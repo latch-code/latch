@@ -141,10 +141,9 @@ describe('changes routes', () => {
     expect((await undo(viewer, sessionId, turnId)).status).toBe(403)
     const body = { scope: 'uncommitted', confirm: 'a'.repeat(64) }
     expect((await viewer.request(`${path}/discard`, { method: 'POST', body })).status).toBe(403)
-    // An ACP session takes input only from this computer, and an undo is no different.
+    // Discarding work that is not one turn's stays on this computer.
     const remote = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
     await widen(remote)
-    expect((await undo(remote, sessionId, turnId)).status).toBe(403)
     expect((await remote.request(`${path}/discard`, { method: 'POST', body })).status).toBe(403)
     expect((await remote.request(`${path}/discard/preview`, { method: 'POST', body: {} })).status).toBe(403)
     expect(await audited(t)).toEqual([])

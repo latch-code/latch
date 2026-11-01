@@ -1,9 +1,9 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AgentSettings, TaskDetail } from '@latch/protocol'
+import type { AgentSettings, AppSnapshot, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { type TestDevice, FAKE_ACP_AGENT } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
@@ -97,7 +97,7 @@ describe('permission states in a browser', () => {
     return sessionId
   }
 
-  it('shows a high-risk approval with the host-desktop hint and no allow button; reject still works', async () => {
+  it('shows a high-risk approval with its reason and an allow button on any device with the scope; reject still works', async () => {
     const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: '写入标记', requestId: randomUUID(), mode: 'agent', model: { providerId: 'r2-model', model: 'fixture' } },
@@ -107,8 +107,7 @@ describe('permission states in a browser', () => {
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
     await card.getByText('Latch 不认识的工具', { exact: true }).waitFor()
-    await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
-    expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
+    await card.getByRole('button', { name: '允许', exact: true }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/r2-browser-desktop.png`, fullPage: true, animations: 'disabled' })
     await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
@@ -232,7 +231,6 @@ describe('permission states in a browser', () => {
       `${card} .approval-title`,
       `${card} .approval-object`,
       `${card} .approval-clause`,
-      `${card} .approval-hint`,
       `${card} .ui-button`,
     ])
     await rejectWithoutNote(page.locator(card))
@@ -260,38 +258,64 @@ describe('permission states in a browser', () => {
     }
   })
 
-  it('keeps a full-access session read-only in the browser and shows permission drift', async () => {
-    const saved = await local.confirmed('agents', {
+  it('allows a high-risk step from this browser with no prompt, on record', async () => {
+    const before = testHost.presence.requests.length
+    const sessionId = await startHighRisk('再写入标记')
+    await open(sessionId)
+    const card = page.locator('[data-approval-id]')
+    await card.getByRole('button', { name: '允许', exact: true }).click()
+    await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+    expect(testHost.presence.requests).toHaveLength(before)
+  })
+
+  it('runs a Harness session in the browser: it starts here, answers, widens with no prompt, and stops on drift', async () => {
+    const saved = await local.request('agents', {
       method: 'POST',
-      body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+      body: {
+        name: 'Fake Agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_MODES: 'read-only,auto', FAKE_ACP_CONFIG: 'options' },
+      },
     })
     expect(saved.status).toBe(201)
     const { agent } = (await saved.json()) as { agent: AgentSettings }
-    const created = await local.confirmed('tasks', {
-      method: 'POST',
-      body: { prompt: 'permission', requestId: randomUUID(), mode: 'agent', harnessId: agent.id },
-    })
-    expect(created.status).toBe(201)
-    const { sessionId } = (await created.json()) as { sessionId: string }
-    await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
-    await open(sessionId)
+    const before = testHost.presence.requests.length
 
-    await page
-      .locator('.composer-readonly')
-      .getByText('这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。', { exact: true })
-      .waitFor()
-    expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
+    await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+    await page.locator('.composer .harness-picker').click()
+    await page.getByRole('menuitemradio', { name: /Fake Agent/ }).click()
+    expect(await page.getByText('只能在 Mac 上开始', { exact: false }).count()).toBe(0)
+    await page.locator('.composer textarea').fill('permission')
+    await page.keyboard.press('Enter')
     const card = page.locator('[data-approval-id]')
+    await card.waitFor()
+    // The first start of a launch says once what it can do, in the timeline.
+    await page.locator('.session-start-note').waitFor()
     await card.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
-    await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
-    expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
-    await page.screenshot({ path: `${OUTPUT}/l3-read-only-desktop.png`, fullPage: true, animations: 'disabled' })
+    await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-desktop.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.screenshot({ path: `${OUTPUT}/l3-read-only-phone.png`, fullPage: true, animations: 'disabled' })
+    await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-phone.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 1440, height: 1000 })
-    // Reject is a class-C action every device may take; the card names the agent's option in the product's words.
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    await card.getByRole('button', { name: '允许', exact: true }).click()
+    await card.waitFor({ state: 'detached' })
+    const { tasks } = await local.json<AppSnapshot>('snapshot')
+    const sessionId = tasks.find(task => task.harnessId === agent.id)!.id
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+    await page.getByRole('textbox', { name: '继续对话' }).waitFor()
+
+    // The mode menu offers the wider row here and takes it at once.
+    await page.locator('.chip-permission').click()
+    await page.getByRole('radio', { name: /auto/iu }).click()
+    await expect.poll(async () => (await detail(sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('auto')
+    await page.keyboard.press('Escape')
+    expect(testHost.presence.requests).toHaveLength(before)
+    const records = (await readFile(join(testHost.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { action: string; stepup?: string })
+    expect(records.find(record => record.action === 'task.l3.started')).toMatchObject({ stepup: 'none' })
+    expect(records.find(record => record.action === 'task.mode.widened')).toMatchObject({ stepup: 'none' })
 
     // The harness switches its own permission mode mid-turn: the Host cancels the turn and stops the session.
     await local.json(`tasks/${encodeURIComponent(sessionId)}/prompt`, {
@@ -311,28 +335,5 @@ describe('permission states in a browser', () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.screenshot({ path: `${OUTPUT}/l3-drift-dark.png`, fullPage: true, animations: 'disabled' })
     await page.emulateMedia({ colorScheme: 'light' })
-  })
-
-  it('offers another device only the built-in engine, and says where the others start', async () => {
-    await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    await page.locator('.composer .harness-picker').click()
-    await page.getByText('其他 Harness 只能在 Mac 上开始。', { exact: true }).waitFor()
-    expect(await page.getByRole('menuitemradio', { name: /Fake Agent/ }).count()).toBe(0)
-    await page.screenshot({ path: `${OUTPUT}/engine-picker-remote.png`, animations: 'disabled' })
-    await page.keyboard.press('Escape')
-  })
-
-  const policy = () => testHost.host.security.policy.get()
-
-  it('lets an admin browser turn 手机可以开始新会话 off but never back on', async () => {
-    expect(policy().remote).toMatchObject({ maxLevel: 'L1', allowRemoteStart: true })
-    const settings = await openSettings(page, '手机与设备')
-    const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
-    await remoteStart.click()
-    await expect.poll(() => policy().remote.allowRemoteStart).toBe(false)
-    // Turning it on takes this Mac's Touch ID, so a browser says where and sends nothing.
-    await settings.getByText('在 Mac 上开启', { exact: true }).waitFor()
-    await remoteStart.click({ force: true })
-    expect(policy().remote.allowRemoteStart).toBe(false)
   })
 })

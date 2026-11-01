@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
 import { fileHistories } from '../src/preview/fileHistory.ts'
 const summary: TaskDetail['summary'] = {
+  harnessId: 'standard',
   id: 'session',
   title: 'History',
   status: 'idle',

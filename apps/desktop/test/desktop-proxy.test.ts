@@ -11,7 +11,6 @@ import {
   CANONICAL_JSON_CASES,
   CANONICAL_JSON_VECTOR,
   ENROLL_SIGNING_VECTOR,
-  CONFIRMATION_SIGNING_VECTOR,
   FOLDERS_SIGNING_VECTOR,
   P256_VECTOR,
   RENEW_SIGNING_VECTOR,
@@ -127,7 +126,6 @@ const credentials = require('../src/credentials.cjs') as {
   deviceFingerprint(spki: Uint8Array): string
   enrollSigningText(hostId: string, id: string, nonce: string): string
   renewSigningText(hostId: string, deviceId: string, nonce: string): string
-  confirmationSigningText(hostId: string, deviceId: string, confirmationId: string, previewHash: string): string
   foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string
   canonicalJson(value: unknown): string
   foldersBodyHash(body: Record<string, unknown>): string
@@ -840,17 +838,6 @@ describe('desktop shell policy', () => {
       expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward' })
   })
 
-  it('reserves signed native confirmation routes for main in every spelling', () => {
-    for (const path of [
-      '/link/api/confirmations/cfm_1/shell',
-      '/link/api/Confirmations/cfm_1/Shell/',
-      '/link/api/confirmations/cfm_1%2Fshell',
-      '/link//api/confirmations/cfm_1/shell',
-      '/link/api/confirmations/cfm_1/%73hell',
-    ])
-      expect(proxy.classifyRoute('POST', path)).toEqual({ kind: 'shell-confirmations' })
-  })
-
   it('lets only static files and enrollment routes go to the Host without a credential', () => {
     const enrollmentId = id('enr')
     for (const [method, path] of [
@@ -989,16 +976,6 @@ describe('desktop credential storage', () => {
       expect(credentials.canonicalJson(vector.input)).toBe(vector.output)
       expect(createHash('sha256').update(credentials.canonicalJson(vector.input), 'utf8').digest('hex')).toBe(vector.sha256)
     }
-    const confirmation = CONFIRMATION_SIGNING_VECTOR.example
-    expect(
-      credentials.confirmationSigningText(
-        confirmation.hostId,
-        confirmation.deviceId,
-        confirmation.confirmationId,
-        confirmation.previewHash,
-      ),
-    ).toBe(confirmation.text)
-    expect(verifyP1363(P256_VECTOR.spki, confirmation.text, confirmation.signature)).toBe(true)
     const folders = FOLDERS_SIGNING_VECTOR.example
     expect(credentials.canonicalJson(folders.body)).toBe(folders.canonicalBody)
     expect(credentials.foldersBodyHash(folders.body)).toBe(folders.bodyHash)
@@ -1314,29 +1291,6 @@ describe('desktop shell proxy', () => {
     expect(context.host.seen).toHaveLength(0)
     expect((await context.request('/other')).status).toBe(404)
     expect(context.host.seen).toHaveLength(0)
-  })
-
-  it('blocks native approval routes in the renderer while main uses its credential and capability header', async () => {
-    const context = await shell()
-    await enroll(context)
-    const before = context.host.seen.length
-    for (const path of [
-      '/link/api/confirmations/cfm_1/shell',
-      '/link/api/Confirmations/cfm_1/Shell/',
-      '/link/api/confirmations/cfm_1%2Fshell',
-    ]) {
-      for (const method of ['GET', 'POST']) {
-        const response = await context.request(path, {
-          method,
-          ...(method === 'POST' ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}),
-        })
-        expect(response.status).toBe(403)
-        expect(await response.json()).toMatchObject({ error: 'shell-managed' })
-      }
-    }
-    expect(context.host.seen).toHaveLength(before)
-    expect((await context.handler.shellRequest('GET', '/link/api/confirmations/cfm_1/shell')).status).toBe(200)
-    expect(context.host.seen.at(-1)!.headers['x-latch-shell-confirmation']).toBe('1')
   })
 
   it('answers renderer folder adds itself and lets only main’s own request reach the Host', async () => {
@@ -1866,7 +1820,7 @@ describe('desktop shell against the Host', () => {
     expect(result.url).toMatch(new RegExp(`^${host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
     expect(host.security.audit.lastOf('pairing.invited')).toMatchObject({
       actor: { deviceId: desktop.deviceId, listener: 'unix' },
-      detail: { scopes: ['view', 'run', 'approve:standard'], listener: 'loopback-tcp' },
+      detail: { scopes: ['view', 'run', 'approve:standard', 'approve:elevated'], listener: 'loopback-tcp' },
     })
     const invitation = new URL(result.url).hash.slice('#pair='.length)
     // Asking for more is refused without spending it: the enrollment page repeats the request without admin.

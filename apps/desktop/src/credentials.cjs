@@ -45,10 +45,6 @@ function foldersSigningText(hostId, deviceId, nonce, bodyHash) {
   return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
 }
 
-function confirmationSigningText(hostId, deviceId, confirmationId, previewHash) {
-  return `latch-confirm-v1\n${hostId}\n${deviceId}\n${confirmationId}\n${previewHash}`
-}
-
 /**
  * The Host's canonicalJson (`packages/core/src/node-kit/digest.ts`) for the plain JSON main builds itself: object keys
  * sorted by UTF-16 code unit, no whitespace, primitives as JSON.stringify writes them, undefined members dropped.
@@ -236,10 +232,6 @@ async function openCredentialStore({
       const current = requireCredential()
       return current.key.sign(foldersSigningText(hostId, current.deviceId, body.nonce, foldersBodyHash(body)))
     },
-    signConfirmation(confirmationId, previewHash) {
-      const current = requireCredential()
-      return current.key.sign(confirmationSigningText(hostId, current.deviceId, confirmationId, previewHash))
-    },
     /** Replaces key and credential after a completed enrollment (each enrollment uses a fresh key). */
     commit({ key, deviceId, credential }) {
       if (!DEVICE_ID.test(deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${deviceId}.`)) {
@@ -282,7 +274,6 @@ module.exports = {
   enrollSigningText,
   renewSigningText,
   foldersSigningText,
-  confirmationSigningText,
   canonicalJson,
   foldersBodyHash,
   generateDeviceKey,

@@ -17,9 +17,9 @@ import type {
   RunEnd,
   RunLive,
   SessionPermission,
-  TaskDetail,
+  DriverTaskDetail,
   TaskStatus,
-  TaskSummary,
+  DriverTaskSummary,
   ToolDecision,
   UnknownResult,
   UnrecognizedRequests,
@@ -42,7 +42,7 @@ import { isoTime, ReasoningTimer, RunClock, sha256Hex } from '@latch/core/node-k
 import { runEndRecord } from '@latch/core/run-end'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
-import { agentEnvironment } from './environment.ts'
+import { agentEnvironment, programPaths } from './environment.ts'
 import {
   append,
   blockText,
@@ -155,7 +155,7 @@ interface Run {
   /** session/prompt was written; updates from now on belong to this turn. */
   sent: boolean
   cancelRequested: boolean
-  activity: NonNullable<TaskDetail['activity']>
+  activity: NonNullable<DriverTaskDetail['activity']>
   /** From the prompt to the turn's end, with the approval wait. */
   clock: RunClock
   /** The user message of this turn, once recorded; it carries the turn's times when the turn ends. */
@@ -261,7 +261,7 @@ function cancelledBeforeSend(): AppError {
 }
 
 function definitionChanged(): AppError {
-  return new AppError(409, 'agent-definition-changed', 'Agent 定义已变化，该会话不能继续。请新建会话（需要本机确认）。')
+  return new AppError(409, 'agent-definition-changed', 'Agent 定义已变化，该会话不能继续。请新建会话。')
 }
 
 function permissionDrift(): AppError {
@@ -292,7 +292,7 @@ function confirmedOf(acp: AcpRecord): Confirmed {
   return { launchHash: acp.launchHash, definitionHash: acp.definitionHash, ...(folders ? { folders } : {}) }
 }
 
-function isActive(summary: TaskSummary): boolean {
+function isActive(summary: DriverTaskSummary): boolean {
   return summary.status === 'running' || summary.status === 'waiting-approval'
 }
 function isObject(value: unknown): boolean {
@@ -408,7 +408,7 @@ export class AcpBridge implements Bridge {
   }
 
   /** Moves a turn to a phase; `since` changes only when the phase or its tool does. */
-  private phase(run: Run, phase: NonNullable<TaskDetail['activity']>['phase'], toolName?: string, since?: string): void {
+  private phase(run: Run, phase: NonNullable<DriverTaskDetail['activity']>['phase'], toolName?: string, since?: string): void {
     if (run.activity.phase === phase && run.activity.toolName === toolName && run.activity.since) return
     run.activity = { phase, ...(toolName !== undefined ? { toolName } : {}), since: since ?? this.now() }
     run.lastEventAt = this.clock()
@@ -441,7 +441,7 @@ export class AcpBridge implements Bridge {
   }
 
   /** The stored summary with what only the live turn knows, which is never stored. */
-  private projected(task: AcpTask): TaskSummary {
+  private projected(task: AcpTask): DriverTaskSummary {
     const run = this.runs.get(task.summary.id)
     return run && isActive(task.summary) ? { ...task.summary, live: this.liveOf(run) } : task.summary
   }
@@ -527,7 +527,7 @@ export class AcpBridge implements Bridge {
     })())
   }
 
-  async listTasks(): Promise<TaskSummary[]> {
+  async listTasks(): Promise<DriverTaskSummary[]> {
     await this.ready()
     return structuredClone(
       Object.values(this.state.tasks)
@@ -536,7 +536,7 @@ export class AcpBridge implements Bridge {
     )
   }
 
-  async detail(sessionId: string): Promise<TaskDetail> {
+  async detail(sessionId: string): Promise<DriverTaskDetail> {
     await this.ready()
     const task = this.task(sessionId)
     const run = this.runs.get(sessionId)
@@ -637,7 +637,7 @@ export class AcpBridge implements Bridge {
     if (mode === 'chat') throw new AppError(400, 'mode-unsupported', `${this.agent.name} 只支持 Agent 模式`)
     if (mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
     if (typeof input.expectedLaunchHash !== 'string' || !input.expectedLaunchHash) {
-      throw new AppError(409, 'l3-confirmation-missing', '此会话没有经过本机确认，不能启动。')
+      throw new AppError(409, 'l3-confirmation-missing', '此会话缺少启动记录，不能启动。')
     }
     const cwd = await this.workspace(input.cwd)
     const scope = await this.scopeOf(input, cwd)
@@ -971,11 +971,6 @@ export class AcpBridge implements Bridge {
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
     const mode = this.isModeOption(task, option)
-    if (mode) {
-      const change = classifyMode(this.profile, this.expectedMode(task) ?? option.currentValue, value)
-      if (change === 'forbidden') throw new AppError(400, 'mode-forbidden', '该模式由模型代为批准，Latch 不提供')
-      if (change === 'wider' && options.allowWiden !== true) throw new AppError(403, 'stepup-required', '放宽权限模式需要在本机确认')
-    }
     if (option.currentValue === value) {
       if (mode && task.acp.expectedMode !== value) {
         task.acp.expectedMode = value
@@ -1029,7 +1024,7 @@ export class AcpBridge implements Bridge {
         // A legacy agent that has not reported yet is checked again before the next prompt. One that reports a mode
         // wider than the requested one did not take it, and a turn must not go on in the mode the owner moved away from.
         const answered = change?.reported === undefined ? 'neutral' : classifyMode(this.profile, value, change.reported)
-        if (answered === 'wider' || answered === 'forbidden') this.unverifiedChange(current, value)
+        if (answered === 'wider') this.unverifiedChange(current, value)
       }
       if (!mode) await apply()
       else await this.changeMode(sessionId, [this.expectedMode(task) ?? this.modeOption(task)?.currentValue, value], apply)
@@ -1283,6 +1278,8 @@ export class AcpBridge implements Bridge {
       definitionEnv: this.agent.env,
       ...(this.selection.profile ? { presetId: this.selection.profile.presetId } : {}),
       profileVersion: 1 as const,
+      ...(this.profile?.inheritEnv ? { inheritEnv: this.profile.inheritEnv } : {}),
+      programs: programPaths(this.profile),
     }
     const definitionHash = launchHash(definition)
     const hash =
@@ -1297,8 +1294,7 @@ export class AcpBridge implements Bridge {
   }
 
   private assertConfirmed(confirmed: Confirmed): asserts confirmed is Confirmed & { launchHash: string } {
-    if (!confirmed.launchHash)
-      throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话（需要本机确认）。')
+    if (!confirmed.launchHash) throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话。')
   }
 
   /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one the owner confirmed. */
@@ -1405,7 +1401,7 @@ export class AcpBridge implements Bridge {
   }
 
   /**
-   * A mode the agent reported. Wider or forbidden than the expected one, or while Latch changes the mode wider than
+   * A mode the agent reported. Wider than the expected one, or while Latch changes the mode wider than
    * both the mode left and the one requested, ends the session's input for good.
    */
   private observeMode(task: AcpTask, before: string | undefined, value: string): void {
@@ -1713,6 +1709,7 @@ export class AcpBridge implements Bridge {
     if (error instanceof RpcError) {
       if (error.code === RPC.cancelled) return 'cancelled'
       if (error.code === RPC.authRequired) {
+        run.end = 'login-required'
         this.forgetProcessAfterAuth(run.live)
         notes.push(this.authMessage())
         return 'failed'
@@ -1729,6 +1726,8 @@ export class AcpBridge implements Bridge {
       )
       return 'failed'
     }
+    // The same refusal as above, already turned into words on its way out of `session`.
+    if (error instanceof AppError && error.code === 'agent-auth-required') run.end = 'login-required'
     notes.push(error instanceof AppError ? error.message : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`)
     return 'failed'
   }

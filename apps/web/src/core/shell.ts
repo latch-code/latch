@@ -27,14 +27,6 @@ export interface ShellFolders {
   saveSessionFolder?: (sessionId: string) => Promise<FolderResult>
 }
 
-export type ShellConfirmationResult = { status: 'confirmed' | 'cancelled' | 'busy' } | { status: 'failed'; code: string }
-
-export interface ShellConfirmations {
-  protocolVersion: 1
-  /** Main reads all displayed content from the Host and returns no proof to the page. */
-  confirm(id: string): Promise<ShellConfirmationResult>
-}
-
 /** What main answers when asked to open this Host's page in the default browser. */
 type OpenInBrowserResult = { ok: true } | { ok: false; status: number; error: string; message: string; retryAfter?: number }
 
@@ -129,7 +121,6 @@ export interface LatchShell {
   platform: string
   /** Shells from before folder support do not have it. */
   folders?: ShellFolders
-  confirmations?: ShellConfirmations
   /**
    * 「在浏览器中打开」: main makes a one-time invitation and opens the browser with it; the page never sees
    * the invitation. Absent in shells from before this action.
@@ -159,11 +150,6 @@ export function currentShell(): LatchShell | null {
   if (typeof window === 'undefined') return null
   const shell = window.latchShell
   return shell !== undefined && shell !== null && shell.kind === 'electron' ? shell : null
-}
-
-export function shellConfirmations(): ShellConfirmations | null {
-  const confirmations = currentShell()?.confirmations
-  return confirmations?.protocolVersion === 1 && typeof confirmations.confirm === 'function' ? confirmations : null
 }
 
 /** The shell's folder actions, only when every one of them is there (an older shell has none). */

@@ -380,9 +380,7 @@ export function SettingsPage({
                   <div key={panel} className="settings-content settings-enter">
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'engines' && (
-                      <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} initialPage={initialAgent} />
-                    )}
+                    {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
                     {panel === 'shortcuts' && <ShortcutsSettings />}
                     {panel === 'workspaces' && (
                       <WorkspacesSettings

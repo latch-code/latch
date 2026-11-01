@@ -42,7 +42,7 @@ function captureFragment(): string | null {
 let invitation = captureFragment()
 export const pendingInvitation = () => invitation
 
-export const BASE_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard']
+export const BASE_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated']
 /** What host.sock grants the desktop app; it asks for nothing itself, so this is only for saying so. */
 export const DESKTOP_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 /** What a browser asks for: management only when the person was shown it and did not turn it down. */

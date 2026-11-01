@@ -717,6 +717,8 @@ export function runEndLine(summary: TaskDetail['summary'], harness: string): Run
       return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false }
     case 'host-stopped':
       return { tone: 'amber', text: `这一轮被中断了${uncertain}`, unknown, retry: true }
+    case 'login-required':
+      return { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true }
     case 'turn-ended':
       return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false } : undefined
   }

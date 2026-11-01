@@ -2,12 +2,9 @@ import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
 import type { AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
-import { InlineConfirm } from '../components/InlineConfirm.tsx'
-import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
 import type { AgentPageTarget } from '../shell/routes.ts'
-import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
-import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
+import { builtinHarness, harnessName } from '../composerChoice.ts'
 import { missingText } from '../core/agentDetection.ts'
 export { missingText } from '../core/agentDetection.ts'
 import { hostOf } from '../format.ts'
@@ -25,7 +22,7 @@ import {
   TextField,
   CopyButton,
 } from '@latch/ui'
-import { HarnessTile } from '../components/BrandTile.tsx'
+import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
@@ -40,12 +37,10 @@ type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPres
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 const ENGINES_CAPTION = 'Harness 是这台 Mac 上的开源程序，以你的权限运行。Latch 不会替你安装它们。'
 const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Harness 自己决定执行范围，Latch 不隔离它。'
-const DEFINE_ON_DESKTOP = `启动方式：${LOCAL_ONLY_TEXT}。`
-/** Saving a definition asks for nothing; every full-access start is confirmed on this computer with what it runs. */
-const SAVE_NOTE = '保存不需要确认；每次用它开始会话，都会在这台电脑上确认要运行的命令。'
+const SAVE_NOTE = '保存后就能用它开始会话，每次启动都留有记录。'
 /** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
 const NOT_STARTED = '还没有开启过会话'
-const NOT_STARTED_NOTE = '开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。'
+const NOT_STARTED_NOTE = '第一次开始会话时，会话开头会说明它能做什么。'
 const lines = (text: string) =>
   text
     .split('\n')
@@ -163,8 +158,6 @@ const invalidEnv = (entries: Array<{ key: string }>) => entries.find(item => ite
 
 /**
  * A new agent from a preset or a custom command: the definition and environment as fields in cards, then 添加 Agent.
- * Only the Host's desktop saves a definition, without a local confirmation: its full-access starts are confirmed. Older
- * Hosts still ask when saving, which `withConfirmation` handles.
  */
 function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState(preset?.name ?? '')
@@ -196,7 +189,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         ...(preset ? { presetId: preset.id } : {}),
         env: Object.fromEntries(env.filter(item => item.key.trim()).map(item => [item.key.trim(), item.value])),
       }
-      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
+      await api('agents', { method: 'POST', body })
       onSaved()
     } catch (cause) {
       setError(inlineError(cause))
@@ -274,7 +267,6 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         {env.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境；需要额外的变量时在这里添加" />}
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
-      <InlineConfirm active={busy} rank={1} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <div className="settings-actions">
         <Button size="md" disabled={busy} onClick={onCancel}>
@@ -459,18 +451,17 @@ function EnvDialog({
 }
 
 /**
- * An added agent's page, in cards. 启用 and the name change from any admin device; the command, arguments and
- * environment define what a full-access session runs, so they change only on the Host's desktop with a local
- * confirmation, and read-only elsewhere. Detection says what the Host found, with 重新检测 and the install command.
+ * An added agent's page, in cards: everything on it changes from any admin device, and each change is on record. Detection
+ * says what the Host found, with 重新检测 and the install command.
  */
 function AgentPage({
   agent,
   preset,
   harness,
-  definable,
   checking,
   probe,
   probeDisabledReason,
+  loginTerminal = false,
   onRecheck,
   onSaved,
   onDeleted,
@@ -478,10 +469,10 @@ function AgentPage({
   agent: AgentSettings
   preset?: AgentPreset
   harness?: HarnessInfo
-  definable: boolean
   checking: boolean
   probe: boolean
   probeDisabledReason?: string
+  loginTerminal?: boolean
   onRecheck: () => void
   onSaved: () => void
   onDeleted: () => void
@@ -498,12 +489,12 @@ function AgentPage({
   }
   const id = encodeURIComponent(agent.id)
 
-  /** One change; an older Host confirms a new definition, and the confirmation resends the identical body. */
+  /** One change. */
   const update = async (body: Record<string, unknown>): Promise<string> => {
     setBusy(true)
     setError('')
     try {
-      await withConfirmation(confirmation => api(`agents/${id}`, { method: 'PUT', body, ...(confirmation ? { confirmation } : {}) }))
+      await api(`agents/${id}`, { method: 'PUT', body })
       onSaved()
       return ''
     } catch (cause) {
@@ -550,20 +541,18 @@ function AgentPage({
       <SettingsGroup
         title="启动方式"
         meta={
-          definable ? (
-            <Button
-              variant="link"
-              size="xs"
-              disabled={busy}
-              onClick={() => {
-                setDialog('definition')
-              }}>
-              编辑…
-            </Button>
-          ) : undefined
+          <Button
+            variant="link"
+            size="xs"
+            disabled={busy}
+            onClick={() => {
+              setDialog('definition')
+            }}>
+            编辑…
+          </Button>
         }
-        caption={definable ? FULL_ACCESS_NOTE : DEFINE_ON_DESKTOP}
-        captionIcon={definable ? 'info' : 'lock'}>
+        caption={FULL_ACCESS_NOTE}
+        captionIcon="info">
         {agent.started === false && <SettingsRow title={NOT_STARTED} description={NOT_STARTED_NOTE} />}
         <SettingsRow title="命令" description={<MiddleEllipsis text={agent.command} className="settings-mono" />} />
         <SettingsRow
@@ -574,19 +563,15 @@ function AgentPage({
       <SettingsGroup
         title="环境变量"
         meta={
-          definable ? (
-            <Button
-              variant="link"
-              size="xs"
-              disabled={busy}
-              onClick={() => {
-                setDialog('env')
-              }}>
-              添加…
-            </Button>
-          ) : agent.envKeys.length > 0 ? (
-            `${agent.envKeys.length} 个变量`
-          ) : undefined
+          <Button
+            variant="link"
+            size="xs"
+            disabled={busy}
+            onClick={() => {
+              setDialog('env')
+            }}>
+            添加…
+          </Button>
         }
         caption="值只保存在这台 Mac 上，不会再显示。">
         {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境" />}
@@ -596,19 +581,17 @@ function AgentPage({
             title={<code className="settings-mono">{key}</code>}
             description="已设置"
             trailing={
-              definable ? (
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  aria-label={`移除 ${key}`}
-                  onClick={() => {
-                    void update({ env: { [key]: null } }).then(text => {
-                      if (text) setError(text)
-                    })
-                  }}>
-                  移除
-                </Button>
-              ) : undefined
+              <Button
+                variant="ghost"
+                disabled={busy}
+                aria-label={`移除 ${key}`}
+                onClick={() => {
+                  void update({ env: { [key]: null } }).then(text => {
+                    if (text) setError(text)
+                  })
+                }}>
+                移除
+              </Button>
             }
           />
         ))}
@@ -646,7 +629,16 @@ function AgentPage({
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
-      {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
+      {probe && (
+        <AgentProbe
+          agent={agent}
+          disabled={busy}
+          disabledReason={probeDisabledReason}
+          onSaved={onSaved}
+          login={harness?.login}
+          terminal={loginTerminal}
+        />
+      )}
       <SettingsGroup>
         <SettingsRow
           title="删除 Harness"
@@ -674,25 +666,23 @@ function AgentPage({
           setDialog(null)
         }}
       />
-      {definable && (
-        <>
-          <DefinitionDialog
-            open={dialog === 'definition'}
-            agent={agent}
-            onSubmit={body => update(body)}
-            onClose={() => {
-              setDialog(null)
-            }}
-          />
-          <EnvDialog
-            open={dialog === 'env'}
-            onSubmit={(key, value) => update({ env: { [key]: value } })}
-            onClose={() => {
-              setDialog(null)
-            }}
-          />
-        </>
-      )}
+      <>
+        <DefinitionDialog
+          open={dialog === 'definition'}
+          agent={agent}
+          onSubmit={body => update(body)}
+          onClose={() => {
+            setDialog(null)
+          }}
+        />
+        <EnvDialog
+          open={dialog === 'env'}
+          onSubmit={(key, value) => update({ env: { [key]: value } })}
+          onClose={() => {
+            setDialog(null)
+          }}
+        />
+      </>
       {removing && (
         <ConfirmDialog
           title="删除 Harness"
@@ -761,12 +751,7 @@ export function AgentRow({
       className="agent-row"
       label={`编辑 ${agent.name}`}
       dim={missingText(agent) !== undefined}
-      leading={
-        <HarnessTile
-          harness={{ id: agent.id, source: 'acp', presetId: agent.presetId, ...(harness ? { status: harness.status } : {}) }}
-          size={24}
-        />
-      }
+      leading={<MarkTile mark={agent.presetId} cold={harness?.status === 'unavailable'} size={24} />}
       title={
         <span className="settings-row-name">
           {agent.name}
@@ -790,17 +775,14 @@ export function AgentRow({
 
 export function AgentsSettings({
   snapshot,
-  access,
   onChanged,
   initialPage,
 }: {
   snapshot: AppSnapshot
-  access: Pick<DeviceAccess, 'legacy' | 'local'>
   onChanged: () => void
   /** A page to open on, each time a new one is given. */
   initialPage?: AgentPageTarget | undefined
 }) {
-  const definable = access.legacy || access.local
   const [data, setData] = useState<AgentsResponse | null>(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<Editing>(initialPage ? editingOf(initialPage) : null)
@@ -859,7 +841,7 @@ export function AgentsSettings({
   }
   if (data === null) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />
 
-  const builtin = snapshot.catalog?.harnesses.find(harness => harness.source === 'builtin')
+  const builtin = builtinHarness(snapshot.catalog)
   const installable = data.presets.filter(preset => !data.agents.some(agent => agent.presetId === preset.id))
   const { installed, missing } = engineGroups(data.agents)
   const engineRow = (agent: AgentSettings) => (
@@ -883,25 +865,23 @@ export function AgentsSettings({
       <SettingsGroup
         title="已安装"
         meta={
-          definable ? (
-            <Button
-              variant="outline"
-              icon={Plus}
-              onClick={() => {
-                setEditing({ kind: 'new' })
-              }}>
-              自定义 Harness
-            </Button>
-          ) : undefined
+          <Button
+            variant="outline"
+            icon={Plus}
+            onClick={() => {
+              setEditing({ kind: 'new' })
+            }}>
+            自定义 Harness
+          </Button>
         }
-        caption={definable ? ENGINES_CAPTION : `添加 Harness 或修改启动方式：${LOCAL_ONLY_TEXT}。`}
-        captionIcon={definable ? null : 'lock'}>
+        caption={ENGINES_CAPTION}
+        captionIcon={null}>
         {builtin && (
           <SettingsRow
             className="agent-row"
             leading={<HarnessTile harness={builtin} size={24} />}
             record
-            title={BUILTIN_HARNESS_NAME}
+            title={harnessName(builtin)}
             description="内置 Harness，用你在 设置 › 模型 里接入的服务"
             trailing={<span className="service-status">{builtin.status === 'ready' ? '可用' : '需要模型服务'}</span>}
           />
@@ -916,20 +896,18 @@ export function AgentsSettings({
               key={preset.id}
               className="agent-preset"
               label={`安装 ${preset.name}`}
-              leading={<HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={24} />}
+              leading={<MarkTile mark={preset.id} size={24} />}
               title={preset.name}
               description={preset.description}
               trailing={
-                definable ? (
-                  <Button
-                    variant="outline"
-                    aria-label={`安装 ${preset.name}`}
-                    onClick={() => {
-                      setEditing({ kind: 'new', preset })
-                    }}>
-                    安装…
-                  </Button>
-                ) : undefined
+                <Button
+                  variant="outline"
+                  aria-label={`安装 ${preset.name}`}
+                  onClick={() => {
+                    setEditing({ kind: 'new', preset })
+                  }}>
+                  安装…
+                </Button>
               }
             />
           ))}
@@ -971,23 +949,17 @@ export function AgentsSettings({
           agent={agent}
           preset={data.presets.find(item => item.id === agent.presetId)}
           harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
-          definable={definable}
           checking={checking}
           probe={snapshot.catalog?.features?.agentProbe === true}
+          loginTerminal={snapshot.catalog?.features?.loginTerminal === true}
           probeDisabledReason={
-            !access.local
-              ? '测试启动只能在 Mac 上，通过桌面端进行。'
-              : !snapshot.device.scopes?.includes('admin')
-                ? '这台设备没有管理这台 Mac 的权限。'
-                : !snapshot.device.scopes?.includes('run')
-                  ? '此设备没有发起和继续会话的权限。'
-                  : !snapshot.host?.policy.allowL3
-                    ? '这台电脑尚未允许完全访问，需要在 policy.json 中开启。'
-                    : snapshot.host.presence.status !== 'available'
-                      ? '这台 Mac 现在不能用 Touch ID 或登录密码确认。'
-                      : !agent.detected.found
-                        ? '先安装或配置 Harness 命令，再测试启动。'
-                        : undefined
+            !snapshot.device.scopes?.includes('admin')
+              ? '这台设备没有管理这台 Mac 的权限。'
+              : !snapshot.device.scopes?.includes('run')
+                ? '此设备没有发起和继续会话的权限。'
+                : !agent.detected.found
+                  ? '先安装或配置 Harness 命令，再测试启动。'
+                  : undefined
           }
           onRecheck={() => {
             void recheck()

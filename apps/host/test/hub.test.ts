@@ -27,7 +27,7 @@ async function hub(dataDir?: string, defaultId = 'standard') {
 }
 
 function summary(id: string, status: TaskSummary['status'] = 'idle'): TaskSummary {
-  return { id, title: `Task ${id}`, status, updatedAt: new Date().toISOString() }
+  return { harnessId: 'standard', id, title: `Task ${id}`, status, updatedAt: new Date().toISOString() }
 }
 
 /** An external Bridge backed by plain arrays the test can mutate. */
@@ -78,7 +78,9 @@ function driver(id: string, extra: Partial<HarnessDriver> = {}): HarnessDriver {
 }
 
 function mount(bridge: Bridge, extra: Partial<HarnessMount> = {}): HarnessMount & { release: ReturnType<typeof vi.fn> } {
-  return { create: () => bridge, release: vi.fn(), source: 'plugin', ...extra } as HarnessMount & { release: ReturnType<typeof vi.fn> }
+  return { create: () => bridge, release: vi.fn(), kind: 'plugin', ...extra } as unknown as HarnessMount & {
+    release: ReturnType<typeof vi.fn>
+  }
 }
 
 function approval(id: string, sessionId: string): Approval {
@@ -237,6 +239,7 @@ describe('run silence', () => {
     const summary = (lastEventAt: string, unrecognized?: { count: number; at: string }) =>
       JSON.stringify(
         listSignature({
+          harnessId: 'standard',
           id: 's1',
           title: '',
           status: 'running',
@@ -343,8 +346,8 @@ describe('harness hub routing', () => {
       notified.push(sessionId)
     })
     await value.attach(
-      driver('standard'),
-      mount(standard, { source: 'builtin', capabilities: { modes: ['chat', 'agent'], models: 'host' } }),
+      driver('standard', { capabilities: { modes: ['chat', 'agent'], models: { owner: 'latch' }, permission: { enforcement: 'latch' } } }),
+      mount(standard, { kind: 'builtin' }),
     )
     await value.attach(driver('ext'), mount(outside.bridge))
 
@@ -582,24 +585,53 @@ describe('harness hub isolation and lifecycle', () => {
     await value.attach(driver('plain'), mount(external().bridge))
     await value.attach(
       driver('agent', {
-        capabilities: { modes: ['agent'], models: 'agent' },
+        capabilities: { modes: ['agent'] },
         status: () => ({ status: 'unavailable', statusMessage: '未安装' }),
       }),
-      mount(external().bridge, { source: 'acp' }),
+      mount(external().bridge, { kind: 'acp' }),
     )
     expect(value.drivers()).toEqual([
-      { id: 'plain', name: 'Driver plain', source: 'plugin', status: 'ready', modes: ['chat', 'agent'], models: 'agent', level: 'L3' },
+      {
+        id: 'plain',
+        capabilities: {
+          models: { owner: 'harness', catalogue: 'none', wires: [] },
+          permission: { enforcement: 'none', rejectionNote: false },
+          tools: { shell: true, fileMentions: false },
+          display: { label: 'Driver plain', mark: 'plugin' },
+        },
+        status: 'ready',
+        modes: ['chat', 'agent'],
+        level: 'L3',
+      },
       {
         id: 'agent',
-        name: 'Driver agent',
-        source: 'acp',
+        capabilities: {
+          models: { owner: 'harness', catalogue: 'none', wires: [] },
+          permission: { enforcement: 'none', rejectionNote: false },
+          tools: { shell: true, fileMentions: false },
+          display: { label: 'Driver agent' },
+        },
+        editable: true,
         status: 'unavailable',
         statusMessage: '未安装',
         modes: ['agent'],
-        models: 'agent',
         level: 'L3',
       },
     ])
+  })
+
+  it('keeps a plugin that declares Latch enforces it at L3', async () => {
+    const { hub: value } = await hub()
+    await value.attach(
+      driver('claims', { capabilities: { permission: { enforcement: 'latch', rejectionNote: true }, tools: { shell: false } } }),
+      mount(external().bridge),
+    )
+    expect(value.levelOf('claims')).toBe('L3')
+    expect(value.trustOf('claims')).toEqual({ kind: 'plugin', level: 'L3', enforcement: 'harness' })
+    expect(value.info('claims')).toMatchObject({
+      level: 'L3',
+      capabilities: { permission: { enforcement: 'harness' }, tools: { shell: true } },
+    })
   })
 
   it('reports which folders of a project each driver receives, and passes them only to one that takes them all', async () => {
@@ -625,7 +657,7 @@ describe('harness hub isolation and lifecycle', () => {
         notes: [],
       }))
       previews.set(id, launchPreview)
-      await value.attach(driver(id, extra), mount(external([], [], { launchPreview }).bridge, { source: 'acp' }))
+      await value.attach(driver(id, extra), mount(external([], [], { launchPreview }).bridge, { kind: 'acp' }))
     }
     expect(Object.fromEntries(value.drivers().map(info => [info.id, info.projectFolders ?? null]))).toEqual({
       all: { access: 'all' },
@@ -694,14 +726,17 @@ describe('permission levels', () => {
     })
     const plugin = external([summary('p-1')])
     const { hub: value } = await hub()
-    await value.attach(driver('standard'), mount(builtin.bridge, { source: 'builtin' }))
-    await value.attach(driver('agent'), mount(acp.bridge, { source: 'acp' }))
+    await value.attach(
+      driver('standard', { capabilities: { permission: { enforcement: 'latch' } } }),
+      mount(builtin.bridge, { kind: 'builtin' }),
+    )
+    await value.attach(driver('agent'), mount(acp.bridge, { kind: 'acp' }))
     await value.attach(driver('plugin'), mount(plugin.bridge))
     expect(value.levelOf('standard')).toBe('L1')
     expect(value.levelOf('agent')).toBe('L3')
     expect(value.levelOf('plugin')).toBe('L3')
     expect(value.levelOf('missing')).toBe('L3')
-    expect(value.sourceOf('agent')).toBe('acp')
+    expect(value.trustOf('agent')).toEqual({ kind: 'acp', level: 'L3', enforcement: 'none' })
     expect(Object.fromEntries((await value.listTasks()).map(task => [task.id, task.level]))).toEqual({
       'b-1': 'L1',
       'a-1': 'L3',
@@ -740,13 +775,13 @@ describe('permission levels', () => {
     const acp = external([summary('a-1')], [], { setConfig, classifyConfigChange, launchPreview })
     const plain = external([summary('p-1')])
     const { hub: value } = await hub()
-    await value.attach(driver('agent'), mount(acp.bridge, { source: 'acp' }))
+    await value.attach(driver('agent'), mount(acp.bridge, { kind: 'acp' }))
     await value.attach(driver('plain'), mount(plain.bridge))
     acp.bridge.createTask.mockResolvedValueOnce({ sessionId: 'a-2' })
     await value.createTask({ prompt: 'x', requestId: 'r', harnessId: 'agent', expectedLaunchHash: 'b'.repeat(64) })
     expect(acp.bridge.createTask).toHaveBeenCalledWith({ prompt: 'x', requestId: 'r', expectedLaunchHash: 'b'.repeat(64) })
-    await value.setConfig('a-1', 'mode', 'auto', { allowWiden: true })
-    expect(setConfig).toHaveBeenCalledWith('a-1', 'mode', 'auto', { allowWiden: true })
+    await value.setConfig('a-1', 'mode', 'auto', {})
+    expect(setConfig).toHaveBeenCalledWith('a-1', 'mode', 'auto', {})
     expect(await value.classifyConfigChange('a-1', 'mode', 'auto')).toBe('wider')
     expect(await value.classifyConfigChange('p-1', 'mode', 'auto')).toBe('neutral')
     expect(await value.launchPreviewOf('agent', '/tmp')).toEqual(preview)
@@ -762,8 +797,11 @@ describe('permission levels', () => {
       { ...summary('a-2', 'running'), updatedAt: '2026-10-25T09:00:00.000Z' },
     ]
     const { hub: value } = await hub()
-    await value.attach(driver('standard'), mount(external(builtinTasks).bridge, { source: 'builtin' }))
-    await value.attach(driver('agent'), mount(external(acpTasks).bridge, { source: 'acp' }))
+    await value.attach(
+      driver('standard', { capabilities: { permission: { enforcement: 'latch' } } }),
+      mount(external(builtinTasks).bridge, { kind: 'builtin' }),
+    )
+    await value.attach(driver('agent'), mount(external(acpTasks).bridge, { kind: 'acp' }))
     const listed = async () => (await value.unsandboxedTasks()).map(task => [task.id, task.harnessId, task.level])
     expect(await listed()).toEqual([['a-2', 'agent', 'L3']])
     acpTasks[0]!.status = 'waiting-approval'

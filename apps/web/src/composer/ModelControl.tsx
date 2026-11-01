@@ -14,14 +14,13 @@ import {
   type PickerGroup,
 } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
-import { harnessLevel, type DeviceAccess } from '../core/permissions.ts'
+import type { DeviceAccess } from '../core/permissions.ts'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 import {
   engineEntries,
   findProvider,
   harnessName,
   isPinnedChoice,
-  otherHarnessesNote,
   presetsToAdd,
   sameModel,
   type ComposerChoice,
@@ -125,7 +124,7 @@ function PinChoiceRow({
     try {
       const defaults = pinned
         ? { pinned: false }
-        : { harnessId: harness.id, ...(harness.models === 'host' && model ? { model } : {}), pinned: true }
+        : { harnessId: harness.id, ...(harness.capabilities.models.owner === 'latch' && model ? { model } : {}), pinned: true }
       await api('preferences', { method: 'PUT', body: { defaults } })
       await onChanged?.()
     } catch (cause) {
@@ -239,19 +238,13 @@ export function DraftHarnessControl({
   onDefaultsChanged?: (() => void | Promise<void>) | undefined
 }) {
   const [adding, setAdding] = useState(false)
-  const entries = engineEntries(catalog, access, choice.workspaceId)
+  const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
-  const canAdd = !access.legacy && access.local && access.admin && presetsToAdd(catalog).length > 0
-  const noService = harness?.models === 'host' && !choice.model
+  const canAdd = !access.legacy && access.admin && presetsToAdd(catalog).length > 0
+  const noService = harness?.capabilities.models.owner === 'latch' && !choice.model
   // A pin names a saved Harness; one still on offer is saved by its first session.
   const canPin =
     !access.legacy && access.local && access.admin && catalog.features?.pinnedDefaults === true && !noService && !harness?.offer
-  const note = otherHarnessesNote(catalog, access)
-  const elsewhere =
-    note === undefined
-    && !access.local
-    && !access.legacy
-    && catalog.harnesses.some(item => item.status === 'ready' && harnessLevel(item) === 'L3')
   return (
     <ValuePicker
       label="Harness"
@@ -276,8 +269,6 @@ export function DraftHarnessControl({
       onValueChange={harnessId => onChoice({ harnessId })}
       footer={
         <div className="model-footer">
-          {note && <p className="model-note">{note}</p>}
-          {elsewhere && <p className="model-note">其他 Harness 只能在 Mac 上开始。</p>}
           {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
           {canAdd && (
             <MenuFooterLink
@@ -400,7 +391,7 @@ export function DraftModelControl({
   const [adding, setAdding] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
-  const entries = engineEntries(catalog, access, choice.workspaceId)
+  const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const manage = onManageModels && (
     <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
@@ -421,7 +412,7 @@ export function DraftModelControl({
         onValueChange={() => {}}
       />
     )
-  if (harness.models !== 'host') {
+  if (harness.capabilities.models.owner !== 'latch') {
     const name = harnessName(harness)
     return (
       <ValuePicker
@@ -566,7 +557,7 @@ export function SessionModelControl({
       管理模型…
     </MenuFooterLink>
   )
-  if (harness?.models === 'host' && catalog.providers.length > 0) {
+  if (harness?.capabilities.models.owner === 'latch' && catalog.providers.length > 0) {
     const groups = modelGroups(catalog, preferences, model, showHidden).map(group => ({
       ...group,
       options: group.options.map(option => ({ ...option, description: undefined })),

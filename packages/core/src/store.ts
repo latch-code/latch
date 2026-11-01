@@ -11,7 +11,7 @@ import {
   type AttachmentRef,
   type Approval,
   type Message,
-  type TaskSummary,
+  type DriverTaskSummary,
 } from '@latch/protocol'
 import { AppError, type ModelMessage, type ToolCall } from '@latch/sdk'
 import { writeFileAtomic } from './node-kit/atomic.ts'
@@ -21,7 +21,7 @@ export interface StoredHistory extends Omit<ModelMessage, 'attachments'> {
   attachmentRefs?: AttachmentRef[]
 }
 export interface StoredTask {
-  summary: TaskSummary
+  summary: DriverTaskSummary
   messages: Message[]
   history: StoredHistory[]
   /** Model-visible instructions snapshotted at the start of the current/latest run. */

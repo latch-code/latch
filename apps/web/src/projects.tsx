@@ -56,8 +56,8 @@ export function projectScopeCaption(project: WorkspaceInfo | undefined, harness:
   const primary = basename(project.path)
   const access = harness.projectFolders?.access
   return access === 'primary-asks'
-    ? `${harness.name} 只使用主文件夹「${primary}」，访问其他文件夹前会询问你`
+    ? `${harness.capabilities.display.label} 只使用主文件夹「${primary}」，访问其他文件夹前会询问你`
     : access === 'primary-unbounded'
-      ? `${harness.name} 只收到主文件夹「${primary}」；它不限制可以访问的目录`
-      : `${harness.name} 只能使用主文件夹「${primary}」`
+      ? `${harness.capabilities.display.label} 只收到主文件夹「${primary}」；它不限制可以访问的目录`
+      : `${harness.capabilities.display.label} 只能使用主文件夹「${primary}」`
 }

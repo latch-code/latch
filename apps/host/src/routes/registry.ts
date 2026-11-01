@@ -64,7 +64,7 @@ export interface RouteContext {
    * has left its project or is gone.
    */
   sessionRoots: (sessionId: string) => Promise<ProjectFolder[] | 'removed' | undefined>
-  /** What a device must pass to send new input to a session: its level's ceiling, the remote lists, the session's folders. */
+  /** What a device must pass to send new input to a session: its scope, the session's access, its folders. */
   assertSessionInput: (caller: DeviceCaller, sessionId: string) => Promise<void>
   /** Runs starting and settling, sessions archived or deleted, and the Host stopping (`session-lifecycle.ts`). */
   lifecycle: LifecycleListeners

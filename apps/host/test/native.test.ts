@@ -152,7 +152,11 @@ describe('native Host entry with existing authorization', () => {
       device: { dataScope: string; status: string; scopes: string[] }
       catalog: { features: { pairingV3?: boolean } }
     }>(await registered.client.request('GET', '/link/api/snapshot'))
-    expect(snapshot.device).toMatchObject({ dataScope: 'all', status: 'active', scopes: ['view', 'run', 'approve:standard'] })
+    expect(snapshot.device).toMatchObject({
+      dataScope: 'all',
+      status: 'active',
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
+    })
     expect(snapshot.catalog.features.pairingV3).toBe(true)
     expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(200)
     const assistant = body<PersonalAssistant>(
@@ -197,6 +201,7 @@ describe('native Host entry with existing authorization', () => {
       registered = await pair(host),
       id = 'task-native-config-window'
     const summary: TaskDetail['summary'] = {
+      harnessId: 'standard',
       id,
       title: 'Native config fixture',
       status: 'idle',
@@ -259,8 +264,8 @@ describe('native Host entry with existing authorization', () => {
     // A private test-only built-in mounting seam supplies an L1 config implementation; actual ACPs remain L3.
     await host.host.bridge.detach('standard')
     await host.host.bridge.attach(
-      { id: 'standard', name: 'fixture', version: '1', create: () => bridge },
-      { source: 'builtin', create: () => bridge, release() {} },
+      { id: 'standard', name: 'fixture', version: '1', capabilities: { permission: { enforcement: 'latch' } }, create: () => bridge },
+      { kind: 'builtin', create: () => bridge, release() {} },
     )
     const path = `/link/api/tasks/${id}`,
       request = { requestId: randomUUID(), configId: 'effort', value: 'high' }
@@ -365,7 +370,7 @@ describe('native Host entry with existing authorization', () => {
       return connection.client
     })
     const snapshot = body<{ device: { status: string; scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot'))
-    expect(snapshot.device).toMatchObject({ status: 'active', scopes: ['view', 'run', 'approve:standard'] })
+    expect(snapshot.device).toMatchObject({ status: 'active', scopes: ['view', 'run', 'approve:standard', 'approve:elevated'] })
     const task = await host.host.bridge.createTask({ prompt: 'carrier body fixture', mode: 'chat', requestId: randomUUID() })
     expect((await registered.client.request('GET', `/link/api/tasks/${task.sessionId}`)).status).toBe(403)
     await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
@@ -837,7 +842,7 @@ describe('native Host entry with existing authorization', () => {
     let exists = true
     let currentTime = Date.now()
     const detail: TaskDetail = {
-      summary: { id: 'replay-fixture', title: 'Replay fixture', status: 'idle', updatedAt: '2026-10-25' },
+      summary: { harnessId: 'standard', id: 'replay-fixture', title: 'Replay fixture', status: 'idle', updatedAt: '2026-10-25' },
       messages: [],
       approvals: [],
       liveText: '',

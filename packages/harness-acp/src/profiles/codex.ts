@@ -7,16 +7,25 @@ export const codexProfile: HarnessProfile = {
     approvals: 'prompts',
     defaultEnv: { INITIAL_AGENT_MODE: 'read-only' },
     expectedMode: 'read-only',
-    modeLadder: ['read-only', 'workspace-write', 'agent-full-access'],
+    modeLadder: ['read-only', 'workspace-write', 'agent', 'agent-full-access'],
     neverAskModes: ['agent-full-access'],
-    forbiddenModes: ['agent'],
     // Accepting these would store a rule inside Codex that outlives the session.
     hiddenOptionIds: ['accept_execpolicy_amendment', 'apply_network_policy_amendment*'],
     readback: 'mode',
+    inheritEnv: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
+    // codex-acp ships a Codex of its own and runs this one instead when it is named, so the person's version and login apply.
+    programEnv: { CODEX_PATH: 'codex' },
     notes: [],
   },
   // codex-acp trusts every folder it receives and loads its `.agents/skills`; in workspace-write mode they are writable too.
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
+  // Every failure exits 1 as well, so only its own sentence means logged out. API keys print partly here: nothing is kept.
+  loginStatus: {
+    args: ['login', 'status'],
+    bundledArgs: ['cli', 'login', 'status'],
+    read: ({ code, output }) =>
+      code === 0 ? 'authenticated' : code === 1 && /\bNot logged in\b/u.test(output) ? 'unauthenticated' : 'unknown',
+  },
 }

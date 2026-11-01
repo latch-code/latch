@@ -85,7 +85,6 @@ export interface ChangesPanelProps {
   local: boolean
   canRun: boolean
   /** The Host takes this session's input only from this computer. */
-  localOnlySession: boolean
   /** The device's data scope covers the session's folders; the routes refuse it otherwise. */
   canRead: boolean
   phone: boolean
@@ -510,7 +509,6 @@ function ReadableChanges({
   engine,
   local,
   canRun,
-  localOnlySession,
   phone,
   offline,
   target,
@@ -580,7 +578,7 @@ function ReadableChanges({
   const shownTurnId = list?.turnId
   const turn: TurnChanges | undefined =
     choice.kind === 'latest' ? turns.at(-1) : choice.kind === 'turn' ? turns.find(item => item.turnId === choice.turnId) : undefined
-  const rights = { canRun, local, localOnlySession, active: running, offline }
+  const rights = { canRun, local, active: running, offline }
   const action = scopeAction(list, turn, rights)
   const label = scopeLabel(choice, numbers, base)
   const rootNames = useMemo(() => {

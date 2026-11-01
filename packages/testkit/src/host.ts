@@ -349,7 +349,7 @@ export async function startHostFixture<H extends FixtureHost>(
     if (listener !== 'unix' && !invitation && !input.offlineCode) {
       invitation = (
         await invite(
-          input.scopes?.filter(scope => scope !== 'approve:elevated' && scope !== 'secrets'),
+          input.scopes?.filter(scope => scope !== 'secrets'),
           listener,
         )
       ).code

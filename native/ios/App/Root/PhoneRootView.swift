@@ -68,10 +68,9 @@ struct AgentTabView: View {
                         }
                         ForEach(PhoneStart.engines(catalog)) { engine in
                             HStack(spacing: 12) {
-                                EngineTile(harnessId: engine.id, size: 28)
+                                EngineTile(mark: model.engineMark(engine.id), size: 28)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(engine.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
-                                    if let line = engine.line { Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                                 }
                             }.padding(.vertical, 2)
                         }

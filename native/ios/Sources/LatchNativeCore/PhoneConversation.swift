@@ -53,10 +53,10 @@ public struct PhoneApprovalGate: Equatable, Sendable {
     public let heading: String
     /** The Host's reason for a risky request, on its own line. */
     public let riskClause: String?
-    /** Nil: this phone may not allow it, and `macLine` says where it can be. */
     public let allowOption: String?
     public let canAllow: Bool
-    public let macLine: String?
+    /** Why this phone may not allow it. */
+    public let refusal: String?
 }
 
 public enum PhoneConversation {
@@ -363,6 +363,7 @@ public enum PhoneConversation {
         let uncertain = count > 0 ? " · 这 \(count) 条命令结果未知，请核对" : ""
         switch reason {
         case "process-exited": return PhoneRunEnd(failed: true, text: engine + " 已退出 · 这一轮没有完成" + uncertain, unknown: unknown)
+        case "login-required": return PhoneRunEnd(failed: true, text: engine + " 还没登录 · 在 Mac 的终端里登录后重试", unknown: unknown)
         case "forced-stop": return PhoneRunEnd(failed: false, text: "已强制停止" + uncertain, unknown: unknown)
         case "host-stopped": return PhoneRunEnd(failed: false, text: "这一轮被中断了" + uncertain, unknown: unknown)
         case "turn-ended": return count > 0 ? PhoneRunEnd(failed: false, text: engine + " 结束了这一轮" + uncertain, unknown: unknown) : nil
@@ -372,23 +373,24 @@ public enum PhoneConversation {
     private static let riskWords = ["code-root": "Latch 自己的代码", "protected-path": "受保护的文件", "outside-workspace": "在项目文件夹之外",
         "unresolved-path": "不是项目里的相对路径", "unlisted-tool": "Latch 不认识的工具", "unparsable-arguments": "参数无法解析"]
     /**
-     * What this phone may do with an approval. Only an ordinary step of the built-in engine can be allowed here, and only once:
-     * the phone never offers allow-always. A request it cannot allow says so plainly, with no button that looks dead.
+     * What this phone may do with an approval, by its own scopes: an agent's question needs `run`, an ordinary step of the
+     * built-in engine `approve:standard`, a high-risk one `approve:elevated`. Allowing is once only: the phone never offers
+     * allow-always. A request it cannot allow says so plainly, with no button that looks dead.
      */
-    public static func approvalGate(_ approval: NativeJSON, canApproveStandard: Bool) -> PhoneApprovalGate {
+    public static func approvalGate(_ approval: NativeJSON, canApproveStandard: Bool, canApproveElevated: Bool, canRun: Bool) -> PhoneApprovalGate {
         let heading = toolHeading(approval["tool"], toolName: approval["toolName"].string)
         let options = approval["options"].array
         let once = options.first { $0["kind"].string == "allow_once" }
-        let ordinary = approval["risk"].string == "R1" && !approval["advisory"].bool
-        let offered = options.isEmpty || once != nil
-        let clause: String? = !ordinary && !approval["advisory"].bool ? riskWords[approval["riskReason"].string ?? ""] ?? "高风险" : nil
-        if ordinary && !canApproveStandard {
-            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, macLine: "这台手机没有允许的权限")
+        let advisory = approval["advisory"].bool
+        let ordinary = approval["risk"].string == "R1" && !advisory
+        let clause: String? = !ordinary && !advisory ? riskWords[approval["riskReason"].string ?? ""] ?? "高风险" : nil
+        guard advisory ? canRun : ordinary ? canApproveStandard : canApproveElevated else {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这台手机没有允许的权限")
         }
-        if ordinary && offered {
-            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: once?["id"].string, canAllow: true, macLine: nil)
+        guard options.isEmpty || once != nil else {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这一步不能只允许一次")
         }
-        return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, macLine: "需要在 Mac 上用 Touch ID 允许")
+        return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: once?["id"].string, canAllow: true, refusal: nil)
     }
     /** What the Host would refuse in a rejection's note, said before sending. The Host also refuses invisible characters, and its word stands. */
     public static let rejectionNoteLimit = 500
@@ -399,7 +401,6 @@ public enum PhoneConversation {
     public static func inputGate(summary: NativeJSON, permission: NativeJSON, canRun: Bool, connected: Bool) -> String? {
         if !connected { return "Mac 不在线" }
         if summary["permissionDrift"].bool || permission["drift"] != .null { return "这个会话的权限变了，已停止接受输入" }
-        if (permission["level"].string ?? summary["level"].string) == "L3" { return "这个会话只能在 Mac 上发送消息" }
         if !canRun { return "这台手机不能发送消息" }
         return nil
     }

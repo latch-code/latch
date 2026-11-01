@@ -32,8 +32,6 @@ interface UncertainChoice {
 export interface ApprovalStatus {
   /** The outcome is unknown; the card offers to send the same choice again. */
   uncertain?: UncertainChoice
-  /** The pressed allow's local confirmation: open on this computer, or passed with the choice on its way. */
-  confirming?: 'waiting' | 'sending'
   /** Why the choice did not go through: a confirmation that did not pass (error) or could not start (warn). */
   failure?: { text: string; tone: 'error' | 'warn' }
 }
@@ -53,7 +51,7 @@ const isAllow = (option: ApprovalOption) => option.kind.startsWith('allow')
  * may be in another language); every other request comes from the Host in the product's words already.
  */
 function optionLabel(option: ApprovalOption, gate: ApprovalGate): string {
-  if (option.kind === 'allow_once' && gate.confirms !== true) return APPROVAL_COPY.allow
+  if (option.kind === 'allow_once') return APPROVAL_COPY.allow
   if (option.kind === 'allow_always') return APPROVAL_COPY.allowSession
   return gate.kind === 'advisory' && Object.hasOwn(APPROVAL_OPTION_LABELS, option.kind) ? APPROVAL_OPTION_LABELS[option.kind] : option.label
 }
@@ -227,13 +225,12 @@ function ApprovalPanel({
   const choose = (option: ApprovalOption) => {
     onDecide(approval, isAllow(option) ? 'allow' : 'reject', gate.explicit ? option.id : undefined)
   }
-  const confirming = gate.confirms === true && status?.confirming === 'waiting'
-  // A risky request's confirmed allow is still the drawer's one clear action; hidden characters take that away.
+  // A risky request's allow is still the drawer's one clear action; hidden characters take that away.
   const primary = allow !== undefined && !hidden && uncertain === undefined
   const shortcut = primary && allow.kind === 'allow_once' && (gate.kind === 'R1' || gate.kind === 'legacy')
   // Content that may read as something else, or a choice in doubt, keeps the broadest choices out of reach.
   const offerMore = !hidden && uncertain === undefined
-  useEscapeRefuses(armed && !running && !confirming && reject !== undefined, () => {
+  useEscapeRefuses(armed && !running && reject !== undefined, () => {
     if (reject) choose(reject)
   })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
@@ -276,17 +273,14 @@ function ApprovalPanel({
     ) : null
   const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string): ReactNode => {
     const pressed = busy === option.id
-    const local = gate.confirms === true && isAllow(option)
     return (
       <Button
         key={option.id}
         variant={variant}
         size={phone ? 'lg' : 'sm'}
-        icon={local && !confirming ? LockKeyhole : undefined}
-        tooltip={local ? APPROVAL_COPY.allowLocalTooltip : label === option.label ? undefined : option.label}
-        loading={pressed || (local && confirming)}
-        loadingLabel={local && confirming ? CONFIRMATION_COPY.waitingShort : undefined}
-        disabled={!armed || (running && !pressed) || confirming}
+        tooltip={label === option.label ? undefined : option.label}
+        loading={pressed}
+        disabled={!armed || (running && !pressed)}
         onClick={() => {
           choose(option)
         }}>
@@ -398,12 +392,6 @@ function ApprovalPanel({
             <DiffView diffs={diffs} fold={phone ? FOLD_ROWS_PHONE : FOLD_ROWS} />
           </div>
         </div>
-      )}
-      {/* The pressed button shows pending and the system sheet is the only window; this is for a screen reader. */}
-      {status?.confirming && (
-        <p className="sr-only" role="status">
-          {status.confirming === 'waiting' ? CONFIRMATION_COPY.waiting : APPROVAL_COPY.confirmedLocal}
-        </p>
       )}
       {failure && (
         <InlineNotice tone={failure.tone} className="approval-failure">

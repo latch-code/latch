@@ -36,7 +36,8 @@ func bundled(_ name: String) -> Image { UIImage(named: name).map(Image.init(uiIm
 
 /** An engine's own mark, the app's own icon for the built-in engine, or a neutral glyph. Never a letter. */
 struct EngineTile: View {
-    let harnessId: String?
+    /** The Host's key for its icon; nil draws the neutral glyph. */
+    let mark: String?
     var size: CGFloat = 16
     @Environment(\.colorScheme) private var scheme
     private static let marks: [String: (light: String, dark: String, mono: Bool)] = [
@@ -44,18 +45,13 @@ struct EngineTile: View {
         "opencode": ("brand-opencode-light", "brand-opencode-dark", false), "dsh": ("brand-deepseek-harness", "brand-deepseek-harness", true),
         "gemini": ("brand-gemini", "brand-gemini", false), "qwen": ("brand-qwen-code", "brand-qwen-code", false), "goose": ("brand-goose", "brand-goose", true),
     ]
-    /** The Host derives a harness's identifier from its preset: codex, codex-2. */
-    private static func mark(_ id: String?) -> (light: String, dark: String, mono: Bool)? {
-        guard let id else { return nil }
-        return marks[id] ?? id.range(of: "-[0-9]+$", options: .regularExpression).flatMap { marks[String(id[..<$0.lowerBound])] }
-    }
     var body: some View {
         Group {
-            if harnessId == nil || harnessId == "standard" {
+            if mark == "latch" {
                 bundled("LatchMark").resizable().interpolation(.high).clipShape(RoundedRectangle(cornerRadius: size * 0.22))
                     // Its charcoal tile would merge with a dark ground.
                     .overlay { if scheme == .dark { RoundedRectangle(cornerRadius: size * 0.22).stroke(PhoneTheme.lineStrong, lineWidth: 0.5) } }
-            } else if let mark = Self.mark(harnessId) {
+            } else if let mark = mark.flatMap({ Self.marks[$0] }) {
                 bundled(scheme == .dark ? mark.dark : mark.light).resizable().renderingMode(mark.mono ? .template : .original).interpolation(.high)
                     .foregroundStyle(PhoneTheme.ink)
             } else {
@@ -65,16 +61,19 @@ struct EngineTile: View {
     }
 }
 
-/** A session's engine by the catalog; a session from before the Host recorded one belongs to the default. */
+/** A session's engine by the catalog. */
 extension PhoneModel {
     func engineInfo(_ harnessId: String?) -> NativeJSON {
-        let id = harnessId ?? snapshot["harness"]["id"].string
-        return snapshot["catalog"]["harnesses"].array.first { $0["id"].string == id } ?? .null
+        snapshot["catalog"]["harnesses"].array.first { $0["id"].string == harnessId } ?? .null
+    }
+    func engineMark(_ harnessId: String?) -> String? {
+        let info = engineInfo(harnessId)
+        return info != .null ? PhoneStart.mark(info) : harnessId.map(PhoneStart.removedMark)
     }
     func engineName(_ harnessId: String?) -> String {
         let info = engineInfo(harnessId)
         if info != .null { return PhoneStart.engineName(info) }
         // A session keeps the identifier of an engine since removed, and should not read as if another ran it.
-        return harnessId ?? snapshot["harness"]["name"].string ?? "Latch 内置"
+        return harnessId ?? "Harness"
     }
 }

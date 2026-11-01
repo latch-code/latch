@@ -6,7 +6,7 @@ Electron 主进程与 preload，共用 Web。
 | --- | --- |
 | `src/main.cjs` | 主进程：窗口、`latch://app/` 协议、渲染进程限制、调试参数检查 |
 | `src/proxy.cjs`、`credentials.cjs`、`host.cjs`、`preload.cjs` | 经 `host.sock` 转发并附加凭据；设备密钥与凭据（safeStorage）；`host.json` 核对的 CJS 版；`latchShell` |
-| `src/folders.cjs`、`confirmations.cjs`、`lifecycle.cjs` | 文件夹面板、拖入与在访达中显示；Host 的崩溃重启、防睡、登录项与睡眠报告 |
+| `src/folders.cjs`、`lifecycle.cjs` | 文件夹面板、拖入与在访达中显示；Host 的崩溃重启、防睡、登录项与睡眠报告 |
 | `src/files.cjs` | `latchShell.files`：文件显示、快速查看与默认应用打开 |
 | `test/` | Vitest；Host 夹具与 `e2e/helpers/host.ts` 保持一致 |
 

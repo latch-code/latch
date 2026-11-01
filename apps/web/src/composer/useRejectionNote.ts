@@ -16,8 +16,8 @@ export interface NoteContext {
   selectedId: string | null
   /** This device may give the open session input now: a note is input to the model, as typing is. */
   mayType: boolean
-  /** The Host hands a note to the built-in harness (`HostView.rejectionNote`). */
-  hostTakesNote: boolean
+  /** A rejection's note reaches this session's model (`permission.rejectionNote`). */
+  harnessTakesNote: boolean
 }
 
 /** What the composer does while an approval can take a note. */
@@ -31,7 +31,7 @@ export interface ComposerNote {
 
 /** Whether a rejection of this approval can carry what was typed. */
 export function takesNote(approval: Approval, context: NoteContext): boolean {
-  return !approval.advisory && context.hostTakesNote && context.mayType && approval.sessionId === context.selectedId
+  return context.harnessTakesNote && context.mayType && approval.sessionId === context.selectedId
 }
 
 /** The rejection to send, or why what was typed cannot go with it. */
@@ -42,7 +42,7 @@ export function rejectionFor(
   context: NoteContext,
 ): { problem: string } | { optionId: string | undefined; note?: string } {
   if (!takesNote(approval, context) || !text.trim()) return { optionId }
-  const checked = rejectionNoteFor(approval, text)
+  const checked = rejectionNoteFor(text)
   if (checked.problem) return { problem: checked.problem }
   return { optionId, ...(checked.note ? { note: checked.note } : {}) }
 }

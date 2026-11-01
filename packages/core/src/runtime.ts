@@ -12,10 +12,10 @@ import type {
   AgentExecutionContext,
   RiskLevel,
   RunLive,
-  TaskDetail,
+  DriverTaskDetail,
   TaskMode,
   TaskStatus,
-  TaskSummary,
+  DriverTaskSummary,
   TokenUsage,
   ToolDecision,
   ToolDetail,
@@ -198,7 +198,7 @@ interface Run {
   lease: CapabilityLease
   done: Promise<void>
   resolveDone(): void
-  activity?: TaskDetail['activity']
+  activity?: DriverTaskDetail['activity']
 }
 /** Streamed, not yet committed output of the current step. */
 interface LiveStep {
@@ -343,7 +343,7 @@ async function canonical(path: string): Promise<string> {
   return realpath(path).catch(() => resolve(path))
 }
 /** The folders a session works in: the ones it recorded, or its working directory alone. */
-function foldersOf(summary: TaskSummary, cwd: string): ProjectFolder[] {
+function foldersOf(summary: DriverTaskSummary, cwd: string): ProjectFolder[] {
   return summary.folders?.length
     ? summary.folders.map(folder => ({ id: folder.id, path: folder.path }))
     : [{ id: SINGLE_FOLDER_ID, path: cwd }]
@@ -446,7 +446,7 @@ class HarnessRuntime implements Bridge {
   }
 
   /** Records a phase of the run's live projection and when it began. */
-  private phase(run: Run, activity: Omit<NonNullable<TaskDetail['activity']>, 'since'>): void {
+  private phase(run: Run, activity: Omit<NonNullable<DriverTaskDetail['activity']>, 'since'>): void {
     run.activity = { ...activity, since: this.now() }
     run.lastEventAt = this.clock()
   }
@@ -467,12 +467,12 @@ class HarnessRuntime implements Bridge {
     }
   }
 
-  private isActive(summary: TaskSummary): boolean {
+  private isActive(summary: DriverTaskSummary): boolean {
     return summary.status === 'running' || summary.status === 'waiting-approval'
   }
 
   /** The stored summary with what only the live run knows, which is never stored. */
-  private projected(task: StoredTask): TaskSummary {
+  private projected(task: StoredTask): DriverTaskSummary {
     const run = this.isActive(task.summary) ? this.runs.get(task.summary.id) : undefined
     const live = run && this.liveOf(run)
     return live ? { ...task.summary, live } : task.summary
@@ -644,7 +644,7 @@ class HarnessRuntime implements Bridge {
    * one of its folders still a folder of that project (same ID and real path); a different primary folder now does
    * not matter. A session without folders needs its directory to be listed.
    */
-  private async stillAllowed(summary: TaskSummary): Promise<boolean> {
+  private async stillAllowed(summary: DriverTaskSummary): Promise<boolean> {
     if (summary.folders === undefined) return (await this.workspaceFor(summary.cwd)) !== undefined
     const project = summary.workspaceId === undefined ? undefined : this.options.projects?.().find(item => item.id === summary.workspaceId)
     if (!project) return false
@@ -656,7 +656,7 @@ class HarnessRuntime implements Bridge {
   }
 
   /** `stillAllowed` without touching the disk, for decisions that must be claimed synchronously. */
-  private stillListed(summary: TaskSummary): boolean {
+  private stillListed(summary: DriverTaskSummary): boolean {
     if (summary.folders === undefined) return true // Its directory was checked when the run began; tools refuse a vanished one.
     const project = summary.workspaceId === undefined ? undefined : this.options.projects?.().find(item => item.id === summary.workspaceId)
     return (
@@ -672,7 +672,7 @@ class HarnessRuntime implements Bridge {
     return { providerId, source: 'default', persist: false }
   }
 
-  async listTasks(): Promise<TaskSummary[]> {
+  async listTasks(): Promise<DriverTaskSummary[]> {
     await this.ready()
     return structuredClone(
       Object.values(this.state.tasks)
@@ -681,7 +681,7 @@ class HarnessRuntime implements Bridge {
     )
   }
 
-  async detail(sessionId: string): Promise<TaskDetail> {
+  async detail(sessionId: string): Promise<DriverTaskDetail> {
     await this.ready()
     const task = this.task(this.state, sessionId)
     const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'

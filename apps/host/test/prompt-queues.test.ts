@@ -16,7 +16,7 @@ async function fixture() {
   const dataDir = await mkdtemp(join(tmpdir(), 'latch-queue-'))
   roots.push(dataDir)
   const detail: TaskDetail = {
-    summary: { id: 'task', title: 'Queue', status: 'running', updatedAt: '', runId: 'run-1' },
+    summary: { harnessId: 'standard', id: 'task', title: 'Queue', status: 'running', updatedAt: '', runId: 'run-1' },
     messages: [],
     approvals: [],
     liveText: '',

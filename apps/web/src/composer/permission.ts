@@ -1,5 +1,5 @@
 import type { HarnessInfo, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
-import { harnessLevel, modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
+import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 
 export type ModeIcon = 'eye' | 'shield' | 'shield-alert'
@@ -29,31 +29,35 @@ export interface PermissionView {
 
 const modeOption = (config: readonly SessionConfigOption[]) => config.find(option => option.category === 'mode')
 
-type PermissionHarness = Pick<HarnessInfo, 'name' | 'source' | 'level' | 'permission'>
+type PermissionHarness = Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'>
 
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */
 function declaredPermission(harness: PermissionHarness): PermissionView {
-  if (harnessLevel(harness) !== 'L3')
-    return { label: MODE_COPY.askFirst, line: MODE_COPY.askBeforeWritesLine, icon: 'shield', amber: false }
+  if (harness.level !== 'L3') return { label: MODE_COPY.askFirst, line: MODE_COPY.askBeforeWritesLine, icon: 'shield', amber: false }
   const declared = harness.permission
   if (declared?.approvals === 'none')
     return {
-      label: MODE_COPY.agentDecides(harness.name),
-      line: MODE_COPY.agentDecidesLine(harness.name),
+      label: MODE_COPY.agentDecides(harness.capabilities.display.label),
+      line: MODE_COPY.agentDecidesLine(harness.capabilities.display.label),
       icon: 'shield-alert',
       amber: true,
     }
   if (declared?.readback === 'none')
-    return { label: MODE_COPY.unverifiable, line: MODE_COPY.unverifiableLine(harness.name), icon: 'shield-alert', amber: true }
+    return {
+      label: MODE_COPY.unverifiable,
+      line: MODE_COPY.unverifiableLine(harness.capabilities.display.label),
+      icon: 'shield-alert',
+      amber: true,
+    }
   if (declared)
     return {
       label: MODE_COPY.askFirst,
-      line: MODE_COPY.askFirstLine(harness.name),
+      line: MODE_COPY.askFirstLine(harness.capabilities.display.label),
       icon: 'shield',
       amber: false,
-      note: MODE_COPY.changeAfterStart(harness.name),
+      note: MODE_COPY.changeAfterStart(harness.capabilities.display.label),
     }
-  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(harness.name), icon: 'shield', amber: false }
+  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(harness.capabilities.display.label), icon: 'shield', amber: false }
 }
 
 /** No tools run, so nothing can be asked and no mode applies. */
@@ -77,7 +81,7 @@ export function permissionView(input: {
   const { harness, permission, config, access, locked } = input
   if (!harness) return undefined
   if (input.mode === 'chat') return chatPermission
-  if (harnessLevel(harness) !== 'L3') return declaredPermission(harness)
+  if (harness.level !== 'L3') return declaredPermission(harness)
   const option = modeOption(config)
   if (!option) {
     // The session's own report outranks the declaration, and once it started the agent has said what modes it has.
@@ -89,13 +93,13 @@ export function permissionView(input: {
     return started
   }
   const never = new Set(permission?.neverAskModes)
-  const rows = modeRows(option, access, locked).map((row, index): PermissionRow => {
+  const rows = modeRows(option, locked).map((row, index): PermissionRow => {
     const neverAsks = never.has(row.value)
     return {
       ...row,
       neverAsks,
       icon: neverAsks ? 'shield-alert' : index === 0 && option.options.length > 1 ? 'eye' : 'shield',
-      line: neverAsks ? MODE_COPY.neverAsksLine(harness.name) : (row.description ?? ''),
+      line: neverAsks ? MODE_COPY.neverAsksLine(harness.capabilities.display.label) : (row.description ?? ''),
     }
   })
   const current = rows.find(row => row.current)
@@ -104,7 +108,7 @@ export function permissionView(input: {
     line: current?.line ?? '',
     icon: current?.icon ?? 'shield',
     amber: current?.neverAsks === true,
-    note: MODE_COPY.agentOwnSetting(harness.name),
+    note: MODE_COPY.agentOwnSetting(harness.capabilities.display.label),
     option,
     rows,
   }

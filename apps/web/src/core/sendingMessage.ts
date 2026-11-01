@@ -1,6 +1,5 @@
 import { splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import type { PendingSubmission } from './api.ts'
-import { harnessLevel } from './permissions.ts'
 
 /** Client presentation only. The Host's messages and receipt remain the authority. */
 export interface SendingMessage {
@@ -20,7 +19,7 @@ export function sendingMessageFor(
   // A full-access start may still be awaiting local presence; only a confirmed Host message represents that input.
   if (view.submission.sessionId === undefined) {
     const harness = snapshot.catalog.harnesses.find(item => item.id === (view.submission.harnessId ?? snapshot.catalog?.defaults.harnessId))
-    if (!harness || harnessLevel(harness) === 'L3') return null
+    if (!harness || harness.level === 'L3') return null
   }
   const submission = view.submission
   const confirmed =

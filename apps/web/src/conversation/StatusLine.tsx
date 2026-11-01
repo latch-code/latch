@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { CircleAlert, TriangleAlert } from 'lucide-react'
-import type { KeepWaitingResult, TaskDetail } from '@latch/protocol'
+import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
 import { Button, ICON_STROKE, Icon } from '@latch/ui'
 import { runEndLine, runStatus, type RunStatus } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { messageTime } from '../format.ts'
 
@@ -140,11 +141,14 @@ export function RunEndNote({
   harness,
   onRetry,
   onContinue,
+  login,
 }: {
   summary: TaskDetail['summary']
   harness: string
   onRetry?: () => void
   onContinue?: () => void
+  /** How to log in, when this run ended for want of it. */
+  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
 }) {
   const line = runEndLine(summary, harness)
   if (!line) return null
@@ -158,12 +162,13 @@ export function RunEndNote({
             重试
           </Button>
         )}
-        {onContinue && (
+        {onContinue && summary.runEnd?.reason !== 'login-required' && (
           <Button size="xs" variant="secondary" onClick={onContinue}>
             在新会话中继续
           </Button>
         )}
       </div>
+      {summary.runEnd?.reason === 'login-required' && login && <HarnessLoginSteps {...login} />}
       {line.unknown.length > 0 && (
         <ul className="run-end-list">
           {line.unknown.map(name => (

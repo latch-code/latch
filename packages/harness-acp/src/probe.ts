@@ -4,7 +4,8 @@ import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed } from './connection.ts'
-import { agentEnvironment } from './environment.ts'
+import { agentEnvironment, programPaths } from './environment.ts'
+import { checkLogin } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
 import { initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
@@ -33,6 +34,8 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     definitionEnv: agent.env,
     profileVersion: 1 as const,
     ...(profile ? { presetId: profile.presetId } : {}),
+    ...(profile?.permission.inheritEnv ? { inheritEnv: profile.permission.inheritEnv } : {}),
+    programs: programPaths(profile?.permission),
   }
   const definitionHash = launchHash(definition)
   const hash = project.digest ? launchHash({ ...definition, projectConfig: project.digest }) : definitionHash
@@ -168,6 +171,10 @@ export async function probeAgent(
     options.signal?.removeEventListener('abort', abort)
     await connection.stop('kill', 0)
   }
+  // The handshake says nothing about a login, so a harness that can say gets asked too. Its refusal is as clear an answer.
+  if (result.status === 'authentication-required') result.login = 'unauthenticated'
+  else if (profile?.loginStatus && !options.signal?.aborted)
+    result.login = await checkLogin(agent, options.signal ? { signal: options.signal } : {})
   result.checkedAt = new Date().toISOString()
   if (diagnostic) result.diagnostic = bounded([diagnostic, connection.stderrTail(4096)].filter(Boolean).join('\n'))
   return result

@@ -76,7 +76,7 @@ const motionDone = (page: Page) =>
     await new Promise(requestAnimationFrame)
   })
 
-describe('what this computer limits and what it can take back', () => {
+describe('what this computer can take back', () => {
   let host: TestHost
   let browser: Browser
   let service: Server
@@ -143,12 +143,8 @@ describe('what this computer limits and what it can take back', () => {
 
   for (const viewport of VIEWPORTS)
     for (const colorScheme of ['light', 'dark'] as const)
-      it(`lists and removes a confirmed address, and states the limits, at ${viewport.name} in ${colorScheme}`, async () => {
+      it(`lists and removes a confirmed address at ${viewport.name} in ${colorScheme}`, async () => {
         await confirmService()
-        await local.json('policy', {
-          method: 'PATCH',
-          body: { local: { allowL3: false }, remote: { workspaces: ['default'] } },
-        })
         const { page, context } = await open(viewport, colorScheme)
         const shot = async (name: string) => {
           await motionDone(page)
@@ -200,13 +196,6 @@ describe('what this computer limits and what it can take back', () => {
         await settings.locator('.provider-row', { hasText: '本地服务' }).getByText('未确认', { exact: true }).waitFor()
         await shot('removed')
 
-        await openSection(settings, '手机与设备')
-        await settings.getByText('运行 pnpm stop', { exact: false }).scrollIntoViewIfNeeded()
-        await settings.getByText('这台 Mac 不能开始完全访问会话', { exact: true }).waitFor()
-        await settings.getByText('手机和浏览器只能在这些项目里工作', { exact: true }).waitFor()
-        await noHorizontalOverflow(page, settings)
-        await shot('limits')
-
         await context.close()
       })
 
@@ -231,14 +220,7 @@ describe('what this computer limits and what it can take back', () => {
     await context.close()
   })
 
-  it('shows no limits group at the defaults, and other devices see neither group', async () => {
-    const { page, context } = await open(VIEWPORTS[2], 'light')
-    const settings = await openSettings(page, '手机与设备')
-    await page.getByRole('button', { name: '关于连接', exact: true }).waitFor()
-    await page.waitForTimeout(300)
-    expect(await settings.getByRole('heading', { name: '这台 Mac 的限制', exact: true }).count()).toBe(0)
-    await context.close()
-
+  it('keeps confirmed addresses to this computer: other devices see no such group', async () => {
     await confirmService()
     const remote = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' })
     const elsewhere = await remote.newPage()

@@ -22,11 +22,10 @@ import {
   startBlock,
 } from '../composerChoice.ts'
 import { openSession } from '../core/blocking.ts'
-import { ConfirmationError, withConfirmation, type ConfirmationPresenter } from '../core/confirmations.ts'
 import { provideSessionLinks } from '../core/sessionLinks.ts'
 import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.ts'
 import { isActive } from '../format.ts'
-import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView } from '../core/permissions.ts'
+import { approvalActions, composerGate, deviceAccess, hostView } from '../core/permissions.ts'
 import { setPreference } from '../preferences.ts'
 import { CONFIG_UNVERIFIED_TEXT, isSessionStopCode, SESSION_STOP_TEXT, stopLocksInput, type SessionStopCode } from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
@@ -146,7 +145,7 @@ export function useSessionController({
   const canQueue = summary?.personal
     ? !summary.personal.groupId && catalog?.features?.personalQueue === true
     : catalog?.features?.queue === true
-  const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device, shell), [access, shell])
+  const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device), [access])
   const approvals = useMemo(
     () => current?.approvals ?? snapshot.approvals.filter(approval => approval.sessionId === selectedId),
     [current, snapshot.approvals, selectedId],
@@ -154,12 +153,11 @@ export function useSessionController({
   const active = isActive(summary?.status)
   const harnessInfo = sessionHarness(catalog, summary)
   const personalName = usePersonalName(summary?.personal?.assistantId, privateVisible, harness.refreshHints + harness.resyncs)
-  // The built-in harness is 「Latch 内置」 wherever the page names it.
   const harnessName = summary?.personal
     ? (personalName ?? '个人助手')
     : harnessInfo
       ? harnessLabel(harnessInfo)
-      : (snapshot.harness?.name ?? 'Latch')
+      : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
 
   const reading = useReadingPosition({
     sessionId: selectedId,
@@ -236,7 +234,8 @@ export function useSessionController({
   const attachmentDraft = useAttachments({
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {
-      harnessId: selectedId === null ? (choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard') : (summary?.harnessId ?? 'standard'),
+      // Attachments are off until the catalog arrives, and then one of these is there.
+      harnessId: (selectedId === null ? choice.harnessId : summary?.harnessId) ?? catalog?.defaults.harnessId ?? '',
       ...(selectedId === null && !personalDraft ? { workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
       ...((selectedId === null ? choice.model : summary?.personal ? sessionModel(summary) : (submission.override ?? sessionModel(summary)))
         ? {
@@ -264,16 +263,17 @@ export function useSessionController({
     submission.setDraft(text)
     setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
   }
+  const mentionHarness = selectedId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
   const mentionChoice = {
     enabled:
       catalog?.features?.fileMentions === true
       && snapshot.device.dataScope === 'all'
       && (selectedId !== null || !personalDraft)
       && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
-      && (selectedId === null ? findHarness(catalog, choice.harnessId)?.source : harnessInfo?.source) !== 'plugin',
+      && mentionHarness?.capabilities.tools.fileMentions === true,
     ...(selectedId ? { sessionId: selectedId } : {}),
     ...(choice.workspaceId && choice.workspaceId !== 'default' ? { workspaceId: choice.workspaceId } : {}),
-    harnessId: (selectedId === null ? choice.harnessId : summary?.harnessId) ?? 'standard',
+    harnessId: mentionHarness?.id ?? '',
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
@@ -503,7 +503,7 @@ export function useSessionController({
     window.addEventListener('keydown', handle)
     return () => window.removeEventListener('keydown', handle)
   }, [nextApproval])
-  // `note`: with a rejection of the built-in harness's approval, what to do instead (see `rejectionNoteFor`).
+  // `note`: with a rejection, for a harness that hands it on, what to do instead (see `rejectionNoteFor`).
   const decide = useCallback(
     async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): Promise<boolean> => {
       if (approvalFlights.current.has(approval.id)) return false
@@ -524,29 +524,9 @@ export function useSessionController({
           return next
         })
       }
-      // The card's button waits while the system sheet is open, and a confirmation that did not pass or could not start
-      // leaves its reason in the card. Any other ending is settled below.
-      const inCard: ConfirmationPresenter = {
-        show: view => {
-          if (view.phase === 'waiting' || view.phase === 'sending') mark({ confirming: view.phase })
-          else mark({ failure: { text: view.message, tone: view.phase === 'failed' ? 'error' : 'warn' } })
-        },
-        // 取消 in the sheet ends here: without this the buttons would keep waiting for it.
-        close: () => {
-          mark({})
-        },
-      }
       mark({})
       try {
-        await withConfirmation(
-          confirmation =>
-            api<unknown>(`approvals/${encodeURIComponent(approval.id)}`, {
-              method: 'POST',
-              body,
-              ...(confirmation ? { confirmation } : {}),
-            }),
-          { presenter: inCard },
-        )
+        await api<unknown>(`approvals/${encodeURIComponent(approval.id)}`, { method: 'POST', body })
         decisions.current.settle(approval.id)
         await refresh()
       } catch (cause) {
@@ -558,7 +538,7 @@ export function useSessionController({
         // An unknown outcome stays on the card, which offers to send the same choice again with the same requestId; a
         // reason the card already shows (a confirmation that did not pass) stays too; anything else clears it.
         if (unknown) mark({ uncertain: { decision, optionId, ...(note && decision === 'reject' ? { note } : {}) } })
-        else if (!(cause instanceof ConfirmationError && cause.handled)) mark({})
+        else mark({})
         if (settled === undefined) {
           const text = unknown ? '' : inlineError(cause)
           if (text) failAction(approval.sessionId, text)
@@ -622,14 +602,10 @@ export function useSessionController({
     })
     clearAction(id)
     try {
-      // Widening a full-access session's permission mode needs a local confirmation.
-      await withConfirmation(confirmation =>
-        api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
-          method: 'POST',
-          body: { configId, value, ...(catalog?.features?.configReceipts === true ? { requestId: request.requestId } : {}) },
-          ...(confirmation ? { confirmation } : {}),
-        }),
-      )
+      await api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
+        method: 'POST',
+        body: { configId, value, ...(catalog?.features?.configReceipts === true ? { requestId: request.requestId } : {}) },
+      })
       configRequests.current.settle(id, request)
       await refresh()
     } catch (cause) {
@@ -697,7 +673,10 @@ export function useSessionController({
   const exportTask = useStableCallback(async (task: TaskSummary) => {
     try {
       const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
-      await saveText(exportFileName(data.summary.title), transcriptMarkdown(data, { harness: sessionHarness(catalog, data.summary)?.name }))
+      await saveText(
+        exportFileName(data.summary.title),
+        transcriptMarkdown(data, { harness: sessionHarness(catalog, data.summary)?.capabilities.display.label }),
+      )
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
@@ -774,7 +753,7 @@ export function useSessionController({
     [patchTask, exportTask, copyTask, manageable, setRenaming, setDeleting, access, catalog, saveSessionProject],
   )
 
-  const block = selectedId === null ? startBlock(snapshot, choice, access) : null
+  const block = selectedId === null ? startBlock(snapshot, choice) : null
   const chosenHarness = selectedId === null ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
   const chosenScopeCaption =
     choice.mode === 'chat'
@@ -783,7 +762,7 @@ export function useSessionController({
           catalog?.workspaces.find(project => project.id === choice.workspaceId),
           chosenHarness,
         )
-  const startsL3 = !access.legacy && chosenHarness !== undefined && harnessLevel(chosenHarness) === 'L3'
+  const startsL3 = !access.legacy && chosenHarness !== undefined && chosenHarness.level === 'L3'
   const stopCode: SessionStopCode | undefined =
     selectedId === null ? undefined : summary?.permissionDrift || current?.permission?.drift ? 'permission-drift' : stopped.get(selectedId)
   const refusedInput = selectedId === null ? undefined : refused.get(selectedId)
@@ -821,7 +800,7 @@ export function useSessionController({
       : workspaceChanged.has(selectedId)
         ? '选择一个项目继续，当前草稿会保留。'
         : harnessInfo?.status === 'unavailable'
-          ? harnessInfo.statusMessage || `${harnessInfo.name} 暂不可用`
+          ? harnessInfo.statusMessage || `${harnessLabel(harnessInfo)} 暂不可用`
           : !catalog && snapshot.execution?.ready === false
             ? '当前模型接口不可用，请检查模型插件状态。'
             : undefined
@@ -839,7 +818,7 @@ export function useSessionController({
     selectedId,
     approval: shownApproval,
     mayType: selectedId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null && !earlierDraft.held,
-    hostTakesNote: host?.rejectionNote === true,
+    harnessTakesNote: harnessInfo?.capabilities.permission.rejectionNote === true,
     draft: submission.draft,
     clearDraft: () => {
       submission.setDraft('')
@@ -925,10 +904,6 @@ export function useSessionController({
               : mode === 'chat'
                 ? '继续对话 · 不读写文件、不运行命令'
                 : startWords
-  // Starting a full-access session takes the local confirmation: a note under the input says so, and sending is blocked
-  // while this computer cannot confirm.
-  const presenceDown = startsL3 && host?.presence.status === 'unavailable'
-  const startReason = presenceDown ? `在 Mac 上确认不可用${host?.presence.message ? `：${host.presence.message}` : ''}` : undefined
 
   return {
     privateVisible,
@@ -1076,7 +1051,5 @@ export function useSessionController({
     providerName,
     retry,
     placeholder,
-    presenceDown,
-    startReason,
   }
 }

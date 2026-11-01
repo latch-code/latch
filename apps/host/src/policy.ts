@@ -2,7 +2,6 @@ import { isIPv6 } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { isLocalListener, type ListenerClass, type PermissionLevel } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
@@ -42,20 +41,9 @@ export function isConfirmedAddressEntry(value: string): boolean {
 }
 
 const level = z.enum(['L0', 'L1', 'L2'])
-const idList = z.array(z.string().min(1).max(128)).max(256).nullable()
 
 export const policySchema = z.strictObject({
   version: z.literal(1),
-  local: z.strictObject({ maxLevel: level, allowL3: z.boolean() }),
-  remote: z.strictObject({
-    maxLevel: level,
-    allowRemoteStart: z.boolean(),
-    /** null = any harness. */
-    harnesses: idList,
-    /** Workspace IDs; null = any. */
-    workspaces: idList,
-    allowInstall: z.literal(false),
-  }),
   insecureLan: z.strictObject({ enabled: z.literal(false) }),
   /** The operator channel is not implemented yet; entries are ignored with a startup warning. */
   operators: z.array(z.unknown()).max(16),
@@ -95,8 +83,6 @@ export type Policy = z.infer<typeof policySchema>
 export function defaultPolicy(platform: NodeJS.Platform): Policy {
   return {
     version: 1,
-    local: { maxLevel: 'L2', allowL3: true },
-    remote: { maxLevel: 'L1', allowRemoteStart: true, harnesses: ['standard'], workspaces: null, allowInstall: false },
     insecureLan: { enabled: false },
     operators: [],
     presence: { backend: platform === 'darwin' ? 'macos-helper' : 'none', helperCdhash: null },
@@ -106,8 +92,6 @@ export function defaultPolicy(platform: NodeJS.Platform): Policy {
     unattended: { maxLevel: 'L1', allowAutoApproveRules: false, approvalTtlHours: { standard: 8, acp: 1 }, pauseAfterIdleDays: 14 },
   }
 }
-
-const LEVEL_RANK: Record<PermissionLevel, number> = { L0: 0, L1: 1, L2: 2, L3: 3 }
 
 function flatten(value: unknown, prefix: string, output: Map<string, unknown>): void {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -144,33 +128,10 @@ function isSubset(next: readonly string[], prev: readonly string[]): boolean {
   return next.every(item => allowed.has(item))
 }
 
-function narrowerList(prev: string[] | null, next: string[] | null): boolean {
-  if (next === null) return prev === null
-  return prev === null || isSubset(next, prev)
-}
-
 /** True iff every changed field moves to a stricter value. Anything else (including presence and unattended) raises. */
 export function isLowering(prev: Policy, next: Policy): boolean {
   for (const { path } of policyDiff(prev, next)) {
     switch (path) {
-      case 'local.maxLevel':
-        if (LEVEL_RANK[next.local.maxLevel] > LEVEL_RANK[prev.local.maxLevel]) return false
-        break
-      case 'remote.maxLevel':
-        if (LEVEL_RANK[next.remote.maxLevel] > LEVEL_RANK[prev.remote.maxLevel]) return false
-        break
-      case 'local.allowL3':
-        if (next.local.allowL3) return false
-        break
-      case 'remote.allowRemoteStart':
-        if (next.remote.allowRemoteStart) return false
-        break
-      case 'remote.harnesses':
-        if (!narrowerList(prev.remote.harnesses, next.remote.harnesses)) return false
-        break
-      case 'remote.workspaces':
-        if (!narrowerList(prev.remote.workspaces, next.remote.workspaces)) return false
-        break
       case 'hostEgressAllow':
         if (!isSubset(next.hostEgressAllow, prev.hostEgressAllow)) return false
         break
@@ -184,16 +145,18 @@ export function isLowering(prev: Policy, next: Policy): boolean {
   return true
 }
 
-/** host.sock → local ceiling; every other listener, loopback included → remote ceiling. */
-export function ceilingFor(policy: Policy, listener: ListenerClass): PermissionLevel {
-  return isLocalListener(listener) ? policy.local.maxLevel : policy.remote.maxLevel
+/** Files from before device scopes became the one limit on what a device may do hold `local` and `remote`; they mean nothing now. */
+export function parsePolicyFile(raw: unknown): ReturnType<typeof policySchema.safeParse> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return policySchema.safeParse(raw)
+  const { local: _local, remote: _remote, ...current } = raw as Record<string, unknown>
+  return policySchema.safeParse(current)
 }
 
 function invalid(detail: string): AppError {
   return new AppError(500, 'policy-invalid', `安全策略文件 policy.json 无效，原文件已保留：${detail}`)
 }
 
-/** `<data>/policy.json`: local ceilings and Host-wide security switches. Out-of-band edits are detected and audited, not blocked. */
+/** `<data>/policy.json`: where the Host may connect and its security switches. Out-of-band edits are detected and audited, not blocked. */
 export class PolicyStore {
   private queue: Promise<unknown> = Promise.resolve()
   /** Chinese startup warnings (never secrets). */
@@ -254,11 +217,12 @@ export class PolicyStore {
         '明文局域网接入已移除。请把 policy.json 中的 insecureLan.enabled 改为 false，并用 HTTPS 入口接入手机。',
       )
     }
-    const parsed = policySchema.safeParse(raw)
+    const parsed = parsePolicyFile(raw)
     if (!parsed.success) throw invalid(parsed.error.issues.map(issue => `${issue.path.join('.') || '（根）'}：${issue.message}`).join('；'))
     const store = new PolicyStore(options.dataDir, options.audit, parsed.data)
     if (parsed.data.operators.length) store.warnings.push('policy.json 中的 operators 已忽略：无界面确认通道尚未实现。')
-    if (expected && expected !== store.hash()) {
+    // The whole file's hash, too: dropping what `parsePolicyFile` drops is no edit made outside Latch.
+    if (expected && expected !== store.hash() && expected !== sha256Hex(canonicalJson(raw))) {
       await options.audit.append({
         action: 'policy.changed-outside',
         actor: { listener: 'host', via: 'startup' },

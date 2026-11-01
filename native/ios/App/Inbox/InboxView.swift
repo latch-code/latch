@@ -129,7 +129,7 @@ struct InboxRow: View {
                 RowStatusSlot(task: task, status: status, frozenAt: model.lastConfirmed)
             }
             HStack(spacing: 6) {
-                EngineTile(harnessId: task["harnessId"].string, size: 14)
+                EngineTile(mark: model.engineMark(task["harnessId"].string), size: 14)
                 Text(([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
                     .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
             }

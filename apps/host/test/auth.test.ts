@@ -29,7 +29,6 @@ import {
   type DeviceFs,
 } from '../src/auth.ts'
 import { deviceFingerprint } from '../src/crypto.ts'
-import { ceilingFor, defaultPolicy } from '../src/policy.ts'
 import { paramsHash, PresenceService } from '../src/presence.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -182,7 +181,7 @@ describe('device credentials', () => {
         id: browser.id,
         status: 'active',
         listener: 'loopback-tcp',
-        scopes: ['view', 'run', 'approve:standard'],
+        scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
         dataScope: 'work',
       },
       renewDue: false,
@@ -483,7 +482,7 @@ describe('device credentials', () => {
         .filter(record => record.action === 'device.review')
         .map(record => record.detail),
     ).toEqual([{ deviceId: phone.id, causeDeviceId: desktop.id }])
-    expect(context.devices.hasActiveAdmin()).toBe(false)
+    expect(context.devices.list().some(device => device.status === 'active' && device.scopes.includes('admin'))).toBe(false)
 
     await expect(context.devices.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'none')).rejects.toMatchObject({
       status: 403,
@@ -725,7 +724,7 @@ describe('migration from v1', () => {
       code: 'unauthorized',
     })
     expect(context.devices.isActive(byName['书房电脑'].id)).toBe(false)
-    expect(context.devices.hasActiveAdmin()).toBe(false)
+    expect(context.devices.list().some(device => device.status === 'active' && device.scopes.includes('admin'))).toBe(false)
 
     // Opening again changes nothing.
     const before = readFileSync(join(context.authDir, 'devices.json'), 'utf8')
@@ -785,7 +784,6 @@ describe('this computer', () => {
       const local = listener === 'unix'
       const connection = connections[listener]
       expect(isLocalListener(listener)).toBe(local)
-      expect(ceilingFor(defaultPolicy('darwin'), listener)).toBe(local ? 'L2' : 'L1')
       const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
       const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
       expect(await context.enrollments.info(connection)).toMatchObject({ invitationRequired: !local, offlineCodeAccepted: local })
@@ -797,16 +795,13 @@ describe('this computer', () => {
         await expect(offline).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
         expect((await context.enrollments.info(unix)).offlineCodeAccepted).toBe(true)
       }
-      for (const scope of ['approve:elevated', 'secrets'] as const) {
+      for (const scope of ['secrets'] as const) {
         const elevated = context.enrollments.create({ publicKey: testDeviceKey().spki, name: '高', scopes: ['view', scope] }, connection)
         if (!local) {
           await expect(elevated).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable' })
           continue
         }
-        const view = await elevated
-        await context.presence.waitForRequest()
-        context.presence.denyNext()
-        await vi.waitFor(() => expect(context.enrollments.status(view.id, connection).status).toBe('denied'))
+        await elevated
       }
       const shown = context.presence.requests.length
 
@@ -871,7 +866,7 @@ describe('this computer', () => {
       await backend.waitForRequest()
       const device = presence.request({
         action: 'policy.change',
-        subject: { form: 'policy.local', slots: { level: '完全访问' } },
+        subject: { form: 'policy.several', slots: { count: '1' } },
         requester: { deviceId: `dev_${'D'.repeat(22)}`, deviceName: '设备', listener, remoteAddress: connections[listener].remoteAddress },
         lines: [],
         warnings: [],
@@ -1003,7 +998,7 @@ describe('enrollment', () => {
       status: 409,
       code: 'enrollment-completed',
     })
-    expect(context.devices.hasActiveAdmin()).toBe(true)
+    expect(context.devices.list().some(device => device.status === 'active' && device.scopes.includes('admin'))).toBe(true)
     expect((await context.enrollments.info(unix)).firstDevice).toBe(false)
     const records = context.auditRecords()
     expect(records.find(record => record.action === 'device.enroll.requested')?.detail).toMatchObject({
@@ -1103,13 +1098,11 @@ describe('enrollment', () => {
     expect(done.device.name).toBe('late')
   })
 
-  it('refuses elevated scopes off host.sock and grants all six on host.sock', async () => {
+  it('refuses the key scope off host.sock and grants all six on host.sock', async () => {
     const context = await fixture()
-    for (const scope of ['approve:elevated', 'secrets'] as const) {
-      await expect(
-        context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['view', scope] }, loopback),
-      ).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable', message: '该权限在此连接方式下不可授予' })
-    }
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['view', 'secrets'] }, loopback),
+    ).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable', message: '该权限在此连接方式下不可授予' })
     await expect(
       context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['root' as DeviceScope] }, loopback),
     ).rejects.toMatchObject({ status: 400 })
@@ -1123,7 +1116,6 @@ describe('enrollment', () => {
       scopes: ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'],
       dataScope: 'all',
     })
-    expect(context.presence.requests.at(-1)!.preview.lines.find(line => line.label === '来源地址')?.value).toBe('本机 host.sock')
   })
 
   it('keeps an invitation that a held-back enrollment could not use, so the same code works once the session ends', async () => {
@@ -1230,7 +1222,7 @@ describe('enrollment', () => {
       id: expect.stringMatching(/^inv_/u),
       code: expect.stringMatching(/^lpi1-[A-Z2-7]{26}$/u),
       url: `${tls.origin}/link/#pair=${invitation.code}`,
-      scopes: ['view', 'run', 'approve:standard'],
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
       expiresAt: new Date(context.clock.now + 600_000).toISOString(),
     })
     await expect(
@@ -1242,7 +1234,7 @@ describe('enrollment', () => {
     const phone = await enroll(context, tls, { invitation: invitation.code, name: '手机' })
     expect(context.devices.get(phone.id)).toMatchObject({
       listener: 'tailnet-tls',
-      scopes: ['view', 'run', 'approve:standard'],
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
       pairedBy: { method: 'invitation', deviceId: desktop.id },
     })
     expect(context.presence.requests.at(-1)!.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面' })
@@ -1251,7 +1243,7 @@ describe('enrollment', () => {
     ).rejects.toMatchObject({ code: 'invitation-invalid' })
     expect(context.auditRecords().find(record => record.action === 'pairing.invited')?.detail).toEqual({
       invitationId: invitation.id,
-      scopes: ['view', 'run', 'approve:standard'],
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
       listener: 'tailnet-tls',
     })
     expect(readFileSync(join(context.dataDir, 'audit', 'audit.jsonl'), 'utf8')).not.toContain(invitation.code)
@@ -1275,6 +1267,7 @@ describe('enrollment', () => {
 
   it('spends an invitation only once its confirmation window was shown', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+    await enroll(context, unix)
     // A request on host.sock holds the window, so the browser's request is refused before anything is shown.
     const desktop = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '桌面' }, unix)
     await context.presence.waitForRequest()
@@ -1295,6 +1288,7 @@ describe('enrollment', () => {
 
   it('accepts a one-time offline code on host.sock only, and never uses it up elsewhere', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'unavailable' }) })
+    await enroll(context, unix)
     const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     expect(ticket).toEqual({
       code: expect.stringMatching(/^lpo1-[A-Z2-7]{26}$/u),
@@ -1338,7 +1332,10 @@ describe('enrollment', () => {
     expect(records.filter(record => record.action === 'offline.ticket.consumed')).toEqual([
       expect.objectContaining({ stepup: 'offline', detail: { ticketId: ticket.ticketId } }),
     ])
-    expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({ stepup: 'offline', detail: { method: 'offline' } })
+    expect(records.findLast(record => record.action === 'device.enrolled')).toMatchObject({
+      stepup: 'offline',
+      detail: { method: 'offline' },
+    })
 
     const late = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     context.clock.now += 15 * 60_000 + 1

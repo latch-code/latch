@@ -166,6 +166,7 @@ test('the bounded session list always includes the current turn before older pin
   await f.service.submit(group.id, { requestId: randomUUID(), prompt: 'work' }, f.actor)
   await vi.waitFor(async () => expect((await f.service.detail(group.id, f.actor)).turn?.state).toBe('completed'))
   const task = (id: string, updatedAt: string): TaskSummary => ({
+    harnessId: 'standard',
     id,
     title: id,
     status: 'idle',

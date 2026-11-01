@@ -6,8 +6,6 @@ import {
   CANONICAL_JSON_CASES,
   CANONICAL_JSON_VECTOR,
   ENROLL_SIGNING_VECTOR,
-  CONFIRMATION_SIGNING_VECTOR,
-  confirmationSigningText as testkitConfirmationSigningText,
   FOLDERS_SIGNING_VECTOR,
   HASH_DISPLAY_VECTORS,
   P256_VECTOR,
@@ -19,7 +17,7 @@ import {
   renewSigningText,
   testDeviceKey,
 } from '@latch/testkit'
-import { foldersSigningText, confirmationSigningText } from '../src/auth.ts'
+import { foldersSigningText } from '../src/auth.ts'
 import {
   BASE32_ALPHABET,
   base32,
@@ -90,23 +88,6 @@ describe('shared vectors', () => {
     expect(renewSigningText(renew.hostId, renew.deviceId, renew.nonce)).toBe(renew.text)
     expect(verifyP256(key, renew.text, renew.signature)).toBe(true)
     expect(verifyP256(key, renew.text, enroll.signature)).toBe(false)
-  })
-
-  it('binds native approval to the host, device, ticket and full preview, in a separate signing domain', () => {
-    const { key } = parseP256Spki(P256_VECTOR.spki)
-    const v = CONFIRMATION_SIGNING_VECTOR.example
-    expect(confirmationSigningText(v.hostId, v.deviceId, v.confirmationId, v.previewHash)).toBe(v.text)
-    expect(testkitConfirmationSigningText(v.hostId, v.deviceId, v.confirmationId, v.previewHash)).toBe(v.text)
-    expect(verifyP256(key, v.text, v.signature)).toBe(true)
-    for (const text of [
-      confirmationSigningText('other', v.deviceId, v.confirmationId, v.previewHash),
-      confirmationSigningText(v.hostId, 'other', v.confirmationId, v.previewHash),
-      confirmationSigningText(v.hostId, v.deviceId, 'other', v.previewHash),
-      confirmationSigningText(v.hostId, v.deviceId, v.confirmationId, 'b'.repeat(64)),
-      RENEW_SIGNING_VECTOR.example.text,
-      FOLDERS_SIGNING_VECTOR.example.text,
-    ])
-      expect(verifyP256(key, text, v.signature)).toBe(false)
   })
 
   it('documents the folders signing text over the canonical body hash, and the example signature verifies', () => {

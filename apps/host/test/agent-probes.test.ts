@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentProbeResult, AgentSettings, ConfirmationTicket } from '@latch/protocol'
+import type { AgentProbeResult, AgentSettings } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { HostConfig } from '../src/config.ts'
@@ -23,17 +23,6 @@ async function fixture(env: Record<string, string> = {}) {
   })
   return { t, desktop, log }
 }
-async function ticket(desktop: TestDevice, input: { requestId: string }, headers = {}) {
-  const response = await desktop.request('agents/fake/probe', { method: 'POST', body: input, headers })
-  expect(response.status).toBe(403)
-  const result = (await response.json()) as { confirmation: ConfirmationTicket }
-  await expect
-    .poll(
-      async () => (await desktop.json<{ confirmation: ConfirmationTicket }>(`confirmations/${result.confirmation.id}`)).confirmation.status,
-    )
-    .toBe('approved')
-  return result.confirmation
-}
 async function logs(path: string) {
   return (await readFile(path, 'utf8'))
     .trim()
@@ -41,16 +30,10 @@ async function logs(path: string) {
     .map(line => JSON.parse(line) as { event: string; method?: string; pid: number })
 }
 describe('Agent probe HTTP boundary', () => {
-  it('requires OS confirmation before executing and replays the same request without another process or confirmation', async () => {
+  it('runs at once and replays the same request without another process', async () => {
     const { t, desktop, log } = await fixture({ FAKE_ACP_CAPS: 'images,resume,dirs', FAKE_ACP_AUTH: 'new' })
     const input = { requestId: randomUUID() }
-    const confirmation = await ticket(desktop, input, { 'x-latch-shell-confirmation': '1' })
-    expect(confirmation).toMatchObject({ action: 'agent.probe', form: 'agent.probe', reason: '试运行 Fake，不发送内容' })
-    expect(confirmation.confirmationMethod).toBeUndefined()
-    await expect(readFile(log)).rejects.toMatchObject({ code: 'ENOENT' })
-    const copies = await Promise.all(
-      [0, 1].map(() => desktop.json<AgentProbeResult>('agents/fake/probe', { method: 'POST', body: input, confirmation: confirmation.id })),
-    )
+    const copies = await Promise.all([0, 1].map(() => desktop.json<AgentProbeResult>('agents/fake/probe', { method: 'POST', body: input })))
     const response = copies[0]!
     expect(copies[1]).toEqual(response)
     expect(response).toMatchObject({
@@ -58,7 +41,7 @@ describe('Agent probe HTTP boundary', () => {
       capabilities: { images: true, resume: true, additionalDirectories: true },
       authMethods: [{ name: 'Fake login' }],
     })
-    expect(await desktop.json('agents/fake/probe', { method: 'POST', body: input, confirmation: confirmation.id })).toEqual(response)
+    expect(await desktop.json('agents/fake/probe', { method: 'POST', body: input })).toEqual(response)
     expect((await logs(log)).filter(line => line.event === 'start')).toHaveLength(1)
     expect((await logs(log)).filter(line => line.event === 'recv').map(line => line.method)).toEqual(['initialize'])
     const { agents } = await desktop.json<{ agents: AgentSettings[] }>('agents')
@@ -67,27 +50,24 @@ describe('Agent probe HTTP boundary', () => {
     expect(agents[0]!.started).toBe(false)
     await desktop.json('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--changed'] } })
     expect((await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0]!.lastProbe).toBeUndefined()
-    expect(t.presence.requests.filter(request => request.preview.action === 'agent.probe')).toHaveLength(1)
+    expect(t.presence.requests).toHaveLength(0)
   })
-  it('refuses browsers, missing run scope, disallowed full access and prompt injection into the endpoint', async () => {
+  it('runs from any device with admin and run, and takes no prompt into the endpoint', async () => {
     const { t, desktop } = await fixture()
     const browser = await t.enroll({ scopes: ['view', 'run', 'admin'] })
-    const restricted = await t.enroll({ listener: 'unix', scopes: ['admin'] })
+    const restricted = await t.enroll({ scopes: ['view', 'admin'] })
     const send = (device: TestDevice, body = { requestId: randomUUID() }) => device.request('agents/fake/probe', { method: 'POST', body })
-    expect(await (await send(browser)).json()).toMatchObject({ error: 'local-only' })
+    expect(await (await send(browser)).json()).toMatchObject({ status: 'ready' })
     expect(await (await send(restricted)).json()).toMatchObject({ error: 'scope-required', required: 'run' })
     expect(
       (await desktop.request('agents/fake/probe', { method: 'POST', body: { requestId: randomUUID(), prompt: 'never send this' } })).status,
     ).toBe(400)
-    await desktop.json('policy', { method: 'PATCH', body: { local: { allowL3: false } } })
-    expect(await (await send(desktop)).json()).toMatchObject({ error: 'ceiling-exceeded' })
   })
   it('redacts diagnostics before returning or persisting a failed handshake', async () => {
     const secret = 'test-only-agent-probe-value'
     const { t, desktop } = await fixture({ FAKE_SECRET: secret, FAKE_ACP_INIT_ERROR: '1' })
     const input = { requestId: randomUUID() }
-    const confirmation = await ticket(desktop, input)
-    const result = await desktop.json<AgentProbeResult>('agents/fake/probe', { method: 'POST', body: input, confirmation: confirmation.id })
+    const result = await desktop.json<AgentProbeResult>('agents/fake/probe', { method: 'POST', body: input })
     expect(result.status).toBe('failed')
     expect(result.diagnostic).toContain('[redacted]')
     expect(JSON.stringify(result)).not.toContain(secret)
@@ -103,15 +83,13 @@ describe('Agent probe HTTP boundary', () => {
       event.action === 'agent.probe.requested' ? Promise.reject(new AppError(503, 'audit-unavailable', '审计不可用')) : append(event),
     )
     const input = { requestId: randomUUID() }
-    const confirmation = await ticket(desktop, input)
-    expect((await desktop.request('agents/fake/probe', { method: 'POST', body: input, confirmation: confirmation.id })).status).toBe(503)
+    expect((await desktop.request('agents/fake/probe', { method: 'POST', body: input })).status).toBe(503)
     await expect(readFile(log)).rejects.toMatchObject({ code: 'ENOENT' })
   })
   it('stops an initialize-only process before Host shutdown completes', async () => {
     const { t, desktop, log } = await fixture({ FAKE_ACP_INIT_DELAY: '10000' })
     const input = { requestId: randomUUID() }
-    const confirmation = await ticket(desktop, input)
-    const pending = desktop.request('agents/fake/probe', { method: 'POST', body: input, confirmation: confirmation.id }).then(
+    const pending = desktop.request('agents/fake/probe', { method: 'POST', body: input }).then(
       response => response.status,
       () => 0,
     )

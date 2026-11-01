@@ -21,7 +21,7 @@ const NAME_LIMIT = 80
 /** R8, as the Host's paths.ts: C0 and C1 controls, DEL, line and paragraph separators, bidi controls, zero-width characters. */
 const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/u
 const READS = 'Latch 内置可以读取其中的所有文件。'
-const REMOTE = '其他设备也可以在这个项目中发起会话。'
+const REMOTE = '连接的设备也可以在这个项目中发起会话。'
 const UNPRINTABLE_MESSAGE = '文件夹路径包含不可显示的字符，不能加入项目。'
 const INVALID_MESSAGE = '这个路径不能作为文件夹加入项目。'
 /** Per-path refusals carry a status only for the page's fallback wording. */
@@ -128,7 +128,7 @@ function shownName(name) {
 /**
  * The native open panel. Never `treatPackageAsDirectory` (an app bundle is not a folder to add), `showHiddenFiles` or
  * `noResolveAliases`; `defaultPath` is always set, since the system default (Downloads) is a protected folder.
- * @param {{ defaultPath: string; project?: { name?: string; remoteStart?: boolean }; replacing?: { name?: string } }} input
+ * @param {{ defaultPath: string; project?: { name?: string }; replacing?: { name?: string } }} input
  * @returns {Electron.OpenDialogOptions}
  */
 function pickDialog({ defaultPath, project, replacing }) {
@@ -146,7 +146,7 @@ function pickDialog({ defaultPath, project, replacing }) {
     return {
       title: name ? `添加文件夹到「${name}」` : '添加文件夹',
       buttonLabel: '添加',
-      message: `可以选择多个文件夹。${READS}${project.remoteStart === true ? REMOTE : ''}`,
+      message: `可以选择多个文件夹。${READS}${REMOTE}`,
       defaultPath,
       properties: ['openDirectory', 'createDirectory', 'multiSelections'],
     }
@@ -163,7 +163,7 @@ function pickDialog({ defaultPath, project, replacing }) {
 /**
  * The confirmation main shows before dropped folders join a project or become one, listing every path; cancel is the
  * default and the Escape answer. The paths passed R8, so none can pose as another line.
- * @param {{ paths: string[]; project?: { name?: string; remoteStart?: boolean } }} input
+ * @param {{ paths: string[]; project?: { name?: string } }} input
  * @returns {Electron.MessageBoxOptions}
  */
 function dropDialog({ paths, project }) {
@@ -172,7 +172,7 @@ function dropDialog({ paths, project }) {
     type: 'question',
     title: 'Latch',
     message: project ? (name ? `把这些文件夹加入「${name}」？` : '把这些文件夹加入这个项目？') : '用这些文件夹添加项目？',
-    detail: `${paths.join('\n')}\n\n${READS}${project?.remoteStart === true ? REMOTE : ''}`,
+    detail: `${paths.join('\n')}\n\n${READS}${REMOTE}`,
     buttons: [project ? '添加' : '添加项目', '取消'],
     defaultId: 1,
     cancelId: 1,
@@ -336,7 +336,7 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
         const chosen = await pick(
           pickDialog({
             defaultPath,
-            ...(project ? { project: { name: project.name, remoteStart: project.remoteStart } } : {}),
+            ...(project ? { project: { name: project.name } } : {}),
             ...(replacing ? { replacing: { name: nodePath.basename(replacing.path) } } : {}),
           }),
         )
@@ -372,9 +372,7 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
           if (found.failure) return found.failure
           project = found.project
         }
-        const { response } = await confirm(
-          dropDialog({ paths: parsed.paths, ...(project ? { project: { name: project.name, remoteStart: project.remoteStart } } : {}) }),
-        )
+        const { response } = await confirm(dropDialog({ paths: parsed.paths, ...(project ? { project: { name: project.name } } : {}) }))
         if (response !== 0) return { status: 'canceled' }
         return submit({ project, via: 'drop', paths: parsed.paths, refused: [] })
       })

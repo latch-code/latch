@@ -128,14 +128,20 @@ describe('project lifecycle regressions', () => {
       })
     const first = await start()
     expect(first.status).toBe(201)
-    const before = t.presence.requests.at(-1)!.preview
-    expect(before.lines.filter(line => line.label === '其他文件夹')).toEqual([{ label: '其他文件夹', value: paths[1] }])
+    const started = async () =>
+      (await readFile(join(t.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { action: string; detail: Record<string, unknown> })
+        .findLast(record => record.action === 'task.l3.started')!.detail
+    expect(await started()).toMatchObject({ folderCount: 2 })
+    const before = await started()
     await settled(t, ((await first.json()) as { sessionId: string }).sessionId)
     await desktop.addFolders({ projectId: project.id, paths: [paths[2]!] })
     expect((await start()).status).toBe(201)
-    const after = t.presence.requests.at(-1)!.preview
-    expect(after.lines.filter(line => line.label === '其他文件夹')).toEqual(paths.slice(1).map(value => ({ label: '其他文件夹', value })))
-    expect(after.lines.find(line => line.label === '启动指纹')?.value).not.toBe(before.lines.find(line => line.label === '启动指纹')?.value)
+    const after = await started()
+    expect(after).toMatchObject({ folderCount: 3 })
+    expect(after.launchHash).not.toBe(before.launchHash)
   })
 
   it('keeps a hand-edited invalid project disabled through unrelated writes and only repairs it after selecting its primary again', async () => {
@@ -289,10 +295,12 @@ describe('project lifecycle regressions', () => {
     const removing = desktop.request(`workspaces/${project.id}`, { method: 'DELETE' })
     await new Promise(done => setTimeout(done, 50))
     let reduced = false
-    const lowering = desktop.request('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L0' } } }).then(response => {
-      reduced = true
-      return response
-    })
+    const lowering = desktop
+      .request('policy', { method: 'PATCH', body: { hostEgressAllow: { remove: ['127.0.0.1:11434'] } } })
+      .then(response => {
+        reduced = true
+        return response
+      })
     try {
       await vi.waitFor(() => expect(reduced).toBe(true), { timeout: 1000 })
       expect((await lowering).status).toBe(200)

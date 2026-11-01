@@ -13,7 +13,7 @@ afterEach(async () => {
 const detail = (): TaskDetail => ({
   liveText: '',
   cursor: 0,
-  summary: { id: 'source', title: 'Renamed title', updatedAt: '', status: 'idle' },
+  summary: { harnessId: 'standard', id: 'source', title: 'Renamed title', updatedAt: '', status: 'idle' },
   approvals: [],
   messages: [
     { id: 'u', role: 'user', text: 'Original question' },

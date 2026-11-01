@@ -21,9 +21,6 @@ export interface HostView {
   }
   tls: { origin: string } | null
   native?: { enabled: boolean; discoveryEpoch?: string; directoryEpoch?: string }
-  policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
-  /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
-  rejectionNote?: true
 }
 
 /** What a device may choose when it starts a session. */

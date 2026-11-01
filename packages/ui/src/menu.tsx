@@ -949,7 +949,7 @@ export interface PermissionLevel<T extends string> {
   description: string
   /** The level with real risk (完全访问): amber only once it is chosen, and only on the trigger. */
   risk?: boolean
-  /** Why this level cannot be chosen here (above the ceiling, unsupported by the agent, raises need the host computer). */
+  /** Why this level cannot be chosen here (unsupported by the agent, the device may not touch this session). */
   disabledReason?: string
 }
 

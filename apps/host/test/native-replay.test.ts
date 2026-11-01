@@ -9,7 +9,7 @@ function event(revision = 1, liveText = ''): TaskStateEvent {
     revision,
     sessionId: 'selected',
     detail: {
-      summary: { id: 'selected', title: 'Fixture', status: 'running', updatedAt: '2026-10-25' },
+      summary: { harnessId: 'standard', id: 'selected', title: 'Fixture', status: 'running', updatedAt: '2026-10-25' },
       liveText,
       cursor: revision,
       messages: [],

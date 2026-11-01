@@ -1,4 +1,4 @@
-import type { TaskStatus, TaskSummary } from '@latch/protocol'
+import type { TaskStatus, DriverTaskSummary, TaskSummary } from '@latch/protocol'
 import type { ProjectFolder } from '@latch/sdk'
 import { errorText } from './http-util.ts'
 
@@ -181,7 +181,7 @@ export class SessionLifecycle {
    * runs nor waits for an approval, it has settled, and `runSettled` goes out. A read begun before a later run was
    * announced says nothing about the later one, so it is ignored.
    */
-  observe(summary: TaskSummary, runId: string): void {
+  observe(summary: DriverTaskSummary, runId: string): void {
     if (this.runs.get(summary.id) !== runId || (summary.runId === runId && ACTIVE.has(summary.status))) return
     this.runs.delete(summary.id)
     if (summary.runId !== runId) {

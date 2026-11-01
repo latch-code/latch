@@ -21,7 +21,6 @@ import {
   type ComposerChoice,
   type DraftPick,
 } from '../composerChoice.ts'
-import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 
@@ -92,12 +91,9 @@ export function useSubmission({
   const [draftPick, setDraftPick] = useState<DraftPick | null>(null)
   const { legacy, local } = access
   const start = useMemo(() => draftStart(catalog, stored, draftPick, { legacy, local }), [catalog, stored, draftPick, legacy, local])
-  const remembered = useMemo(() => resolveChoice(catalog, start, { legacy, local }), [catalog, start, legacy, local])
+  const remembered = useMemo(() => resolveChoice(catalog, start), [catalog, start])
   const borrowed = fork?.choice
-  const choice = useMemo(
-    () => (borrowed ? forkedChoice(catalog, start, borrowed, { legacy, local }) : remembered),
-    [catalog, start, borrowed, remembered, legacy, local],
-  )
+  const choice = useMemo(() => (borrowed ? forkedChoice(catalog, start, borrowed) : remembered), [catalog, start, borrowed, remembered])
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
@@ -119,32 +115,15 @@ export function useSubmission({
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
     const next = { ...stored, ...remembered, ...patch }
     setStored(next)
-    writeChoice(deviceId, resolveChoice(catalog, next, { legacy, local }))
+    writeChoice(deviceId, resolveChoice(catalog, next))
   }
 
   useEffect(() => {
     const stored = readPending(pendingKey)
     const owner = stored && storedOwnsInput(stored, selectedId, assistantId)
-    if (stored?.awaitingConfirmation)
-      void api(`confirmations/${encodeURIComponent(stored.awaitingConfirmation)}`, { method: 'DELETE' }).catch(() => {
-        /* The ticket also expires on the Host. */
-      })
-    // Only a confirmation was open, so nothing was sent: the text goes back to its input, with no row asking about delivery.
-    let restored = stored
-    if (stored?.awaitingConfirmation) {
-      const { awaitingConfirmation: _closed, ...rest } = stored
-      restored = owner ? null : rest
-      try {
-        writePending(pendingKey, restored)
-      } catch {
-        /* Unreadable storage already reads as nothing pending on the next load. */
-      }
-    }
-    setPending(restored)
+    setPending(stored)
     setSendingMessage(
-      restored && !restored.queue
-        ? { submission: restored, sessionId: restored.sessionId ?? null, state: 'unknown', startedAt: Date.now() }
-        : null,
+      stored && !stored.queue ? { submission: stored, sessionId: stored.sessionId ?? null, state: 'unknown', startedAt: Date.now() } : null,
     )
     if (stored === null) return
     if (owner) {
@@ -200,7 +179,7 @@ export function useSubmission({
         env: {},
         enabled: true,
       }
-      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
+      await api('agents', { method: 'POST', body })
       return true
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'agent-exists') return true
@@ -281,30 +260,7 @@ export function useSubmission({
     setError('')
     try {
       const { path, body } = submissionRequest(submission)
-      // Full-access sessions start only after a local confirmation; the resend carries the same requestId.
-      const result = await withConfirmation(
-        async confirmation => {
-          try {
-            return await api<{ sessionId?: string; queued?: { id: string } }>(path, {
-              method: 'POST',
-              body,
-              ...(confirmation ? { confirmation } : {}),
-            })
-          } catch (error) {
-            if (error instanceof ApiError && error.code === 'stepup-required') setSendingMessage(null)
-            throw error
-          }
-        },
-        {
-          onTicket: id => {
-            try {
-              writePending(pendingKey, id === null ? submission : { ...submission, awaitingConfirmation: id })
-            } catch {
-              /* What was stored before sending stands: a reload shows it as unconfirmed, which is the cautious reading. */
-            }
-          },
-        },
-      )
+      const result = await api<{ sessionId?: string; queued?: { id: string } }>(path, { method: 'POST', body })
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })

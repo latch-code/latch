@@ -21,6 +21,11 @@ export interface AgentPreset {
    * say the program was found and only the adapter is missing; nothing waits on it, unlike `companion`.
    */
   agentCommand?: string
+  /**
+   * The program's own login, which a person runs in a terminal; Latch never logs in for them. `note`: what to do once it
+   * opens, for a program that logs in from inside. `bundled`: the same login through an adapter that ships the program.
+   */
+  login?: { command: string; args: string[]; note?: string; bundled?: { command: string; args: string[] } }
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
 }
@@ -36,6 +41,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '通过适配器运行 Codex；模型、登录与沙箱由 Codex 自身配置。',
     install: 'npm i -g @agentclientprotocol/codex-acp',
     agentCommand: 'codex',
+    login: { command: 'codex', args: ['login'], bundled: { command: 'codex-acp', args: ['cli', 'login'] } },
   },
   {
     id: 'pi',
@@ -48,6 +54,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '通过适配器运行 pi。pi 执行工具前不请求审批，Latch 不会显示审批。',
     install: 'npm i -g pi-acp',
     companion: 'pi',
+    login: { command: 'pi', args: [], note: '进入 pi 后输入 /login，按提示登录。' },
   },
   {
     id: 'opencode',
@@ -58,6 +65,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/anomalyco/opencode',
     description: '模型与登录由 OpenCode 管理。',
     install: 'npm i -g opencode-ai',
+    login: { command: 'opencode', args: ['auth', 'login'] },
   },
   {
     id: 'dsh',
@@ -80,6 +88,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/google-gemini/gemini-cli',
     description: '登录与模型由 Gemini CLI 管理。',
     install: 'npm i -g @google/gemini-cli',
+    login: { command: 'gemini', args: [], note: '进入 Gemini CLI 后按提示登录，或输入 /auth。' },
   },
   {
     id: 'qwen',
@@ -90,6 +99,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/QwenLM/qwen-code',
     description: '登录与模型由 Qwen Code 管理。',
     install: 'npm i -g @qwen-code/qwen-code',
+    login: { command: 'qwen', args: [], note: '进入 Qwen Code 后输入 /auth，按提示登录。' },
   },
   {
     id: 'goose',
@@ -100,6 +110,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/block/goose',
     description: '模型在 goose 中配置。',
     install: 'brew install block-goose-cli',
+    login: { command: 'goose', args: ['configure'] },
   },
 ]
 
@@ -150,4 +161,14 @@ const RESERVED_PREFIXES = RESERVED_ENV_PREFIXES.map(prefix => prefix.toUpperCase
 export function isReservedAgentEnvName(name: string): boolean {
   const upper = name.toUpperCase()
   return RESERVED_NAMES.has(upper) || RESERVED_PREFIXES.some(prefix => upper.startsWith(prefix))
+}
+
+/** Icons no preset owns: `latch` for the built-in harness only, `plugin` for a third-party one that names no other. */
+const NEUTRAL_MARKS = ['latch', 'plugin'] as const
+
+/** Whether a client has an icon under this key. */
+export function isHarnessMark(mark: unknown): mark is string {
+  return (
+    typeof mark === 'string' && ((NEUTRAL_MARKS as readonly string[]).includes(mark) || AGENT_PRESETS.some(preset => preset.id === mark))
+  )
 }

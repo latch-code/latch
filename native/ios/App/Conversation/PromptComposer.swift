@@ -18,7 +18,7 @@ struct PromptComposer: View {
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var rejecting: String? {
         // A question's drawer covers any approval, and typing answers what is on screen.
-        guard model.snapshot["host"]["rejectionNote"].bool, model.detail["questions"].array.isEmpty, let approval = model.detail["approvals"].array.first, !approval["advisory"].bool else { return nil }
+        guard model.engineInfo(model.currentSummary["harnessId"].string)["capabilities"]["permission"]["rejectionNote"].bool, model.detail["questions"].array.isEmpty, let approval = model.detail["approvals"].array.first else { return nil }
         return approval["id"].string
     }
     private var placeholder: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : "回复 " + engine + "…" }
@@ -38,7 +38,7 @@ struct PromptComposer: View {
             if noteTooLong {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
-            if let gate { macLine(gate) } else { field }
+            if let gate { gateLine(gate) } else { field }
             if gate == nil && focused && model.sessionId != nil { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
@@ -53,7 +53,7 @@ struct PromptComposer: View {
             else if old == nil, let held = model.takeDraft(for: draftId) { text = held }
         }
     }
-    private func macLine(_ words: String) -> some View {
+    private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: gate == "Mac 不在线" ? "wifi.slash" : gate == Self.closedWindow ? "faceid" : "laptopcomputer").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
             Text(words).font(.system(size: 15)).foregroundStyle(PhoneTheme.muted).lineLimit(2)
@@ -118,7 +118,7 @@ struct PromptComposer: View {
         let current = nextModel?.model ?? summary["model"].string
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if !models.isEmpty, model.engineInfo(summary["harnessId"].string)["models"].string == "host" {
+                if !models.isEmpty, PhoneStart.usesServices(model.engineInfo(summary["harnessId"].string)) {
                     Menu {
                         ForEach(models) { item in
                             Button { nextModel = item } label: {
@@ -126,7 +126,7 @@ struct PromptComposer: View {
                             }
                         }
                     } label: {
-                        chip { HStack(spacing: 6) { EngineTile(harnessId: summary["harnessId"].string, size: 14); Text(current ?? "模型"); Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)) } }
+                        chip { HStack(spacing: 6) { EngineTile(mark: model.engineMark(summary["harnessId"].string), size: 14); Text(current ?? "模型"); Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)) } }
                     }
                 }
             }.padding(.horizontal, 12)

@@ -151,7 +151,7 @@ describe('bounded per-run workspace changes', () => {
     const roots = f.input.folders
     const store = await FileReferenceStore.open(join(f.base, 'data'))
     const detail = {
-      summary: { id: 'task', title: 'title', updatedAt: '', status: 'idle' as const, runId: 'run' },
+      summary: { harnessId: 'standard', id: 'task', title: 'title', updatedAt: '', status: 'idle' as const, runId: 'run' },
       messages: [{ id: 'reply', role: 'assistant' as const, text: 'done' }],
       approvals: [],
       cursor: 0,

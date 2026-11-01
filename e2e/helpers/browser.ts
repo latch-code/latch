@@ -4,8 +4,8 @@ import { latchEnv } from '@latch/host/env'
 import type { TestHost } from './host.ts'
 
 /** What the command line's invitation for a browser on this computer allows. */
-const ADMIN_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
-const BASE_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
+const ADMIN_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
+const BASE_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated']
 const ENROLLMENTS_API = '**/link/api/enrollments'
 
 /** The shell reports its synchronized connection; the visible indicator differs per breakpoint. */

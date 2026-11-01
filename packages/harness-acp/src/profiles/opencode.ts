@@ -55,6 +55,7 @@ export const opencodeProfile: HarnessProfile = {
     configEnv: ['XDG_*', 'OPENCODE_*', 'USERPROFILE'],
     // OpenCode merges project and user configuration around OPENCODE_CONFIG_CONTENT, some of it later, and Latch
     // cannot turn that off; the rules above are a default, not a guarantee.
+    inheritEnv: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'],
     notes: [
       '项目或用户的 OpenCode 配置（opencode.json、.opencode 目录中的配置与 Agent 定义）可以覆盖 Latch 设置的询问规则，此时 OpenCode 可能不经询问就执行命令或修改文件',
       'OpenCode 启动时会加载项目 .opencode 目录中的插件；在不信任的项目中使用会运行其中的代码',

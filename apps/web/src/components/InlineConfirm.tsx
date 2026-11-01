@@ -61,8 +61,7 @@ function ConfirmationWarnings({ ticket }: { ticket: ConfirmationTicket }) {
  * lists the lines itself. Hashes bind the request and are nothing to read.
  */
 function detailsLeftOut(ticket: ConfirmationTicket) {
-  if (ticket.confirmationMethod === 'shell-local') return []
-  if (!ticket.form?.startsWith('start.') && !ticket.reason?.includes('…')) return []
+  if (!ticket.reason?.includes('…')) return []
   return (ticket.lines ?? []).filter(line => !/指纹|哈希|首条输入/u.test(line.label))
 }
 
@@ -231,7 +230,7 @@ function ConfirmationStatus({ view }: { view: ConfirmationView | undefined }) {
   if (view?.phase === 'waiting') text = COPY.waiting
   else if (view?.phase === 'sending') {
     const { action } = view.ticket
-    text = `${COPY.confirmed}${Object.hasOwn(CONFIRMATION_VERBS, action) ? CONFIRMATION_VERBS[action] : CONFIRMATION_VERBS['approval.r2']}…`
+    text = `${COPY.confirmed}${Object.hasOwn(CONFIRMATION_VERBS, action) ? CONFIRMATION_VERBS[action] : '继续'}…`
   }
   return (
     <p className="sr-only" role="status">

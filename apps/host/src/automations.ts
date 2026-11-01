@@ -145,8 +145,10 @@ export interface AutomationPlan {
   basis: string
   /** False when the plugins' revisions cannot be trusted across a restart. */
   persistent: boolean
+  harnessId: string
   mode: TaskMode
-  model: ModelRef
+  /** Absent for a Harness that chooses its own model. */
+  model?: ModelRef
   agentContext?: AgentExecutionContext
 }
 interface Options {

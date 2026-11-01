@@ -51,7 +51,8 @@ export interface UsageReport {
   at: string
 }
 
-export interface TaskSummary {
+/** A session as a driver reports it; the Host adds which harness owns it (`TaskSummary`). */
+export interface DriverTaskSummary {
   /** Enabled capability owners selected by this personal assistant. */
   pluginIds?: string[]
   /** Host-owned personal context, independent of a saved project. Absent for ordinary project sessions. */
@@ -74,8 +75,6 @@ export interface TaskSummary {
   model?: string
   /** Missing on historical tasks; those retain the original Agent behavior. */
   mode?: TaskMode
-  /** Harness that owns the session. The Host fills it in for every driver. */
-  harnessId?: string
   /** Provider of `model` when the harness runs on the Host's model providers. */
   providerId?: string
   /** Host-level session metadata; it applies to every harness. */
@@ -180,7 +179,7 @@ export interface UnknownResult {
  * the engine ended its turn and left calls unfinished.
  */
 export interface RunEnd {
-  reason: 'process-exited' | 'forced-stop' | 'host-stopped' | 'turn-ended'
+  reason: 'process-exited' | 'forced-stop' | 'host-stopped' | 'turn-ended' | 'login-required'
   at: string
   /** Session detail only: what was running when it ended. These may or may not have taken effect. */
   unknownResults?: UnknownResult[]
@@ -377,6 +376,15 @@ export interface SessionConfigOption {
   description?: string
   currentValue: string
   options: Array<{ value: string; name: string; description?: string }>
+}
+
+/** A session as clients read it. Every one has a harness: the Host fills it in for every driver. */
+export interface TaskSummary extends DriverTaskSummary {
+  harnessId: string
+}
+
+export interface DriverTaskDetail extends Omit<TaskDetail, 'summary'> {
+  summary: DriverTaskSummary
 }
 
 export interface TaskDetail {

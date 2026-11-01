@@ -1186,7 +1186,6 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
             cwd: '/workspace',
             model: 'm',
             mode: 'agent',
-            harnessId: 'standard',
             providerId: 'p',
             pinned: true,
             archived: false,

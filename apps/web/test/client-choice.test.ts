@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, HostCatalog, TaskSummary } from '@latch/protocol'
@@ -11,7 +12,6 @@ import {
   noProjectLine,
   needsProject,
   nothingInstalled,
-  otherHarnessesNote,
   presetsToAdd,
   projectFor,
   resolveChoice,
@@ -29,9 +29,9 @@ import { GeneralSettings } from '../src/settings/GeneralSettings.tsx'
 function catalog(overrides: Partial<HostCatalog> = {}): HostCatalog {
   return {
     harnesses: [
-      { id: 'standard', name: 'Standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host' },
-      { id: 'codex', name: 'Codex', source: 'acp', status: 'ready', modes: ['agent'], models: 'agent' },
-      { id: 'pi', name: 'pi', source: 'acp', status: 'unavailable', statusMessage: '未找到命令 pi-acp', modes: ['agent'], models: 'agent' },
+      testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
+      testHarness('codex', { kind: 'agent', label: 'Codex' }),
+      testHarness('pi', { kind: 'agent', label: 'pi', status: 'unavailable', statusMessage: '未找到命令 pi-acp' }),
     ],
     providers: [
       {
@@ -75,7 +75,6 @@ function snapshot(extra: Partial<AppSnapshot> = {}): AppSnapshot {
       devMode: true,
       presence: { status: 'available' },
       tls: null,
-      policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
     },
     tasks: [],
     approvals: [],
@@ -128,38 +127,33 @@ describe('composer choice', () => {
   })
 
   it('never asks: the last engine of this device, otherwise the first it can start with the built-in one last', () => {
-    const local = { legacy: false, local: true }
-    const remote = { legacy: false, local: false }
-    expect(resolveChoice(catalog(), null, local).harnessId).toBe('codex')
-    expect(resolveChoice(catalog(), { harnessId: 'standard' }, local).harnessId).toBe('standard')
-    expect(startBlock(snapshot({ catalog: catalog() }), resolveChoice(catalog(), null, local), local)).toBeNull()
-    // Another device gets the built-in engine alone, and a remembered full-access engine does not follow it.
-    expect(resolveChoice(catalog(), null, remote).harnessId).toBe('standard')
-    expect(resolveChoice(catalog(), { harnessId: 'codex' }, remote).harnessId).toBe('standard')
+    expect(resolveChoice(catalog(), null).harnessId).toBe('codex')
+    expect(resolveChoice(catalog(), { harnessId: 'standard' }).harnessId).toBe('standard')
+    expect(startBlock(snapshot({ catalog: catalog() }), resolveChoice(catalog(), null))).toBeNull()
     const onlyBuiltin = catalog({ harnesses: [catalog().harnesses[0]!] })
-    expect(resolveChoice(onlyBuiltin, null, local).harnessId).toBe('standard')
+    expect(resolveChoice(onlyBuiltin, null).harnessId).toBe('standard')
   })
 
   it('orders engines as the presets are, whatever order the Host lists them in', () => {
     const local = { legacy: false, local: true }
     const [builtin, codex] = catalog().harnesses
-    const offered = { ...codex!, id: 'opencode', name: 'OpenCode', offer: { presetId: 'opencode' } }
-    const listed = catalog({ harnesses: [builtin!, offered, { ...codex!, id: 'custom', name: '自定义' }, codex!] })
-    expect(engineEntries(listed, local).map(entry => entry.harness.id)).toEqual(['codex', 'opencode', 'custom', 'standard'])
+    const offered = testHarness('opencode', { label: 'OpenCode', offer: { presetId: 'opencode' } })
+    const listed = catalog({ harnesses: [builtin!, offered, testHarness('custom', { label: '自定义', mark: 'none' }), codex!] })
+    expect(engineEntries(listed).map(entry => entry.harness.id)).toEqual(['codex', 'opencode', 'custom', 'standard'])
   })
 
   it('asks for a folder only when a Harness has none and the Host would make one up', () => {
     const local = { legacy: false, local: true }
     const hostChosen = catalog({ sessionFolders: true, workspaces: catalog().workspaces.filter(item => item.id === 'default') })
-    const choice = resolveChoice(hostChosen, { harnessId: 'codex' }, local)
+    const choice = resolveChoice(hostChosen, { harnessId: 'codex' })
     expect(needsProject(hostChosen, choice)).toBe(true)
     expect(needsProject(hostChosen, { ...choice, projectSkipped: true })).toBe(false)
-    expect(needsProject(hostChosen, resolveChoice(hostChosen, { harnessId: 'standard' }, local))).toBe(false)
+    expect(needsProject(hostChosen, resolveChoice(hostChosen, { harnessId: 'standard' }))).toBe(false)
     // A start directory the owner set is a folder in mind.
     expect(needsProject({ ...hostChosen, sessionFolders: undefined }, choice)).toBe(false)
     // 不选项目 is remembered; anything else leaves the question open.
-    expect(resolveChoice(hostChosen, { workspaceId: 'default', projectSkipped: true }, local).projectSkipped).toBe(true)
-    expect(resolveChoice(hostChosen, { workspaceId: 'default' }, local).projectSkipped).toBeUndefined()
+    expect(resolveChoice(hostChosen, { workspaceId: 'default', projectSkipped: true }).projectSkipped).toBe(true)
+    expect(resolveChoice(hostChosen, { workspaceId: 'default' }).projectSkipped).toBeUndefined()
   })
 
   it('takes a saved project when nothing was chosen and the Host would otherwise make a folder', () => {
@@ -174,7 +168,7 @@ describe('composer choice', () => {
   it('says what to install only where nothing else can run and this device could change that', () => {
     const owner = { legacy: false, local: true, admin: true }
     const onlyBuiltin = catalog({ harnesses: [catalog().harnesses[0]!], providers: [] })
-    const missing = startBlock(snapshot({ catalog: onlyBuiltin }), resolveChoice(onlyBuiltin, null, owner), owner)
+    const missing = startBlock(snapshot({ catalog: onlyBuiltin }), resolveChoice(onlyBuiltin, null))
     expect(nothingInstalled(missing, onlyBuiltin, owner)).toBe(true)
     expect(nothingInstalled(missing, onlyBuiltin, { ...owner, local: false })).toBe(false)
     expect(nothingInstalled(missing, onlyBuiltin, { ...owner, admin: false })).toBe(false)
@@ -196,7 +190,7 @@ describe('composer choice', () => {
     })
     // Pinned on the Mac, so unlike a Host's plain default it counts as this person's choice of a full-access engine.
     const started = (memory: Partial<ComposerChoice> | null, pick: DraftPick | null = null) =>
-      resolveChoice(pinned, draftStart(pinned, memory, pick, local), local)
+      resolveChoice(pinned, draftStart(pinned, memory, pick, local))
     expect(started(null).harnessId).toBe('codex')
     // The pin stands in for what this device remembers, what it does not hold stays.
     expect(draftStart(pinned, { harnessId: 'standard', mode: 'chat' }, null, local)).toMatchObject({ harnessId: 'codex', mode: 'chat' })
@@ -207,16 +201,15 @@ describe('composer choice', () => {
     const elsewhere = { harnessId: 'standard', model: { providerId: 'local', model: 'qwen3' } }
     expect(pinnedChoice(pinned, remote)).toBeUndefined()
     expect(draftStart(pinned, elsewhere, null, remote)).toBe(elsewhere)
-    expect(resolveChoice(pinned, draftStart(pinned, null, null, remote), remote).harnessId).toBe('standard')
+    expect(resolveChoice(pinned, draftStart(pinned, null, null, remote)).harnessId).toBe('codex')
     expect(pinnedChoice(catalog(), local)).toBeUndefined()
-    const pi = { id: 'codex', models: 'agent' as const }
-    expect(isPinnedChoice(pinned, pi, undefined)).toBe(true)
-    expect(isPinnedChoice(pinned, { id: 'standard', models: 'host' as const }, undefined)).toBe(false)
+    expect(isPinnedChoice(pinned, testHarness('codex'), undefined)).toBe(true)
+    expect(isPinnedChoice(pinned, testHarness('standard', { kind: 'builtin' }), undefined)).toBe(false)
   })
 
   it('says a named engine is gone', () => {
     const local = { legacy: false, local: true }
-    expect(startBlock(snapshot({ catalog: catalog() }), { mode: 'agent', harnessId: 'deleted-agent' }, local)).toMatchObject({
+    expect(startBlock(snapshot({ catalog: catalog() }), { mode: 'agent', harnessId: 'deleted-agent' })).toMatchObject({
       kind: 'harness-unavailable',
     })
   })
@@ -252,12 +245,10 @@ describe('composer choice', () => {
     expect(resolveChoice(onlyDisabled, { workspaceId: 'docs' })).not.toHaveProperty('workspaceId')
   })
 
-  it('lists only the engines that can start from this device, the built-in one last, and offers unadded presets separately', () => {
-    expect(engineEntries(catalog(), { legacy: false, local: false }).map(entry => entry.harness.id)).toEqual(['standard'])
-    const desktop = engineEntries(catalog(), { legacy: false, local: true })
-    expect(desktop.map(entry => [entry.harness.id, entry.label, entry.fullAccess])).toEqual([
-      ['codex', 'Codex', true],
-      ['standard', 'Latch 内置', false],
+  it('lists the engines that are ready, the built-in one last, and offers unadded presets separately', () => {
+    expect(engineEntries(catalog()).map(entry => [entry.harness.id, entry.label])).toEqual([
+      ['codex', 'Codex'],
+      ['standard', 'Latch 内置'],
     ])
     expect(presetsToAdd(catalog()).map(preset => preset.id)).toEqual(['opencode', 'dsh', 'gemini', 'qwen', 'goose'])
   })
@@ -327,10 +318,10 @@ describe('composer choice', () => {
       kind: 'harness-unavailable',
       message: '没有可用的 Harness。',
     })
-    expect(startBlock(snapshot({ execution: { ready: false, modelConfigurationRequired: true } }), { mode: 'agent' })).toMatchObject({
+    expect(startBlock(snapshot({ execution: { ready: false, modelConfigurationRequired: true } }), { mode: 'chat' })).toMatchObject({
       kind: 'model-required',
     })
-    expect(startBlock(snapshot({ execution: { ready: false } }), { mode: 'agent' })).toMatchObject({ kind: 'harness-unavailable' })
+    expect(startBlock(snapshot({ execution: { ready: false } }), { mode: 'chat' })).toMatchObject({ kind: 'harness-unavailable' })
   })
 })
 
@@ -386,11 +377,6 @@ describe('pending submissions', () => {
       setItem: (key: string, value: string) => store.set(key, value),
     })
     const submission = { requestId: 'r1', prompt: '你好', assistantId }
-    writePending('ticket', { requestId: 'r', prompt: 'p', awaitingConfirmation: 'cfm_abcdefghijklmnopqrstuv' })
-    expect(readPending('ticket')?.awaitingConfirmation).toBe('cfm_abcdefghijklmnopqrstuv')
-    expect(submissionRequest(readPending('ticket')!).body).not.toHaveProperty('awaitingConfirmation')
-    writePending('ticket', { requestId: 'r', prompt: 'p', awaitingConfirmation: '../other' })
-    expect(readPending('ticket')?.awaitingConfirmation).toBeUndefined()
     writePending('personal', submission)
     expect(readPending('personal')).toEqual(submission)
     writePending('personal', { ...submission, workspaceId: 'other' })
@@ -465,22 +451,19 @@ describe('demo labelling', () => {
 })
 
 /** A session that ran in `cwd`. */
-const task = (cwd?: string): TaskSummary => ({ id: 't', title: '', status: 'idle', updatedAt: '', ...(cwd ? { cwd } : {}) })
+const task = (cwd?: string): TaskSummary => ({
+  harnessId: 'standard',
+  id: 't',
+  title: '',
+  status: 'idle',
+  updatedAt: '',
+  ...(cwd ? { cwd } : {}),
+})
 
 describe('harness entries', () => {
   it('applies multi-folder limits to Agent sessions while keeping chat independent of folders', () => {
     const limited = catalog({
-      harnesses: [
-        {
-          id: 'standard',
-          name: 'Latch 内置',
-          source: 'builtin',
-          status: 'ready',
-          modes: ['agent', 'chat'],
-          models: 'host',
-          projectFolders: { access: 'all', max: 1 },
-        },
-      ],
+      harnesses: [testHarness('standard', { kind: 'builtin', label: 'Latch 内置', projectFolders: { access: 'all', max: 1 } })],
       workspaces: [
         {
           id: 'wide',
@@ -493,27 +476,11 @@ describe('harness entries', () => {
         },
       ],
     })
-    const entries = engineEntries(limited, { local: true, legacy: false }, 'wide')
+    const entries = engineEntries(limited, 'wide')
     expect(entries[0]?.disabledReason).toContain('最多使用 1 个')
     expect(
-      startBlock(
-        { catalog: limited } as AppSnapshot,
-        { harnessId: 'standard', workspaceId: 'wide', mode: 'agent' },
-        { local: true, legacy: false },
-      )?.message,
+      startBlock({ catalog: limited } as AppSnapshot, { harnessId: 'standard', workspaceId: 'wide', mode: 'agent' })?.message,
     ).toContain('最多使用 1 个')
-  })
-
-  it('says in the Harness menu why only the built-in one is listed', () => {
-    const builtinOnly = catalog({ harnesses: catalog().harnesses.filter(harness => harness.id === 'standard') })
-    const mac = { local: true, legacy: false, admin: true }
-    const remote = { local: false, legacy: false, admin: false }
-    expect(otherHarnessesNote(catalog(), mac)).toBeUndefined()
-    // Adding one is right there in the same menu on the Mac.
-    expect(otherHarnessesNote(builtinOnly, mac)).toBeUndefined()
-    expect(otherHarnessesNote(builtinOnly, remote)).toBe('要运行命令，在 Mac 上的 Latch 里添加一个 Harness。')
-    // Installed, but only the Mac may start it: never told to add what is there.
-    expect(otherHarnessesNote(catalog(), remote)).toBe('其他 Harness 只能在 Mac 上开始。')
   })
 
   it('offers only the presets no agent was added from yet', () => {
@@ -521,8 +488,8 @@ describe('harness entries', () => {
     expect(presetsToAdd(catalog()).map(preset => preset.id)).not.toContain('pi')
     const more = catalog({
       harnesses: [
-        { id: 'standard', name: 'Standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host' },
-        { id: 'opencode-2', name: 'OpenCode', source: 'acp', status: 'ready', modes: ['agent'], models: 'agent' },
+        testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
+        testHarness('opencode-2', { kind: 'agent', label: 'OpenCode' }),
       ],
     })
     expect(presetsToAdd(more).map(preset => preset.id)).toEqual(['codex', 'pi', 'dsh', 'gemini', 'qwen', 'goose'])

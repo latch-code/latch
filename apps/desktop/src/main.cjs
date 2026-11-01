@@ -32,7 +32,6 @@ const { dirname, join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState, readBody, socketRequest } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
-const { createConfirmationActions } = require('./confirmations.cjs')
 const {
   createNotifications,
   readPreferences: readNotificationPreferences,
@@ -547,20 +546,6 @@ async function start() {
   protocol.handle('latch', request => proxy.handle(request))
   protocol.handle('latch-frame', request => proxy.previewFrame(request))
   handleFolders(proxy, store)
-  const confirmations = createConfirmationActions({
-    request: (method, path, body) => proxy.shellRequest(method, path, body),
-    sign: (id, hash) => store.signConfirmation(id, hash),
-    identity: () => {
-      const current = store.current()
-      return current ? { hostId: store.hostId, deviceId: current.deviceId } : undefined
-    },
-    focused: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
-    gate: dialogGate,
-    confirm: options => dialog.showMessageBox(mainWindow, options),
-  })
-  ipcMain.handle('latch:confirmations:confirm', (event, id) =>
-    trusted(event) ? confirmations.confirm(id) : { status: 'failed', code: 'shell-refused' },
-  )
   // The renderer may only trigger this; main makes the invitation and gives it to the default browser.
   const openInBrowser = createBrowserOpener({
     invite: () => proxy.browserInvitation(),

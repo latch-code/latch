@@ -38,7 +38,7 @@ import {
   resolveLatchPaths,
   runtimeDirPath,
 } from '../src/paths.ts'
-import { policySchema, PolicyStore, type Policy } from '../src/policy.ts'
+import { parsePolicyFile, PolicyStore, type Policy } from '../src/policy.ts'
 import { foldersHash, newProject, planFolders } from '../src/projects.ts'
 import { readProjectContext } from '../src/project-context.ts'
 import {
@@ -474,7 +474,9 @@ async function createSecretFile(path: string): Promise<SecretFile> {
 async function readOnlyPolicy(dataDir: string): Promise<PolicyStore> {
   let policy: Policy
   try {
-    policy = policySchema.parse(JSON.parse(await readFile(join(dataDir, 'policy.json'), 'utf8')))
+    const parsed = parsePolicyFile(JSON.parse(await readFile(join(dataDir, 'policy.json'), 'utf8')))
+    if (!parsed.success) throw parsed.error
+    policy = parsed.data
   } catch {
     throw new CliError('无法读取安全策略文件 policy.json')
   }
@@ -504,7 +506,7 @@ async function presenceTest(backend: PresenceBackend, hostId: () => Promise<stri
     preview,
     previewHash,
     hashDisplay,
-    requireBiometric: PRESENCE_ACTIONS['device.enroll'].requireBiometric,
+    requireBiometric: true,
     signal: AbortSignal.timeout(CONFIRMATION_LIFETIME_MS),
   })
   out(`结果：${outcome.result}${'method' in outcome ? `（${outcome.method}）` : ''}`)
@@ -1002,22 +1004,6 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
   }
 }
 
-/** `remote.workspaces` of a stopped Host's policy: IDs a new project never takes. Absent file: the default, no list. */
-async function remoteProjectIds(dataDir: string): Promise<string[]> {
-  let text: string
-  try {
-    text = await readFile(join(dataDir, 'policy.json'), 'utf8')
-  } catch (error) {
-    if (codeOf(error) === 'ENOENT') return []
-    throw new CliError('无法读取安全策略文件 policy.json')
-  }
-  try {
-    return policySchema.parse(JSON.parse(text)).remote.workspaces ?? []
-  } catch {
-    throw new CliError('无法读取安全策略文件 policy.json')
-  }
-}
-
 async function offlineProjectContext(dataDir: string, flags: Map<string, string | true>, io: CliIO) {
   const recorded = await readProjectContext(dataDir)
   const explicit = flags.get('--workspace') ?? latchEnv(io.env, 'WORKSPACE')
@@ -1107,7 +1093,7 @@ async function addProjectFolders(
       : newProject({
           ...(name !== undefined ? { name } : {}),
           folders: plan.folders,
-          taken: ['default', ...settings.workspaces.map(item => item.id), ...(await remoteProjectIds(dataDir))],
+          taken: ['default', ...settings.workspaces.map(item => item.id)],
         })
     out(record ? `将把这些文件夹加入项目「${record.name}」（${record.id}）：` : `将用这些文件夹新建项目「${created!.name}」：`)
     for (const folder of plan.added) out(`  ${folder.path}${folder === plan.folders[0] ? '（主文件夹）' : ''}`)

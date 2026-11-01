@@ -14,7 +14,7 @@ import { RefreshCw } from 'lucide-react'
 import type { SearchHit } from '@latch/protocol'
 import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from '../breakpoints.ts'
-import { projectFor, usesDemoModel } from '../composerChoice.ts'
+import { findHarness, projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
@@ -109,7 +109,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     sessionMenu,
     block,
     gate,
-    presenceDown,
     askProject,
   } = session
 
@@ -198,10 +197,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }, [infoPage])
   const lifecycle = useShellLifecycle()
   const audit = useAuditCheckpoint(host?.hostId, connection === 'connected')
+  const draftHarnessId = choice.harnessId ?? catalog?.defaults.harnessId
   const fileContext: FileContext | null = selectedId
     ? { kind: 'session', sessionId: selectedId }
-    : !personalDraft && choice.workspaceId && choice.workspaceId !== 'default'
-      ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard' }
+    : !personalDraft && choice.workspaceId && choice.workspaceId !== 'default' && draftHarnessId
+      ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: draftHarnessId }
       : null
   const fileAuthority = JSON.stringify([snapshot.device.dataScope, access.scopes.has('view'), catalog?.features?.filePreview])
   const savedFileTabs = useFileTabs(snapshot.device.id, fileContext, fileAuthority)
@@ -524,7 +524,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     selectedId === null
     && gate.kind === 'open'
     && block === null
-    && !presenceDown
     && !newChoicesLocked
     && (submission.draft.trim().length > 0 || attachmentDraft.items.length > 0)
   // The open column stands beside the conversation, which keeps its minimum width between the two.
@@ -755,7 +754,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     revealRow(messageId, offset)
   })
   // Where the session runs: its harness (a Host without a catalog runs the built-in one) and its project's folder.
-  const topHarness = harnessInfo ?? (snapshot.harness ? { ...snapshot.harness, source: 'builtin' as const } : undefined)
+  // A session whose Harness was removed names none rather than the default one.
+  const topHarness = harnessInfo ?? (summary ? undefined : findHarness(catalog, undefined))
   const savedProject = summary && catalog ? projectOf(summary, catalog.workspaces) : undefined
   const project = savedProject ? savedProject.name || basename(savedProject.path) : undefined
   // The demo label follows what this session (or the new-session choice) actually runs on.

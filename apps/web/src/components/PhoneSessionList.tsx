@@ -16,10 +16,10 @@ import {
   type SessionFilter,
   type SessionGroup,
 } from '../sessions.ts'
-import { HarnessTile } from './BrandTile.tsx'
+import { MarkTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
-import { harnessLabel, taskHarness, type TaskHarness } from './Sidebar.tsx'
+import { taskHarness, type TaskHarness } from './Sidebar.tsx'
 import { Button, ICON_STROKE, IconButton, SearchField } from '@latch/ui'
 
 /** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
@@ -101,7 +101,7 @@ const PhoneRow = memo(function PhoneRow({
   const title = task.title || '未命名会话'
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
-  const engine = harnessLabel(harness)
+  const engine = harness.label
   const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
@@ -143,7 +143,7 @@ const PhoneRow = memo(function PhoneRow({
         </span>
         <span className="phone-row-meta" aria-hidden="true">
           <span className="session-mark">
-            <HarnessTile harness={{ id: harness.id, source: harness.source }} size={16} />
+            <MarkTile mark={harness.mark} size={16} />
           </span>
           <span className="phone-row-meta-text">{meta ? `${engine} · ${meta}` : engine}</span>
           {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}

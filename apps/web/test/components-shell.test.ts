@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { entryOfSection, routeAtWidth, sidebarPages, visibleEntries, type SettingsSection } from '../src/shell/routes.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,7 +11,14 @@ const noop = () => {}
 afterEach(() => {
   vi.unstubAllGlobals()
 })
-const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({ id: 's', title: 't', status: 'idle', updatedAt: '', ...extra })
+const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
+  id: 's',
+  title: 't',
+  status: 'idle',
+  updatedAt: '',
+  ...extra,
+})
 
 describe('top bar', () => {
   const topBar = {
@@ -51,7 +59,7 @@ describe('top bar', () => {
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
         ...topBar,
-        harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
+        harness: testHarness('codex', { kind: 'agent', label: 'Codex' }),
         project: 'latch-app',
       }),
     )
@@ -69,7 +77,7 @@ describe('top bar', () => {
         onBack: noop,
         menu,
         summary: session({ status: 'failed' }),
-        harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
+        harness: testHarness('codex', { kind: 'agent', label: 'Codex' }),
         project: 'latch-app',
       }),
     )
@@ -93,7 +101,7 @@ describe('top bar', () => {
         phone: true,
         onBack: noop,
         menu,
-        harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
+        harness: testHarness('codex', { kind: 'agent', label: 'Codex' }),
         project: 'latch-app',
       }),
     )

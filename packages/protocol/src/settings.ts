@@ -59,8 +59,6 @@ export interface WorkspaceInfo {
   /** Ordered; `[0]` is the primary folder. Absent from older Hosts. */
   folders?: WorkspaceFolder[]
   glyph?: ProjectGlyph
-  /** Other devices may start sessions in this project under the current policy. */
-  remoteStart?: boolean
   /** Host-read, display-only Git branch of the primary folder; omitted when metadata cannot be verified. */
   branch?: string
   /** The project lies in Latch's program directory: every Latch 内置 write asks for local approval, and ACP agents cannot start there. */

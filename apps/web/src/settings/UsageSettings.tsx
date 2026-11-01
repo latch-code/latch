@@ -102,7 +102,7 @@ export function UsageSettings({ catalog }: { catalog: HostCatalog }) {
                     <small>
                       {catalog.providers.find(item => item.id === row.providerId)?.name
                         ?? (row.source === 'agent'
-                          ? (catalog.harnesses.find(item => item.id === row.harnessId)?.name ?? row.harnessId)
+                          ? (catalog.harnesses.find(item => item.id === row.harnessId)?.capabilities.display.label ?? row.harnessId)
                           : '未记录模型服务')}
                       {row.source === 'agent' ? ' · Harness 报告' : ''}
                     </small>

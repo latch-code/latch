@@ -20,8 +20,6 @@ import {
 import { currentShell, type LatchShell } from '../../core/shell.ts'
 import { IconTile, Loading, moreButton, SettingsGroup, SettingsRow } from '../common.tsx'
 import { NavigationContext, SettingsPages } from '../navigation.tsx'
-import { PolicyLimits } from '../PolicyLimits.tsx'
-import { RemoteStartRow } from '../RemoteStartRow.tsx'
 import { deviceIcon } from './deviceIcon.ts'
 import { deviceLabel, isBrowserDevice, isPhoneDevice, listedDevices, removeBody, seenText } from './deviceRows.ts'
 import { PairingSheet } from './PairingSheet.tsx'
@@ -428,12 +426,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
   const openInBrowser = shell?.platform === 'darwin' && access.local && access.admin ? shell.openInBrowser : undefined
   const canPair = access.local && access.admin
   const host = hostView(snapshot)
-  const raiseBlocked = !access.local
-    ? COPY.raiseOnMac
-    : host?.presence.status === 'unavailable'
-      ? presenceUnavailableText(host.presence.message)
-      : undefined
-
   const listed = devices === null ? [] : listedDevices(devices, snapshot.device.id)
   // A wide window always shows one device, the first when none was picked; a phone opens one as a page. The first is
   // settled once: rows reorder as devices are seen, and the page must not change under someone typing a name.
@@ -533,7 +525,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
   )
   const foot = (
     <div className="device-foot">
-      {access.admin && <RemoteStartRow {...(raiseBlocked ? { raiseBlocked } : {})} />}
       <div className="device-foot-links">
         <AboutConnection canManageRoutes={canPair} />
         {openInBrowser && <OpenInBrowser open={openInBrowser} />}
@@ -562,8 +553,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
       onChanged={changed}
     />
   )
-  // What this Mac lets other devices do, so a refusal elsewhere can point here. Absent while everything is at its default.
-  const limits = canPair && <PolicyLimits catalog={snapshot.catalog} />
   const overlays = (
     <>
       {pairing && (
@@ -625,7 +614,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
                 <div className="device-phone-list">
                   {connect}
                   {rows || (devices !== null && empty)}
-                  {limits}
                   {foot}
                 </div>
               )}
@@ -676,7 +664,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
         )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {devices === null ? !error && <Loading /> : (detail ?? empty)}
-      {limits}
       {overlays}
     </>
   )

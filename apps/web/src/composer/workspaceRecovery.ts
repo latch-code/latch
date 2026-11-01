@@ -9,9 +9,8 @@ export interface WorkspaceRecoveryInput {
   workspaceId?: string
   forkSupported: boolean
   runGate: RecoveryRunGate
-  local: boolean
   phase: RecoveryPhase
-  harness?: Pick<HarnessInfo, 'name' | 'projectFolders'>
+  harness?: Pick<HarnessInfo, 'capabilities' | 'projectFolders'>
 }
 
 export interface WorkspaceRecoveryIntent {
@@ -35,7 +34,7 @@ export function recoveryMessage(source: TaskDetail): string | undefined {
 }
 
 /** An explicit saved project avoids the Host-owned default folder's deliberate reuse on a normal fork. */
-export function recoveryWorkspaces(input: Pick<WorkspaceRecoveryInput, 'workspaces' | 'local' | 'harness'>): WorkspaceInfo[] {
+export function recoveryWorkspaces(input: Pick<WorkspaceRecoveryInput, 'workspaces' | 'harness'>): WorkspaceInfo[] {
   const max = input.harness?.projectFolders?.access === 'all' ? input.harness.projectFolders.max : undefined
   return input.workspaces.filter(workspace => {
     const folders = workspace.folders?.length ? workspace.folders : [{ id: 'default', path: workspace.path, unavailable: undefined }]
@@ -43,7 +42,6 @@ export function recoveryWorkspaces(input: Pick<WorkspaceRecoveryInput, 'workspac
       workspace.id !== 'default'
       && workspace.unavailable === undefined
       && folders.every(folder => folder.unavailable === undefined)
-      && (input.local || workspace.remoteStart !== false)
       && (max === undefined || folders.length <= max)
     )
   })

@@ -11,7 +11,7 @@ export function isLocalListener(listener: ListenerClass | 'cli'): boolean {
   return listener === 'unix'
 }
 
-/** Both native paths retain the same device identity and remote policy ceiling. */
+/** Both native paths retain the same device identity. */
 export function isNativeListener(listener: ListenerClass): boolean {
   return listener === 'native-direct' || listener === 'native-relay'
 }

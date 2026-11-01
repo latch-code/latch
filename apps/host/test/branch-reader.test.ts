@@ -37,6 +37,7 @@ async function worktree() {
   return { main, git, root, admin }
 }
 const summary = (cwd: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
   id: 'session',
   title: 'Fixture',
   cwd,
@@ -203,7 +204,7 @@ describe('nonblocking branch snapshots', () => {
         },
       },
       driver: HarnessDriver = { id: 'fixture', name: 'Fixture', version: '1', create: () => bridge }
-    await hub.attach(driver, { source: 'plugin', create: () => bridge, release: () => {} })
+    await hub.attach(driver, { kind: 'plugin', create: () => bridge, release: () => {} })
     expect((await hub.summary(task.id)).branch).not.toBe('forged')
     await vi.waitFor(async () => expect((await hub.summary(task.id)).branch).toBe('main'))
     expect((await hub.listTasks())[0]!.branch).toBe('main')

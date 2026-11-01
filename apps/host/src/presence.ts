@@ -21,60 +21,29 @@ import { hashDisplay as formatHash, randomId, randomNonce } from './crypto.ts'
 import type { PolicyStore } from './policy.ts'
 import { presenceReason } from './presence-reason.ts'
 
-export {
-  argumentsText,
-  enrollmentSubject,
-  envNamesText,
-  policySubject,
-  presenceReason,
-  programText,
-  REASON_FORMS,
-  reasonSlots,
-  toolInputText,
-} from './presence-reason.ts'
+export { enrollmentSubject, policySubject, presenceReason, REASON_FORMS, reasonSlots } from './presence-reason.ts'
 
 /**
- * Class A needs biometrics when Touch ID is available; class B accepts the login password. The title is fixed wording
- * per action, for the client's card; the system sheet shows the reason instead. Only a policy change that adds one
- * outbound address is titled by that address (targetTitle): the Host checked it as `host:port`, so nobody chose those
- * words freely.
+ * The few things a connected device may not do by itself, each confirmed with Touch ID or the login password on this
+ * computer: what lets a new device in or widens one, where keys and traffic may go, and code loaded into the process that
+ * holds them. Everything else a person does (starting agents, choosing their permission, answering them) needs only the
+ * device's own scopes: agents are trusted local code with no sandbox, so a prompt there protects nothing.
  *
- * `duringFullAccess`: while a full-access (L3) session runs or waits for an answer, its unsandboxed process may be the
- * one asking. What outlives that session (another device, more rights for one, a wider policy, a new model-service
- * address, an automation's scheduled runs) is refused until it ends. Approving a Standard R2 call, starting another agent
- * and widening a session's mode proceed: an agent with full access can already do the same on this computer itself.
- * Every action has to say which.
+ * The title is fixed wording per action, for the client's card; the system sheet shows the reason instead. Only a policy
+ * change that adds one outbound address is titled by that address (targetTitle): the Host checked it as `host:port`, so
+ * nobody chose those words freely.
+ *
+ * While a full-access (L3) session runs or waits for an answer, its unsandboxed process may be the one asking, and each of
+ * these outlives that session, so every one is refused until it ends.
  */
-export const PRESENCE_ACTIONS: Readonly<
-  Record<
-    PresenceAction,
-    { title: string; requireBiometric: boolean; duringFullAccess: 'refuse' | 'proceed'; target?: (target: string) => string }
-  >
-> = {
-  'plugin.package.apply': { title: '应用自定义插件', requireBiometric: true, duringFullAccess: 'refuse' },
-  'device.enroll': { title: '允许新设备连接', requireBiometric: true, duringFullAccess: 'refuse' },
-  'device.enroll-native': { title: '配对原生设备', requireBiometric: true, duringFullAccess: 'refuse' },
-  'agent.probe': { title: '测试启动 Agent', requireBiometric: true, duringFullAccess: 'proceed' },
-  'automation.grant': { title: '允许自动化按时运行', requireBiometric: true, duringFullAccess: 'refuse' },
-  'device.grant': { title: '为设备增加权限', requireBiometric: true, duringFullAccess: 'refuse' },
-  'task.start-l3': { title: '开启完全访问会话', requireBiometric: true, duringFullAccess: 'proceed' },
-  'task.mode-widen': { title: '放宽会话权限模式', requireBiometric: true, duringFullAccess: 'proceed' },
-  'policy.change': {
-    title: '放宽本机安全策略',
-    requireBiometric: true,
-    duringFullAccess: 'refuse',
-    target: target => `允许 Host 访问 ${target}`,
-  },
-  // No longer asked for (keys save without one or with the address), so no sentence names it; kept for older audit records.
-  'provider.set-key': { title: '保存模型服务密钥', requireBiometric: false, duringFullAccess: 'refuse' },
+export const PRESENCE_ACTIONS: Readonly<Record<PresenceAction, { title: string; target?: (target: string) => string }>> = {
+  'plugin.package.apply': { title: '应用自定义插件' },
+  'device.enroll': { title: '允许新设备连接' },
+  'device.enroll-native': { title: '配对原生设备' },
+  'device.grant': { title: '为设备增加权限' },
+  'policy.change': { title: '放宽本机安全策略', target: target => `允许 Host 访问 ${target}` },
   // The first use of a model-service address: the address, its key and its outbound allowance in one confirmation.
-  'provider.confirm-origin': {
-    title: '确认模型服务地址',
-    requireBiometric: true,
-    duringFullAccess: 'refuse',
-    target: target => `确认模型服务地址 ${target}`,
-  },
-  'approval.r2': { title: '允许一次高风险操作', requireBiometric: false, duringFullAccess: 'proceed' },
+  'provider.confirm-origin': { title: '确认模型服务地址', target: target => `确认模型服务地址 ${target}` },
 }
 
 /** The refusal's text; clients show their own words for the code. */
@@ -384,7 +353,7 @@ export interface ConfirmationRecord extends ConfirmationTicket {
   paramsHash: string
   previewHash: string
   requesterDeviceId?: string
-  method?: 'biometric' | 'password' | 'shell'
+  method?: 'biometric' | 'password'
   failure?: 'biometry-lockout'
   settled: Promise<PresenceOutcome>
 }
@@ -397,7 +366,6 @@ interface Entry {
   expiresAtMs: number
   controller: AbortController
   done: boolean
-  resolveShell?: (outcome: PresenceOutcome) => void
 }
 
 function ticketOf(record: ConfirmationRecord): ConfirmationTicket {
@@ -412,7 +380,6 @@ function ticketOf(record: ConfirmationRecord): ConfirmationTicket {
     form: record.form,
     lines: record.lines.map(line => ({ ...line })),
     warnings: [...record.warnings],
-    ...(record.confirmationMethod ? { confirmationMethod: record.confirmationMethod } : {}),
     ...(record.failure ? { failure: record.failure } : {}),
   }
 }
@@ -466,11 +433,14 @@ export class PresenceService {
    * Refuses the way `request` would before anything else happens: no confirmation component, or a full-access session
    * holding this action back. A caller checks first when a refusal must not spend something single-use (an invitation).
    */
-  async assertCanRequest(action: PresenceAction, revealBlocking = false, shell = false): Promise<void> {
+  async assertCanRequest(action: PresenceAction, revealBlocking = false): Promise<void> {
     const availability = await this.backend.availability()
-    if (availability.status !== 'available' && (!shell || availability.reason === 'disabled'))
-      throw new AppError(503, 'presence-unavailable', `本机确认不可用：${availability.message}`)
-    if (PRESENCE_ACTIONS[action].duringFullAccess === 'proceed') return
+    if (availability.status !== 'available') throw new AppError(503, 'presence-unavailable', `本机确认不可用：${availability.message}`)
+    await this.assertNotHeldBack(action, revealBlocking)
+  }
+
+  /** A full-access session holds back every confirmation; also what takes none (the desktop's first connection) waits for it to end. */
+  async assertNotHeldBack(action: PresenceAction, revealBlocking = false): Promise<void> {
     const blocking = await this.blockingTasks()
     if (blocking.length === 0) return
     throw new AppError(409, 'presence-blocked', BLOCKED_MESSAGE, {
@@ -490,22 +460,12 @@ export class PresenceService {
     lines: PresencePreview['lines']
     warnings: string[]
     paramsHash: string
-    /** Only the Host chooses this tier, after checking the action and any prior OS approval. */
-    confirmationMethod?: 'shell-local'
     /** A checked `host:port` the request adds, for the title of the actions worded around one. */
     target?: string
     /** A refusal names the sessions holding it back only for a requester that may view sessions. */
     revealBlocking?: boolean
   }): Promise<ConfirmationRecord> {
-    const shell = input.confirmationMethod === 'shell-local'
-    if (
-      shell
-      && (!input.requester.deviceId
-        || !isLocalListener(input.requester.listener)
-        || !['task.start-l3', 'task.mode-widen', 'approval.r2'].includes(input.action))
-    )
-      throw new AppError(403, 'confirmation-os-required', '这项操作必须通过系统认证')
-    await this.assertCanRequest(input.action, input.revealBlocking === true, shell)
+    await this.assertCanRequest(input.action, input.revealBlocking === true)
     const now = this.now()
     const kind = requesterKind(input.requester)
     // Device cooldowns stop everyone; an anonymous cooldown only stops further anonymous requests.
@@ -536,12 +496,6 @@ export class PresenceService {
     if (waiting) this.abandon(waiting)
     const controller = new AbortController()
     let resolveSettled!: (outcome: PresenceOutcome) => void
-    let resolveShell: ((outcome: PresenceOutcome) => void) | undefined
-    const shellOutcome = shell
-      ? new Promise<PresenceOutcome>(resolve => {
-          resolveShell = resolve
-        })
-      : undefined
     const record: ConfirmationRecord = {
       id: randomId('cfm'),
       action: input.action,
@@ -555,7 +509,6 @@ export class PresenceService {
       warnings: preview.warnings,
       paramsHash: input.paramsHash,
       previewHash,
-      ...(shell ? { confirmationMethod: 'shell-local' as const } : {}),
       ...(input.requester.deviceId !== undefined ? { requesterDeviceId: input.requester.deviceId } : {}),
       settled: new Promise(resolve => {
         resolveSettled = resolve
@@ -569,7 +522,6 @@ export class PresenceService {
       expiresAtMs: now + CONFIRMATION_LIFETIME_MS,
       controller,
       done: false,
-      ...(resolveShell ? { resolveShell } : {}),
     }
     this.prune(now)
     this.entries.set(record.id, entry)
@@ -577,32 +529,14 @@ export class PresenceService {
 
     const timer = setTimeout(() => controller.abort('expired'), CONFIRMATION_LIFETIME_MS)
     timer.unref?.()
-    if (resolveShell)
-      controller.signal.addEventListener(
-        'abort',
-        () => {
-          resolveShell!({ result: controller.signal.reason === 'expired' ? 'timeout' : 'cancelled' })
-        },
-        { once: true },
-      )
     void (async () => {
       let outcome: PresenceOutcome
       try {
-        outcome = shellOutcome
-          ? await shellOutcome
-          : await this.backend.confirm({
-              preview,
-              previewHash,
-              hashDisplay,
-              requireBiometric: PRESENCE_ACTIONS[input.action].requireBiometric,
-              signal: controller.signal,
-            })
+        outcome = await this.backend.confirm({ preview, previewHash, hashDisplay, requireBiometric: true, signal: controller.signal })
       } catch (error) {
         outcome = { result: 'error', message: error instanceof Error ? error.message : '本机确认失败' }
       }
       clearTimeout(timer)
-      if (outcome.result === 'approved' && (outcome.method === 'shell') !== shell)
-        outcome = { result: 'error', message: '本机确认使用了不匹配的认证方式' }
       if (outcome.result === 'approved' && (outcome.nonce !== preview.nonce || outcome.previewHash !== previewHash)) {
         outcome = { result: 'error', message: '本机确认组件返回了不匹配的结果' }
       }
@@ -699,38 +633,11 @@ export class PresenceService {
     if (!entry.done) entry.controller.abort('cancelled')
   }
 
-  /** Full Host-generated content for main's native sheet; ordinary ticket reads never return this proof payload. */
-  shellPreview(id: string, requesterDeviceId: string): { preview: PresencePreview; previewHash: string } {
-    const entry = this.shellEntry(id, requesterDeviceId)
-    return { preview: structuredClone(entry.preview), previewHash: entry.record.previewHash }
-  }
-
-  /** The Host calls this only after verifying main's signature over the preview hash. */
-  async completeShell(id: string, requesterDeviceId: string, previewHash: string, approved: boolean): Promise<ConfirmationTicket> {
-    const entry = this.shellEntry(id, requesterDeviceId)
-    if (entry.record.previewHash !== previewHash) throw new AppError(409, 'confirmation-mismatch', '确认内容与本次请求不一致，请重新确认')
-    const complete = entry.resolveShell!
-    delete entry.resolveShell
-    complete(approved ? { result: 'approved', method: 'shell', nonce: entry.preview.nonce, previewHash } : { result: 'denied' })
-    await entry.record.settled
-    return ticketOf(entry.record)
-  }
-
-  private shellEntry(id: string, requesterDeviceId: string): Entry {
-    this.expire()
-    const entry = this.lookup(id, requesterDeviceId)
-    if (!entry) throw new AppError(404, 'confirmation-not-found', '找不到该确认')
-    if (entry.record.confirmationMethod !== 'shell-local') throw new AppError(403, 'confirmation-os-required', '这项操作必须通过系统认证')
-    if (entry.record.status === 'expired') throw new AppError(410, 'confirmation-expired', '本机确认已超时，请重试')
-    if (entry.record.status !== 'pending' || !entry.resolveShell) throw new AppError(409, 'confirmation-used', '该确认已处理')
-    return entry
-  }
-
   /** Verifies and consumes an approved confirmation for exactly this binding. */
   consume(
     id: string,
     binding: { action: PresenceAction; requesterDeviceId?: string; paramsHash: string },
-  ): { stepup: 'lpc-local' | 'shell-local'; method: 'biometric' | 'password' | 'shell' } {
+  ): { stepup: 'lpc-local'; method: 'biometric' | 'password' } {
     this.expire()
     const entry = this.lookup(id, binding.requesterDeviceId)
     if (!entry) throw new AppError(404, 'confirmation-not-found', '找不到该确认')
@@ -757,6 +664,6 @@ export class PresenceService {
       throw new AppError(409, 'confirmation-mismatch', '确认内容与本次请求不一致，请重新确认')
     }
     record.status = 'consumed'
-    return { stepup: record.method === 'shell' ? 'shell-local' : 'lpc-local', method: record.method! }
+    return { stepup: 'lpc-local', method: record.method! }
   }
 }

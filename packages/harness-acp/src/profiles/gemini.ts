@@ -19,6 +19,7 @@ export const geminiProfile: HarnessProfile = {
     hiddenOptionIds: ['proceed_always_and_save', 'ProceedAlwaysAndSave'],
     readback: 'mode',
     systemSettings: SYSTEM_SETTINGS,
+    inheritEnv: ['GEMINI_CLI_HOME'],
     notes: [],
   },
   // Every ACP session of a process uses its arguments; Gemini CLI splits the value on commas and documents 5 directories.

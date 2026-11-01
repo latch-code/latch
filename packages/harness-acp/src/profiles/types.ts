@@ -14,8 +14,6 @@ export interface AcpPermissionProfile {
   modeLadder?: readonly string[]
   /** Modes in the ladder where the harness stops asking; the composer names them. Display only. */
   neverAskModes?: readonly string[]
-  /** Modes where a model approves on the user's behalf; never offered. */
-  forbiddenModes?: readonly string[]
   /** Permission option IDs never shown; exact IDs, or prefixes ending in '*'. */
   hiddenOptionIds?: readonly string[]
   /** Whether the harness reports its mode so Latch can read it back. */
@@ -29,9 +27,18 @@ export interface AcpPermissionProfile {
    * prefixes ending in '*', compared case-insensitively. A definition that sets one is not verified.
    */
   configEnv?: readonly string[]
+  /**
+   * Variables taken from the person's environment when set: where this harness keeps its own home. Names only reach the
+   * launch fingerprint, and none may hold a secret (`test/login.test.ts`). A definition cannot set the reserved ones.
+   */
+  inheritEnv?: readonly string[]
+  /** Variable for the adapter to `command`, set to the path found on this computer; left out when it is not installed. */
+  programEnv?: Readonly<Record<string, string>>
   /** Chinese display notes. */
   notes: string[]
 }
+
+export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
 /** What the harness itself writes below its `projectConfigPaths` when it starts, so that is not a change. */
 export interface ProjectConfigManaged {
@@ -73,6 +80,16 @@ export interface HarnessProfile {
    */
   readonly projectConfigPaths?: readonly string[]
   readonly projectConfigManaged?: ProjectConfigManaged
+  /**
+   * A command that says whether the harness is logged in, without a prompt or a session. Only a clear answer is an answer:
+   * `read` returns `unknown` for anything else. The output never leaves `read`, since it may hold an account or part of a key.
+   */
+  readonly loginStatus?: {
+    /** After the program `AgentPreset.login` runs, or the adapter's own with `bundledArgs`. */
+    readonly args: readonly string[]
+    readonly bundledArgs?: readonly string[]
+    read(result: { code: number | null; output: string }): LoginStatus
+  }
   /** Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. */
   materialize?(input: { dataDir: string }): Promise<Record<string, string>>
 }

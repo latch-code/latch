@@ -57,7 +57,7 @@ async function fixture() {
         plan: (): AutomationPlan => {
           f.onPlan?.()
           if (f.planFailure) throw f.planFailure
-          return { basis: f.basis, persistent: true, mode: 'agent', model: { providerId: 'p', model: 'm' } }
+          return { basis: f.basis, persistent: true, harnessId: 'standard', mode: 'agent', model: { providerId: 'p', model: 'm' } }
         },
         authorize: () => {
           if (f.ownerFailure) throw f.ownerFailure

@@ -78,7 +78,14 @@ function effects(kind: 'read' | 'edit' | 'execute' | 'other' | undefined, state:
 }
 
 function detail(messages: Message[], extra: Partial<TaskDetail> = {}, status: TaskStatus = 'idle'): TaskDetail {
-  return { summary: { id: 's', title: 't', status, updatedAt: '' }, messages, approvals: [], liveText: '', cursor: 1, ...extra }
+  return {
+    summary: { harnessId: 'standard', id: 's', title: 't', status, updatedAt: '' },
+    messages,
+    approvals: [],
+    liveText: '',
+    cursor: 1,
+    ...extra,
+  }
 }
 
 afterEach(() => {
@@ -511,6 +518,7 @@ describe('the live run', () => {
 
   it('says how a run ended when it took more than an answer, naming what nobody can vouch for', () => {
     const summary = (runEnd: TaskSummary['runEnd']): TaskSummary => ({
+      harnessId: 'standard',
       id: 's',
       title: 't',
       status: 'failed',
@@ -567,7 +575,7 @@ const streamingTranscript = (status: TaskStatus) =>
     createElement(Transcript, {
       detail: {
         ...detail([user('u')], { liveText: '正在写', liveMessageId: 'live' }, status),
-        summary: { id: 's', title: 't', status, updatedAt: '', model: 'fixture-large', providerId: 'fixture' },
+        summary: { harnessId: 'standard', id: 's', title: 't', status, updatedAt: '', model: 'fixture-large', providerId: 'fixture' },
       },
       approvals: [],
       harnessName: 'Latch',

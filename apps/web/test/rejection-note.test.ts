@@ -17,7 +17,7 @@ const approval = (extra: Partial<Approval> = {}): Approval => ({
   requestedAt: '2026-10-25T06:24:00.000Z',
   ...extra,
 })
-const context = (extra: Partial<NoteContext> = {}): NoteContext => ({ selectedId: 's1', mayType: true, hostTakesNote: true, ...extra })
+const context = (extra: Partial<NoteContext> = {}): NoteContext => ({ selectedId: 's1', mayType: true, harnessTakesNote: true, ...extra })
 
 describe('text written before a request arrived', () => {
   const start = { ids: [] as string[], held: false }
@@ -111,10 +111,9 @@ describe('what is typed while an approval waits', () => {
     expect(rejectionFor(approval(), undefined, '改用\u202edocs', context())).toEqual({ problem: DECISION_COPY.noteInvalid })
   })
 
-  it('stays a draft where a note cannot go: an agent’s ask, an older Host, a device that may not type, another session', () => {
+  it('stays a draft where a note cannot go: a harness that drops it, a device that may not type, another session', () => {
     for (const [item, ctx] of [
-      [approval({ advisory: true }), context()],
-      [approval(), context({ hostTakesNote: false })],
+      [approval(), context({ harnessTakesNote: false })],
       [approval(), context({ mayType: false })],
       [approval(), context({ selectedId: 's2' })],
     ] as const) {
@@ -131,7 +130,7 @@ describe('what is typed while an approval waits', () => {
           messages: [],
           index: 0,
           onIndex: () => {},
-          gateFor: item => approvalActions(item, null, null),
+          gateFor: item => approvalActions(item, null),
           busy: new Map(),
           statuses: new Map(),
           onDecide: () => {},

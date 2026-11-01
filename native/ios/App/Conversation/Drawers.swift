@@ -26,8 +26,8 @@ private struct BoundedScroll<Content: View>: View {
 }
 
 /**
- * Above the composer: what is asked, and the answers this phone really has. Only an ordinary step of the built-in engine can
- * be allowed here, once; anything else says plainly where it can be allowed.
+ * Above the composer: what is asked, and the answers this phone really has. Allowing is once only; what this phone's scopes
+ * do not cover says so plainly.
  */
 struct ApprovalDrawer: View {
     @EnvironmentObject private var model: PhoneModel
@@ -38,7 +38,7 @@ struct ApprovalDrawer: View {
     @State private var stat: PhoneDiffStat?
     private static let argumentsLimit = 16_000
     var body: some View {
-        let gate = PhoneConversation.approvalGate(approval, canApproveStandard: model.canApproveStandard)
+        let gate = PhoneConversation.approvalGate(approval, canApproveStandard: model.canApproveStandard, canApproveElevated: model.canApproveElevated, canRun: model.canRun)
         let arguments = approval["tool"]["input"].string ?? approval["arguments"].string
         let diffs = approval["tool"]["diffs"].array
         let places = approval["tool"]["locations"].array.compactMap(\.string)
@@ -74,7 +74,7 @@ struct ApprovalDrawer: View {
             }
             if !model.connected { Text("Mac 不在线，连上后可以处理").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
             else {
-                if let line = gate.macLine { Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                if let line = gate.refusal { Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 HStack(spacing: 8) {
                     // A stop on its way answers this request too, so a rejection could only be told it came second.
                     button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id) } } }.disabled(rejecting || model.stoppingCurrent)

@@ -118,21 +118,16 @@ test('distinguishes invalid local values from unknown dispatch and keeps legacy 
   expect(await f.calls()).toBe(1)
 })
 
-test('does not turn a receipt into mode-widen authority and allows the original RID to continue through actual local confirmation', async () => {
+test('widens a mode at once, and the receipt replays it without another change', async () => {
   const f = await fixture(),
     request = { requestId: randomUUID(), configId: 'mode', value: 'workspace-write' }
-  const first = await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })
-  expect(first.status).toBe(403)
-  expect(await f.calls()).toBe(0)
-  expect(await f.owner.json(`${f.path}/config-requests/${request.requestId}`)).toEqual({ state: 'unknown' })
+  const confirmations = f.host.presence.requests.length
+  expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(200)
+  expect(await f.owner.json(`${f.path}/config-requests/${request.requestId}`)).toEqual({ state: 'applied' })
+  expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(200)
   expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: { ...request, value: 'danger-full-access' } })).status).toBe(
     409,
   )
-  expect((await f.owner.confirmed(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(200)
-  expect(f.host.presence.requests.at(-1)?.preview.action).toBe('task.mode-widen')
-  expect(await f.owner.json(`${f.path}/config-requests/${request.requestId}`)).toEqual({ state: 'applied' })
-  const confirmations = f.host.presence.requests.length
-  expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(200)
   expect(f.host.presence.requests).toHaveLength(confirmations)
   expect(await f.calls()).toBe(1)
 })

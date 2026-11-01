@@ -271,44 +271,6 @@ describe('authenticated attachment routes', () => {
       ).status,
     ).toBe(200)
   })
-  it('never pins a draft while full-access confirmation is refused, and accepts a later confirmed creation', async () => {
-    const host = await startTestHost()
-    hosts.push(host)
-    const desktop = await host.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
-      body: {
-        id: 'confirm-agent',
-        name: 'Confirm Agent',
-        command: process.execPath,
-        args: [FAKE_ACP_AGENT],
-        env: { FAKE_ACP_CAPS: 'images,embedded' },
-      },
-    })
-    expect((await desktop.confirmed('agents/confirm-agent/probe', { body: { requestId: randomUUID() } })).status).toBe(200)
-    const uploaded = await desktop.json<{ attachment: AttachmentRef }>('attachments', {
-      rawBody: png,
-      headers: {
-        'content-type': 'application/octet-stream',
-        'x-latch-attachment': Buffer.from(
-          JSON.stringify({ requestId: randomUUID(), name: 'confirm.png', size: png.length, selection: { harnessId: 'confirm-agent' } }),
-        ).toString('base64url'),
-      },
-      method: 'POST',
-    })
-    host.presence.mode = 'deny'
-    const deniedInput = { prompt: 'echo', requestId: randomUUID(), harnessId: 'confirm-agent', attachmentIds: [uploaded.attachment.id] }
-    const refused = await desktop.request('tasks', { body: deniedInput })
-    expect(refused.status).toBe(403)
-    const ticket = ((await refused.json()) as { confirmation: { id: string } }).confirmation
-    await vi.waitFor(async () =>
-      expect((await desktop.json<{ confirmation: { status: string } }>(`confirmations/${ticket.id}`)).confirmation.status).toBe('denied'),
-    )
-    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8'))
-    expect(index.entries[uploaded.attachment.id].claim).toBeUndefined()
-    expect(index.entries[uploaded.attachment.id].creationRequestId).toBeUndefined()
-    host.presence.mode = 'approve'
-    expect((await desktop.confirmed('tasks', { body: { ...deniedInput, requestId: randomUUID() } })).status).toBe(201)
-  })
   it('keeps the original claim after an accepted-but-unacknowledged creation and does not create a duplicate on retry', async () => {
     let loseResponse = true,
       starts = 0
@@ -332,7 +294,7 @@ describe('authenticated attachment routes', () => {
           id: 'unknown-harness',
           name: 'unknown',
           version: '1',
-          capabilities: { models: 'host', modes: ['agent'], attachments: { text: true, textBytes: 256 * 1024 } },
+          capabilities: { models: { owner: 'latch' }, modes: ['agent'], attachments: { text: true, textBytes: 256 * 1024 } },
           create(options) {
             const bridge = createRuntime(options)
             return new Proxy(bridge, {

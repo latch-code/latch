@@ -6,8 +6,8 @@ import { api } from '../core/api.ts'
 import { foundWithoutAdapter } from '../core/agentDetection.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderSetupPanel } from '../components/SetupPanels.tsx'
-import { LATCH_ENGINE_LIMIT, type StartBlock } from '../composerChoice.ts'
-import { HarnessTile } from '../components/BrandTile.tsx'
+import type { StartBlock } from '../composerChoice.ts'
+import { MarkTile } from '../components/BrandTile.tsx'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 
 /**
@@ -44,7 +44,7 @@ export function SetupCard({
           <p>
             {model
               ? owner
-                ? (held?.hint ?? `Latch 内置要先连一个模型服务才能开始。${LATCH_ENGINE_LIMIT}`)
+                ? (held?.hint ?? 'Latch 内置要先连一个模型服务才能开始。Latch 内置只能读写项目里的文件，不能运行命令。')
                 : SETUP_COPY.modelNeedsAdmin
               : owner
                 ? '可在设置中检查 Harness 与插件。'
@@ -88,7 +88,7 @@ function InstallRow({ preset, note }: { preset: AgentPresetSettings; note?: stri
   return (
     <li className="harness-install-row">
       <span className="harness-install-name">
-        <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={16} />
+        <MarkTile mark={preset.id} size={16} />
         {preset.name}
       </span>
       {note && <span className="harness-install-note">{note}</span>}

@@ -43,7 +43,14 @@ const tool = (extra: Partial<Message> = {}): Message => ({
   ...extra,
 })
 
-const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({ id: 's', title: 't', status: 'idle', updatedAt: '', ...extra })
+const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
+  id: 's',
+  title: 't',
+  status: 'idle',
+  updatedAt: '',
+  ...extra,
+})
 const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
   instanceId: 'host',
   device: {
@@ -66,7 +73,6 @@ const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
     devMode: true,
     presence: { status: 'available' },
     tls: null,
-    policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
   },
   tasks: [],
   approvals: [],
@@ -136,7 +142,7 @@ const Drawer = ({
     messages: message ? [message] : [],
     index: 0,
     onIndex: () => {},
-    gateFor: gateFor ?? (item => approvalActions(item, null, null)),
+    gateFor: gateFor ?? (item => approvalActions(item, null)),
     busy: new Map(busy ? [[approval.id, busy]] : []),
     statuses: new Map(),
     onDecide: () => {},
@@ -309,7 +315,7 @@ describe('assistant messages', () => {
 
   it('renders the live reply under the ID it keeps and labels the harness once per turn', () => {
     const detail: TaskDetail = {
-      summary: { id: 's', title: 't', status: 'running', updatedAt: '' },
+      summary: { harnessId: 'standard', id: 's', title: 't', status: 'running', updatedAt: '' },
       messages: [
         { id: 'u1', role: 'user', text: '一' },
         { id: 'a1', role: 'assistant', text: '' },
@@ -405,7 +411,7 @@ describe('turn footers', () => {
     renderToStaticMarkup(
       createElement(Transcript, {
         detail: {
-          summary: { id: 's', title: 't', status: active ? 'running' : 'idle', updatedAt: '' },
+          summary: { harnessId: 'standard', id: 's', title: 't', status: active ? 'running' : 'idle', updatedAt: '' },
           messages: turn,
           approvals: [],
           liveText: '',
@@ -430,7 +436,7 @@ describe('turn footers', () => {
 
   it('renders no copy control between tool calls of one turn', () => {
     const detail: TaskDetail = {
-      summary: { id: 's', title: 't', status: 'idle', updatedAt: '' },
+      summary: { harnessId: 'standard', id: 's', title: 't', status: 'idle', updatedAt: '' },
       messages: turn.slice(0, 4),
       approvals: [],
       liveText: '',

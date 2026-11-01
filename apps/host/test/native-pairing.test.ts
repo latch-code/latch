@@ -219,7 +219,7 @@ it('asks for one confirmation naming the escaped device, and grants the fixed re
   expect(completed.status).toBe(200)
   expect((completed.body as { device: Device }).device).toMatchObject({
     status: 'active',
-    scopes: ['view', 'run', 'approve:standard'],
+    scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
     dataScope: 'all',
     listener: 'native-direct',
   })

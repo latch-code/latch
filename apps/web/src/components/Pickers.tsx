@@ -15,7 +15,7 @@ import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
 import type { MenuSection } from './overlays.tsx'
-import { CODE_ROOT_COPY, REMOTE_PROJECT_REFUSED, SETUP_COPY } from '../core/securityCopy.ts'
+import { CODE_ROOT_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
 import {
   Badge,
@@ -264,11 +264,10 @@ export function ProjectPicker({
     media: <ProjectIcon project={workspace} size={16} />,
     disabledReason:
       workspace.unavailable
-      ?? (access && !access.local && !access.legacy && workspace.remoteStart === false ? REMOTE_PROJECT_REFUSED : undefined)
       ?? (harness?.projectFolders?.access === 'all'
       && harness.projectFolders.max !== undefined
       && projectFolders(workspace).length > harness.projectFolders.max
-        ? `${harness.name} 最多使用 ${harness.projectFolders.max} 个文件夹`
+        ? `${harness.capabilities.display.label} 最多使用 ${harness.projectFolders.max} 个文件夹`
         : undefined),
     tag: workspace.codeRoot ? (
       <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge>

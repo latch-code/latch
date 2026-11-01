@@ -396,11 +396,10 @@ func visible(_ text: String) -> String {
 // MARK: - Reason: the sentence the system sheet shows, byte-for-byte equal to the Host's presenceReason
 
 /// A literal, or a slot: escaped and cut to `max` grapheme clusters with "…" (at its start when `keepEnd`, so a path
-/// keeps its file name and a host name its domain). A slot with a `lead` may be empty, and then neither it, its lead
-/// nor its `trail` appears; every other slot must have text.
+/// keeps its file name and a host name its domain). A slot must have text.
 enum Segment {
   case text(String)
-  case slot(String, max: Int, keepEnd: Bool, lead: String?, trail: String?)
+  case slot(String, max: Int, keepEnd: Bool)
 }
 
 struct ReasonForm {
@@ -408,49 +407,16 @@ struct ReasonForm {
   let segments: [Segment]
 }
 
-func slot(_ name: String, _ max: Int, keepEnd: Bool = false, lead: String? = nil, trail: String? = nil) -> Segment {
-  .slot(name, max: max, keepEnd: keepEnd, lead: lead, trail: trail)
+func slot(_ name: String, _ max: Int, keepEnd: Bool = false) -> Segment {
+  .slot(name, max: max, keepEnd: keepEnd)
 }
 
-let agentSlot = slot("agent", 16)
-/// The saved project a session starts in, as a note: it names where the agent starts, never a limit on what it may
-/// reach. A session without one leaves the note out.
-let projectNote = slot("project", 16, lead: "（项目「", trail: "」）")
-let changedNote = slot("project", 16, lead: "，项目「", trail: "」")
-/// What a start runs: the resolved executable's absolute path (home as ~, keeping its end), or 插件 <id>@<version> for a
-/// third-party plugin harness; then its arguments, and the names of the variables its definition sets, never their values.
-let command: [Segment] = [slot("program", 52, keepEnd: true), slot("args", 24, lead: " "), slot("env", 24, lead: "，另设 ")]
-let fullAccess = "读写这台 Mac 上的文件并运行命令"
-/// A permission mode by the agent's own name for it.
-let modeSlot = slot("mode", 24)
 let deviceSlot = slot("device", 20)
-let nameSlot = slot("name", 20)
 let countSlot = slot("count", 4)
-let levelSlot = slot("level", 8)
 let deviceConnects: [Segment] = [.text("允许「"), deviceSlot, .text("」连接这台 Mac")]
 
 /// The same table as REASON_FORMS in apps/host/src/presence-reason.ts; the shared vectors pin both.
 let reasonForms: [String: ReasonForm] = [
-  "approval.write": ReasonForm(actions: ["approval.r2"], segments: [.text("允许写入 "), slot("path", 40, keepEnd: true)]),
-  "approval.tool": ReasonForm(actions: ["approval.r2"], segments: [.text("允许运行 "), slot("tool", 24), slot("input", 40, lead: "：")]),
-  "start.first": ReasonForm(actions: ["task.start-l3"], segments: [.text("允许 "), agentSlot, .text(" " + fullAccess), projectNote, .text("：")] + command),
-  "start.first-mode": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("允许 "), agentSlot, .text(" 以「"), modeSlot, .text("」" + fullAccess), projectNote, .text("："),
-  ] + command),
-  "start.changed": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("再次允许 "), agentSlot, .text(" " + fullAccess + "（启动方式已变化"), changedNote, .text("）："),
-  ] + command),
-  "start.changed-mode": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("再次允许 "), agentSlot, .text(" 以「"), modeSlot, .text("」" + fullAccess + "（启动方式已变化"), changedNote, .text("）："),
-  ] + command),
-  "mode.widen": ReasonForm(actions: ["task.mode-widen"], segments: [.text("允许「"), slot("session", 20), .text("」改用「"), modeSlot, .text("」")]),
-  "mode.widen-draft": ReasonForm(actions: ["task.mode-widen"], segments: [
-    .text("允许 "), agentSlot, .text(" 改用「"), modeSlot, .text("」"), projectNote,
-  ]),
-  "agent.probe": ReasonForm(actions: ["agent.probe"], segments: [.text("试运行 "), agentSlot, .text("，不发送内容")]),
-  "automation.grant": ReasonForm(actions: ["automation.grant"], segments: [
-    .text("允许自动化「"), nameSlot, .text("」按时用 "), agentSlot, .text(" " + fullAccess),
-  ]),
   "device.enroll-named": ReasonForm(actions: ["device.enroll"], segments: deviceConnects),
   "device.enroll-native": ReasonForm(actions: ["device.enroll-native"], segments: deviceConnects),
   "device.grant": ReasonForm(actions: ["device.grant"], segments: [.text("为「"), deviceSlot, .text("」增加权限："), slot("change", 40)]),
@@ -458,13 +424,6 @@ let reasonForms: [String: ReasonForm] = [
     .text("允许 Latch 连接 "), slot("target", 48, keepEnd: true),
   ]),
   "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Latch 连接 "), countSlot, .text(" 个新地址")]),
-  "policy.remote-start": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器在这台 Mac 上开始新会话")]),
-  "policy.relay": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Latch 使用中继「"), slot("relay", 24), .text("」")]),
-  "policy.feishu": ReasonForm(actions: ["policy.change"], segments: [.text("允许飞书用户「"), nameSlot, .text("」使用这台 Mac 上的 Latch")]),
-  "policy.local": ReasonForm(actions: ["policy.change"], segments: [.text("把在这台 Mac 上开始的会话上限放宽到"), levelSlot]),
-  "policy.remote": ReasonForm(actions: ["policy.change"], segments: [.text("把从手机和浏览器开始的会话上限放宽到"), levelSlot]),
-  "policy.remote-agents": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器使用更多 Agent")]),
-  "policy.remote-projects": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器使用更多项目")]),
   "policy.several": ReasonForm(actions: ["policy.change"], segments: [.text("放宽这台 Mac 的安全设置："), countSlot, .text(" 项更改")]),
   "plugin.package.apply": ReasonForm(actions: ["plugin.package.apply"], segments: [.text("应用插件「"), slot("plugin", 24), .text("」")]),
 ]
@@ -473,20 +432,17 @@ let reasonForms: [String: ReasonForm] = [
 func presenceReason(action: String, form name: String, slots: [String: String]) -> String? {
   guard let form = reasonForms[name], form.actions.contains(action) else { return nil }
   var names: [String] = []
-  for segment in form.segments { if case .slot(let slot, _, _, _, _) = segment { names.append(slot) } }
+  for segment in form.segments { if case .slot(let slot, _, _) = segment { names.append(slot) } }
   guard slots.count == names.count, Set(slots.keys) == Set(names) else { return nil }
   var reason = ""
   for segment in form.segments {
     switch segment {
     case .text(let text): reason += text
-    case .slot(let slot, let max, let keepEnd, let lead, let trail):
-      guard let value = slots[slot], !value.isEmpty || lead != nil else { return nil }
-      if value.isEmpty { continue }
+    case .slot(let slot, let max, let keepEnd):
+      guard let value = slots[slot], !value.isEmpty else { return nil }
       // Swift's Character is an extended grapheme cluster, as Intl.Segmenter's graphemes are on the Host.
       let clusters = Array(visible(value))
-      reason += lead ?? ""
       reason += clusters.count <= max ? String(clusters) : keepEnd ? "…" + String(clusters.suffix(max - 1)) : String(clusters.prefix(max - 1)) + "…"
-      reason += trail ?? ""
     }
   }
   return reason
@@ -575,31 +531,12 @@ func readRequestLine(limit: Int) -> Data {
 // MARK: - Self-test (no LocalAuthentication)
 
 enum SelfTest {
-  // The helper does not approve Electron sheets; it checks their separate signing domain against the shared vector.
-  static func confirmationSigning(_ root: JSONValue) -> Bool {
-    func decoded(_ value: String) -> Data? {
-      let base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-      return Data(base64Encoded: base64 + String(repeating: "=", count: (4 - base64.count % 4) % 4))
-    }
-    guard let example = root["signing"]?["confirmations"]?["example"],
-          let hostId = example["hostId"]?.stringValue, let deviceId = example["deviceId"]?.stringValue,
-          let confirmationId = example["confirmationId"]?.stringValue, let previewHash = example["previewHash"]?.stringValue,
-          let expected = example["text"]?.stringValue,
-          let spki = root["p256"]?["spki"]?.stringValue, let publicData = decoded(spki), publicData.count >= 65,
-          let encodedSignature = example["signature"]?.stringValue, let signatureData = decoded(encodedSignature),
-          let key = try? P256.Signing.PublicKey(x963Representation: publicData.suffix(65)),
-          let signature = try? P256.Signing.ECDSASignature(rawRepresentation: signatureData) else { return false }
-    let text = ["latch-confirm-v1", hostId, deviceId, confirmationId, previewHash].joined(separator: "\n")
-    return Array(text.utf16) == Array(expected.utf16) && key.isValidSignature(signature, for: Data(text.utf8))
-  }
-
   static func run(path: String) -> Int32 {
     guard let data = FileManager.default.contents(atPath: path), let root = try? JSONParser.parse([UInt8](data)) else {
       FileHandle.standardOutput.write(Data("{\"v\":1,\"ok\":false,\"error\":\"vectors-unreadable\"}\n".utf8))
       return 1
     }
-    let confirmationSigningResult = confirmationSigning(root)
-    var ok = confirmationSigningResult
+    var ok = true
     var canonicalResults: [String] = []
     var cases: [JSONValue] = []
     if let single = root["canonicalJson"] { cases.append(single) }
@@ -675,7 +612,7 @@ enum SelfTest {
         requestResults.append("\"\(outcome)\"")
       }
     } else { ok = false }
-    let line = "{\"v\":1,\"ok\":\(ok),\"confirmationSigning\":\(confirmationSigningResult),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))],\"presenceReason\":[\(reasonResults.joined(separator: ","))],\"presenceRequest\":[\(requestResults.joined(separator: ","))]}\n"
+    let line = "{\"v\":1,\"ok\":\(ok),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))],\"presenceReason\":[\(reasonResults.joined(separator: ","))],\"presenceRequest\":[\(requestResults.joined(separator: ","))]}\n"
     FileHandle.standardOutput.write(Data(line.utf8))
     return ok ? 0 : 1
   }

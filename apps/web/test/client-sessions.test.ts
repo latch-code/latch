@@ -26,7 +26,7 @@ import {
 import { steadyHold } from '../src/hooks/useSteady.ts'
 
 function task(id: string, updatedAt: Date, extra: Partial<TaskSummary> = {}): TaskSummary {
-  return { id, title: `会话 ${id}`, status: 'idle', updatedAt: updatedAt.toISOString(), ...extra }
+  return { harnessId: 'standard', id, title: `会话 ${id}`, status: 'idle', updatedAt: updatedAt.toISOString(), ...extra }
 }
 const at = (day: number, hour = 12) => new Date(2026, 9, day, hour)
 

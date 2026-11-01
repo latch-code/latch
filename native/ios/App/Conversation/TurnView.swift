@@ -10,7 +10,7 @@ struct TurnView: View, Equatable {
     /** The Mac is out of reach, so nothing here may look as if it is still moving. */
     let frozen: Bool
     let delivery: String?
-    let harnessId: String?
+    let mark: String?
     let engine: String
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
@@ -18,7 +18,7 @@ struct TurnView: View, Equatable {
     @State private var unfolded = false
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
-            && a.harnessId == b.harnessId && a.engine == b.engine && a.endSaid == b.endSaid
+            && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
@@ -26,7 +26,7 @@ struct TurnView: View, Equatable {
         let folds = !running && PhoneConversation.workFolds(turn, outcome: outcome)
         VStack(alignment: .leading, spacing: 12) {
             if let user = turn.user { UserBubble(message: user, delivery: delivery) }
-            if !turn.replies.isEmpty || running { AuthorLine(harnessId: harnessId, engine: engine, model: PhoneConversation.turnModel(turn)) }
+            if !turn.replies.isEmpty || running { AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn)) }
             if folds {
                 Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
                     HStack(spacing: 4) {
@@ -84,12 +84,12 @@ private struct UserBubble: View {
 
 /** The Harness, with the model secondary. */
 private struct AuthorLine: View {
-    let harnessId: String?
+    let mark: String?
     let engine: String
     let model: String?
     var body: some View {
         HStack(spacing: 8) {
-            EngineTile(harnessId: harnessId, size: 16)
+            EngineTile(mark: mark, size: 16)
             Text(engine).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
             if let model { Text(model).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
         }

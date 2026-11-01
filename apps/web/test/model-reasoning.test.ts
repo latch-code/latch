@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, SessionConfigOption } from '@latch/protocol'
@@ -36,15 +37,7 @@ const reasoning: SessionConfigOption = {
   ],
 }
 const context: SessionConfigOption = { ...reasoning, id: 'context', name: '上下文窗口', category: 'model_config' }
-const harness: HarnessInfo = {
-  id: 'fake-agent',
-  name: 'Fake Agent',
-  source: 'acp',
-  status: 'ready',
-  modes: ['agent'],
-  models: 'agent',
-  level: 'L3',
-}
+const harness: HarnessInfo = testHarness('fake-agent', { label: 'Fake Agent' })
 const catalog: HostCatalog = {
   harnesses: [harness],
   providers: [],
@@ -206,9 +199,9 @@ describe('the 权限 chip', () => {
     expect(draft()).toMatchObject({ label: '开始后可以选', amber: false })
   })
 
-  it('disables wider rows on another device, with where to do it', () => {
+  it('offers wider rows on another device too', () => {
     const rows = view('workspace-write', { legacy: false, local: false }).rows!
-    expect(rows.map(row => row.disabledReason)).toEqual([undefined, undefined, '在 Mac 上开启'])
+    expect(rows.map(row => row.disabledReason)).toEqual([undefined, undefined, undefined])
   })
 })
 

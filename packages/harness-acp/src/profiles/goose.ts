@@ -7,10 +7,10 @@ export const gooseProfile: HarnessProfile = {
     approvals: 'prompts',
     defaultEnv: { GOOSE_MODE: 'approve' },
     expectedMode: 'approve',
-    modeLadder: ['chat', 'approve', 'auto'],
+    modeLadder: ['chat', 'approve', 'smart_approve', 'auto'],
     neverAskModes: ['auto'],
-    forbiddenModes: ['smart_approve'],
     readback: 'mode',
+    inheritEnv: ['GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME'],
     notes: [],
   },
   // goose has no other folders to receive and does not limit the paths its tools use.

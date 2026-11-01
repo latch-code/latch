@@ -46,9 +46,6 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "noteTooLong": [PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 500)), PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 501)), PhoneConversation.rejectionNoteTooLong(" " + String(repeating: "字", count: 500) + "\n")],
         "faceId": [("com.apple.LocalAuthentication", -2), ("com.apple.LocalAuthentication", -4), ("com.apple.LocalAuthentication", -1), (kCFErrorDomainOSStatus as String, -128), (kCFErrorDomainOSStatus as String, -25300), ("", 0)]
             .map { SecureDeviceKeys.verificationFailure(domain: $0.0, code: $0.1) == .declined },
-        "chatStartable": PhoneStart.chatStartable(catalog),
-        "chatSealed": [PhoneStart.chatStartable(value["sealedCatalog"]), PhoneStart.defaults(value["sealedCatalog"]).workspaceId as Any],
-        "chatBlocker": PhoneStart.blocker(value["sealedCatalog"], choice: PhoneStartChoice(harnessId: "standard", workspaceId: nil, model: PhoneModelChoice(providerId: "p", providerName: "P", model: "m1"))) ?? "",
         "rows": tasks.map { words(PhoneSessions.rowStatus($0)) },
         "frozen": tasks.map { words(PhoneSessions.rowStatus($0, frozen: true)) },
         "shelves": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces).map { ["label": $0.label, "ids": $0.tasks.compactMap { $0["id"].string }] },
@@ -63,11 +60,11 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "subtitle": subtitle.parts, "fullAccess": subtitle.fullAccess,
         "input": value["inputs"].array.map { PhoneConversation.inputGate(summary: $0["summary"], permission: $0["permission"], canRun: $0["canRun"].bool, connected: $0["connected"].bool) ?? "" },
         "approvals": value["approvals"].array.map { approval -> [String: Any] in
-            let gate = PhoneConversation.approvalGate(approval, canApproveStandard: value["canApprove"].bool)
-            return ["heading": gate.heading, "canAllow": gate.canAllow, "option": gate.allowOption ?? "", "mac": gate.macLine ?? "", "clause": gate.riskClause ?? ""]
+            let gate = PhoneConversation.approvalGate(approval, canApproveStandard: value["canApprove"].bool, canApproveElevated: value["canApproveElevated"].bool, canRun: value["canRun"].bool)
+            return ["heading": gate.heading, "canAllow": gate.canAllow, "option": gate.allowOption ?? "", "refusal": gate.refusal ?? "", "clause": gate.riskClause ?? ""]
         },
-        "engines": PhoneStart.engines(catalog).map { ["id": $0.id, "name": $0.name, "startable": $0.startable, "line": $0.line ?? ""] },
-        "projects": PhoneStart.projects(catalog).map { ["id": $0.id, "startable": $0.startable] },
+        "engines": PhoneStart.engines(catalog).map { ["id": $0.id, "name": $0.name] },
+        "projects": PhoneStart.projects(catalog).map { ["id": $0.id] },
         "choice": ["harness": choice.harnessId ?? "", "workspace": choice.workspaceId ?? "", "model": choice.model?.model ?? ""],
         "blocker": PhoneStart.blocker(catalog, choice: choice) ?? "",
         "fields": try fieldValue(.object(PhoneStart.fields(choice, prompt: "开始"))),

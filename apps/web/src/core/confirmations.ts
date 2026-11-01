@@ -2,8 +2,7 @@ import { useLayoutEffect, useSyncExternalStore } from 'react'
 import type { BlockingTask, ConfirmationTicket, PresenceAction } from '@latch/protocol'
 import { api as defaultApi, ApiError, ClientError, type ApiOptions } from './api.ts'
 import { blockedDetail } from './blocking.ts'
-import { shellConfirmations, type ShellConfirmationResult } from './shell.ts'
-import { CONFIRMATION_RESULT_TEXT, describeFailure, HOST_DESKTOP_TEXT } from './securityCopy.ts'
+import { CONFIRMATION_RESULT_TEXT, describeFailure } from './securityCopy.ts'
 
 /**
  * Local presence confirmation (Touch ID or the login password on the Host
@@ -47,7 +46,7 @@ export interface ConfirmationPresenter {
 }
 
 export class ConfirmationError extends ClientError {
-  constructor(message: string, reason: FailureReason | PausedReason | 'host-desktop' | 'dismissed', handled: boolean) {
+  constructor(message: string, reason: FailureReason | PausedReason | 'dismissed', handled: boolean) {
     super(message, reason, { definitive: true, handled })
     this.name = 'ConfirmationError'
   }
@@ -57,7 +56,6 @@ export interface ConfirmationOptions {
   /** Where the states are shown; the active inline card unless the caller provides its own presenter. */
   presenter?: ConfirmationPresenter
   api?: <T>(path: string, options?: ApiOptions) => Promise<T>
-  nativeConfirm?: (id: string) => Promise<ShellConfirmationResult>
   pollMs?: number
   sleep?: (ms: number, wake: AbortSignal) => Promise<void>
   /** Told the ticket the Host opened, and `null` just before the request goes out again with it. */
@@ -124,7 +122,6 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
       throw new ConfirmationError(message, paused, true)
     }
     if (!(error instanceof ApiError && error.status === 403 && error.code === 'stepup-required')) throw error
-    if (error.details.stepup?.where === 'host-desktop') throw new ConfirmationError(HOST_DESKTOP_TEXT, 'host-desktop', false)
     if (!error.details.confirmation) throw error
     ticket = error.details.confirmation
   }
@@ -152,22 +149,6 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
   }
   options.onTicket?.(ticket.id)
   presenter.show({ phase: 'waiting', ticket }, actions)
-  if (ticket.confirmationMethod === 'shell-local') {
-    const confirm = options.nativeConfirm ?? shellConfirmations()?.confirm
-    let outcome: ShellConfirmationResult
-    try {
-      outcome = confirm ? await confirm(ticket.id) : { status: 'failed', code: 'confirmation-shell-unavailable' }
-    } catch {
-      outcome = { status: 'failed', code: 'confirmation-failed' }
-    }
-    if (cancelled.signal.aborted) stop()
-    if (outcome.status !== 'confirmed') {
-      actions.cancel()
-      if (outcome.status === 'cancelled') stop()
-      fail('error', describeFailure(409, outcome.status === 'failed' ? outcome.code : 'presence-busy', ''))
-    }
-  }
-
   while (ticket.status === 'pending') {
     await sleep(pollMs, cancelled.signal)
     if (cancelled.signal.aborted) stop()
@@ -184,8 +165,7 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     if (ticket.status === 'pending') presenter.show({ phase: 'waiting', ticket }, actions)
   }
   if (cancelled.signal.aborted) stop()
-  if (ticket.status === 'denied')
-    fail('denied', ticket.form?.startsWith('start.') ? CONFIRMATION_RESULT_TEXT.startDenied : CONFIRMATION_RESULT_TEXT.denied)
+  if (ticket.status === 'denied') fail('denied', CONFIRMATION_RESULT_TEXT.denied)
   if (ticket.status === 'expired') fail('expired', CONFIRMATION_RESULT_TEXT.expired)
   if (ticket.status === 'cancelled') fail('cancelled', CONFIRMATION_RESULT_TEXT.cancelled)
   if (ticket.status !== 'approved')

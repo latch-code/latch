@@ -162,12 +162,6 @@ export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
     why: 'Only a person adding relay nodes reads it.',
   })),
   {
-    file: COPY_FILE,
-    key: 'BLOCKED_ACTION_TEXT.automation.grant',
-    words: ['自动化'],
-    why: 'Mirrors the confirmation title on the macOS helper, which no route raises yet; renaming it means rebuilding the helper.',
-  },
-  {
     file: 'apps/web/src/palette/ShellPalette.tsx',
     key: 'SETTINGS_ROWS.keywords',
     words: ['自动化'],

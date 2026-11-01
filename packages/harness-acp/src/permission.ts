@@ -113,6 +113,10 @@ export function launchHash(input: {
   profileVersion: 1
   projectConfig?: string
   folders?: LaunchFolders
+  /** The names a profile inherits from the person's environment; never their values, since a client receives this hash. */
+  inheritEnv?: readonly string[]
+  /** Variable to the path of the program it points at. */
+  programs?: Record<string, string>
 }): string {
   return sha256Hex(
     canonicalJson({
@@ -125,13 +129,14 @@ export function launchHash(input: {
       profileVersion: input.profileVersion,
       projectConfig: input.projectConfig,
       ...(input.folders?.paths.length ? { folders: { via: input.folders.via, paths: input.folders.paths } } : {}),
+      ...(input.inheritEnv?.length ? { inheritEnv: [...input.inheritEnv].sort() } : {}),
+      ...(input.programs && Object.keys(input.programs).length ? { programs: input.programs } : {}),
     }),
   )
 }
 
 /** How `value` relates to `expected`: unknown modes and an unknown baseline count as wider. */
 export function classifyMode(profile: AcpPermissionProfile | undefined, expected: string | undefined, value: string): ConfigChangeClass {
-  if (profile?.forbiddenModes?.includes(value)) return 'forbidden'
   if (value === expected) return 'neutral'
   const ladder = profile?.modeLadder
   if (!ladder || expected === undefined) return 'wider'

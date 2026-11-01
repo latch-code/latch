@@ -121,7 +121,7 @@ export function SessionPanels({
     ? panels.filter(
         panel =>
           (!summary.personal || summary.pluginIds?.includes(panel.pluginId))
-          && (panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId ?? 'standard')),
+          && (panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId)),
       )
     : []
   const [treeStarted, setTreeStarted] = useState(showFiles)

@@ -66,7 +66,6 @@ export const PRESENCE_REASON_VECTORS = SECURITY_VECTORS.presenceReason
 export const PRESENCE_REQUEST_VECTORS = SECURITY_VECTORS.presenceRequest
 export const ENROLL_SIGNING_VECTOR = SECURITY_VECTORS.signing.enroll
 export const RENEW_SIGNING_VECTOR = SECURITY_VECTORS.signing.renew
-export const CONFIRMATION_SIGNING_VECTOR = SECURITY_VECTORS.signing.confirmations
 export const FOLDERS_SIGNING_VECTOR = SECURITY_VECTORS.signing.folders
 
 export function enrollSigningText(hostId: string, enrollmentId: string, nonce: string): string {
@@ -75,10 +74,6 @@ export function enrollSigningText(hostId: string, enrollmentId: string, nonce: s
 
 export function renewSigningText(hostId: string, deviceId: string, nonce: string): string {
   return `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}`
-}
-
-export function confirmationSigningText(hostId: string, deviceId: string, confirmationId: string, previewHash: string): string {
-  return `latch-confirm-v1\n${hostId}\n${deviceId}\n${confirmationId}\n${previewHash}`
 }
 
 export function foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string {

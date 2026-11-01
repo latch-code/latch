@@ -304,8 +304,6 @@ export interface PendingSubmission {
   queue?: true
   fileRefs?: FileMention[]
   attachmentIds?: string[]
-  /** The Host asked for this confirmation and nothing has been sent with it yet: a page that went away left it open. */
-  awaitingConfirmation?: string
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -315,8 +313,6 @@ function modelRef(value: unknown): ModelRef | undefined {
     ? { providerId: item.providerId, model: item.model }
     : undefined
 }
-
-const CONFIRMATION_ID = /^cfm_[A-Za-z0-9_-]{22}$/u
 
 export function readPending(key: string): PendingSubmission | null {
   try {
@@ -361,9 +357,6 @@ export function readPending(key: string): PendingSubmission | null {
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
-      ...(typeof item.awaitingConfirmation === 'string' && CONFIRMATION_ID.test(item.awaitingConfirmation)
-        ? { awaitingConfirmation: item.awaitingConfirmation }
-        : {}),
     }
   } catch {
     return null

@@ -30,9 +30,15 @@ export const SESSION_ACTIONS = {
   }),
   'approval.stale': z.strictObject({ approvalId: opaqueId }),
   /** Written before a full-access session is spawned; nothing is spawned without it. */
-  'task.l3.start-requested': z.strictObject({ harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
+  'task.l3.start-requested': z.strictObject({
+    harnessId: opaqueId,
+    launchHash: hex64,
+    promptHash: hex64.optional(),
+    folderCount: count.optional(),
+  }),
   /** `definitionHash`: the launch fingerprint without the project's configuration, from drivers that report it. */
   'task.l3.started': z.strictObject({
+    promptHash: hex64.optional(),
     sessionId: opaqueId,
     harnessId: opaqueId,
     launchHash: hex64,

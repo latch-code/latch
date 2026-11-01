@@ -265,6 +265,7 @@ const workspaceSchema = z
   }))
 const agentProbeSchema = z.object({
   status: z.enum(['ready', 'authentication-required', 'failed']),
+  login: z.enum(['authenticated', 'unauthenticated', 'unknown']).optional(),
   agent: z.object({ name: z.string().max(200).optional(), version: z.string().max(100).optional() }).optional(),
   capabilities: z.object({
     embeddedContext: z.boolean().optional(),

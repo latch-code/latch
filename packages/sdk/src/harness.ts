@@ -1,6 +1,6 @@
 import type { Bridge, ProjectFolder } from './bridge.ts'
 import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
-import type { AttachmentRef, FileChange, HarnessInfo, ModelRef, RiskLevel } from '@latch/protocol/types'
+import type { AttachmentRef, FileChange, HarnessCapabilities, HarnessInfo, ModelRef, RiskLevel } from '@latch/protocol/types'
 
 export interface ToolRiskInput {
   toolName: string
@@ -74,6 +74,16 @@ export interface HarnessHostOptions {
   clock?: () => number
 }
 
+/** A driver's own account of `HarnessCapabilities`, with the modes and attachments it takes. */
+export interface HarnessDeclaration {
+  modes?: HarnessInfo['modes']
+  attachments?: HarnessInfo['attachments']
+  models?: Partial<HarnessCapabilities['models']>
+  permission?: Partial<HarnessCapabilities['permission']>
+  tools?: Partial<HarnessCapabilities['tools']>
+  display?: Partial<HarnessCapabilities['display']>
+}
+
 /** A complete harness implementation. This is distinct from a model API adapter. */
 export interface HarnessDriver {
   /**
@@ -88,8 +98,11 @@ export interface HarnessDriver {
   name: string
   version: string
   description?: string
-  /** Modes and model ownership shown to clients. Defaults: both modes, agent-managed models. */
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
+  /**
+   * What this harness really does. Leave out what is not known: the Host takes the weakest value, and it lowers whatever
+   * it cannot vouch for (only the built-in harness gets `enforcement: 'latch'`). Defaults: both modes, its own models.
+   */
+  capabilities?: HarnessDeclaration
   /**
    * `all`: sessions receive every folder of their project (`CreateTaskInput.folders`) and the driver gets `projects()`.
    * Absent: sessions receive the primary folder only, as `cwd`.
@@ -104,6 +117,8 @@ export interface HarnessDriver {
   folderAccess?: NonNullable<HarnessInfo['projectFolders']>
   /** What clients may say about this driver's permissions before a session starts. */
   permission?: NonNullable<HarnessInfo['permission']>
+  /** How a person logs in to it, looked up with each catalog: which program is installed can change. */
+  login?(): HarnessInfo['login']
   /** Optional readiness probe, e.g. whether an agent binary is installed. */
   status?(): { status: HarnessInfo['status']; statusMessage?: string }
   /** Creates an unstarted instance; asynchronous initialization belongs to Bridge.start(). */

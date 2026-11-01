@@ -73,14 +73,8 @@ export type PresenceAction =
   | 'device.enroll'
   | 'device.enroll-native'
   | 'device.grant'
-  | 'agent.probe'
-  | 'automation.grant'
-  | 'task.start-l3'
-  | 'task.mode-widen'
   | 'policy.change'
-  | 'provider.set-key'
   | 'provider.confirm-origin'
-  | 'approval.r2'
 
 /** A full-access session, running or waiting for an answer, that holds back a confirmation (`presence-blocked`). */
 export interface BlockingTask {
@@ -97,14 +91,12 @@ export interface ConfirmationTicket {
   /** Fixed Chinese title per action. */
   title: string
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'consumed' | 'error'
-  /** The Host chooses; absent on older Hosts, which always use OS authentication. */
-  confirmationMethod?: 'lpc-local' | 'shell-local'
   /** 'a1b2-c3d4-e5f6-0718'; no longer shown on the Host computer, which shows `reason` instead. */
   hashDisplay: string
   expiresAt: string
   /** The sentence the macOS system sheet shows (`PresencePreview.reason`). Absent from older Hosts. */
   reason?: string
-  /** Its fixed form: a first or changed start opens the card's details at once. Absent from older Hosts. */
+  /** Its fixed form. Absent from older Hosts. */
   form?: PresenceReasonForm
   /** The details behind the reason, for the card: the preview's lines and warnings. Absent from older Hosts. */
   lines?: Array<{ label: string; value: string }>
@@ -118,28 +110,11 @@ export interface ConfirmationTicket {
  * the macOS helper, which rebuilds the reason from the subject and refuses any difference.
  */
 export type PresenceReasonForm =
-  | 'approval.write'
-  | 'approval.tool'
-  | 'start.first'
-  | 'start.first-mode'
-  | 'start.changed'
-  | 'start.changed-mode'
-  | 'mode.widen'
-  | 'mode.widen-draft'
-  | 'agent.probe'
-  | 'automation.grant'
   | 'device.enroll-named'
   | 'device.enroll-native'
   | 'device.grant'
   | 'origin.confirm'
   | 'policy.egress-many'
-  | 'policy.remote-start'
-  | 'policy.relay'
-  | 'policy.feishu'
-  | 'policy.local'
-  | 'policy.remote'
-  | 'policy.remote-agents'
-  | 'policy.remote-projects'
   | 'policy.several'
   | 'plugin.package.apply'
 
@@ -180,7 +155,7 @@ export type PresenceAvailability =
   | { status: 'unavailable'; reason: 'platform' | 'helper-missing' | 'helper-signature' | 'cdhash-mismatch' | 'disabled'; message: string }
 
 export type PresenceOutcome =
-  | { result: 'approved'; method: 'biometric' | 'password' | 'shell'; nonce: string; previewHash: string }
+  | { result: 'approved'; method: 'biometric' | 'password'; nonce: string; previewHash: string }
   | { result: 'denied' | 'cancelled' | 'timeout'; message?: string }
   | { result: 'error'; message?: string; failure?: 'biometry-lockout' }
 

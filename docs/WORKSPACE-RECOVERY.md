@@ -24,7 +24,7 @@ sources:
 - `runGate` 为 `{ allowed: true }` 或 `{ allowed: false, reason }`。调用方使用当前设备的 `run` 权限和实际所选 Harness 的启动门禁；原因沿用已有权限文案。组件展示判断不替代 Host 授权。
 - `local` 表示当前请求确实经 `host.sock`，不能把回环浏览器当本机。`harness` 传入真正用于新会话的 Harness 名称和文件夹数量限制。
 - `phase` 为 `idle`、`busy` 或 `unknown`。未知提交仍恢复原请求的原始请求体和 `requestId`；不能将未知结果转成一次新的分叉。正在取消或运行的来源也先等真实结算。
-- `onFork(taskId, upToMessageId, workspaceId)` 仅准备分叉草稿。上层保留现有草稿及其附件语义，不自动发送，继续沿用正常提交、授权复查与 L3 本机确认流程。
+- `onFork(taskId, upToMessageId, workspaceId)` 仅准备分叉草稿。上层保留现有草稿及其附件语义，不自动发送，继续沿用正常提交与授权复查。
 
 组件要求显式保存的当前可用项目，排除不可用文件夹、不允许远程启动的项目与超出所选 Harness 文件夹数量上限的项目。`default` 不作为恢复目标：普通分叉有意复用 Host 已知的自有默认会话目录，不能借此避开旧目录失效。添加或修复项目后，上层更新项目列表即可原地重新选择；失效的旧选择不会自动回退到其他项目。
 

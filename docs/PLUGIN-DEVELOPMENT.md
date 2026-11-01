@@ -239,7 +239,7 @@ Standard 在每次工具调用执行前请 Host 分级（`HarnessHostOptions.cla
 
 - 分级表只列出内置工具。第三方工具的 `requiresApproval: false` 会被忽略，它们一律是 R2，只读工具同样每次询问。`requiresApproval` 只在没有分级器的场合（例如直接用 `createRuntime` 写的测试）决定是否询问。
 - 分级器抛错或返回未知值时按 R2 处理。审批的 `risk` 字段由 Host 按当前分级重新计算（不低于运行时记录的值，至少为 R1），并与待处理审批一起持久化；Host 重启后旧审批失效，不会被重新批准。Host 的分级为 R2 时，审批另带原因 `riskReason`（第三方工具为 `unlisted-tool`），审批卡写成「高风险 · Latch 不认识的工具」。工具的 `title` 与 `kind` 不参与分级：把自己叫作「读取文件」的插件工具仍是 R2。
-- R2 只能在执行端电脑上用 Latch 桌面端经本机确认（Touch ID 或登录密码，目前只在 macOS 上提供）后允许，不提供「始终允许」；其他设备只能拒绝或取消。
+- R2 每次询问，不提供「始终允许」；持有 `approve:elevated` 的设备都能允许，其他设备只能拒绝或取消。每次决定都有审计。
 
 ## 注册模型 Provider
 
@@ -286,7 +286,7 @@ export default {
   activate(ctx) {
     ctx.registerHarness({
       id: 'my-harness', name: 'My Harness', version: '1.0.0',
-      capabilities: { modes: ['agent'], models: 'agent' },
+      capabilities: { modes: ['agent'], permission: { enforcement: 'harness' } },
       status: () => ({ status: 'ready' }),
       create: options => createMyHarness(options),
     })
@@ -295,7 +295,8 @@ export default {
 ```
 
 - 所有已启用的 Harness 都会被挂载并出现在新会话的选择器中；`--harness my-harness` 让它成为默认值。
-- `capabilities.modes` 列出接受的模式；`models: 'host'` 表示使用 Host 的模型服务（客户端会显示模型选择器并传入 `model`），`'agent'` 表示自行管理模型。不支持的模式或模型请求由 Host 以 400 拒绝。
+- `capabilities` 写这个 Harness 实际做什么，客户端只读这些事实，不判断它是哪种 Driver；不知道的项不写，Host 按最弱处理。`modes` 列出接受的模式。`models.owner: 'latch'` 表示使用 Host 的模型服务（客户端会显示模型选择器并传入 `model`），`'harness'`（默认）表示自行管理模型；不支持的模式或模型请求由 Host 以 400 拒绝。`models.catalogue` 说明开始前能否知道可选项（`none` 为默认），`models.wires` 列出能接的模型协议（空表示不能经 Latch 转发）。`permission.enforcement` 写谁决定工具调用能否运行（`harness` 或 `none`，默认 `none`），`permission.rejectionNote` 表示拒绝说明能送到模型（默认 `false`）。`tools.fileMentions` 表示消息里提到的项目文件能送到它（默认 `false`，这时 Host 拒绝带文件引用的输入）。`display.label` 是显示的名字（默认 `name`），`display.mark` 是客户端固定图标集的键（预设 ID 或 `plugin`），不是地址或图片。
+- 这些事实是对用户的陈述，描述的一方说了不算，由 Host 钳制：只有内置 Harness 能得到 `enforcement: 'latch'`（其他写了也算 `harness`，会话仍是 L3，也收不到分级器）；只有内置 Harness 能说 `tools.shell: false`；其他 Harness 的名字与内置的相同或只差大小写、宽度、空白与不可见字符时显示为「…（非内置）」，也不能用内置的图标。
 - `status()` 可选，返回 `ready` 或 `unavailable` 与说明，例如依赖的程序未安装。
 - `create(options)` 同步返回尚未启动的 Bridge，异步初始化放进 `start()`。`options`（`HarnessHostOptions`）包括私有 `dataDir`（`<数据目录>/harnesses/<driver-id>`，不要写入用户工作区）、默认 `workspaceRoot`、允许的 `workspaces()`（各项目的主文件夹）、`registry`、`providerId`、`defaultModel()` 与可选 `maxSteps`。
 - `projectFolders: 'all'`（可选）：Driver 能使用项目的全部文件夹。Host 因此在新建会话时传入 `workspaceId` 与 `folders`（`{ id, path }` 的有序列表，`[0]` 就是 `cwd`），并在 `options.projects()` 中列出当前可用的项目及其文件夹（`default` 是启动目录）；Driver 应据此核对 `folders`，在会话中保存它们，并在每次输入前确认它们仍属于该项目（否则 409 `workspace-changed`）。会话应把它们记在 `TaskSummary.workspaceId` 与 `folders` 中。没有声明的 Driver 只收到主文件夹作为 `cwd`，`HarnessInfo.projectFolders` 也不声称它能使用其他文件夹。L3 Driver 同样收到这些字段，`launchPreview` 也收到 `workspaceId` 与 `folders`，并在返回的 `folders` 中列出 Agent 除 `cwd` 之外还会收到的文件夹，本机确认逐个显示并绑定它们。使用 Registry 时在运行开始时取得 `acquire(providerId, { tools })` 租约，并持有到运行真正结束。
@@ -309,7 +310,7 @@ export default {
 
 Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无法核实它的执行范围。规则与 ACP 会话相同（见 [HARNESSES.md](./HARNESSES.md)）：
 
-- 新建会话只能在执行端电脑上的 Latch 桌面端经本机确认；发送输入、修改设置、允许审批与删除会话只能在执行端桌面端进行；其他设备只能查看、拒绝和取消。
+- 任何持有 `run` 的设备都能新建会话、发送输入、修改设置与允许询问，不弹确认，每次启动都有审计；只有 `view` 的设备只能查看、拒绝和取消。
 
 ### Bridge 契约
 
@@ -325,9 +326,9 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | `subscribe` | 状态变化时通知，带 sessionId 时 Host 会合并通知并推送该会话状态 |
 | `liveRuns?` | 可选。同步返回内存中活动的运行 `{ sessionId, live }`，开销只随活动运行数增长：Host 每次变化与阈值到期时都调用，据此发现沉默；不提供时没有沉默通知 |
 | `remove?` | 可选。删除已结束会话的数据；运行中返回 409 `task-running` |
-| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效；经本机确认放宽权限模式时 `options.allowWiden` 为 `true`。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行 |
-| `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter`、`wider` 或 `forbidden`。Host 对 `wider` 先要求本机确认，再以 `allowWiden: true` 调用 `setConfig`；对 `forbidden` 返回 400 `mode-forbidden`。未实现时一律按 `neutral` 处理，不要求确认 |
-| `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于本机确认；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
+| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行 |
+| `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter` 或 `wider`。Host 只用它决定是否写放宽模式的审计 |
+| `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
 
 会话 ID 与审批 ID 必须全局唯一（建议 UUID 或带前缀的 UUID），不超过 256 字符；Host 按 ID 把请求路由到对应 Driver，冲突时先挂载者胜出。
 

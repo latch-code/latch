@@ -1,6 +1,14 @@
 import { memo, useMemo, useRef, useState } from 'react'
 import { ChevronRight, FileSearch, RotateCcw, X } from 'lucide-react'
-import { splitChangeNote, type Approval, type HarnessInfo, type Message, type TaskDetail, type TurnChanges } from '@latch/protocol'
+import {
+  splitChangeNote,
+  type Approval,
+  type HarnessInfo,
+  type HarnessLogin,
+  type Message,
+  type TaskDetail,
+  type TurnChanges,
+} from '@latch/protocol'
 import {
   deliveryWords,
   foldWords,
@@ -131,7 +139,9 @@ interface TurnViewProps {
   /** Stands in for the Harness in what the status says, and beside it on the author line: only the demo model does. */
   engine?: string
   harnessName: string
-  harness?: Pick<HarnessInfo, 'id' | 'source'>
+  /** How to log in to this session's harness, shown when a turn ends for want of it. */
+  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
+  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
   /** The model that answered, or that the run uses before its first step records one, and its service's name. */
   model?: string
   provider?: string
@@ -170,7 +180,7 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
   if (keys.length !== Object.keys(b).length) return false
   return keys.every(key => {
     if (Object.is(a[key], b[key])) return true
-    if (key === 'harness' || key === 'changes' || key === 'plan') return sameData(a[key], b[key])
+    if (key === 'harness' || key === 'changes' || key === 'plan' || key === 'login') return sameData(a[key], b[key])
     if (key !== 'context') return false
     const left = a.context,
       right = b.context
@@ -209,6 +219,7 @@ function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOu
 }
 
 const TurnView = memo(function TurnView({
+  login,
   turn,
   engine,
   harnessName,
@@ -361,7 +372,9 @@ const TurnView = memo(function TurnView({
             />
           )}
           {status && <StatusLine {...status} />}
-          {runEnd && summary && <RunEndNote summary={summary} harness={engine ?? harnessName} onRetry={onRetry} onContinue={onContinue} />}
+          {runEnd && summary && (
+            <RunEndNote summary={summary} harness={engine ?? harnessName} onRetry={onRetry} onContinue={onContinue} login={login} />
+          )}
           {showOutcome && <OutcomeRecord turn={turn} outcome={outcome} onRetry={onRetry} />}
           {retry?.warning && (
             <Collapse open={confirming}>
@@ -436,6 +449,7 @@ const TurnView = memo(function TurnView({
  * with the status line instead.
  */
 export function Transcript({
+  login,
   detail,
   approvals,
   harnessName,
@@ -460,8 +474,10 @@ export function Transcript({
   approvals: Approval[]
   /** This device's approval buttons; omitted, every offered option is shown. */
   harnessName: string
+  /** How to log in to this session's harness, shown when a turn ends for want of it. */
+  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
   /** The session's harness, for the tile on each turn's author line. */
-  harness?: Pick<HarnessInfo, 'id' | 'source'>
+  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
   /** A personal agent's session: its name is the word of the author line. */
   personal?: boolean
   /** The demo model answers, and every turn says so. */
@@ -613,6 +629,7 @@ export function Transcript({
                 }}
                 {...(engine ? { engine } : {})}
                 harnessName={harnessName}
+                login={login}
                 harness={harness}
                 model={stamped?.model ?? (trailingLive ? detail.summary.model : undefined)}
                 provider={providerId ? providerName?.(providerId) : undefined}

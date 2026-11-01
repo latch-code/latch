@@ -3,7 +3,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { AutoOpenOutputs } from '../src/preview/autoOpenOutputs.ts'
 import { parsePreferences } from '../src/preferences.ts'
 const active: TaskDetail = {
-  summary: { id: 'session', runId: 'run', title: 'title', status: 'running', updatedAt: '' },
+  summary: { harnessId: 'standard', id: 'session', runId: 'run', title: 'title', status: 'running', updatedAt: '' },
   messages: [],
   approvals: [],
   liveText: '',

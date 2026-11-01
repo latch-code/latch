@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { FolderOpen } from 'lucide-react'
-import type { AppSnapshot, HostCatalog, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
+import type { AppSnapshot, HarnessInfo, HostCatalog, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
 import { Badge, CopyButton, IconButton, InlineNotice, Tooltip } from '@latch/ui'
 import { CodeRootNotice, codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { MiddleText } from '../components/ui.tsx'
@@ -100,7 +100,7 @@ export function SessionFolders({
         })}
         {folders.length > 1 && harness && !allFolders && (
           <p className="crumb-note">
-            {harness.name}：{folderAccessText(harness, folders.length)}
+            {harness.capabilities.display.label}：{folderAccessText(harness, folders.length)}
           </p>
         )}
       </CrumbRow>
@@ -181,12 +181,12 @@ export function SessionFacts({
 }: {
   summary: TaskSummary
   detail: TaskDetail | null
-  harness: { source: string } | undefined
+  harness: Pick<HarnessInfo, 'capabilities'> | undefined
   gate: ComposerGate
 }) {
   return (
     <>
-      <SessionUsage summary={summary} detail={detail} agentReported={harness?.source === 'acp'} />
+      <SessionUsage summary={summary} detail={detail} agentReported={harness?.capabilities.models.owner === 'harness'} />
       <LockedOptions config={detail?.summary.id === summary.id ? (detail.config ?? []) : []} gate={gate} />
     </>
   )

@@ -29,12 +29,11 @@ export class DecisionRequests {
 
 /**
  * 「告诉 Agent 改做什么」 after 拒绝 (`useRejectionNote`): the note to send with the rejection, why it cannot go, or
- * neither. Only the built-in harness takes a note; an agent's ask (`advisory`) has no room for text, so the composer
- * keeps it for the next message once the turn ends. The Host applies the same rule, and, since a note is input to the
- * model, also requires 「发起和继续会话」 and the session ceiling, as typing does.
+ * neither. Only a harness that says so takes a note (`permission.rejectionNote`); an agent's ask has no room for text, so
+ * the composer keeps it for the next message once the turn ends. The Host applies the same rule, and, since a note is
+ * input to the model, also requires 「发起和继续会话」, as typing does.
  */
-export function rejectionNoteFor(approval: Pick<Approval, 'advisory'>, text: string): { note?: string; problem?: string } {
-  if (approval.advisory) return {}
+export function rejectionNoteFor(text: string): { note?: string; problem?: string } {
   const note = rejectionNote(text)
   return note === null ? { problem: DECISION_COPY.noteInvalid } : note === undefined ? {} : { note }
 }

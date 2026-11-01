@@ -327,6 +327,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
         <div className="pair-foot" data-dim={busy ? '' : undefined}>
           <p className="pair-foot-title">{COPY.scan}</p>
           <p className="pair-foot-note">{COPY.sameWifi}</p>
+          <p className="pair-foot-note">{COPY.drivesAgents}</p>
         </div>
         <WaitingDevices place="sheet" />
       </>

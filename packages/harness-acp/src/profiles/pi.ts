@@ -7,6 +7,8 @@ export const piProfile: HarnessProfile = {
     approvals: 'none',
     defaultEnv: {},
     readback: 'none',
+    inheritEnv: ['PI_CODING_AGENT_DIR'],
+    programEnv: { PI_ACP_PI_COMMAND: 'pi' },
     notes: ['pi 执行工具前不请求审批'],
   },
   // pi has no other folders to receive and does not limit the paths its tools use.

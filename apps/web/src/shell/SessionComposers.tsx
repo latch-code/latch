@@ -19,6 +19,7 @@ import { WorkspaceRecovery } from '../composer/WorkspaceRecovery.tsx'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { HarnessInstallCard, SetupCard } from '../newSession/NewSession.tsx'
+import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
 import { SendingMessage } from '../components/SendingMessage.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -110,8 +111,6 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     effectiveModel,
     run,
     placeholder,
-    presenceDown,
-    startReason,
     coarse,
     preferences,
     phone,
@@ -165,7 +164,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     if (configBusy.has(selectedId ?? '')) return
     void Promise.resolve(setConfig(option.id, value))
   }
-  const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.models === 'host')
+  const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
   const use = selectedId === null ? undefined : contextUse(current?.usageReport)
   const branch =
     selectedId === null
@@ -183,7 +182,6 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           workspaceId={recoveryProjects.get(current.summary.id)}
           onWorkspaceChange={workspaceId => setRecoveryProjects(previous => new Map(previous).set(current.summary.id, workspaceId))}
           forkSupported={catalog?.features?.fork === true}
-          local={access.local}
           harness={harnessInfo}
           runGate={
             access.scopes.has('run') && harnessInfo?.status === 'ready'
@@ -302,8 +300,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       onRetry={() => {
         void retryDraft()
       }}
-      canSend={gate.kind === 'open' && (selectedId === null ? block === null && !presenceDown : sessionBlock === undefined)}
-      blockReason={block?.message ?? sessionBlock ?? startReason}
+      canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined)}
+      blockReason={block?.message ?? sessionBlock}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
       {...(answer ? { answer } : {})}
       drawers={drawers}
@@ -455,8 +453,6 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
     gate,
     codeRootChoice,
     placeholder,
-    presenceDown,
-    startReason,
     coarse,
     preferences,
     sheetComposerRef,
@@ -479,8 +475,8 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       onRetry={() => {
         void retryDraft()
       }}
-      canSend={gate.kind === 'open' && block === null && !presenceDown}
-      blockReason={block?.message ?? startReason}
+      canSend={gate.kind === 'open' && block === null}
+      blockReason={block?.message}
       readOnly={gate.kind === 'read-only' ? gate.text : undefined}
       below={
         codeRootChoice ? (
@@ -501,9 +497,14 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
 }
 
 export function SetupNotices({ shell }: { shell: ShellState }) {
-  const { catalog, access, owner, submission, block, setupTrigger, openSettings, refresh } = shell
+  const { catalog, access, owner, submission, block, setupTrigger, openSettings, refresh, chosenHarness } = shell
   return (
     <>
+      <DraftLoginNotice
+        harness={chosenHarness?.status === 'ready' ? chosenHarness : undefined}
+        allowed={access.scopes.has('run')}
+        terminal={catalog?.features?.loginTerminal === true}
+      />
       {submission.fork && (
         <InlineNotice tone="neutral">
           正在从「{submission.fork.title ?? submission.fork.taskId}」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。

@@ -234,7 +234,7 @@ export function SessionHeader({
   crumb?: { folders?: ReactNode; after?: ReactNode }
   identity?: string
   summary?: TaskSummary
-  harness?: Pick<HarnessInfo, 'id' | 'name' | 'source'>
+  harness?: Pick<HarnessInfo, 'capabilities' | 'status'> | undefined
   /** The basename of the session's working directory. */
   project?: string
   /** What the engine last reported about its context. */

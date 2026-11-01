@@ -1,0 +1,119 @@
+/** Whether a harness is logged in, and how a person logs in: its own commands, run in its own environment. */
+import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { AGENT_PRESETS, type AgentRecord, type HarnessLogin } from '@latch/protocol'
+import { agentEnvironment } from './environment.ts'
+import { selectProfile } from './permission.ts'
+import type { LoginStatus } from './profiles/index.ts'
+
+const STATUS_TIMEOUT_MS = 10_000
+const MAX_OUTPUT = 16 * 1024
+
+let locate: ((command: string) => string | undefined) | undefined
+
+/**
+ * How login commands find the person's programs. Off until the start script turns it on, so that a test Host, which may
+ * hold a preset's definition around a fake adapter, can never reach a real program installed on the same computer.
+ */
+export function setLoginPrograms(locator: ((command: string) => string | undefined) | undefined): void {
+  locate = locator
+}
+
+/** The preset's program when installed; otherwise the adapter's own copy, or nothing to run. */
+function loginProgram(record: AgentRecord): { command: string; args: readonly string[]; path: string; bundled: boolean } | undefined {
+  const preset = selectProfile(record).preset
+  const login = preset?.login
+  if (!login || !locate) return undefined
+  const path = locate(login.command)
+  if (path) return { command: login.command, args: login.args, path, bundled: false }
+  const adapter = login.bundled && locate(login.bundled.command)
+  return adapter ? { command: login.bundled!.command, args: login.bundled!.args, path: adapter, bundled: true } : undefined
+}
+
+/** What a client shows; Host-only details stay behind. Absent: Latch knows no login command for this harness. */
+export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
+  const selection = selectProfile(record)
+  const program = loginProgram(record)
+  if (!program) return undefined
+  const note = selection.preset?.login?.note
+  return {
+    command: [program.command, ...program.args].join(' '),
+    ...(note ? { note } : {}),
+    ...(selection.profile?.loginStatus ? { checkable: true as const } : {}),
+  }
+}
+
+/**
+ * Runs the profile's status command and reads only its verdict. Three states, like the rest of the page: a command that
+ * times out, crashes or says anything else is `unknown`, which no client presents as logged out.
+ */
+export async function checkLogin(record: AgentRecord, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<LoginStatus> {
+  const selection = selectProfile(record)
+  const status = selection.profile?.loginStatus
+  const program = loginProgram(record)
+  if (!status || !program) return 'unknown'
+  const args = program.bundled ? status.bundledArgs : status.args
+  if (!args || options.signal?.aborted) return 'unknown'
+  const env = agentEnvironment({
+    resolvedCommand: program.path,
+    profile: selection.profile?.permission,
+    definitionEnv: record.env,
+    sessionTmpDir: tmpdir(),
+  })
+  return new Promise<LoginStatus>(resolve => {
+    const child = spawn(program.path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+    let output = ''
+    const keep = (chunk: string) => {
+      if (output.length < MAX_OUTPUT) output += chunk
+    }
+    const kill = () => {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        /* Already gone. */
+      }
+    }
+    const timer = setTimeout(kill, options.timeoutMs ?? STATUS_TIMEOUT_MS)
+    options.signal?.addEventListener('abort', kill, { once: true })
+    child.stdout.setEncoding('utf8').on('data', keep)
+    child.stderr.setEncoding('utf8').on('data', keep)
+    const done = (verdict: LoginStatus) => {
+      clearTimeout(timer)
+      options.signal?.removeEventListener('abort', kill)
+      resolve(verdict)
+    }
+    child.once('error', () => {
+      done('unknown')
+    })
+    child.once('close', (code, signal) => {
+      done(signal ? 'unknown' : status.read({ code, output }))
+    })
+  })
+}
+
+const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`
+
+/**
+ * A `.command` file that runs the harness's own login in the person's terminal, with the environment that terminal has.
+ * It removes itself first, holds no secret, and ends by saying what to do next. Undefined: no login command.
+ */
+export function loginTerminalScript(record: AgentRecord): string | undefined {
+  const program = loginProgram(record)
+  if (!program) return undefined
+  const login = selectProfile(record).preset?.login
+  const lines = ['#!/bin/sh', 'rm -f -- "$0"']
+  if (login?.note) lines.push(`printf '%s\\n\\n' ${shellQuote(login.note)}`)
+  lines.push(
+    [program.path, ...program.args].map(shellQuote).join(' '),
+    `printf '\\n%s\\n' ${shellQuote('完成后回到 Latch。这个窗口可以关闭。')}`,
+  )
+  return `${lines.join('\n')}\n`
+}
+
+/** A preset as a saved definition would hold it, for a draft that has not saved one. */
+export function presetRecord(presetId: string): AgentRecord | undefined {
+  const preset = AGENT_PRESETS.find(item => item.id === presetId)
+  return preset
+    ? { id: preset.id, name: preset.name, presetId: preset.id, command: preset.command, args: preset.args, env: {}, enabled: true }
+    : undefined
+}

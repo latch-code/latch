@@ -73,17 +73,14 @@ export function foldersSigningText(hostId: string, deviceId: string, nonce: stri
 }
 
 /** A native sheet's proof: domain-separated, bound to this Host, device, ticket and full Host preview. */
-export function confirmationSigningText(hostId: string, deviceId: string, confirmationId: string, previewHash: string): string {
-  return `latch-confirm-v1\n${hostId}\n${deviceId}\n${confirmationId}\n${previewHash}`
-}
 
 export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
-/** Grantable only to devices enrolled over host.sock until a remote step-up exists. */
-export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['approve:elevated', 'secrets']
-const DEFAULT_REMOTE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
+/** Key entry stays on the desktop app for now; this one scope is what a device on another listener cannot hold. */
+export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['secrets']
+const DEFAULT_REMOTE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated']
 /** What pairing a phone on the Mac's own network grants; there is no choice to make and nothing to grant later. */
-const NATIVE_PAIRED_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
-const INVITABLE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
+const NATIVE_PAIRED_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated']
+const INVITABLE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 /** Name used when a migrated record's name cannot be shown in a confirmation dialog. */
 const DEFAULT_DEVICE_NAME = '未命名设备'
 
@@ -1016,10 +1013,6 @@ export class DeviceStore {
     return this.state.devices.map(publicDevice)
   }
 
-  hasActiveAdmin(): boolean {
-    return this.state.devices.some(device => device.status === 'active' && this.usable(device) && device.scopes.includes('admin'))
-  }
-
   /** The non-expired legacy-pending record matching an old `harness_link` cookie value. */
   legacyMatch(cookieValue: string): Device | undefined {
     if (!/^[\w-]{1,128}$/u.test(cookieValue)) return undefined
@@ -1173,15 +1166,6 @@ export class DeviceStore {
     if (!device || !this.usable(device) || !device.publicKey || typeof input.signature !== 'string') throw invalid
     const { key } = parseP256Spki(device.publicKey)
     if (!verifyP256(key, foldersSigningText(this.hostId, device.id, nonce, input.bodyHash), input.signature)) throw invalid
-  }
-
-  verifyConfirmation(input: { deviceId: string; confirmationId: string; previewHash: string; signature: string }): void {
-    const invalid = new AppError(403, 'confirmation-signature-invalid', '本机确认没有通过桌面端签名校验')
-    const device = this.find(input.deviceId)
-    if (!device || !this.usable(device) || !isLocalListener(device.listener) || !device.publicKey) throw invalid
-    const { key } = parseP256Spki(device.publicKey)
-    if (!verifyP256(key, confirmationSigningText(this.hostId, device.id, input.confirmationId, input.previewHash), input.signature))
-      throw invalid
   }
 
   /**
@@ -1487,6 +1471,8 @@ interface Enrollment {
   scopes: DeviceScope[]
   dataScope: DataScope
   method: 'lpc' | 'offline' | 'invitation'
+  /** Nothing confirmed this: see `firstUse`. */
+  firstUse?: true
   inviterDeviceId?: string
   invitationId?: string
   confirmationId?: string
@@ -1613,6 +1599,19 @@ export class EnrollmentService {
     }
   }
 
+  /**
+   * The desktop's own first connection, on the Host's socket before any device was ever enrolled here: there is nothing
+   * yet to protect from it, so it needs no confirmation. A revoked device's record stays, so emptying the list does not
+   * reopen this, and one such enrollment at a time can be open. Every later device goes through the confirmation.
+   */
+  private firstUse(connection: ConnectionContext): boolean {
+    return (
+      connection.listener === 'unix'
+      && this.devices.list().length === 0
+      && ![...this.enrollments.values()].some(item => item.firstUse && (item.status === 'approved' || item.status === 'completed'))
+    )
+  }
+
   async info(connection: ConnectionContext, legacyName?: string): Promise<EnrollmentInfo> {
     const availability = await this.presence.availability()
     const local = isLocalListener(connection.listener)
@@ -1622,7 +1621,7 @@ export class EnrollmentService {
       hostId: this.hostId,
       listener: connection.listener,
       presence: availability.status === 'available' ? { status: 'available' } : { status: 'unavailable', message: availability.message },
-      ...(local ? { firstDevice: !this.devices.hasActiveAdmin() } : {}),
+      ...(local ? { firstDevice: this.firstUse(connection) } : {}),
       invitationRequired: !local,
       offlineCodeAccepted: offline,
       ...(connection.listener === 'loopback-tcp' && legacyName ? { legacy: { name: legacyName } } : {}),
@@ -1783,6 +1782,8 @@ export class EnrollmentService {
       if (session) session.claim = { invitationId: invitation.id, keysHash, enrollmentId: id, inFlight: true }
       method = 'invitation'
     }
+    const firstUse = method === 'lpc' && this.firstUse(connection)
+    if (firstUse) await this.presence.assertNotHeldBack('device.enroll')
     const fingerprint = deviceFingerprint(der)
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
     try {
@@ -1828,6 +1829,14 @@ export class EnrollmentService {
     if (ticket) {
       await this.consumeOfflineTicket(ticket, actor)
       enrollment.status = 'approved'
+      this.enrollments.set(id, enrollment)
+      return this.view(enrollment, true)
+    }
+
+    if (firstUse) {
+      enrollment.firstUse = true
+      enrollment.status = 'approved'
+      enrollment.expiresAt = Math.max(enrollment.expiresAt, now + ENROLLMENT_SIGNING_WINDOW)
       this.enrollments.set(id, enrollment)
       return this.view(enrollment, true)
     }
@@ -2354,6 +2363,10 @@ export class EnrollmentService {
     if (enrollment.completing) throw new AppError(409, 'enrollment-pending', '本机尚未确认')
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
     this.verifyEnrollment(enrollment, signature, connection)
+    if (enrollment.firstUse && this.devices.list().length > 0) {
+      enrollment.status = 'cancelled'
+      throw new AppError(410, 'enrollment-cancelled', '连接请求已取消，请重新提交')
+    }
     enrollment.completing = true
     try {
       const result = await this.devices.create(
@@ -2369,7 +2382,7 @@ export class EnrollmentService {
           pairedBy: { method: enrollment.method, ...(enrollment.inviterDeviceId ? { deviceId: enrollment.inviterDeviceId } : {}) },
         },
         actor,
-        enrollment.method === 'offline' ? 'offline' : 'lpc-local',
+        enrollment.firstUse ? 'none' : enrollment.method === 'offline' ? 'offline' : 'lpc-local',
       )
       // Burned or cancelled while the device was being written: nobody will be asked about it, so it does not stay.
       const ended = (enrollment.status as EnrollmentView['status']) === 'cancelled' || enrollment.contended

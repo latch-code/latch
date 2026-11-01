@@ -2,39 +2,92 @@ import type { AgentPreset } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { TaskMode } from './sessions.ts'
 
-export type HarnessSource = 'builtin' | 'acp' | 'plugin'
+/** How a person logs in to a harness: its own command, in a terminal. */
+export interface HarnessLogin {
+  /** What to run, as a person would type it. */
+  command: string
+  /** What to do once it opens, for a program that logs in from inside. */
+  note?: string
+  /** The Host can ask the program whether it is logged in. Absent: it finds out only when a session is refused. */
+  checkable?: true
+}
+
+/** Only a clear answer from the program is `unauthenticated`; everything else is `unknown`, which no client treats as logged out. */
+export type HarnessLoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
+
+/** The built-in harness's name. Reserved: no other harness is shown under it. */
+export const BUILTIN_HARNESS_LABEL = 'Latch 内置'
+
+/** The wire protocols a model service can speak. */
+export type ModelWire = 'chat-completions' | 'responses' | 'anthropic-messages' | 'gemini'
+
+/**
+ * What a harness really does, read by clients instead of asking what kind of driver it is. A driver declares these; the
+ * Host fills what it left out with the weakest value and lowers what it cannot vouch for, so a client can state them as
+ * facts. A fact a client states about safety (`permission.enforcement`, `tools.shell`, `display`) never rests on the
+ * driver's word alone.
+ */
+export interface HarnessCapabilities {
+  models: {
+    /** `latch`: the Host's model services. `harness`: the harness's own login and configuration. */
+    owner: 'latch' | 'harness'
+    /** How the choices are known before a session starts. `none`: they are not. */
+    catalogue: 'live' | 'session-check' | 'none'
+    /** Protocols the harness can reach a model service over. Empty: Latch cannot route it to one. */
+    wires: ModelWire[]
+  }
+  permission: {
+    /** Who decides whether a tool call runs. Only the built-in harness can be `latch`. */
+    enforcement: 'latch' | 'harness' | 'none'
+    /** A rejection's note reaches the model. */
+    rejectionNote: boolean
+  }
+  tools: {
+    /** It can run commands. False only where Latch knows it cannot, so nothing unverified reads as safer than it is. */
+    shell: boolean
+    /** A project file named in a message reaches it. */
+    fileMentions: boolean
+  }
+  display: {
+    /** Never a built-in harness's name unless it is one. */
+    label: string
+    /** A key of the client's fixed set of icons, not a URL or an image. Absent: the neutral agent glyph. */
+    mark?: string
+  }
+}
+
 export interface HarnessInfo {
+  /** What it really does; see `HarnessCapabilities`. */
+  capabilities: HarnessCapabilities
   /** How an agent's instructions and memories reach this engine. Absent: they cannot, so no agent can run on it. */
   agentContext?: 'private' | 'first-turn'
   /** How an agent's skills reach it: loaded natively, or fetched from a read-only server. Absent: they do not. */
   skills?: 'native' | 'server'
   attachments?: { images?: boolean; text?: boolean; textBytes?: number }
   id: string
-  name: string
   description?: string
-  source: HarnessSource
   /** `ready` can start sessions; `unavailable` explains why in `statusMessage`. */
   status: 'ready' | 'unavailable'
   statusMessage?: string
   /** Session modes the harness accepts. */
   modes: TaskMode[]
-  /** `host`: uses the Host's model providers; `agent`: the agent manages its own models. */
-  models: 'host' | 'agent'
-  /** L1: builtin, Latch asks per risky call. L3: ACP or plugin harness, unsandboxed. */
-  level?: 'L1' | 'L3'
+  /** L1: Latch decides each risky call. L3: unsandboxed. Always the Host's derivation, never a driver's word. */
+  level: 'L1' | 'L3'
+  /** Its command and environment are a saved definition that settings can open. */
+  editable?: true
   /**
    * Which folders of a project the harness receives. `all`: every folder (at most `max`); `primary`: the primary folder
    * only; `primary-asks`: the primary folder, and it asks before using others; `primary-unbounded`: the primary folder,
-   * and it does not limit which directories it reads. Absent: an older Host, or `primary`.
+   * and it does not limit which directories it reads. Absent: `primary`.
    */
   projectFolders?: { access: ProjectFolderAccess; max?: number }
-  /** Other devices may start sessions on this harness under the current policy; absent from older Hosts. */
-  remoteStart?: boolean
   /**
    * Display only, known before a session starts: whether the harness asks before it acts, and whether Latch can read its
    * mode back. Absent: Latch has no profile for it and learns this only after it starts.
    */
   permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none' }
+  /** Absent: Latch knows no login command for it. */
+  login?: HarnessLogin
   /**
    * A preset whose commands are on this computer and that has no saved definition yet: it can be chosen like any other,
    * and the first session saves the definition. Only a device that may save one receives these.

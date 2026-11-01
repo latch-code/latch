@@ -265,25 +265,16 @@ async function captureTablet(application: ElectronApplication, page: Page, name:
 }
 
 async function enrollShell(page: Page, testHost: TestHost) {
-  // One sentence and one button: no name to type, and the system sheet follows the press.
-  await page.getByText('第一次在这台 Mac 上打开 Latch，用 Touch ID 确认。', { exact: true }).waitFor()
+  // One sentence and one button: no name to type, and the first connection on this computer takes no confirmation.
+  await page.getByText('第一次在这台 Mac 上打开 Latch。', { exact: true }).waitFor()
   expect(await page.getByRole('textbox').count()).toBe(0)
-  expect(testHost.presence.requests).toHaveLength(0)
-  await page.getByRole('button', { name: '继续', exact: true }).click()
-  const request = await testHost.presence.waitForRequest(15_000)
-  expect(request.preview.action).toBe('device.enroll')
-  expect(request.preview.requester.listener).toBe('unix')
-  const fingerprint = request.preview.lines.find(line => line.label === '设备指纹')?.value
-  expect(fingerprint).toMatch(/^[A-Z2-7]{4}( [A-Z2-7]{4}){4}$/)
-  // The check is there for someone who wants it, and shut until then.
-  const details = page.locator('details.connection-details')
-  expect(await details.getAttribute('open')).toBeNull()
-  expect(await details.locator('.connection-code').getAttribute('aria-label')).toBe(`校验码 ${fingerprint}`)
-  expect(await details.locator('.connection-code').isVisible()).toBe(false)
   await page.screenshot({ path: 'test-results/native-desktop-enrollment.png', animations: 'disabled' })
-  testHost.presence.approveNext()
+  await page.getByRole('button', { name: '继续', exact: true }).click()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
-  return fingerprint!
+  expect(testHost.presence.requests).toHaveLength(0)
+  // The click still holds its one-shot gesture, which would open a link unasked; a navigation clears it.
+  await page.reload()
+  await page.locator('.app-shell[data-connection="connected"]').waitFor()
 }
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop shell', () => {
@@ -348,7 +339,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           return {
             ...shell,
             folders: Object.keys(shell.folders as object),
-            confirmations: Object.keys(shell.confirmations as object),
             files: Object.keys(shell.files as object),
             notifications: Object.keys(shell.notifications as object),
             browser: Object.keys(shell.browser as object),
@@ -362,7 +352,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         platform: 'darwin',
         previews: { protocolVersion: 1, htmlScripts: true },
         folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'saveSessionFolder'],
-        confirmations: ['protocolVersion', 'confirm'],
         openInBrowser: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
         files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
@@ -389,7 +378,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         ],
       })
 
-      const fingerprint = await enrollShell(page, testHost)
+      await enrollShell(page, testHost)
       const titleRow = await page.locator('.titlebar').evaluate(bar => {
         const region = (element: Element) => getComputedStyle(element).getPropertyValue('-webkit-app-region')
         const controls = [...bar.querySelectorAll('button')].filter(control => control.getBoundingClientRect().width > 0)
@@ -405,7 +394,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const devices = host.security.devices.list()
       expect(devices).toHaveLength(1)
       const device = devices[0]!
-      expect(device).toMatchObject({ name: '桌面端测试', status: 'active', listener: 'unix', fingerprint })
+      expect(device).toMatchObject({ name: '桌面端测试', status: 'active', listener: 'unix' })
       expect([...device.scopes].sort()).toEqual(['admin', 'approve:elevated', 'approve:standard', 'run', 'secrets', 'view'])
 
       // The credential lives only in main, encrypted on disk; the renderer cannot see or renew it.
@@ -655,44 +644,20 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByText(R2_PROMPT).first().click()
       await page.locator('[data-approval-id] .approval-clause').waitFor()
       const card = page.locator('[data-approval-id]')
-      const allow = card.getByRole('button', { name: '在这台 Mac 上允许', exact: true })
-      const resting = (await allow.boundingBox())!.width
-      await allow.click()
-      const nativeSheets = () => application!.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.asked)
-      await waitFor(async () => (await nativeSheets()).length === 1)
-      const confirmation = { preview: { reason: (await nativeSheets())[0]!.message as string } }
-      expect((await nativeSheets())[0]).toMatchObject({ defaultId: 0, cancelId: 0, buttons: ['取消', '允许'] })
-      expect((await nativeSheets())[0]!.detail).toContain(MARK_TOOL)
-      // The system sheet is the only window: the button says it waits, both buttons rest, and the card repeats nothing
-      // of the sheet.
-      await card.locator('.ui-button[aria-busy="true"]', { hasText: '等待确认' }).waitFor()
-      expect(await card.getByRole('button', { name: '拒绝', exact: true }).isDisabled()).toBe(true)
-      await card.getByText('在系统窗口中确认', { exact: true }).waitFor()
-      expect(confirmation.preview.reason).toMatch(new RegExp(`^允许运行 ${MARK_TOOL}`, 'u'))
-      expect(await card.getByText(confirmation.preview.reason).count()).toBe(0)
-      expect(await page.locator('.presence-dock').count()).toBe(0)
-      expect(Math.abs((await card.locator('.ui-button[aria-busy="true"]').boundingBox())!.width - resting)).toBeLessThanOrEqual(1)
-      await captureThemes(page, 'native-desktop-confirmation')
-      await captureTablet(application, page, 'native-tablet-confirmation')
-      // The card keeps its look under styles added to the page while it waits.
+      // The card keeps its look under styles added to the page.
       await expectUnmovedByInjectedStyles(page, [
         '[data-approval-id] .approval-title',
         '[data-approval-id] .approval-clause',
         '[data-approval-id] .ui-button',
       ])
-      // A denial returns the buttons at once with the reason in the card; nothing ran.
+      await captureThemes(page, 'native-desktop-approval')
+      await captureTablet(application, page, 'native-tablet-approval')
+      // Allowing takes no prompt here either: the person chose this level of oversight.
       expect(marks.ran).toBe(0)
-      await application.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.finish?.(0))
-      await card.locator('.ui-button[aria-busy="true"]').waitFor({ state: 'detached' })
-      expect(await card.locator('.ui-button[aria-disabled="true"]').count()).toBe(0)
-      await captureThemes(page, 'native-desktop-confirmation-denied')
-      expect(marks.ran).toBe(0)
-      // Allowing again from the card asks for a new confirmation of the same request.
-      expect(marks.ran).toBe(0)
-      await allow.click()
-      await waitFor(async () => (await nativeSheets()).length === 2)
-      await card.locator('.approval-failure').waitFor({ state: 'detached' })
-      await application.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.finish?.(1))
+      const nativeSheets = () => application!.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.asked)
+      const sheetsBefore = (await nativeSheets()).length
+      await card.getByRole('button', { name: '允许', exact: true }).click()
+      expect((await nativeSheets()).length).toBe(sheetsBefore)
       await waitFor(() => marks.ran === 1)
       await waitFor(async () => (await host.bridge.detail(sessionId)).summary.status === 'idle')
 
@@ -772,8 +737,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(host.security.devices.get(phone.device.id)?.scopes).toEqual(['view'])
       await closeSettings(settings)
 
-      // A full-access agent's question: advisory, and on the Host's own desktop it may be answered with 允许.
       const policy = () => host.security.policy.get()
+      // A full-access agent's question: advisory, and on the Host's own desktop it may be answered with 允许.
       const helper = await testHost.enroll({ listener: 'unix', name: '本机测试设备' })
       const saved = await helper.confirmed('agents', {
         method: 'POST',
@@ -806,15 +771,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const heldBack = page.locator('.settings-page')
       await openSection(heldBack, '手机与设备')
-      const heldSwitch = heldBack.getByRole('switch', { name: '手机可以开始新会话', exact: true })
-      await heldSwitch.click()
-      await waitFor(() => !policy().remote.allowRemoteStart)
-      await heldSwitch.click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      const manage = heldBack.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
+      await manage.click()
       const blockedDock = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
       expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(
-        `Fake Agent 在「${advisoryTitle}」里等你处理，结束后才能放宽设置。`,
+        `Fake Agent 在「${advisoryTitle}」里等你处理，结束后才能为设备增加权限。`,
       )
       expect(await blockedDock.getByRole('button').count()).toBe(3)
       for (const name of ['查看', '停止', '关闭']) await blockedDock.getByRole('button', { name, exact: true }).waitFor()
@@ -825,14 +789,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await blockedDock.waitFor({ state: 'detached' })
       await heldBack.waitFor({ state: 'detached' })
       await advisory.locator('.approval-note').waitFor()
-      expect(policy().remote.allowRemoteStart).toBe(false)
 
       await advisory.getByRole('button', { name: '拒绝', exact: true }).click()
       await waitFor(async () => (await host.bridge.detail(advisoryId)).summary.status === 'idle')
 
-      // A full-access start from the composer, of an agent saved without any confirmation: before Touch ID the card
-      // above the input shows the sentence the system sheet shows, the Host's two warnings, and, as the first start of
-      // this command, the details open with the command and the folder; no dock.
+      // A full-access start from the composer, of an agent saved without any confirmation: it just starts.
       const second = await helper.request('agents', {
         method: 'POST',
         body: { name: 'Second Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MARK: 'second' } },
@@ -844,32 +805,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('menuitemradio', { name: /Second Agent/ }).click()
       await page.getByRole('textbox', { name: '新会话消息' }).fill('echo 开始')
       await page.getByRole('button', { name: '发送', exact: true }).click()
-      const start = await testHost.presence.waitForRequest(15_000)
-      expect(start.preview.action).toBe('task.start-l3')
-      expect(start.preview.subject.form).toBe('start.first')
-      expect(start.preview.reason).toMatch(/^允许 Second Agent 读写这台 Mac 上的文件并运行命令：\S*node /u)
-      const startCard = page.locator('.composer-confirm .inline-confirm[data-confirmation-phase="waiting"]')
-      await startCard.waitFor()
-      await startCard.getByText('等待 Touch ID', { exact: true }).waitFor()
-      // Shut at first, so the list does not push the input off the page; everything the sheet leaves out is one click away.
-      expect(await startCard.locator('.confirm-fold').evaluate(fold => (fold as HTMLDetailsElement).open)).toBe(false)
-      await startCard.locator('.confirm-fold summary').click()
-      expect(start.preview.warnings).toHaveLength(2)
-      for (const warning of start.preview.warnings) await startCard.getByText(warning, { exact: true }).waitFor()
-      // The system form names the program only: the full command, the folder and the notes stay readable here, hashes do not.
-      const command = start.preview.lines.find(line => line.label === '命令')!.value
-      const folder = start.preview.lines.find(line => line.label === '工作目录')!.value
-      await startCard.locator('.confirm-details-row', { hasText: '命令' }).getByText(command, { exact: true }).waitFor()
-      await startCard.locator('.confirm-details-row', { hasText: '工作目录' }).getByText(folder, { exact: true }).waitFor()
-      for (const note of start.preview.lines.filter(line => line.label === '说明'))
-        await startCard.getByText(note.value, { exact: true }).waitFor()
-      expect(await startCard.locator('.confirm-details-row', { hasText: /指纹|哈希/u }).count()).toBe(0)
-      expect(await startCard.getByText(start.preview.reason).count()).toBe(0)
-      expect(await page.locator('.presence-dock').count()).toBe(0)
-      await captureThemes(page, 'native-desktop-start-confirmation')
-      await captureTablet(application, page, 'native-tablet-start-confirmation')
-      testHost.presence.approveNext()
-      await startCard.waitFor({ state: 'detached' })
+      expect(await page.locator('.composer-confirm .inline-confirm').count()).toBe(0)
       await waitFor(async () => (await host.bridge.listTasks()).some(task => task.harnessId === secondAgent.id))
       // A running agent holds a raise back too; 停止 ends it (this one stops at once when asked), and the
       // raise then asks for confirmation.
@@ -898,13 +834,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看', '停止'])
       await captureThemes(page, 'native-desktop-pairing-blocked')
       await page.locator('.pair-sheet').getByRole('button', { name: '关闭', exact: true }).click()
-      // 手机可以开始新会话 in the desktop app: turning it off applies at once, turning it on takes the local confirmation.
-      const remoteStart = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
-      await expect.poll(() => remoteStart.getAttribute('aria-checked')).toBe('false')
-      await remoteStart.click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      const manageRaise = computer.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
+      await manageRaise.click()
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
-      expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(`Fake Agent 正在运行「${hangTitle}」，结束后才能放宽设置。`)
+      expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(
+        `Fake Agent 正在运行「${hangTitle}」，结束后才能为设备增加权限。`,
+      )
       await blockedDock.getByRole('button', { name: '停止', exact: true }).click()
       await expect
         .poll(async () => ({ status: (await host.bridge.detail(hangId)).summary.status, text: await blockedDock.innerText() }), {
@@ -916,19 +853,15 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await captureThemes(page, 'native-desktop-confirmation-blocked-ended')
       await blockedDock.getByRole('button', { name: '好', exact: true }).click()
       await blockedDock.waitFor({ state: 'detached' })
-      expect(policy().remote.allowRemoteStart).toBe(false)
-      await remoteStart.click()
+      await manageRaise.click()
       const raise = await testHost.presence.waitForRequest(15_000)
-      expect(raise.preview.action).toBe('policy.change')
+      expect(raise.preview.action).toBe('device.grant')
       expect(raise.preview.requester.listener).toBe('unix')
       // The control that asked shows it waits; there is no card and no dock.
       await page.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'attached' })
       expect(await page.locator('.presence-dock').count()).toBe(0)
-      await computer.getByText('等待 Touch ID…', { exact: true }).waitFor()
-      expect(policy().remote.allowRemoteStart).toBe(false)
-      testHost.presence.approveNext()
-      await waitFor(() => policy().remote.allowRemoteStart)
-      await expect.poll(() => remoteStart.getAttribute('aria-checked')).toBe('true')
+      testHost.presence.denyNext()
+      await page.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'detached' })
 
       // 设置 › 模型服务: a preset provider's key saves without a confirmation; a local address is confirmed once,
       // before its models are listed, and saving the service there then asks nothing more.
@@ -1210,13 +1143,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
       await openSection(computer, '手机与设备')
-      const remoteStartOff = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
-      await remoteStartOff.click()
-      await waitFor(() => !policy().remote.allowRemoteStart)
-      await remoteStartOff.click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      await computer.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).click()
       const refused = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await refused.waitFor()
-      await refused.getByText(`Fake Agent 正在运行「${runningTitle}」，结束后才能放宽设置。`, { exact: true }).waitFor()
+      await refused.getByText(`Fake Agent 正在运行「${runningTitle}」，结束后才能为设备增加权限。`, { exact: true }).waitFor()
       expect(testHost.presence.requests.length).toBe(beforeRunningConfirmation)
       expect(await page.locator('.presence-dock').count()).toBe(0)
       await captureThemes(page, 'native-desktop-confirmation-blocked')
@@ -1386,23 +1317,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         )
         await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
         await probe.getByRole('button', { name: '测试启动', exact: true }).click()
-        const request = await testHost.presence.waitForRequest(15_000)
-        expect(request.preview.action).toBe('agent.probe')
-        // What the sheet leaves out stays in view: a probe runs trusted code on this Mac.
-        await probe
-          .locator('.inline-confirm[data-confirmation-phase="waiting"]')
-          .getByText(request.preview.warnings[0]!, { exact: true })
-          .waitFor()
-        expect(await probe.getByText(request.preview.reason).count()).toBe(0)
-        await probe.scrollIntoViewIfNeeded()
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
-        await captureThemes(page, `agent-probe-waiting-${width}`)
-        testHost.presence.approveNext()
         await probe.getByText('启动握手成功', { exact: true }).waitFor()
         await probe.getByText('登录状态与模型访问尚未验证。', { exact: true }).waitFor()
         await probe.getByText('声明支持：图片、恢复会话、附加文件夹', { exact: true }).waitFor()
         expect(await probe.getByText('需要先登录', { exact: true }).count()).toBe(0)
-        await probe.locator('.inline-confirm').waitFor({ state: 'detached' })
       }
       await captureThemes(page, 'agent-probe-ready-phone')
       await application.evaluate(({ BrowserWindow }) => {
@@ -1424,14 +1342,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await settings.getByRole('button', { name: '重新检测', exact: true }).click()
       await probe.getByText('尚未测试启动', { exact: true }).waitFor()
       await probe.getByRole('button', { name: '测试启动', exact: true }).click()
-      const failure = await testHost.presence.waitForRequest(15_000)
-      expect(failure.preview.action).toBe('agent.probe')
-      testHost.presence.approveNext()
       await probe.getByText('测试启动失败', { exact: true }).waitFor()
       await probe.getByRole('button', { name: '复制诊断', exact: true }).waitFor()
       expect(await probe.innerText()).not.toContain(secret)
       expect(await probe.locator('pre').innerText()).toContain('[redacted]')
-      await probe.locator('.inline-confirm').waitFor({ state: 'detached' })
       await probe.scrollIntoViewIfNeeded()
       await captureThemes(page, 'agent-probe-failed-desktop')
       expect(await host.bridge.listTasks()).toHaveLength(0)

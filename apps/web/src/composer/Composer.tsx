@@ -112,7 +112,7 @@ export function Composer({
   below?: ReactNode
   /** Phone session: input and action share a row; options sit above it. */
   inline?: boolean
-  /** The local confirmation a send starts, shown above the input (InlineConfirm). */
+  /** Shown above the input. */
   confirmation?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
@@ -197,8 +197,7 @@ export function Composer({
   const shortcut = sendKey === 'enter' && !coarse ? 'Enter' : `${isMac() ? '⌘' : 'Ctrl'} Enter`
   const sendTip = blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft ? '本轮完成后发送' : undefined)
 
-  // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending, or a
-  // harness chosen that starts with the local confirmation.
+  // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
   const answering = answer?.kind === 'question' && !empty
   const slot = answering ? 'send' : run && !queueDraft ? 'stop' : queueDraft ? 'queue' : readOnly !== undefined ? 'none' : 'send'
   useLiveChange(slot, (_previous, live) => {

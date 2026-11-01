@@ -1,6 +1,7 @@
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
+import { loginShellValues, PROXY_NAMES } from './login-shell.ts'
 
 /** Install locations that a GUI-launched Host often lacks on PATH. */
 const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global/bin', '~/.local/bin', '~/.bun/bin']
@@ -77,8 +78,8 @@ export function extraDirectories(): string[] {
 }
 
 function searchDirectories(): string[] {
-  const fromPath = (process.env.PATH ?? '').split(delimiter).filter(directory => directory && isAbsolute(directory))
-  return [...new Set([...fromPath, ...extraDirectories()])]
+  const paths = [loginShellValues().PATH, process.env.PATH].flatMap(path => (path ?? '').split(delimiter))
+  return [...new Set([...paths.filter(directory => directory && isAbsolute(directory)), ...extraDirectories()])]
 }
 
 function executable(path: string): boolean {
@@ -118,6 +119,10 @@ export function redactor(extra: Record<string, string>): (text: string) => strin
   }
   for (const [key, value] of Object.entries(process.env)) {
     if (value && value.length >= 8 && SECRET_NAME.test(key)) values.add(value)
+  }
+  // A proxy address may carry a password, and without a scheme the URL rule in `redactSecrets` does not see it.
+  for (const name of PROXY_NAMES) {
+    for (const source of [process.env[name], loginShellValues()[name]]) if (source?.includes('@')) values.add(source)
   }
   const secrets = [...values].sort((a, b) => b.length - a.length)
   return text => secrets.reduce((current, secret) => current.split(secret).join('[redacted]'), text)

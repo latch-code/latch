@@ -74,7 +74,6 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 engine={topHarness ? harnessName(topHarness) : 'Harness'}
                 local={access.local}
                 canRun={access.scopes.has('run')}
-                localOnlySession={level === 'L3'}
                 canRead={snapshot.device.dataScope === 'all'}
                 phone={phone}
                 offline={connection === 'reconnecting' || connection === 'offline'}

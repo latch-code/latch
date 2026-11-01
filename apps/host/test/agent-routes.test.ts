@@ -387,13 +387,20 @@ test('an automation runs on the built-in engine from any allowed device, and its
   expect(seen[0]?.[1]?.content).toContain('AGENT INSTRUCTIONS')
 })
 
-test('an automation refuses an external engine, and 立即运行 goes through the route', async () => {
-  const { owner } = await fixture()
+test('an automation may use a Harness, on record, and 立即运行 goes through the route', async () => {
+  const { host, owner } = await fixture()
+  const defined = await owner.request('agents', {
+    method: 'POST',
+    body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+  })
+  expect(defined.status).toBe(201)
   const agent = await owner.json<CustomAgent>('custom-agents', {
     method: 'POST',
-    body: definition({ harnessId: 'codex-not-standard', model: undefined }),
+    body: definition({ harnessId: 'fake-engine', mode: 'agent', model: undefined, skills: [] }),
   })
-  const refused = await owner.request('automations', {
+  const asked = host.presence.requests.length
+  // Enabling one with a Harness takes no prompt, like starting one by hand.
+  const onHarness = await owner.json<Automation>('automations', {
     method: 'POST',
     body: {
       requestId: randomUUID(),
@@ -404,8 +411,20 @@ test('an automation refuses an external engine, and 立即运行 goes through th
       notify: false,
     },
   })
-  expect(refused.status).toBe(409)
-  expect(await refused.json()).toMatchObject({ error: 'automation-engine' })
+  expect(onHarness).toMatchObject({ enabled: true, state: 'ready' })
+  await owner.json(`automations/${onHarness.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+  await expect
+    .poll(async () => (await owner.json<AutomationDetail>(`automations/${onHarness.id}`)).automation.lastRun?.state, { timeout: 8000 })
+    .toBe('completed')
+  expect(host.presence.requests).toHaveLength(asked)
+  const records = (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line) as { action: string; stepup?: string; detail: Record<string, unknown> })
+  expect(records.find(record => record.action === 'task.l3.started')).toMatchObject({
+    stepup: 'none',
+    detail: { harnessId: 'fake-engine', promptHash: expect.any(String) },
+  })
   const general = await owner.json<Automation>('automations', {
     method: 'POST',
     body: {
@@ -422,12 +441,12 @@ test('an automation refuses an external engine, and 立即运行 goes through th
     .poll(async () => (await owner.json<AutomationDetail>(`automations/${general.id}`)).automation.lastRun?.state, { timeout: 8000 })
     .toBe('completed')
   const list = await owner.json<{ automations: Automation[] }>('automations')
-  expect(list.automations.map(item => item.id)).toEqual([general.id])
+  expect(list.automations.map(item => item.id).sort()).toEqual([general.id, onHarness.id].sort())
   await owner.json(`automations/${general.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
   expect((await owner.request(`automations/${general.id}`)).status).toBe(404)
 })
 
-test('a device off this computer enables an automation only as far as its own start limits reach', async () => {
+test('a device off this computer enables an automation only while its own scopes stand behind it', async () => {
   const { host, owner } = await fixture()
   const remote = await host.enroll({ listener: 'loopback-tcp' })
   const widened = await owner.confirmed(`devices/${remote.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
@@ -442,19 +461,19 @@ test('a device off this computer enables an automation only as far as its own st
   })
   const created = await remote.json<Automation>('automations', { method: 'POST', body: body() })
   expect(created).toMatchObject({ enabled: true, state: 'ready' })
-  await owner.json('policy', { method: 'PATCH', body: { remote: { allowRemoteStart: false } } })
+  await owner.json(`devices/${remote.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
   const refused = await remote.request('automations', { method: 'POST', body: body() })
   expect(refused.status).toBe(403)
-  expect(await refused.json()).toMatchObject({ error: 'automation-owner' })
+  expect(await refused.json()).toMatchObject({ error: 'agent-scope-required' })
   // What it had already turned on no longer stands either.
   await expect
-    .poll(async () => (await remote.json<AutomationDetail>(`automations/${created.id}`)).automation.pause?.reason, { timeout: 8000 })
+    .poll(async () => (await owner.json<AutomationDetail>(`automations/${created.id}`)).automation.pause?.reason, { timeout: 8000 })
     .toBe('owner-unavailable')
-  const off = await remote.json<Automation>(`automations/${created.id}/enabled`, {
+  const off = await owner.json<Automation>(`automations/${created.id}/enabled`, {
     method: 'POST',
     body: {
       requestId: randomUUID(),
-      baseRevision: (await remote.json<AutomationDetail>(`automations/${created.id}`)).automation.revision,
+      baseRevision: (await owner.json<AutomationDetail>(`automations/${created.id}`)).automation.revision,
       enabled: false,
     },
   })
@@ -481,9 +500,6 @@ test('an external engine gets the labelled first-turn block, and the confirmatio
   const started = await owner.confirmed('tasks', { method: 'POST', body })
   expect(started.status).toBe(201)
   const { sessionId } = (await started.json()) as { sessionId: string }
-  const request = host.presence.requests.at(-1)!
-  expect(JSON.stringify(request)).toContain('代码审阅（Fake）')
-  expect(request.preview.lines).toContainEqual({ label: '说明', value: expect.stringContaining('只读技能服务') })
   await settled(owner, sessionId)
   const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
   expect(detail.summary).toMatchObject({ agent: { customAgentId: agent.id }, harnessId: 'fake-engine' })
@@ -499,7 +515,7 @@ test('an external engine gets the labelled first-turn block, and the confirmatio
   expect(next.status).toBe(200)
 })
 
-test("an engine's name survives a long agent name in the sentence, and 通用 on an external engine is as private as an agent", async () => {
+test('通用 on an external engine is as private as an agent', async () => {
   const host = await startTestHost()
   hosts.push(host)
   const owner = await host.enroll({ listener: 'unix' })
@@ -517,8 +533,6 @@ test("an engine's name survives a long agent name in the sentence, and 通用 on
     body: { customAgentId: agent.id, prompt: 'echo one', requestId: randomUUID() },
   })
   expect(started.status).toBe(201)
-  const sentence = JSON.stringify(host.presence.requests.at(-1))
-  expect(sentence).toContain('一个名字特别特别特…（Fake）')
 
   const list = await owner.json<CustomAgentList>('custom-agents')
   await owner.json('custom-agents/general', {

@@ -132,7 +132,7 @@ struct PersonalAssistantEditor: View {
                 Section("职责") { LocalTextEditor(text: $role, placeholder: "告诉它负责什么", maximumLines: 6).frame(minHeight: 96) }
                 Section {
                     Picker("执行方式", selection: $harness) {
-                        ForEach(harnesses, id: \.id) { item in Text(item["name"].string ?? "执行方式").tag(item.id) }
+                        ForEach(harnesses, id: \.id) { item in Text(item["capabilities"]["display"]["label"].string ?? "执行方式").tag(item.id) }
                         if !harnesses.contains(where: { $0.id == harness }) { Text("当前配置暂不可用").tag(harness) }
                     }
                     Picker("工作方式", selection: $mode) { Text("只对话").tag("chat"); Text("使用插件工具").tag("agent") }

@@ -1,3 +1,4 @@
+import { createAgentLoginRoutes, type AgentLoginDeps } from './agent-login.ts'
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
 import { createChangeRoutes } from './changes.ts'
@@ -16,6 +17,7 @@ export interface RouteDeps {
   devices: Omit<DeviceRouteDeps, 'deviceView'>
   terminals: TerminalService
   agents: AgentRouteDeps
+  agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
 }
 
@@ -39,6 +41,7 @@ export function createRoutes(
       createGitRoutes(context),
       terminal,
       createAgentRoutes(context, deps.agents),
+      createAgentLoginRoutes(context, deps.agentLogin),
       createAutomationRoutes(context, deps.automations),
       createConversationRoutes(context),
       createNativeApprovalRoutes(context),

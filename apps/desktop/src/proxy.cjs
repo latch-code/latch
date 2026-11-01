@@ -40,7 +40,10 @@ const PAIRINGS_PATH = '/link/api/pairings'
  * 管理此 Host because the loopback port may be forwarded and the desktop app can raise it later on the 手机 page.
  * `pnpm latch device invite --loopback` offers more, for a Host with no desktop app to raise it (apps/host/scripts/latch.ts).
  */
-const BROWSER_INVITATION = Object.freeze({ target: 'loopback', scopes: Object.freeze(['view', 'run', 'approve:standard']) })
+const BROWSER_INVITATION = Object.freeze({
+  target: 'loopback',
+  scopes: Object.freeze(['view', 'run', 'approve:standard', 'approve:elevated']),
+})
 const INVITATION_FRAGMENT = /^#pair=lpi1-[A-Z2-7]{26}$/
 const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
 const BROWSER_LINK_MANAGED = '这台电脑上浏览器的链接由 Latch 桌面端直接交给浏览器'
@@ -395,7 +398,6 @@ function classifyRoute(method, pathname) {
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
   if (method === 'POST' && pathname === '/link/api/attachments') return { kind: 'attachment-upload' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
-  if (/^\/link\/api\/confirmations\/.+\/shell(?:\/|$)/.test(lower)) return { kind: 'shell-confirmations' }
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
   if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
   // A session ID with an encoded slash decodes into more than one segment, so any depth under /tasks/ counts.
@@ -848,7 +850,6 @@ function createShellProxy(options) {
       return errorResponse(401, 'unauthorized', NOT_ENROLLED)
     }
     const headers = forwardRequestHeaders(request.headers, current.credential)
-    headers['x-latch-shell-confirmation'] = '1'
     const socketPath = await options.resolveSocket()
     let result
     try {
@@ -894,7 +895,6 @@ function createShellProxy(options) {
       // The credential can be gone by now: revoked or expired during renewal, or a concurrent self-revoke.
       if (used === undefined && !route.public) throw new ProxyError(401, 'unauthorized', NOT_ENROLLED)
       const headers = forwardRequestHeaders(request.headers, used)
-      headers['x-latch-shell-confirmation'] = '1'
       return upstream(request.method, target.path, headers, body)
     }
     let result = await send()
@@ -963,13 +963,6 @@ function createShellProxy(options) {
         if (origin !== 'shell') {
           await discardRequestBody(request)
           return errorResponse(403, 'shell-managed', '添加文件夹由 Latch 桌面端处理')
-        }
-        return await forward(request, target, { kind: 'forward' })
-      }
-      if (route.kind === 'shell-confirmations') {
-        if (origin !== 'shell') {
-          await discardRequestBody(request)
-          return errorResponse(403, 'shell-managed', '本机确认由 Latch 桌面端处理')
         }
         return await forward(request, target, { kind: 'forward' })
       }

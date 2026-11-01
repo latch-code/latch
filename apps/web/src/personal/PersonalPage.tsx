@@ -787,14 +787,14 @@ function AssistantEditor({
             <ValuePicker
               label="执行方式"
               value={config.harnessId}
-              groups={[{ id: 'harnesses', options: harnesses.map(item => ({ value: item.id, label: item.name })) }]}
+              groups={[{ id: 'harnesses', options: harnesses.map(item => ({ value: item.id, label: item.capabilities.display.label })) }]}
               onValueChange={id => {
                 const next = harnesses.find(item => item.id === id)
                 setConfig({
                   ...config,
                   harnessId: id,
                   mode: next?.modes.includes(config.mode) ? config.mode : (next?.modes[0] ?? 'chat'),
-                  ...(next?.models !== 'host' ? { model: undefined } : {}),
+                  ...(next?.capabilities.models.owner !== 'latch' ? { model: undefined } : {}),
                 })
               }}
             />
@@ -809,7 +809,7 @@ function AssistantEditor({
               ]}
               onValueChange={mode => setConfig({ ...config, mode: mode === 'chat' ? 'chat' : 'agent' })}
             />
-            {catalog && harness?.models === 'host' && (
+            {catalog && harness?.capabilities.models.owner === 'latch' && (
               <ModelPicker catalog={catalog} access={access} value={config.model} onChange={model => setConfig({ ...config, model })} />
             )}
           </div>

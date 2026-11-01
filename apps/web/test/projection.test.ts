@@ -23,12 +23,11 @@ const host: HostView = {
   devMode: true,
   presence: { status: 'available' },
   tls: null,
-  policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
 }
 
 function detail(id: string, revision: number, instanceId = 'host'): TaskDetail {
   return {
-    summary: { id, title: id, status: 'running', updatedAt: '2026-01-01' },
+    summary: { harnessId: 'standard', id, title: id, status: 'running', updatedAt: '2026-01-01' },
     messages: [],
     approvals: [],
     liveText: `${revision}`,

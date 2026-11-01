@@ -81,7 +81,7 @@ describe('streamed task state', () => {
     let blockNext = true
     let notify: (sessionId?: string) => void = () => {}
     const current: TaskDetail = {
-      summary: { id: 'slow-session', title: 'Slow fixture', status: 'running', updatedAt: '2026-01-01' },
+      summary: { harnessId: 'standard', id: 'slow-session', title: 'Slow fixture', status: 'running', updatedAt: '2026-01-01' },
       messages: [],
       approvals: [],
       liveText: 'old',

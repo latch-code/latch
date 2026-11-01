@@ -6,7 +6,7 @@ import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol
 import { MessageContent } from '../MessageContent.tsx'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
-import { HarnessTile } from './BrandTile.tsx'
+import { MarkTile } from './BrandTile.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, ICON_STROKE, IconButton, Shimmer, Swap, Tooltip, CopyButton } from '@latch/ui'
 
@@ -114,7 +114,7 @@ export function AuthorLine({
   name: string
   /** The engine's name, when it is not already the word. */
   engine?: string
-  harness?: Pick<HarnessInfo, 'id' | 'source'>
+  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
   model?: string
   /** The model service's name, for the model's tooltip. */
   provider?: string
@@ -123,7 +123,7 @@ export function AuthorLine({
   return (
     <div className="assistant-meta">
       {/* The turn's source, not the harness's state now: the tile never draws readiness here. */}
-      <HarnessTile harness={harness ? { id: harness.id, source: harness.source } : { id: 'standard', source: 'builtin' }} size={16} />
+      <MarkTile mark={harness?.capabilities.display.mark} size={16} />
       <span className="assistant-meta-name">{name}</span>
       {detail && (
         <Tooltip content={provider}>

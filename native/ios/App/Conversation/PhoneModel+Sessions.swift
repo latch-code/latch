@@ -158,7 +158,7 @@ extension PhoneModel {
         do {
             // Turning a request down reduces what runs, so the Host asks only that the device can see it.
             let declining = fields["decision"] == .string("reject") && connected && snapshot["device"]["status"].string == "active"
-            guard declining || (path.hasPrefix("/link/api/approvals/") ? canApproveStandard : canRun) else { throw NativeFailure.forbidden }
+            guard declining || (path.hasPrefix("/link/api/approvals/") ? canApproveStandard || canApproveElevated || canRun : canRun) else { throw NativeFailure.forbidden }
             try await ensureVerified()
             guard current == generation, contentGeneration == reading else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }

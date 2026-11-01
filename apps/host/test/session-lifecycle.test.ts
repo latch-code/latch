@@ -472,7 +472,7 @@ describe('runs open when the Host stops', () => {
 
 /** A driver's summary of session `s1` while its run `r1` goes on, with `patch` applied. */
 function run(patch: Partial<TaskSummary>): TaskSummary {
-  return { id: 's1', title: '', status: 'running', updatedAt: '', runId: 'r1', ...patch }
+  return { harnessId: 'standard', id: 's1', title: '', status: 'running', updatedAt: '', runId: 'r1', ...patch }
 }
 
 function starting(runId: string, folders: ProjectFolder[] = []): RunStarting {
@@ -589,7 +589,7 @@ describe('reading a run from its driver', () => {
       },
     } satisfies Bridge
     const driver = { id: 'external', name: 'External', version: '1', create: () => bridge }
-    await hub.attach(driver, { source: 'plugin', create: () => bridge, release: () => {} })
+    await hub.attach(driver, { kind: 'plugin', create: () => bridge, release: () => {} })
     await lifecycle.runStarted(starting('r1'))
     listTasks.mockClear()
     return { hub, task, listTasks, settled, notify: () => notify('s1') }
@@ -644,7 +644,7 @@ describe('the lookup before a run', () => {
     }
     await t.host.bridge.attach(
       { id: 'hung', name: 'Hung', version: '1', create: () => hung },
-      { source: 'plugin', create: () => hung, release: () => {} },
+      { kind: 'plugin', create: () => hung, release: () => {} },
     )
     await expect(t.host.bridge.runSummary('standard', sessionId)).resolves.toMatchObject({ id: sessionId })
   })

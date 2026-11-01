@@ -3,7 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
-import type { AgentBrief, Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
+import type { AgentBrief, Message, SessionCommand, PlanEntry, SessionConfigOption, DriverTaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
@@ -46,7 +46,7 @@ export interface AcpRecord {
 }
 
 export interface AcpTask {
-  summary: TaskSummary
+  summary: DriverTaskSummary
   messages: Message[]
   commands?: SessionCommand[]
   plan?: PlanEntry[]

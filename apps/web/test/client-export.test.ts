@@ -5,6 +5,7 @@ import { exportFileName, transcriptMarkdown } from '../src/exportMarkdown.ts'
 function detail(): TaskDetail {
   return {
     summary: {
+      harnessId: 'standard',
       id: 's1',
       title: '修复登录问题',
       status: 'idle',

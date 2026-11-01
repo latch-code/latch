@@ -7,6 +7,7 @@ export const dshProfile: HarnessProfile = {
     approvals: 'prompts',
     defaultEnv: { DSH_PERMISSION_MODE: 'read-only' },
     readback: 'none',
+    inheritEnv: ['DSH_HOME'],
     notes: ['无法读回权限模式'],
   },
   // DeepSeek Harness refuses additionalDirectories and keeps to the session directory.

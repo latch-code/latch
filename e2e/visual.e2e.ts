@@ -814,7 +814,7 @@ describe('visual capture of the real product', () => {
       await target.goto(`${host.loopbackOrigin}/link/`)
       await target.getByText(/^这个浏览器还没连接到 Latch。/).waitFor()
       await recorder.capture(target, viewport, 'enrollment-invitation', 'browser without an invitation')
-      const invitation = await testHost.invite(['view', 'run', 'approve:standard', 'admin'], 'loopback-tcp')
+      const invitation = await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated', 'admin'], 'loopback-tcp')
       await target.goto(invitation.url)
       await target.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
       await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
@@ -835,7 +835,7 @@ describe('visual capture of the real product', () => {
       await target.getByText(/^这个浏览器还没连接到 Latch。/).waitFor()
       await recorder.capture(target, viewport, 'enrollment-denied', 'refused on the Host computer')
 
-      await target.goto((await testHost.invite(['view', 'run', 'approve:standard', 'admin'], 'loopback-tcp')).url)
+      await target.goto((await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated', 'admin'], 'loopback-tcp')).url)
       await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
       await target.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
       await testHost.presence.waitForRequest()
@@ -858,7 +858,7 @@ describe('visual capture of the real product', () => {
       const readOnlyContext = await visualContext(browser, viewport)
       const readOnly = await readOnlyContext.newPage()
       readOnlyPages.set(viewport.name, { context: readOnlyContext, page: readOnly })
-      await readOnly.goto((await testHost.invite(['view', 'run', 'approve:standard'], 'loopback-tcp')).url)
+      await readOnly.goto((await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated'], 'loopback-tcp')).url)
       await readOnly.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
       await nameNextEnrollment(readOnly, `只读的${DEVICE_NAMES[viewport.name].replace(/^我的/, '')}`)
       await readOnly.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
@@ -1033,6 +1033,10 @@ describe('visual capture of the real product', () => {
       await settleMotion(target)
       if (viewport.name !== 'phone')
         await recorder.capture(target, viewport, 'new-session-draft', 'the quiet empty workspace with compact agent choices')
+      // A draft opens on a Harness that can run commands; the services' surfaces belong to the built-in one.
+      await target.getByRole('button', { name: /^Harness：/ }).click()
+      await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
+      await settleMotion(target)
       if (viewport.name === 'phone') {
         const sheet = target.getByRole('dialog', { name: '新会话', exact: true })
         // The project and the model are rows that open single-choice sheets of their own.
@@ -1181,41 +1185,6 @@ describe('visual capture of the real product', () => {
         await recorder.capture(desktopApp, viewport, 'new-session-add-agent', 'one engine: what is missing and how to install it')
         await desktopApp.keyboard.press('Escape')
         await desktopApp.close()
-
-        // The same tab where this computer cannot confirm (its helper is missing): starting is blocked, and why is the
-        // button's tooltip.
-        const blockedApp = await pages.get(viewport.name)!.context.newPage()
-        await blockedApp.addInitScript(() => {
-          Object.defineProperty(window, 'latchShell', { value: { kind: 'electron', devMode: false, platform: 'darwin' } })
-        })
-        await blockedApp.route('**/link/api/snapshot', async route => {
-          const response = await route.fetch()
-          const snapshot: AppSnapshot = await response.json()
-          await route.fulfill({
-            response,
-            json: {
-              ...snapshot,
-              device: { ...snapshot.device, listener: 'unix' },
-              ...(snapshot.host ? { host: { ...snapshot.host, presence: { status: 'unavailable', message: '找不到本机确认组件' } } } : {}),
-            },
-          })
-        })
-        await blockedApp.emulateMedia({ reducedMotion: 'reduce' })
-        await blockedApp.goto(`${host.loopbackOrigin}/link/`)
-        await connected(blockedApp)
-        await blockedApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
-        await blockedApp.locator('.workspace.is-new').waitFor()
-        await blockedApp.getByRole('button', { name: /^Harness：/ }).click()
-        await blockedApp.getByRole('menuitemradio', { name: /本地 ACP Harness/ }).click()
-        await blockedApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
-        const blockedStart = blockedApp.getByRole('button', { name: '发送', exact: true })
-        await reachable(blockedStart, { allowDisabled: true })
-        expect(await blockedStart.getAttribute('aria-disabled')).toBe('true')
-        expect(await blockedStart.getAttribute('aria-describedby')).toBeTruthy()
-        await blockedApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
-        await blockedApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
-        await recorder.capture(blockedApp, viewport, 'new-session-full-access-blocked', 'starting is blocked: this computer cannot confirm')
-        await blockedApp.close()
       }
 
       // Sessions in each state.
@@ -1506,10 +1475,9 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.r2)
       const r2 = target.locator('[data-approval-id]')
       await target.locator('[data-approval-id]:not([data-arming])').waitFor()
-      await r2.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
-      expect(await r2.getByRole('button', { name: /允许/ }).count()).toBe(0)
+      await reachable(r2.getByRole('button', { name: /允许/ }).first())
       await reachable(r2.getByRole('button', { name: '拒绝', exact: true }))
-      await recorder.capture(target, viewport, 'approval-r2-locked', 'R2 on a device that cannot approve it')
+      await recorder.capture(target, viewport, 'approval-r2', 'R2 on a connected device, which can answer it')
 
       await openSession(target, viewport, sessions.hidden)
       const hidden = target.locator('[data-approval-id]')
@@ -1783,7 +1751,7 @@ describe('visual capture of the real product', () => {
         ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
-        ['settings-devices', '手机与设备', target.getByRole('switch', { name: '手机可以开始新会话', exact: true })],
+        ['settings-devices', '手机与设备', target.getByRole('button', { name: '关于连接', exact: true })],
         ['settings-about', '关于', settings.getByText('Harness 和插件以你的权限在这台电脑上运行。').first()],
       ] as const) {
         await openSection(settings, section)

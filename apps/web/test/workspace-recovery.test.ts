@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
@@ -7,7 +8,15 @@ import { recoveryMessage, recoveryWorkspaces, workspaceRecovery, type WorkspaceR
 
 const project: WorkspaceInfo = { id: 'target', name: 'New project', path: '/projects/new' }
 const source = (): TaskDetail => ({
-  summary: { id: 'old-task', title: 'Original', status: 'failed', updatedAt: '', workspaceId: 'removed', cwd: '/missing/old' },
+  summary: {
+    harnessId: 'standard',
+    id: 'old-task',
+    title: 'Original',
+    status: 'failed',
+    updatedAt: '',
+    workspaceId: 'removed',
+    cwd: '/missing/old',
+  },
   messages: [
     { id: 'user', role: 'user', text: 'Keep this history' },
     { id: 'answer', role: 'assistant', text: 'Settled answer', state: 'completed' },
@@ -22,7 +31,6 @@ const input = (): WorkspaceRecoveryInput => ({
   workspaceId: project.id,
   forkSupported: true,
   runGate: { allowed: true },
-  local: true,
   phase: 'idle',
 })
 
@@ -76,7 +84,7 @@ describe('workspace recovery', () => {
       { ...project, id: 'default' },
       { ...project, id: 'disabled', unavailable: 'Missing' },
       { ...project, id: 'folder-missing', folders: [{ id: 'a', path: '/a', unavailable: 'Missing' }] },
-      { ...project, id: 'local', remoteStart: false },
+      { ...project, id: 'local' },
       {
         ...project,
         id: 'two',
@@ -86,12 +94,13 @@ describe('workspace recovery', () => {
         ],
       },
     ]
-    const value = { workspaces, local: false, harness: { name: 'Limited', projectFolders: { access: 'all' as const, max: 1 } } }
-    expect(recoveryWorkspaces(value).map(item => item.id)).toEqual(['target'])
-    expect(recoveryWorkspaces({ ...value, local: true }).map(item => item.id)).toEqual(['target', 'local'])
+    const value = { workspaces, harness: testHarness('limited', { label: 'Limited', projectFolders: { access: 'all', max: 1 } }) }
+    expect(recoveryWorkspaces(value).map(item => item.id)).toEqual(['target', 'local'])
     expect(
-      recoveryWorkspaces({ ...value, harness: { name: 'Primary', projectFolders: { access: 'primary' } } }).map(item => item.id),
-    ).toEqual(['target', 'two'])
+      recoveryWorkspaces({ ...value, harness: testHarness('primary', { label: 'Primary', projectFolders: { access: 'primary' } }) }).map(
+        item => item.id,
+      ),
+    ).toEqual(['target', 'local', 'two'])
     expect(workspaceRecovery({ ...input(), workspaces: [{ ...project, unavailable: 'Removed after selection' }] }).intent).toBeUndefined()
   })
 

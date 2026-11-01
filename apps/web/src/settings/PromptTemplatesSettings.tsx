@@ -31,7 +31,7 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
       ? '所有会话'
       : scope.kind === 'project'
         ? `项目：${snapshot.catalog?.workspaces.find(item => item.id === scope.id)?.name ?? scope.id}`
-        : `Agent：${snapshot.catalog?.harnesses.find(item => item.id === scope.id)?.name ?? scope.id}`
+        : `Agent：${snapshot.catalog?.harnesses.find(item => item.id === scope.id)?.capabilities.display.label ?? scope.id}`
   }
   return (
     <SettingsGroup title="提示模板" caption="在输入框键入 / 选择模板；插入草稿后可编辑，再由你发送。">
@@ -111,7 +111,7 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
                 ))}
                 {snapshot.catalog?.harnesses.map(item => (
                   <option key={item.id} value={`agent:${item.id}`}>
-                    Agent：{item.name}
+                    Agent：{item.capabilities.display.label}
                   </option>
                 ))}
               </select>

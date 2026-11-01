@@ -117,6 +117,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'personal.changed': { kind: 'routine', operation: 'start', before: hex, after: hex, assistantId: 'asst_1' },
   'agent.probe.requested': { agentId: 'codex', launchHash: hex },
   'agent.probed': { agentId: 'codex', launchHash: hex, status: 'authentication-required' },
+  'agent.login.checked': { agentId: 'codex', status: 'unauthenticated' },
+  'agent.login.opened': { agentId: 'codex' },
   'agent.defined': { agentId: 'codex', definitionHash: hex, created: true },
   'agent.deleted': { agentId: 'codex' },
   'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },

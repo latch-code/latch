@@ -7,10 +7,10 @@ export const qwenProfile: HarnessProfile = {
     approvals: 'prompts',
     defaultEnv: {},
     expectedMode: 'default',
-    modeLadder: ['plan', 'default', 'auto-edit', 'yolo'],
+    modeLadder: ['plan', 'default', 'auto-edit', 'auto', 'yolo'],
     neverAskModes: ['yolo'],
-    forbiddenModes: ['auto'],
     readback: 'mode',
+    inheritEnv: ['QWEN_HOME', 'QWEN_RUNTIME_DIR'],
     notes: ['恢复会话会恢复旧模式，Latch 每轮前重新设置'],
   },
   // As in Gemini CLI: the process arguments apply to its ACP sessions, and the value is split on commas.

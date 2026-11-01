@@ -5,9 +5,9 @@ import type {
   ModelRef,
   AgentExecutionContext,
   RunLive,
-  TaskDetail,
+  DriverTaskDetail,
   TaskMode,
-  TaskSummary,
+  DriverTaskSummary,
 } from '@latch/protocol/types'
 
 /** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
@@ -39,7 +39,7 @@ export interface CreateTaskInput {
    * session's lifetime. Others never receive it and use `cwd` alone.
    */
   folders?: ReadonlyArray<ProjectFolder>
-  /** L3 drivers: the launch fingerprint the owner confirmed. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
+  /** L3 drivers: the launch fingerprint this start recorded. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }
 
@@ -77,13 +77,11 @@ export interface CancelOptions {
 export interface SetConfigOptions {
   /** Host authority, checked after async preparation and immediately before an external configuration request. */
   authorize?: () => void
-  /** The owner confirmed widening a mode-category option through local presence confirmation. */
-  allowWiden?: boolean
 }
 
-export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider' | 'forbidden'
+export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider'
 
-/** What an L3 session would launch, shown in the local confirmation before it starts. */
+/** What an L3 session would launch, for the audit and its start. */
 export interface LaunchPreview {
   launchHash: string
   /**
@@ -112,8 +110,8 @@ export interface LaunchPreview {
 export interface Bridge {
   start(): Promise<void>
   close(): Promise<void>
-  listTasks(): Promise<TaskSummary[]>
-  detail(sessionId: string): Promise<TaskDetail>
+  listTasks(): Promise<DriverTaskSummary[]>
+  detail(sessionId: string): Promise<DriverTaskDetail>
   createTask(input: CreateTaskInput): Promise<{ sessionId: string }>
   prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void>
   /**

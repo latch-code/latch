@@ -141,8 +141,8 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **Host 是唯一权威。** 每个请求的身份只来自接受连接的监听入口与设备凭据。
 - **设备各自持有密钥。** 每台设备在登记时生成自己的密钥，Host 只保存公钥与凭据哈希。登记需要在执行端电脑上确认（离线连接码除外）。
 - **只有 `host.sock` 算这台电脑。** 回环端口也可能被转发到别处，所以回环与其他入口一样按远程处理。
-- **能力按设备分级。** 设备权限（scope）决定能调用哪些接口；监听入口决定能否提升权限；安全策略的上限与会话级别（L1 / L3）决定能运行什么、Latch 是否逐项把关。
-- **本机确认只在执行端电脑上发起。** 只有经 `host.sock` 认证的已登记设备（桌面端）能发起需要本机确认的操作；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请。
+- **能力按设备分级。** 设备权限（scope）决定能调用哪些接口，这是唯一的限制；监听入口决定能否扩大权限；会话级别（L1 / L3）说明 Latch 是否逐项把关。信任在连接设备时建立一次，之后手机和这台 Mac 一样工作。
+- **本机确认只留给真实边界，只在这台 Mac 上发起。** 连接新设备、扩大设备权限、确认新的模型服务地址或出站地址、应用含代码的插件。只有经 `host.sock` 认证的已登记设备（桌面端）能发起；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请，从未有过设备时桌面端在 `host.sock` 上的第一次连接不需要确认。开始 Agent、放宽模式、批准操作不弹确认：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
 - **先审计再执行。** 授予或执行权限的操作先写入审计记录，写入失败则拒绝执行；降低权限的操作从不因审计失败而受阻。
 
 ### 不防御的情况
@@ -222,11 +222,11 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 - 新建会话的可选项与默认值不包含它，把它设为默认值返回 400 `workspace-unavailable`，在其中新建会话返回 409 `workspace-disabled`；
 - 文件夹回到原来的真实路径并通过检查后，项目自动恢复。Latch 不跟踪移动的文件夹（没有书签，也不按身份追踪）。
 
-列表中的每个项目还带 `remoteStart`：按当前策略，其他设备能否在其中发起会话。快照的 `catalog.harnesses` 同样带 `remoteStart`：能否在这个 Harness 上发起；完全访问的 Harness 只能从 `host.sock` 发起。快照的 `catalog.projectFolders`（`{ max: 8 }`）表示 Host 支持多个文件夹的项目；没有它的是旧版本 Host。
+快照的 `catalog.projectFolders`（`{ max: 8 }`）表示 Host 支持多个文件夹的项目；没有它的是旧版本 Host。
 
 ### 会话与项目
 
-`POST /tasks` 仍只带 `workspaceId`。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出返回 409 `harness-folder-limit`，不请求本机确认），会话在主文件夹中启动；Host 把项目标识记在会话元数据（`sessions-meta.json` 的 `workspaceId`，摘要中的 `workspaceId`），写入失败只影响分组。L3 会话确认之后，如果主文件夹已不是确认时的那个，或者 Harness 收到全部文件夹而项目的文件夹已与确认时不同，返回 409 `workspace-changed`。
+`POST /tasks` 仍只带 `workspaceId`。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出返回 409 `harness-folder-limit`），会话在主文件夹中启动；Host 把项目标识记在会话元数据（`sessions-meta.json` 的 `workspaceId`，摘要中的 `workspaceId`），写入失败只影响分组。L3 会话确认之后，如果主文件夹已不是确认时的那个，或者 Harness 收到全部文件夹而项目的文件夹已与确认时不同，返回 409 `workspace-changed`。
 
 Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` 的 Driver（内置 Standard，以及预设为 Codex、Gemini CLI、Qwen Code 的 ACP Driver），同时给它 `projects()` 供它自己再核对一次；其他 Driver 只收到主文件夹作为 `cwd`，摘要的 `folderAccess` 由 Host 设为 `primary`。`HarnessInfo.projectFolders` 告诉客户端每个 Harness 怎样对待其他文件夹：Standard 与 Codex 为 `{ access: 'all' }`，Gemini CLI 与 Qwen Code 为 `{ access: 'all', max: 5 }`，OpenCode 为 `primary-asks`，DeepSeek Harness 为 `primary`，pi 与 goose 为 `primary-unbounded`；没有这一项的 Harness 只使用主文件夹，只有声明 `projectFolders: 'all'` 的 Driver 才显示为 `all`。L3 本机确认逐个列出并绑定 Host 交给 Driver 的其他文件夹，以及 `launchPreview` 声明的其他文件夹；没有预览方法的插件同样显示并绑定，文件夹计入通用启动指纹。各 ACP Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)。会话的文件夹在创建时固定（由 Driver 记在摘要的 `folders` 中；没有时就是 `cwd`）。之后加入项目的文件夹只用于新会话；会话记下的文件夹被移出项目、被替换或找不到时，继续该会话返回 409 `workspace-changed`，项目因其他原因不可用时返回 409 `workspace-disabled`。
 
@@ -265,7 +265,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 
 - **会话 ID 原样透传。** 路由表来自 `createTask` 的返回、Driver 的变化通知和 `listTasks`，只在内存中保存；未知 ID 会重新列出一次后再返回 404。Driver 必须生成全局唯一、不超过 256 字符的会话与审批 ID；会话 ID 冲突时先挂载者胜出并记录日志，审批 ID 同时属于多个 Harness 时拒绝路由。
 - **审批按来源路由。** `approvals()` 合并所有 Driver；`decide` 找到持有该审批的 Driver。
-- **权限级别。** Hub 按来源给会话标注级别：内置为 L1，ACP 与插件 Harness 为 L3（未知来源按 L3）；会话详情带 `permission` 说明由谁把关、能否读回模式与漂移状态。
+- **权限级别。** Hub 由 `trustOf` 给会话标注级别：Driver 的来源由注册它的插件得出，内置且声明 Latch 把关的是 L1，ACP 与插件 Harness 是 L3（未知来源按 L3），Driver 只能往低了说（`apps/host/src/harness-trust.ts`）；会话详情带 `permission` 说明由谁把关、能否读回模式与漂移状态。
 - **故障隔离。** 某个 Driver 列表失败不影响快照；非必需 Driver 启动失败只会在目录中标为不可用。
 - **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。
 - **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效；审批决定与取消的回执也随会话保存在这里（见「审批与取消」）。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`，删除成功后一并删除该会话的元数据与回执。
@@ -278,7 +278,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
   - 运行的查询与 `runStarted` 的监听器合计最多等待 15 秒，`hostStopping` 的监听器最多 3 秒，其余事件不等待。取消会让仍在等待的运行立即继续（提示不会发出）；Host 开始停止时，仍在等待的运行先被取消再放行，之后才到达 `trackFiles` 的运行直接取消，都不会发给模型或 Agent。监听器抛错、拒绝或超时只经脱敏的日志记录，不影响运行与停止。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。
 
-客户端从快照的 `catalog` 读取可选项：`harnesses`（来源、状态、级别、支持的模式、模型由 Host 还是 Agent 管理；`offer` 表示这台电脑上找到了预设的命令、定义还没保存，只发给能保存它的设备，见 [HARNESSES.md](./HARNESSES.md#使用)）、`providers`（不含密钥）、`workspaces`（含本次运行停用、带 `unavailable` 的项目）与 `defaults`。`snapshot.harness` 与 `snapshot.execution` 保留旧含义，描述默认 Harness。快照还带当前设备（`device`，含续期时间）与 Host 信息（`host`：hostId、开发版标记、本机确认状态、HTTPS 入口、策略上限与 `allowL3`）。
+客户端从快照的 `catalog` 读取可选项：`harnesses`（状态、级别、支持的模式、`capabilities`：模型归谁、谁把关、能否运行命令、显示的名字与图标；客户端只读这些事实，不判断 Driver 种类；`offer` 表示这台电脑上找到了预设的命令、定义还没保存，只发给能保存它的设备，见 [HARNESSES.md](./HARNESSES.md#使用)）、`providers`（不含密钥）、`workspaces`（含本次运行停用、带 `unavailable` 的项目）与 `defaults`。`snapshot.harness` 与 `snapshot.execution` 保留旧含义，描述默认 Harness。快照还带当前设备（`device`，含续期时间）与 Host 信息（`host`：hostId、开发版标记、本机确认状态、HTTPS 入口、策略上限与 `allowL3`）。
 
 ## Standard 的会话与运行
 
@@ -363,7 +363,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 
 ## HTTP API
 
-接口根为 `/link/api`，这是本项目的内部协议，暂不承诺版本兼容。访问检查顺序：Host 与来源检查 → 认证 → 权限 → 入口规则 → 上限 → 本机确认 → 审计 → 执行；排队或等待确认的请求在执行前按设备当前记录重新检查。
+接口根为 `/link/api`，这是本项目的内部协议，暂不承诺版本兼容。访问检查顺序：Host 与来源检查 → 认证 → 权限 → 入口规则 → 本机确认（只有少数操作）→ 审计 → 执行；排队或等待确认的请求在执行前按设备当前记录重新检查。
 
 路由分在 `server.ts` 与 `apps/host/src/routes/` 的模块中。`handleApi` 按 `routes/index.ts` 的次序在四处询问模块：任何路由之前的连接检查（文件传输连接只取它的文件，被撤销的手机只能读撤销通知，配对连接只能登记）；健康检查与运行状态路由之后、认证之前的无需凭据的路由（登记、凭据续期）；认证之后、拒绝匿名 `host.sock` 调用之前（原生连接的验证窗口）；以及所有检查（含匿名调用与个人会话的数据范围）之后、`server.ts` 自己的路由之前。每个路由的入口、权限与限速检查在它所在的模块中，`apps/host/test/route-guards.test.ts` 逐个核对。错误体为 `{ error, message, ...details }`（`required`、`allowed`、`confirmation`、`stepup`、`retryAfter`、`target`、`legacyName`、`decidedBy`）；429 同时带 `retry-after` 响应头，输入校验失败为 400 `invalid-input`。
 
@@ -376,19 +376,19 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
-| `GET /workspaces` | `view` | 项目列表：启动目录与已保存的项目，含文件夹、各自的不可用原因与 `remoteStart` |
+| `GET /workspaces` | `view` | 项目列表：启动目录与已保存的项目，含文件夹与各自的不可用原因 |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
-| `POST /tasks` | `run` | Standard 受上限与远程发起规则约束；L3 只在桌面端、`local.allowL3` 为真时经本机确认 |
+| `POST /tasks` | `run` | L3 写两条启动审计，不弹确认 |
 | `POST /tasks/:id/prompt` | `run` | 受上限与远程列表约束；L3 只在桌面端；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
-| `POST /tasks/:id/config` | `run` | 同上；放宽权限模式需本机确认；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
+| `POST /tasks/:id/config` | `run` | 放宽权限模式写 `task.mode.widened`；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |
-| `DELETE /tasks/:id` | `run` | L3 只在桌面端；不受上限约束 |
-| `PATCH /tasks/:id` | `run` | 重命名、置顶、归档；不受上限约束；会话还有终端时归档可能被拒绝（见 [TERMINAL.md](./TERMINAL.md)） |
+| `DELETE /tasks/:id` | `run` | |
+| `PATCH /tasks/:id` | `run` | 重命名、置顶、归档；会话还有终端时归档可能被拒绝（见 [TERMINAL.md](./TERMINAL.md)） |
 | `POST /tasks/:id/cancel` | `view` | `{ requestId?, runId? }`，回答取消的回执 |
 | `POST /tasks/:id/keep-waiting` | `view` | `{ runId, thresholdMs }`，让这次运行晚一些再说沉默，见 [STREAMING.md](./STREAMING.md#运行的真实状态) |
 | `GET /traffic` | `admin` 或匿名 `host.sock` | 流量计数（只读） |
-| `POST /approvals/:id` | 拒绝：`view`；允许 R1：`approve:standard`；允许 R2：桌面端 + `approve:elevated` + 本机确认；允许 L3 询问：桌面端 + `run` | `{ decision, optionId?, requestId?, note? }`（`note` 只随拒绝，只交给内置 Harness；它是给模型的输入，所以另需 `run` 并受上限与远程列表约束）；允许受上限与远程列表约束，会话目录已离开项目时返回 workspace-changed |
+| `POST /approvals/:id` | 拒绝：`view`；允许 R1：`approve:standard`；允许 R2：`approve:elevated`；允许 L3 询问：`run` | `{ decision, optionId?, requestId?, note? }`（`note` 只随拒绝，只交给内置 Harness；它是给模型的输入，所以另需 `run` 并受上限与远程列表约束）；允许受上限与远程列表约束，会话目录已离开项目时返回 workspace-changed |
 | `GET/DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
 | `PATCH /devices/current`、`DELETE /devices/current` | `view` | 重命名、撤销本设备 |
@@ -400,14 +400,14 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET/POST /providers`、`PUT/DELETE /providers/:id`、`GET/PUT /provider` | `admin`；填写密钥另需 `secrets`（只在桌面端）；确认地址（`confirmOrigin`）只在桌面端，经本机确认 | 模型服务；`GET /providers` 另返回 `confirmedAddresses` 与本次运行放行的源 `runOrigins`，每个服务带 `destination` |
 | `POST /provider-origins` | `admin`，只在桌面端；尚未确认的地址经本机确认 | 保存服务之前确认一个模型服务地址 |
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
-| `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin`；新建，或修改命令、参数、环境变量与预设，只能在桌面端（不需要本机确认） | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
+| `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin` | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：添加项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
 | `PATCH /workspaces/:id` | `admin` | `{ name?, glyph?, order? }`：重命名、图标、文件夹顺序（第一个是主文件夹） |
 | `DELETE /workspaces/:id/folders/:folderId`、`DELETE /workspaces/:id` | `admin` | 从项目中移除文件夹、移除项目（文件不删除） |
 | `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned`（这台电脑上的新会话都从这个 Harness 与模型开始；它们用不了时快照里不带 `pinned`）与它固定之后的 Harness、模型只能经 `host.sock` 修改，因为固定的 Harness 可以是完全访问的 |
-| `GET /policy`、`PATCH /policy` | `admin`；放宽需桌面端与本机确认 | 安全策略及其哈希 |
+| `GET /policy`、`PATCH /policy` | `admin`；加入出站地址需桌面端与本机确认 | 安全策略及其哈希；放宽只有 `hostEgressAllow` 一项 |
 
 `/link/` 下的静态页面在所有入口上无需认证（Host 与来源检查照常）。不是页面的地址（例如把回复里的文件名当链接打开的 `/link/report.md`，或 `/link/` 之外的路径）返回 404 的普通 HTML 页面「找不到这个页面」，带回到 `/link/` 的链接：它不回显请求的路径，不运行脚本（[not-found.ts](../apps/host/src/not-found.ts)）。`/link/api/` 下的路径仍返回 JSON 错误。没有凭据的 `host.sock` 连接只能调用健康检查、`host-info`、运行状态报告、登记、设备列表、撤销设备、生成邀请与读取流量计数，以匿名命令行身份审计。
 
@@ -432,7 +432,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
 | 无界面服务器的确认通道（独立系统用户、命令行确认） | 未实现，`policy.json` 的 `operators` 被忽略；Linux 服务器建议用独立系统用户运行 Host |
-| 远程设备的高风险确认（WebAuthn） | 未实现；在此之前 R2 与其他需要本机确认的操作只能在桌面端处理 |
+| 手机上可选的 Face ID 保护 | 未实现；手机连上后不再要求别的确认，已验证窗口的规则不变 |
 | 打包的桌面端与登录项 | 尚无打包构建：「登录时打开 Latch」的登录项只能登记打包后的 Latch.app，开发运行时不可用；打包版以无参数启动时使用默认数据目录也未实现 |
 | Electron fuses、签名安装包、asar 完整性、Secure Enclave 设备密钥 | 尚无打包构建；当前为开发版 |
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
@@ -449,7 +449,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | 页面中的项目界面：编辑项目（添加与移除文件夹、调整顺序与设为主文件夹、重新选择、重命名与图标）、新会话选择器里的文件夹信息、侧栏按 `workspaceId` 分组、项目弹层里的文件夹，以及会话菜单的「存为项目…」 | 尚未实现；Host 的接口与桌面端的 `latchShell.folders` 已可用，页面目前每个项目只显示主文件夹 |
 | 在手机、其他电脑或本机浏览器上添加文件夹（包括 Host 端的目录浏览） | 不提供：加入文件夹就是授予权限，只在 Host 所在电脑上进行 |
 | 跟随移动或改名的文件夹（书签、按身份追踪），运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
-| 按文件夹的远程授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；`remote.workspaces` 按项目授权，所列项目授予它的全部文件夹 |
+| 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
 | 原生中继、端到端连接与推送通知 | Host 直连与中继已接入授权与会话；Mac 可生成二维码、管理只读与正文窗口，并移除已保存的中继。官方中继尚未部署，新增自建中继与地址目录的入口尚未实现；可安装手机 App 与推送尚未提供 |
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。
@@ -523,4 +523,4 @@ Host 在 `sessions-meta.json` 保存设备、编号、请求体 SHA-256、时间
 
 配置回执随会话存续，不参与审批／取消回执的七天淘汰；每设备最多 10000 条、Host 共 100000 条，计入共享回执容量，满时拒绝新增，不能通过淘汰未决身份重执行。准备中的请求全局最多 256 条、每设备 32 条，同一执行最多 32 个合并等待者、全局 256 个。删除会话可清理其持久回执，旧会话 ID 不能复用。
 
-配置修改仍执行原来的权限上限、项目与远程输入规则。`wider` 必须真实消费本机确认，旧回执只能确认已经发生的结果，不能授予一次新修改。审计只保存会话 ID 和字段／目标值哈希；插件和 Agent 仍是可信本机代码，这些检查不构成 OS 沙箱。
+配置修改仍执行设备权限与项目规则。旧回执只能确认已经发生的结果，不能授予一次新修改。审计只保存会话 ID 和字段／目标值哈希；插件和 Agent 仍是可信本机代码，这些检查不构成 OS 沙箱。

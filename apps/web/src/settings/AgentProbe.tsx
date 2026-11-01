@@ -1,17 +1,17 @@
 import { useRef, useState } from 'react'
 import { FlaskConical } from 'lucide-react'
-import type { AgentProbeResult, AgentSettings } from '@latch/protocol'
+import type { AgentProbeResult, AgentSettings, HarnessLogin } from '@latch/protocol'
 import { Button, InlineNotice, CopyButton } from '@latch/ui'
-import { InlineConfirm } from '../components/InlineConfirm.tsx'
+import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, inlineError, isUncertain } from '../core/api.ts'
-import { withConfirmation } from '../core/confirmations.ts'
 import { dateTime } from '../format.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 
 export function probeResultTitle(result: AgentProbeResult | undefined): string {
   if (!result) return '尚未测试启动'
-  if (result.status === 'ready') return '启动握手成功'
+  if (result.login === 'unauthenticated') return '还没登录'
+  if (result.status === 'ready') return result.login === 'authenticated' ? '可以启动，已登录' : '启动握手成功'
   return result.status === 'authentication-required' ? '需要先登录' : '测试启动失败'
 }
 
@@ -20,8 +20,12 @@ export function AgentProbe({
   disabledReason,
   disabled = false,
   onSaved,
+  login,
+  terminal = false,
 }: {
   agent: AgentSettings
+  login?: HarnessLogin | undefined
+  terminal?: boolean
   disabledReason?: string
   disabled?: boolean
   onSaved(): void
@@ -44,14 +48,7 @@ export function AgentProbe({
     setError('')
     const body = { requestId: (pending.current ??= crypto.randomUUID()) }
     try {
-      const next = await withConfirmation(confirmation =>
-        api<AgentProbeResult>(`agents/${encodeURIComponent(agent.id)}/probe`, {
-          method: 'POST',
-          body,
-          timeoutMs: 25_000,
-          ...(confirmation ? { confirmation } : {}),
-        }),
-      )
+      const next = await api<AgentProbeResult>(`agents/${encodeURIComponent(agent.id)}/probe`, { method: 'POST', body, timeoutMs: 25_000 })
       setResult(next)
       pending.current = null
       setUncertain(false)
@@ -79,7 +76,7 @@ export function AgentProbe({
   return (
     <SettingsGroup
       title="测试启动"
-      caption={disabledReason ?? '会运行 Harness 程序并要求 Touch ID；只检查启动握手，不发送提示词。'}
+      caption={disabledReason ?? '会运行 Harness 程序；只检查启动握手，不发送提示词。'}
       captionIcon={disabledReason ? 'lock' : 'info'}>
       <SettingsRow
         title={busy ? '正在测试启动' : probeResultTitle(result)}
@@ -87,9 +84,13 @@ export function AgentProbe({
           busy
             ? '在系统表单中核对后，最多等待 15 秒。'
             : result?.status === 'ready'
-              ? '登录状态与模型访问尚未验证。'
+              ? result.login === 'unauthenticated'
+                ? '在终端里登录，再重新测试。'
+                : result.login === 'authenticated'
+                  ? '模型访问尚未验证。'
+                  : '登录状态与模型访问尚未验证。'
               : result?.status === 'authentication-required'
-                ? '先在终端登录这个 Harness，再重新测试。'
+                ? '在终端里登录，再重新测试。'
                 : result
                   ? '查看诊断，检查安装、启动配置或登录状态后重试。'
                   : '检查程序能否启动，以及它声明的能力。'
@@ -107,8 +108,8 @@ export function AgentProbe({
         }
       />
       <div className="settings-card-body agent-probe-body">
-        <InlineConfirm active={busy} rank={1} />
         {error && <InlineNotice tone="error">{uncertain ? '测试结果未确认；请重试同一次请求以同步结果。' : error}</InlineNotice>}
+        {result?.login === 'unauthenticated' && login && <HarnessLoginSteps harnessId={agent.id} login={login} terminal={terminal} />}
         {result && (
           <>
             <p className="agent-probe-meta">

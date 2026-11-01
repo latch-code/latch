@@ -270,7 +270,7 @@ export function createChangeRoutes(context: RouteContext): RouteModule {
       requireScope(caller, 'run')
       const input = discardSchema.parse(await jsonBody(req))
       if (input.scope === 'uncommitted') {
-        // Nothing brings these files back, as with an agent's delete that only this computer may approve.
+        // Nothing brings these files back, so for now this stays on this computer.
         requireLocal(caller)
         if (input.confirm === undefined) throw new AppError(409, 'change-confirm-required', '这个操作会删除文件且无法撤销，请先确认。')
       }

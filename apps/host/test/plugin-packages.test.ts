@@ -37,7 +37,10 @@ describe('local feature packages', () => {
     lease.release()
     const data = registry.acquireUiPanel('release-review:criteria')
     expect(
-      await data.render({ session: { id: 'task', title: 'Review', status: 'idle', updatedAt: '' }, signal: new AbortController().signal }),
+      await data.render({
+        session: { harnessId: 'standard', id: 'task', title: 'Review', status: 'idle', updatedAt: '' },
+        signal: new AbortController().signal,
+      }),
     ).toMatchObject({ blocks: [{ type: 'list', items: ['测试通过并附上结果', '兼容性与迁移已核对', '已准备回退步骤'] }] })
     data.release()
     await registry.disable(plugin.id)

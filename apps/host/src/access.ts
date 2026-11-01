@@ -99,14 +99,6 @@ export function localOnly(): AppError {
   return new AppError(403, 'local-only', '此操作只能在执行端电脑上用 Latch 桌面端进行')
 }
 
-export function ceilingExceeded(allowed: PermissionLevel[]): AppError {
-  return new AppError(403, 'ceiling-exceeded', '超出此设备可用的权限上限', { allowed })
-}
-
-export function hostDesktopRequired(): AppError {
-  return new AppError(403, 'stepup-required', '高风险操作只能在执行端电脑上用 Latch 桌面端确认', { stepup: { where: 'host-desktop' } })
-}
-
 export function stepupRequired(confirmation: ConfirmationTicket): AppError {
   return new AppError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' }, confirmation })
 }
@@ -114,11 +106,6 @@ export function stepupRequired(confirmation: ConfirmationTicket): AppError {
 const LEVELS: PermissionLevel[] = ['L0', 'L1', 'L2', 'L3']
 export function levelAtMost(level: PermissionLevel, ceiling: PermissionLevel): boolean {
   return LEVELS.indexOf(level) <= LEVELS.indexOf(ceiling)
-}
-
-/** Levels up to and including the ceiling, for `ceiling-exceeded` details. */
-export function levelsUpTo(ceiling: PermissionLevel): PermissionLevel[] {
-  return LEVELS.slice(0, LEVELS.indexOf(ceiling) + 1)
 }
 
 /** Only the public ticket fields leave the Host. */
@@ -130,7 +117,6 @@ export function publicTicket(record: ConfirmationTicket): ConfirmationTicket {
     status: record.status,
     hashDisplay: record.hashDisplay,
     expiresAt: record.expiresAt,
-    ...(record.confirmationMethod ? { confirmationMethod: record.confirmationMethod } : {}),
     ...(record.reason !== undefined ? { reason: record.reason } : {}),
     ...(record.form !== undefined ? { form: record.form } : {}),
     ...(record.lines ? { lines: record.lines.map(line => ({ label: line.label, value: line.value })) } : {}),

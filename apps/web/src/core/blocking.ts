@@ -36,7 +36,7 @@ export function activeFullAccess(snapshot: Pick<AppSnapshot, 'tasks'>): Blocking
   return snapshot.tasks
     .filter(task => task.level === 'L3' && (task.status === 'running' || task.status === 'waiting-approval'))
     .sort((a, b) => waiting(a) - waiting(b) || b.updatedAt.localeCompare(a.updatedAt))
-    .map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId ?? '' }))
+    .map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId }))
 }
 
 /**
@@ -73,7 +73,7 @@ export function shownTitle(title: string): string {
  * (left out on an older Host or for a harness it no longer lists), and whether it waits for the person rather than runs.
  */
 export function namedSession(task: BlockingTask, snapshot: Pick<AppSnapshot, 'catalog' | 'tasks'> | null): NamedSession {
-  const name = snapshot?.catalog?.harnesses.find(harness => harness.id === task.harnessId)?.name
+  const name = snapshot?.catalog?.harnesses.find(harness => harness.id === task.harnessId)?.capabilities.display.label
   const agent = name ? escapeSecurityText(name) : ''
   const waiting = snapshot?.tasks.find(item => item.id === task.id)?.status === 'waiting-approval'
   return { title: shownTitle(task.title), ...(agent ? { agent } : {}), ...(waiting ? { waiting } : {}) }

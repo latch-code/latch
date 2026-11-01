@@ -434,7 +434,7 @@ export function ProjectEditor({
               <SettingsRow
                 key={harness.id}
                 leading={<HarnessTile harness={harness} size={24} />}
-                title={harness.name}
+                title={harness.capabilities.display.label}
                 description={folderAccessText(harness, folders.length)}
               />
             ))}

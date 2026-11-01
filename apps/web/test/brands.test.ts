@@ -33,15 +33,18 @@ describe('brand icons', () => {
   it('gives every harness preset its brand icon', () => {
     expect(Object.keys(HARNESS_MARKS).toSorted()).toEqual(AGENT_PRESETS.map(preset => preset.id).toSorted())
     for (const preset of AGENT_PRESETS) {
-      expect({ preset: preset.id, kind: harnessArt({ id: preset.id, source: 'acp', presetId: preset.id }).kind }).toEqual({
+      expect({ preset: preset.id, kind: harnessArt(preset.id).kind }).toEqual({
         preset: preset.id,
         kind: 'mark',
       })
     }
     // The built-in harness is Latch itself; an agent command or a plugin without a brand gets a glyph, never a letter.
-    expect(harnessArt({ id: 'standard', source: 'builtin' })).toEqual({ kind: 'app' })
-    expect(harnessArt({ id: 'my-agent', source: 'acp' })).toEqual({ kind: 'glyph', icon: GLYPHS.agent })
-    expect(harnessArt({ id: 'codex', source: 'plugin' })).toEqual({ kind: 'glyph', icon: GLYPHS.plugin })
+    expect(harnessArt('latch')).toEqual({ kind: 'app' })
+    expect(harnessArt(undefined)).toEqual({ kind: 'glyph', icon: GLYPHS.agent })
+    expect(harnessArt('plugin')).toEqual({ kind: 'glyph', icon: GLYPHS.plugin })
+    // Only keys of the fixed set draw anything of their own.
+    expect(harnessArt('https://example.test/mark.svg')).toEqual({ kind: 'glyph', icon: GLYPHS.agent })
+    expect(harnessArt('constructor')).toEqual({ kind: 'glyph', icon: GLYPHS.agent })
   })
 
   it('gives every model-service preset its brand icon, and demo, plugin and custom services a glyph', () => {

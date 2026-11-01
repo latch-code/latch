@@ -131,17 +131,15 @@ it('allows a complete external harness to accept tasks without any model provide
   expect(await admin.json('provider')).toMatchObject({ configured: false })
   expect((await snapshot()).execution).toEqual({ ready: true })
   expect((await snapshot()).catalog?.harnesses.find(harness => harness.id === 'independent')).toMatchObject({
-    source: 'plugin',
     level: 'L3',
+    capabilities: { permission: { enforcement: 'none' }, display: { mark: 'plugin' } },
   })
   const input = { prompt: 'Run on independent backend', mode: 'agent', requestId: crypto.randomUUID() }
-  expect(await (await admin.request('tasks', { method: 'POST', body: input })).json()).toMatchObject({ error: 'local-only' })
-  const response = await desktop.confirmed('tasks', { method: 'POST', body: input })
+  const response = await admin.request('tasks', { method: 'POST', body: input })
   expect(response.status).toBe(201)
   expect(await response.json()).toEqual({ sessionId: 'external-task' })
   const launchHash = sha256Hex(canonicalJson({ harnessId: 'independent', pluginId: 'independent', version: '1' }))
   expect(createTask).toHaveBeenCalledExactlyOnceWith({ ...input, expectedLaunchHash: launchHash })
-  expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '命令', value: '第三方 Harness 插件 independent@1' })
 })
 
 it('selects a full Harness driver through its Cordis plugin', async () => {
@@ -152,7 +150,14 @@ it('selects a full Harness driver through its Cordis plugin', async () => {
     version: '1',
     description: 'test extension',
     activate(ctx) {
-      ctx.registerHarness({ id: 'custom', name: 'Custom engine', version: '1', create })
+      // Its claim changes nothing: no classifier below, and the session stays L3.
+      ctx.registerHarness({
+        id: 'custom',
+        name: 'Custom engine',
+        version: '1',
+        capabilities: { permission: { enforcement: 'latch' } },
+        create,
+      })
     },
   }
   const host = await startServer({ ...(await options()), harnessId: 'custom', plugins: [plugin] })
@@ -161,6 +166,7 @@ it('selects a full Harness driver through its Cordis plugin', async () => {
     expect(create.mock.calls[0]![0].dataDir).toContain(join('harnesses', 'custom'))
     expect(create.mock.calls[0]![0].tmpRoot).toBe(join(host.runtimeDir, 'tmp'))
     expect(create.mock.calls[0]![0].classifyToolCall).toBeUndefined()
+    expect(host.bridge.levelOf('custom')).toBe('L3')
     const { sessionId } = await host.bridge.createTask({ prompt: 'hello', requestId: crypto.randomUUID(), mode: 'chat' })
     await expect.poll(async () => (await host.bridge.detail(sessionId)).summary.status).toBe('idle')
     expect((await host.bridge.detail(sessionId)).summary.mode).toBe('chat')
@@ -238,7 +244,7 @@ function externalHarness(id: string, start: () => Promise<void> = async () => {}
         id,
         name: `${id} engine`,
         version: '1',
-        capabilities: { modes: ['agent'], models: 'agent' },
+        capabilities: { modes: ['agent'] },
         create: () => ({
           start,
           close,
@@ -268,14 +274,24 @@ it('lists every mounted harness in the catalog and routes a session to the one t
   expect(current.catalog?.harnesses).toEqual([
     expect.objectContaining({
       id: 'standard',
-      name: 'Latch 内置',
-      source: 'builtin',
       status: 'ready',
       modes: ['chat', 'agent'],
-      models: 'host',
       level: 'L1',
+      capabilities: expect.objectContaining({
+        models: expect.objectContaining({ owner: 'latch' }),
+        display: { label: 'Latch 内置', mark: 'latch' },
+      }),
     }),
-    expect.objectContaining({ id: 'outside', source: 'plugin', status: 'ready', modes: ['agent'], models: 'agent', level: 'L3' }),
+    expect.objectContaining({
+      id: 'outside',
+      status: 'ready',
+      modes: ['agent'],
+      level: 'L3',
+      capabilities: expect.objectContaining({
+        models: expect.objectContaining({ owner: 'harness' }),
+        display: expect.objectContaining({ mark: 'plugin' }),
+      }),
+    }),
   ])
   expect(current.catalog?.defaults).toEqual({
     harnessId: 'standard',

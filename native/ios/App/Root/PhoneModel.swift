@@ -70,6 +70,7 @@ enum PhoneArea: String { case personal, projects }
     @Published var contentGeneration = UUID()
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") }
+    var canApproveElevated: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:elevated") }
     func hasScope(_ scope: String) -> Bool { snapshot["device"]["scopes"].array.contains(.string(scope)) }
     private(set) var store: PhoneStore?
     private(set) var workspace: NativeWorkspace?

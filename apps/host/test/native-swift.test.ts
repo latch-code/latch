@@ -36,7 +36,7 @@ import {
   parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
-import { swiftFixturePath } from '@latch/testkit'
+import { swiftFixturePath, testHarness } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -623,15 +623,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { id: 'gone', role: 'assistant', text: '', outputs: [{ path: 'old.ts', change: 'deleted' }] },
         ],
       },
-      sealedCatalog: {
-        harnesses: [{ id: 'standard', source: 'builtin', status: 'ready', level: 'L1', modes: ['chat', 'agent'], models: 'host' }],
-        workspaces: [
-          { id: 'default', name: '默认文件夹', remoteStart: false },
-          { id: 'latch', name: 'latch', remoteStart: true },
-        ],
-        providers: [{ id: 'p', name: 'P', models: ['m1'] }],
-        defaults: { harnessId: 'standard', mode: 'chat' },
-      },
       workspaces: [
         { id: 'default', name: '默认文件夹', path: '/work' },
         { id: 'latch', name: 'latch', path: '/work/latch' },
@@ -707,6 +698,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
       outputs: [{ path: 'a.ts' }, { path: 'made.pptx', root: 'r' }],
       canApprove: true,
+      canApproveElevated: true,
+      canRun: true,
       approvals: [
         { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts'] } },
         { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts', 'src/b.ts', 'src/c.ts'] } },
@@ -732,31 +725,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
       catalog: {
         harnesses: [
-          {
-            id: 'codex',
-            name: 'Codex',
-            source: 'acp',
-            status: 'ready',
-            level: 'L3',
-            modes: ['agent'],
-            models: 'agent',
-            remoteStart: false,
-          },
-          { id: 'broken', name: 'Broken', source: 'acp', status: 'unavailable', modes: ['agent'], models: 'agent' },
-          {
-            id: 'standard',
-            name: 'Standard',
-            source: 'builtin',
-            status: 'ready',
-            level: 'L1',
-            modes: ['chat', 'agent'],
-            models: 'host',
-            remoteStart: true,
-          },
+          testHarness('codex', { label: 'Codex' }),
+          testHarness('broken', { label: 'Broken', status: 'unavailable' }),
+          testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
         ],
         workspaces: [
-          { id: 'sealed', name: 'sealed', remoteStart: false },
-          { id: 'latch', name: 'latch', remoteStart: true },
+          { id: 'sealed', name: 'sealed' },
+          { id: 'latch', name: 'latch' },
           { id: 'gone', name: 'gone', unavailable: '找不到这个文件夹' },
         ],
         providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'], defaultModel: 'm1' }],
@@ -782,9 +757,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.noteTooLong).toEqual([false, true, false])
     // Backing out of Face ID is quiet; a sheet that failed says so, and neither reads as a lost connection.
     expect(result.faceId).toEqual([true, true, false, true, false, false])
-    expect(result.chatStartable).toBe(true)
-    expect(result.chatSealed).toEqual([false, 'latch'])
-    expect(result.chatBlocker).toBe('不用项目的对话只能在 Mac 上开始。')
     expect(result.rows).toEqual(['waiting', 'waiting', 'running', 'silent', 'stopping', 'ended:已强制停止:2', 'failed', 'read', 'read'])
     // A list that may be stale draws nothing live; a run that has already ended still says how.
     expect(result.frozen).toEqual(['frozen', 'frozen', 'frozen', 'frozen', 'frozen', 'ended:已强制停止:2', 'failed', 'read', 'read'])
@@ -816,37 +788,27 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain', actions: [] })
     expect(result.subtitle).toEqual(['Codex', '完全访问', 'main', '62%'])
     expect(result.fullAccess).toBe(true)
-    expect(result.input).toEqual([
-      '',
-      '这个会话只能在 Mac 上发送消息',
-      'Mac 不在线',
-      '这个会话的权限变了，已停止接受输入',
-      '这台手机不能发送消息',
-    ])
-    const mac = '需要在 Mac 上用 Touch ID 允许'
+    expect(result.input).toEqual(['', '', 'Mac 不在线', '这个会话的权限变了，已停止接受输入', '这台手机不能发送消息'])
     expect(result.approvals).toEqual([
-      { heading: '写入 src/a.ts', canAllow: true, option: '', mac: '', clause: '' },
-      { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', mac: '', clause: '' },
-      { heading: 'write_file', canAllow: true, option: 'o1', mac: '', clause: '' },
-      { heading: 'write_file', canAllow: false, option: '', mac, clause: '' },
-      { heading: 'write_file', canAllow: false, option: '', mac, clause: '在项目文件夹之外' },
-      { heading: 'shell', canAllow: false, option: '', mac, clause: '' },
-      { heading: 'write_file', canAllow: false, option: '', mac, clause: '高风险' },
+      { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: 'write_file', canAllow: true, option: 'o1', refusal: '', clause: '' },
+      { heading: 'write_file', canAllow: false, option: '', refusal: '这一步不能只允许一次', clause: '' },
+      { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '在项目文件夹之外' },
+      { heading: 'shell', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '高风险' },
     ])
     expect(result.engines).toEqual([
-      { id: 'standard', name: 'Latch 内置', startable: true, line: '' },
-      { id: 'codex', name: 'Codex', startable: false, line: '在 Mac 上开始' },
+      { id: 'standard', name: 'Latch 内置' },
+      { id: 'codex', name: 'Codex' },
     ])
-    expect(result.projects).toEqual([
-      { id: 'sealed', startable: false },
-      { id: 'latch', startable: true },
-    ])
-    expect(result.choice).toEqual({ harness: 'standard', workspace: 'latch', model: 'm2' })
+    expect(result.projects).toEqual([{ id: 'sealed' }, { id: 'latch' }])
+    expect(result.choice).toEqual({ harness: 'codex', workspace: 'sealed', model: 'm2' })
     expect(result.blocker).toBe('')
     expect(result.fields).toEqual({
       prompt: '开始',
-      harnessId: 'standard',
-      workspaceId: 'latch',
+      harnessId: 'codex',
+      workspaceId: 'sealed',
       mode: 'agent',
       model: { providerId: 'p', model: 'm2' },
     })

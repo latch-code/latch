@@ -14,6 +14,9 @@ export const AGENT_ACTIONS = {
   'automation.ran': z.strictObject({ trigger: z.enum(['schedule', 'manual']), attempt: hex64 }),
   'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),
   'agent.probed': z.strictObject({ agentId: opaqueId, launchHash: hex64, status: z.enum(['ready', 'authentication-required', 'failed']) }),
+  /** The program's status command ran; the status is all that is kept of what it said. */
+  'agent.login.checked': z.strictObject({ agentId: opaqueId, status: z.enum(['authenticated', 'unauthenticated', 'unknown']) }),
+  'agent.login.opened': z.strictObject({ agentId: opaqueId }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),
   'agent.deleted': z.strictObject({ agentId: opaqueId }),
 } as const

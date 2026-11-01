@@ -348,7 +348,8 @@ describe('audit chain', () => {
     expect(ask('changed', 'codex', 'changed-definition')).toBe('harness')
     expect(ask('older', 'goose')).toBe('launch')
     expect(ask('new', 'goose', 'new-definition')).toBe('harness')
-    expect(ask('unconfirmed', 'pi', 'unconfirmed-definition')).toBe('never')
+    // A start takes no confirmation now, and counts all the same.
+    expect(ask('unconfirmed', 'pi', 'unconfirmed-definition')).toBe('launch')
     expect(ask('intent', 'intent-only')).toBe('never')
     await log.close()
     const reopened = await openLog(path)

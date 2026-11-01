@@ -73,7 +73,7 @@ export function NewSessionSheet({
     return () => cancelAnimationFrame(frame)
   }, [open, present, focusComposer])
   const catalog = snapshot.catalog
-  const entries = catalog ? engineEntries(catalog, access, choice.workspaceId) : []
+  const entries = catalog ? engineEntries(catalog, choice.workspaceId) : []
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const permission = draftPermission(harness, choice.mode)
   return (
@@ -121,7 +121,7 @@ export function NewSessionSheet({
             }))}
             onValueChange={harnessId => onChoice({ harnessId })}
           />
-          {harness?.models === 'host' ? (
+          {harness?.capabilities.models.owner === 'latch' ? (
             <>
               <ModelPicker
                 variant="row"

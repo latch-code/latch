@@ -65,11 +65,11 @@ export async function reportedUsage(source: Source, days: 7 | 30): Promise<Usage
             result.unattributedMessages++
             continue
           }
-          const harnessId = detail.summary.harnessId ?? 'standard',
+          const harnessId = detail.summary.harnessId,
             providerId = message.providerId,
             model = message.model
           const key = JSON.stringify([harnessId, providerId, model]),
-            reportSource = providerId || harnessId === 'standard' ? 'provider' : 'agent'
+            reportSource = providerId ? 'provider' : 'agent'
           let row = rows.get(key)
           if (!row) {
             row = {

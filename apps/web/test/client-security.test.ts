@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, ConfirmationTicket, CurrentDevice, DeviceScope, HostCatalog, HostView } from '@latch/protocol'
 import { sha256Hex } from '@latch/core/node-kit'
-import { SECURITY_VECTORS_FILE } from '@latch/testkit'
+import { SECURITY_VECTORS_FILE, testHarness } from '@latch/testkit'
 import { hashDisplay as hostHashDisplay } from '@latch/host/crypto'
 import { ApiError, ApiTimeoutError } from '../src/core/api.ts'
 import { choiceKind, DecisionRequests, rejectionNoteFor, settledOutcome } from '../src/core/approvalDecision.ts'
@@ -56,16 +56,7 @@ import {
   infoFailureStep,
   requestedScopes,
 } from '../src/core/enrollment.ts'
-import {
-  approvalActions,
-  composerGate,
-  deviceAccess,
-  harnessGate,
-  L3_READ_ONLY,
-  LEGACY_HOST_TEXT,
-  LEVEL_LABELS,
-  modeRows,
-} from '../src/core/permissions.ts'
+import { approvalActions, composerGate, deviceAccess, LEGACY_HOST_TEXT, LEVEL_LABELS, modeRows } from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
   CONFIRMATION_RESULT_TEXT,
@@ -137,7 +128,6 @@ const hostView: HostView = {
   devMode: true,
   presence: { status: 'available' },
   tls: null,
-  policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
 }
 const snapshotOf = (current: CurrentDevice, extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
   instanceId: 'i',
@@ -150,10 +140,7 @@ const snapshotOf = (current: CurrentDevice, extra: Partial<AppSnapshot> = {}): A
   ...extra,
 })
 const catalog: HostCatalog = {
-  harnesses: [
-    { id: 'codex', name: 'Codex', source: 'acp', status: 'ready', modes: ['agent'], models: 'agent', level: 'L3' },
-    { id: 'standard', name: 'Standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host', level: 'L1' },
-  ],
+  harnesses: [testHarness('codex', { kind: 'agent', label: 'Codex' }), testHarness('standard', { kind: 'builtin', label: 'Standard' })],
   providers: [{ id: 'p', name: 'P', kind: 'openai-compatible', models: ['m'], defaultModel: 'm' }],
   workspaces: [{ id: 'default', name: 'app', path: '/w' }],
   defaults: { harnessId: 'codex', mode: 'agent', workspaceId: 'default' },
@@ -222,79 +209,64 @@ describe('shared security vectors (browser algorithms)', () => {
 
 describe('approval gating', () => {
   it.each([
-    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '需要你允许'],
+    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), ['允许一次', '本会话始终允许', '拒绝'], undefined, '需要你允许'],
     [
       'R1 without approve:standard',
       approval({ risk: 'R1' }),
       device({ scopes: ['view', 'run'] }),
-      null,
       ['拒绝'],
       '这台设备不能允许这一步',
       '需要你允许',
     ],
-    ['R2 from a browser', approval({ risk: 'R2' }), device({ scopes: allScopes }), null, ['拒绝'], '在 Mac 上的 Latch 里允许', '高风险'],
     [
-      'R2 on the desktop without the scope',
+      'R2 with the scope, from any device',
       approval({ risk: 'R2' }),
-      device({ listener: 'unix', scopes: ['view', 'run', 'approve:standard'] }),
-      desktop,
+      device({ scopes: allScopes }),
+      ['拒绝', '允许一次'],
+      undefined,
+      '高风险',
+    ],
+    [
+      'R2 without the scope',
+      approval({ risk: 'R2' }),
+      device({ scopes: ['view', 'run', 'approve:standard'] }),
       ['拒绝'],
       '这台设备不能允许这一步',
       '高风险',
     ],
+    ['missing risk is treated as R2', approval({}), device({ scopes: ['view', 'run'] }), ['拒绝'], '这台设备不能允许这一步', '高风险'],
     [
-      'R2 on the desktop with the scope',
-      approval({ risk: 'R2' }),
-      device({ listener: 'unix', scopes: allScopes }),
-      desktop,
-      ['拒绝', '在这台 Mac 上允许'],
-      undefined,
-      '高风险',
-    ],
-    ['missing risk is treated as R2', approval({}), device({ scopes: allScopes }), null, ['拒绝'], '在 Mac 上的 Latch 里允许', '高风险'],
-    [
-      'advisory from a browser',
+      'advisory with run, from any device',
       approval({ risk: 'R2', advisory: true }),
-      device({ scopes: allScopes }),
-      null,
-      ['拒绝'],
-      '在 Mac 上的 Latch 里允许',
-      '仅提示',
-    ],
-    [
-      'advisory on the desktop',
-      approval({ risk: 'R2', advisory: true }),
-      device({ listener: 'unix', scopes: ['view', 'run'] }),
-      desktop,
+      device({ scopes: ['view', 'run'] }),
       ['拒绝', '允许一次'],
       undefined,
       '仅提示',
     ],
     [
-      'a unix device outside the desktop shell is not local',
-      approval({ risk: 'R2' }),
-      device({ listener: 'unix', scopes: allScopes }),
-      null,
+      'advisory without run',
+      approval({ risk: 'R2', advisory: true }),
+      device({ scopes: ['view'] }),
       ['拒绝'],
-      '在 Mac 上的 Latch 里允许',
-      '高风险',
+      '这台设备不能允许这一步',
+      '仅提示',
     ],
-  ] as const)('%s', (_name, item, current, shell, buttons, hint, badge) => {
-    const gate = approvalActions(item, current, shell)
+  ] as const)('%s', (_name, item, current, buttons, hint, badge) => {
+    const gate = approvalActions(item, current)
     expect(labels(gate)).toEqual(buttons)
     expect(gate.hint).toBe(hint)
     expect(gate.badge?.label).toBe(badge)
   })
 
   it('keeps every offered option on a Host of the previous build, and falls back to allow/reject without options', () => {
-    expect(labels(approvalActions(approval({}), null, null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
-    const plain = approvalActions({ id: 'a', sessionId: 's', toolName: 't', reason: '', requestedAt: '' }, null, null)
+    expect(labels(approvalActions(approval({}), null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
+    const plain = approvalActions({ id: 'a', sessionId: 's', toolName: 't', reason: '', requestedAt: '' }, null)
     expect(plain.explicit).toBe(false)
     expect(labels(plain)).toEqual(['拒绝', '允许一次'])
   })
 
   it('names the Host’s reason after 高风险, and only 高风险 for no reason or a code this page does not know', () => {
-    const label = (extra: Partial<Approval>) => approvalActions(approval({ risk: 'R2', ...extra }), device(), null).badge?.label
+    const label = (extra: Partial<Approval>) => approvalActions(approval({ risk: 'R2', ...extra }), device()).badge?.label
     expect(label({ riskReason: 'code-root' })).toBe('高风险 · Latch 自己的代码')
     expect(label({ riskReason: 'protected-path' })).toBe('高风险 · 受保护的文件')
     expect(label({ riskReason: 'outside-workspace' })).toBe('高风险 · 在项目文件夹之外')
@@ -309,31 +281,18 @@ describe('approval gating', () => {
   })
 
   it('explains advisory prompts', () => {
-    expect(approvalActions(approval({ advisory: true }), device(), null).note).toContain('拒绝会转达给它，但不能阻止它执行其他操作')
+    expect(approvalActions(approval({ advisory: true }), device()).note).toContain('拒绝会转达给它，但不能阻止它执行其他操作')
   })
 })
 
 describe('session and harness gating', () => {
-  it('makes L3 sessions read-only for every device but the desktop shell', () => {
+  it('opens a session to any device with the scope, whatever its Harness; only a stopped session or a missing scope closes it', () => {
     const browser = deviceAccess(snapshotOf(device()), null)
-    const local = deviceAccess(snapshotOf(device({ listener: 'unix', scopes: allScopes })), desktop)
-    expect(composerGate({ summary: { level: 'L3' }, access: browser })).toEqual({ kind: 'read-only', text: L3_READ_ONLY })
-    expect(composerGate({ summary: { level: 'L3' }, access: local })).toEqual({ kind: 'open' })
-    expect(composerGate({ summary: { level: 'L1' }, access: browser })).toEqual({ kind: 'open' })
-    expect(composerGate({ summary: { level: 'L3', permissionDrift: true }, access: local })).toEqual({ kind: 'stopped' })
-    expect(
-      composerGate({ summary: { level: 'L1' }, access: deviceAccess(snapshotOf(device({ status: 'review', scopes: ['view'] })), null) })
-        .kind,
-    ).toBe('read-only')
-  })
-
-  it('offers full-access harnesses only on the desktop and picks a startable default elsewhere', () => {
-    const browser = deviceAccess(snapshotOf(device()), null)
-    expect(harnessGate(catalog.harnesses[0]!, browser)).toEqual({ allowed: false, reason: '在 Mac 上开始' })
-    expect(harnessGate(catalog.harnesses[1]!, browser)).toEqual({ allowed: true })
-    expect(resolveChoice(catalog, null, browser).harnessId).toBe('standard')
-    expect(resolveChoice(catalog, { harnessId: 'codex' }, { legacy: false, local: true }).harnessId).toBe('codex')
-    expect(startBlock(snapshotOf(device(), { catalog }), { mode: 'agent', harnessId: 'codex' }, browser)?.kind).toBe('harness-unavailable')
+    expect(composerGate({ summary: {}, access: browser })).toEqual({ kind: 'open' })
+    expect(composerGate({ summary: { permissionDrift: true }, access: browser })).toEqual({ kind: 'stopped' })
+    expect(composerGate({ summary: {}, access: deviceAccess(snapshotOf(device({ status: 'review', scopes: ['view'] })), null) }).kind).toBe(
+      'read-only',
+    )
   })
 })
 
@@ -346,40 +305,23 @@ describe('the 权限 rows', () => {
       { value: 'full', name: '完全访问' },
     ],
   })
-  const mac = { legacy: false, local: true }
-  const phone = { legacy: false, local: false }
-
   it('reads 完全访问 as a plain fact about the session', () => {
     expect(LEVEL_LABELS.L3).toBe('完全访问')
   })
 
-  it('narrows at once and asks for a confirmation on this Mac to widen', () => {
-    const rows = modeRows(option('auto'), mac)
-    expect(rows.map(row => [row.value, row.current, row.widens, row.confirmsHere, row.disabledReason])).toEqual([
-      ['read', false, false, false, undefined],
-      ['auto', true, false, false, undefined],
-      ['full', false, true, true, undefined],
+  it('offers every row at once on any device', () => {
+    const rows = modeRows(option('auto'))
+    expect(rows.map(row => [row.value, row.current, row.disabledReason])).toEqual([
+      ['read', false, undefined],
+      ['auto', true, undefined],
+      ['full', false, undefined],
     ])
     expect(rows[0]?.description).toBe('Codex 只看不改')
   })
 
-  it('keeps wider rows off a phone or a browser and says where they are', () => {
-    const rows = modeRows(option('auto'), phone)
-    expect(rows.map(row => [row.value, row.confirmsHere, row.disabledReason])).toEqual([
-      ['read', false, undefined],
-      ['auto', false, undefined],
-      ['full', false, '在 Mac 上开启'],
-    ])
-  })
-
-  it('never shows a change from an unknown mode as narrowing', () => {
-    expect(modeRows(option('gone'), phone).map(row => row.disabledReason)).toEqual(['在 Mac 上开启', '在 Mac 上开启', '在 Mac 上开启'])
-    expect(modeRows(option('gone'), mac).every(row => row.confirmsHere)).toBe(true)
-  })
-
   it('leaves the current row alone and disables the rest with the reason a session is locked', () => {
-    const rows = modeRows(option('auto'), phone, '这个会话只能在 Mac 上继续')
-    expect(rows.map(row => row.disabledReason)).toEqual(['这个会话只能在 Mac 上继续', undefined, '这个会话只能在 Mac 上继续'])
+    const rows = modeRows(option('auto'), '这台设备不能发送消息')
+    expect(rows.map(row => row.disabledReason)).toEqual(['这台设备不能发送消息', undefined, '这台设备不能发送消息'])
   })
 })
 
@@ -398,9 +340,8 @@ describe('a Host of the previous build (no snapshot.host)', () => {
     const access = deviceAccess(legacy, null)
     expect(access).toMatchObject({ legacy: true, local: false, admin: true, device: null })
     expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'shortcuts', 'about'])
-    expect(composerGate({ summary: { level: 'L3' }, access })).toEqual({ kind: 'open' })
-    expect(harnessGate(catalog.harnesses[0]!, access).allowed).toBe(true)
-    expect(labels(approvalActions(approval({ risk: 'R2' }), access.device, null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
+    expect(composerGate({ summary: {}, access })).toEqual({ kind: 'open' })
+    expect(labels(approvalActions(approval({ risk: 'R2' }), access.device))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
     const controller = deviceAccess({ ...legacy, device: { ...legacy.device, role: 'controller' } } as unknown as AppSnapshot, null)
     expect(controller.admin).toBe(false)
     expect(LEGACY_HOST_TEXT).toBe('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。')
@@ -418,8 +359,7 @@ describe('error copy', () => {
     expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('这台设备不能允许这一步')
     expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('这台设备不能这样做')
     expect(describeFailure(403, 'local-only', forged)).toBe('只能在 Mac 上的 Latch 里操作')
-    expect(describeFailure(403, 'ceiling-exceeded', forged)).toContain('policy.json')
-    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe('要在 Mac 上的 Latch 里确认。')
+    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'this-device' } })).toBe('需要在 Mac 上确认')
     expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('连续取消了 3 次，请 5 分钟后再试')
     expect(describeFailure(409, 'presence-busy', forged)).toBe('另一个确认还没完成，先完成或取消它。')
     expect(describeFailure(503, 'presence-something-new', forged)).toBe('这台 Mac 暂时不能确认，请稍后重试')
@@ -453,8 +393,8 @@ describe('error copy', () => {
     // The session learned the code from a refusal: the composer stops even on the desktop that could run it.
     expect(
       composerGate({
-        summary: { level: 'L3' },
-        access: { legacy: false, local: true, scopes: new Set<DeviceScope>(['view', 'run']) },
+        summary: {},
+        access: { legacy: false, scopes: new Set<DeviceScope>(['view', 'run']) },
         stopped: isSessionStopCode('project-config-changed'),
       }),
     ).toEqual({ kind: 'stopped' })
@@ -531,8 +471,8 @@ describe('error copy', () => {
   })
 
   it('asks for management only when told to', () => {
-    expect(requestedScopes(false)).toEqual(['view', 'run', 'approve:standard'])
-    expect(requestedScopes(true)).toEqual(['view', 'run', 'approve:standard', 'admin'])
+    expect(requestedScopes(false)).toEqual(['view', 'run', 'approve:standard', 'approve:elevated'])
+    expect(requestedScopes(true)).toEqual(['view', 'run', 'approve:standard', 'approve:elevated', 'admin'])
   })
 
   it('names a browser so the system sheet says which one asked, within the rule for device names', () => {
@@ -561,7 +501,7 @@ describe('error copy', () => {
 describe('local confirmation', () => {
   const ticket = (status: ConfirmationTicket['status']): ConfirmationTicket => ({
     id: 'cfm_1',
-    action: 'approval.r2',
+    action: 'policy.change',
     title: '批准高风险操作（R2）',
     status,
     hashDisplay: 'a1b2-c3d4-e5f6-0718',
@@ -592,38 +532,6 @@ describe('local confirmation', () => {
     }
   }
   const instant = () => Promise.resolve()
-
-  it('opens main’s native sheet for the ticket and still waits for the Host before retrying', async () => {
-    const ui = presenter()
-    const nativeConfirm = vi.fn(async () => ({ status: 'confirmed' as const }))
-    const sends = vi.fn(async (confirmation?: string) => {
-      if (!confirmation)
-        throw new ApiError(403, 'stepup-required', 'x', { confirmation: { ...ticket('pending'), confirmationMethod: 'shell-local' } })
-      return 'done'
-    })
-    const api = vi.fn(async () => ({ confirmation: { ...ticket('approved'), confirmationMethod: 'shell-local' } }))
-    expect(await withConfirmation(sends, { presenter: ui.value, nativeConfirm, api: api as never, sleep: instant })).toBe('done')
-    expect(nativeConfirm).toHaveBeenCalledExactlyOnceWith('cfm_1')
-    expect(api).toHaveBeenCalledTimes(1)
-    expect(sends.mock.calls).toEqual([[], ['cfm_1']])
-  })
-
-  it.each(['cancelled', 'busy', 'failed'] as const)('never resends when main returns %s', async status => {
-    const ui = presenter()
-    const sends = vi.fn(async () => {
-      throw new ApiError(403, 'stepup-required', 'x', { confirmation: { ...ticket('pending'), confirmationMethod: 'shell-local' } })
-    })
-    const api = vi.fn(async () => ({}))
-    await expect(
-      withConfirmation(sends, {
-        presenter: ui.value,
-        api: api as never,
-        nativeConfirm: async () => (status === 'failed' ? { status, code: 'confirmation-failed' } : { status }),
-      }),
-    ).rejects.toBeInstanceOf(ConfirmationError)
-    expect(sends).toHaveBeenCalledTimes(1)
-    expect(api).toHaveBeenCalledWith('confirmations/cfm_1', { method: 'DELETE' })
-  })
 
   it('polls until approved, then resends with the ticket id', async () => {
     const statuses: ConfirmationTicket['status'][] = ['pending', 'approved']
@@ -672,7 +580,7 @@ describe('local confirmation', () => {
     expect(ui.views.at(-1)).toBe('closed')
   })
 
-  it('says a cancelled start did not start', async () => {
+  it('says a denied confirmation did not run', async () => {
     const error = await withConfirmation(
       async (confirmation?: string) => {
         if (!confirmation) throw stepup()
@@ -680,11 +588,11 @@ describe('local confirmation', () => {
       },
       {
         presenter: presenter().value,
-        api: (async () => ({ confirmation: { ...ticket('denied'), form: 'start.first' } })) as never,
+        api: (async () => ({ confirmation: ticket('denied') })) as never,
         sleep: instant,
       },
     ).catch((cause: unknown) => cause)
-    expect(error).toMatchObject({ message: '没有开始：Touch ID 已取消。', reason: 'denied' })
+    expect(error).toMatchObject({ message: '没有执行：确认没有通过。', reason: 'denied' })
   })
 
   it.each([
@@ -871,16 +779,8 @@ describe('local confirmation', () => {
     expect(CONFIRMATION_RESULT_TEXT.lockout).toContain('登录密码')
   })
 
-  it('reports the host-desktop rule without a dialog and passes other errors through', async () => {
+  it('passes other errors through without a dialog', async () => {
     const ui = presenter()
-    await expect(
-      withConfirmation(
-        async () => {
-          throw new ApiError(403, 'stepup-required', 'x', { stepup: { where: 'host-desktop' } })
-        },
-        { presenter: ui.value },
-      ),
-    ).rejects.toMatchObject({ message: '要在 Mac 上的 Latch 里确认。', reason: 'host-desktop' })
     await expect(
       withConfirmation(
         async () => {
@@ -981,7 +881,7 @@ describe('local confirmation', () => {
     expect(shownTitle(long)).toBe(`${long.slice(0, 39)}…`)
     // Cut between graphemes: the emoji stays whole.
     expect(shownTitle(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}bc`)).toBe(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}…`)
-    const catalog = { harnesses: [{ id: 'codex', name: 'Co\u200Bdex' }] } as unknown as HostCatalog
+    const catalog = { harnesses: [testHarness('codex', { label: 'Co\u200Bdex' })] } as unknown as HostCatalog
     const asked = [{ id: 'w', status: 'waiting-approval' }] as AppSnapshot['tasks']
     expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, { catalog, tasks: asked })).toEqual({
       title: '会话',
@@ -1077,13 +977,12 @@ describe('approval decisions (idempotent retries)', () => {
   })
 
   it('checks 「告诉 Harness 改做什么」 as the Host does, and leaves an agent’s ask to the next message', () => {
-    expect(rejectionNoteFor({}, '  先给我看计划\r\n再写  ')).toEqual({ note: '先给我看计划\n再写' })
-    expect(rejectionNoteFor({}, '   ')).toEqual({})
+    expect(rejectionNoteFor('  先给我看计划\r\n再写  ')).toEqual({ note: '先给我看计划\n再写' })
+    expect(rejectionNoteFor('   ')).toEqual({})
     const problem = '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符'
-    expect(rejectionNoteFor({}, 'x'.repeat(501))).toEqual({ problem })
-    expect(rejectionNoteFor({}, '改写\u202E到 docs/')).toEqual({ problem })
-    expect(rejectionNoteFor({}, '改写\u0007')).toEqual({ problem })
-    expect(rejectionNoteFor({ advisory: true }, '先给我看计划')).toEqual({})
+    expect(rejectionNoteFor('x'.repeat(501))).toEqual({ problem })
+    expect(rejectionNoteFor('改写\u202E到 docs/')).toEqual({ problem })
+    expect(rejectionNoteFor('改写\u0007')).toEqual({ problem })
   })
 
   it('reads 409 approval-settled receipts', () => {

@@ -16,7 +16,9 @@ import {
   SunMoon,
 } from 'lucide-react'
 import { Icon, type LucideIcon } from '@latch/ui'
-import { HarnessTile } from '../components/BrandTile.tsx'
+import { HARNESS_MARKS, presetOf } from '../brands.ts'
+import { harnessName } from '../composerChoice.ts'
+import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
 import { setPreference } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
@@ -92,7 +94,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
   const allowed = settingsSections(snapshot, access)
   const canSearchFiles =
     catalog?.features?.fileSearch === true && catalog.features.filePreview === true && snapshot.device.dataScope === 'all'
-  const canDefineAgents = allowed.includes('engines') && (access.legacy || access.local)
+  const canDefineAgents = allowed.includes('engines')
 
   const folders = summary?.folders
   const fileRootName = useCallback(
@@ -114,7 +116,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
         id: `session:${task.id}`,
         label: task.title || '未命名会话',
         ...(sub ? { sub } : {}),
-        icon: <HarnessTile harness={harness ?? { id: task.harnessId ?? 'standard', source: 'builtin' }} size={16} />,
+        icon: harness ? <HarnessTile harness={harness} size={16} /> : <MarkTile mark={presetOf(task.harnessId, HARNESS_MARKS)} size={16} />,
         run: () => {
           choose(task.id)
         },
@@ -129,10 +131,10 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
 
   const agents: PaletteEntry[] = allowed.includes('engines')
     ? (catalog?.harnesses ?? [])
-        .filter(harness => harness.source === 'acp')
+        .filter(harness => harness.editable || harness.offer)
         .map(harness => ({
           id: `agent:${harness.id}`,
-          label: harness.name,
+          label: harnessName(harness),
           icon: <HarnessTile harness={harness} size={16} />,
           run: () => {
             openAgentPage({ kind: 'agent', id: harness.id })

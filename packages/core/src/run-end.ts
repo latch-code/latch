@@ -15,7 +15,7 @@ export function runEndRecord(reason: RunEnd['reason'], at: string, unknown: Unkn
 }
 
 export const runEndSchema = z.object({
-  reason: z.enum(['process-exited', 'forced-stop', 'host-stopped', 'turn-ended']),
+  reason: z.enum(['process-exited', 'forced-stop', 'host-stopped', 'turn-ended', 'login-required']),
   at: z.string(),
   unknownResults: z.array(z.object({ messageId: z.string(), name: z.string() })).optional(),
   unknownResultCount: z.number().int().nonnegative().optional(),

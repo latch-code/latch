@@ -1,13 +1,16 @@
 import { basename, isAbsolute } from 'node:path'
-import { AGENT_PRESETS, type AgentPreset, type HarnessInfo } from '@latch/protocol'
+import { AGENT_PRESETS, isHarnessMark, type AgentPreset, type HarnessCapabilities, type HarnessInfo } from '@latch/protocol'
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
 import { AcpBridge, CLIENT_VERSION } from './bridge.ts'
 import { resolveCommand } from './command.ts'
+import { harnessLogin, presetRecord } from './login.ts'
 import { selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
 
 export { agentProbePreview, probeAgent } from './probe.ts'
+export { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
+export { loadLoginShell } from './login-shell.ts'
 export { resolveCommand } from './command.ts'
 export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
@@ -62,9 +65,21 @@ function permissionDeclaration(profile: HarnessProfile | undefined): Pick<Harnes
 
 const ACP_CAPABILITIES = {
   modes: ['agent'],
-  models: 'agent',
   attachments: { images: true, text: true, textBytes: 25 * 1024 * 1024 },
 } satisfies HarnessDriver['capabilities']
+
+/**
+ * What every ACP agent is, with what its profile knows. Nothing can be known before a session starts, and no agent is
+ * routed to a model service yet. Without a profile whether it asks is unknown, which counts as not asking.
+ */
+function agentFacts(name: string, presetId: string | undefined, profile: HarnessProfile | undefined): HarnessCapabilities {
+  return {
+    models: { owner: 'harness', catalogue: 'none', wires: [] },
+    permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
+    tools: { shell: true, fileMentions: true },
+    display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },
+  }
+}
 
 /** ACP asks every agent to accept MCP servers over stdio; a preset says when one is known not to. */
 const skillsOf = (presetId: string | undefined): Pick<HarnessDriver, 'skills'> =>
@@ -75,30 +90,23 @@ const skillsOf = (presetId: string | undefined): Pick<HarnessDriver, 'skills'> =
  * Describing it starts nothing and saves nothing.
  */
 export function presetOffer(preset: AgentPreset): HarnessInfo {
-  const { profile } = selectProfile({
-    id: preset.id,
-    name: preset.name,
-    presetId: preset.id,
-    command: preset.command,
-    args: preset.args,
-    env: {},
-    enabled: true,
-  })
+  const record = presetRecord(preset.id)!
+  const { profile } = selectProfile(record)
+  const login = harnessLogin(record)
   const folders = folderDeclaration(profile)
   return {
     id: preset.id,
-    name: preset.name,
     description: preset.description,
-    source: 'acp',
     status: 'ready',
+    capabilities: agentFacts(preset.name, preset.id, profile),
     modes: [...ACP_CAPABILITIES.modes],
-    models: ACP_CAPABILITIES.models,
     attachments: { ...ACP_CAPABILITIES.attachments },
     agentContext: 'first-turn',
     level: 'L3',
     ...skillsOf(preset.id),
     ...(folders.folderAccess ? { projectFolders: folders.folderAccess as NonNullable<HarnessInfo['projectFolders']> } : {}),
     ...permissionDeclaration(profile),
+    ...(login ? { login } : {}),
     offer: { presetId: preset.id },
   }
 }
@@ -130,11 +138,12 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         name: record.name,
         version: CLIENT_VERSION,
         description,
-        capabilities: ACP_CAPABILITIES,
+        capabilities: { ...ACP_CAPABILITIES, ...agentFacts(record.name, record.presetId, selectProfile(record).profile) },
         agentContext: 'first-turn',
         ...skillsOf(record.presetId),
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
+        login: () => harnessLogin(record),
         status() {
           const preset = AGENT_PRESETS.find(item => item.id === record.presetId)
           const found = located() !== undefined

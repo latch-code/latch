@@ -3,11 +3,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
   HarnessInfo,
-  HarnessSource,
+  HarnessCapabilities,
   KeepWaitingResult,
   RunEnd,
   SessionPermission,
   TaskDetail,
+  DriverTaskSummary,
   TaskSummary,
 } from '@latch/protocol'
 import {
@@ -23,6 +24,7 @@ import {
   type PromptOptions,
   type SetConfigOptions,
 } from '@latch/sdk'
+import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
 import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
@@ -58,9 +60,8 @@ export interface HarnessMount {
   create(): Bridge
   /** Returns the registry lease after the Bridge has closed. */
   release(): void
-  source: HarnessSource
-  /** Overrides `driver.capabilities`, e.g. for a built-in driver that predates the field. */
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
+  /** From which plugin registered the driver, never from the driver. */
+  kind: HarnessKind
   /** A required driver that fails to start fails `attach`; others are listed as unavailable. */
   required?: boolean
 }
@@ -81,8 +82,8 @@ export interface HubOptions {
 
 interface Entry {
   driver: HarnessDriver
-  source: HarnessSource
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
+  trust: HarnessTrust
+  capabilities: HarnessCapabilities
   bridge?: Bridge
   release?: () => void
   unsubscribe?: () => void
@@ -97,7 +98,6 @@ interface Entry {
 
 type Member = Entry & { bridge: Bridge }
 
-const DEFAULT_CAPABILITIES: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'> = { modes: ['chat', 'agent'], models: 'agent' }
 const ACTIVE = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
 const MAX_DETAIL_APPROVALS = 1024
 /** As often as the Host's event stream reads a changed session. */
@@ -118,7 +118,6 @@ const NOTELESS_PROMPTS = 256
 export type PromptNote = (sessionId: string, requestId: string, signal: AbortSignal) => Promise<string | undefined>
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
 
-/** Builtin runs under Latch's own approvals (L1); ACP agents and plugin harnesses run unsandboxed (L3). */
 const PRIMARY_ACCESS = new Set<unknown>(['primary', 'primary-asks', 'primary-unbounded'])
 
 /** What clients are told about a project's other folders: `all` only for a driver that receives them all. */
@@ -133,10 +132,6 @@ function folderInfo(driver: HarnessDriver): Pick<HarnessInfo, 'projectFolders'> 
       },
     }
   return PRIMARY_ACCESS.has(access) ? { projectFolders: { access: access as 'primary' | 'primary-asks' | 'primary-unbounded' } } : {}
-}
-
-function levelFor(source: HarnessSource): 'L1' | 'L3' {
-  return source === 'builtin' ? 'L1' : 'L3'
 }
 
 /**
@@ -263,13 +258,8 @@ export class HarnessHub implements Bridge {
       mount.release()
       throw refusal
     }
-    const entry: Entry = {
-      driver,
-      source: mount.source,
-      starting: true,
-      accepting: 0,
-      ...(mount.capabilities ? { capabilities: mount.capabilities } : {}),
-    }
+    const capabilities = harnessFacts(driver.capabilities, driver.name, mount.kind)
+    const entry: Entry = { driver, trust: trustOf(mount.kind, capabilities), capabilities, starting: true, accepting: 0 }
     this.entries.delete(driver.id)
     this.entries.set(driver.id, entry)
     let bridge: Bridge | undefined
@@ -330,7 +320,7 @@ export class HarnessHub implements Bridge {
     // A Bridge may list a new session or turn only once the call settles, so in-flight work counts as running.
     if (member.accepting) throw new AppError(409, 'harness-busy', `${member.driver.name} 正在接收新的请求，请稍后再试`)
     member.detaching = true
-    let tasks: TaskSummary[]
+    let tasks: DriverTaskSummary[]
     try {
       tasks = await member.bridge.listTasks()
     } catch (error) {
@@ -360,14 +350,14 @@ export class HarnessHub implements Bridge {
     return Boolean(this.entries.get(id)?.bridge)
   }
 
-  sourceOf(harnessId: string): HarnessSource | undefined {
-    return this.entries.get(harnessId)?.source
+  /** Undefined for a harness that is not attached, which every check treats as vouching for nothing. */
+  trustOf(harnessId: string): HarnessTrust | undefined {
+    return this.entries.get(harnessId)?.trust
   }
 
   /** Unknown harnesses count as L3, the level that allows the least. */
   levelOf(harnessId: string): 'L1' | 'L3' {
-    const source = this.sourceOf(harnessId)
-    return source ? levelFor(source) : 'L3'
+    return this.trustOf(harnessId)?.level ?? 'L3'
   }
 
   /**
@@ -377,7 +367,7 @@ export class HarnessHub implements Bridge {
   async unsandboxedTasks(): Promise<TaskSummary[]> {
     const found: TaskSummary[] = []
     for (const [member, tasks] of await this.discover()) {
-      if (levelFor(member.source) !== 'L3') continue
+      if (member.trust.level !== 'L3') continue
       for (const task of tasks) if (ACTIVE.has(task.status)) found.push(this.present(member.driver.id, task))
     }
     const waiting = (task: TaskSummary) => (task.status === 'waiting-approval' ? 0 : 1)
@@ -769,10 +759,10 @@ export class HarnessHub implements Bridge {
   }
 
   /** Lists every driver; one failing driver is logged and skipped instead of failing the whole listing. */
-  private async discover(): Promise<Array<[Member, TaskSummary[]]>> {
+  private async discover(): Promise<Array<[Member, DriverTaskSummary[]]>> {
     const members = this.members()
     const settled = await Promise.allSettled(members.map(member => member.bridge.listTasks()))
-    const listed: Array<[Member, TaskSummary[]]> = []
+    const listed: Array<[Member, DriverTaskSummary[]]> = []
     settled.forEach((result, index) => {
       const member = members[index]!
       if (result.status === 'rejected') {
@@ -849,10 +839,10 @@ export class HarnessHub implements Bridge {
     if (this.detailApprovals.size > MAX_DETAIL_APPROVALS) this.detailApprovals.delete(this.detailApprovals.keys().next().value!)
   }
 
-  /** Builtin: Latch enforces. ACP: what the bridge verified, but never more than L3. Plugin harness: nothing verified. */
+  /** Latch enforces, or: what the bridge verified, but never more than L3. Plugin harness: nothing verified. */
   private permission(member: Member, reported: SessionPermission | undefined): SessionPermission {
-    if (member.source === 'builtin') return { level: 'L1', enforcer: 'LATCH', notes: [] }
-    if (member.source === 'acp') return { ...reported, notes: [...(reported?.notes ?? [])], level: 'L3', enforcer: 'NONE' }
+    if (member.trust.level === 'L1') return { level: 'L1', enforcer: 'LATCH', notes: [] }
+    if (member.trust.kind === 'acp') return { ...reported, notes: [...(reported?.notes ?? [])], level: 'L3', enforcer: 'NONE' }
     return { level: 'L3', enforcer: 'NONE', notes: [PLUGIN_NOTE] }
   }
 
@@ -872,7 +862,7 @@ export class HarnessHub implements Bridge {
     return live && typeof live.lastEventAt === 'string' ? { sessionId, live } : undefined
   }
 
-  private present(harnessId: string, summary: TaskSummary): TaskSummary {
+  private present(harnessId: string, summary: DriverTaskSummary): TaskSummary {
     if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
     if (summary.agent) this.rememberAgent(summary.id, summary.agent)
     if (summary.agentPrivate) this.briefSessions.add(summary.id)
@@ -916,7 +906,8 @@ export class HarnessHub implements Bridge {
 
   private describe(entry: Entry): HarnessInfo {
     const { driver } = entry
-    const capabilities = entry.capabilities ?? driver.capabilities ?? DEFAULT_CAPABILITIES
+    const declared = driver.capabilities
+    const { capabilities } = entry
     let status: HarnessInfo['status'] = 'ready'
     let statusMessage: string | undefined
     if (entry.failure) {
@@ -937,21 +928,22 @@ export class HarnessHub implements Bridge {
         statusMessage = message(error)
       }
     }
+    const login = driver.login?.()
     return {
       id: driver.id,
-      name: driver.name,
       ...(driver.description ? { description: driver.description } : {}),
-      source: entry.source,
+      capabilities: structuredClone(capabilities),
+      ...(entry.trust.kind === 'acp' ? { editable: true as const } : {}),
       status,
       ...(statusMessage ? { statusMessage } : {}),
-      modes: [...capabilities.modes],
-      models: capabilities.models,
+      modes: [...(declared?.modes ?? ['chat', 'agent'])],
       ...(driver.agentContext ? { agentContext: driver.agentContext } : {}),
       ...(driver.skills ? { skills: driver.skills } : {}),
-      ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
-      level: levelFor(entry.source),
+      ...(declared?.attachments ? { attachments: structuredClone(declared.attachments) } : {}),
+      level: entry.trust.level,
       ...folderInfo(driver),
       ...(driver.permission ? { permission: { ...driver.permission } } : {}),
+      ...(login ? { login } : {}),
     }
   }
 

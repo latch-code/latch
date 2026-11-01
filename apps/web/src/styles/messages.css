@@ -1146,3 +1146,30 @@ button.summary-file:hover {
     transition: none;
   }
 }
+
+.harness-login {
+  display: grid;
+  gap: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+}
+.harness-login p {
+  margin: 0;
+}
+.harness-login-command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.harness-login-command code {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.harness-login-error {
+  color: var(--red);
+}
+.harness-login-card {
+  gap: var(--sp-8);
+}

@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, FileDirectoryListing, HostCatalog, TaskDetail, TaskSummary } from '@latch/protocol'
@@ -14,9 +15,16 @@ const noop = () => {}
 afterEach(() => {
   vi.unstubAllGlobals()
 })
-const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({ id: 's', title: 't', status: 'idle', updatedAt: '', ...extra })
+const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
+  id: 's',
+  title: 't',
+  status: 'idle',
+  updatedAt: '',
+  ...extra,
+})
 const hostCatalog = (extra: Partial<HostCatalog> = {}): HostCatalog => ({
-  harnesses: [{ id: 'standard', name: 'Standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host' }],
+  harnesses: [testHarness('standard', { kind: 'builtin', label: 'Standard' })],
   providers: [{ id: 'fake', name: 'Fake', kind: 'openai-compatible', models: ['fake-chat', 'fake-coder-32k'], defaultModel: 'fake-chat' }],
   workspaces: [{ id: 'default', name: 'app', path: '/work/app' }],
   defaults: { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'fake', model: 'fake-chat' } },
@@ -44,7 +52,6 @@ const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
     devMode: true,
     presence: { status: 'available' },
     tls: null,
-    policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
   },
   tasks: [],
   approvals: [],
@@ -157,17 +164,7 @@ describe('a folder with a single folder in it', () => {
 describe('the session in the breadcrumb', () => {
   it('lists what became of each folder and which ones the agent can reach', () => {
     const catalog = hostCatalog({
-      harnesses: [
-        {
-          id: 'codex',
-          name: 'Codex',
-          source: 'acp',
-          status: 'ready',
-          modes: ['agent'],
-          models: 'agent',
-          projectFolders: { access: 'primary' },
-        },
-      ],
+      harnesses: [testHarness('codex', { label: 'Codex', projectFolders: { access: 'primary' } })],
       workspaces: [
         {
           id: 'w',

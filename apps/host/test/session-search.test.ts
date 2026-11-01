@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import { SessionSearch } from '../src/search.ts'
 const summary = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
   id,
   title: id,
   updatedAt: '2026-10-25T00:00:00Z',

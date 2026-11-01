@@ -1,3 +1,4 @@
+import type { HarnessLoginStatus } from './harnesses.ts'
 import type { TokenUsage } from './types.ts'
 
 /** Optional feature discovery; older Hosts omit these fields. */
@@ -28,6 +29,8 @@ export interface HostFeatures {
   changes?: true
   gitWrites?: true
   terminal?: true
+  /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
+  loginTerminal?: true
   previewBrowser?: true
   customAgents?: true
   automations?: true
@@ -88,6 +91,8 @@ export interface AgentProbeResult {
   agent?: { name?: string; version?: string }
   capabilities: { embeddedContext?: boolean; images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }
   authMethods: Array<{ name: string; description?: string }>
+  /** What the program's own status command said; absent when it has none. */
+  login?: HarnessLoginStatus
   diagnostic?: string
   checkedAt: string
   launchHash: string

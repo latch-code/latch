@@ -1,5 +1,5 @@
 ---
-description: 定时任务：内置 Harness 上的定时运行、开启与暂停、错过的时间、运行记录。
+description: 定时任务：任一 Harness 上的定时运行、开启与暂停、错过的时间、运行记录。
 sources:
   - apps/host/src/automations.ts
   - apps/host/src/schedule.ts
@@ -10,7 +10,7 @@ sources:
 ---
 # 定时任务
 
-定时任务按时用一个 Agent 新开会话，做一件保存好的事。目前只能用内置 Harness：选了外部 Harness 的 Agent 会被拒绝（`automation-engine`）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
+定时任务按时用一个 Agent 新开会话，做一件保存好的事。可以用任一 Harness：选了外部 Harness 的 Agent 就在它上面运行，开启不需要确认，每次运行都写启动审计（`task.l3.started`，带第一条输入的哈希）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
 
 | 接口 | 作用 |
 | --- | --- |
@@ -43,6 +43,6 @@ sources:
 
 **运行期间经过的时间**：上一次运行还没结束时到了下一个时间，结束时补记一条 `skipped`，同样不补跑。`lastRun` 仍是那次真实运行的结果。
 
-**没有人看着时**：运行照常在每个审批处停下，超过内置 Harness 的审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
+**没有人看着时**：运行照常在每个审批处停下，超过审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
 
 **同时最多两个运行**：到点时已有两个在运行，这一次排队，有位置时按到点先后开始，不算错过；排队期间 Host 重启则记为 `missed`。

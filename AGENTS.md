@@ -80,7 +80,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 - **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存中、也只存哈希。模型密钥只在数据目录的 0600 文件中，不返回浏览器；`LATCH_API_KEY` 只在内存中使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
-- **只有 `host.sock` 算这台电脑**（`isLocalListener`）：本机确认只由桌面端发起（登记例外）；L3 运行或等待时只放行 `PRESENCE_ACTIONS` 标为 `proceed` 的确认。
+- **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（格式见 [docs/TESTING.md](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`。
 - **共享安全编码。** 修改 base32、指纹、`canonicalJson`、确认预览与 previewHash、`hashDisplay`、`escapeSecurityText` 或签名文本时，同时更新 `packages/testkit/vectors/security-v1.json`、`native/macos/LatchPresence.swift` 与各处实现（`apps/host/src/crypto.ts`、`auth.ts`（签名文本）、`presence*.ts`（确认预览）、`packages/core/src/node-kit/digest.ts`、`packages/protocol/src/text.ts`、`apps/web/src/core/deviceKey.ts`、`contentHash.ts`、`apps/desktop/src/credentials.cjs`），再 `pnpm build:presence` 并运行 `presence.test.ts`（自检用例对旧组件失败）。
@@ -93,7 +93,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户的数据，后者还会把它们写进对象库。
 - 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`（如 `git -c core.hooksPath=/dev/null worktree add <临时目录> <提交>`），因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
 - 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调用付费模型，不对真实 Agent CLI 发送提示。不运行 `pnpm desktop`（它使用系统钥匙串与默认桌面端数据目录），桌面端用 Electron e2e 验证。
-- `pnpm build` 会更新 `dist/web`，正在运行的旧 Host 会直接提供新页面；客户端必须能在缺少 `snapshot.catalog` 与 `snapshot.host`（旧 Host）时降级运行。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，使用这份代码的已运行 Host 的本机确认随之不可用，需要用户停止 Host 后运行 `pnpm latch presence repin`，完成时告知用户。
+- `pnpm build` 会更新 `dist/web`，运行中的旧 Host 会直接提供新页面。上线前不为旧 Host 写降级：Host 字段变化后要重启 Host，完成时告知用户。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，使用这份代码的已运行 Host 的本机确认随之不可用，需要用户停止 Host 后运行 `pnpm latch presence repin`，完成时告知用户。
 
 ## 改动前先读
 
@@ -111,7 +111,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 ## 产品规则
 
 - 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`。应用图标为 `apps/web/public/icon.png`（源图 `build/icon.png`），不改动图形。
-- 密钥、Agent 的命令与环境变量、放宽安全策略、批准 R2 与开启 L3 会话只在执行端电脑上处理：桌面端经本机确认（预置地址的密钥与 Agent 定义免确认），或 Host 停止时的 `pnpm latch` 离线命令；不为远程设备提供绕过路径。
+- 模型密钥只在这台 Mac 上填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
 - Harness 预设只收录可在本机安装运行、许可证可核对的开源 Agent，并记录许可证；预设使用已安装的命令，不在运行时下载代码。
 - 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。
 

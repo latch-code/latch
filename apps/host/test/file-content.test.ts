@@ -55,7 +55,7 @@ async function fixture() {
       pairedBy: { method: 'lpc' },
     })
   const detail: TaskDetail = {
-    summary: { id: 'session', title: 'Preview', status: 'idle', updatedAt: new Date().toISOString() },
+    summary: { harnessId: 'standard', id: 'session', title: 'Preview', status: 'idle', updatedAt: new Date().toISOString() },
     messages: [{ id: 'reply', role: 'assistant', text: 'Read `report.md` and `.env`.' }],
     approvals: [],
     liveText: '',

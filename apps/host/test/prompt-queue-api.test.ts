@@ -104,7 +104,7 @@ describe('queue HTTP boundaries', () => {
     release.at(-1)!()
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
   })
-  it('refuses remote L3 enqueue, editing and resend while allowing remote removal even if audit is unavailable', async () => {
+  it('lets another device queue on a Harness session, edit and remove, even with the audit unavailable for a removal', async () => {
     const host = await startTestHost()
     hosts.push(host)
     const owner = await host.enroll({ listener: 'unix' }),
@@ -113,18 +113,18 @@ describe('queue HTTP boundaries', () => {
       method: 'POST',
       body: { id: 'queue-agent', name: 'Queue fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })
-    const created = await owner.confirmed('tasks', {
+    const created = await phone.request('tasks', {
       method: 'POST',
       body: { harnessId: 'queue-agent', prompt: 'count 1000', requestId: randomUUID() },
     })
     expect(created.status).toBe(201)
     const { sessionId } = (await created.json()) as { sessionId: string }
     const path = `tasks/${sessionId}`
-    const body = { prompt: 'echo next', requestId: randomUUID(), queue: true }
-    expect((await phone.request(`${path}/prompt`, { method: 'POST', body })).status).toBe(403)
-    const queued = await owner.json<{ queued: { id: string } }>(`${path}/prompt`, { method: 'POST', body })
-    expect((await phone.request(`${path}/queue/${queued.queued.id}`, { method: 'PATCH', body: { text: 'Different' } })).status).toBe(403)
-    expect((await phone.request(`${path}/queue/${queued.queued.id}/send`, { method: 'POST' })).status).toBe(403)
+    const queued = await phone.json<{ queued: { id: string } }>(`${path}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'echo next', requestId: randomUUID(), queue: true },
+    })
+    expect((await phone.request(`${path}/queue/${queued.queued.id}`, { method: 'PATCH', body: { text: 'Different' } })).status).toBe(200)
     await owner.json(`${path}/cancel`, { method: 'POST', body: { requestId: randomUUID() } })
     vi.spyOn(host.host.security.audit, 'append').mockRejectedValue(new Error('audit unavailable'))
     const removed = await phone.request(`${path}/queue/${queued.queued.id}`, { method: 'DELETE' })

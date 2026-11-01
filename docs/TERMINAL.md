@@ -21,6 +21,8 @@ sources:
 
 macOS 组件 `latch-pty`、终端服务（`apps/host/src/terminal/`）与 HTTP 路由（`apps/host/src/routes/terminal.ts`）已实现，只有这台电脑（`host.sock`）能用。界面尚未实现，所以页面上还打不开终端。其他系统上终端尚未实现：组件只有 macOS 版本，服务返回 501 `terminal-unsupported`。
 
+Harness 的登录命令不走这里：页面还没有终端界面，所以「在终端里登录」用这台电脑默认的终端打开（见 [HARNESSES.md](HARNESSES.md)）。
+
 ## latch-pty 组件
 
 `native/macos/LatchTerminal.swift` 由 `pnpm build`（`build:host`）经 `apps/host/scripts/build-terminal.ts` 编译并临时签名为 `dist/native/latch-pty`（标识 `dev.latch.pty`），做法与 `latch-files` 相同，不用 npm 原生模块。组件缺失时 Host 不提供终端（503 `terminal-unavailable`），也不以其他方式启动 shell。

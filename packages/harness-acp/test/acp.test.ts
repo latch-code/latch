@@ -6,12 +6,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isReservedAgentEnvName, type TaskDetail } from '@latch/protocol'
+import { isReservedAgentEnvName, type DriverTaskDetail } from '@latch/protocol'
 import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
-import { agentEnvironment } from '../src/environment.ts'
+import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { commandName } from '../src/mapping.ts'
 import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, type AcpAgentOptions, type AgentRecord } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
@@ -88,6 +88,12 @@ function hostEnv(values: Record<string, string>): void {
       else process.env[key] = value
     }
   })
+}
+
+/** What a preset's own profile adds to its launch fingerprint. */
+const launchExtras = (presetId: string) => {
+  const permission = profileFor(presetId)!.permission
+  return { ...(permission.inheritEnv ? { inheritEnv: permission.inheritEnv } : {}), programs: programPaths(permission) }
 }
 
 async function setup(
@@ -201,12 +207,12 @@ function received(log: LogEntry[], method: string | null): LogEntry[] {
   return log.filter(entry => entry.event === 'recv' && entry.method === method)
 }
 
-async function until(bridge: Bridge, id: string, predicate: (detail: TaskDetail) => boolean): Promise<TaskDetail> {
+async function until(bridge: Bridge, id: string, predicate: (detail: DriverTaskDetail) => boolean): Promise<DriverTaskDetail> {
   await vi.waitFor(async () => expect(predicate(await bridge.detail(id))).toBe(true), { timeout: 8_000, interval: 10 })
   return bridge.detail(id)
 }
 
-function settled(bridge: Bridge, id: string): Promise<TaskDetail> {
+function settled(bridge: Bridge, id: string): Promise<DriverTaskDetail> {
   return until(bridge, id, detail => detail.summary.status !== 'running' && detail.summary.status !== 'waiting-approval')
 }
 
@@ -219,14 +225,14 @@ function alive(pid: number): boolean {
   }
 }
 
-const assistants = (detail: TaskDetail) => detail.messages.filter(message => message.role === 'assistant')
-const systemText = (detail: TaskDetail) =>
+const assistants = (detail: DriverTaskDetail) => detail.messages.filter(message => message.role === 'assistant')
+const systemText = (detail: DriverTaskDetail) =>
   detail.messages
     .filter(message => message.role === 'system')
     .map(message => message.text)
     .join('\n')
-const tool = (detail: TaskDetail, id: string) => detail.messages.find(message => message.id === id)
-const userTexts = (detail: TaskDetail) => detail.messages.filter(message => message.role === 'user').map(message => message.text)
+const tool = (detail: DriverTaskDetail, id: string) => detail.messages.find(message => message.id === id)
+const userTexts = (detail: DriverTaskDetail) => detail.messages.filter(message => message.role === 'user').map(message => message.text)
 /** pid of the process that received the prompt starting with `text`. */
 const promptPid = (log: LogEntry[], text: string) =>
   received(log, 'session/prompt').find(entry => (entry.params?.prompt as Array<{ text: string }>)[0].text.startsWith(text))!.pid
@@ -298,7 +304,7 @@ describe('ACP driver registration and readiness', () => {
     })
     expect(plugin.id).toBe('agent-missing')
     const driver = await activate(plugin)
-    expect(driver).toMatchObject({ id: 'missing', name: 'Missing', capabilities: { modes: ['agent'], models: 'agent' } })
+    expect(driver).toMatchObject({ id: 'missing', name: 'Missing', capabilities: { modes: ['agent'], models: { owner: 'harness' } } })
     const status = driver.status?.()
     expect(status?.status).toBe('unavailable')
     expect(status?.statusMessage).toContain('latch-no-such-agent')
@@ -599,7 +605,9 @@ describe('ACP driver registration and readiness', () => {
     expect(classifyMode(qwen, 'default', 'plan')).toBe('stricter')
     expect(classifyMode(qwen, 'default', 'auto-edit')).toBe('wider')
     expect(classifyMode(qwen, 'default', 'yolo')).toBe('wider')
-    expect(classifyMode(qwen, 'default', 'auto')).toBe('forbidden')
+    // A mode where a model approves ranks between asking and never asking; the agent moving itself there is still wider.
+    expect(classifyMode(qwen, 'default', 'auto')).toBe('wider')
+    expect(classifyMode(qwen, 'yolo', 'auto')).toBe('stricter')
     expect(classifyMode(qwen, 'default', 'turbo')).toBe('wider')
     expect(classifyMode(qwen, undefined, 'plan')).toBe('wider')
     expect(classifyMode(undefined, 'build', 'build')).toBe('neutral')
@@ -714,16 +722,8 @@ describe('ACP agent environment', () => {
       GOOSE_PROVIDER: 'openai',
       EXTRA_PATH_FILE: '/data/x.json',
       TMPDIR: '/tmp/latch-session',
-      HTTP_PROXY: '',
-      HTTPS_PROXY: '',
-      ALL_PROXY: '',
-      NO_PROXY: '',
-      http_proxy: '',
-      https_proxy: '',
-      all_proxy: '',
-      no_proxy: '',
+      SSL_CERT_FILE: '/tmp/ca.pem',
       NODE_TLS_REJECT_UNAUTHORIZED: '1',
-      NODE_EXTRA_CA_CERTS: '',
       GIT_CONFIG_COUNT: '3',
       GIT_CONFIG_KEY_0: 'core.fsmonitor',
       GIT_CONFIG_VALUE_0: 'false',
@@ -770,16 +770,14 @@ describe('ACP agent environment', () => {
         'latch_model',
         'npm_config_x',
         'DYLD_X',
-        'SSL_CERT_FILE',
         'OPENAI_BASE_URL',
       ]) {
         expect(env[name], name).toBeUndefined()
       }
       expect(env).toMatchObject({
-        HTTPS_PROXY: '',
-        https_proxy: '',
+        HTTPS_PROXY: 'http://proxy.invalid:3128',
+        SSL_CERT_FILE: '/tmp/latch-ca.pem',
         NODE_TLS_REJECT_UNAUTHORIZED: '1',
-        NODE_EXTRA_CA_CERTS: '',
         LANG: 'en_US.UTF-8',
         FAKE_SECRET: 'configured',
         GIT_CONFIG_COUNT: '3',
@@ -883,13 +881,13 @@ describe('ACP agent environment', () => {
 })
 
 describe('ACP launch confirmation', () => {
-  it('starts a session only with the launch fingerprint the owner confirmed', async () => {
+  it('starts a session only with a launch fingerprint on record', async () => {
     const fixture = await setup({ FAKE_SECRET: 'top-secret-value' })
     const bridge = await fixture.open()
     await expect(bridge.createTask({ prompt: 'echo', requestId: rid(), expectedLaunchHash: undefined })).rejects.toMatchObject({
       status: 409,
       code: 'l3-confirmation-missing',
-      message: '此会话没有经过本机确认，不能启动。',
+      message: '此会话缺少启动记录，不能启动。',
     })
     await expect(bridge.createTask({ prompt: 'echo', requestId: rid(), expectedLaunchHash: 'f'.repeat(64) })).rejects.toMatchObject({
       status: 409,
@@ -906,7 +904,7 @@ describe('ACP launch confirmation', () => {
       command: process.execPath,
       args: [FAKE_ACP_AGENT],
       cwd: await realpath(fixture.workspace),
-      envNames: expect.arrayContaining(['FAKE_SECRET', 'FAKE_ACP_LOG', 'PATH', 'TMPDIR', 'HTTPS_PROXY', 'GIT_CONFIG_COUNT']),
+      envNames: expect.arrayContaining(['FAKE_SECRET', 'FAKE_ACP_LOG', 'PATH', 'TMPDIR', 'GIT_CONFIG_COUNT']),
       // Only what the definition sets, for the system sheet; the launch environment's own names stay out.
       definitionEnvNames: Object.keys(fixture.record.env).sort(),
       verified: false,
@@ -987,7 +985,7 @@ describe('ACP launch confirmation', () => {
     const missing = {
       status: 409,
       code: 'l3-confirmation-missing',
-      message: '此会话创建于安全升级之前，不能继续。请新建会话（需要本机确认）。',
+      message: '此会话创建于安全升级之前，不能继续。请新建会话。',
     }
     await expect(bridge.prompt('old', 'echo again', rid())).rejects.toMatchObject(missing)
     await expect(bridge.setConfig!('old', 'model', 'large')).rejects.toMatchObject(missing)
@@ -1006,6 +1004,7 @@ describe('ACP project configuration', () => {
       definitionEnv: record.env,
       presetId: record.presetId,
       profileVersion: 1,
+      ...launchExtras(record.presetId!),
     })
   const projectNote = (names: string) =>
     `项目中有 OpenCode 配置：${names}。启动指纹包含这些配置的内容，确认后如有增删或修改，该会话不能继续`
@@ -1382,6 +1381,7 @@ describe('ACP project folders', () => {
         definitionEnv: fixture.record.env,
         presetId: 'codex',
         profileVersion: 1 as const,
+        ...launchExtras('codex'),
       }
       const definition = launchHash(launched)
       expect((await bridge.launchPreview!({ cwd: scope.folders[0]!.path })).launchHash).toBe(definition)
@@ -1949,23 +1949,15 @@ describe('ACP permission mode', () => {
     expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'default')).toBe('neutral')
     expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'plan')).toBe('stricter')
     expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'yolo')).toBe('wider')
-    expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'auto')).toBe('forbidden')
+    expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'auto')).toBe('wider')
     expect(await bridge.classifyConfigChange!(sessionId, 'model', 'large')).toBe('neutral')
     await expect(bridge.classifyConfigChange!(sessionId, 'missing', 'x')).rejects.toMatchObject({ status: 404 })
-
-    await expect(bridge.setConfig!(sessionId, 'mode', 'auto', { allowWiden: true })).rejects.toMatchObject({
-      status: 400,
-      code: 'mode-forbidden',
-      message: '该模式由模型代为批准，Latch 不提供',
-    })
-    await expect(bridge.setConfig!(sessionId, 'mode', 'yolo')).rejects.toMatchObject({ status: 403, code: 'stepup-required' })
-    expect(received(await fixture.log(), 'session/set_config_option')).toEqual([])
 
     await bridge.setConfig!(sessionId, 'mode', 'plan')
     expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('plan')
     // Widening is measured against the mode now expected.
     expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'default')).toBe('wider')
-    await bridge.setConfig!(sessionId, 'mode', 'yolo', { allowWiden: true })
+    await bridge.setConfig!(sessionId, 'mode', 'yolo')
     const widened = await bridge.detail(sessionId)
     expect(widened.permission?.expectedMode).toBe('yolo')
     expect(widened.config?.find(option => option.id === 'mode')?.currentValue).toBe('yolo')
@@ -2035,6 +2027,7 @@ describe('ACP permission mode', () => {
         definitionEnv: fixture.record.env,
         presetId: 'gemini',
         profileVersion: 1,
+        ...launchExtras('gemini'),
       }),
     )
 
@@ -2358,7 +2351,7 @@ describe('ACP approvals', () => {
     expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('outcome approved')
     const env = (await fixture.log()).find(entry => entry.event === 'env')!.env as Record<string, string>
     expect(env.INITIAL_AGENT_MODE).toBe('read-only')
-    expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'agent')).toBe('forbidden')
+    expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'agent')).toBe('wider')
   })
 })
 
@@ -2707,6 +2700,42 @@ describe('ACP process failures', () => {
     expect((await settled(bridge, next.sessionId)).summary.status).toBe('idle')
   })
 
+  it('picks up the same session in a new process once a login that expired is renewed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-login-file-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const loginFile = join(root, 'login')
+    await writeFile(loginFile, 'yes')
+    const fixture = await setup({ FAKE_ACP_LOGIN_FILE: loginFile, FAKE_ACP_CAPS: 'resume' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+
+    await rm(loginFile)
+    await bridge.prompt(sessionId, 'echo two', rid())
+    const expired = await settled(bridge, sessionId)
+    expect(expired.summary.status).toBe('failed')
+    expect(expired.summary.runEnd?.reason).toBe('login-required')
+    expect(systemText(expired)).toContain('还没登录')
+
+    // The process stops by itself, because a real one reads its login only once. Logged in again, the next turn goes on.
+    await writeFile(loginFile, 'yes')
+    await vi.waitFor(
+      async () => {
+        const started = (await fixture.log()).filter(entry => entry.event === 'start')
+        expect(alive(started[0]!.pid)).toBe(false)
+      },
+      { timeout: 8_000 },
+    )
+    await bridge.prompt(sessionId, 'echo three', rid())
+    const resumed = await settled(bridge, sessionId)
+    expect(resumed.summary.status).toBe('idle')
+    expect(resumed.summary.runEnd).toBeUndefined()
+    const log = await fixture.log()
+    expect(received(log, 'session/new')).toHaveLength(1)
+    expect(received(log, 'session/resume')).toHaveLength(1)
+    expect(received(log, 'authenticate')).toEqual([])
+  })
+
   it('fails with login guidance instead of authenticating, and rejects other protocol versions', async () => {
     const fixture = await setup({ FAKE_ACP_AUTH: 'new' })
     const bridge = await fixture.open()
@@ -2714,6 +2743,7 @@ describe('ACP process failures', () => {
     const detail = await settled(bridge, sessionId)
     expect(detail.summary.status).toBe('failed')
     expect(systemText(detail)).toContain('还没登录。按它自己的方式登录后重试。')
+    expect(detail.summary.runEnd?.reason).toBe('login-required')
     await expect(bridge.prompt(sessionId, 'echo again', rid())).rejects.toMatchObject({ status: 409, code: 'agent-auth-required' })
     expect(received(await fixture.log(), 'authenticate')).toEqual([])
     // Each try after a refusal starts a new process, which is what reads a login made in between.
@@ -3017,8 +3047,7 @@ describe('ACP session configuration', () => {
 
     await bridge.setConfig!(sessionId, 'model', 'large')
     // Without a profile every mode change counts as widening.
-    await expect(bridge.setConfig!(sessionId, 'mode', 'plan')).rejects.toMatchObject({ status: 403, code: 'stepup-required' })
-    await bridge.setConfig!(sessionId, 'mode', 'plan', { allowWiden: true })
+    await bridge.setConfig!(sessionId, 'mode', 'plan')
     await expect(bridge.setConfig!(sessionId, 'model', 'huge')).rejects.toMatchObject({ status: 400 })
     await expect(bridge.setConfig!(sessionId, 'missing', 'x')).rejects.toMatchObject({ status: 404 })
     const changed = await bridge.detail(sessionId)

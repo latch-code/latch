@@ -7,8 +7,8 @@ const snapshot = {
     features: { messageIdentity: true },
     defaults: { harnessId: 'standard' },
     harnesses: [
-      { id: 'standard', source: 'builtin', level: 'L1' },
-      { id: 'external', source: 'acp', level: 'L3' },
+      { id: 'standard', level: 'L1' },
+      { id: 'external', level: 'L3' },
     ],
   },
 } as AppSnapshot

@@ -95,7 +95,7 @@ export function ProjectGroupHeading({
   }
   const actions = !renaming && (
     <>
-      {onNew && !project.unavailable && (folders !== null || project.remoteStart !== false) && (
+      {onNew && !project.unavailable && (
         <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} tooltip="新会话" icon={Plus} onClick={onNew} />
       )}
       {onEditProject && (

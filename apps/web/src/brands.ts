@@ -1,5 +1,5 @@
 import { Bot, FlaskConical, Plug, Puzzle } from 'lucide-react'
-import type { HarnessSource, ProviderSummary } from '@latch/protocol'
+import type { ProviderSummary } from '@latch/protocol'
 import type { LucideIcon, TileMark } from '@latch/ui'
 import anthropic from './assets/brands/anthropic.svg?no-inline'
 import bailian from './assets/brands/bailian.svg?no-inline'
@@ -73,15 +73,13 @@ export function presetOf(id: string, presets: Record<string, unknown>): string |
   return base !== undefined && Object.hasOwn(presets, base) ? base : undefined
 }
 
-export function harnessArt(harness: { id: string; source?: HarnessSource; presetId?: string } | undefined): BrandArt {
-  if (harness === undefined || harness.source === 'builtin') return { kind: 'app' }
-  if (harness.source === 'plugin') return { kind: 'glyph', icon: GLYPHS.plugin }
-  const preset =
-    harness.presetId !== undefined && Object.hasOwn(HARNESS_MARKS, harness.presetId)
-      ? harness.presetId
-      : presetOf(harness.id, HARNESS_MARKS)
-  const mark = preset === undefined ? undefined : HARNESS_MARKS[preset]
-  return mark ? { kind: 'mark', mark } : { kind: 'glyph', icon: GLYPHS.agent }
+/** A key the Host sent (`HarnessCapabilities.display.mark`), drawn from this fixed set; anything else is the neutral agent. */
+export function harnessArt(mark: string | undefined): BrandArt {
+  if (mark === 'latch') return { kind: 'app' }
+  if (mark === 'plugin') return { kind: 'glyph', icon: GLYPHS.plugin }
+  return mark !== undefined && Object.hasOwn(HARNESS_MARKS, mark)
+    ? { kind: 'mark', mark: HARNESS_MARKS[mark]! }
+    : { kind: 'glyph', icon: GLYPHS.agent }
 }
 
 export function providerArt(provider: { id: string; kind?: ProviderSummary['kind']; presetId?: string } | undefined): BrandArt {

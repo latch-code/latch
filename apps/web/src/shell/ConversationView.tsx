@@ -150,8 +150,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     {current.summary.firstStart && harnessInfo && (
                       <p className="session-start-note" role="note">
                         {harnessInfo.permission?.approvals === 'none'
-                          ? `${MODE_COPY.agentDecidesLine(harnessInfo.name)}。`
-                          : MODE_COPY.firstStart(harnessInfo.name)}
+                          ? `${MODE_COPY.agentDecidesLine(harnessInfo.capabilities.display.label)}。`
+                          : MODE_COPY.firstStart(harnessInfo.capabilities.display.label)}
                       </p>
                     )}
                     <Transcript
@@ -176,6 +176,11 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       }
                       approvals={approvals}
                       harnessName={harnessName}
+                      login={
+                        harnessInfo?.login
+                          ? { harnessId: harnessInfo.id, login: harnessInfo.login, terminal: catalog?.features?.loginTerminal === true }
+                          : undefined
+                      }
                       harness={topHarness}
                       personal={Boolean(summary?.personal)}
                       demo={demo}
@@ -183,11 +188,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       changes={{
                         // The Host shows a session's files only to a device whose data scope covers them.
                         enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
-                        undo: !access.scopes.has('run')
-                          ? 'read-only'
-                          : !access.local && harnessInfo?.source !== 'builtin'
-                            ? 'mac-only'
-                            : 'open',
+                        undo: !access.scopes.has('run') ? 'read-only' : !access.local && harnessInfo?.level !== 'L1' ? 'mac-only' : 'open',
                       }}
                       {...(run ? { onStop: run.onCancel } : {})}
                       onReveal={reading.reveal}

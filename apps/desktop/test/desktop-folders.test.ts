@@ -57,12 +57,8 @@ interface FoldersModule {
   parseDropInput(input: unknown): { projectId: string | null; paths: string[] } | { error: string }
   parseRevealInput(input: unknown): { projectId: string; folderId: string | null } | undefined
   parseSaveSessionInput(input: unknown): { sessionId: string } | undefined
-  pickDialog(input: {
-    defaultPath: string
-    project?: { name?: string; remoteStart?: boolean }
-    replacing?: { name?: string }
-  }): DialogOptions
-  dropDialog(input: { paths: string[]; project?: { name?: string; remoteStart?: boolean } }): DialogOptions
+  pickDialog(input: { defaultPath: string; project?: { name?: string }; replacing?: { name?: string } }): DialogOptions
+  dropDialog(input: { paths: string[]; project?: { name?: string } }): DialogOptions
   saveSessionDialog(input: { path: string; title?: string }): DialogOptions
   createFolderActions(options: ActionOptions): FolderActions
 }
@@ -97,7 +93,6 @@ interface FakeProject {
   name: string
   path: string
   folders: Array<{ id: string; path: string }>
-  remoteStart?: boolean
 }
 
 /**
@@ -172,7 +167,6 @@ const shop: FakeProject = {
   name: 'Shop',
   path: '/Users/me/code/shop-api',
   folders: [{ id: 'shop-api', path: '/Users/me/code/shop-api' }],
-  remoteStart: true,
 }
 
 describe('desktop shell folders: what main accepts', () => {
@@ -263,14 +257,11 @@ describe('desktop shell folders: what main accepts', () => {
       defaultPath: '/Users/me',
       properties: ['openDirectory', 'createDirectory', 'multiSelections'],
     })
-    expect(folders.pickDialog({ defaultPath: '/Users/me', project: { name: 'Shop', remoteStart: false } })).toMatchObject({
+    expect(folders.pickDialog({ defaultPath: '/Users/me', project: { name: 'Shop' } })).toMatchObject({
       title: '添加文件夹到「Shop」',
       buttonLabel: '添加',
-      message: '可以选择多个文件夹。Latch 内置可以读取其中的所有文件。',
+      message: '可以选择多个文件夹。Latch 内置可以读取其中的所有文件。连接的设备也可以在这个项目中发起会话。',
     })
-    expect(folders.pickDialog({ defaultPath: '/Users/me', project: { name: 'Shop', remoteStart: true } }).message).toBe(
-      '可以选择多个文件夹。Latch 内置可以读取其中的所有文件。其他设备也可以在这个项目中发起会话。',
-    )
     // A name the Host sent that a dialog could not show as it is stays out of the dialog.
     expect(folders.pickDialog({ defaultPath: '/', project: { name: 'Shop\u202e' } }).title).toBe('添加文件夹')
     const again = folders.pickDialog({ defaultPath: '/Users/me/code', replacing: { name: 'api' } })
@@ -290,15 +281,15 @@ describe('desktop shell folders: what main accepts', () => {
       type: 'question',
       title: 'Latch',
       message: '用这些文件夹添加项目？',
-      detail: '/Users/me/site\n/Users/me/docs\n\nLatch 内置可以读取其中的所有文件。',
+      detail: '/Users/me/site\n/Users/me/docs\n\nLatch 内置可以读取其中的所有文件。连接的设备也可以在这个项目中发起会话。',
       buttons: ['添加项目', '取消'],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
     })
-    expect(folders.dropDialog({ paths: ['/x'], project: { name: 'Shop', remoteStart: true } })).toMatchObject({
+    expect(folders.dropDialog({ paths: ['/x'], project: { name: 'Shop' } })).toMatchObject({
       message: '把这些文件夹加入「Shop」？',
-      detail: '/x\n\nLatch 内置可以读取其中的所有文件。其他设备也可以在这个项目中发起会话。',
+      detail: '/x\n\nLatch 内置可以读取其中的所有文件。连接的设备也可以在这个项目中发起会话。',
       buttons: ['添加', '取消'],
       defaultId: 1,
       cancelId: 1,
@@ -388,7 +379,7 @@ describe('desktop shell folders: adding', () => {
     })
     expect(asked[0]).toMatchObject({
       title: '添加文件夹到「Shop」',
-      message: '可以选择多个文件夹。Latch 内置可以读取其中的所有文件。其他设备也可以在这个项目中发起会话。',
+      message: '可以选择多个文件夹。Latch 内置可以读取其中的所有文件。连接的设备也可以在这个项目中发起会话。',
     })
     expect(host.requests.at(-1)).toMatchObject({ method: 'POST', path: '/link/api/workspaces/shop/folders', body: { via: 'picker' } })
   })

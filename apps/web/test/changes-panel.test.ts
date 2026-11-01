@@ -46,7 +46,7 @@ const list = (extra: Partial<ChangeList> = {}): ChangeList => ({
   ...extra,
 })
 const settled: TurnChanges = { turnId: 't', startedAt: '2026-11-01T08:20:00.000Z', state: 'settled', files: 1 }
-const rights = { canRun: true, local: true, localOnlySession: false, active: false, offline: false }
+const rights = { canRun: true, local: true, active: false, offline: false }
 const remote = { ...rights, local: false }
 const blocked = (reason: NonNullable<ChangeList['undo']> extends infer A ? (A extends { reason: infer R } ? R : never) : never) =>
   ({ available: false, reason }) as const
@@ -115,8 +115,7 @@ describe('the scope row', () => {
     expect(scopeAction({ ...uncommitted, files: [] }, undefined, rights)).toEqual({ kind: 'none' })
   })
 
-  it('follows the Host for an engine session from another device, and for a device that only reads', () => {
-    expect(scopeAction(list(), settled, { ...remote, localOnlySession: true })).toEqual({ kind: 'why', text: '在 Mac 的 Latch 中撤销' })
+  it('undoes a turn from another device, and says so for a device that only reads', () => {
     expect(scopeAction(list(), settled, remote)).toEqual({ kind: 'undo' })
     expect(scopeAction(list(), settled, { ...rights, canRun: false })).toEqual({ kind: 'why', text: '这台设备只能查看' })
   })

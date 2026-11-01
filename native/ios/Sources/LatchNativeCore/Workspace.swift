@@ -741,7 +741,7 @@ public actor NativeWorkspace {
             "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds", "mode", "branch", "runOutcome", "runEnd", "permissionDrift"]) }),
             // Enough to draw the shelves and the engine's name offline; paths, models and settings stay out.
             "catalog": .object(["workspaces": .array(value["catalog"]["workspaces"].array.map { select($0, keys: ["id", "name"]) }),
-                "harnesses": .array(value["catalog"]["harnesses"].array.map { select($0, keys: ["id", "name", "source", "level"]) })]),
+                "harnesses": .array(value["catalog"]["harnesses"].array.map { .object(["id": $0["id"], "level": $0["level"], "capabilities": .object(["display": $0["capabilities"]["display"]])]) })]),
             "hostTime": value["hostTime"]])
     }
 }

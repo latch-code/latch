@@ -29,7 +29,7 @@ struct NewSessionSheet: View {
                 }
                 .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(PhoneTheme.line))
-                Text(blocker ?? "改文件前会问你。放宽权限和其他 Harness 都在 Mac 上开始。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
+                Text(blocker ?? "开始后可以换权限。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
                 LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: 6)
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
@@ -81,23 +81,22 @@ struct NewSessionSheet: View {
     private var projectRow: some View {
         Menu {
             ForEach(PhoneStart.projects(catalog)) { project in
-                Button { choice.workspaceId = project.id } label: { menuLabel(project.name, line: project.line, on: project.id == choice.workspaceId) }.disabled(!project.startable)
+                Button { choice.workspaceId = project.id } label: { menuLabel(project.name, line: nil, on: project.id == choice.workspaceId) }
             }
             if PhoneStart.acceptsChat(catalog, harnessId: choice.harnessId) {
-                let startable = PhoneStart.chatStartable(catalog)
-                Button { choice.workspaceId = nil } label: { menuLabel("不用项目", line: startable ? "只对话" : PhoneStart.onMac, on: choice.workspaceId == nil) }.disabled(!startable)
+                Button { choice.workspaceId = nil } label: { menuLabel("不用项目", line: "只对话", on: choice.workspaceId == nil) }
             }
         } label: { row("项目") { HStack(spacing: 6) { Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted); Text(projectName).foregroundStyle(PhoneTheme.ink2); updown } } }
     }
     private var engineRow: some View {
         Menu {
             ForEach(PhoneStart.engines(catalog)) { engine in
-                Button { choice.harnessId = engine.id } label: { menuLabel(engine.name, line: engine.line, on: engine.id == choice.harnessId) }.disabled(!engine.startable)
+                Button { choice.harnessId = engine.id } label: { menuLabel(engine.name, line: nil, on: engine.id == choice.harnessId) }
             }
         } label: {
             row("Harness") {
                 HStack(spacing: 6) {
-                    if choice.harnessId != nil { EngineTile(harnessId: choice.harnessId, size: 18); Text(PhoneStart.engineName(harness)).foregroundStyle(PhoneTheme.ink2) }
+                    if choice.harnessId != nil { EngineTile(mark: PhoneStart.mark(harness), size: 18); Text(PhoneStart.engineName(harness)).foregroundStyle(PhoneTheme.ink2) }
                     else { Text("没有可用的 Harness").foregroundStyle(PhoneTheme.muted) }
                     updown
                 }
@@ -105,7 +104,7 @@ struct NewSessionSheet: View {
         }
     }
     @ViewBuilder private var modelRow: some View {
-        if harness["models"].string == "agent" { row("模型") { Text("由 Harness 决定").foregroundStyle(PhoneTheme.muted) } }
+        if !PhoneStart.usesServices(harness) { row("模型") { Text("由 Harness 决定").foregroundStyle(PhoneTheme.muted) } }
         else {
             NavigationLink {
                 ModelList(models: PhoneStart.models(catalog), chosen: $choice.model)

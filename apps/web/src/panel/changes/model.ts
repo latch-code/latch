@@ -335,7 +335,6 @@ export interface UndoRights {
   /** The connection is `host.sock`. */
   local: boolean
   /** The Host takes this session's input only from this computer (an external engine). */
-  localOnlySession: boolean
   /** The session runs or waits: the Host refuses every write, whatever a list read earlier says. */
   active: boolean
   /** No connection to the Host. */
@@ -366,7 +365,6 @@ export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | un
   if (rights.active || turn?.state === 'running') return { kind: 'why', text: `运行中不能${word}` }
   if (turn?.state === 'interrupted') return { kind: 'why', text: '没有结算，不能撤销' }
   if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
-  if (rights.localOnlySession && !rights.local) return { kind: 'why', text: '在 Mac 的 Latch 中撤销' }
   if (list.undone) return list.redo?.available ? { kind: 'redo' } : blockedWhy(REDO_WHY, list.redo)
   if (list.undo?.available) return { kind: 'undo' }
   return blockedWhy(UNDO_WHY, list.undo)

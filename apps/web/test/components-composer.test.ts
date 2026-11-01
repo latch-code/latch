@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
@@ -57,7 +58,7 @@ const Drawer = ({
     messages: message ? [message] : [],
     index: 0,
     onIndex: () => {},
-    gateFor: gateFor ?? (item => approvalActions(item, null, null)),
+    gateFor: gateFor ?? (item => approvalActions(item, null)),
     busy: new Map(busy ? [[approval.id, busy]] : []),
     statuses: new Map(status ? [[approval.id, status]] : []),
     onDecide: () => {},
@@ -77,9 +78,16 @@ const approvalCard = (extra: Partial<Approval>, status?: ApprovalStatus, gate?: 
 const buttonLabels = (html: string) =>
   [...html.matchAll(/<button[^>]*class="ui-button"[^>]*>(?:<svg.*?<\/svg>)?([^<]+)<\/button>/g)].map(match => match[1])
 
-const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({ id: 's', title: 't', status: 'idle', updatedAt: '', ...extra })
+const session = (extra: Partial<TaskSummary> = {}): TaskSummary => ({
+  harnessId: 'standard',
+  id: 's',
+  title: 't',
+  status: 'idle',
+  updatedAt: '',
+  ...extra,
+})
 const hostCatalog = (extra: Partial<HostCatalog> = {}): HostCatalog => ({
-  harnesses: [{ id: 'standard', name: 'Standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host' }],
+  harnesses: [testHarness('standard', { kind: 'builtin', label: 'Standard' })],
   providers: [{ id: 'fake', name: 'Fake', kind: 'openai-compatible', models: ['fake-chat', 'fake-coder-32k'], defaultModel: 'fake-chat' }],
   workspaces: [{ id: 'default', name: 'app', path: '/work/app' }],
   defaults: { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'fake', model: 'fake-chat' } },
@@ -107,7 +115,6 @@ const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
     devMode: true,
     presence: { status: 'available' },
     tls: null,
-    policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
   },
   tasks: [],
   approvals: [],
@@ -262,7 +269,7 @@ describe('approval cards', () => {
           messages: [],
           index: 0,
           onIndex: noop,
-          gateFor: gate ? () => gate : item => approvalActions(item, null, null),
+          gateFor: gate ? () => gate : item => approvalActions(item, null),
           busy: new Map(),
           statuses: new Map(),
           onDecide: noop,
@@ -357,41 +364,18 @@ describe('approval cards', () => {
     expect(html).not.toContain('>Reject</button>')
   })
 
-  it('says the allow waits while the sheet is open, disables both buttons, and leaves a failed confirmation in the card', () => {
-    const gate: ApprovalGate = {
-      kind: 'R2',
-      badge: { label: APPROVAL_COPY.highRisk, tone: 'err' },
-      explicit: false,
-      options: [
-        { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-        { id: 'allow_once', label: APPROVAL_COPY.allowLocal, kind: 'allow_once' },
-      ],
-      confirms: true,
-    }
-    // The system sheet is the only window: nothing of its sentence, its details or a way to cancel appears in the card.
-    const waiting = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
-    expect(waiting).toContain(CONFIRMATION_COPY.waiting)
-    expect(waiting).toMatch(/class="sr-only" role="status"/u)
-    expect(waiting).not.toContain('确认详情')
-    expect(waiting).toContain(CONFIRMATION_COPY.waitingShort)
-    const failed = approvalCard({ risk: 'R2' }, { failure: { text: CONFIRMATION_RESULT_TEXT.denied, tone: 'error' } }, gate)
-    expect(failed).toMatch(/class="ui-notice approval-failure" data-tone="error"/)
-    expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
-    expect(buttonLabels(failed)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
-  })
-
   it('shows no card of its own while the sheet is open: only the warnings the sheet leaves out, never its sentence or details', () => {
     const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
     const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
     const ticket = {
       id: 'cfm_1',
-      action: 'task.start-l3' as const,
-      title: '开启完全访问会话',
+      action: 'plugin.package.apply' as const,
+      title: '应用自定义插件',
       status: 'pending' as const,
       hashDisplay: 'a1b2-c3d4-e5f6-0718',
       expiresAt: new Date().toISOString(),
-      reason: '允许「修复登录」改用「完全访问」',
-      form: 'mode.widen' as const,
+      reason: '应用插件「发布检查」',
+      form: 'plugin.package.apply' as const,
       lines: [{ label: '工作目录', value: '/Users/u/proj' }],
       warnings: ['这个地址不使用 HTTPS，发给它的内容会以明文经过网络。'],
     }
@@ -407,36 +391,19 @@ describe('approval cards', () => {
     expect(failed).not.toContain(ticket.title)
   })
 
-  it('shows what a system form leaves out for a start or a cut sentence, without hashes, and nothing beside a native sheet', () => {
+  it('shows what a system form leaves out for a cut sentence, without hashes', () => {
     const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
     const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
-    const command = '/Users/u/a/very/long/path/that/did/not/fit/in/the/sentence/bin/codex-acp'
     const ticket = {
       id: 'cfm_2',
-      action: 'task.start-l3' as const,
-      title: '开启完全访问会话',
+      action: 'provider.confirm-origin' as const,
+      title: '确认模型服务地址',
       status: 'pending' as const,
       hashDisplay: 'a1b2-c3d4-e5f6-0718',
       expiresAt: new Date().toISOString(),
-      reason: '允许 Codex 读写这台 Mac 上的文件并运行命令：/opt/bin/codex-acp',
-      form: 'start.first' as const,
-      lines: [
-        { label: '命令', value: command },
-        { label: '工作目录', value: '/Users/u/proj' },
-        { label: '说明', value: '项目配置可以覆盖询问设置' },
-        { label: '启动指纹', value: 'f00d-f00d-f00d-f00d' },
-      ],
-    }
-    // Every start: the system form names the program, not the folder or what the project can change.
-    for (const form of ['start.first', 'start.first-mode', 'start.changed', 'start.changed-mode'] as const) {
-      const waiting = render({ phase: 'waiting', ticket: { ...ticket, form } })
-      // Under one word, shut: it must not push the input off the page.
-      expect(waiting).toContain(CONFIRMATION_COPY.waitingTouchId)
-      expect(waiting).toMatch(/<details class="confirm-fold"><summary>确认详情<\/summary>/u)
-      expect(waiting).not.toContain('<details class="confirm-fold" open')
-      for (const line of ticket.lines.slice(0, 3)) expect(waiting).toContain(line.value)
-      expect(waiting).not.toContain('f00d-f00d-f00d-f00d')
-      expect(waiting).not.toContain(ticket.reason)
+      reason: '允许 Latch 连接 service.example.com',
+      form: 'origin.confirm' as const,
+      lines: [{ label: '地址', value: 'https://service.example.com' }],
     }
     // A slot the Host cut ends or begins with 「…」, the only mark a sentence carries.
     const cut = {
@@ -450,9 +417,6 @@ describe('approval cards', () => {
     expect(render({ phase: 'waiting', ticket: { ...cut, reason: '允许 Latch 连接 service.example.com' } })).toBe('')
     expect(render({ phase: 'waiting', ticket: { ...ticket, lines: [] } })).toBe('')
     expect(render({ phase: 'sending', ticket })).toBe('')
-    // The native sheet lists the Host's lines itself.
-    for (const sheet of [ticket, cut])
-      expect(render({ phase: 'waiting', ticket: { ...sheet, confirmationMethod: 'shell-local' as const } })).toBe('')
   })
 
   it('names the session a refused confirmation waits for, in one line', () => {
@@ -506,7 +470,7 @@ describe('approval cards', () => {
         messages: [],
         index: 1,
         onIndex: noop,
-        gateFor: item => approvalActions(item, null, null),
+        gateFor: item => approvalActions(item, null),
         busy: new Map(),
         statuses: new Map(),
         onDecide: noop,
@@ -534,15 +498,14 @@ describe('approval cards', () => {
           explicit: false,
           options: [
             { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-            { id: 'allow_once', label: '在这台 Mac 上允许', kind: 'allow_once' },
+            { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
           ],
-          confirms: true,
         }),
       }),
     )
     expect(html).toContain('data-risky=""')
     expect(html).toContain('<p class="approval-clause">')
-    expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?lucide-lock-keyhole[^>]*>.*?<\/svg>在这台 Mac 上允许<\/button>/u)
+    expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?允许<\/button>/u)
   })
 
   it('never labels a write without previous text as a new file', () => {

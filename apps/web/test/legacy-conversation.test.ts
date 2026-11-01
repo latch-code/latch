@@ -7,7 +7,7 @@ import { Transcript } from '../src/components/Transcript.tsx'
 describe('history from a Host that records no times', () => {
   it('renders without times, durations, separators or a thinking timer, and its footer keeps the tokens', () => {
     const detail: TaskDetail = {
-      summary: { id: 's', title: 't', status: 'idle', updatedAt: '' },
+      summary: { harnessId: 'standard', id: 's', title: 't', status: 'idle', updatedAt: '' },
       messages: [
         { id: 'u', role: 'user', text: '一' },
         { id: 'a', role: 'assistant', text: '答', reasoning: '想', usage: { inputTokens: 1200, outputTokens: 30 } },

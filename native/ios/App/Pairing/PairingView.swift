@@ -11,6 +11,7 @@ struct PairingWelcome: View {
             bundled("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
             Text("连接你的 Mac").font(.title2.weight(.semibold))
             Text("在 Mac 上的 Latch 中，打开 手机 › 连接手机。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text("连接后，拿着这台解锁手机的人可以操作 Mac 上的 Agent，直到你移除它。").font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("扫码", action: scan).buttonStyle(.borderedProminent).controlSize(.large)
         }.frame(maxWidth: .infinity)
     }

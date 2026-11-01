@@ -87,7 +87,10 @@ describe('editable local plugin assets', () => {
     expect(registry.skills()).toMatchObject([{ id: 'skill:guide' }])
     const panel = registry.acquireUiPanel('skill:overview')
     expect(
-      await panel.render({ session: { id: 's', title: '', status: 'idle', updatedAt: '' }, signal: new AbortController().signal }),
+      await panel.render({
+        session: { harnessId: 'standard', id: 's', title: '', status: 'idle', updatedAt: '' },
+        signal: new AbortController().signal,
+      }),
     ).toMatchObject({ blocks: [{ type: 'text' }] })
     panel.release()
   })

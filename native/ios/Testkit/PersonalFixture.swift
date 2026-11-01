@@ -67,7 +67,7 @@ import LatchNativeCore
         // The list that survives offline holds only what its rows draw, and the bodies stay behind a window.
         guard cached["tasks"].array.allSatisfy({ $0["cwd"] == .null && $0["live"] == .null }), cached["catalog"]["providers"] == .null,
               cached["catalog"]["workspaces"].array.allSatisfy({ Set($0.object.keys) == ["id", "name"] }),
-              cached["catalog"]["harnesses"].array.allSatisfy({ Set($0.object.keys) == ["id", "name", "source", "level"] }),
+              cached["catalog"]["harnesses"].array.allSatisfy({ Set($0.object.keys) == ["id", "level", "capabilities"] && Set($0["capabilities"].object.keys) == ["display"] }),
               try await workspace.cachedDetail(taskId)?["summary"]["id"].string == taskId,
               try await workspace.cachedDetail("never-read") == nil else { throw NativeFailure.storageUnavailable }
         // A run that has ended answers 继续等 plainly; a note against a settled request is refused, not left unknown.

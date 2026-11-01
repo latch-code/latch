@@ -364,7 +364,7 @@ describe('an agent that has not started yet', () => {
       const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
       await palette.getByRole('searchbox').fill('本地 ACP')
       await palette.getByRole('option', { name: '本地 ACP Harness', exact: true }).click()
-      await page.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).waitFor()
+      await page.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).waitFor()
       await page.reload()
       await connected(page)
       const settings = await openSettings(page, '设置')
@@ -377,7 +377,7 @@ describe('an agent that has not started yet', () => {
       }
       await page.emulateMedia({ colorScheme: 'light' })
       await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
-      await settings.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).waitFor()
+      await settings.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).waitFor()
       await page.screenshot({ path: 'test-results/settings-agent-page-not-started.png', animations: 'disabled' })
       await backToSection(settings)
 
@@ -388,13 +388,11 @@ describe('an agent that has not started yet', () => {
         body: { prompt: 'echo hi', requestId: randomUUID(), mode: 'agent', harnessId: agent.id },
       })
       expect(started.status).toBe(201)
-      expect(testHost.presence.requests.slice(beforeStart).map(request => request.preview.action)).toEqual(['task.start-l3'])
+      expect(testHost.presence.requests).toHaveLength(beforeStart)
       // 重新检测 on its page reads the agents again.
       await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
       await settings.getByRole('button', { name: '重新检测', exact: true }).click()
-      await expect
-        .poll(() => settings.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).count())
-        .toBe(0)
+      await expect.poll(() => settings.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).count()).toBe(0)
       await backToSection(settings)
       await row.waitFor()
       await context.close()

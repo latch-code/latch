@@ -4,6 +4,7 @@ import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
+import { loadLoginShell, resolveCommand } from '@latch/harness-acp'
 import { detectPresetCommands, LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
 import {
   acquireDataDirLock,
@@ -209,11 +210,14 @@ async function main(): Promise<void> {
   const providerId = option('--provider')
   const harnessId = option('--harness')
   const model = latchEnv(env, 'MODEL')
+  // Before the Host listens, because a launch fingerprint holds the path found through it.
+  await loadLoginShell()
   const server = await startServer({
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
     sessionFolders,
     detectPreset: detectPresetCommands,
+    loginPrograms: resolveCommand,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),
     port,

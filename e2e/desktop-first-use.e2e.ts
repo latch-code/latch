@@ -1,8 +1,11 @@
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, AgentSettings, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -143,6 +146,78 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
     })
 
+    it('opens the login command in a terminal on this computer, then goes on with the same words gone', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'latch-electron-login-'))
+      const bin = join(directory, 'bin')
+      await mkdir(bin)
+      const loginFile = join(directory, 'login')
+      for (const name of ['codex', 'codex-acp']) {
+        await writeFile(
+          join(bin, name),
+          [
+            '#!/bin/sh',
+            `export FAKE_ACP_LOGIN_FILE='${loginFile}' FAKE_ACP_MODES=read-only,workspace-write,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options`,
+            `exec "${process.execPath}" "${FAKE_ACP_AGENT}" "$@"`,
+          ].join('\n'),
+        )
+        await chmod(join(bin, name), 0o755)
+      }
+      const project = join(directory, 'rust-learn')
+      await mkdir(project)
+      const path = process.env.PATH
+      process.env.PATH = `${bin}:${path}`
+      const scripts: string[] = []
+      const terminal = { fails: false }
+      const host = await startTestHost({
+        demo: false,
+        sessionFolders: true,
+        presenceMode: 'manual',
+        detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
+        loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+        // Runs the script the terminal would, so what it logs in is what the page then finds.
+        loginTerminal: async script => {
+          if (terminal.fails) throw new Error('no terminal here')
+          scripts.push(script)
+          const file = join(directory, `login-${scripts.length}.command`)
+          await writeFile(file, script, { mode: 0o700 })
+          await promisify(execFile)(file)
+        },
+      })
+      let application: ElectronApplication | undefined
+      try {
+        application = await launch(host, join(directory, 'electron'))
+        const page = await application.firstWindow()
+        await resize(application, page, 1440)
+        await enroll(page)
+        const notice = page.getByRole('status', { name: '登录' })
+        await notice.getByText('Codex 还没登录', { exact: true }).waitFor()
+        await notice.getByText('codex login', { exact: true }).waitFor()
+        expect(await notice.getByText('在这台 Mac 的终端里运行这条命令。').count()).toBe(0)
+        await mkdir('test-results/desktop-first-use', { recursive: true })
+        await page.screenshot({ path: 'test-results/desktop-first-use/login-draft-1440.png', animations: 'disabled' })
+
+        // A terminal that does not open says what to do instead, and pressing again works.
+        terminal.fails = true
+        await notice.getByRole('button', { name: '在终端里登录' }).click()
+        await notice.getByText('没有打开终端。请自己在终端里运行这条命令。').waitFor()
+        terminal.fails = false
+        await notice.getByRole('button', { name: '在终端里登录' }).click()
+        await expect.poll(() => scripts.length).toBe(1)
+        await expect.poll(() => existsSync(loginFile)).toBe(true)
+        expect(scripts[0]).toContain(`'${join(bin, 'codex')}' 'login'`)
+
+        // Coming back to the window is enough.
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+        await notice.waitFor({ state: 'detached' })
+        await noHorizontalOverflow(page)
+      } finally {
+        await application?.close()
+        await host.close()
+        process.env.PATH = path
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
     it('runs a Harness found on this computer with nothing to add, asking only for the folder', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-'))
       const bin = join(directory, 'bin')
@@ -175,8 +250,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await resize(application, page, 1440)
         page.setDefaultTimeout(15_000)
         await page.getByRole('button', { name: '继续', exact: true }).click()
-        await host.presence.waitForRequest(15_000)
-        host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         await page.getByRole('button', { name: /^Harness：Codex/ }).waitFor()
         expect(await page.locator('.setup-card').count()).toBe(0)
@@ -210,12 +283,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await open.isVisible()).toBe(false)
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 
-        // Sending saves the definition, then the existing start confirmation runs what was saved.
+        // Sending saves the definition and runs what was saved.
         await input.press('Meta+Enter')
-        const sheet = await host.presence.waitForRequest(15_000)
-        expect(sheet.preview.action).toBe('task.start-l3')
+        await expect.poll(async () => (await owner.json<{ agents: AgentSettings[] }>('agents')).agents.length).toBe(1)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
-        host.presence.approveNext()
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
         // The first start of this launch in this project says what the Harness can do, and it stays.
         const startNote = page.locator('.session-start-note')
@@ -239,26 +310,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
         await input.fill('随便试试')
         await input.press('Meta+Enter')
-        await host.presence.waitForRequest(15_000)
-        await page.getByText('确认详情', { exact: true }).waitFor()
-
-        // A reload with the sheet up: nothing was sent, so the text is back, no row asks about delivery and the sheet is closed.
-        await page.reload()
-        await page.locator('.app-shell[data-connection="connected"]').waitFor()
-        await expect.poll(() => input.inputValue()).toBe('随便试试')
-        expect(await page.locator('.pending-submission').count()).toBe(0)
-        await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(2)
-        // The text stays while another session is open, and sending starts a new confirmation instead of waiting on the old one.
-        await page.locator('#session-navigation').getByText('修一下测试', { exact: true }).click()
-        await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
-        expect(await page.locator('.pending-submission').count()).toBe(0)
-        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-        await expect.poll(() => input.inputValue()).toBe('随便试试')
-        await page.locator('.new-session-title button').first().click()
-        await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
-        await input.press('Meta+Enter')
-        await host.presence.waitForRequest(15_000)
-        host.presence.approveNext()
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
         await noHorizontalOverflow(page)
 

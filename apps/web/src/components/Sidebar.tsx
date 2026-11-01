@@ -16,7 +16,8 @@ import {
   X,
 } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
-import { BUILTIN_HARNESS_NAME, sessionHarness } from '../composerChoice.ts'
+import { HARNESS_MARKS, presetOf } from '../brands.ts'
+import { sessionHarness } from '../composerChoice.ts'
 import { currentShell } from '../core/shell.ts'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
@@ -36,7 +37,7 @@ import {
   type SessionGroup,
 } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
-import { HarnessTile } from './BrandTile.tsx'
+import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
 import { Collapse, ICON_STROKE, IconButton, type LucideIcon } from '@latch/ui'
@@ -56,21 +57,21 @@ const KEEP_AWAKE_LABEL = '保持唤醒中'
 export const connectionProblem = (connection: ConnectionStatus) => connection === 'reconnecting' || connection === 'offline'
 
 /**
- * The harness a session runs on, for its tile: the catalog's entry, or, for one no longer listed (a removed agent), an
- * agent of that ID; a session from before harnesses were recorded ran on the built-in one. A row describes the
- * session, not the agent's state now, so its tile never draws whether the harness is currently usable.
+ * The harness a session runs on, for its row: the catalog's facts, or, for one no longer listed (a removed agent), its ID
+ * and the icon of the preset that ID was made from. A row describes the session, not the agent's state now, so its tile
+ * never draws whether the harness is currently usable.
  */
-export type TaskHarness = Pick<HarnessInfo, 'id' | 'source'> & Partial<Pick<HarnessInfo, 'name'>>
+export interface TaskHarness {
+  id: string
+  label: string
+  mark?: string | undefined
+}
 export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarness {
   const known = sessionHarness(snapshot.catalog, task)
-  if (known) return known
-  return task.harnessId !== undefined && task.harnessId !== 'standard'
-    ? { id: task.harnessId, source: 'acp' }
-    : { id: 'standard', source: 'builtin' }
+  return known
+    ? { id: known.id, label: known.capabilities.display.label, mark: known.capabilities.display.mark }
+    : { id: task.harnessId, label: task.harnessId, mark: presetOf(task.harnessId, HARNESS_MARKS) }
 }
-
-/** The harness's name on a row: the built-in one by its product name, one no longer listed by its ID. */
-export const harnessLabel = (harness: TaskHarness) => (harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : (harness.name ?? harness.id))
 
 const shortcutFor = (key: string) => (currentShell() ? `⌘${key}` : `Alt ${key}`)
 
@@ -125,7 +126,7 @@ const SessionItem = memo(function SessionItem({
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const oneLine = isOneLine(status)
-  const engine = harnessLabel(harness)
+  const engine = harness.label
   const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
@@ -166,7 +167,7 @@ const SessionItem = memo(function SessionItem({
           {!oneLine && (
             <span className="session-meta">
               <span className="session-mark" title={engine}>
-                <HarnessTile harness={{ id: harness.id, source: harness.source }} size={14} />
+                <MarkTile mark={harness.mark} size={14} />
               </span>
               <span>{engine}</span>
               {meta && <span className="session-meta-rest">{`· ${meta}`}</span>}

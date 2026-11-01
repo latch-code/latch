@@ -46,7 +46,7 @@ export class AgentPlans {
     if (!harness || harness.status !== 'ready') return '这个 Harness 暂时不可用，请检查电脑上的配置。'
     if (!harness.agentContext) return '这个 Harness 收不到 Agent 的指令。'
     const enabled = new Set(this.options.plugins().map(plugin => plugin.id))
-    if (harness.models === 'host') {
+    if (harness.capabilities.models.owner === 'latch') {
       if (agent.tools?.some(id => !enabled.has(id))) return '选择的插件已停用或移除，请更新这个 Agent。'
       const model = agent.model ?? this.options.defaultModel()
       if (!model || !this.options.modelAvailable(model)) return '选择的模型服务暂不可用，请在电脑上检查模型配置。'
@@ -66,7 +66,7 @@ export class AgentPlans {
       sessionCount: tasks.filter(task => task.agent?.customAgentId === agent.id).length,
       available: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      canAutomate: unavailableReason === undefined && agent.harnessId === STANDARD,
+      canAutomate: unavailableReason === undefined,
     }
   }
 
@@ -108,7 +108,7 @@ export class AgentPlans {
       ...this.skillDelivery(harness, skills),
       brief: {
         agentName: '通用',
-        engineName: harness.name,
+        engineName: harness.capabilities.display.label,
         instructions,
         memories,
         skillNames: this.skillNames(harness, skills ?? []),
@@ -116,16 +116,20 @@ export class AgentPlans {
     })
   }
 
-  /** What an unattended run needs, for the built-in engine only: a run nobody watches cannot answer a full-access prompt. */
+  /** What an unattended run needs. A question nobody answers ends as any unanswered approval does. */
   automation(config: AutomationConfig): AutomationPlan {
     const agent = config.customAgentId ? this.options.agents.get(config.customAgentId) : undefined
-    if (agent && agent.harnessId !== STANDARD) throw new AppError(409, 'automation-engine', '定时任务目前只能用 Latch 内置运行。')
+    const harnessId = agent?.harnessId ?? STANDARD
+    const harness = this.options.harness(harnessId)
+    if (!harness || harness.status !== 'ready')
+      throw new AppError(409, 'agent-unavailable', '这个 Harness 暂时不可用，请检查电脑上的配置。')
     if (config.projectId && !this.options.projectUsable(config.projectId))
       throw new AppError(409, 'workspace-unavailable', '找不到所选项目，或它暂不可用。')
-    const model = config.model ?? agent?.model ?? this.options.defaultModel()
-    if (!model || !this.options.modelAvailable(model)) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
-    const provider = this.options.providerOwner(model.providerId)
-    if (!provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
+    const hostModel = harness.capabilities.models.owner === 'latch'
+    const model = hostModel ? (config.model ?? agent?.model ?? this.options.defaultModel()) : undefined
+    if (hostModel && (!model || !this.options.modelAvailable(model))) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
+    const provider = model ? this.options.providerOwner(model.providerId) : undefined
+    if (hostModel && !provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
     if (agent) {
       const reason = this.unavailable(agent)
       if (reason) throw new AppError(409, 'agent-unavailable', reason)
@@ -141,24 +145,27 @@ export class AgentPlans {
         .filter(plugin => plugin.capabilities.some(item => item.startsWith('tool:') || item.startsWith('skill:')))
         .map(plugin => plugin.id)
     const skillOwners = skills ? skills.map(id => id.slice(0, id.indexOf(':'))) : tools
-    const snapshot = this.options.revisions([...new Set([STANDARD_PLUGIN, provider, ...tools, ...skillOwners])])
-    const context = agent ? this.build(agent, STANDARD) : this.generalContext(STANDARD)
+    const owners = harnessId === STANDARD ? [STANDARD_PLUGIN, provider!, ...tools, ...skillOwners] : [...skillOwners]
+    const snapshot = this.options.revisions([...new Set(owners)])
+    const context = agent ? this.build(agent, harnessId) : this.generalContext(harnessId)
     const definition = this.options.agents.definitionHash(owner)
     const mode = agent?.mode ?? 'agent'
     return {
       basis: sha256Hex(
         canonicalJson({
           definition,
+          harnessId,
           mode,
-          model,
+          ...(model ? { model } : {}),
           tools: agent?.tools ?? null,
           revisions: snapshot.hashed,
           environment: this.options.environment(config.projectId),
         }),
       ),
       persistent: snapshot.persistent,
+      harnessId,
       mode,
-      model,
+      ...(model ? { model } : {}),
       agentContext: {
         ...(context ?? { instructions: '', revision: definition }),
         expectedRevisions: snapshot.revisions,
@@ -184,7 +191,7 @@ export class AgentPlans {
       ...this.skillDelivery(harness, agent.skills),
       brief: {
         agentName: agent.name,
-        engineName: harness.name,
+        engineName: harness.capabilities.display.label,
         instructions: agent.instructions,
         memories: this.options.agents.memories(agent.id),
         skillNames: this.skillNames(harness, agent.skills),

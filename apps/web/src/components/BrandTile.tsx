@@ -32,27 +32,23 @@ function BrandTile({
   return <Tile size={size} icon={art.icon} plain={size <= 16} state={state} label={label} className={className} />
 }
 
-/** A harness's tile; an unavailable harness is drawn faint, and its reason is said in words beside it. */
-export function HarnessTile({
-  harness,
-  size,
-  label,
-  className,
-}: {
-  harness: Pick<HarnessInfo, 'id' | 'source'> & Partial<Pick<HarnessInfo, 'status'>> & { presetId?: string }
+interface HarnessTileProps {
   size?: TileSize
   label?: string
   className?: string
-}) {
-  return (
-    <BrandTile
-      art={harnessArt(harness)}
-      size={size}
-      state={harness.status === 'unavailable' ? 'cold' : undefined}
-      label={label}
-      className={className}
-    />
-  )
+}
+
+/** The tile of a harness key: a preset that is no Harness yet, or a session whose Harness is no longer listed. */
+export function MarkTile({ mark, cold, size, label, className }: HarnessTileProps & { mark: string | undefined; cold?: boolean }) {
+  return <BrandTile art={harnessArt(mark)} size={size} state={cold ? 'cold' : undefined} label={label} className={className} />
+}
+
+/** A harness's tile; an unavailable harness is drawn faint, and its reason is said in words beside it. */
+export function HarnessTile({
+  harness,
+  ...tile
+}: HarnessTileProps & { harness: Pick<HarnessInfo, 'capabilities'> & Partial<Pick<HarnessInfo, 'status'>> }) {
+  return <MarkTile mark={harness.capabilities.display.mark} cold={harness.status === 'unavailable'} {...tile} />
 }
 
 export function ProviderTile({

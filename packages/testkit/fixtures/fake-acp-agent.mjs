@@ -9,6 +9,20 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { join } from 'node:path'
 
 const env = process.env
+// Like an agent's own CLI: `login status` answers from the login file, `login` writes it. FAKE_ACP_LOGIN_FILE also makes a
+// session refuse while it is absent, and a process read its login once at start, as real agents do.
+if (env.FAKE_ACP_LOGIN_FILE && process.argv[2] === 'login') {
+  if (process.argv[3] === 'status') {
+    const logged = existsSync(env.FAKE_ACP_LOGIN_FILE)
+    process.stderr.write(logged ? 'Logged in using ChatGPT\n' : 'Not logged in\n')
+    process.exit(logged ? 0 : 1)
+  }
+  writeFileSync(env.FAKE_ACP_LOGIN_FILE, 'logged in\n')
+  process.stderr.write('Successfully logged in\n')
+  process.exit(0)
+}
+const loggedInAtStart = !env.FAKE_ACP_LOGIN_FILE || existsSync(env.FAKE_ACP_LOGIN_FILE)
+const notLoggedIn = () => !loggedInAtStart || (env.FAKE_ACP_LOGIN_FILE !== undefined && !existsSync(env.FAKE_ACP_LOGIN_FILE))
 /** The content of FAKE_ACP_CAPS_FILE when set, so a later process of the same definition can advertise other capabilities. */
 const capsFile = (() => {
   try {
@@ -275,7 +289,7 @@ async function handle(method, params) {
         agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
       }
     case 'session/new': {
-      if (env.FAKE_ACP_AUTH === 'new') throw rpcError(-32000, 'Authentication required')
+      if (env.FAKE_ACP_AUTH === 'new' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
       sessions[sessionId] = { cwd: params.cwd, history: [], model: 'small', mode: initialMode, effort: 'low' }
@@ -370,7 +384,7 @@ async function prompt({ sessionId, prompt: blocks }) {
     })()
     log('prompt-store', { sessionId, durable })
   }
-  if (env.FAKE_ACP_AUTH === 'prompt') throw rpcError(-32000, 'Authentication required')
+  if (env.FAKE_ACP_AUTH === 'prompt' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
   const input = blocks.map(block => block.text ?? '').join('')
   const [keyword, argument] = input.trim().split(/\s+/)
   log('prompt-mode', { sessionId, mode: session.mode })

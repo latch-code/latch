@@ -30,7 +30,7 @@ async function apply(owner: TestDevice, record: PluginPackageDetail) {
 async function granted(owner: TestDevice, host: TestHost, record: PluginPackageDetail) {
   const input = { requestId: randomUUID(), revision: record.revision },
     route = `plugin-packages/${record.id}/apply`
-  const denied = await owner.request(route, { body: input, headers: { 'x-latch-shell-confirmation': '1' } })
+  const denied = await owner.request(route, { body: input })
   expect(denied.status).toBe(403)
   const confirmation = ((await denied.json()) as { confirmation: ConfirmationTicket }).confirmation
   expect(confirmation).toMatchObject({
@@ -38,7 +38,6 @@ async function granted(owner: TestDevice, host: TestHost, record: PluginPackageD
     form: 'plugin.package.apply',
     reason: expect.stringMatching(/^应用插件「.+」$/u),
   })
-  expect(confirmation.confirmationMethod).toBeUndefined()
   await expect
     .poll(async () => (await owner.json<{ confirmation: ConfirmationTicket }>(`confirmations/${confirmation.id}`)).confirmation.status)
     .toBe('approved')

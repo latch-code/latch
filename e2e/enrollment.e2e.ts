@@ -17,7 +17,7 @@ import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 
 const OUTPUT = 'test-results/enrollment'
 /** What `pnpm latch device invite --loopback` lets a browser ask for. */
-const BROWSER_CEILING: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
+const BROWSER_CEILING: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 const UI_DIR = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
 const SIZES = [
   { width: 1440, height: 1000, label: 'desktop' },
@@ -202,7 +202,7 @@ describe('device enrollment in the browser', () => {
     }
 
     // The desktop app's link allows no management, so nothing is said and nothing is asked.
-    const plain = await open((await testHost.invite(['view', 'run', 'approve:standard'], 'loopback-tcp')).url)
+    const plain = await open((await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated'], 'loopback-tcp')).url)
     await plain.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
     expect(await plain.getByText('这个链接还可以管理这台 Mac').count()).toBe(0)
     expect(await scopesAsked()).not.toContain('管理此 Host')

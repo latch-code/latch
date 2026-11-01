@@ -215,7 +215,7 @@ describe('route guards', () => {
           phone: [403, 'local-only'],
         },
       ],
-      ['PATCH', `devices/${viewer.id}`, { scopes: ['view', 'approve:elevated'] }, { desktop: [400, 'scope-not-grantable'] }],
+      ['PATCH', `devices/${viewer.id}`, { scopes: ['view', 'secrets'] }, { desktop: [400, 'scope-not-grantable'] }],
       [
         'GET',
         'enrollments',

@@ -56,7 +56,6 @@ import {
   type CurrentDevice,
   type DeviceScope,
   type FolderVia,
-  type HarnessSource,
   type HarnessInfo,
   type HostCatalog,
   type HostStateEvent,
@@ -92,7 +91,15 @@ import {
 } from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
-import { createAcpAgentPlugin, forgetCommandLookups, presetOffer, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
+import {
+  createAcpAgentPlugin,
+  forgetCommandLookups,
+  presetOffer,
+  presetRecord,
+  resolveCommand,
+  setLoginPrograms,
+  validateAgentDefinition,
+} from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
 import { PRIVATE_ENTRIES, isPrivateEntry } from './data-entries.ts'
@@ -124,28 +131,15 @@ import {
   type FolderProblem,
 } from './paths.ts'
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
-import { PolicyStore, ceilingFor, isLowering, policyDiff, type Policy } from './policy.ts'
-import {
-  PresenceService,
-  argumentsText,
-  createPresenceBackend,
-  envNamesText,
-  programText,
-  toolInputText,
-  paramsHash,
-  policySubject,
-  type PresenceBackend,
-} from './presence.ts'
+import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
+import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
 import { classifyStandardCall, targetFolder, type CallFolder } from './risk.ts'
 import {
   authFailure,
-  ceilingExceeded,
   createRateLimits,
   hasAuthorization,
-  hostDesktopRequired,
   isSocketTransport,
   levelAtMost,
-  levelsUpTo,
   localOnly,
   presentedCredential,
   publicTicket,
@@ -176,6 +170,7 @@ import {
   type ProviderRecord,
   type WorkspaceRecord,
 } from './config.ts'
+import type { HarnessKind } from './harness-trust.ts'
 import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
@@ -183,7 +178,6 @@ import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
 import { writeProjectContext } from './project-context.ts'
 import { AgentProbes } from './agent-probes.ts'
-import { LaunchTrust, launchTrustKey } from './launch-trust.ts'
 import type { HostInfo } from './host-state.ts'
 import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
@@ -312,7 +306,7 @@ const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const decisionSchema = z.strictObject({
   decision: z.enum(['allow', 'reject']),
   optionId: z.string().min(1).max(128).optional(),
-  /** With a rejection: what to do instead, for the built-in harness (`rejectionNote` decides what is accepted). */
+  /** With a rejection: what to do instead, for a harness that hands it on (`rejectionNote` decides what is accepted). */
   note: z.string().max(4096).optional(),
   requestId: requestIdSchema.optional(),
 })
@@ -447,16 +441,6 @@ const egressEntry = z
   .transform(value => value.toLowerCase())
 const policyPatchSchema = z
   .object({
-    local: z.object({ maxLevel: levelSchema.optional(), allowL3: z.boolean().optional() }).strict().optional(),
-    remote: z
-      .object({
-        maxLevel: levelSchema.optional(),
-        allowRemoteStart: z.boolean().optional(),
-        harnesses: z.array(z.string().regex(HARNESS_ID)).max(64).nullable().optional(),
-        workspaces: z.array(z.string().min(1).max(64)).max(256).nullable().optional(),
-      })
-      .strict()
-      .optional(),
     hostEgressAllow: z
       .object({ add: z.array(egressEntry).max(64).optional(), remove: z.array(egressEntry).max(64).optional() })
       .strict()
@@ -525,6 +509,13 @@ export interface ServerOptions {
   fileHooks?: { afterResolve?(realPath: string): Promise<void> }
   /** Tests: the terminal component (`binary`, default `dist/native/latch-pty`) or a stand-in for it. Production never sets it. */
   terminal?: Pick<TerminalServiceOptions, 'launch' | 'shell' | 'hostEnv'> & { binary?: string }
+  /**
+   * Finds the programs whose login commands the Host may run. The start script passes `resolveCommand`; left out, as in
+   * tests, no real program on this computer can be run to check or start a login.
+   */
+  loginPrograms?: (command: string) => string | undefined
+  /** Tests: receives a harness's login script instead of a terminal opening. Production never sets it. */
+  loginTerminal?: (script: string) => Promise<void>
   /** Tests: how long a run's first prompt and a stop wait for lifecycle listeners. Production never sets it. */
   lifecycleBounds?: Partial<LifecycleBounds>
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
@@ -975,7 +966,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => devices.close())
     const runtime = await prepareRuntimeDir({ hostId8, ...(options.runtimeParent ? { parent: options.runtimeParent } : {}) })
     const config = await HostConfig.open(dataDir)
-    const launchTrust = await LaunchTrust.open(dataDir)
     // Key material, Agent definitions and the Host identity stay out of Time Machine backups; sessions, the audit log
     // and the policy are backed up as usual.
     await excludeFromBackup([authDir, join(dataDir, 'identity'), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))], { log })
@@ -1024,7 +1014,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       audit,
       now,
       blockingTasks: async () =>
-        hub ? (await hub.unsandboxedTasks()).map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId ?? '' })) : [],
+        hub ? (await hub.unsandboxedTasks()).map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId })) : [],
     })
     const enrollments = new EnrollmentService({ hostId, devices, presence, audit, directory: authDir, now })
     const relayProfiles = await RelayProfiles.open(dataDir)
@@ -1171,7 +1161,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const folders: FolderState[] = []
       let failure: ProjectState['failure']
       if (record.invalid || record.folders[0]?.path !== record.path)
-        failure = { reason: 'invalid', message: '这个项目的主文件夹配置不一致，请在执行端重新选择主文件夹' }
+        failure = { reason: 'invalid', message: '这个项目的主文件夹配置不一致，请在这台 Mac 上重新选择主文件夹' }
       for (const [index, folder] of record.folders.entries()) {
         const verdict = await checkFolderCandidate(folder.path, workspaceGuard, { readable }).catch(() => undefined)
         const problem: FolderProblem | undefined = verdict === undefined ? 'invalid' : verdict.ok ? undefined : verdict.problem
@@ -1451,13 +1441,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       recheck(caller, 'run')
       let selected = selection
       if (sessionId) {
-        const level = await assertSessionAccess(caller, sessionId)
+        await assertSessionAccess(caller, sessionId)
         const detail = await hub!.detail(sessionId)
-        assertSessionCeiling(caller, level)
-        await assertRemoteSession(caller, sessionId)
         await assertSessionWorkspace(sessionId)
         selected = {
-          harnessId: detail.summary.harnessId ?? selection.harnessId,
+          harnessId: detail.summary.harnessId,
           ...(detail.summary.workspaceId ? { workspaceId: detail.summary.workspaceId } : {}),
           ...(selection.model
             ? { model: selection.model }
@@ -1468,10 +1456,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const harness = draftHarness(selected.harnessId)
       if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Agent 不可用。')
-      if (harness.level === 'L3') assertSessionCeiling(caller, 'L3')
-      else assertStandardCeiling(caller, { harnessId: selected.harnessId, workspaceId: selected.workspaceId ?? 'default' })
       const declared = harness.attachments
-      if (harness.models === 'host') {
+      if (harness.capabilities.models.owner === 'latch') {
         const choice = selected.model ?? defaultModelRef()
         if (choice) assertModel(choice)
         const provider = choice ? usableProviders().find(item => item.id === choice.providerId) : undefined
@@ -1490,7 +1476,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           images: probe?.status === 'ready' && probe.capabilities.images === true,
           text: probe?.status === 'ready' && probe.capabilities.embeddedContext === true,
           textBytes: 25 * 1024 * 1024,
-          ...(!probe || probe.status !== 'ready' ? { reason: '请先在执行端电脑的 Agent 设置中测试连接，再添加附件。' } : {}),
+          ...(!probe || probe.status !== 'ready' ? { reason: '请先在 Harness 设置中测试连接，再添加附件。' } : {}),
         }
       }
       return {
@@ -1664,8 +1650,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       sessionRoots,
       async assertSessionInput(caller, sessionId) {
         recheck(caller, 'run')
-        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
-        await assertRemoteSession(caller, sessionId)
+        await assertSessionAccess(caller, sessionId)
         await assertSessionWorkspace(sessionId)
         recheck(caller, 'run')
       },
@@ -1695,6 +1680,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       terminalBinary,
     )
+    setLoginPrograms(options.loginPrograms)
     const {
       native: nativeRoutes,
       terminal: terminalRoutes,
@@ -1739,6 +1725,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         plugins: enabledPluginInfo,
       },
       automations: { automations: () => automations, access: agentAccess },
+      agentLogin: {
+        record: (id, caller) =>
+          config.settings().agents.find(agent => agent.id === id)
+          ?? (caller.device?.scopes.includes('admin') && presetsToOffer().some(offer => offer.id === id) ? presetRecord(id) : undefined),
+        ...(options.loginTerminal ? { openTerminal: options.loginTerminal } : {}),
+      },
     })
 
     // ---- Callers, scopes and audit ---------------------------------------------------------------
@@ -1824,9 +1816,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
           : assistant.pluginIds.some(id => !enabled.has(id))
             ? '选择的插件已停用或移除，请更新个人助手。'
-            : harness.models === 'host' && (!selection || !modelAvailable(selection))
+            : harness.capabilities.models.owner === 'latch' && (!selection || !modelAvailable(selection))
               ? '选择的模型服务暂不可用，请在电脑上检查模型配置。'
-              : harness.models !== 'host' && assistant.model
+              : harness.capabilities.models.owner !== 'latch' && assistant.model
                 ? '这个执行方式自行管理模型，请移除指定的模型服务。'
                 : undefined
     }
@@ -1958,7 +1950,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         || device.listener !== 'unix'
         || device.dataScope !== 'all'
         || !device.scopes.includes('run')
-        || !levelAtMost('L1', policy.get().local.maxLevel)
         || !levelAtMost('L1', policy.get().unattended.maxLevel)
         || now() - Date.parse(device.lastSeenAt) > policy.get().unattended.pauseAfterIdleDays * 86400000
       )
@@ -2101,19 +2092,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function authorizeAutomation(deviceId: string, definition: AutomationConfig): void {
       const device = devices.get(deviceId),
         current = policy.get()
-      const remote = current.remote
       if (
         !device
         || !devices.standsBehind(deviceId)
         || device.dataScope !== 'all'
         || !device.scopes.includes('run')
-        || !levelAtMost('L1', ceilingFor(current, device.listener))
         || !levelAtMost('L1', current.unattended.maxLevel)
         || now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000
-        || (!isLocalListener(device.listener)
-          && (!remote.allowRemoteStart
-            || (remote.harnesses !== null && !remote.harnesses.includes(STANDARD))
-            || (remote.workspaces !== null && !remote.workspaces.includes(definition.projectId ?? 'default'))))
       )
         throw new AppError(403, 'automation-owner', '这台设备不能开启这个定时任务。')
     }
@@ -2137,24 +2122,55 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const task: HubCreateInput = {
             requestId,
             prompt,
-            harnessId: STANDARD,
+            harnessId: plan.harnessId,
             workspaceId: projectId ?? 'default',
             mode: plan.mode,
-            model: plan.model,
+            ...(plan.model ? { model: plan.model } : {}),
             automationId,
             initialTitle: title,
             ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
           }
-          if (chosen) {
+          const folders = chosen?.folders.map(({ id, path }) => ({ id, path }))
+          const own = !chosen && makeOwnFolders && plan.mode === 'agent' ? await ownFolders.allocate(requestId) : undefined
+          const cwd = chosen?.folders[0].path ?? own?.path
+          /** A run nobody started by hand is still on record as a start, with what it runs. */
+          const onRecord = async (): Promise<Pick<HubCreateInput, 'expectedLaunchHash'>> => {
+            if (hub!.levelOf(plan.harnessId) !== 'L3') return {}
+            const root = await realpath(cwd ?? workspaceRoot)
+            const preview = await hub!.launchPreviewOf(plan.harnessId, root, folders ? { workspaceId: projectId!, folders } : undefined)
+            const launchHash = preview?.launchHash ?? sha256Hex(canonicalJson({ harnessId: plan.harnessId, automationId }))
+            await audited({
+              action: 'task.l3.start-requested',
+              actor: { listener: 'host', via: 'startup' },
+              stepup: 'none',
+              detail: { harnessId: plan.harnessId, launchHash, promptHash: sha256Hex(prompt) },
+            })
+            return { expectedLaunchHash: launchHash }
+          }
+          const started = await onRecord()
+          const created = await (async () => {
+            if (chosen) {
+              authorize()
+              return hub!.createTask({ ...task, ...started, cwd: chosen.folders[0].path, folders: folders! })
+            }
+            if (own) return createInOwnFolder({ ...task, ...started, cwd: own.path, sessionFolder: own.name }, requestId, authorize)
             authorize()
-            return hub!.createTask({ ...task, cwd: chosen.folders[0].path, folders: chosen.folders.map(({ id, path }) => ({ id, path })) })
-          }
-          if (makeOwnFolders && plan.mode === 'agent') {
-            const folder = await ownFolders.allocate(requestId)
-            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
-          }
-          authorize()
-          return hub!.createTask(task)
+            return hub!.createTask({ ...task, ...started })
+          })()
+          if (started.expectedLaunchHash)
+            await audited({
+              action: 'task.l3.started',
+              actor: { listener: 'host', via: 'startup' },
+              target: created.sessionId,
+              stepup: 'none',
+              detail: {
+                sessionId: created.sessionId,
+                harnessId: plan.harnessId,
+                launchHash: started.expectedLaunchHash,
+                promptHash: sha256Hex(prompt),
+              },
+            }).catch(() => {})
+          return created
         })
       },
     })
@@ -2173,7 +2189,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             actor.authorize()
             if (native && (!windowHash || windowHash !== caller.nativeOpening?.windowHash))
               throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，接力已停止。')
-            assertStandardCeiling(caller, { harnessId: 'standard', workspaceId: 'default' })
           },
         }
       },
@@ -2252,44 +2267,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       lines: PreviewLine[],
       warnings: string[] = [],
       target?: string,
-      launchKey?: string,
     ): Promise<StepupMethod> {
       requireLocal(caller)
       requireDevice(caller)
       const hash = paramsHash(action, params)
       const header = req.headers['x-latch-confirmation']
       if (typeof header === 'string' && header) {
-        const consumed = presence.consume(header, { action, requesterDeviceId: caller.device.id, paramsHash: hash })
-        if (consumed.stepup === 'shell-local' && action === 'task.start-l3' && (!launchKey || !launchTrust.has(launchKey)))
-          throw new AppError(409, 'confirmation-mismatch', '启动信任条件已变化，请重新确认')
-        if (action === 'task.start-l3' && launchKey && consumed.stepup === 'lpc-local' && !launchTrust.has(launchKey)) {
-          const seq = await audited({
-            action: 'presence.launch-trusted',
-            actor: actorOf(caller),
-            stepup: 'lpc-local',
-            detail: { keyHash: launchKey },
-          })
-          try {
-            await launchTrust.remember(launchKey)
-          } catch (error) {
-            auditFailed(seq, caller)
-            throw error
-          }
-        }
-        return consumed.stepup
+        return presence.consume(header, { action, requesterDeviceId: caller.device.id, paramsHash: hash }).stepup
       }
-      const shell =
-        req.headers['x-latch-shell-confirmation'] === '1'
-        && (action === 'approval.r2'
-          || action === 'task.mode-widen'
-          || (action === 'task.start-l3' && launchKey !== undefined && launchTrust.has(launchKey)))
       const record = await presence.request({
         action,
         paramsHash: hash,
         subject,
         lines,
         warnings,
-        ...(shell ? { confirmationMethod: 'shell-local' as const } : {}),
         requester: {
           deviceId: caller.device.id,
           deviceName: caller.device.name,
@@ -2332,8 +2323,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           discoveryEpoch: discoveryEpoch(),
           directoryEpoch: relayDirectory.epoch(),
         },
-        policy: { localMaxLevel: current.local.maxLevel, remoteMaxLevel: current.remote.maxLevel, allowL3: current.local.allowL3 },
-        rejectionNote: true,
       }
     }
 
@@ -2765,7 +2754,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     // ---- Harnesses and agents --------------------------------------------------------------------
 
-    function sourceOf(driver: HarnessDriver): HarnessSource {
+    function kindOf(driver: HarnessDriver): HarnessKind {
       if (driver.id === STANDARD) return 'builtin'
       const owner = registry.list().find(plugin => plugin.capabilities.includes(`harness:${driver.id}`))
       return owner?.managed === 'agent' ? 'acp' : 'plugin'
@@ -2874,10 +2863,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function mount(driver: HarnessDriver, required = false): Promise<void> {
-      const source = sourceOf(driver)
       const lease = registry.acquireHarness(driver.id)
       await hub!.attach(driver, {
-        source,
+        kind: kindOf(driver),
         required,
         release: () => lease.release(),
         create: () =>
@@ -2930,7 +2918,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               await attachmentStore.bind('host', [ref.id], input.sessionId)
               return ref
             },
-            ...(source === 'builtin' ? { classifyToolCall } : {}),
+            // Only where Latch decides each call, which the hub has settled by the time it creates the Bridge.
+            ...(hub!.levelOf(driver.id) === 'L1' ? { classifyToolCall } : {}),
           }),
       })
     }
@@ -3185,31 +3174,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return record
     }
 
-    /** Whether other devices may start sessions in a project under the current policy. */
-    function remoteStartable(id: string): boolean {
-      const remote = policy.get().remote
-      return remote.allowRemoteStart && levelAtMost('L1', remote.maxLevel) && (remote.workspaces === null || remote.workspaces.includes(id))
-    }
-
-    /** Whether other devices may start sessions on a harness: never a full-access one, which only starts on host.sock. */
-    function remoteHarnessStartable(harness: Pick<HarnessInfo, 'id' | 'level' | 'source'>): boolean {
-      const remote = policy.get().remote
-      const level = harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
-      return (
-        remote.allowRemoteStart
-        && level !== 'L3'
-        && levelAtMost(level, remote.maxLevel)
-        && (remote.harnesses === null || remote.harnesses.includes(harness.id))
-      )
-    }
-
     function startInfo(): WorkspaceInfo {
       return {
         id: 'default',
         name: START_DIRECTORY,
         path: workspaceRoot,
         folders: [{ id: 'default', path: workspaceRoot }],
-        remoteStart: remoteStartable('default'),
         ...(defaultFlags.codeRoot ? { codeRoot: true as const } : {}),
       }
     }
@@ -3231,7 +3201,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(folder.message ? { unavailable: folder.message } : {}),
         })),
         ...(record.glyph ? { glyph: record.glyph } : {}),
-        remoteStart: remoteStartable(record.id),
         ...(state.folders.some(folder => folder.problem === 'code-root') ? { codeRoot: true as const } : {}),
         ...branchOfProject(record.path),
       }
@@ -3380,9 +3349,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return { workspace: await saveNewProject(caller, record, input.via), refused: plan.refused }
     }
 
-    /** An ID the policy still names is never handed to another project: reusing it would widen remote access without a confirmed policy change. */
     function takenIds(): string[] {
-      return ['default', ...config.settings().workspaces.map(item => item.id), ...(policy.get().remote.workspaces ?? [])]
+      return ['default', ...config.settings().workspaces.map(item => item.id)]
     }
 
     /** Granting: the project is on record before it is saved, and a failed save marks the record as never committed. */
@@ -3667,7 +3635,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const pinned =
         saved.pinned === true
         && engine?.status === 'ready'
-        && (engine.models !== 'host' || saved.model === undefined || savedDefaultModel() !== undefined)
+        && (engine.capabilities.models.owner !== 'latch' || saved.model === undefined || savedDefaultModel() !== undefined)
       return {
         harnessId: defaultHarnessId(),
         mode: saved.mode ?? 'agent',
@@ -3681,9 +3649,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function savePreferences(caller: Caller, input: z.infer<typeof preferencesSchema>['defaults']): Promise<void> {
-      // A pinned engine is preselected on this computer, a full-access one included, so only this computer picks or moves it.
-      const movesPin = config.settings().defaults.pinned === true && (input.harnessId !== undefined || input.model !== undefined)
-      if (input.pinned !== undefined || movesPin) requireLocal(caller)
       if (input.harnessId !== undefined && !hub!.has(input.harnessId))
         throw new AppError(400, 'harness-unavailable', `Harness ${input.harnessId} 未启用`)
       if (input.workspaceId !== undefined && input.workspaceId !== 'default') {
@@ -3724,7 +3689,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function catalog(caller: Caller): Promise<HostCatalog> {
       // Only a device that may save a definition is offered one; everyone else keeps what is defined.
-      const mayDefine = isLocalListener(caller.connection.listener) && caller.device?.scopes.includes('admin') === true
+      const mayDefine = caller.device?.scopes.includes('admin') === true
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -3752,10 +3717,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           pinnedDefaults: true,
           ...routes.features(caller),
         },
-        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])].map(harness => ({
-          ...harness,
-          remoteStart: remoteHarnessStartable(harness),
-        })),
+        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])],
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),
@@ -3776,9 +3738,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * a built-in R2 the reason the classifier gave. A driver's own `riskReason` is dropped; unparsable arguments are R2
      * with `unparsable-arguments`.
      */
-    async function decorate(approval: Approval, source: HarnessSource | undefined, session: SessionScope | undefined): Promise<Approval> {
+    async function decorate(approval: Approval, level: 'L1' | 'L3', session: SessionScope | undefined): Promise<Approval> {
       const { risk: reported, advisory: _advisory, riskReason: _reported, ...rest } = approval
-      if (source !== 'builtin') return { ...rest, advisory: true, risk: 'R2' }
+      if (level !== 'L1') return { ...rest, advisory: true, risk: 'R2' }
       const args = parseArguments(approval.arguments)
       const classified = args
         ? await classifyCall({ toolName: approval.toolName, arguments: args, ...session })
@@ -3794,14 +3756,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         approvals.map(async approval => {
           const task = byId.get(approval.sessionId)
           const harnessId = task?.harnessId ?? (await hub!.harnessOf(approval.sessionId).catch(() => undefined))
-          return decorate(approval, harnessId ? hub!.sourceOf(harnessId) : undefined, task)
+          return decorate(approval, harnessId ? hub!.levelOf(harnessId) : 'L3', task)
         }),
       )
     }
 
     async function decoratedDetail(sessionId: string): Promise<TaskDetail> {
       const detail = await hub!.detail(sessionId)
-      const source = hub!.sourceOf(detail.summary.harnessId ?? '')
+      const level = hub!.levelOf(detail.summary.harnessId)
       return {
         ...detail,
         messages: detail.summary.personal
@@ -3814,7 +3776,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         summary: questionSummary(detail.summary),
         queue: promptQueues.view(sessionId),
         questions: questions.view(sessionId),
-        approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, source, detail.summary))),
+        approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, level, detail.summary))),
       }
     }
 
@@ -3888,23 +3850,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return { realCwd, folder, target, newTextHash, oldTextHash, reason, previewHash, builtinWrite }
     }
 
-    /**
-     * What the system sheet names for an R2 approval: the file the built-in writer would write (relative to the session
-     * directory when inside it, else as resolved or given); for any other tool, its name and the start of the arguments,
-     * so two calls of one tool read differently.
-     */
-    function approvalSubject(
-      toolName: string,
-      args: Record<string, unknown> | undefined,
-      raw: string | undefined,
-      facts: Awaited<ReturnType<typeof approvalFacts>>,
-    ): PresenceSubject {
-      const given = facts.builtinWrite && args && typeof args.path === 'string' && args.path ? args.path : undefined
-      if (given === undefined) return { form: 'approval.tool', slots: { tool: toolName, input: toolInputText(args, raw) } }
-      const path = facts.target && isWithin(facts.target, facts.realCwd) ? relative(facts.realCwd, facts.target) : (facts.target ?? given)
-      return { form: 'approval.write', slots: { path: path || given } }
-    }
-
     async function decideApproval(req: IncomingMessage, res: ServerResponse, caller: Caller, approvalId: string): Promise<void> {
       requireScope(caller, 'view')
       const input = decisionSchema.parse(await jsonBody(req))
@@ -3943,10 +3888,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const found = await hub!.findApproval(approvalId)
       if (!found) throw settled(approvalId, caller)
-      const source = hub!.sourceOf(found.harnessId)
+      const level = hub!.levelOf(found.harnessId)
       const session = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)
       if (input.decision === 'allow' || input.note !== undefined) privateAccess(caller, session)
-      const approval = await decorate(found.approval, source, session)
+      const approval = await decorate(found.approval, level, session)
       const option = input.optionId ? approval.options?.find(item => item.id === input.optionId) : undefined
       if (input.optionId && !option) {
         throw approval.advisory
@@ -3956,34 +3901,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (option && option.kind.startsWith('allow') !== (input.decision === 'allow'))
         throw new AppError(400, 'invalid-option', '所选选项与决定不一致')
       const optionKind = option?.kind ?? (input.decision === 'allow' ? 'allow_once' : 'reject_once')
-      // 「告诉 Agent 改做什么」 goes only with a rejection, and only the built-in harness hands it on: an agent's permission
-      // answer carries no text. It is checked before anything is recorded.
+      // 「告诉 Agent 改做什么」 goes only with a rejection, and only to a harness that hands it on: an agent's permission answer
+      // carries no text. It is checked before anything is recorded.
       let note: string | undefined
       if (input.note !== undefined) {
         if (input.decision !== 'reject') throw new AppError(400, 'invalid-note', '只有拒绝时可以附上说明')
         const checked = rejectionNote(input.note)
         if (checked === null) throw new AppError(400, 'invalid-note', '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符')
-        if (source === 'builtin') note = checked
+        if (hub!.info(found.harnessId)?.capabilities.permission.rejectionNote) note = checked
       }
-      const args = source === 'builtin' ? parseArguments(approval.arguments) : undefined
-      const level = hub!.levelOf(found.harnessId)
+      const args = level === 'L1' ? parseArguments(approval.arguments) : undefined
       // Checked against the current device record: the request may have been opened before a scope change.
       const needed: DeviceScope =
         input.decision === 'reject' ? 'view' : approval.advisory ? 'run' : approval.risk === 'R2' ? 'approve:elevated' : 'approve:standard'
-      let stepup: StepupMethod = 'none'
       let previewHash: string | undefined
-      if (input.decision === 'reject') {
-        limits.classC.take(caller.device.id)
-      } else if (approval.advisory) {
-        requireLocal(caller)
-      } else if (approval.risk === 'R2') {
-        if (!isLocalListener(caller.connection.listener)) throw hostDesktopRequired()
-      }
+      if (input.decision === 'reject') limits.classC.take(caller.device.id)
       recheck(caller, needed)
-      // Rejections reduce what runs and are never limited by the ceiling.
       if (input.decision === 'allow') {
-        assertSessionCeiling(caller, level)
-        await assertRemoteSession(caller, approval.sessionId)
         // Allowing a call acts in the session's folders, so they must still be folders of its project, as for new input.
         await assertSessionWorkspace(approval.sessionId)
       }
@@ -3991,52 +3925,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // reject can still reject, but without a note.
       if (note !== undefined) {
         recheck(caller, 'run')
-        assertSessionCeiling(caller, level)
-        await assertRemoteSession(caller, approval.sessionId)
       }
       if (input.decision === 'allow' && optionKind === 'allow_always' && (approval.advisory || approval.risk === 'R2')) {
         throw new AppError(403, 'approval-always-unavailable', '高风险操作不提供“始终允许”')
       }
       if (input.decision === 'allow' && approval.risk === 'R2' && !approval.advisory) {
-        const facts = await approvalFacts(approval, args, session)
-        previewHash = facts.previewHash
-        // Host-derived facts come first and the model-chosen arguments last. Only the built-in writer's file content appears
-        // as its size and hash; other arguments, and unparsable argument text, appear whole and escaped.
-        const lines: PreviewLine[] = [
-          { label: '会话', value: session?.title || approval.sessionId },
-          { label: '工具', value: approval.toolName },
-          { label: '工作目录', value: facts.realCwd },
-          ...(facts.folder !== undefined ? [{ label: '文件夹', value: facts.folder ?? '（不是这个会话的文件夹）' }] : []),
-          ...(facts.target ? [{ label: '目标路径', value: facts.target }] : []),
-          ...(facts.newTextHash ? [{ label: '新内容哈希', value: hashDisplay(facts.newTextHash) }] : []),
-          ...(facts.oldTextHash ? [{ label: '原内容哈希', value: hashDisplay(facts.oldTextHash) }] : []),
-          // The same words as the card's pill, from one mapping.
-          ...(facts.reason ? [{ label: '风险原因', value: RISK_REASON_TEXT[facts.reason] }] : []),
-          {
-            label: '参数',
-            value: args
-              ? canonicalJson(previewArguments(args, facts.builtinWrite && req.headers['x-latch-shell-confirmation'] !== '1'))
-              : (approval.arguments ?? ''),
-          },
-        ]
-        stepup = await confirm(
-          req,
-          caller,
-          'approval.r2',
-          { approvalId, optionId: input.optionId, decision: input.decision, previewHash: facts.previewHash },
-          approvalSubject(approval.toolName, args, approval.arguments, facts),
-          lines,
-        )
+        previewHash = (await approvalFacts(approval, args, session)).previewHash
       }
       recheck(caller, needed)
-      if (input.decision === 'allow') assertSessionCeiling(caller, level)
       const at = new Date(now()).toISOString()
       const intent = await audited(
         {
           action: 'approval.decided',
           actor: actorOf(caller),
           target: approvalId,
-          stepup,
+          stepup: 'none',
           detail: {
             approvalId,
             sessionId: approval.sessionId,
@@ -4052,10 +3955,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
       try {
         recheck(caller, needed)
-        if (input.decision === 'allow') {
-          assertSessionCeiling(caller, level)
-          privateAccess(caller, session)
-        }
+        if (input.decision === 'allow') privateAccess(caller, session)
       } catch (error) {
         auditFailed(intent, caller)
         throw error
@@ -4487,8 +4387,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       recheck(caller, 'admin')
       const patched = (base: Policy): Policy => {
         const next = structuredClone(base)
-        if (input.local) Object.assign(next.local, input.local)
-        if (input.remote) Object.assign(next.remote, input.remote)
         if (input.hostEgressAllow) {
           const remove = new Set(input.hostEgressAllow.remove ?? [])
           next.hostEgressAllow = [
@@ -4551,81 +4449,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     // ---- Tasks -----------------------------------------------------------------------------------
 
-    /** Remote starts and turns stay within the remote ceiling; local ones within the local ceiling. */
-    function assertStandardCeiling(caller: Caller, start?: { harnessId: string; workspaceId: string }): void {
-      const current = policy.get()
-      const ceiling: PermissionLevel = ceilingFor(current, caller.connection.listener)
-      const allowed = levelsUpTo(ceiling).filter(level => level !== 'L3')
-      if (!levelAtMost('L1', ceiling)) throw ceilingExceeded(allowed)
-      if (!start || isLocalListener(caller.connection.listener)) return
-      const remote = current.remote
-      if (
-        !remote.allowRemoteStart
-        || (remote.harnesses !== null && !remote.harnesses.includes(start.harnessId))
-        || (remote.workspaces !== null && !remote.workspaces.includes(start.workspaceId))
-      )
-        throw ceilingExceeded([])
-    }
-
-    /** The ceiling for running anything at `level`: Standard within the listener's ceiling, full access only on host.sock while allowed. */
-    function assertSessionCeiling(caller: Caller, level: 'L1' | 'L3'): void {
-      if (level === 'L1') {
-        assertStandardCeiling(caller)
-        return
-      }
-      requireLocal(caller)
-      const local = policy.get().local
-      if (!local.allowL3) throw ceilingExceeded(levelAtMost('L1', local.maxLevel) ? ['L1'] : [])
-    }
-
-    /**
-     * The harness and project lists that limit remote starts also limit what a remote device may continue: new input,
-     * option changes and allowing a call. A session started in a project needs that project listed, usable and still
-     * holding every folder the session recorded; a folder shared with an unlisted project never makes its sessions
-     * match. A session in a folder of its own counts as one in the start directory. A session from before projects had
-     * several folders needs its directory to be a listed project's primary folder. Anything that does not match counts
-     * as outside.
-     */
-    async function assertRemoteSession(caller: Caller, sessionId: string): Promise<void> {
-      if (isLocalListener(caller.connection.listener)) return
-      const remote = policy.get().remote
-      if (remote.harnesses === null && remote.workspaces === null) return
-      if (remote.harnesses !== null && !remote.harnesses.includes(await hub!.harnessOf(sessionId))) throw ceilingExceeded([])
-      if (remote.workspaces === null) return
-      const task = await sessionTask(sessionId)
-      if (!task) throw ceilingExceeded([])
-      if (task.workspaceId !== undefined) {
-        if (!remote.workspaces.includes(task.workspaceId)) throw ceilingExceeded([])
-        if (task.workspaceId === 'default') {
-          const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
-          if (root !== undefined && root === canonicalWorkspace) return
-          // A session's own folder lies directly inside the start directory, which the policy lists.
-          if (task.sessionFolder && (await ownFolders.verify(task.cwd))) return
-          throw ceilingExceeded([])
-        }
-        const record = savedProject(task.workspaceId)
-        if (record && !(await projectState(record)).failure && (await foldersStillIn(task, record))) return
-        throw ceilingExceeded([])
-      }
-      const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
-      if (root === undefined) throw ceilingExceeded([])
-      if (remote.workspaces.includes('default') && root === canonicalWorkspace) return
-      for (const record of config.settings().workspaces) {
-        if (!remote.workspaces.includes(record.id)) continue
-        if (root === (await canonicalPath(record.path).catch(() => undefined))) return
-      }
-      throw ceilingExceeded([])
-    }
-
-    async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<'L1' | 'L3'> {
+    async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<void> {
       if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       await checkPersonalSession(caller, sessionId, true)
-      const level = hub!.levelOf(await hub!.harnessOf(sessionId))
+      await hub!.harnessOf(sessionId)
       if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
-      if (level === 'L3') requireLocal(caller)
-      return level
     }
 
     /**
@@ -4750,11 +4580,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready')
-          throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.name} 当前不可用`)
+          throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
         if (input.mode && !harness.modes.includes(input.mode))
-          throw new AppError(400, 'mode-unsupported', `${harness.name} 不支持该会话模式`)
-        if (input.model && harness.models !== 'host')
-          throw new AppError(400, 'model-unsupported', `${harness.name} 自行管理模型，不能指定模型服务`)
+          throw new AppError(400, 'mode-unsupported', `${harness.capabilities.display.label} 不支持该会话模式`)
+        if (input.model && harness.capabilities.models.owner !== 'latch')
+          throw new AppError(400, 'model-unsupported', `${harness.capabilities.display.label} 自行管理模型，不能指定模型服务`)
         if (input.model) assertModel(input.model)
         const workspaceId = input.workspaceId ?? 'default'
         const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
@@ -4766,7 +4596,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(
             409,
             'harness-folder-limit',
-            `${harness.name} 最多使用 ${limit} 个文件夹，这个项目有 ${folderCount} 个，会话没有开始`,
+            `${harness.capabilities.display.label} 最多使用 ${limit} 个文件夹，这个项目有 ${folderCount} 个，会话没有开始`,
           )
         // While the start directory is the Host's default, an Agent session outside a saved project gets a new folder of
         // its own there; 只对话 sessions read and write no files and never get one.
@@ -4779,7 +4609,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const folderRequest = `${caller.device.id}:${input.requestId}`
         // The session starts in the project's primary folder. Only what the client chose reaches the driver as `cwd`;
         // without a choice the start directory stays the driver's default.
-        if (input.fileRefs?.length && (harness.source === 'plugin' || mode === 'chat' || ownFolder))
+        if (input.fileRefs?.length && (!harness.capabilities.tools.fileMentions || mode === 'chat' || ownFolder))
           throw new AppError(415, 'file-references-unavailable', '当前会话尚不能引用项目文件，请先选择项目与 Agent 模式。')
         if (input.fileRefs?.length && caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
         const mentionRoots = chosen
@@ -4864,11 +4694,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             recheck(caller, 'view')
             privateAccess(caller, fork.source)
           }
-          if (hub!.levelOf(harnessId) === 'L1') assertStandardCeiling(caller, { harnessId, workspaceId })
-          else assertSessionCeiling(caller, 'L3')
         }
         if (hub!.levelOf(harnessId) === 'L1') {
-          assertStandardCeiling(caller, { harnessId, workspaceId })
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
             await respondCreated(
@@ -4884,15 +4711,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           )
           return
         }
-        assertSessionCeiling(caller, 'L3')
         if (workspaceId === 'default' && defaultFlags.insideData)
           throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
         if (workspaceId === 'default' && defaultFlags.codeRoot)
           throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
-        // Made before the confirmation, which shows it; the confirmed retry of this request gets the same folder.
         const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
         const cwd = await realpath(own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
-        // As for L1; the local confirmation below lists the ones the driver says it passes to the agent.
+        // As for L1; the audit below counts the ones the driver says it passes to the agent.
         const folders =
           task.cwd === undefined || own || forkFolder
             ? undefined
@@ -4903,7 +4728,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies
             ? canonicalJson({
                 prompt,
-                // The block goes out with the prompt, so what was confirmed includes it.
+                // The block goes out with the prompt, so what the record names includes it.
                 ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
                 ...(agentContext?.skillBodies ? { skills: agentContext.skillBodies } : {}),
                 ...(attachments.length ? { attachments: attachments.map(ref => ({ id: ref.id, sha256: ref.sha256 })) } : {}),
@@ -4912,7 +4737,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : prompt,
         )
         const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined)
-        // The folders the agent receives besides its working directory: shown, bound to the confirmation and audited.
+        // The folders the agent receives besides its working directory, for the audit.
         const passed = [
           ...new Set([
             ...(harness.projectFolders?.access === 'all' ? (folders?.slice(1).map(folder => folder.path) ?? []) : []),
@@ -4920,124 +4745,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]),
         ]
         const foldersAudited = passed.length ? { folderCount: passed.length + 1 } : {}
-        const project = chosen && chosen.id !== 'default' ? chosen.name : undefined
-        // A session without a saved project leaves the place out of the sentence.
-        const place = { agent: selected ? agentSlot(selected.name, harness.name) : harness.name, project: project ?? '' }
-        let subject: PresenceSubject
         let launchHash: string
-        let lines: PreviewLine[]
-        if (preview) {
-          launchHash = preview.launchHash
-          const before = audit.startedBefore({
+        if (preview) launchHash = preview.launchHash
+        else {
+          const plugin = harnessPlugin(harnessId)
+          launchHash = sha256Hex(
+            canonicalJson({
+              harnessId,
+              pluginId: plugin?.id ?? harnessId,
+              version: plugin?.version ?? '',
+              ...(passed.length ? { folders: passed } : {}),
+            }),
+          )
+        }
+        // The session's first row says once what a launch can do, the first time it runs on this Host.
+        const firstStart =
+          !fork
+          && audit.startedBefore({
             launchHash,
             harnessId,
-            ...(preview.definitionHash ? { definitionHash: preview.definitionHash } : {}),
-          })
-          // Another command or another project configuration than this agent started with here before is a change. The
-          // sentence names what runs: the executable's path, its arguments and the variables the definition sets (they
-          // change what the agent does as much as its arguments).
-          const command = {
-            program: programText(preview.command),
-            args: argumentsText(preview.args),
-            env: envNamesText(preview.definitionEnvNames ?? []),
-          }
-          subject = {
-            form: before === 'harness' || before === 'definition' ? 'start.changed' : 'start.first',
-            slots: { ...place, ...command },
-          }
-          lines = [
-            { label: 'Harness', value: `${harness.name}（${harnessId}）` },
-            { label: '命令', value: preview.command },
-            { label: '参数', value: JSON.stringify(preview.args) },
-            { label: '环境变量名', value: preview.envNames.join('、') || '（无）' },
-            { label: '工作目录', value: preview.cwd },
-            ...passed.map(path => ({ label: '其他文件夹', value: path })),
-            { label: '定义状态', value: preview.verified ? '已验证的预设' : '未验证的定义' },
-            { label: '模式读回', value: preview.readback === 'mode' ? '可读回' : '无法读回' },
-            { label: '审批', value: preview.approvals === 'prompts' ? '会请求审批' : '不请求审批' },
-            ...(agentContext?.skillBodies ? [{ label: '说明', value: '随会话附加只读技能服务：只能列出和读取所选技能。' }] : []),
-            ...preview.notes.map(note => ({ label: '说明', value: note })),
-            { label: '启动指纹', value: hashDisplay(launchHash) },
-            { label: '首条输入', value: hashDisplay(promptHash) },
-          ]
-        } else {
-          const plugin = harnessPlugin(harnessId)
-          const pluginId = plugin?.id ?? harnessId
-          const version = plugin?.version ?? ''
-          launchHash = sha256Hex(canonicalJson({ harnessId, pluginId, version, ...(passed.length ? { folders: passed } : {}) }))
-          const before = audit.startedBefore({ launchHash, harnessId })
-          subject = {
-            form: before === 'harness' ? 'start.changed' : 'start.first',
-            slots: { ...place, program: `插件 ${pluginId}@${version}`, args: '', env: '' },
-          }
-          lines = [
-            { label: 'Harness', value: `${harness.name}（${harnessId}）` },
-            { label: '命令', value: `第三方 Harness 插件 ${pluginId}@${version}` },
-            { label: '工作目录', value: cwd },
-            ...passed.map(path => ({ label: '其他文件夹', value: path })),
-            { label: '定义状态', value: '未验证的定义' },
-            { label: '模式读回', value: '无法读回' },
-            { label: '审批', value: '由插件决定，Latch 无法核实' },
-            { label: '启动指纹', value: hashDisplay(launchHash) },
-            { label: '首条输入', value: hashDisplay(promptHash) },
-          ]
-        }
-        // Only drivers reporting a definition/configuration fingerprint can reuse OS approval. A session's own
-        // fresh 0700 directory shares the start root's project identity; its complete launch hash stays unchanged.
-        let launchKey: string | undefined
-        const privateOwn = own
-          ? (await ownFolders.verify(own.path))
-            && (await lstat(own.path).then(
-              info =>
-                info.isDirectory()
-                && !info.isSymbolicLink()
-                && (info.mode & 0o777) === 0o700
-                && (typeof process.getuid !== 'function' || info.uid === process.getuid()),
-              () => false,
-            ))
-          : true
-        if (req.headers['x-latch-shell-confirmation'] === '1' && preview?.definitionHash && privateOwn) {
-          const roots = own
-            ? [canonicalWorkspace]
-            : await Promise.all((chosen?.folders.map(folder => folder.path) ?? [cwd]).map(path => canonicalPath(path)))
-          launchKey = launchTrustKey({ deviceId: caller.device.id, harnessId, launchHash, projectId: workspaceId, roots })
-        }
-        // Read before `confirm`, which remembers this launch once the sheet approved it.
-        const firstStart = !fork && (!launchKey || !launchTrust.has(launchKey))
-        const stepup = await confirm(
-          req,
-          caller,
-          'task.start-l3',
-          { harnessId, cwd, requestId: input.requestId, promptHash, launchHash, ...(passed.length ? { folders: passed } : {}) },
-          subject,
-          lines,
-          L3_WARNINGS,
-          undefined,
-          launchKey,
-        )
-        recheck(caller, 'run')
-        // The policy may have been lowered while the confirmation was open.
-        assertSessionCeiling(caller, 'L3')
-        if (fork) recheck(caller, 'view')
-        if (chosen) {
-          // The project may have been edited meanwhile: the session starts only in the primary folder that was confirmed.
-          const current = savedProject(chosen.id)
-          if (!current || (await realpath(current.folders[0].path).catch(() => undefined)) !== cwd) throw workspaceChanged()
-          // A harness that takes every folder starts only with the folders that were confirmed.
-          if (harness.projectFolders?.access === 'all' && !sameFolders(current.folders, chosen.folders)) throw workspaceChanged()
-          await assertWorkspaceUsable(current)
-        }
-        if (forkFolder && (!(await ownFolders.verify(forkFolder)) || (await realpath(forkFolder).catch(() => undefined)) !== cwd))
-          throw workspaceChanged()
-        if (own && (!(await ownFolders.verify(own.path)) || (await realpath(own.path).catch(() => undefined)) !== cwd))
-          throw workspaceChanged()
+            ...(preview?.definitionHash ? { definitionHash: preview.definitionHash } : {}),
+          }) !== 'launch'
         // The intent is on record before the driver can spawn anything; the session id exists only once it has, so the
         // record naming it is a commit that may fail without stopping a session the intent already covers.
         const intent = await audited({
           action: 'task.l3.start-requested',
           actor: actorOf(caller),
-          stepup,
-          detail: { harnessId, launchHash, ...foldersAudited },
+          stepup: 'none',
+          detail: { harnessId, launchHash, promptHash, ...foldersAudited },
         })
         let created: { sessionId: string }
         try {
@@ -5071,11 +4806,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             action: 'task.l3.started',
             actor: actorOf(caller),
             target: created.sessionId,
-            stepup,
+            stepup: 'none',
             detail: {
               sessionId: created.sessionId,
               harnessId,
               launchHash,
+              promptHash,
               ...foldersAudited,
               ...(preview?.definitionHash ? { definitionHash: preview.definitionHash } : {}),
             },
@@ -5188,13 +4924,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       try {
         requireScope(caller, 'run')
-        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
-        await assertRemoteSession(caller, sessionId)
+        await assertSessionAccess(caller, sessionId)
         await assertSessionWorkspace(sessionId)
         const detail = await harnessHub.detail(sessionId)
         if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
         if (model) {
-          if (hub!.info(await hub!.harnessOf(sessionId))?.models !== 'host')
+          if (hub!.info(await hub!.harnessOf(sessionId))?.capabilities.models.owner !== 'latch')
             throw new AppError(400, 'model-unsupported', '该会话不能指定模型服务')
           assertModel(model)
         }
@@ -5255,8 +4990,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const authorize = async () => {
         recheck(caller, 'run')
         if (devices.get(caller.device.id)?.dataScope !== caller.device.dataScope) throw scopeRequired('run')
-        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
-        await assertRemoteSession(caller, sessionId)
+        await assertSessionAccess(caller, sessionId)
         await assertSessionWorkspace(sessionId)
         const detail = await harnessHub.detail(sessionId)
         if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
@@ -5322,12 +5056,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.queue && (input.attachmentIds?.length || input.fileRefs?.length))
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         recheck(caller, 'run')
-        assertSessionCeiling(caller, await assertSessionAccess(caller, id))
-        await assertRemoteSession(caller, id)
+        await assertSessionAccess(caller, id)
         await assertSessionWorkspace(id)
         if (input.model) {
           const harness = hub!.info(await hub!.harnessOf(id))
-          if (harness?.models !== 'host') throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
+          if (harness?.capabilities.models.owner !== 'latch')
+            throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
           assertModel(input.model)
         }
         if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
@@ -5362,7 +5096,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const mentionTask = input.fileRefs?.length ? await hub!.detail(id) : undefined
         if (
           input.fileRefs?.length
-          && (caller.device.dataScope !== 'all' || hub!.info(harnessId)?.source === 'plugin' || mentionTask?.summary.mode === 'chat')
+          && (caller.device.dataScope !== 'all'
+            || !hub!.info(harnessId)?.capabilities.tools.fileMentions
+            || mentionTask?.summary.mode === 'chat')
         )
           throw new AppError(403, 'file-references-unavailable', '当前设备或会话不能引用项目文件。')
         const fileRefs = await checkedFileMentions(
@@ -5377,7 +5113,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
         try {
           recheck(caller, 'run')
-          assertSessionCeiling(caller, hub!.levelOf(harnessId))
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (personal) {
@@ -5442,13 +5177,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           checkPersonalSession(caller, id, true)
           if (isNativeListener(caller.connection.listener) && (!originalWindow || caller.nativeOpening?.windowHash !== originalWindow))
             throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，请查询原请求。')
-          assertSessionCeiling(caller, level)
         }
         const authorize = async () => {
           recheck(caller, 'run')
-          level = await assertSessionAccess(caller, id)
-          assertSessionCeiling(caller, level)
-          await assertRemoteSession(caller, id)
+          await assertSessionAccess(caller, id)
           await assertSessionWorkspace(id)
           authority()
         }
@@ -5456,7 +5188,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const execute = async (before: () => Promise<void>) => {
           await authorize()
           const change = await hub!.classifyConfigChange(id, input.configId, input.value)
-          if (change === 'forbidden') throw new AppError(400, 'mode-forbidden', '该模式由模型代为批准，Latch 不提供')
           if (input.requestId) {
             const current = await hub!.detail(id),
               selectedOption = current.config?.find(row => row.id === input.configId)
@@ -5464,8 +5195,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             if (!selectedOption.options.some(row => row.value === input.value))
               throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内。')
           }
-          const apply = async (allowWiden = false) => {
-            await hub!.setConfig(id, input.configId, input.value, { authorize: authority, ...(allowWiden ? { allowWiden: true } : {}) })
+          const apply = async () => {
+            await hub!.setConfig(id, input.configId, input.value, { authorize: authority })
             if (input.requestId) {
               authority()
               const actual = await hub!.detail(id)
@@ -5485,46 +5216,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             await apply()
             return
           }
-          const detail = await hub!.detail(id)
-          const harness = hub!.info(detail.summary.harnessId ?? '')
-          // A wider mode applies in every folder the harness received, e.g. Codex may then write in all of them.
-          const others = detail.summary.folderAccess === 'all' ? (detail.summary.folders ?? []).slice(1) : []
-          const option = detail.config?.find(item => item.id === input.configId)
-          const modeName = option?.options.find(item => item.value === input.value)?.name
-          const stepup = await confirm(
-            req,
-            caller,
-            'task.mode-widen',
-            { sessionId: id, configId: input.configId, value: input.value },
-            {
-              form: 'mode.widen',
-              slots: {
-                session: detail.summary.title || '未命名会话',
-                // The agent's name for the mode; its value stays in the details.
-                mode: modeName || input.value,
-              },
-            },
-            [
-              { label: '会话', value: detail.summary.title || id },
-              { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
-              { label: '当前模式', value: option?.currentValue ?? '' },
-              { label: '新模式', value: input.value },
-              ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
-            ],
-          )
-          recheck(caller, 'run')
-          assertSessionCeiling(caller, hub!.levelOf(await hub!.harnessOf(id)))
           const seq = await audited({
             action: 'task.mode.widened',
             actor: actorOf(caller),
             target: id,
-            stepup,
+            stepup: 'none',
             detail: { sessionId: id, toHash: sha256Hex(input.value) },
           })
           try {
             await before()
             authority()
-            await apply(true)
+            await apply()
           } catch (error) {
             auditFailed(seq, caller)
             throw error
@@ -5847,7 +5549,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'admin')
         const input = agentCreateSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
         recheck(caller, 'admin')
-        requireLocal(caller)
         const agents = config.settings().agents
         const taken = [
           STANDARD,
@@ -5894,8 +5595,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (probeMatch && method === 'POST') {
         requireScope(caller, 'admin')
         requireScope(caller, 'run')
-        assertSessionCeiling(caller, 'L3')
-        requireLocal(caller)
         const input = z
           .object({ requestId: z.string().min(1).max(256) })
           .strict()
@@ -5910,7 +5609,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
           recheck(caller, 'admin')
           recheck(caller, 'run')
-          assertSessionCeiling(caller, 'L3')
           const latest = config.settings().agents.find(agent => agent.id === id)
           if (!latest || definitionHash(latest) !== hash)
             throw new AppError(409, 'agent-definition-changed', 'Agent 定义已变化，请重新测试。')
@@ -5922,22 +5620,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return true
         }
         const preview = attempt.preview
-        const stepup = await confirm(
-          req,
-          caller,
-          'agent.probe',
-          { agentId: id, requestId: input.requestId, launchHash: preview.launchHash, cwd: preview.cwd },
-          { form: 'agent.probe', slots: { agent: agent.name } },
-          [
-            { label: 'Agent', value: agent.name },
-            { label: '命令', value: preview.command },
-            { label: '参数', value: argumentsText(preview.args) },
-            { label: '环境变量名', value: envNamesText(preview.envNames) },
-            { label: '工作目录', value: preview.cwd },
-            { label: '启动指纹', value: hashDisplay(preview.launchHash) },
-          ],
-          ['只进行 ACP initialize 握手，不发送提示词；程序是可信本机代码，可以访问这台电脑上的数据。'],
-        )
         const result = await agentProbes.run(
           attempt,
           async () => {
@@ -5946,7 +5628,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               action: 'agent.probe.requested',
               actor: actorOf(caller),
               target: id,
-              stepup,
+              stepup: 'none',
               detail: { agentId: id, launchHash: preview.launchHash },
             })
           },
@@ -5956,7 +5638,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               action: 'agent.probed',
               actor: actorOf(caller),
               target: id,
-              stepup,
+              stepup: 'none',
               detail: { agentId: id, launchHash: result.launchHash, status: result.status },
             })
             await writeSettings(caller, draft => {
@@ -5994,13 +5676,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           enabled: input.enabled ?? current.enabled,
         }
         const changed = definitionHash(next) !== definitionHash(current)
-        // A new definition has not started yet; its first full-access start is confirmed with what it runs.
         if (changed) {
           next.startedHash = null
           delete next.lastProbe
           delete next.probedDefinitionHash
         }
-        const hash = changed ? (requireLocal(caller), checkAgent(next)) : undefined
+        const hash = changed ? checkAgent(next) : undefined
         const record = await serial(caller, 'admin', async () => {
           const latest = config.settings().agents.find(agent => agent.id === id)
           if (!latest) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
@@ -6110,11 +5791,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return false
     }
 
-    /**
-     * Agent definitions run as L3 code, so only the desktop saves them (`requireLocal`), but saving asks for no local
-     * confirmation: nothing runs until a full-access start, which is confirmed with the command, arguments,
-     * environment variable names and launch fingerprint. Returns the definition's hash for the audit.
-     */
+    /** Checks a definition before it is saved, and returns its hash for the audit. Values of its variables are never returned. */
     function checkAgent(next: AgentRecord): string {
       const verdict = validateAgentDefinition(next)
       if (!verdict.ok) throw verdict.error
@@ -6197,7 +5874,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ),
           demo: options.demo,
           hostName: options.hostName ?? hostname(),
-          harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
+          harness: { id: defaultId, name: hub!.info(defaultId)?.capabilities.display.label ?? defaultId },
           execution,
           catalog: await catalog(caller),
           ...agentSummaries(caller, tasks),
@@ -6325,7 +6002,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             || (summary.agent && summary.pluginIds && !summary.pluginIds.includes(lease.info.pluginId))
           )
             throw new AppError(404, 'ui-panel-unavailable', '这个 Agent 没有选择此插件。')
-          if (lease.info.harnessIds !== undefined && !lease.info.harnessIds.includes(summary.harnessId ?? STANDARD)) {
+          if (lease.info.harnessIds !== undefined && !lease.info.harnessIds.includes(summary.harnessId)) {
             throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板不适用于当前会话。')
           }
           const panel = await lease.render({ session: summary, signal: controller.signal })
@@ -6354,29 +6031,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {
         await decideApproval(req, res, caller, safeDecode(approval[1]!))
-        return
-      }
-      const shellConfirmation = path.match(/^\/link\/api\/confirmations\/([^/]+)\/shell$/)
-      if (shellConfirmation && (method === 'GET' || method === 'POST')) {
-        requireDevice(caller)
-        requireLocal(caller)
-        recheck(caller)
-        const id = safeDecode(shellConfirmation[1]!)
-        limits.confirmationPoll.take(id)
-        const content = presence.shellPreview(id, caller.device.id)
-        if (method === 'GET') {
-          json(res, content)
-          return
-        }
-        const proof = z
-          .object({ previewHash: z.string().regex(/^[a-f0-9]{64}$/u), signature: z.string().min(1).max(256) })
-          .strict()
-          .parse(await jsonBody(req))
-        recheck(caller)
-        if (proof.previewHash !== content.previewHash)
-          throw new AppError(409, 'confirmation-mismatch', '确认内容与本次请求不一致，请重新确认')
-        devices.verifyConfirmation({ deviceId: caller.device.id, confirmationId: id, ...proof })
-        json(res, { confirmation: await presence.completeShell(id, caller.device.id, proof.previewHash, true) })
         return
       }
       const confirmation = path.match(/^\/link\/api\/confirmations\/([^/]+)$/)

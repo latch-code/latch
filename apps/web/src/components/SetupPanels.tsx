@@ -21,7 +21,7 @@ import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
 import { Badge, Button, ButtonLink, Icon, IconButton, InlineNotice, Loading, CopyButton } from '@latch/ui'
-import { HarnessTile, ProviderTile } from './BrandTile.tsx'
+import { MarkTile, ProviderTile } from './BrandTile.tsx'
 
 const ProviderAddForm = deferredComponent(
   async () => ({ default: (await import('../settings/ProvidersSettings.tsx')).ProviderAddForm }),
@@ -128,7 +128,7 @@ export function AgentPresetList({
           onClick={() => {
             onPick(preset)
           }}>
-          <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={24} />
+          <MarkTile mark={preset.id} size={24} />
           <span className="setup-list-text">
             <span className="setup-list-name">
               {preset.name}
@@ -196,7 +196,7 @@ export function AgentSetupPanel({
   return (
     <SetupPanel
       title={preset.name}
-      tile={<HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={24} />}
+      tile={<MarkTile mark={preset.id} size={24} />}
       onBack={onBack}
       footer={
         canAdd ? (

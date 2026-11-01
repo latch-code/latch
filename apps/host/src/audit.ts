@@ -142,7 +142,7 @@ export class AuditLog {
   private headState = { seq: 0, hash: GENESIS }
   private readonly hashes: string[] = []
   private readonly latestByAction = new Map<AuditAction, AuditRecord>()
-  /** What full-access sessions started with after a local confirmation: their launch fingerprints, definitions and harnesses. */
+  /** What full-access sessions started with: their launch fingerprints, definitions and harnesses. */
   private readonly started = { launches: new Set<string>(), definitions: new Set<string>(), harnesses: new Set<string>() }
   private bytes = 0
   private poisoned = false
@@ -207,7 +207,7 @@ export class AuditLog {
 
   private index(record: AuditRecord): void {
     this.latestByAction.set(record.action, record)
-    if (record.action !== 'task.l3.started' || record.stepup !== 'lpc-local') return
+    if (record.action !== 'task.l3.started') return
     const { launchHash, definitionHash, harnessId } = record.detail
     if (typeof launchHash === 'string') this.started.launches.add(launchHash)
     if (typeof definitionHash === 'string') this.started.definitions.add(definitionHash)

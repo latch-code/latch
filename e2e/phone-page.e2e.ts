@@ -383,7 +383,7 @@ describe('the 手机 page', () => {
 
       await pick('dev_review')
       await page.getByRole('button', { name: '恢复使用', exact: true }).click()
-      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_review', scopes })
+      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_review', scopes: [...scopes, 'approve:elevated'] })
       await page.getByRole('button', { name: '恢复使用', exact: true }).waitFor({ state: 'hidden' })
 
       await pick('dev_phone')

@@ -172,7 +172,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 - **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不会再次决定或审计。
 - **已被处理。** 其他情况下，已经处理或已失效的审批返回 `409 approval-settled`，`decidedBy` 为 `{ kind: 'device', self, deviceName, decision, optionKind, at }`，或 `{ kind: 'system' }`（会话结束或取消使其失效）。`deviceName` 是作出决定的设备当前的名称，Host 已不认识该设备时为空。客户端据此判断：本设备此前作出了同一决定（Host 给出 `optionKind` 时还要求选项类别相同）就视为已生效；本设备此前作了不同的选择时，提示本次选择未生效；由其他设备处理时提示「已由「设备名」处理」，设备名为空或不符合设备名称规则时只提示「该审批已结束」；`system` 同样提示「该审批已结束」。
 - **随会话保存。** 决定记录（审批 ID、`requestId`、作出决定的设备 ID、决定与选项、时间）在回答之前写入数据目录的 `sessions-meta.json`，与该会话的标题、置顶等放在一起，所以 Host 重启后重试同一个 `requestId` 仍得到原回执（`replay: true`），其他设备仍得到 `decidedBy`。记录保留 7 天，每台设备最多 1 万条、合计最多 10 万条，最旧的先删除；删除会话时一并删除。写入失败时决定照常生效，记录留在内存中并进入下一次写入，日志记下失败。
-- **本机确认。** 需要本机确认的允许先得到 `403 stepup-required` 与确认票据。审批卡的按钮转圈，读屏读出「在系统窗口中确认」；理由和详情由系统窗口显示。批准后页面带 `x-latch-confirmation` 原样重发同一请求体（同一 `requestId`）。取消、出错或超时不重发；「在这台 Mac 上允许」可重新申请确认。其他设备收到 `stepup-required`（`where: 'host-desktop'`），页面说明去运行 Latch 的电脑确认。
+- **决定不弹确认。** 允许与拒绝都由设备的权限范围决定，发出后等 Host 回执；结果未知时卡片可以用同一 `requestId` 重试。
 
 ### 取消的请求 ID 与回执
 

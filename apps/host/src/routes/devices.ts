@@ -411,7 +411,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         throw new AppError(404, 'device-not-found', '找不到该设备')
       const scopes = [...new Set<DeviceScope>(['view', ...(input.scopes ?? target.scopes)])].sort()
       const dataScope: DataScope = input.dataScope ?? target.dataScope
-      if (!isLocalListener(target.listener) && scopes.some(scope => scope === 'approve:elevated' || scope === 'secrets')) {
+      if (!isLocalListener(target.listener) && scopes.includes('secrets')) {
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
       }
       const added = scopes.filter(scope => !target.scopes.includes(scope))
