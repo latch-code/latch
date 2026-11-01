@@ -37,6 +37,7 @@ import { GitReader, blobId, findGit } from './git.ts'
 import { ObjectStore, hashHandle, type CloneFile } from './objects.ts'
 import {
   NAMED_FILE_LIMIT,
+  OTHER_SESSION_LIMIT,
   SNAPSHOTS_DIR,
   SessionFiles,
   directoryKey,
@@ -643,6 +644,20 @@ export class ChangesEngine {
     }
   }
 
+  /** Records that other sessions ran in this turn's folder meanwhile; a turn no longer kept is left alone. */
+  async noteOtherSessions(input: { session: ChangesSession; turnId: string; others: readonly string[] }): Promise<void> {
+    const { session, turnId, others } = input
+    checkSession(session)
+    await this.mutate(session.projectId, async project => {
+      const state = await this.session(project, session.id)
+      const turn = state.turns.find(item => item.turnId === turnId)
+      if (!turn) return
+      const otherSessions = [...new Set([...(turn.otherSessions ?? []), ...others])].slice(0, OTHER_SESSION_LIMIT)
+      state.turns = state.turns.map(item => (item === turn ? { ...turn, otherSessions } : item))
+      await this.save(project, state)
+    })
+  }
+
   /** Forgets a deleted session's snapshots. */
   async deleteSession(input: { id: string; projectId: string }): Promise<void> {
     if (!PROJECT_ID.test(input.projectId)) throw new AppError(400, 'change-session-invalid', '会话信息无效。')
@@ -793,6 +808,7 @@ export class ChangesEngine {
         ...(git.notGit.length && !git.unavailable ? { notGit: git.notGit } : {}),
         ...(git.partial ? { partial: true as const } : {}),
         ...(git.unavailable ? { unavailable: git.unavailable } : {}),
+        ...(git.conflict ? { conflict: git.conflict } : {}),
       },
       contents: new Contents({ objects: project.objects, blobs: oid => blobs.get(oid) }, this.limits.readBytes),
     }
@@ -850,6 +866,13 @@ export class ChangesEngine {
         list.undo = await this.availability(scoped, input.session, 'undo')
         list.redo = await this.availability(scoped, input.session, 'redo')
       }
+      const others =
+        input.scope === 'turn'
+          ? (scoped.turn?.otherSessions ?? [])
+          : input.scope === 'session'
+            ? scoped.state.turns.flatMap(turn => turn.otherSessions ?? [])
+            : []
+      if (others.length) list.otherSessions = [...new Set(others)]
       return list
     })
   }
@@ -938,6 +961,7 @@ export class ChangesEngine {
         ...(turn.state === 'settled' ? { files: turn.changes.length } : {}),
         ...(turn.undone ? { undone: true as const } : {}),
         ...(turn.note && !turn.note.told ? { notePending: true as const } : {}),
+        ...(turn.otherSessions?.length ? { otherSessions: turn.otherSessions } : {}),
       }))
     })
   }
@@ -1265,6 +1289,8 @@ export class ChangesEngine {
   private async planUncommitted(session: ChangesSession, files: readonly FileMention[] | undefined): Promise<Plan> {
     const git = await this.gitScope(session, 'uncommitted')
     if (git.unavailable) throw new AppError(409, 'change-not-git', '这些文件夹没有可以撤销的未提交改动。')
+    // Writing HEAD's content over a file mid-merge would drop what the merge brought in and the person's resolutions.
+    if (git.conflict) throw new AppError(409, 'change-git-conflict', '仓库正在合并或有未解决的冲突，不能撤销未提交的改动。')
     const wanted = files ? new Set(files.map(file => fileKey(file.root, file.path))) : undefined
     const pairs = git.pairs.filter(
       pair =>

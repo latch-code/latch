@@ -164,7 +164,7 @@ describe('segmented control', () => {
       'rgb(24, 24, 27)',
     ])
     expect(style(chosen).boxShadow).not.toBe('none')
-    expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(113, 113, 122)'])
+    expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(106, 106, 115)'])
     expect(style(chosen).transitionProperty).not.toMatch(/translate|transform|left/u)
   })
 })
@@ -215,7 +215,7 @@ describe('tabs and filter pills', () => {
     await expect
       .poll(() => [tab.getBoundingClientRect().height, style(tab).backgroundColor, style(tab).color, style(tab).borderTopLeftRadius])
       .toEqual([24, 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', '6px'])
-    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(113, 113, 122)')
+    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(106, 106, 115)')
     expect(style(tab).textDecorationLine).toBe('none')
   })
 

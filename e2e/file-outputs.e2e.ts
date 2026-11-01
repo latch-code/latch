@@ -87,11 +87,14 @@ describe('files observed during real Harness runs', () => {
         await enrollBrowser(page, host, { name: `产物 ${width}`, scopes: ['admin'] })
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page.locator(`[data-task-id="${sessionId}"]`).first().click()
-        const outputs = page.getByRole('region', { name: '运行期间有变化的文件', exact: true })
-        await outputs.getByText('已删除', { exact: true }).waitFor()
-        expect(await outputs.getByText('gone.txt', { exact: true }).count()).toBe(1)
-        expect(await outputs.getByRole('button', { name: '预览文件：gone.txt', exact: true }).count()).toBe(0)
-        expect(await outputs.getByText('unrelated.tmp').count()).toBe(0)
+        const outputs = page.getByRole('region', { name: '这一轮生成的文件', exact: true })
+        const changed = page.getByRole('region', { name: '这一轮改动的文件', exact: true })
+        await changed.getByRole('button', { name: '显示文件', exact: true }).click()
+        // A removed file is listed for the record, with nothing to open.
+        const removed = changed.locator('.summary-file', { hasText: 'gone.txt' })
+        await removed.getByText('已删除', { exact: true }).waitFor()
+        expect(await removed.evaluate(element => element.tagName)).toBe('DIV')
+        expect(await changed.getByText('unrelated.tmp').count()).toBe(0)
         await outputs.getByRole('button', { name: '预览产物图片：pixel.png', exact: true }).waitFor()
         await expect
           .poll(() =>
@@ -105,13 +108,13 @@ describe('files observed during real Harness runs', () => {
         expect(await outputs.getByRole('button', { name: '预览产物图片：unknown.png', exact: true }).count()).toBe(0)
         await expect.poll(() => resolved.has('sensitive.png') && resolved.has('unknown.png')).toBe(true)
         expect(contentRequests).toHaveLength(1)
-        expect(await outputs.locator('.file-output-size').count()).toBe(4)
+        expect(await outputs.locator('.file-output-size').count()).toBe(3)
         await page.screenshot({ path: `test-results/file-outputs/${width}-${theme}-list.png`, animations: 'disabled' })
         if (width === 1440) {
           await outputs.getByRole('button', { name: '预览产物图片：pixel.png', exact: true }).click()
           await page.getByRole('region', { name: '文件预览', exact: true }).getByRole('img', { name: 'pixel.png', exact: true }).waitFor()
         }
-        await outputs.getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
+        await changed.locator('button.summary-file', { hasText: 'report.txt' }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('Observed result', { exact: true }).waitFor()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)

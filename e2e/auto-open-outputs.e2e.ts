@@ -83,7 +83,7 @@ it.each([
       await page.getByRole('tab', { name: 'created.html', exact: true }).waitFor()
       await page.frameLocator('iframe').getByRole('heading', { name: 'Generated document', exact: true }).waitFor()
     } else {
-      await page.getByRole('button', { name: '预览文件：created.html', exact: true }).waitFor()
+      await page.getByRole('button', { name: '打开 created.html', exact: true }).waitFor()
       expect(await page.locator('.file-preview').count()).toBe(0)
     }
     expect(await input.inputValue()).toBe('仍在输入的草稿')

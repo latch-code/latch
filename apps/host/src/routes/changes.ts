@@ -54,6 +54,12 @@ function runEdits(messages: readonly Message[], opener: string | undefined): Fil
   return (end < 0 ? after : after.slice(0, end)).flatMap(message => message.tool?.diffs ?? [])
 }
 
+/** Two sessions work in the same place when a folder of one is, or lies inside, a folder of the other. */
+function shareFolder(a: readonly ProjectFolder[], b: readonly ProjectFolder[]): boolean {
+  const inside = (path: string, parent: string) => path === parent || path.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+  return a.some(one => b.some(other => inside(one.path, other.path) || inside(other.path, one.path)))
+}
+
 /** The sentence a confirmation shows. */
 function discardWarning(plan: Omit<DiscardPreview, 'warning'>): string {
   const parts = [
@@ -89,10 +95,29 @@ export function createChangeRoutes(context: RouteContext): RouteModule {
   /** A run's settlement under way, which the session's next run waits for: it would otherwise find the run still open. */
   const settling = new Map<string, Promise<void>>()
 
+  /** Told once both turns are on record; no run waits for this. */
+  async function noteOverlap(run: OpenRun, others: readonly OpenRun[]): Promise<void> {
+    try {
+      await run.begun
+      const changes = await engine()
+      await changes.noteOtherSessions({ session: run.session, turnId: run.runId, others: others.map(other => other.session.id) })
+      refresh(run.session.id)
+      for (const other of others) {
+        await other.begun
+        await changes.noteOtherSessions({ session: other.session, turnId: other.runId, others: [run.session.id] })
+        refresh(other.session.id)
+      }
+    } catch (error) {
+      log(`会话 ${run.session.id} 的并行记录没有写入：${errorText(error)}`)
+    }
+  }
+
   lifecycle.on('runStarted', ({ sessionId, projectId, runId, folders }) => {
     const session: ChangesSession = { id: sessionId, projectId, folders }
     const previous = settling.get(sessionId)
     const run: OpenRun = { session, runId, begun: Promise.resolve() }
+    // Two runs overlap exactly when one starts while the other is open, so looking here finds every pair once.
+    const others = [...open.values()].filter(other => other.session.id !== sessionId && shareFolder(other.session.folders, folders))
     open.set(sessionId, run)
     run.begun = (async () => {
       await previous
@@ -100,6 +125,7 @@ export function createChangeRoutes(context: RouteContext): RouteModule {
       await (await engine()).beginTurn({ session, turnId: runId })
       refresh(sessionId)
     })()
+    if (others.length) void noteOverlap(run, others)
     return run.begun
   })
   lifecycle.on('runSettled', ({ sessionId, runId, outcome }) => {

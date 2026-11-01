@@ -51,11 +51,11 @@ describe('Markdown export', () => {
     const markdown = transcriptMarkdown(detail(), { harness: 'Standard', exportedAt: new Date('2026-10-23T08:00:00.000Z') })
     expect(
       markdown.startsWith(
-        '# 修复登录问题\n\n- Harness：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：输入 1.2k tokens · 输出 350 tokens\n- 导出于：',
+        '# 修复登录问题\n\n- 引擎：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：输入 1.2k tokens · 输出 350 tokens\n- 导出于：',
       ),
     ).toBe(true)
     expect(markdown).toContain('## 你\n\n登录按钮没反应')
-    expect(markdown).toContain('## 助手\n\n<details>\n<summary>思考过程</summary>\n\n> 检查事件绑定\n> 再看网络请求')
+    expect(markdown).toContain('## Agent\n\n<details>\n<summary>思考过程</summary>\n\n> 检查事件绑定\n> 再看网络请求')
     expect(markdown).toContain('_用量：输入 1.2k tokens · 输出 350 tokens_')
     expect(markdown).toContain('<summary>工具：写入 &lt;src/login.ts&gt;（已完成）</summary>')
     expect(markdown).toContain('工具名：`write_file`')
@@ -90,7 +90,7 @@ describe('Markdown export', () => {
     expect(markdown).toContain('<summary>工具：写入文件 notes/plan.md（已拒绝）</summary>')
     expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在这台 Mac 上决定')
     expect(markdown).not.toContain('变更：')
-    expect(markdown).toContain('- Harness：Latch 内置')
+    expect(markdown).toContain('- 引擎：Latch 内置')
   })
 
   it('keeps the diff an agent reports for a call it ran after a rejection, and says so next to the record', () => {
@@ -137,7 +137,7 @@ describe('Markdown export', () => {
 
   it('includes a reply that is still streaming', () => {
     const live = { ...detail(), messages: [], liveText: '正在写' }
-    expect(transcriptMarkdown(live)).toContain('## 助手（生成中）\n\n正在写')
+    expect(transcriptMarkdown(live)).toContain('## Agent（生成中）\n\n正在写')
   })
 
   it('does not call an unreadable previous file new', () => {
@@ -173,7 +173,7 @@ describe('Markdown export', () => {
     expect(markdown).toContain('> \\![r](https://attacker.example/r)')
     expect(markdown).toContain('`![code](kept)`')
     expect(markdown).toContain('```md\n![fenced](kept) <b>kept</b>\n```')
-    expect(markdown).toContain('## 助手（生成中）\n\n&lt;img src=x>')
+    expect(markdown).toContain('## Agent（生成中）\n\n&lt;img src=x>')
   })
 
   it('keeps model text from posing as a user turn and closes a fence it leaves open', () => {

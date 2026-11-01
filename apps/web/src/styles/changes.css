@@ -1,0 +1,702 @@
+/*
+ * The 变更 tab: one 36 row holds the scope, the stat and the undo action or the reason there is none; lines say what the
+ * reader must know about the list; then the tree and the diff in one order. Amber only where the reader must take care,
+ * red only inside the step that cannot be undone.
+ */
+.changes-panel {
+  --diff-indent: 0ch;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  container-type: inline-size;
+  color: var(--ink);
+}
+.changes-scope-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 36px;
+  padding: 0 var(--sp-12) 0 var(--sp-6);
+}
+.changes-scope-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 24px;
+  padding: 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: var(--lh-caption);
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.changes-scope-button:hover,
+.changes-scope-button[aria-expanded='true'] {
+  background: var(--hover);
+}
+.changes-scope-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.changes-scope-button > svg {
+  color: var(--muted);
+}
+.changes-scope-action {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+.changes-scope-space {
+  flex: 1;
+}
+.changes-why {
+  overflow: hidden;
+  padding: 0 var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-stat {
+  display: inline-flex;
+  flex: none;
+  gap: var(--sp-4);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-mono);
+}
+.changes-add {
+  color: var(--green);
+}
+.changes-del {
+  color: var(--red);
+}
+
+.changes-line {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-12);
+  border: 0;
+  background: transparent;
+  box-shadow:
+    inset 0 1px 0 var(--line),
+    inset 0 -1px 0 var(--line);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: left;
+}
+.changes-line + .changes-line {
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.changes-line > svg {
+  flex: none;
+}
+.changes-line[data-tone='muted'] {
+  color: var(--muted);
+}
+.changes-line[data-tone='amber'] {
+  color: var(--amber);
+}
+.changes-line[data-tone='amber'] > svg {
+  color: var(--amber-icon);
+}
+.changes-line-text {
+  min-width: 0;
+  flex: 1;
+}
+.changes-line-sub {
+  flex: 1 0 100%;
+  padding-inline-start: var(--sp-20);
+  color: var(--muted);
+}
+.changes-line-button {
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.changes-line-button:hover {
+  background: var(--hover);
+}
+.changes-line-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.changes-line-button .ui-spinner {
+  color: var(--accent);
+}
+
+.changes-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 72px;
+  padding: var(--sp-16) var(--sp-24);
+  text-align: center;
+}
+.changes-empty-title {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.changes-empty-detail {
+  margin-top: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.changes-empty .ui-button {
+  margin-top: var(--sp-8);
+}
+
+/* The receipt fades in once, where the action was, and dims with the list. */
+.changes-receipt {
+  flex: none;
+  padding: var(--sp-8) var(--sp-12) var(--sp-8);
+  box-shadow:
+    inset 0 1px 0 var(--line),
+    inset 0 -1px 0 var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  animation: changes-fade var(--m-panel) var(--e-panel);
+}
+@keyframes changes-fade {
+  from {
+    opacity: 0;
+  }
+}
+.changes-receipt-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: var(--lh-ui);
+}
+.changes-receipt-title > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.changes-receipt-key {
+  margin-top: var(--sp-6);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: var(--lh-caption-para);
+}
+.changes-receipt-more {
+  margin-top: var(--sp-2);
+}
+.changes-receipt-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.changes-receipt-scope:hover {
+  color: var(--ink);
+}
+.changes-receipt-scope > svg {
+  transition: transform var(--m-panel) var(--e-panel);
+}
+.changes-receipt-scope[aria-expanded='true'] > svg {
+  transform: rotate(90deg);
+}
+.changes-missed {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) max-content;
+  column-gap: var(--sp-12);
+  max-height: 176px;
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.changes-missed-row {
+  display: contents;
+}
+.changes-missed code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-caption-para);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-warning {
+  padding: var(--sp-12);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.changes-warning-title {
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: var(--lh-ui);
+}
+.changes-warning-miss {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin: var(--sp-8) 0 var(--sp-2);
+  color: var(--amber);
+  font-weight: 500;
+}
+.changes-warning-miss > svg {
+  color: var(--amber-icon);
+}
+.changes-warning-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-6);
+  margin-top: var(--sp-12);
+}
+.changes-discard {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.changes-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.changes-tree {
+  flex: none;
+  width: min(232px, 40%);
+  overflow: auto;
+  padding: 0 var(--sp-6) var(--sp-12);
+  box-shadow: inset -1px 0 0 var(--line);
+}
+.changes-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding-inline-end: var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.changes-tree-row:hover {
+  background: var(--hover);
+}
+.changes-tree-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.changes-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-tree-file {
+  position: relative;
+}
+.changes-tree-file[data-selected] > .changes-tree-row {
+  background: var(--hover);
+  color: var(--ink);
+}
+.changes-tree-file > .changes-tree-row {
+  padding-inline-end: var(--sp-24);
+}
+.changes-tree-letter {
+  position: absolute;
+  top: 0;
+  right: var(--sp-6);
+  height: 24px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.changes-tree-letter[data-status='A'] {
+  color: var(--green);
+}
+.changes-tree-letter[data-status='D'] {
+  color: var(--red);
+}
+.changes-tree-letter[data-status='U'] {
+  color: var(--amber);
+}
+.changes-tree-undo {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+}
+.changes-tree-file:hover > .changes-tree-undo,
+.changes-tree-file[data-selected] > .changes-tree-undo,
+.changes-tree-undo:focus-within,
+.changes-tree-undo:focus-visible {
+  opacity: 1;
+}
+.changes-tree-file:has(> .changes-tree-undo):hover > .changes-tree-letter,
+.changes-tree-file:has(> .changes-tree-undo)[data-selected] > .changes-tree-letter {
+  opacity: 0;
+}
+.changes-chevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
+}
+.changes-tree-row > .changes-chevron[data-open] {
+  transform: rotate(90deg);
+}
+.changes-list {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  container-type: inline-size;
+}
+:is(.changes-panel[data-undone], .changes-file[data-file-undone]) :is(.changes-path, .diff-text, .diff-text *) {
+  color: var(--muted);
+}
+
+.changes-file {
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.changes-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  min-height: 32px;
+  background: var(--canvas);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.changes-file[data-selected] .changes-file-head {
+  background: linear-gradient(var(--hover), var(--hover)), var(--canvas);
+}
+.changes-file-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: 0 var(--sp-8) 0 var(--sp-12);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.changes-file-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.changes-file-toggle[aria-expanded='true'] > .changes-chevron {
+  transform: rotate(90deg);
+}
+.changes-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  white-space: nowrap;
+}
+.changes-note {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.changes-note-warn {
+  color: var(--amber);
+}
+.changes-tag {
+  flex: none;
+  color: var(--green);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.changes-tag[data-tone='gone'] {
+  color: var(--red);
+}
+/* Below 300px of diff the note gives way to the path. */
+@container (max-width: 300px) {
+  .changes-file-toggle > .changes-note {
+    display: none;
+  }
+}
+.changes-file-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* The head's hairline runs under the row's whole width. */
+  bottom: 1px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-8);
+  background: var(--canvas);
+  opacity: 0;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.changes-file-head:hover > .changes-file-actions,
+.changes-file-actions:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .changes-file-actions {
+    position: static;
+    opacity: 1;
+  }
+}
+.changes-file-lines {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-6) 0;
+}
+.changes-file-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.changes-file-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-panel[data-phone] .changes-file:not([data-open]) .changes-file-actions {
+  display: none;
+}
+.info-page-body:has(> .session-panels > .session-panel-changes:not([hidden])) {
+  padding: 0;
+  overflow: hidden;
+  background: var(--canvas);
+}
+.info-page-body > .session-panels:has(> .session-panel-changes:not([hidden])) {
+  max-width: none;
+  margin: 0;
+}
+.changes-body-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+/* One file scrolls sideways as a block with its numbers pinned; each line stays one line until 自动换行 is on. */
+.changes-file-body .diff-lines {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.changes-file-body .diff-lines[data-layout='split'] {
+  overflow-x: hidden;
+}
+.changes-file-body .diff-line {
+  position: relative;
+  grid-template-columns: 44px minmax(max-content, 1fr);
+  width: max-content;
+  min-width: 100%;
+}
+.changes-file-body :is(.diff-ln-old, .diff-ln-new, .diff-line > .diff-sign) {
+  display: none;
+}
+.changes-file-body .diff-ln-one {
+  display: block;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--canvas);
+}
+.changes-file-body .diff-side-row {
+  position: relative;
+  grid-template-columns: 44px minmax(max-content, 1fr);
+}
+.changes-file-body .diff-side-row > .diff-sign {
+  display: none;
+}
+.changes-file-body :is(.diff-line.diff-add, .diff-side-row.diff-add) > .diff-ln {
+  background: linear-gradient(var(--diff-add), var(--diff-add)), var(--canvas);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.changes-file-body :is(.diff-line.diff-remove, .diff-side-row.diff-remove) > .diff-ln {
+  background: linear-gradient(var(--diff-del), var(--diff-del)), var(--canvas);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+.changes-file-body .diff-add {
+  background: var(--diff-add);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.changes-file-body .diff-remove {
+  background: var(--diff-del);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+.changes-file-body [data-whole] .diff-add,
+.changes-file-body [data-whole] .diff-remove {
+  background: transparent;
+}
+.changes-file-body [data-whole] .diff-add {
+  box-shadow: inset 2px 0 0 var(--green);
+}
+.changes-file-body [data-whole] .diff-remove {
+  box-shadow: inset 2px 0 0 var(--red);
+}
+.changes-file-body [data-whole] .diff-add > .diff-ln {
+  background: var(--canvas);
+  box-shadow: inset 2px 0 0 var(--green);
+}
+.changes-file-body [data-whole] .diff-remove > .diff-ln {
+  background: var(--canvas);
+  box-shadow: inset 2px 0 0 var(--red);
+}
+.changes-file-body .diff-gap {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+}
+.changes-file-body .diff-gutter {
+  z-index: 1;
+  left: var(--sp-2);
+  top: 0;
+}
+.changes-panel[data-wrap] .diff-lines {
+  overflow-x: hidden;
+}
+.changes-panel[data-wrap] :is(.diff-line, .diff-side-row) {
+  grid-template-columns: 44px minmax(0, 1fr);
+  width: auto;
+}
+.changes-panel[data-wrap] :is(.diff-line, .diff-side-row) > .diff-text {
+  overflow-wrap: anywhere;
+  padding-inline-start: calc(var(--diff-indent, 0ch) + 2ch);
+  text-indent: calc(-1 * (var(--diff-indent, 0ch) + 2ch));
+  white-space: pre-wrap;
+}
+.changes-comment {
+  position: sticky;
+  left: var(--sp-12);
+  width: min(calc(100cqw - 56px), 520px);
+  margin: var(--sp-6) 0 var(--sp-6) 44px;
+  padding: var(--sp-8);
+  border-radius: var(--r-8);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-family: var(--font);
+}
+.changes-comment textarea {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+  resize: vertical;
+}
+.changes-comment textarea:focus {
+  outline: none;
+}
+.changes-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-6);
+  margin-top: var(--sp-6);
+}
+
+/* Full bleed while 变更 shows: its rows and hairlines run to the panel's edges. */
+.inspector-column-inner:has(> .session-panels > .session-panel-changes:not([hidden])) {
+  padding: 0;
+  overflow: hidden;
+}
+/* Tab strip's ends while 变更 is showing. */
+.session-panel-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding-inline-end: var(--sp-8);
+}
+@media (max-width: 767.98px) {
+  .session-panel-strip > .ui-icon-button {
+    display: none;
+  }
+}
+.session-panel-strip > .session-panel-tabs {
+  flex: 1;
+}
+.session-panels:has(> .session-panel-changes) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+.session-panels:has(> .session-panel-changes:not([hidden])) > [role='tabpanel'] {
+  display: none;
+}
+.session-panel-changes {
+  flex: 1;
+  min-height: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .changes-receipt {
+    animation: none;
+  }
+  .changes-chevron,
+  .changes-receipt-scope > svg {
+    transition: none;
+  }
+}
+/* A phone's header gives its two end buttons one cell, so the title keeps its place. */
+.topbar-phone-actions {
+  display: inline-flex;
+  align-items: center;
+}

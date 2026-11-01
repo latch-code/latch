@@ -181,7 +181,7 @@ describe('value picker', () => {
     expect(trigger.element().querySelector('.lucide-chevrons-up-down')).not.toBeNull()
     expect(trigger.element().querySelector('.lucide-chevron-down')).toBeNull()
     const text = trigger.element().querySelector('.ui-value-picker-text[data-shown]')
-    expect(text && getComputedStyle(text).color).toBe('rgb(113, 113, 122)')
+    expect(text && getComputedStyle(text).color).toBe('rgb(106, 106, 115)')
   })
 })
 
@@ -311,7 +311,7 @@ describe('permission menu', () => {
     await expect.element(screen.getByRole('button', { name: '权限：完全访问' })).not.toHaveAttribute('aria-busy')
     expect(screen.getByRole('button', { name: '权限：完全访问' }).element().getBoundingClientRect().width).toBe(width)
     const shield = screen.getByRole('button', { name: '权限：完全访问' }).element().querySelector('.lucide-shield-alert')
-    expect(shield && getComputedStyle(shield).color).toBe('rgb(245, 158, 11)')
+    expect(shield && getComputedStyle(shield).color).toBe('rgb(212, 115, 6)')
   })
 
   it('keeps the value when a verification is cancelled', async () => {
@@ -510,7 +510,7 @@ describe('menu rows', () => {
     )
     const rename = screen.getByRole('menuitem', { name: '重命名' })
     const glyph = () => getComputedStyle(rename.element().querySelector('.lucide-pencil')!).color
-    expect(glyph()).toBe('rgb(113, 113, 122)')
+    expect(glyph()).toBe('rgb(106, 106, 115)')
     await userEvent.hover(rename)
     await expect.poll(glyph).toBe(getComputedStyle(document.documentElement).color)
     const danger = screen.getByRole('menuitem', { name: '删除…' })

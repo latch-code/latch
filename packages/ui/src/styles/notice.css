@@ -1,7 +1,6 @@
 /*
- * Inline notices and banners: 8px corners, 8px 12px inside, on the raised surface with a 1px line; a warning lays
- * amber-soft over it with an amber-line edge, an error red-soft with a red-line edge. The tone colours only the glyph
- * and the title; the text stays ink-2 at the caption's paragraph height. At most one xs action, outlined inside amber
+ * Inline notices and banners: 8px corners, 8px 12px inside, on the raised surface with a 1px line; a warning stays on
+ * that neutral surface, an error lays red-soft over it with a red-line edge. The tone colours the glyph and the title; the text stays ink-2 at the caption's paragraph height. At most one xs action, outlined inside amber
  * and red (data-tint).
  */
 .ui-notice {
@@ -15,10 +14,6 @@
   color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
-}
-.ui-notice[data-tone='warn'] {
-  border-color: var(--amber-line);
-  background: linear-gradient(var(--amber-soft), var(--amber-soft)) var(--raised);
 }
 .ui-notice[data-tone='error'] {
   border-color: var(--red-line);

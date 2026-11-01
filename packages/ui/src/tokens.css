@@ -37,7 +37,7 @@
      * faint placeholders, disabled words and rows already read. */
     --ink: #18181b;
     --ink-2: #3f3f46;
-    --muted: #71717a;
+    --muted: #6a6a73;
     --faint: #a1a1aa;
 
     /* Surfaces. canvas: the conversation and the panels; sidebar: the sidebar and the settings navigation; raised:
@@ -96,10 +96,11 @@
     --accent-soft: rgba(36, 97, 224, 0.1);
     --on-accent: #ffffff;
 
-    /* Amber: 等你处理 and warnings. amber is text, amber-icon a glyph or dot, amber-soft a tint and amber-line its ring. */
+    /* Amber: 等你处理 and warnings, always on a neutral surface. amber is text, amber-icon a glyph or dot, amber-soft only an
+     * amber control's hover fill, amber-line the outline of an inline mark. */
     --amber: #b45309;
-    --amber-icon: #f59e0b;
-    --amber-soft: rgba(245, 158, 11, 0.1);
+    --amber-icon: #d47306;
+    --amber-soft: rgba(217, 119, 6, 0.08);
     --amber-line: rgba(217, 119, 6, 0.24);
     /* Red: a real failure or risk. red is text, glyphs and dots; red-solid fills the one destructive confirmation. */
     --red: #b91c1c;
@@ -209,7 +210,7 @@
     --sidebar-open-width: var(--sidebar-width);
     --inspector-width: 320px;
     --inspector-open-width: var(--inspector-width);
-    --content-width: 760px;
+    --content-width: 720px;
     --gutter: 32px;
     --topbar-height: 48px;
     --shell-inset: 8px;
@@ -320,7 +321,7 @@
       --on-accent: #ffffff;
       --amber: #fbbf24;
       --amber-icon: #fbbf24;
-      --amber-soft: rgba(251, 191, 36, 0.12);
+      --amber-soft: rgba(251, 191, 36, 0.08);
       --amber-line: rgba(251, 191, 36, 0.24);
       --red: #f87171;
       --red-solid: #dc2626;
@@ -383,7 +384,7 @@
     --on-accent: #ffffff;
     --amber: #fbbf24;
     --amber-icon: #fbbf24;
-    --amber-soft: rgba(251, 191, 36, 0.12);
+    --amber-soft: rgba(251, 191, 36, 0.08);
     --amber-line: rgba(251, 191, 36, 0.24);
     --red: #f87171;
     --red-solid: #dc2626;
@@ -415,7 +416,7 @@
     --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
     --ink: #18181b !important;
     --ink-2: #3f3f46 !important;
-    --muted: #71717a !important;
+    --muted: #6a6a73 !important;
     --faint: #a1a1aa !important;
     --canvas: #ffffff !important;
     --sidebar: #f7f7f8 !important;
@@ -453,8 +454,8 @@
     --accent-soft: rgba(36, 97, 224, 0.1) !important;
     --on-accent: #ffffff !important;
     --amber: #b45309 !important;
-    --amber-icon: #f59e0b !important;
-    --amber-soft: rgba(245, 158, 11, 0.1) !important;
+    --amber-icon: #d47306 !important;
+    --amber-soft: rgba(217, 119, 6, 0.08) !important;
     --amber-line: rgba(217, 119, 6, 0.24) !important;
     --red: #b91c1c !important;
     --red-solid: #b91c1c !important;
@@ -587,7 +588,7 @@
       --on-accent: #ffffff !important;
       --amber: #fbbf24 !important;
       --amber-icon: #fbbf24 !important;
-      --amber-soft: rgba(251, 191, 36, 0.12) !important;
+      --amber-soft: rgba(251, 191, 36, 0.08) !important;
       --amber-line: rgba(251, 191, 36, 0.24) !important;
       --red: #f87171 !important;
       --red-solid: #dc2626 !important;
@@ -649,7 +650,7 @@
     --on-accent: #ffffff !important;
     --amber: #fbbf24 !important;
     --amber-icon: #fbbf24 !important;
-    --amber-soft: rgba(251, 191, 36, 0.12) !important;
+    --amber-soft: rgba(251, 191, 36, 0.08) !important;
     --amber-line: rgba(251, 191, 36, 0.24) !important;
     --red: #f87171 !important;
     --red-solid: #dc2626 !important;

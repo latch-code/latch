@@ -240,53 +240,51 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
-  it('says what the run does at the end of its turn and settles it into the facts the Host recorded, the same after a reload', async () => {
+  it('says what the run does under its turn and settles it into the facts the Host recorded, the same after a reload', async () => {
     const { context, page } = await open(1280, 820)
     try {
       const { id, reply } = await start(page, '检验回合脚部的进行与结算')
-      const footer = page.locator('.turn').last().locator('.turn-footer')
-      // Before any output the turn's live line waits for the model; the bar above the input has nothing to say.
-      await expect.poll(() => footer.getAttribute('class'), { interval: 20 }).toContain('is-live')
-      await expect.poll(() => footer.locator('[role="status"]').textContent(), { interval: 20 }).toContain('等待模型')
+      const turn = page.locator('.turn').last()
+      const status = turn.locator('.status-line')
+      const footer = turn.locator('.turn-footer')
+      // While the turn runs the status line says so; the bar above the input has nothing to say, and there is no footer.
+      await expect.poll(() => status.textContent(), { interval: 20 }).toContain('运行中')
       expect(await page.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
+      expect(await footer.count()).toBe(0)
 
       reply.append('回合脚部的第一段正文。')
       await liveRow(page, id)
-      // A phase holds at least 1.2s before the next one shows.
-      await expect.poll(() => footer.locator('[role="status"]').textContent(), { interval: 50, timeout: 5000 }).toContain('正在回复')
-      await expect.poll(() => footer.textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+ 秒/)
+      await expect.poll(() => status.textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)
       reply.usage(1234, 340)
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')
 
-      // Settled, the same element carries the turn's facts: when the reply was sent and its tokens, each with its unit;
-      // when the turn began and ended and how long it worked are in the time's tooltip.
-      await expect.poll(() => footer.getAttribute('class'), { interval: 20 }).not.toContain('is-live')
+      // Settled, the footer carries the turn's facts: when the reply was sent and its tokens, each with its unit; when the
+      // turn began and ended is in the time's tooltip.
+      await status.waitFor({ state: 'detached' })
       const facts = footer.locator('.turn-facts')
-      await expect.poll(() => facts.innerText(), { interval: 20 }).toMatch(/输入 1\.2k tokens\s*输出 340 tokens/)
+      await expect.poll(() => facts.innerText(), { interval: 20 }).toMatch(/输入 1\.2k tokens\s*·?\s*输出 340 tokens/)
       const settled = (await facts.textContent()) ?? ''
-      // The working time is in the time's tooltip, not a segment of its own.
-      expect(await facts.innerText()).not.toContain('用时')
       const sent = facts.locator('time')
       expect(await sent.getAttribute('datetime')).toBe(
         (await host.bridge.detail(id)).messages.find(message => message.role === 'user')?.turn?.endedAt,
       )
-      await page.locator('.turn').last().locator('.turn-reply').hover()
+      await turn.locator('.turn-reply').hover()
       await sent.hover()
       await expect
         .poll(() => page.getByRole('tooltip').filter({ visible: true }).textContent(), { interval: 50, timeout: 5000 })
         .toMatch(/开始 · \d{2}:\d{2}:\d{2} 完成/)
-      await footer.getByRole('button', { name: '复制回复', exact: true }).waitFor({ state: 'attached' })
+      await footer.getByRole('button', { name: '复制', exact: true }).waitFor({ state: 'attached' })
       const recorded = (await host.bridge.detail(id)).messages.find(message => message.role === 'user')?.turn
       expect(recorded).toEqual({ endedAt: expect.any(String), activeMs: expect.any(Number), waitMs: 0 })
 
-      // The page watched the turn settle, so the footer stays shown for a moment; after a reload it rests hidden on
-      // desktop until the pointer is on the turn, and reads the same.
+      // After a reload it rests hidden on desktop until the pointer is on the turn, and reads the same.
+      await page.mouse.move(0, 0)
       await page.reload()
       await connected(page)
       await expect.poll(() => facts.textContent(), { interval: 20 }).toBe(settled)
       expect(await footer.evaluate(element => getComputedStyle(element).opacity)).toBe('0')
-      await page.locator('.turn').last().locator('.turn-reply').hover()
+      await turn.locator('.turn-reply').hover()
       await expect.poll(() => footer.evaluate(element => getComputedStyle(element).opacity), { interval: 20 }).toBe('1')
     } finally {
       await context.close()

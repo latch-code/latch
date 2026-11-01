@@ -5,11 +5,14 @@ import type { Approval, AppSnapshot, Message, TaskDetail, TaskSummary } from '@l
 import { sha256Hex } from '@latch/core/node-kit'
 import { hashDisplay } from '@latch/host/crypto'
 import { Inspector } from '../src/components/Inspector.tsx'
-import { MessageRow } from '../src/components/MessageRow.tsx'
+import { MessageRow, ThinkingRow } from '../src/components/MessageRow.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView } from '../src/components/DiffView.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
+import { JumpLatest } from '../src/components/JumpLatest.tsx'
+import { StatusLine } from '../src/conversation/StatusLine.tsx'
+import { ChangesLinkContext, type ChangesLink } from '../src/conversation/changesLink.ts'
 import { renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
@@ -113,6 +116,67 @@ const localIso = (minutes: number) => new Date(2026, 9, 24, 14, minutes).toISOSt
 const transcriptOf = (detail: TaskDetail, active: boolean) =>
   renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Latch', active }))
 
+describe('with the connection down', () => {
+  it('stops the thinking row and the caret, and says when it last knew', () => {
+    const live = { text: '想', live: true, streaming: true, liveTimes: { startedAt: localIso(0) } }
+    const moving = renderToStaticMarkup(createElement(ThinkingRow, live))
+    expect(moving).toContain('is-live')
+    expect(moving).toContain('process-time')
+    const still = renderToStaticMarkup(createElement(ThinkingRow, { ...live, frozen: true }))
+    expect(still).not.toContain('is-live')
+    expect(still).not.toContain('process-time')
+    expect(still).toContain('思考中')
+    const message: Message = { id: 'm', role: 'assistant', text: '写到一半' }
+    expect(renderToStaticMarkup(createElement(MessageRow, { message, streaming: true }))).toContain('is-live')
+    expect(renderToStaticMarkup(createElement(MessageRow, { message, streaming: true, frozen: true }))).not.toContain('is-live')
+    const detail = { summary: { id: 's', status: 'running' }, messages: [], liveText: '' } as unknown as TaskDetail
+    const line = renderToStaticMarkup(
+      createElement(StatusLine, {
+        detail,
+        harness: 'Codex',
+        cancelling: false,
+        approvals: 0,
+        frozenAt: new Date(2026, 9, 24, 10, 42).getTime(),
+      }),
+    )
+    expect(line).toContain('上次确认 10:42')
+    expect(line).not.toContain('运行中')
+  })
+})
+
+describe('a run that has gone quiet', () => {
+  const quiet = (live: NonNullable<TaskSummary['live']>) =>
+    renderToStaticMarkup(
+      createElement(StatusLine, {
+        detail: { summary: { id: 's', status: 'running', live }, messages: [], liveText: '' } as unknown as TaskDetail,
+        harness: 'Codex',
+        cancelling: false,
+        approvals: 0,
+        onStop: noop,
+      }),
+    )
+  const base = { runId: 'r', activity: 'model' as const, since: localIso(0), lastEventAt: localIso(0) }
+
+  it('asks whether to keep waiting, and a request it cannot read stops the question', () => {
+    const silent = quiet({ ...base, silent: true, silenceThresholdMs: 120_000 })
+    expect(silent).toContain('继续等')
+    expect(silent).toContain('停止')
+    const unknown = quiet({ ...base, unrecognized: { count: 1, at: localIso(0), messageId: 'n' } })
+    expect(unknown).toContain('Codex 发来一个看不懂的请求')
+    expect(unknown).toContain('查看')
+    expect(unknown).not.toContain('继续等')
+  })
+})
+
+describe('the jump button', () => {
+  it('says what waits for the person, in the words it is given, when its card is out of view', () => {
+    const html = renderToStaticMarkup(createElement(JumpLatest, { show: true, onJump: noop, waiting: '等你回答', onRevealWaiting: noop }))
+    expect(html).toContain('等你回答')
+    expect(html).toContain('is-waiting')
+    expect(renderToStaticMarkup(createElement(JumpLatest, { show: true, onJump: noop }))).toContain('回到最新')
+  })
+})
+
 describe('tool cards', () => {
   it('merges a pending approval into its tool card with the Host options, allow-once last', () => {
     const html = renderToStaticMarkup(
@@ -166,33 +230,17 @@ describe('tool cards', () => {
     expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-busy="true"/g)).toHaveLength(1)
   })
 
-  it("puts an opened card's changes in its paper and keeps a closed card's under its row, never a tray inside a tray", () => {
+  it('shows a file edit as one row, whose preview opens under it only when asked', () => {
     const diffs = [{ path: 'src/a.ts', oldText: 'x\n', newText: 'y\n', previous: 'text' as const }]
-    // A failure with output opens by itself: the changes are the paper's 变更, between 参数 and 输出.
-    const open = renderToStaticMarkup(
-      createElement(ToolCard, {
-        message: tool({
-          state: 'failed',
-          text: '退出码 1',
-          tool: { kind: 'edit', input: '{"path":"src/a.ts"}', output: '退出码 1', diffs },
-        }),
-        onDecide: noop,
-      }),
-    )
-    expect(open.match(/class="diff-view"/g)).toHaveLength(1)
-    const paper = open.slice(open.indexOf('class="tool-card-body"'))
-    expect(paper.indexOf('<h4>参数</h4>')).toBeLessThan(paper.indexOf('<h4>变更</h4>'))
-    expect(paper.indexOf('<h4>变更</h4>')).toBeLessThan(paper.indexOf('<h4>输出</h4>'))
-    expect(paper.indexOf('class="diff-view"')).toBeGreaterThan(paper.indexOf('<h4>变更</h4>'))
-    // Closed, the diff sits after the tray, outside it.
     const closed = renderToStaticMarkup(
       createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }), onDecide: noop }),
     )
-    expect(closed.match(/class="diff-view"/g)).toHaveLength(1)
-    expect(closed).not.toContain('<h4>变更</h4>')
-    const tray = closed.indexOf('class="tool-tray"')
-    expect(closed.indexOf('class="diff-view"')).toBeGreaterThan(closed.indexOf('</button>', tray))
-    expect(closed.slice(tray, closed.indexOf('class="diff-view"'))).toMatch(/<\/div><\/div><\/div><div class="ui-collapse"/)
+    expect(closed).toContain('编辑')
+    expect(closed).toContain('a.ts')
+    expect(closed).toContain('+1')
+    expect(closed).toContain('−1')
+    expect(closed).not.toContain('class="diff-view"')
+    expect(closed).toContain('data-kind="edit"')
   })
 
   it('numbers a removed line by its old line in the single column phones keep', () => {
@@ -216,29 +264,26 @@ describe('tool cards', () => {
 })
 
 describe('assistant messages', () => {
-  it('shows reported reasoning only when it exists and labels the live row', () => {
+  it('labels the live row and draws no reasoning in the prose block', () => {
     const live = renderToStaticMarkup(
-      createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '', reasoning: '想一想' }, streaming: true }),
+      createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答', reasoning: '想一想' }, streaming: true }),
     )
     expect(live).toContain('aria-label="正在生成的回复"')
-    expect(live).toContain('正在思考')
-    expect(live).toMatch(/class="process-row thinking-toggle" aria-expanded="true"/)
-    expect(live).toContain('想一想')
-    const settled = renderToStaticMarkup(
-      createElement(MessageRow, {
-        message: { id: 'm', role: 'assistant', text: '答案', reasoning: '想一想', usage: { inputTokens: 1500, outputTokens: 20 } },
-      }),
-    )
-    expect(settled).not.toContain('正在生成的回复')
-    expect(settled).toContain('思考过程')
-    // Folded once the answer started; the body stays in the page for the browser's find.
-    expect(settled).toMatch(/class="process-row thinking-toggle" aria-expanded="false"/)
-    const timed = renderToStaticMarkup(
-      createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答案', reasoning: '想一想', reasoningMs: 6200 } }),
-    )
-    expect(timed).toContain('思考了 6.2 秒')
+    expect(live).not.toContain('想一想')
     const plain = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答案' } }))
     expect(plain).not.toContain('思考')
+  })
+
+  it('makes reasoning a work row: 思考中 while live, then how long, and its body folds once the answer starts', () => {
+    const live = renderToStaticMarkup(createElement(ThinkingRow, { text: '想一想', live: true, streaming: true }))
+    expect(live).toContain('思考中')
+    expect(live).toMatch(/class="process-row thinking-toggle" aria-expanded="true"/)
+    expect(live).toContain('想一想')
+    const settled = renderToStaticMarkup(createElement(ThinkingRow, { text: '想一想', live: false, streaming: false }))
+    expect(settled).toContain('思考过程')
+    expect(settled).toMatch(/class="process-row thinking-toggle" aria-expanded="false"/)
+    const timed = renderToStaticMarkup(createElement(ThinkingRow, { text: '想一想', live: false, streaming: false, reasoningMs: 6200 }))
+    expect(timed).toContain('思考了 6.2 秒')
   })
 
   it('renders the live reply under the ID it keeps and labels the harness once per turn', () => {
@@ -260,9 +305,59 @@ describe('assistant messages', () => {
     const html = renderToStaticMarkup(
       createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Standard' }),
     )
-    expect([...html.matchAll(/data-message-id="([^"]+)"/g)].map(match => match[1])).toEqual(['u1', 'a1', 'tool:c1', 'a2', 'u2', 'a3'])
+    // A block with neither prose nor reasoning draws nothing.
+    expect([...html.matchAll(/data-message-id="([^"]+)"/g)].map(match => match[1])).toEqual(['u1', 'tool:c1', 'a2', 'u2', 'a3'])
     expect(html.match(/class="assistant-meta"/g)).toHaveLength(2)
     expect(html).toContain('data-message-id="a3" aria-label="正在生成的回复"')
+  })
+})
+
+describe("the person's message", () => {
+  it('keeps what an undo told the engine apart from what the person wrote', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageRow, {
+        message: { id: 'u', role: 'user', text: '[Latch] 在这条消息之前，用户撤销了上一轮\n\n接着改', createdAt: new Date().toISOString() },
+      }),
+    )
+    expect(html).toContain('已告诉 Agent 改动被撤销了')
+    expect(html).toContain('接着改')
+    expect(html.slice(html.indexOf('user-bubble'))).not.toContain('[Latch]')
+  })
+
+  it('follows delivery under the bubble, in place of its time, and offers editing only with a place to fork to', () => {
+    const message = { id: 'u', role: 'user' as const, text: '问', createdAt: new Date().toISOString() }
+    const going = renderToStaticMarkup(createElement(MessageRow, { message, delivery: 'Agent 已开始' }))
+    expect(going).toContain('Agent 已开始')
+    expect(going).not.toContain('message-meta')
+    expect(renderToStaticMarkup(createElement(MessageRow, { message }))).not.toContain('从这里编辑')
+    expect(renderToStaticMarkup(createElement(MessageRow, { message, onEdit: noop }))).toContain('从这里编辑')
+  })
+})
+
+describe('a file edit and the right panel', () => {
+  const diffs = [{ path: 'src/a.ts', oldText: 'x\n', newText: 'y\n', previous: 'text' as const }]
+  const row = (link: ChangesLink | null) =>
+    renderToStaticMarkup(
+      createElement(
+        ChangesLinkContext.Provider,
+        { value: link },
+        createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }), onDecide: noop }),
+      ),
+    )
+
+  it('stays one line while the panel is open, with nothing to expand, and marks the file the panel shows', () => {
+    const open = row({ open: noop, panelOpen: true })
+    expect(open).not.toContain('aria-expanded')
+    expect(open).not.toContain('process-chevron')
+    expect(open).not.toContain('data-selected')
+    expect(row({ open: noop, panelOpen: true, selected: { path: 'src/a.ts' } })).toContain('data-selected')
+    expect(row({ open: noop, panelOpen: true, selected: { path: 'src/b.ts' } })).not.toContain('data-selected')
+  })
+
+  it('offers its preview while the panel is closed', () => {
+    const closed = row({ open: noop, panelOpen: false })
+    expect(closed).toContain('aria-expanded="false"')
+    expect(closed).toContain('process-chevron')
   })
 })
 
@@ -271,9 +366,9 @@ describe('system notes', () => {
     const failed = renderToStaticMarkup(
       createElement(MessageRow, { message: { id: 'n1', role: 'system', text: '模型服务返回错误（HTTP 503）', state: 'failed' } }),
     )
-    expect(failed).toMatch(/<article class="message message-system is-failed"[^>]*><svg[^>]*lucide-circle-x/)
+    expect(failed).toMatch(/<article class="message message-system is-failed"[^>]*><span[^>]*><svg[^>]*lucide-x/)
     const note = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'n2', role: 'system', text: '已自动拒绝' } }))
-    expect(note).toMatch(/<article class="message message-system"[^>]*><svg[^>]*lucide-info/)
+    expect(note).toMatch(/<article class="message message-system"[^>]*><span[^>]*><svg[^>]*lucide-info/)
   })
 })
 
@@ -305,16 +400,15 @@ describe('turn footers', () => {
       }),
     )
 
-  it('gives only the block that ends a settled turn a footer, with the turn usage summed', () => {
+  it('gives a settled turn one footer with its usage summed, and a running one the status line instead', () => {
     const settled = render(false)
     expect(settled.match(/class="turn-footer[ "]/g)).toHaveLength(2)
     expect(settled).toContain('>输入 300 tokens</span>')
     expect(settled).toContain('>输出 30 tokens</span>')
-    // The latest turn of a running session ends with the live line instead.
     const running = render(true)
-    expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(2)
-    expect(running.match(/class="turn-footer is-live"/g)).toHaveLength(1)
-    expect(running).toContain('等待模型…')
+    expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(1)
+    expect(running).toContain('class="status-line is-plain"')
+    expect(running).toContain('运行中')
   })
 
   it('renders no copy control between tool calls of one turn', () => {
@@ -329,7 +423,7 @@ describe('turn footers', () => {
       createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Agent' }),
     )
     expect(html.match(/class="turn-footer[ "]/g)).toHaveLength(1)
-    expect(html.match(/aria-label="复制回复"/g)).toHaveLength(1)
+    expect(html.match(/aria-label="复制"/g)).toHaveLength(2)
     expect(html).toContain('>输入 300 tokens</span>')
   })
 })
@@ -438,8 +532,9 @@ describe('units', () => {
       runStartedAt: localIso(4),
       lastOutputAt: localIso(4),
     }
-    const footers = [...textsOf(transcriptOf(settled, false), 'turn-facts'), ...textsOf(transcriptOf(running, true), 'turn-facts')]
-    expect(footers.join(' | ')).toMatch(/输入 12\.4k tokens.*输出 3\.1k tokens.*上下文 74\.2k tokens.*输出 3\.1k tokens/u)
+    const footers = textsOf(transcriptOf(settled, false), 'turn-facts')
+    expect(footers.join(' | ')).toMatch(/输入 12\.4k tokens.*输出 3\.1k tokens.*上下文 74\.2k tokens/u)
+    expect(transcriptOf(running, true)).toContain('status-line')
     const inspector = renderToStaticMarkup(
       createElement(Inspector, {
         snapshot: appSnapshot(),

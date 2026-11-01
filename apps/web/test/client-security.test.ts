@@ -214,7 +214,7 @@ describe('shared security vectors (browser algorithms)', () => {
 
 describe('approval gating', () => {
   it.each([
-    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '等你允许'],
+    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '需要你允许'],
     [
       'R1 without approve:standard',
       approval({ risk: 'R1' }),
@@ -222,7 +222,7 @@ describe('approval gating', () => {
       null,
       ['拒绝'],
       '这台设备不能允许这一步',
-      '等你允许',
+      '需要你允许',
     ],
     ['R2 from a browser', approval({ risk: 'R2' }), device({ scopes: allScopes }), null, ['拒绝'], '在 Mac 上的 Latch 里允许', '高风险'],
     [

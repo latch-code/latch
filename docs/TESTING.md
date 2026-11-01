@@ -141,7 +141,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 终端：帧格式、环境白名单与 Latch 标记、回放与输出上限、「加入对话」的文本与脱敏、观看名额与数据范围、只有 `host.sock` 上数据范围为 `all` 的设备能打开输入关闭、流随设备与凭据结束、归档时不结束这台电脑的 shell、配对码不显示在 Latch 终端里、真实组件的进程清理 | `terminal-frames.test.ts`、`terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-service.test.ts`、`terminal-helper.test.ts`、`terminal-cli.test.ts`、`terminal-routes.test.ts`（路由、审计、入口、能力标记、归档与删除的检查） |
 | SSE 合并、会话隔离、刷新回退、事件与快照带的 Host 时间 | `streaming.test.ts` |
 | Host 记录的时间与用量：审批等待按并集计、不计入用时，思考用时，工具的开始与结束，回合的 `turn`，用量的缓存与推理部分只在每一步都报告时保留，ACP 的 `starting` 阶段与 `usage_update` | `timing.test.ts`、`runtime.test.ts` 的 `times and usage the runtime records`、`acp.test.ts` 的 `ACP times and usage reports`、`providers.test.ts` |
-| 对话的推导：回合、结果（按这一轮实际留下的内容）、复制与用量合计、回复的时间与它的提示、过程行的说法与用时、答案前的折叠、时间分隔、重新发送前的说明、按 Host 时钟的已运行时间、运行阶段与停滞、运行中回合的模型 | `conversation.test.ts` |
+| 对话的推导：回合、结果（按这一轮实际留下的内容）、复制与用量合计、回复的时间与它的提示、工作行的说法与用时、回合的块与折叠、送达的过程、重试前的说明、按 Host 时钟的已运行时间、状态行的说法与沉默的询问、运行的结束方式、运行中回合的模型 | `conversation.test.ts` |
+| 回合与每轮记录的匹配、回合卡片的数字来源、撤销前说明恢复不了的文件 | `turn-changes.test.ts`；在真实 Host 上撤销与恢复见 `e2e/turn-undo.e2e.ts` |
 | 每个数都带单位：回合脚部、活的一行与会话信息的行里没有不带单位的数 | `components-*.test.ts` 的 `units` |
 | 消息到达的动效只在页面亲眼看到时播放（重新加载与切换会话后没有），减少动效时直接出现；切换会话时对话区淡入 | `streaming-ui.e2e.ts` |
 | 会话信息栏：默认打开的宽度、按窗口类别记住、与侧栏和对话画布的宽度分配、平板与手机换成页面 | `inspector-layout.test.ts`、`visual.e2e.ts` |
@@ -484,6 +485,8 @@ pnpm latch presence test --data-dir <临时目录>
 `apps/host/test/file-tree.test.ts` 经真实 Host 检查会话与带 Harness 的项目懒加载、主根限制、隐藏项、符号链接、`work` 拒绝、跨设备句柄、根换序／同路径替换、迟到撤权和哈希审计；受控子进程检查无排队并发和取消后的真实退出。`files-helper.test.ts` 编译真实 Swift 组件，验证私有路径、Unicode 与上限；`native.test.ts` 的文件树用例经真实原生 TLS 验证正文窗口前后与到期迟到结果。非 macOS 跳过实际枚举，缺组件仍检查诚实拒绝。标准 `build:host` 同时构建目录组件，运行测试只用临时 Host 和测试确认后端。
 
 文档样例统一由 `@latch/testkit` 的 `documentFixtures` 生成，覆盖备注、窗口化大页数与缓存公式；格式浏览器回归还核对保页、键盘缩放、横向手势和链接显式打开，见 [文档预览](DOCUMENT-PREVIEWS.md)。
+
+`changes-panel.e2e.ts` 用真实工具与真实 Git 仓库走完变更页签的范围、撤销与恢复、合并中的拒绝和数据范围不足的说明，再按 Host 的答复在三种宽度、浅深色下画出每个状态（截图在 `test-results/changes-panel/`），并量过两万个文件的列表。
 
 `file-history.e2e.ts` 用真实工具写入生成两文件、三次差异，检查最新优先、旧记录展开、手机行内、宽屏左右对照与展开宽度、删除重载后的历史保留；同时核对差异最后一行没有额外空白。`diff-layout.test.ts` 检查不等长变更块、空行和两侧行序号守恒。
 

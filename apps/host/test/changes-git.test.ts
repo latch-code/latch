@@ -31,6 +31,7 @@ async function repository() {
     execFileSync(git!, ['-c', 'user.name=Latch', '-c', 'user.email=latch@example.invalid', '-c', 'init.defaultBranch=main', ...args], {
       cwd: root,
       env: { PATH: '/usr/bin:/bin', HOME: root, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      stdio: 'pipe',
     })
   run('init', '-q')
   return { root, run }
@@ -141,6 +142,67 @@ describe.skipIf(!git)('read-only Git scopes', () => {
   it('reads the layout it runs Git in from files only', async () => {
     const { root } = await repository()
     expect(await readGitLayout(root)).toEqual({ root, gitdir: join(root, '.git'), head: { branch: 'main' } })
+  })
+})
+
+describe('a repository in the middle of something', () => {
+  /** Two branches that both change `shared.txt`, on `main`. */
+  async function diverged() {
+    const repo = await repository()
+    await writeFile(join(repo.root, 'shared.txt'), 'base\n')
+    repo.run('add', '.')
+    repo.run('commit', '-q', '-m', 'base')
+    repo.run('checkout', '-q', '-b', 'side')
+    await writeFile(join(repo.root, 'shared.txt'), 'side\n')
+    repo.run('commit', '-q', '-am', 'side')
+    repo.run('checkout', '-q', 'main')
+    await writeFile(join(repo.root, 'shared.txt'), 'main\n')
+    repo.run('commit', '-q', '-am', 'main')
+    return repo
+  }
+  const fails = (run: () => unknown) => expect(run).toThrow()
+  const listed = async (root: string) => {
+    const scope = await gitPairs([{ id: 'default', path: root }], 'uncommitted', options())
+    return { conflict: scope.conflict, rows: scope.pairs.map(pair => [pair.path, pair.conflicted]) }
+  }
+
+  it('says nothing about a clean repository', async () => {
+    const repo = await diverged()
+    expect(await listed(repo.root)).toEqual({ conflict: undefined, rows: [] })
+  })
+
+  it('names a merge and the files Git marks as unmerged', async () => {
+    const repo = await diverged()
+    fails(() => repo.run('merge', 'side'))
+    expect(await listed(repo.root)).toEqual({ conflict: { operation: 'merge', files: 1 }, rows: [['shared.txt', true]] })
+  })
+
+  it('names a cherry-pick, a revert and a rebase', async () => {
+    const pick = await diverged()
+    fails(() => pick.run('cherry-pick', 'side'))
+    expect((await listed(pick.root)).conflict).toEqual({ operation: 'cherry-pick', files: 1 })
+    const back = await diverged()
+    await writeFile(join(back.root, 'shared.txt'), 'later\n')
+    back.run('commit', '-q', '-am', 'later')
+    fails(() => back.run('revert', '--no-edit', 'HEAD~1'))
+    expect((await listed(back.root)).conflict).toEqual({ operation: 'revert', files: 1 })
+    const rebase = await diverged()
+    fails(() => rebase.run('rebase', 'side'))
+    expect((await listed(rebase.root)).conflict).toEqual({ operation: 'rebase', files: 1 })
+  })
+
+  it('names conflicted files with nothing under way, and an operation with none left to resolve', async () => {
+    const stashed = await diverged()
+    await writeFile(join(stashed.root, 'shared.txt'), 'mine\n')
+    stashed.run('stash', 'push', '-q')
+    stashed.run('checkout', '-q', 'side')
+    fails(() => stashed.run('stash', 'pop', '-q'))
+    expect((await listed(stashed.root)).conflict).toEqual({ operation: 'unmerged', files: 1 })
+    const resolved = await diverged()
+    fails(() => resolved.run('merge', 'side'))
+    await writeFile(join(resolved.root, 'shared.txt'), 'both\n')
+    resolved.run('add', '.')
+    expect((await listed(resolved.root)).conflict).toEqual({ operation: 'merge', files: 0 })
   })
 })
 

@@ -18,6 +18,8 @@ export const CHANGE_LIMIT = 20_000
 export const AGENT_LINE_LIMIT = 5000
 /** Files a receipt names; `skipped` keeps the full count. */
 export const NAMED_FILE_LIMIT = 200
+/** Sessions a turn names as having run in its folder. */
+export const OTHER_SESSION_LIMIT = 8
 
 /** One file at one moment. */
 export interface FileState {
@@ -108,6 +110,8 @@ export interface TurnRecord {
   note?: TurnNote
   /** Files the turn's own edits name that no snapshot covers: outside the session's folders, or ignored. */
   notCovered?: string[]
+  /** Sessions that ran in the same folder during this turn. */
+  otherSessions?: string[]
   /** Recent undo and redo answers, replayed for a retried request ID. */
   receipts: Receipt[]
 }
@@ -188,6 +192,7 @@ const turnSchema = z.strictObject({
   undone: z.strictObject({ at: isoTime, requestId }).optional(),
   note: noteSchema.optional(),
   notCovered: notCovered.optional(),
+  otherSessions: z.array(z.string().min(1).max(256)).max(OTHER_SESSION_LIMIT).optional(),
   receipts: z.array(receiptSchema).max(8),
 })
 const ownerShape = { v: z.literal(1), sessionId: z.string().min(1).max(256), projectId: z.string().min(1).max(256) }

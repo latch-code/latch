@@ -630,4 +630,31 @@ describe('streaming render', () => {
     for (const [role, ratio] of Object.entries(ratios)) expect(ratio, role).toBeGreaterThanOrEqual(role === 'comment' ? 3 : 4.5)
     await page.emulateMedia({ colorScheme: 'light' })
   })
+
+  it('asks when a run goes quiet, says what it cannot read, and says what is unknown when the engine dies', async () => {
+    await open()
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    const live = { runId: 'r', activity: 'model', since: ago(5), lastEventAt: ago(3) }
+    const withSummary = (extra: object, running: boolean): TaskDetail => {
+      const base = detail(prose(1, 2), { running })
+      return { ...base, summary: { ...base.summary, ...extra } } as TaskDetail
+    }
+
+    await show(withSummary({ live: { ...live, silent: true, silenceThresholdMs: 120_000 } }, true))
+    const line = page.locator('.status-line')
+    await line.filter({ hasText: /等模型回应 · 3 分钟没有新内容/ }).waitFor()
+    await line.getByRole('button', { name: '继续等', exact: true }).waitFor()
+
+    await show(
+      withSummary({ live: { ...live, unrecognized: { count: 1, at: ago(0), method: 'terminal/create', messageId: 'user-0' } } }, true),
+    )
+    await line.filter({ hasText: '发来一个看不懂的请求' }).waitFor()
+    await line.getByRole('button', { name: '查看', exact: true }).waitFor()
+    expect(await line.getByRole('button', { name: '继续等', exact: true }).count()).toBe(0)
+
+    await show(withSummary({ runEnd: { reason: 'process-exited', unknownResultCount: 1, unknownResults: [{ name: 'pnpm test' }] } }, false))
+    const end = page.locator('.run-end')
+    await end.filter({ hasText: '已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对' }).waitFor()
+    await end.getByText('pnpm test', { exact: true }).waitFor()
+  })
 })

@@ -63,7 +63,10 @@ describe('notices and toasts', () => {
     // The raised surface under a red tint and edge; the warning's glyph in the amber of icons.
     expect(getComputedStyle(alert.element()).backgroundImage).toMatch(/^linear-gradient/u)
     expect(getComputedStyle(alert.element()).borderTopColor).toBe('rgba(220, 38, 38, 0.2)')
-    expect(color(screen.getByRole('status').element().querySelector('.ui-notice-glyph'))).toBe('rgb(245, 158, 11)')
+    expect(color(screen.getByRole('status').element().querySelector('.ui-notice-glyph'))).toBe('rgb(212, 115, 6)')
+    // A warning keeps the neutral surface; only its glyph and title are amber.
+    expect(getComputedStyle(screen.getByRole('status').element()).backgroundImage).toBe('none')
+    expect(getComputedStyle(screen.getByRole('status').element()).backgroundColor).toBe('rgb(255, 255, 255)')
     expect(screen.getByRole('status').element().textContent).toBe('连接已中断已显示的内容都在。')
     press(screen.getByRole('button', { name: '关闭' }))
     expect(closed).toHaveBeenCalledOnce()
@@ -97,7 +100,7 @@ describe('badges, counts and marks', () => {
     expect([badge.height, badge.borderTopLeftRadius, badge.backgroundColor, badge.color]).toEqual([
       '18px',
       '4px',
-      'rgba(245, 158, 11, 0.1)',
+      'rgba(0, 0, 0, 0.04)',
       'rgb(180, 83, 9)',
     ])
   })
@@ -106,7 +109,7 @@ describe('badges, counts and marks', () => {
     const screen = await render(<DevMark description="开发模式：Host 代码可被本机修改" />)
     const mark = screen.getByRole('note', { name: '开发模式：Host 代码可被本机修改' })
     await expect.element(mark).toHaveTextContent('开发版')
-    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(113, 113, 122)', 'rgba(0, 0, 0, 0.04)'])
+    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(106, 106, 115)', 'rgba(0, 0, 0, 0.04)'])
   })
 
   it('hides a status dot from screen readers unless it is labelled', async () => {

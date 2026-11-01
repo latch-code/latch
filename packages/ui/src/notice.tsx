@@ -9,9 +9,9 @@ export type NoticeTone = 'neutral' | 'warn' | 'error'
 const NOTICE_GLYPH = { neutral: Info, warn: TriangleAlert, error: CircleX } as const
 
 /**
- * An inline notice, also used as a banner at the top of the message area: the raised surface with a 1px line, tinted
- * amber or red with an edge in the same tone, the tone's glyph, a title in the tone's colour and the text in ink-2.
- * Write what was kept first, then the reason, then the action. At most one xs action; inside amber and red it is an
+ * An inline notice, also used as a banner at the top of the message area: the raised surface with a 1px line (an error
+ * tints it red with a red edge), the tone's glyph, a title in the tone's colour and the text in ink-2.
+ * Write what was kept first, then the reason, then the action. At most one xs action; in a warning or an error it is an
  * outlined button (the notice marks itself `data-tint`). Never a full-width coloured strip.
  */
 export function InlineNotice({

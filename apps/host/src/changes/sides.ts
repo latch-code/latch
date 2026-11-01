@@ -45,6 +45,7 @@ export interface Pair {
   after?: Side
   byCommand?: true
   byUser?: true
+  conflicted?: true
   /** Turn scope: whose change it was, to mark a command's lines. */
   attribution?: Pick<Change, 'by' | 'agentLines'>
 }
@@ -160,6 +161,7 @@ export function describe(pair: Pair, compared: Compared): ChangedFile {
     ...(hidden === 'secret' ? { secret: true as const } : {}),
     ...(hidden === 'not-retained' ? { notRetained: true as const } : {}),
     ...(pair.before && pair.after && executable(pair.before) !== executable(pair.after) ? { modeChanged: true as const } : {}),
+    ...(pair.conflicted ? { conflicted: true as const } : {}),
   }
 }
 

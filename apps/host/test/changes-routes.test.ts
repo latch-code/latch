@@ -5,7 +5,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { splitChangeNote, type ChangeList, type ChangeReceipt, type DiscardPreview, type TurnChanges } from '@latch/protocol'
+import {
+  splitChangeNote,
+  type ChangeList,
+  type ChangeReceipt,
+  type DiscardPreview,
+  type TaskDetail,
+  type TurnChanges,
+} from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
@@ -230,6 +237,58 @@ describe('changes routes', () => {
     expect(await readFile(file('tracked.txt'), 'utf8')).toBe('committed\n')
     expect(existsSync(file('command-edit.txt'))).toBe(false)
     expect(await audited(t)).toEqual(['change.discard'])
+  })
+
+  it('marks the message that opened a turn, so the conversation can reach that turn', async () => {
+    const { owner, sessionId, turnId } = await fixture()
+    const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.messages.find(message => message.role === 'user')?.turnId).toBe(turnId)
+  })
+
+  it('refuses to discard uncommitted changes in the middle of a merge, and draws what it found', async () => {
+    const { t, owner, path, file } = await fixture()
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: t.workspaceRoot, stdio: 'pipe' })
+    git('add', '.')
+    git('commit', '-q', '-m', 'turn')
+    git('checkout', '-q', '-b', 'side', 'HEAD~1')
+    await writeFile(file('tracked.txt'), 'side\n')
+    git('commit', '-q', '-am', 'side')
+    git('checkout', '-q', 'main')
+    await writeFile(file('tracked.txt'), 'main\n')
+    git('commit', '-q', '-am', 'main')
+    expect(() => git('merge', 'side')).toThrow()
+    await writeFile(file('untracked.txt'), 'mine\n')
+    const before = await audited(t)
+
+    const list = await owner.json<ChangeList>(`${path}?scope=uncommitted`)
+    expect(list.conflict).toEqual({ operation: 'merge', files: 1 })
+    expect(list.files.find(item => item.path === 'tracked.txt')).toMatchObject({ conflicted: true })
+    const preview = await owner.request(`${path}/discard/preview`, { method: 'POST', body: {} })
+    expect(preview.status).toBe(409)
+    expect(((await preview.json()) as { error: string }).error).toBe('change-git-conflict')
+    const discard = await owner.request(`${path}/discard`, { method: 'POST', body: { scope: 'uncommitted', confirm: '0'.repeat(64) } })
+    expect(discard.status).toBe(409)
+    expect(((await discard.json()) as { error: string }).error).toBe('change-git-conflict')
+    expect(existsSync(file('untracked.txt'))).toBe(true)
+    expect(await audited(t)).toEqual(before)
+  })
+
+  it('notes on both turns that another session worked in the same folder, and not on later ones', async () => {
+    const { owner, path, sessionId, turns } = await fixture()
+    const held = await owner.confirmed('tasks', {
+      method: 'POST',
+      body: { prompt: 'hang', requestId: randomUUID(), mode: 'agent', harnessId: 'fake', workspaceId: 'default' },
+    })
+    expect(held.status).toBe(201)
+    const other = ((await held.json()) as { sessionId: string }).sessionId
+    const otherPath = `tasks/${other}/changes`
+    await expect.poll(async () => (await owner.json<{ turns: TurnChanges[] }>(`${otherPath}/turns`)).turns.length, SLOW).toBe(1)
+    await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'echo beside', requestId: randomUUID() } })
+    await expect.poll(async () => (await turns()).at(-1)?.otherSessions, SLOW).toEqual([other])
+    await expect.poll(async () => (await owner.json<ChangeList>(`${otherPath}?scope=turn`)).otherSessions, SLOW).toEqual([sessionId])
+    expect((await owner.json<ChangeList>(`${path}?scope=session`)).otherSessions).toEqual([other])
+    expect((await turns()).at(0)?.otherSessions).toBeUndefined()
   })
 
   it('writes nothing when the audit record cannot be written', async () => {

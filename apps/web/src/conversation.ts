@@ -1,25 +1,14 @@
 import type { Approval, Message, TaskDetail, TaskStatus, TokenUsage, ToolDecision, ToolKind } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
 import { DECISION_COPY } from './core/securityCopy.ts'
-import {
-  absoluteTime,
-  argumentView,
-  clockTime,
-  dayClockTime,
-  exactTokens,
-  formatDuration,
-  messageTime,
-  sameDay,
-  sumUsage,
-  tokenAmount,
-} from './format.ts'
+import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
+import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
 
 /*
- * What the conversation shows, derived from the Host's messages alone: turns, their footers, what a process row says,
- * when the process before an answer folds away, where time separators go and the live phase of a run. Every time and
- * count comes from a Host field; when a field is missing (an older Host, a plugin driver, older history) the part that
- * needs it is left out rather than estimated.
+ * What the conversation shows, derived from the Host's messages alone: turns, their footers, what a work row says, when
+ * a turn's work folds away and what the live status line says. Every time and count comes from a Host field; when a field
+ * is missing (an older Host, a plugin driver, older history) the part that needs it is left out rather than estimated.
  */
 
 export const liveMessageId = (detail: TaskDetail) => detail.liveMessageId ?? `live:${detail.summary.id}`
@@ -180,14 +169,14 @@ export function turnTimeTip(times: TurnTimes, outcome: TurnOutcome, now: number)
 
 // ---- Process rows ------------------------------------------------------------------------------------------------
 
-const VERBS: Partial<Record<ToolKind, readonly [string, string]>> = {
-  read: ['正在读取', '读取'],
-  edit: ['正在修改', '修改'],
-  delete: ['正在删除', '删除'],
-  move: ['正在移动', '移动'],
-  search: ['正在搜索', '搜索'],
-  execute: ['正在运行', '运行'],
-  fetch: ['正在获取', '获取'],
+const VERBS: Partial<Record<ToolKind, string>> = {
+  read: '读取',
+  edit: '编辑',
+  delete: '删除',
+  move: '移动',
+  search: '搜索',
+  execute: '运行',
+  fetch: '获取',
 }
 
 function argument(input: string | undefined, names: string[]): string | undefined {
@@ -201,10 +190,10 @@ function argument(input: string | undefined, names: string[]): string | undefine
 }
 
 /**
- * What a process row says: a verb by the tool's kind (in the present while it runs) and its object, a path or command
- * in mono and a query or address in text; or, when the tool names no object Latch can read, its own title alone. A
- * tool that declares its own title (Latch 内置: 「写入文件」) is named by that title with the call's object, and one that
- * has neither a title nor an object Latch can read shows its raw name in mono, never a guess.
+ * What a work row says: a verb by the tool's kind and its object, a file by its name, a command, query or address in
+ * mono; or, when the tool names no object Latch can read, its own title alone. A tool that declares its own title (Latch
+ * 内置: 「写入文件」) is named by that title with the call's object, and one that has neither a title nor an object Latch
+ * can read shows its raw name in mono, never a guess. The spinner says it runs, so the words keep one tense.
  */
 export interface ToolLabel {
   verb?: string
@@ -214,43 +203,59 @@ export interface ToolLabel {
 
 const PATH_KEYS = ['path', 'file', 'file_path', 'filePath']
 /** The arguments a titled tool's object is read from, in order, and whether it is shown in mono. */
-const OBJECT_KEYS: Array<[keys: string[], mono: boolean]> = [
+const OBJECT_KEYS: Array<[keys: string[], path: boolean]> = [
   [PATH_KEYS, true],
-  [['command', 'cmd'], true],
+  [['command', 'cmd'], false],
   [['query', 'pattern', 'q'], false],
-  [['url'], true],
+  [['url'], false],
 ]
 
 /** The object of a titled tool's call: its first location or a known argument; the workspace root names nothing. */
-function titledObject(tool: Message['tool']): { object: string; mono: boolean } | undefined {
+function titledObject(tool: Message['tool']): { object: string; path: boolean } | undefined {
   const located = tool?.locations?.[0]
-  if (located) return { object: located, mono: true }
-  for (const [keys, mono] of OBJECT_KEYS) {
+  if (located) return { object: located, path: true }
+  for (const [keys, path] of OBJECT_KEYS) {
     const value = argument(tool?.input, keys)
-    if (value !== undefined) return value.trim() === '.' || value.trim() === './' ? undefined : { object: value, mono }
+    if (value !== undefined) return value.trim() === '.' || value.trim() === './' ? undefined : { object: value, path }
   }
   return undefined
 }
 
+/** A path as a row shows it: the file's name, or the path itself when it ends without one. */
+const shortPath = (path: string) => basename(path) || path
+
+/** A file edit: 「编辑 providers.ts」, 「新建 providers.test.ts · 42 行」, 「编辑 3 个文件」. */
+function diffLabel(tool: Message['tool']): ToolLabel | undefined {
+  const diffs = tool?.diffs
+  if (!diffs?.length) return undefined
+  if (diffs.length > 1) return { verb: '编辑', object: `${diffs.length} 个文件`, mono: false }
+  const diff = diffs[0]!
+  if (previousState(diff) !== 'none') return { verb: '编辑', object: shortPath(diff.path), mono: false }
+  const lines = diff.newText === '' ? 0 : diff.newText.replace(/\n$/, '').split('\n').length
+  return { verb: '新建', object: `${shortPath(diff.path)} · ${lines} 行`, mono: false }
+}
+
 export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolLabel {
   const tool = message.tool
-  const running = message.state === 'running'
+  const edited = diffLabel(tool)
+  if (edited) return edited
   if (tool?.toolTitle) {
     const found = titledObject(tool)
-    return found ? { verb: running ? `正在${tool.toolTitle}` : tool.toolTitle, ...found } : { object: tool.toolTitle, mono: false }
+    if (!found) return { object: tool.toolTitle, mono: false }
+    return { verb: tool.toolTitle, object: found.path ? shortPath(found.object) : found.object, mono: !found.path }
   }
   const kind = toolKind(message)
-  const verbs = VERBS[kind]
+  const verb = VERBS[kind]
   let object: string | undefined
   let mono = true
   if (kind === 'execute') object = argument(tool?.input, ['command', 'cmd'])
-  else if (kind === 'read' || kind === 'edit' || kind === 'delete' || kind === 'move')
-    object = tool?.locations?.[0] ?? argument(tool?.input, PATH_KEYS)
-  else if (kind === 'search') {
-    object = argument(tool?.input, ['query', 'pattern', 'q'])
+  else if (kind === 'read' || kind === 'edit' || kind === 'delete' || kind === 'move') {
+    const path = tool?.locations?.[0] ?? argument(tool?.input, PATH_KEYS)
+    object = path === undefined ? undefined : shortPath(path)
     mono = false
-  } else if (kind === 'fetch') object = argument(tool?.input, ['url'])
-  if (object !== undefined && verbs !== undefined) return { verb: verbs[running ? 0 : 1], object, mono }
+  } else if (kind === 'search') object = argument(tool?.input, ['query', 'pattern', 'q'])
+  else if (kind === 'fetch') object = argument(tool?.input, ['url'])
+  if (object !== undefined && verb !== undefined) return { verb, object, mono }
   // A title that only repeats the tool's identifier is the raw name.
   if (tool?.title && tool.title !== message.toolName) return { object: tool.title, mono: false }
   return message.toolName ? { object: message.toolName, mono: true } : { object: '工具调用', mono: false }
@@ -266,6 +271,19 @@ export function toolHeading(tool: Message['tool'], toolName: string | undefined)
     return found ? `${tool.toolTitle} ${found.object}` : tool.toolTitle
   }
   return tool?.title || toolName || '工具调用'
+}
+
+/** What a row's edits add and remove, in lines; undefined when it edits nothing. */
+export function diffStat(tool: Message['tool']): { add: number; del: number } | undefined {
+  if (!tool?.diffs?.length) return undefined
+  let add = 0
+  let del = 0
+  for (const diff of tool.diffs) {
+    const view = diffLines(diff.oldText, diff.newText)
+    add += view.added
+    del += view.removed
+  }
+  return { add, del }
 }
 
 /** The code the built-in harness put before a rejection's tool result until the Host kept decision records. */
@@ -367,92 +385,116 @@ export function toolDuration(message: Message, now: number): { ms: number; live:
 /** Whether a tool's changes are evidence that stays in view: its diffs. */
 export const hasDiffs = (message: Message) => (message.tool?.diffs?.length ?? 0) > 0
 
-// ---- The fold after a turn ---------------------------------------------------------------------------------------
+// ---- A turn's blocks and its fold --------------------------------------------------------------------------------
+
+/** A row of the work: a tool, a block's reasoning, or the finished reads of a settled turn as one row. */
+export type WorkItem = { kind: 'tool'; message: Message } | { kind: 'thinking'; message: Message } | { kind: 'reads'; messages: Message[] }
 
 /**
- * Which rows of a settled, completed turn fold into 「已处理 · …」: the process before the answer, from the first reply
- * block up to the first thing that must stay in view (a tool's diffs, a failed or waiting tool, a note) or the answer.
- * The prose block that introduces what follows stays out. Nothing folds while a turn streams, when it failed or was
- * stopped, or when no tool would fold.
+ * A turn in reading order. The work is what folds; prose and notes never do, so they are blocks of their own, and an
+ * answer keeps its place in the tree from its first word to its last.
  */
-export function foldedRows(turn: Turn, outcome: TurnOutcome | undefined): Message[] {
-  if (outcome !== 'completed') return []
-  const last = turn.replies.at(-1)
-  if (!last || last.role !== 'assistant' || !last.text.trim()) return []
-  let end = turn.replies.length - 1
-  for (let index = 0; index < turn.replies.length - 1; index++) {
-    const message = turn.replies[index]
-    const keep = message.role === 'system' || (message.role === 'tool' && (hasDiffs(message) || message.state !== 'completed'))
-    if (keep) {
-      end = index
-      break
+export type TurnBlock =
+  | { kind: 'work'; key: string; items: WorkItem[] }
+  | { kind: 'prose'; message: Message }
+  | { kind: 'note'; message: Message }
+
+/** A question stays in reading order: its card or its record 「你选了…」 is what the person said, not the agent's work. */
+const isQuestion = (message: Message) => message.toolName === 'ask_user'
+
+const itemKey = (item: WorkItem) => (item.kind === 'reads' ? item.messages[0]!.id : item.message.id)
+
+/** Reads run together while nothing is decided about them; a read that failed or waited stays a row of its own. */
+const plainRead = (message: Message) => message.state === 'completed' && toolKind(message) === 'read' && !message.tool?.decision
+
+function joinReads(items: WorkItem[]): WorkItem[] {
+  const out: WorkItem[] = []
+  let reads: Message[] = []
+  const flush = () => {
+    if (reads.length > 1) out.push({ kind: 'reads', messages: reads })
+    else if (reads[0]) out.push({ kind: 'tool', message: reads[0] })
+    reads = []
+  }
+  for (const item of items) {
+    if (item.kind === 'tool' && plainRead(item.message)) reads.push(item.message)
+    else {
+      flush()
+      out.push(item)
     }
   }
-  let rows = turn.replies.slice(0, end)
-  // The prose right before what stays out introduces it.
-  while (rows.length > 0 && rows.at(-1)!.role === 'assistant' && rows.at(-1)!.text.trim()) rows = rows.slice(0, -1)
-  return rows.some(message => message.role === 'tool') ? rows : []
+  flush()
+  return out
 }
-
-const FOLD_WORDS: Record<ToolKind, (count: number) => string> = {
-  read: count => `读取 ${count} 个文件`,
-  edit: count => `修改 ${count} 个文件`,
-  delete: count => `删除 ${count} 个文件`,
-  move: count => `移动 ${count} 个文件`,
-  execute: count => `运行 ${count} 条命令`,
-  search: count => `搜索 ${count} 次`,
-  fetch: count => `获取 ${count} 个网页`,
-  think: count => `思考 ${count} 次`,
-  other: count => `调用 ${count} 次工具`,
-}
-
-/** 「已处理 · 思考 6 秒 · 读取 4 个文件 · 运行 2 条命令 · 用时 2.4 秒」: counts and times only from the folded rows. */
-export function foldSummary(rows: Message[]): string {
-  const parts = ['已处理']
-  const thinking = rows.reduce((sum, message) => sum + (parseDuration(message.reasoningMs) ?? 0), 0)
-  const thought = formatDuration(thinking)
-  if (thought) parts.push(`思考 ${thought}`)
-  const counts = new Map<ToolKind, number>()
-  for (const message of rows) if (message.role === 'tool') counts.set(toolKind(message), (counts.get(toolKind(message)) ?? 0) + 1)
-  const kinds = [...counts]
-  for (const [kind, count] of kinds.slice(0, 3)) parts.push(FOLD_WORDS[kind](count))
-  if (kinds.length > 3) parts.push(`等 ${kinds.slice(3).reduce((sum, [, count]) => sum + count, 0)} 项`)
-  const toolTime = rows.reduce((sum, message) => sum + (message.role === 'tool' ? (toolDuration(message, 0)?.ms ?? 0) : 0), 0)
-  const spent = formatDuration(toolTime)
-  if (spent) parts.push(`用时 ${spent}`)
-  return parts.join(' · ')
-}
-
-// ---- Time separators ---------------------------------------------------------------------------------------------
 
 /**
- * The prompts that open a time separator: the first message of the transcript, and a prompt on another day than the
- * message before it or more than an hour after it. Only prompts open one, so a separator never splits a turn; a
- * message without a time opens none and leaves the gaps around it alone.
+ * The turn's blocks. `settled`: a turn that no longer runs joins its consecutive reads into 「读取 4 个文件」; a live turn
+ * keeps each read on its own row, so rows do not jump as they finish.
  */
-export function separators(messages: Message[]): Map<string, { at: number; sameDay: boolean }> {
-  const found = new Map<string, { at: number; sameDay: boolean }>()
-  let previous: number | undefined
-  let previousSeparator: number | undefined
-  messages.forEach((message, index) => {
-    const at = parseTime(message.createdAt)
-    if (
-      message.role === 'user'
-      && at !== undefined
-      && (index === 0 || (previous !== undefined && (newDay(previous, at) || at - previous > 3_600_000)))
-    ) {
-      found.set(message.id, { at, sameDay: previousSeparator !== undefined && !newDay(previousSeparator, at) })
-      previousSeparator = at
+export function turnBlocks(turn: Turn, settled: boolean): TurnBlock[] {
+  const blocks: TurnBlock[] = []
+  let work: WorkItem[] = []
+  const flush = () => {
+    if (work.length === 0) return
+    const items = settled ? joinReads(work) : work
+    blocks.push({ kind: 'work', key: `work:${itemKey(items[0]!)}`, items })
+    work = []
+  }
+  for (const message of turn.replies) {
+    if (message.role === 'tool' && !isQuestion(message)) {
+      work.push({ kind: 'tool', message })
+      continue
     }
-    previous = parseTime(message.completedAt) ?? at
-  })
-  return found
+    if (message.role === 'assistant') {
+      if (message.reasoning) work.push({ kind: 'thinking', message })
+      if (!message.text && !message.attachments?.length) continue
+      flush()
+      blocks.push({ kind: 'prose', message })
+      continue
+    }
+    flush()
+    blocks.push({ kind: 'note', message })
+  }
+  flush()
+  return blocks
 }
 
-const newDay = (a: number, b: number) => {
-  const first = new Date(a)
-  const second = new Date(b)
-  return first.getFullYear() !== second.getFullYear() || first.getMonth() !== second.getMonth() || first.getDate() !== second.getDate()
+/**
+ * Whether a settled turn's work folds into 「已工作 … ›」: it finished, it did something, and it answered. A failed or
+ * stopped turn stays open, and so does one that ended without a word, because its last row is all it said.
+ */
+export function workFolds(turn: Turn, outcome: TurnOutcome | undefined): boolean {
+  if (outcome !== 'completed') return false
+  return turn.replies.some(message => message.role === 'tool' && !isQuestion(message)) && turnText(turn).trim().length > 0
+}
+
+/** The fold's words: 「已工作 2 分 13 秒」 when the Host recorded it, 「已工作」 for older history, and what it must not hide. */
+export function foldWords(turn: Turn): string {
+  const spent = formatDuration(turnTimes(turn).activeMs ?? 0)
+  const count = (state: ShownToolState) =>
+    turn.replies.filter(message => message.role === 'tool' && shownToolState(message) === state).length
+  const failed = count('failed')
+  const rejected = count('rejected')
+  return [`已工作${spent ? ` ${spent}` : ''}`, ...(failed ? [`${failed} 步失败`] : []), ...(rejected ? [`${rejected} 步被拒绝`] : [])].join(
+    ' · ',
+  )
+}
+
+/** One line for a failed row: the first line of what it reported, without the runtime's code, and cut. */
+export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
+  const line = shownToolOutput(message)
+    .split('\n')
+    .map(part => part.trim())
+    .find(Boolean)
+  const reason = line?.replace(/^TOOL_[A-Z_]+:\s*/u, '') ?? ''
+  if (!reason) return '没有成功'
+  return reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
+}
+
+/** The answer's delivery under the person's latest bubble, until the agent starts answering. */
+export function deliveryWords(detail: TaskDetail, turn: Turn): string | undefined {
+  const activity = detail.summary.live?.activity
+  if (activity === undefined || detail.liveText || turnText(turn)) return undefined
+  return activity === 'starting' ? 'Mac 已收到' : 'Agent 已开始'
 }
 
 // ---- Retry ------------------------------------------------------------------------------------------------------
@@ -556,19 +598,18 @@ export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; appro
 }
 
 /**
- * A running tool's words on one line, for the phase of the live footer and the jump pill: its row's present tense
- * (「正在运行 pnpm test」, 「正在读取 src/a.ts」), or 「正在执行」 with its title when it has no kind Latch reads.
+ * A running tool's words on one line, for a screen reader while its own row says it: its row's words
+ * (「运行 pnpm test」, 「读取 a.ts」), or 「正在执行」 with its title when it has no kind Latch reads.
  */
 function toolText(message: Message): string {
   const label = toolLabel({ ...message, state: 'running' })
   if (label.verb) return `${label.verb} ${label.object}`
-  // A titled tool without an object says its own title in the present: 「正在运行长任务」.
   return message.tool?.toolTitle ? `正在${message.tool.toolTitle}` : `正在执行 ${label.object}`
 }
 
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {
   cancelling: '正在停止…',
-  approval: '等你批准',
+  approval: '需要你允许',
   question: '等你回答',
   reply: '正在回复',
   thinking: '正在思考',
@@ -582,25 +623,100 @@ export function phaseText(phase: LivePhase, harness: string): string {
   return PHASE_WORDS[phase.kind]
 }
 
-/** The facts of the live line after the phase: output so far, or the context an agent reported, and a stall. */
-export function liveFacts(
+/** The one running clock: 0:47, 12:03, 1:02:03. */
+export function runClock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(seconds / 60)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return minutes < 60 ? `${minutes}:${pad(seconds % 60)}` : `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(seconds % 60)}`
+}
+
+type StatusAction = 'keep-waiting' | 'stop'
+
+/**
+ * The status line under a running turn: what is really happening, never only that time passes. `tone`: `plain` is the
+ * ordinary line; `amber` asks the person, because nothing else would tell them the run went quiet; `quiet` is a phase
+ * with no line of its own, since the card that waits on the person already says so.
+ */
+export type RunStatus = {
+  tone: 'plain' | 'amber' | 'quiet'
+  /** Announced to a screen reader and shown, except in the quiet tone, where only a screen reader gets it. */
+  text: string
+  /** The elapsed part, kept apart so the words stay still while it ticks. */
+  clock?: string
+  actions?: StatusAction[]
+  /** The system message recording a request Latch did not recognise. */
+  viewMessageId?: string
+}
+
+const minutesText = (ms: number) => `${Math.max(1, Math.floor(ms / 60_000))} 分钟`
+
+export function runStatus(
   detail: TaskDetail,
-  turn: Turn | undefined,
-  hostNow: number,
-): { tokens?: string; tokensTitle?: string; stalled?: string } {
-  const usage = turn ? turnUsage(turn) : undefined
-  const report = detail.usageReport
-  const facts: { tokens?: string; tokensTitle?: string; stalled?: string } = {}
-  if (usage) {
-    facts.tokens = `输出 ${tokenAmount(usage.outputTokens)}`
-    facts.tokensTitle = `已完成的步骤：输入 ${exactTokens(usage.inputTokens)} tokens · 输出 ${exactTokens(usage.outputTokens)} tokens（输入是累计计费输入，每一步都重新发送上下文）`
-  } else if (typeof report?.contextUsed === 'number') {
-    facts.tokens = `上下文 ${tokenAmount(report.contextUsed)}`
-    facts.tokensTitle = `由 Agent 报告：${exactTokens(report.contextUsed)} tokens`
+  opts: { cancelling: boolean; approvals: number; hostNow: number; harness: string; fallbackElapsed?: number },
+): RunStatus {
+  const phase = livePhase(detail, opts)
+  if (phase.kind === 'cancelling') return { tone: 'plain', text: PHASE_WORDS.cancelling }
+  if (phase.kind === 'approval' || phase.kind === 'question') return { tone: 'quiet', text: PHASE_WORDS[phase.kind] }
+  const live = detail.summary.live
+  const unknown = live?.unrecognized
+  // A request after the engine's last sign of life is what the run is stuck on; one it went on from is only on record.
+  const stuck = unknown !== undefined && (parseTime(unknown.at) ?? 0) >= (parseTime(live?.lastEventAt) ?? 0)
+  if (stuck) {
+    return {
+      tone: 'amber',
+      text: `${opts.harness} 发来一个看不懂的请求`,
+      actions: ['stop'],
+      ...(unknown.messageId ? { viewMessageId: unknown.messageId } : {}),
+    }
   }
-  const last = parseTime(detail.lastOutputAt)
-  const quiet = last === undefined ? 0 : hostNow - last
-  if (quiet > 120_000 && detail.activity?.phase !== 'approval' && detail.summary.status !== 'waiting-approval')
-    facts.stalled = `${Math.floor(quiet / 60_000)} 分钟没有新输出`
-  return facts
+  if (live?.silent) {
+    const quiet = opts.hostNow - (parseTime(live.lastEventAt) ?? opts.hostNow)
+    const commandLike = live.activity === 'command' || live.activity === 'tool'
+    return {
+      tone: 'amber',
+      text: commandLike ? `${live.commandName ?? '命令'} · ${minutesText(quiet)}没有输出` : `等模型回应 · ${minutesText(quiet)}没有新内容`,
+      actions: ['keep-waiting', 'stop'],
+    }
+  }
+  if (phase.kind === 'starting') return { tone: 'plain', text: phaseText(phase, opts.harness) }
+  // An older Host says nothing about silence; the time since its last output is all there is to go on.
+  const lastOutput = live ? undefined : parseTime(detail.lastOutputAt)
+  if (lastOutput !== undefined && opts.hostNow - lastOutput > 120_000)
+    return { tone: 'amber', text: `${minutesText(opts.hostNow - lastOutput)}没有新输出`, actions: ['stop'] }
+  const elapsed = runElapsed(detail, opts.hostNow) ?? opts.fallbackElapsed
+  const clock = elapsed === undefined ? undefined : runClock(elapsed)
+  const running = detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
+  // The row reads the command itself where the Host may only have the tool's title.
+  const command =
+    running && toolKind(running) === 'execute' ? toolLabel(running).object : live?.activity === 'command' ? live.commandName : undefined
+  const words = command ? `命令运行中 · ${command}` : '运行中'
+  return { tone: 'plain', text: words, ...(clock ? { clock } : {}) }
+}
+
+/** How a run ended when it took more than a plain answer, for the line that stays under the turn. */
+export interface RunEndLine {
+  tone: 'red' | 'amber'
+  text: string
+  /** What was running when it ended: nobody can vouch for these. */
+  unknown: string[]
+  retry: boolean
+}
+
+export function runEndLine(summary: TaskDetail['summary'], harness: string): RunEndLine | undefined {
+  const end = summary.runEnd
+  if (!end) return undefined
+  const unknown = (end.unknownResults ?? []).map(result => result.name)
+  const count = end.unknownResultCount ?? unknown.length
+  const uncertain = count > 0 ? ` · 这 ${count} 条命令结果未知，请核对` : ''
+  switch (end.reason) {
+    case 'process-exited':
+      return { tone: 'red', text: `${harness} 已退出 · 这一轮没有完成${uncertain}`, unknown, retry: true }
+    case 'forced-stop':
+      return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false }
+    case 'host-stopped':
+      return { tone: 'amber', text: `这一轮被中断了${uncertain}`, unknown, retry: true }
+    case 'turn-ended':
+      return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false } : undefined
+  }
 }

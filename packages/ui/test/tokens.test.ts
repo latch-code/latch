@@ -89,7 +89,7 @@ const TOKENS: Record<string, [string, string]> = {
   '--line-strong': ['#dcdce0', 'rgba(255, 255, 255, 0.14)'],
   '--ink': ['#18181b', '#f4f4f5'],
   '--ink-2': ['#3f3f46', '#d4d4d8'],
-  '--muted': ['#71717a', '#a1a1aa'],
+  '--muted': ['#6a6a73', '#a1a1aa'],
   '--faint': ['#a1a1aa', '#71717a'],
   '--bubble': ['#f1f1f3', '#1e1e21'],
   '--accent': ['#2461e0', '#2f6feb'],
@@ -97,8 +97,8 @@ const TOKENS: Record<string, [string, string]> = {
   '--accent-ink': ['#215bd5', '#6b9bfa'],
   '--accent-soft': ['rgba(36, 97, 224, 0.1)', 'rgba(59, 118, 246, 0.18)'],
   '--amber': ['#b45309', '#fbbf24'],
-  '--amber-icon': ['#f59e0b', '#fbbf24'],
-  '--amber-soft': ['rgba(245, 158, 11, 0.1)', 'rgba(251, 191, 36, 0.12)'],
+  '--amber-icon': ['#d47306', '#fbbf24'],
+  '--amber-soft': ['rgba(217, 119, 6, 0.08)', 'rgba(251, 191, 36, 0.08)'],
   '--red': ['#b91c1c', '#f87171'],
   '--red-soft': ['rgba(220, 38, 38, 0.07)', 'rgba(248, 113, 113, 0.12)'],
   '--green': ['#15803d', '#4ade80'],
@@ -219,7 +219,7 @@ describe('design tokens', () => {
     }
   })
 
-  it('keeps secondary words and 等你处理 at 4.5:1 where they rest: the canvas, the raised surface and the sidebar, and 等你处理 on its tint', () => {
+  it('keeps secondary words and 等你处理 at 4.5:1 where they rest, secondary words on a hovered row, and 等你处理 on its hover fill', () => {
     const all = themes()
     for (const name of ['light', 'dark'] as const) {
       const theme = all[name]
@@ -230,12 +230,37 @@ describe('design tokens', () => {
         ['--sidebar', get('--sidebar')],
       ]
       const tint: [string, Rgba] = ['--amber-soft on --raised', over(get('--amber-soft'), get('--raised'))]
+      const hovered: Array<[string, Rgba]> = [
+        ['--hover on --sidebar', over(get('--hover'), get('--sidebar'))],
+        ['--hover on --raised', over(get('--hover'), get('--raised'))],
+      ]
       const failing = [
-        ...rests.filter(([, fill]) => contrast(get('--muted'), fill) < 4.5).map(([surface]) => `${name} --muted on ${surface}`),
+        ...[...rests, ...hovered]
+          .filter(([, fill]) => contrast(get('--muted'), fill) < 4.5)
+          .map(([surface]) => `${name} --muted on ${surface}`),
         ...[...rests, tint].filter(([, fill]) => contrast(get('--amber'), fill) < 4.5).map(([surface]) => `${name} --amber on ${surface}`),
       ]
       expect(failing).toEqual([])
     }
+  })
+
+  it('keeps the amber of icons at 3:1 on the surfaces under it', () => {
+    const all = themes()
+    for (const name of ['light', 'dark'] as const) {
+      const get = (token: string) => colour(all[name].get(token))
+      for (const surface of ['--canvas', '--raised', '--sidebar'])
+        expect(contrast(get('--amber-icon'), get(surface)), `${name} --amber-icon on ${surface}`).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('lays the hover fill of an amber chip to the two approved composites on the raised surface', () => {
+    const { light, dark } = themes()
+    const hex = (theme: Map<string, string>) =>
+      `#${over(colour(theme.get('--amber-soft')), colour(theme.get('--raised')))
+        .slice(0, 3)
+        .map(channel => Math.round(channel).toString(16).padStart(2, '0'))
+        .join('')}`
+    expect([hex(light), hex(dark)]).toEqual(['#fcf4eb', '#2a251c'])
   })
 
   it('keeps the semantic inks distinct under Chromium vision-deficiency simulations', () => {

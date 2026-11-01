@@ -3,31 +3,22 @@ import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { ArrowUp, LockKeyhole } from 'lucide-react'
-import type { PlanEntry, PromptTemplate, SessionCommand } from '@latch/protocol'
+import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { DECISION_COPY } from '../core/securityCopy.ts'
 import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
-import { PlanChip } from './PlanCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
 
 /**
- * What a running session's bar above the input carries: only what can be acted on. What the run is doing and for how
- * long is said in the conversation (the latest turn's live line), so the bar has no running label.
+ * What a running session's input needs to know. What the run is doing and for how long is said in the conversation (the
+ * latest turn's status line), so the input has no running label.
  */
 export interface RunState {
   id?: string
-  approvals: number
-  /** A waiting request's card is in view in the conversation, where it says so itself: the bar stays quiet. */
-  approvalsInView?: boolean
-  /** What the oldest waiting request would do, 「写入 docs/notes.md」. */
-  approvalTitle?: string
-  onRevealApprovals: () => void
   cancel: 'idle' | 'cancelling' | 'uncertain'
   onCancel: () => void
-  /** The harness's latest plan, as a chip that opens the list. */
-  plan?: PlanEntry[]
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
@@ -321,12 +312,7 @@ export function Composer({
           <Button onClick={onRetry}>重试这次提交</Button>
         </div>
       )}
-      {inline && (
-        <div className="composer-above">
-          {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
-          {controls}
-        </div>
-      )}
+      {inline && controls && <div className="composer-above">{controls}</div>}
       <form
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
@@ -375,6 +361,7 @@ export function Composer({
         <SlashCommands menu={slash} />
         {inline ? (
           <div className="composer-row">
+            {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
             {input}
             {action}
           </div>
@@ -429,68 +416,25 @@ function StopButton({ run }: { run: RunState }) {
 }
 
 /**
- * The bar on top of the input while a session runs, when it has something to act on: approvals waiting while none of
- * their cards is in view (amber, 「1 项待批准 · 写入 docs/notes.md」 and 查看), the stop's own states (正在停止… with the
- * spinner; 尚未确认 with 重试) and the plan chip. With nothing to say it folds away (its height animates with the
- * disclosure, which the reading position follows as a resize).
+ * The bar on top of the input while a stop's outcome is unknown: 尚未确认 with 重试. With nothing to say it folds away (its
+ * height animates with the disclosure, which the reading position follows as a resize).
  */
 function RunBar({ run }: { run?: RunState }) {
-  const approvals = run?.approvals ?? 0
-  const stopping = run?.cancel === 'cancelling'
-  const uncertain = run?.cancel === 'uncertain'
-  const waiting = approvals > 0 && run?.approvalsInView !== true && !stopping && !uncertain
-  const plan = run?.plan?.length ? run.plan : undefined
-  const shown = run !== undefined && (waiting || stopping || uncertain || plan !== undefined)
   return (
-    <Collapse open={shown} className="run-bar-collapse">
-      <div className={`run-bar ${waiting ? 'is-waiting' : ''}`}>
-        {waiting ? (
-          <>
-            <span className="run-bar-what">
-              <span role="status" className="run-bar-status">
-                {approvals} 项待批准
-              </span>
-              {run?.approvalTitle && (
-                <>
-                  <span className="run-bar-dot" aria-hidden="true">
-                    ·
-                  </span>
-                  <span className="run-bar-detail">
-                    <VisibleText text={run.approvalTitle} />
-                  </span>
-                </>
-              )}
-            </span>
-            <button type="button" className="run-bar-action" onClick={run?.onRevealApprovals}>
-              查看
-            </button>
-          </>
-        ) : stopping ? (
-          <span className="run-bar-what">
-            <Spinner size={12} />
-            <span role="status" className="run-bar-status">
-              正在停止…
-            </span>
+    <Collapse open={run?.cancel === 'uncertain'} className="run-bar-collapse">
+      <div className="run-bar">
+        <span className="run-bar-what">
+          <span role="status" className="run-bar-status">
+            <span className="sr-only">停止</span>
+            尚未确认
           </span>
-        ) : uncertain ? (
-          <span className="run-bar-what">
-            <span role="status" className="run-bar-status">
-              <span className="sr-only">停止</span>
-              尚未确认
-            </span>
-            <span className="run-bar-dot" aria-hidden="true">
-              ·
-            </span>
-            <button type="button" className="run-bar-action" onClick={run?.onCancel}>
-              重试
-            </button>
+          <span className="run-bar-dot" aria-hidden="true">
+            ·
           </span>
-        ) : null}
-        {plan && (
-          <span className="run-bar-end">
-            <PlanChip plan={plan} />
-          </span>
-        )}
+          <button type="button" className="run-bar-action" onClick={run?.onCancel}>
+            重试
+          </button>
+        </span>
       </div>
     </Collapse>
   )

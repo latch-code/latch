@@ -1,20 +1,26 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Message, TaskDetail, TaskStatus } from '@latch/protocol'
+import type { FileDiff, Message, RunLive, TaskDetail, TaskStatus, TaskSummary } from '@latch/protocol'
 import type { Turn } from '../src/conversation.ts'
 import {
   sameData,
   stableTurns,
-  foldedRows,
-  foldSummary,
-  liveFacts,
   livePhase,
   outcomeWords,
   phaseText,
+  runClock,
+  runEndLine,
+  runStatus,
+  turnBlocks,
+  workFolds,
+  foldWords,
+  failureReason,
+  deliveryWords,
+  diffStat,
+  type TurnBlock,
   resendWarning,
   runElapsed,
-  separators,
   sideEffects,
   toolDuration,
   decisionLine,
@@ -112,10 +118,10 @@ describe('turns of a conversation', () => {
 })
 
 describe('process rows', () => {
-  it('says what a tool does in the tense of its state, with its object, or its own title when it names none', () => {
+  it('says what a tool does with its object in one tense, a file by its name, or its own title when it names none', () => {
     const read = { toolName: 'read_file', tool: { kind: 'read' as const, title: 'read_file', input: '{"path":"src/app.ts"}' } }
-    expect(toolLabel({ ...read, state: 'running' })).toEqual({ verb: '正在读取', object: 'src/app.ts', mono: true })
-    expect(toolLabel({ ...read, state: 'completed' })).toEqual({ verb: '读取', object: 'src/app.ts', mono: true })
+    expect(toolLabel({ ...read, state: 'running' })).toEqual({ verb: '读取', object: 'app.ts', mono: false })
+    expect(toolLabel({ ...read, state: 'completed' })).toEqual({ verb: '读取', object: 'app.ts', mono: false })
     expect(
       toolLabel({ toolName: 'x', state: 'completed', tool: { kind: 'execute', title: 'Run pnpm test', input: '{"command":"pnpm test"}' } }),
     ).toEqual({
@@ -129,12 +135,32 @@ describe('process rows', () => {
       mono: false,
     })
     expect(
-      toolLabel({ toolName: 'edit', state: 'completed', tool: { kind: 'edit', title: 'Edit a.txt', locations: ['/w/a.txt:3'] } }),
+      toolLabel({ toolName: 'edit', state: 'completed', tool: { kind: 'edit', title: 'Edit a.txt', locations: ['/w/a.txt'] } }),
     ).toEqual({
-      verb: '修改',
-      object: '/w/a.txt:3',
-      mono: true,
+      verb: '编辑',
+      object: 'a.txt',
+      mono: false,
     })
+  })
+
+  it('names a file edit by what it does to the file', () => {
+    const edit = (diffs: FileDiff[]) => toolLabel({ toolName: 'write_file', state: 'completed', tool: { kind: 'edit', diffs } })
+    expect(edit([{ path: 'src/a.ts', oldText: 'x\n', newText: 'y\n' }])).toEqual({ verb: '编辑', object: 'a.ts', mono: false })
+    expect(edit([{ path: 'src/new.ts', oldText: '', previous: 'none', newText: 'a\nb\nc\n' }])).toEqual({
+      verb: '新建',
+      object: 'new.ts · 3 行',
+      mono: false,
+    })
+    // A missing previous text alone never proves the file is new.
+    expect(edit([{ path: 'src/a.ts', newText: 'y\n' }]).verb).toBe('编辑')
+    expect(
+      edit([
+        { path: 'a', newText: '' },
+        { path: 'b', newText: '' },
+      ]),
+    ).toEqual({ verb: '编辑', object: '2 个文件', mono: false })
+    expect(diffStat({ diffs: [{ path: 'a', oldText: 'x\n', newText: 'y\nz\n' }] })).toEqual({ add: 2, del: 1 })
+    expect(diffStat({})).toBeUndefined()
   })
 
   it('names a tool that declares a title by that title and its object, and an untitled one by its raw name in mono', () => {
@@ -142,8 +168,8 @@ describe('process rows', () => {
       toolName: 'write_file',
       tool: { kind: 'edit' as const, toolTitle: '写入文件', title: 'write_file', input: '{"path":"notes/plan.md"}' },
     }
-    expect(toolLabel({ ...write, state: 'completed' })).toEqual({ verb: '写入文件', object: 'notes/plan.md', mono: true })
-    expect(toolLabel({ ...write, state: 'running' })).toEqual({ verb: '正在写入文件', object: 'notes/plan.md', mono: true })
+    expect(toolLabel({ ...write, state: 'completed' })).toEqual({ verb: '写入文件', object: 'plan.md', mono: false })
+    expect(toolLabel({ ...write, state: 'running' })).toEqual({ verb: '写入文件', object: 'plan.md', mono: false })
     expect(toolHeading(write.tool, write.toolName)).toBe('写入文件 notes/plan.md')
     // Listing the workspace root names no object; a tool without arguments is its title alone.
     const list = {
@@ -182,50 +208,84 @@ describe('process rows', () => {
   })
 })
 
-describe('the fold after a settled turn', () => {
+describe("a turn's blocks and its fold", () => {
   const messages = [
-    user('u'),
+    user('u', { turn: { activeMs: 133_000 } }),
     reply('a1', '先看看接口。', { reasoning: '想', reasoningMs: 6000 }),
     tool('tool:read', { tool: { kind: 'read' }, createdAt: at(0), startedAt: at(0), completedAt: at(2400) }),
     reply('a2', '找到原因了。'),
     tool('tool:write', { tool: { kind: 'edit', diffs: [{ path: 'a.ts', newText: 'x' }] } }),
     reply('a3', '已修复。'),
   ]
+  const shape = (blocks: TurnBlock[]) =>
+    blocks.map(block =>
+      block.kind === 'work'
+        ? block.items.map(item => (item.kind === 'reads' ? `reads:${item.messages.length}` : `${item.kind}:${item.message.id}`))
+        : block.message.id,
+    )
 
-  it('folds the process before the answer and keeps evidence, failures and the prose that introduces them in view', () => {
-    const turn = firstTurn(messages)
-    expect(foldedRows(turn, 'completed').map(message => message.id)).toEqual(['a1', 'tool:read'])
-    expect(foldSummary(foldedRows(turn, 'completed'))).toBe('已处理 · 思考 6 秒 · 读取 1 个文件 · 用时 2.4 秒')
-    for (const outcome of ['failed', 'stopped', 'interrupted'] as const) expect(foldedRows(turn, outcome)).toEqual([])
-    const failing = firstTurn([user('u'), tool('tool:a', { state: 'failed' }), reply('a', '结束。')])
-    expect(foldedRows(failing, 'completed')).toEqual([])
-    const plain = firstTurn([user('u'), reply('a', '只是回答。')])
-    expect(foldedRows(plain, 'completed')).toEqual([])
-  })
-
-  it('names at most three kinds and counts the rest', () => {
-    const rows = (['read', 'edit', 'execute', 'search', 'fetch'] as const).map((kind, index) => tool(`t${index}`, { tool: { kind } }))
-    expect(foldSummary(rows)).toBe('已处理 · 读取 1 个文件 · 修改 1 个文件 · 运行 1 条命令 · 等 2 项')
-  })
-})
-
-describe('time separators', () => {
-  it('opens the transcript and every prompt on another day or more than an hour after the message before it', () => {
-    const marks = separators([
-      user('u1', { createdAt: day(9) }),
-      reply('a1', '一', { createdAt: day(9), completedAt: day(9, 1) }),
-      user('u2', { createdAt: day(10) }),
-      reply('a2', '二', { createdAt: day(10), completedAt: day(10, 1) }),
-      user('u3', { createdAt: day(11, 2) }),
-      reply('a3', '三', { createdAt: new Date(2026, 9, 24, 23, 59).toISOString() }),
-      user('u4', { createdAt: new Date(2026, 9, 25, 0, 1).toISOString() }),
-      user('old'),
-      user('u5', { createdAt: new Date(2026, 9, 25, 9).toISOString() }),
+  it("keeps prose in reading order between the work, a block's reasoning before its prose", () => {
+    expect(shape(turnBlocks(firstTurn(messages), true))).toEqual([
+      ['thinking:a1'],
+      'a1',
+      ['tool:tool:read'],
+      'a2',
+      ['tool:tool:write'],
+      'a3',
     ])
-    // 59 minutes after the reply before it: no separator; 61 minutes: one, on the same day as the first.
-    expect([...marks.keys()]).toEqual(['u1', 'u3', 'u4'])
-    expect(marks.get('u3')?.sameDay).toBe(true)
-    expect(marks.get('u4')?.sameDay).toBe(false)
+  })
+
+  it('folds a turn that finished, worked and answered; never a failed or stopped one, or one that ended without a word', () => {
+    const turn = firstTurn(messages)
+    expect(workFolds(turn, 'completed')).toBe(true)
+    for (const outcome of ['failed', 'stopped', 'interrupted'] as const) expect(workFolds(turn, outcome)).toBe(false)
+    expect(workFolds(turn, undefined)).toBe(false)
+    expect(workFolds(firstTurn([user('u'), reply('a', '只是回答。')]), 'completed')).toBe(false)
+    expect(workFolds(firstTurn([user('u'), tool('t', { tool: { kind: 'read' } })]), 'completed')).toBe(false)
+  })
+
+  it('says how long the turn worked, and any failure the fold would hide', () => {
+    expect(foldWords(firstTurn(messages))).toBe('已工作 2 分 13 秒')
+    expect(foldWords(firstTurn([user('u'), tool('t', { tool: { kind: 'read' } })]))).toBe('已工作')
+    expect(foldWords(firstTurn([user('u', { turn: { activeMs: 5000 } }), tool('t', { state: 'failed', text: 'x' })]))).toBe(
+      '已工作 5 秒 · 1 步失败',
+    )
+  })
+
+  it("joins a settled turn's finished reads into one row, and a live turn's never", () => {
+    const reads = firstTurn([
+      user('u'),
+      tool('r1', { tool: { kind: 'read' } }),
+      tool('r2', { tool: { kind: 'read' } }),
+      tool('e', { tool: { kind: 'edit' } }),
+    ])
+    expect(shape(turnBlocks(reads, true))).toEqual([['reads:2', 'tool:e']])
+    expect(shape(turnBlocks(reads, false))).toEqual([['tool:r1', 'tool:r2', 'tool:e']])
+    const failedRead = firstTurn([
+      user('u'),
+      tool('r1', { tool: { kind: 'read' } }),
+      tool('r2', { state: 'failed', text: 'x', tool: { kind: 'read' } }),
+    ])
+    expect(shape(turnBlocks(failedRead, true))).toEqual([['tool:r1', 'tool:r2']])
+  })
+
+  it("keeps the work block's key from its first row, so rows join it without remounting it", () => {
+    const before = turnBlocks(firstTurn([user('u'), tool('t1')]), false)
+    const after = turnBlocks(firstTurn([user('u'), tool('t1'), tool('t2')]), false)
+    expect(before[0]).toMatchObject({ key: 'work:t1' })
+    expect(after[0]).toMatchObject({ key: 'work:t1' })
+  })
+
+  it('keeps a question out of the fold: it is what the person said', () => {
+    const blocks = turnBlocks(firstTurn([user('u'), tool('q', { toolName: 'ask_user' }), tool('t'), reply('a', '好')]), true)
+    expect(shape(blocks)).toEqual(['q', ['tool:t'], 'a'])
+    expect(workFolds(firstTurn([user('u'), tool('q', { toolName: 'ask_user' }), reply('a', '好')]), 'completed')).toBe(false)
+  })
+
+  it("gives a failed row the first line of what it reported, without the runtime's code, cut", () => {
+    expect(failureReason({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过')
+    expect(failureReason({ state: 'failed', text: '' })).toBe('没有成功')
+    expect(failureReason({ state: 'failed', text: 'x'.repeat(200) })).toHaveLength(121)
   })
 })
 
@@ -311,7 +371,7 @@ describe('resending a turn', () => {
     expect(resendWarning(effects('other', 'failed', 'TOOL_OUTCOME_UNKNOWN: …'), false)).toContain('结果未知')
   })
 
-  it('offers 重新发送 only on the latest turn that did not simply finish, and sends its prompt again', () => {
+  it('offers 重试 on the latest turn only, and sends its prompt again', () => {
     const sent: string[] = []
     const render = (status: TaskStatus) =>
       renderToStaticMarkup(
@@ -324,8 +384,8 @@ describe('resending a turn', () => {
           retry: { fullAccess: false, onResend: prompt => sent.push(prompt) },
         }),
       )
-    expect(render('failed').match(/>重新发送</g)).toHaveLength(1)
-    expect(render('idle')).not.toContain('重新发送')
+    expect(render('failed').match(/aria-label="重试"/g)).toHaveLength(1)
+    expect(render('idle').match(/aria-label="重试"/g)).toHaveLength(1)
   })
 })
 
@@ -354,10 +414,10 @@ describe('the live run', () => {
     const phase = (extra: Partial<TaskDetail>, opts: { cancelling?: boolean; approvals?: number } = {}) =>
       phaseText(livePhase({ ...base, ...extra }, { cancelling: false, approvals: 0, hostNow: T0 + 12_000, ...opts }), 'Codex')
     expect(phase({}, { cancelling: true })).toBe('正在停止…')
-    expect(phase({}, { approvals: 1 })).toBe('等你批准')
+    expect(phase({}, { approvals: 1 })).toBe('需要你允许')
     expect(
       phase({ messages: [user('u'), tool('t', { state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } })] }),
-    ).toBe('正在运行 pnpm test')
+    ).toBe('运行 pnpm test')
     // A tool without a kind Latch reads says 正在执行 with its title; so does the driver's own phase.
     expect(phase({ messages: [user('u'), tool('t', { state: 'running', toolName: 'mcp_lookup' })] })).toBe('正在执行 mcp_lookup')
     expect(phase({ activity: { phase: 'tool', toolName: 'lookup' } })).toBe('正在执行 lookup')
@@ -368,18 +428,122 @@ describe('the live run', () => {
     expect(phase({ activity: { phase: 'model' } })).toBe('等待模型…')
   })
 
-  it('reports output so far, the context an agent reported, and a stall after two quiet minutes', () => {
-    const turn = firstTurn([user('u'), reply('a', '一', { usage: { inputTokens: 8200, outputTokens: 900 } })])
-    const running = detail([], { lastOutputAt: at(0) }, 'running')
-    expect(liveFacts(running, turn, T0 + 119_000)).toMatchObject({ tokens: '输出 900 tokens' })
-    expect(liveFacts(running, turn, T0 + 119_000).stalled).toBeUndefined()
-    expect(liveFacts(running, turn, T0 + 121_000).stalled).toBe('2 分钟没有新输出')
-    const agent = detail([], { usageReport: { contextUsed: 74_210, contextSize: 200_000, at: at(0) } }, 'running')
-    expect(liveFacts(agent, turnsOf([user('u')])[0], T0)).toMatchObject({
-      tokens: '上下文 74.2k tokens',
-      tokensTitle: '由 Agent 报告：74,210 tokens',
+  it('names what really runs, with one clock, and stays silent while the person is the one awaited', () => {
+    const live = (extra: Partial<RunLive>): RunLive => ({ runId: 'r', activity: 'model', since: at(0), lastEventAt: at(0), ...extra })
+    const status = (
+      extra: Partial<TaskDetail>,
+      summary: Partial<TaskSummary> = {},
+      opts: { approvals?: number; cancelling?: boolean } = {},
+    ) => {
+      const base = detail([user('u')], { runStartedAt: at(0), ...extra }, 'running')
+      return runStatus(
+        { ...base, summary: { ...base.summary, ...summary } },
+        { cancelling: false, approvals: 0, hostNow: T0 + 72_000, harness: 'Codex', ...opts },
+      )
+    }
+    expect(status({}, { live: live({}) })).toEqual({ tone: 'plain', text: '运行中', clock: '1:12' })
+    expect(status({}, { live: live({ activity: 'command', commandName: 'swift test' }) })).toEqual({
+      tone: 'plain',
+      text: '命令运行中 · swift test',
+      clock: '1:12',
     })
-    expect(liveFacts({ ...running, activity: { phase: 'approval' } }, turn, T0 + 400_000).stalled).toBeUndefined()
+    expect(status({}, { live: live({ activity: 'approval' }) }, { approvals: 1 })).toEqual({ tone: 'quiet', text: '需要你允许' })
+    expect(status({ questions: [{}] as unknown as TaskDetail['questions'] }).tone).toBe('quiet')
+    expect(status({}, {}, { cancelling: true })).toEqual({ tone: 'plain', text: '正在停止…' })
+  })
+
+  it('asks when a run has gone quiet, in the words of what it waits on, and only then', () => {
+    const base = detail([user('u')], { runStartedAt: at(0) }, 'running')
+    const quiet = (live: RunLive, now: number) =>
+      runStatus({ ...base, summary: { ...base.summary, live } }, { cancelling: false, approvals: 0, hostNow: T0 + now, harness: 'Codex' })
+    const model = quiet(
+      { runId: 'r', activity: 'model', since: at(0), lastEventAt: at(0), silent: true, silenceThresholdMs: 120_000 },
+      180_000,
+    )
+    expect(model).toMatchObject({ tone: 'amber', text: '等模型回应 · 3 分钟没有新内容', actions: ['keep-waiting', 'stop'] })
+    const command = quiet(
+      {
+        runId: 'r',
+        activity: 'command',
+        commandName: 'pnpm test',
+        since: at(0),
+        lastEventAt: at(0),
+        silent: true,
+        silenceThresholdMs: 600_000,
+      },
+      720_000,
+    )
+    expect(command).toMatchObject({ tone: 'amber', text: 'pnpm test · 12 分钟没有输出' })
+    const unknown = quiet(
+      {
+        runId: 'r',
+        activity: 'model',
+        since: at(0),
+        lastEventAt: at(1000),
+        unrecognized: { count: 1, at: at(1000), messageId: 'n1' },
+      },
+      5000,
+    )
+    expect(unknown).toEqual({ tone: 'amber', text: 'Codex 发来一个看不懂的请求', actions: ['stop'], viewMessageId: 'n1' })
+    // The engine went on after the request it did not get an answer to: nothing is stuck on it.
+    const wentOn = quiet(
+      { runId: 'r', activity: 'model', since: at(0), lastEventAt: at(2000), unrecognized: { count: 1, at: at(1000) } },
+      5000,
+    )
+    expect(wentOn.tone).toBe('plain')
+    // An older Host has no such field: its last output is all there is to go on.
+    const older = (now: number) =>
+      runStatus(detail([user('u')], { lastOutputAt: at(0) }, 'running'), {
+        cancelling: false,
+        approvals: 0,
+        hostNow: T0 + now,
+        harness: 'Codex',
+      })
+    expect(older(119_000).tone).toBe('plain')
+    expect(older(121_000)).toMatchObject({ tone: 'amber', text: '2 分钟没有新输出' })
+  })
+
+  it('keeps one clock format', () => {
+    expect(runClock(47_000)).toBe('0:47')
+    expect(runClock(72_000)).toBe('1:12')
+    expect(runClock(3_723_000)).toBe('1:02:03')
+  })
+
+  it('says how a run ended when it took more than an answer, naming what nobody can vouch for', () => {
+    const summary = (runEnd: TaskSummary['runEnd']): TaskSummary => ({
+      id: 's',
+      title: 't',
+      status: 'failed',
+      updatedAt: '',
+      ...(runEnd ? { runEnd } : {}),
+    })
+    expect(runEndLine(summary(undefined), 'Codex')).toBeUndefined()
+    expect(
+      runEndLine(summary({ reason: 'process-exited', at: at(0), unknownResults: [{ messageId: 'm', name: 'pnpm test' }] }), 'Codex'),
+    ).toEqual({ tone: 'red', text: 'Codex 已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对', unknown: ['pnpm test'], retry: true })
+    expect(runEndLine(summary({ reason: 'forced-stop', at: at(0), unknownResultCount: 2 }), 'Codex')).toEqual({
+      tone: 'amber',
+      text: '已强制停止 · 这 2 条命令结果未知，请核对',
+      unknown: [],
+      retry: false,
+    })
+    expect(runEndLine(summary({ reason: 'turn-ended', at: at(0) }), 'Codex')).toBeUndefined()
+  })
+
+  it('follows the prompt until the agent answers', () => {
+    const turn = firstTurn([user('u')])
+    const running = (activity: RunLive['activity'] | undefined, extra: Partial<TaskDetail> = {}) => {
+      const base = detail([user('u')], extra, 'running')
+      return {
+        ...base,
+        summary: { ...base.summary, ...(activity ? { live: { runId: 'r', activity, since: at(0), lastEventAt: at(0) } } : {}) },
+      }
+    }
+    expect(deliveryWords(running('starting'), turn)).toBe('Mac 已收到')
+    expect(deliveryWords(running('model'), turn)).toBe('Agent 已开始')
+    expect(deliveryWords(running('model', { liveText: '好' }), turn)).toBeUndefined()
+    expect(deliveryWords(running(undefined), turn)).toBeUndefined()
+    expect(deliveryWords(running('model'), firstTurn([user('u'), reply('a', '好')]))).toBeUndefined()
   })
 })
 
@@ -470,16 +634,16 @@ describe('a settled turn', () => {
 
   it('writes the outcome from what the turn kept', () => {
     const kept = settledTranscript([user('u'), reply('a', '部分', { state: 'cancelled' })], 'cancelled')
-    expect(kept).toContain('>已停止</span><span class="turn-fact">保留了部分回复</span>')
+    expect(kept).toMatch(/class="turn-record outcome-stopped"><span>已停止 · .*保留了部分回复<\/span>/u)
     const nothing = settledTranscript([user('u'), tool('t', { state: 'cancelled' })], 'cancelled')
-    expect(nothing).toContain('>已停止</span>')
+    expect(nothing).toContain('已停止')
     expect(nothing).not.toContain('保留了部分')
   })
 
   it('names the model of a running turn from the run before its first step records one', () => {
-    expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">· fixture-large</span>')
-    // A settled turn names only the model its steps recorded.
-    expect(streamingTranscript('idle')).not.toContain('assistant-meta-model')
+    expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">Latch · fixture-large</span>')
+    // A settled turn names only the model its steps recorded: here, just the engine.
+    expect(streamingTranscript('idle')).not.toContain('fixture-large')
   })
 })
 

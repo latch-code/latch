@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  changesPanelWidth,
   RIGHT_PANEL_DEFAULT,
   SIDEBAR_MAX,
   SIDEBAR_MIN,
@@ -62,5 +63,16 @@ describe('the right panel', () => {
 
   it('is a pushed page on phones', () => {
     expect(placeRightPanel({ windowWidth: 767, left: 0 })).toEqual({ kind: 'page' })
+  })
+})
+
+describe('how wide 变更 opens', () => {
+  it('asks for 660 where the conversation keeps 480, what is left below that, and a 420 sheet when that is too little', () => {
+    expect(changesPanelWidth(1440, 300)).toBe(660)
+    expect(changesPanelWidth(1280, 300)).toBe(500)
+    expect(changesPanelWidth(1024, 300)).toBe(420)
+    expect(changesPanelWidth(1024, 52)).toBe(492)
+    expect(changesPanelWidth(1440, 52, true)).toBe(860)
+    expect(changesPanelWidth(1440, 300, true)).toBe(660)
   })
 })

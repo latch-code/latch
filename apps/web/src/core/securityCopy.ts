@@ -62,13 +62,12 @@ export const SETUP_COPY = {
  * device does not get.
  */
 export const APPROVAL_COPY = {
-  waiting: '等你允许',
+  waiting: '需要你允许',
   highRisk: '高风险',
   advisory: '仅提示',
   check: '需要核对',
   advisoryNote: 'Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
   hiddenCharacters: '含有不可见字符，已标出',
-  onceNote: '只允许这一次，之后的同类操作仍会询问。',
   confirmedLocal: '已确认，正在执行…',
   /** Standard R2 opens the desktop's own 取消/允许 sheet (`shell-local`), which takes no Touch ID. */
   allowLocal: '在这台 Mac 上允许',

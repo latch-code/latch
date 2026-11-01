@@ -93,7 +93,7 @@ describe('telling the agent what to do instead after 拒绝', () => {
         sendKey: 'enter',
         coarse: false,
         controls: null,
-        run: { approvals: 1, onRevealApprovals: () => {}, cancel: 'idle', onCancel: () => {} },
+        run: { cancel: 'idle', onCancel: () => {} },
         hint: DECISION_COPY.noteHint,
         answer: { label: DECISION_COPY.noteSubmit, onSubmit: () => {}, onCancel: () => {} },
       }),

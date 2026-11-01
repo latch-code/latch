@@ -1,12 +1,23 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { FileAudio, FileImage, FileText, FileVideo, Globe, Presentation, Sheet } from 'lucide-react'
 import type { FileChange } from '@latch/protocol'
-import { Button, Tooltip } from '@latch/ui'
+import { Button, Icon, Tooltip, type LucideIcon } from '@latch/ui'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
-import { FileSession, FileChip } from './FileChip.tsx'
+import { FileSession } from './FileChip.tsx'
 import { VisibleText } from './VisibleText.tsx'
 const outputSize = (size: number) =>
   size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`
+const KIND_ICONS: Record<string, LucideIcon> = {
+  pptx: Presentation,
+  xlsx: Sheet,
+  csv: Sheet,
+  html: Globe,
+  svg: FileImage,
+  image: FileImage,
+  audio: FileAudio,
+  video: FileVideo,
+}
 function OutputThumbnail({ file }: { file: FileChange }) {
   const session = useContext(FileSession),
     open = useContext(FileOpenContext)
@@ -60,56 +71,64 @@ function OutputThumbnail({ file }: { file: FileChange }) {
     </span>
   )
 }
-const WORDS = { created: '新增', modified: '修改', deleted: '已删除' }
-export interface FileOutputsProps {
-  files: FileChange[]
-  pending?: boolean
-  truncated?: boolean
-  unavailable?: boolean
-}
-/** These are observed workspace changes, including other processes; they do not assert who wrote the file. */
-export function FileOutputs({ files, pending, truncated, unavailable }: FileOutputsProps) {
-  const [expanded, setExpanded] = useState(false)
-  if (!files.length && !truncated && !unavailable) return null
-  const shown = expanded ? files : files.slice(0, 5)
+/** What the watch over the folders could not vouch for. */
+export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | undefined; unavailable?: boolean | undefined }) {
+  if (!truncated && !unavailable) return null
   return (
-    <section className="file-outputs" aria-label="运行期间有变化的文件">
-      <Tooltip content="记录项目目录在运行期间及结束后两秒内的变化。其他编辑器或会话的改动也可能包含在内。">
-        <span className="file-outputs-heading" tabIndex={0}>
-          运行期间有变化的文件{pending ? ' · 正在核对' : ''}
-        </span>
-      </Tooltip>
-      {shown.length > 0 && (
-        <ul>
-          {shown.map(file => (
+    <div className="output-notes">
+      {truncated && <p>只记录了部分变化；目录过大、观察中断或部分路径无法读取。</p>}
+      {unavailable && <p>本轮未能完整观察文件变化，请在项目目录中核对结果。</p>}
+    </div>
+  )
+}
+
+/**
+ * 「生成了 2 个文件」: what the turn made for the person to open. These come from watching the folders, which sees other
+ * writers too, so the card says what exists rather than who wrote it.
+ */
+export function ProducedFiles({ files, actions }: { files: FileChange[]; actions?: ReactNode }) {
+  const session = useContext(FileSession)
+  const open = useContext(FileOpenContext)
+  if (!files.length) return null
+  return (
+    <section className="file-outputs" aria-label="这一轮生成的文件">
+      <div className="file-outputs-heading">
+        <span>生成了 {files.length} 个文件</span>
+        {actions}
+      </div>
+      <ul>
+        {files.map(file => {
+          const Glyph = KIND_ICONS[file.kind ?? ''] ?? FileText
+          const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+          return (
             <li key={`${file.root}\n${file.path}`}>
-              <span className="file-output-change">{WORDS[file.change]}</span>
-              {!pending && file.kind === 'image' && file.change !== 'deleted' && <OutputThumbnail file={file} />}
-              {file.change === 'deleted' ? (
-                <span className="file-output-deleted">
-                  <VisibleText text={file.path} />
-                </span>
-              ) : (
-                <FileChip path={file.path} rootId={file.root} />
-              )}
-              {file.change !== 'deleted' && file.size !== undefined && (
+              {file.kind === 'image' ? <OutputThumbnail file={file} /> : <Icon icon={Glyph} size={16} className="file-output-icon" />}
+              <span className="file-output-name" title={file.path}>
+                <VisibleText text={name} />
+              </span>
+              {file.size !== undefined && (
                 <Tooltip content={`${file.size.toLocaleString()} 字节`}>
                   <span className="file-output-size" tabIndex={0}>
                     {outputSize(file.size)}
                   </span>
                 </Tooltip>
               )}
+              {session && open && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="file-output-open"
+                  aria-label={`打开 ${name}`}
+                  onClick={() => {
+                    open({ sessionId: session.id, reference: file.path, rootId: file.root })
+                  }}>
+                  打开
+                </Button>
+              )}
             </li>
-          ))}
-        </ul>
-      )}
-      {files.length > 5 && (
-        <Button variant="ghost" size="xs" onClick={() => setExpanded(!expanded)}>
-          {expanded ? '收起文件列表' : `查看全部 ${files.length} 个文件`}
-        </Button>
-      )}
-      {truncated && <p>只记录了部分变化；目录过大、观察中断或部分路径无法读取。</p>}
-      {unavailable && <p>本轮未能完整观察文件变化，请在项目目录中核对结果。</p>}
+          )
+        })}
+      </ul>
     </section>
   )
 }

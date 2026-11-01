@@ -300,6 +300,8 @@ export interface Message {
   providerId?: string
   /** User: what the turn this message opened took. */
   turn?: TurnStats
+  /** User: the turn it opened in the changes record (`TurnChanges.turnId`); absent when the run reached no folder, or from before this field. */
+  turnId?: string
 }
 
 export type ApprovalOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'

@@ -109,9 +109,7 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
       expect(JSON.parse(seen.at(-1)!)).toMatchObject({
         answers: [{ choices: ['TypeScript'] }, { choices: ['单元测试'], other: '再检查可访问性' }],
       })
-      const process = page.locator('.process-fold > .fold-toggle')
-      await expect.poll(() => process.getAttribute('aria-expanded')).toBe('false')
-      await process.click()
+      // What the person answered stays in reading order, out of the work's fold.
       await page.getByText('已回答 2 题', { exact: true }).click()
       await expect.poll(() => page.locator('.question-result').getByText('再检查可访问性', { exact: false }).isVisible()).toBe(true)
       await page.screenshot({ path: `test-results/questions-answered-${width}.png`, fullPage: true })

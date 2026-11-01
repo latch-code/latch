@@ -43,6 +43,15 @@ test('shows a local submission only in its own session and removes it by confirm
   ).toBe(view)
 })
 
+test('recognises its message under the note the Host adds after an undo', () => {
+  expect(
+    sendingMessageFor(snapshot, view, 'session', {
+      ...detail,
+      messages: [{ id: 'host-user', requestId: 'request', role: 'user', text: '[Latch] 上一轮的改动已撤销。\n\n你好' }],
+    }),
+  ).toBeNull()
+})
+
 test('never duplicates queued input, a full-access start or a Host without confirmed message identities', () => {
   expect(sendingMessageFor(snapshot, { ...view, submission: { ...view.submission, queue: true } }, 'session', detail)).toBeNull()
   const start = { ...view, submission: { prompt: '你好', requestId: 'request', harnessId: 'external' }, sessionId: null }

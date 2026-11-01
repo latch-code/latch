@@ -119,6 +119,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     column,
     page,
     closeInfoPage,
+    changesOpen,
     selectedId,
     resync,
     connection,
@@ -319,13 +320,15 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         )}
                         <div className="info-page-title">
                           <h2>
-                            {fileTabs.active?.target.view === 'changes'
-                              ? '代码审阅'
-                              : fileTabs.active
-                                ? '文件预览'
-                                : filesOpen
-                                  ? '文件'
-                                  : '会话信息'}
+                            {changesOpen && !fileTabs.active
+                              ? '变更'
+                              : fileTabs.active?.target.view === 'changes'
+                                ? '代码审阅'
+                                : fileTabs.active
+                                  ? '文件预览'
+                                  : filesOpen
+                                    ? '文件'
+                                    : '会话信息'}
                           </h2>
                           <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                         </div>

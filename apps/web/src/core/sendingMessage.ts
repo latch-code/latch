@@ -1,4 +1,4 @@
-import type { AppSnapshot, TaskDetail } from '@latch/protocol'
+import { splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import type { PendingSubmission } from './api.ts'
 import { harnessLevel } from './permissions.ts'
 
@@ -29,7 +29,8 @@ export function sendingMessageFor(
       if (message.role !== 'user' || message.requestId !== submission.requestId) return false
       const text = message.forkContext ? message.text.slice(message.forkContext.prefixLength) : message.text
       return (
-        text === submission.prompt
+        // The Host puts the note about an undo in front of what the person wrote.
+        (text === submission.prompt || splitChangeNote(text).text === submission.prompt)
         && JSON.stringify(message.attachments?.map(ref => ref.id) ?? []) === JSON.stringify(submission.attachmentIds ?? [])
         && JSON.stringify(message.fileRefs ?? []) === JSON.stringify(submission.fileRefs ?? [])
       )

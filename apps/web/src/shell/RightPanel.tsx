@@ -1,6 +1,8 @@
 import { fileContextKey } from '../preview/fileContext.ts'
 import { Inspector } from '../components/Inspector.tsx'
 import { SessionPanels } from '../components/SessionPanels.tsx'
+import { harnessName } from '../composerChoice.ts'
+import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The session's panels: the same blocks in the column beside the conversation and in the page over it. */
@@ -50,11 +52,62 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     workspaceForFiles,
     snapshot,
     refresh,
+    connection,
+    canViewChanges,
+    changesOpen,
+    showChanges,
+    closeChanges,
+    changesTarget,
+    changesStat,
+    setChangesTotals,
+    commentOnLine,
+    openFile,
+    level,
+    phone,
+    topHarness,
   } = shell
   if (!(summary || filesVisible)) return null
+  const canCompose = gate.kind === 'open' && !submission.pending && !submission.sending && sessionBlock === undefined
   return (
     <SessionPanels
       key={contextKey}
+      {...(summary && canViewChanges && (changesOpen || snapshot.device.dataScope === 'all')
+        ? {
+            changes: (
+              <ChangesPanel
+                summary={summary}
+                messages={current?.messages ?? []}
+                engine={topHarness ? harnessName(topHarness) : 'Agent'}
+                local={access.local}
+                canRun={access.scopes.has('run')}
+                localOnlySession={level === 'L3'}
+                canRead={snapshot.device.dataScope === 'all'}
+                phone={phone}
+                offline={connection === 'reconnecting' || connection === 'offline'}
+                {...(changesTarget ? { target: changesTarget } : {})}
+                {...(canCompose && !phone ? { onComment: commentOnLine } : {})}
+                onOpenFile={file => {
+                  openFile({ sessionId: summary.id, reference: file.path, rootId: file.root })
+                }}
+                onOpenSession={choose}
+                knownSession={id => snapshot.tasks.some(task => task.id === id)}
+                onToast={(text, tone = 'ok') => {
+                  setToast({ text, tone })
+                }}
+                onTotals={setChangesTotals}
+              />
+            ),
+          }
+        : {})}
+      changesOpen={changesOpen}
+      onShowChanges={showChanges}
+      changesExpanded={fileExpanded}
+      onExpandChanges={() => {
+        setFileExpanded(value => !value)
+        setInfoPage(true)
+      }}
+      onCloseChanges={closeChanges}
+      {...(changesStat ? { changesStat } : {})}
       fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
       treeView={fileTabs.treeView}
@@ -100,7 +153,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
         setInfoPage(true)
       }}
       summary={summary}
-      canCompose={gate.kind === 'open' && !submission.pending && !submission.sending && sessionBlock === undefined}
+      canCompose={canCompose}
       onCompose={text => {
         submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
         if (pageMode) setInfoPage(false)

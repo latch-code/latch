@@ -100,7 +100,7 @@ describe('status words', () => {
       ['失败', 'rgb(185, 28, 28)'],
       ['已完成', 'rgb(24, 24, 27)'],
       ['不可用', 'rgb(180, 83, 9)'],
-      ['已取消', 'rgb(113, 113, 122)'],
+      ['已取消', 'rgb(106, 106, 115)'],
     ])
     expect(
       words.every(item => style(item).fontSize === '12px' && style(item).lineHeight === '16px' && style(item).fontWeight === '500'),
@@ -109,7 +109,7 @@ describe('status words', () => {
     // Waiting has the shield in the amber of icons, running the spinner, failed circle-alert, done a check; the rest none.
     const glyph = (index: number) => words[index]!.querySelector('.ui-status-word-glyph')
     expect(glyph(0)?.classList.contains('lucide-shield')).toBe(true)
-    expect(style(glyph(0)!).color).toBe('rgb(245, 158, 11)')
+    expect(style(glyph(0)!).color).toBe('rgb(212, 115, 6)')
     expect(glyph(1)?.classList.contains('ui-spinner')).toBe(true)
     expect(glyph(1)?.getAttribute('data-size')).toBe('12')
     expect(glyph(2)?.classList.contains('lucide-circle-alert')).toBe(true)

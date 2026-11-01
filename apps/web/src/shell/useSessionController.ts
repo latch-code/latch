@@ -142,7 +142,7 @@ export function useSessionController({
   })
   // Fade the content, not the masked scroller: animating the latter can leave Chromium's hit-test region empty.
   useSwitchFade(reading.contentRef, current?.summary.id ?? null)
-  // The bar above the input says approvals wait only while none of their cards is in view.
+  // The way back to a waiting approval shows only while none of the cards is in view.
   const approvalVisibility = useApprovalVisibility()
   const approvalsInView = useApprovalsInView(approvalVisibility)
   const stopSession = (sessionId: string, cause: unknown) => {
@@ -731,16 +731,10 @@ export function useSessionController({
       : selectedId !== null && (cancelling.has(selectedId) || phase === 'cancelling')
         ? 'cancelling'
         : 'idle'
-  const firstApproval = approvals[0]
   const run: RunState | undefined =
     selectedId !== null && active
       ? {
           id: selectedId + ':' + (summary?.runId ?? ''),
-          ...(current?.plan?.length ? { plan: current.plan } : {}),
-          approvals: approvals.length,
-          approvalsInView: approvalsInView !== false,
-          ...(firstApproval ? { approvalTitle: firstApproval.tool?.title || firstApproval.toolName } : {}),
-          onRevealApprovals: revealApprovals,
           cancel: cancelState,
           onCancel: () => {
             if (selectedId !== null) void cancelSession(selectedId).catch(() => {})
@@ -908,7 +902,6 @@ export function useSessionController({
     mode,
     phase,
     cancelState,
-    firstApproval,
     run,
     fallbackElapsed,
     providerName,

@@ -124,6 +124,7 @@ const message = z.object({
   turn: z
     .object({ endedAt: z.string().optional(), activeMs: z.number().nonnegative().optional(), waitMs: z.number().nonnegative().optional() })
     .optional(),
+  turnId: z.string().max(128).optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),

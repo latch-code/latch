@@ -16,7 +16,8 @@ import {
   type UiPanelDocument,
   type UiPanelInfo,
 } from '@latch/protocol'
-import { Button, InlineNotice, Loading, Tabs } from '@latch/ui'
+import { Maximize2, Minimize2, X } from 'lucide-react'
+import { Button, IconButton, InlineNotice, Loading, Tabs } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
@@ -50,7 +51,23 @@ export function SessionPanels({
   onQuote,
   folders,
   cwd,
+  changes,
+  changesOpen = false,
+  onShowChanges,
+  changesStat,
+  changesExpanded,
+  onExpandChanges,
+  onCloseChanges,
 }: {
+  /** The 变更 tab's content, when the session has one. */
+  changes?: ReactNode
+  changesOpen?: boolean
+  onShowChanges?(value: boolean): void
+  /** `+60 −6`, while another tab is showing. */
+  changesStat?: string
+  changesExpanded?: boolean
+  onExpandChanges?(): void
+  onCloseChanges?(): void
   files?: FileTab[]
   activeFile?: FileTab
   onSelectFile?(id?: string): void
@@ -105,36 +122,82 @@ export function SessionPanels({
   const history = activeFile
     ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
     : undefined
-  if (offered.length === 0 && files.length === 0 && !fileContext) return children
+  const [changesStarted, setChangesStarted] = useState(changesOpen)
+  useEffect(() => {
+    if (changesOpen) setChangesStarted(true)
+  }, [changesOpen])
+  const showingChanges = changesOpen && !activeFile
+  if (offered.length === 0 && files.length === 0 && !fileContext && !changes) return children
   return (
     <div className="session-panels inspector">
       {!(fileExpanded && activeFile?.target.view === 'changes') && (
-        <Tabs
-          label="会话面板"
-          className="session-panel-tabs"
-          value={activeFile ? `file:${activeFile.id}` : showFiles || !summary ? 'files' : (active?.id ?? 'session')}
-          options={[
-            ...(summary ? [{ value: 'session', label: '会话', controls: id }] : []),
-            ...(fileContext ? [{ value: 'files', label: '文件', controls: id }] : []),
-            ...files.map(tab => ({
-              value: `file:${tab.id}`,
-              label: escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference),
-              controls: id,
-            })),
-            ...offered.map(panel => ({ value: panel.id, label: escapeSecurityText(panel.title), controls: id })),
-          ]}
-          onValueChange={value => {
-            if (value.startsWith('file:')) onSelectFile?.(value.slice(5))
-            else {
-              onSelectFile?.(undefined)
-              setSelected(value)
-              onShowFiles?.(value === 'files')
+        <div className="session-panel-strip">
+          <Tabs
+            label="会话面板"
+            className="session-panel-tabs"
+            value={
+              activeFile
+                ? `file:${activeFile.id}`
+                : showingChanges
+                  ? 'changes'
+                  : showFiles || !summary
+                    ? 'files'
+                    : (active?.id ?? 'session')
             }
-          }}
-        />
+            options={[
+              ...(changes
+                ? [{ value: 'changes', label: showingChanges || !changesStat ? '变更' : `变更 ${changesStat}`, controls: id }]
+                : []),
+              ...(summary ? [{ value: 'session', label: '会话', controls: id }] : []),
+              ...(fileContext ? [{ value: 'files', label: '文件', controls: id }] : []),
+              ...files.map(tab => ({
+                value: `file:${tab.id}`,
+                label: escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference),
+                controls: id,
+              })),
+              ...offered.map(panel => ({ value: panel.id, label: escapeSecurityText(panel.title), controls: id })),
+            ]}
+            onValueChange={value => {
+              if (value.startsWith('file:')) {
+                onShowChanges?.(false)
+                onSelectFile?.(value.slice(5))
+              } else {
+                onSelectFile?.(undefined)
+                onShowChanges?.(value === 'changes')
+                if (value !== 'changes') setSelected(value)
+                onShowFiles?.(value === 'files')
+              }
+            }}
+          />
+          {showingChanges && (
+            <>
+              <IconButton
+                size="xs"
+                icon={changesExpanded ? Minimize2 : Maximize2}
+                label={changesExpanded ? '还原' : '最大化'}
+                onClick={() => {
+                  onExpandChanges?.()
+                }}
+              />
+              <IconButton
+                size="xs"
+                icon={X}
+                label="关闭变更"
+                onClick={() => {
+                  onCloseChanges?.()
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
+      {changes && changesStarted && (
+        <div className="session-panel-changes" hidden={!showingChanges}>
+          {changes}
+        </div>
       )}
       {fileContext && treeStarted && (
-        <div className="session-file-tree" hidden={!!activeFile || (!showFiles && !!summary)}>
+        <div className="session-file-tree" hidden={!!activeFile || showingChanges || (!showFiles && !!summary)}>
           <FileTree
             key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
             context={fileContext}
@@ -151,7 +214,7 @@ export function SessionPanels({
         </div>
       )}
       <div
-        hidden={!activeFile && (showFiles || !summary)}
+        hidden={!activeFile && (showingChanges || showFiles || !summary)}
         role="tabpanel"
         id={id}
         aria-label={activeFile?.file?.name ?? active?.title ?? '会话'}>

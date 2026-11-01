@@ -116,6 +116,7 @@ const messageSchema = z.object({
   model: z.string().optional(),
   providerId: z.string().optional(),
   turn: turnSchema.optional(),
+  turnId: z.string().max(128).optional(),
 })
 const historySchema = z.object({
   attachmentRefs: z.array(z.custom<AttachmentRef>(isAttachmentRef)).max(8).optional(),

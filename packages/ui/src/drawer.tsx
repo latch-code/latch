@@ -39,7 +39,7 @@ export function Drawer({
   className,
   children,
 }: {
-  /** waiting: tinted amber, for what needs the person. */
+  /** waiting: for what needs the person; the surface stays neutral and its contents say so in amber. */
   tone?: 'neutral' | 'waiting'
   arming?: boolean
   /** A security surface: the tokens are locked inside it (tokens.css). */

@@ -105,10 +105,17 @@ describe('preview authority reduction', () => {
         await showList(page, width)
         await page.locator(`[data-task-id="${created.sessionId}"]`).click()
         const artifactLink = page
-            .getByRole('region', { name: '运行期间有变化的文件', exact: true })
-            .getByRole('button', { name: '预览文件：allowed.txt', exact: true }),
+            .getByRole('region', { name: '这一轮改动的文件', exact: true })
+            .locator('button.summary-file', { hasText: 'allowed.txt' }),
           preview = page.getByRole('region', { name: '文件预览', exact: true })
-        await artifactLink.click()
+        // The card's row opens the change; the file itself is one button away.
+        const openArtifact = async () => {
+          const toggle = page.getByRole('button', { name: '显示文件', exact: true })
+          if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+          await artifactLink.click()
+          await page.getByRole('region', { name: '文件历史变更', exact: true }).getByRole('button', { name: '预览', exact: true }).click()
+        }
+        await openArtifact()
         await preview.getByText(artifact, { exact: true }).waitFor()
         await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
         const allSnapshot = page.waitForResponse(
@@ -170,7 +177,7 @@ describe('preview authority reduction', () => {
             && response.url().endsWith('/tasks/' + created.sessionId + '/files/resolve')
             && (response.request().postDataJSON() as { paths?: string[] }).paths?.includes('allowed.txt') === true,
         )
-        await artifactLink.click()
+        await openArtifact()
         const reauthorized = await resolved
         expect(reauthorized.ok()).toBe(true)
         expect(((await reauthorized.json()) as { files: Array<{ status: string; file: FileMetadata }> }).files[0]?.status).toBe('ok')

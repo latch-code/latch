@@ -123,7 +123,7 @@
   background: linear-gradient(var(--hover), var(--hover)) var(--raised);
 }
 
-/* Translucent ink turns muddy over amber or red, so a secondary button inside a tint is outlined instead. */
+/* Inside a warning or a risk a secondary button is outlined: translucent ink turns muddy over red, and both read alike. */
 :is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary'] {
   background: var(--raised);
   box-shadow:

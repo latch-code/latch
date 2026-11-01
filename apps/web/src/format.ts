@@ -168,22 +168,6 @@ export const clockTime = (at: number): string => {
   return `${clock(date)}:${pad(date.getSeconds())}`
 }
 
-/**
- * A separator between messages: 「今天 14:02」, 「昨天 09:15」, 「周三 09:15」 within a week, 「10月22日 09:15」 this year,
- * 「2025年3月2日 10:00」 earlier; a later separator on the same day as the one before it says only 「16:40」.
- */
-export function separatorLabel(at: number, now: number, sameDayAsPrevious: boolean): string {
-  const date = new Date(at)
-  const today = new Date(now)
-  const days = daysBetween(date, today)
-  if (sameDayAsPrevious) return clock(date)
-  if (days <= 0) return `今天 ${clock(date)}`
-  if (days === 1) return `昨天 ${clock(date)}`
-  if (days < 7) return `${WEEKDAYS[date.getDay()]} ${clock(date)}`
-  if (date.getFullYear() === today.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日 ${clock(date)}`
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${clock(date)}`
-}
-
 export function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(seconds / 3600)

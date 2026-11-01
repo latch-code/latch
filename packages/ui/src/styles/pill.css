@@ -1,6 +1,6 @@
 /*
- * Badges (an attribute after a name): 18px, 4px corners, 11/14·500 on a soft fill; amber and red tint the fill and the
- * words in their own tone. Counts are tabular digits without a box. Status dots are 6px, 8px on phones.
+ * Badges (an attribute after a name): 18px, 4px corners, 11/14·500 on a soft fill; amber colours only the words, red the
+ * fill and the words. Counts are tabular digits without a box. Status dots are 6px, 8px on phones.
  */
 .ui-badge {
   display: inline-flex;
@@ -17,7 +17,6 @@
   white-space: nowrap;
 }
 .ui-badge[data-tone='warn'] {
-  background: var(--amber-soft);
   color: var(--amber);
 }
 .ui-badge[data-tone='err'] {

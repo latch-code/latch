@@ -181,7 +181,10 @@ it.each([
           routeFailed = true
         }
       })
-      await page.getByRole('button', { name: resend ? '重新发送' : '发送', exact: true }).click()
+      await page
+        .getByRole('button', { name: resend ? '重试' : '发送', exact: true })
+        .last()
+        .click()
       await expect.poll(() => accepted).toBe(true)
       if (unknown) await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
       await choose(b.summary.title)

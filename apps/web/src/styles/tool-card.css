@@ -1,9 +1,6 @@
 /*
- * A tool call at rest is a process row (messages.css). Opened (or failed with output, which opens by itself), it is a
- * card on the column's edges, like the diff trays and notices around it: a tray (sunken, a subtle line, 12 corners, 4
- * inside) that fades in behind the row, whose 32 head keeps the row's words 8 in from the tray, holding a sheet of
- * paper with the arguments, the changes and the output. Running state is ink; amber marks only what waits for the
- * person, red only a failure or real risk.
+ * A tool call is a work row (messages.css). Opened, what it did stands indented under its words: a file edit's short
+ * preview, or its arguments and output. Amber marks only what waits for the person, red only a failure or real risk.
  */
 .tool-card {
   display: flex;
@@ -11,37 +8,9 @@
   min-width: 0;
 }
 .tool-tray {
-  position: relative;
-  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-.tool-tray::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--sunken);
-  opacity: 0;
-  transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
-}
-/* The tray's line is drawn by the layer behind, so the head and the paper sit 1px further in. */
-.tool-card[data-open] > .tool-tray {
-  margin: var(--sp-4) 0;
-  padding: 1px calc(var(--sp-4) + 1px) calc(var(--sp-4) + 1px);
-}
-.tool-card[data-open] > .tool-tray::before {
-  opacity: 1;
-  transition: opacity var(--m-micro) var(--e-micro);
-}
-.tool-card[data-open] > .tool-tray > .tool-card-header {
-  width: 100%;
-  min-height: 32px;
-  margin: 0;
-  padding: 0 var(--sp-8);
 }
 /* An approval card names the call by the tool's own title, on one line (its type is in security.css). */
 .tool-card-title {
@@ -54,6 +23,7 @@
   min-width: 0;
   flex-shrink: 2;
   overflow: hidden;
+  margin-left: var(--sp-6);
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
@@ -74,62 +44,57 @@
 .tool-card-state:empty {
   display: none;
 }
-.tool-card-state.state-failed {
-  color: var(--red);
-}
 @media (max-width: 767.98px) {
   .tool-card-name {
     display: none;
   }
 }
-
-/* The opened card's paper: the arguments, the changes and the output, 12 inside, sections 12 apart. */
-.tool-card-body {
-  display: grid;
-  gap: var(--sp-12);
-  padding: var(--sp-12);
-  border: 1px solid var(--line);
-  border-radius: var(--r-8);
-  background: var(--canvas);
-}
-.tool-card-body h4 {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-}
-.tool-card-body section > h4 {
-  margin-bottom: var(--sp-6);
-}
-.tool-section-head {
+/* A failed row's reason, on one line under its words, in red, with 重试. */
+.tool-failure {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--sp-8);
   min-height: 24px;
-  margin-bottom: var(--sp-4);
+  padding-left: 24px;
+  color: var(--red);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  overflow-wrap: anywhere;
+}
+.tool-failure .ui-button {
+  flex-shrink: 0;
+}
+
+/* What opens under a row: indented past its icon, at most 320 tall. */
+.tool-card-body {
+  display: grid;
+  gap: var(--sp-6);
+  padding: var(--sp-4) 0 var(--sp-6) 28px;
 }
 .tool-pre {
-  max-height: 240px;
+  max-height: 320px;
   margin: 0;
   padding: var(--sp-8) var(--sp-12);
   overflow: auto;
-  border-radius: var(--r-6);
+  border-radius: var(--r-8);
   background: var(--sunken);
   color: var(--ink-2);
+  font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* Output scrolls in its own box of at most 240; while the tool runs the box is laid out from its end, so it follows
- * the newest lines until the reader scrolls up inside it. */
+/* Output scrolls in its own box; while the tool runs the box is laid out from its end, so it follows the newest lines
+ * until the reader scrolls up inside it. */
 .tool-output-scroll {
-  max-height: 240px;
+  position: relative;
+  max-height: 320px;
   overflow: auto;
   overscroll-behavior: contain;
-  border-radius: var(--r-6);
+  border-radius: var(--r-8);
   background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .tool-output-scroll.is-live {
   display: flex;
@@ -138,7 +103,22 @@
 .tool-output-scroll > .tool-pre {
   max-height: none;
   overflow: visible;
-  border-radius: 0;
+  background: transparent;
+}
+.tool-output-copy {
+  position: absolute;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  opacity: 0;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.tool-output-scroll:is(:hover, :focus-within) > .tool-output-copy {
+  opacity: 1;
+}
+@media (hover: none) {
+  .tool-output-copy {
+    opacity: 1;
+  }
 }
 .argument-list {
   display: grid;
@@ -177,20 +157,24 @@
   background: var(--sunken);
 }
 .tool-card.has-approval > .tool-card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  min-height: 36px;
-  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-12);
-  color: var(--muted);
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-8) var(--sp-12) var(--sp-4);
+  color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+/* What the request would do, with the lines it would change. */
+.tool-card-what {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
 }
 /* A control, bidirectional or zero-width character shown as \u{XXXX} instead of being applied. */
 .hidden-char {
   padding: 0 var(--sp-2);
   border-radius: var(--r-4);
-  background: var(--amber-soft);
+  background: var(--hover);
   box-shadow: inset 0 0 0 1px var(--amber-line);
   color: var(--amber);
   font-family: var(--mono);
@@ -212,86 +196,8 @@
   border-radius: 0;
 }
 
-/* The plan: a chip in the bar above the input that opens the list. Nearer to now reads stronger: the step in progress
- * is in ink at 500, steps to come are secondary ink, done steps the faintest. No progress bar. */
-.plan-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-  height: 24px;
-  padding: 0 var(--sp-6) 0 var(--sp-8);
-  border: 0;
-  border-radius: var(--r-6);
-  background: transparent;
-  color: var(--ink-2);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
-}
-.plan-chip:hover,
-.plan-chip[aria-expanded='true'] {
-  background: var(--hover);
-  color: var(--ink);
-}
-.plan-chip > svg {
-  color: var(--muted);
-}
-.plan-popover {
-  display: grid;
-  gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-8) var(--sp-8);
-}
-.plan-popover-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  height: 28px;
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
-}
-/* In the phone sheet the title says 「计划 0/2」, so the list's own head is not repeated; the steps stand in a paper card
- * on the sheet's ground, as a menu's items do, each 48 high. */
-.ui-sheet-body .plan-popover-head {
-  display: none;
-}
-.ui-sheet-body .plan-popover {
-  --surface: var(--canvas);
-  padding: var(--sp-4) var(--sp-16);
-  border-radius: var(--r-12);
-  background: var(--canvas);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.ui-sheet-body .plan-entry {
-  min-height: 48px;
-  padding: calc((48px - var(--lh-ui)) / 2) 0;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
-.ui-sheet-body .plan-entry + .plan-entry {
-  box-shadow: inset 0 1px var(--line);
-}
-.ui-sheet-body .plan-icon {
-  height: var(--lh-ui);
-}
-.plan-sheet-count {
-  color: var(--muted);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-.plan-popover-count {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
+/* The plan's steps. Nearer to now reads stronger: the step in progress is in ink at 500, steps to come are secondary ink,
+ * done steps the faintest. No progress bar. */
 .plan-list {
   list-style: none;
   display: grid;

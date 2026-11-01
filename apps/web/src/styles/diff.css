@@ -195,7 +195,6 @@
 .diff-note {
   padding: var(--sp-6) var(--sp-8);
   border-bottom: 1px solid var(--line);
-  background: var(--amber-soft);
   color: var(--amber);
   font-family: var(--font);
   white-space: normal;

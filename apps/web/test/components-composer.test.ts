@@ -121,18 +121,20 @@ describe('decided approvals', () => {
   const at = new Date().toISOString()
   /** The words in the row's state slot. */
   const stateSlot = (html: string) =>
-    /<span class="ui-status-words tool-card-state[^"]*">(.*?)<\/span><\/span>(?:<svg|<\/div>)/u.exec(html)?.[1] ?? ''
+    /tool-card-state[^"]*">(?:<span class="ui-[^>]*>)?(.*?)<\/span>(?:<\/span>)?(?:<span class="process-time"|<\/span><\/button>)/u.exec(
+      html,
+    )?.[1] ?? ''
 
   it('folds a rejection into its row: 已拒绝 with the time in the state slot, never a failure, and no diff', () => {
     const html = decided({ outcome: 'rejected', at, via: 'other-device' })
     expect(html).toContain('写入文件')
     expect(html).toContain('notes/plan.md')
     expect(stateSlot(html)).toMatch(
-      /^<span class="tool-decision-words" title="[^"]*在其他设备上决定" data-outcome="rejected">已拒绝 · \d{2}:\d{2}<\/span>$/u,
+      /^<span class="tool-decision-words" title="[^"]*在其他设备上决定" data-outcome="rejected">已拒绝 · \d{2}:\d{2}$/u,
     )
     expect(html).toContain('state-rejected')
     expect(html).toContain('lucide-circle-slash')
-    expect(html).not.toMatch(/state-failed|process-failed|失败|lucide-triangle-alert/u)
+    expect(html).not.toMatch(/state-failed|process-failed|tool-failure|失败/u)
     // One place says it: no second record line under the row.
     expect(html).not.toContain('class="tool-decision"')
     expect(html.match(/已拒绝/gu)).toHaveLength(1)
@@ -142,20 +144,19 @@ describe('decided approvals', () => {
     expect(html).not.toMatch(/APPROVAL_REJECTED|。。/u)
   })
 
-  it('keeps an allowance in the row’s tooltip, and says nobody’s answer without claiming the call did not run', () => {
+  it('records an allowance on its row, and says nobody’s answer without claiming the call did not run', () => {
     const allowed = decided({ outcome: 'allowed', at, via: 'this-mac' }, 'completed', { startedAt: at, completedAt: at })
     expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在这台 Mac 上决定"/u)
-    expect(allowed).not.toContain('tool-decision')
-    expect(stateSlot(allowed)).toBe('')
-    expect(allowed).toContain('diff-view')
+    expect(allowed).not.toContain('class="tool-decision"')
+    expect(stateSlot(allowed)).toMatch(/data-outcome="allowed">已允许 · \d{2}:\d{2}$/u)
     const cancelled = decided({ outcome: 'cancelled', at }, 'cancelled')
-    expect(stateSlot(cancelled)).toMatch(/title="[^"]*会话停止时还没有人回答" data-outcome="cancelled">已取消（会话停止）<\/span>$/u)
+    expect(stateSlot(cancelled)).toMatch(/title="[^"]*会话停止时还没有人回答" data-outcome="cancelled">已取消（会话停止）$/u)
     const expired = decided({ outcome: 'expired', at }, 'cancelled')
-    expect(stateSlot(expired)).toMatch(/data-outcome="expired">已过期<\/span>$/u)
+    expect(stateSlot(expired)).toMatch(/data-outcome="expired">已过期$/u)
     for (const html of [cancelled, expired]) expect(html).not.toMatch(/已拒绝|决定"|失败|没有执行/u)
   })
 
-  it('keeps the state and the diff an agent reports for a call that ran after a rejection, with one line that says so', () => {
+  it('keeps the state an agent reports for a call that ran after a rejection, with one line that says so', () => {
     const html = decided({ outcome: 'rejected', at, via: 'other-device' }, 'completed', {
       text: '',
       toolName: 'edit',
@@ -163,7 +164,6 @@ describe('decided approvals', () => {
     })
     expect(html).not.toContain('state-rejected')
     expect(stateSlot(html)).toBe('')
-    expect(html).toContain('diff-view')
     expect(html).toMatch(
       /<p class="tool-decision" title="[^"]*在其他设备上决定\nAgent 的询问只是提示[^"]*" data-outcome="rejected">.*已拒绝 · \d{2}:\d{2} · Agent 报告仍执行了这次调用<\/p>/u,
     )
@@ -172,7 +172,7 @@ describe('decided approvals', () => {
   it('shows no record while the approval waits, and a failed call that was allowed still reads as a failure', () => {
     expect(approvalCard({ risk: 'R1' })).not.toContain('tool-decision')
     const failed = decided({ outcome: 'allowed', at }, 'failed', { startedAt: at })
-    expect(stateSlot(failed)).toBe('失败')
+    expect(failed).toContain('tool-failure')
     expect(failed).toContain('已允许 · ')
   })
 
@@ -190,7 +190,7 @@ describe('decided approvals', () => {
       }),
     )
     expect(stateSlot(html)).toBe('已拒绝')
-    expect(html).not.toMatch(/失败|data-open=""|APPROVAL_REJECTED|process-time/u)
+    expect(html).not.toMatch(/tool-failure|data-open=""|APPROVAL_REJECTED|process-time/u)
   })
 
   it('names a titled tool’s row by its title alone, with its ID in the tooltip, and keeps the ID on its approval card', () => {
@@ -438,7 +438,7 @@ describe('approval cards', () => {
   it('carries the waiting in the header as one amber status word after its shield', () => {
     const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
     expect(html).toMatch(
-      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>等你允许<\/span>/u,
+      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>需要你允许<\/span>/u,
     )
   })
 
@@ -674,38 +674,12 @@ describe('composer', () => {
     expect(empty).not.toMatch(/<button[^>]*aria-label="发送"[^>]*disabled=""/u)
   })
 
-  it('names what the oldest waiting request would do in the run bar, with hidden characters marked', () => {
-    const html = renderToStaticMarkup(
-      createElement(Composer, {
-        ...base,
-        variant: 'session',
-        run: { approvals: 2, approvalTitle: '写入 notes\u200b.md', onRevealApprovals: noop, cancel: 'idle', onCancel: noop },
-      }),
-    )
-    expect(html).toContain('2 项待批准')
-    expect(html).toContain('\\u{200B}')
-    expect(html).toContain('查看')
+  it('says nothing above the input while a request waits: its card does, and the way back to it is the jump button', () => {
+    const html = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', run: { cancel: 'idle', onCancel: noop } }))
+    expect(html).not.toContain('待批准')
+    expect(html).not.toContain('is-waiting')
     // Stop takes the send slot and is never red.
     expect(html).toContain('aria-label="停止"')
-  })
-
-  it('keeps the bar quiet while a waiting card is in view, which says so itself', () => {
-    const html = renderToStaticMarkup(
-      createElement(Composer, {
-        ...base,
-        variant: 'session',
-        run: {
-          approvals: 1,
-          approvalsInView: true,
-          approvalTitle: '写入 notes.md',
-          onRevealApprovals: noop,
-          cancel: 'idle',
-          onCancel: noop,
-        },
-      }),
-    )
-    expect(html).not.toContain('项待批准')
-    expect(html).not.toContain('is-waiting')
   })
 
   it('says a stop whose outcome is unknown once, in the bar with 重试, and leaves the stop button a square', () => {
@@ -713,7 +687,7 @@ describe('composer', () => {
       createElement(Composer, {
         ...base,
         variant: 'session',
-        run: { approvals: 0, onRevealApprovals: noop, cancel: 'uncertain', onCancel: noop },
+        run: { cancel: 'uncertain', onCancel: noop },
       }),
     )
     expect(html.match(/尚未确认/gu)).toHaveLength(1)

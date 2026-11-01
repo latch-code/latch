@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { ChevronRight, ChevronsUpDown } from 'lucide-react'
 import type { FileDiff } from '@latch/protocol'
 import {
@@ -89,6 +89,8 @@ function LineText({ text, tokens, ranges }: { text: string; tokens: SyntaxLines[
 }
 
 interface RowTools extends LineSlots {
+  /** Each line carries its own indent, for a hanging indent when the owner wraps lines. */
+  indent?: boolean
   diff: DiffViewFile
   marks?: Map<DiffLine, TextRange[]>
   before: ReturnType<typeof useHighlightedTokens>
@@ -99,6 +101,9 @@ const lineTokens = (line: DiffLine, { before, after }: Pick<RowTools, 'before' |
   line.kind === 'remove' ? before?.[(line.oldLine ?? 1) - 1] : after?.[(line.newLine ?? 1) - 1]
 
 type SplitRows = ReturnType<typeof sideBySideLines>
+
+/** A line's own indent, for the hanging indent when lines wrap. */
+const indentOf = (text: string) => ({ '--diff-indent': `${/^[ \t]*/u.exec(text)![0].length}ch` }) as CSSProperties
 
 function SplitSides({ rows, tools, titled }: { rows: SplitRows; tools: RowTools; titled: boolean }) {
   const { before, after, marks, gutter, diff } = tools
@@ -116,7 +121,10 @@ function SplitSides({ rows, tools, titled }: { rows: SplitRows; tools: RowTools;
             const line = row[side.key]
             const number = side.key === 'before' ? line?.oldLine : line?.newLine
             return (
-              <div className={`diff-side-row ${line ? `diff-${line.kind}` : 'diff-absent'}`} key={index}>
+              <div
+                className={`diff-side-row ${line ? `diff-${line.kind}` : 'diff-absent'}`}
+                key={index}
+                style={tools.indent ? indentOf(line?.text ?? '') : undefined}>
                 <span className="diff-ln" aria-hidden="true">
                   {number ?? ''}
                 </span>
@@ -172,7 +180,7 @@ function UnifiedRows({ lines, tools }: { lines: DiffLine[]; tools: RowTools }) {
   const { marks, gutter, annotation, diff } = tools
   return lines.map((line, row) => (
     <Fragment key={row}>
-      <div className={`diff-line diff-${line.kind}`}>
+      <div className={`diff-line diff-${line.kind}`} style={tools.indent ? indentOf(line.text) : undefined}>
         <span className="diff-ln diff-ln-old" aria-hidden="true">
           {line.oldLine ?? ''}
         </span>
@@ -476,6 +484,59 @@ function DiffFile({
         </div>
       </Collapse>
     </section>
+  )
+}
+
+/**
+ * The lines of a review whose owner draws its own head and already holds the lines: a new or deleted file is the file
+ * itself, unchanged stretches fold into bands, and each line can carry a comment slot.
+ */
+export function DiffLines({
+  diff,
+  view,
+  layout: wanted = 'unified',
+  gutter,
+  annotation,
+}: LineSlots & { diff: DiffViewFile; view: LineDiff; layout?: 'unified' | 'split' }) {
+  const whole = wholeFile(diff, previousState(diff))
+  const layout = whole ? 'unified' : wanted
+  const language = languageForPath(diff.path)
+  const before = useHighlightedTokens(diff.oldText ?? '', language, true)
+  const after = useHighlightedTokens(diff.newText, language, true)
+  const marks = useMemo(() => (whole ? undefined : wordHighlights(view.hunks.flatMap(hunk => hunk.lines))), [whole, view])
+  const [all, setAll] = useState(false)
+  const tools: RowTools = { diff, marks, before, after, gutter, annotation, indent: true }
+  const lineCount = view.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0)
+  let budget = all ? Infinity : VISIBLE_LINES
+  const trailing = view.gaps.find(gap => gap.before === view.hunks.length)
+  return (
+    <div className="diff-lines" data-layout={layout} data-whole={whole}>
+      <div className="diff-table">
+        {view.hunks.map((hunk, index) => {
+          if (budget <= 0) return null
+          const lines = hunk.lines.slice(0, budget)
+          budget -= lines.length
+          const gap = view.gaps.find(item => item.before === index)
+          return (
+            <div className="diff-hunk" key={index}>
+              {gap && <GapBand gap={gap} hunks={view.hunks.length} tools={tools} layout={layout} />}
+              {layout === 'split' ? <SplitHunk lines={lines} tools={tools} titled={false} /> : <UnifiedRows lines={lines} tools={tools} />}
+            </div>
+          )
+        })}
+        {trailing && budget > 0 && <GapBand gap={trailing} hunks={view.hunks.length} tools={tools} layout={layout} />}
+      </div>
+      {!all && lineCount > VISIBLE_LINES && (
+        <button
+          type="button"
+          className="diff-more"
+          onClick={() => {
+            setAll(true)
+          }}>
+          展开其余 {lineCount - VISIBLE_LINES} 行
+        </button>
+      )}
+    </div>
   )
 }
 

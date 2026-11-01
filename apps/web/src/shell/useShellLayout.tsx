@@ -1,13 +1,15 @@
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
-import type { FileMention } from '@latch/protocol'
+import type { ChangeTotals, FileMention } from '@latch/protocol'
+import type { ChangesTarget as ChangesPanelTarget } from '../panel/changes/ChangesPanel.tsx'
+import { TREE_FROM_FILES } from '../panel/changes/model.ts'
 import { useFileTabs } from '../preview/useFileTabs.ts'
 import { quoteDraft, type FileQuote } from '../preview/quote.ts'
 import { fileContextKey } from '../preview/fileContext.ts'
 import { useAutoOpenOutputs } from '../hooks/useAutoOpenOutputs.ts'
 import type { ContextFileOpenTarget, FileContext } from '@latch/protocol'
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { RefreshCw } from 'lucide-react'
 import type { SearchHit } from '@latch/protocol'
 import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
@@ -22,6 +24,7 @@ import {
   RIGHT_PANEL_DEFAULT,
   SIDEBAR_DEFAULT,
   SIDEBAR_SNAP_MS,
+  changesPanelWidth,
   clampRightPanel,
   clampSidebar,
   placeRightPanel,
@@ -45,6 +48,8 @@ import { type MenuSection } from '../components/overlays.tsx'
 import { MOTION, usePresence, type ResizePhase } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController } from './useSessionController.ts'
+import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
+import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 
 type Harness = ReturnType<typeof useHarness>
 
@@ -206,22 +211,40 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     catalog?.features?.fileTree === true && snapshot.device.dataScope === 'all' && access.scopes.has('view') && fileContext !== null
   const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
   const contextKey = fileContext ? fileContextKey(fileContext) : ''
+  // A device without the data scope still gets the tab: it says why there is nothing to read, instead of a toggle that vanished.
+  const canViewChanges = catalog?.features?.changes === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
+  const [changesWanted, setChangesWanted] = useState(false)
+  const changesOpen = changesWanted && canViewChanges
+  const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
+  const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
+  const changesStat = changesTotals?.files ? `+${changesTotals.add} −${changesTotals.del}` : undefined
   useLayoutEffect(() => {
     setFilesOpen(false)
     setInfoPage(false)
     setFileExpanded(false)
+    setChangesWanted(false)
+    setChangesTarget(undefined)
+    setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
   const storedSidebar = preferences.sidebar.width ?? SIDEBAR_DEFAULT
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
+  const panelLeft = RAIL_WIDTH + (sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0)
+  const showingChanges = changesOpen && !fileTabs.active
+  const panelWidth =
+    preferences.rightPanel.width
+    ?? (showingChanges
+      ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
+      : undefined)
   const placed = placeRightPanel({
     windowWidth,
-    ...(preferences.rightPanel.width !== undefined ? { width: preferences.rightPanel.width } : {}),
-    left: RAIL_WIDTH + (sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0),
+    ...(panelWidth !== undefined ? { width: panelWidth } : {}),
+    left: panelLeft,
   })
-  const placement = !summary && !filesVisible ? null : filesVisible && fileExpanded ? { kind: 'page' as const } : placed
+  const placement = !summary && !filesVisible ? null : (filesVisible || changesOpen) && fileExpanded ? { kind: 'page' as const } : placed
   const pageMode = placement?.kind === 'page'
-  const columnOpen = placement !== null && placement.kind !== 'page' && (filesVisible || (!!summary && preferences.rightPanel.open))
+  const columnOpen =
+    placement !== null && placement.kind !== 'page' && (filesVisible || changesOpen || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
@@ -491,7 +514,35 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const setColumnOpen = (open: boolean) => {
     setPreference('rightPanel', { ...preferences.rightPanel, open })
   }
+  const closeChanges = () => {
+    setChangesWanted(false)
+    setFileExpanded(false)
+    setInfoPage(false)
+  }
+  const showChanges = (open: boolean) => {
+    setChangesWanted(open)
+    if (open) setFilesOpen(false)
+  }
+  const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
+    if (!canViewChanges) return
+    setChangesWanted(true)
+    setFilesOpen(false)
+    fileTabs.select(undefined)
+    setInfoPage(true)
+    if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
+  }
+  const toggleChanges = () => {
+    if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closeChanges()
+    else openChangesTab()
+  }
   const toggleInspector = () => {
+    if (changesOpen) {
+      setChangesWanted(false)
+      setFileExpanded(false)
+      setColumnOpen(true)
+      setInfoPage(true)
+      return
+    }
     if (filesOpen) {
       setFilesOpen(false)
       fileTabs.select(undefined)
@@ -566,6 +617,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     if (action === 'side-panel') {
       if (summary || filesVisible) toggleInspector()
+      return
+    }
+    if (action === 'changes') {
+      if (canViewChanges) toggleChanges()
       return
     }
     if (action === 'settings') {
@@ -665,6 +720,40 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     selectedId === null
       ? usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId)
       : summary !== undefined && usesDemoModel(snapshot, summary.harnessId, summary.providerId)
+  const frozenAt = useFrozenAt(connection)
+  const changesTabReads = canViewChanges && snapshot.device.dataScope === 'all'
+  const openChanges = useStableCallback((target: ChangesTarget) => {
+    if (changesTabReads) {
+      openChangesTab({
+        ...(target.turnId ? { turnId: target.turnId } : {}),
+        ...(target.path ? { file: { path: target.path, ...(target.root ? { root: target.root } : {}) } } : {}),
+      })
+      return
+    }
+    if (selectedId === null || !target.path) return
+    // The per-file history is built from the tools' own edits, so a file only a command changed opens as itself.
+    const edited = current?.messages.some(message => message.tool?.diffs?.some(diff => diff.path === target.path))
+    openFile({
+      sessionId: selectedId,
+      reference: target.path,
+      ...(target.root ? { rootId: target.root } : {}),
+      ...(edited ? { view: 'changes' as const } : {}),
+    })
+  })
+  const shownChanges = fileTabs.active?.target.view === 'changes' ? fileTabs.active.target.reference : undefined
+  const tabFile = changesOpen && !fileTabs.active ? changesTarget?.file : undefined
+  const changesLink = useMemo<ChangesLink | null>(
+    () =>
+      catalog?.features?.filePreview || changesTabReads
+        ? {
+            open: openChanges,
+            panelOpen: columnOpen,
+            turns: changesTabReads,
+            ...(tabFile ? { selected: tabFile } : shownChanges ? { selected: { path: shownChanges } } : {}),
+          }
+        : null,
+    [catalog?.features?.filePreview, changesTabReads, openChanges, columnOpen, shownChanges, tabFile],
+  )
   const syncSection: MenuSection = {
     id: 'sync',
     items: [
@@ -713,8 +802,18 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
               ? `完全访问会话的选项只能在 ${snapshot.hostName} 上用 Latch 桌面端更改`
               : gate.text
             : undefined
+  const commentOnLine = (mention: FileMention, line: number, text: string) => {
+    const name = mention.path.split('/').at(-1)!
+    const named = mentionChoice.enabled && fileMentions.length < 32
+    const head = named ? mentionMarker(mention) : name
+    submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? '\n\n' : ''}${head} 第 ${line} 行：${text}\n`)
+    if (named) setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
+    if (pageMode) setInfoPage(false)
+    composerRef.current?.focus()
+  }
   const browseFiles = () => {
     if (!canBrowseFiles) return
+    setChangesWanted(false)
     if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
       setInfoPage(false)
@@ -786,6 +885,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const page = usePresence(pageMode && infoPage, MOTION.pushExit)
   const closeInfoPage = () => {
     setInfoPage(false)
+    if (changesOpen) setFileExpanded(false)
     if (phone && selectedId === null) {
       fileTabs.select(undefined)
       setFilesOpen(false)
@@ -894,6 +994,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded,
     filesOpen,
     setFilesOpen,
+    canViewChanges,
+    changesOpen,
+    showChanges,
+    openChanges,
+    closeChanges,
+    toggleChanges,
+    changesTarget,
+    changesStat,
+    setChangesTotals,
+    commentOnLine,
     canBrowseFiles,
     filesVisible,
     contextKey,
@@ -949,6 +1059,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     canStart,
     startIn,
     connectionProblem,
+    frozenAt,
+    changesLink,
     shellHost,
     hostProblem,
     notice,

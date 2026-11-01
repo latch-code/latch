@@ -1,17 +1,16 @@
 /*
- * The conversation as turns. A turn is the person's prompt (with a time separator when a day changed or an hour
- * passed) and, 32 below it, what answered under one source line: prose, quiet process rows, evidence and notes, ending
- * with the turn's footer, which belongs to the turn. The next prompt stands 48 after it (32 on phones), so a reply's
- * last line and the next prompt are 84 apart. The prompt's time and copy sit in the gap under its bubble, which keeps
- * 32 on phones too so the row never touches the source line. Only the person's messages have a bubble.
+ * The conversation as turns, 32 apart; blocks inside a turn stand 12 apart. A turn is the person's prompt and what
+ * answered under one author line: quiet work rows, prose, summary cards. What only hovering shows overlays the gap under
+ * its turn, so it reserves no room. Only the person's messages have a bubble.
  */
 .turn {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 .turn + .turn {
-  margin-top: var(--sp-48);
+  margin-top: var(--sp-32);
 }
 .turn[data-settled] {
   content-visibility: auto;
@@ -31,15 +30,10 @@
 .message-user + .turn-reply {
   margin-top: var(--sp-32);
 }
-@media (max-width: 767.98px) {
-  .turn + .turn {
-    margin-top: var(--sp-32);
-  }
-}
 
 /*
  * Arrival, only for what the page saw appear (never on a load, a reconnect or a session switch): the person's bubble
- * rises 6px as it fades in over --m-enter, a reply's source line and first block fade in over --m-micro. Text that streams
+ * rises 6px as it fades in over --m-enter, a reply's author line and first block fade in over --m-micro. Text that streams
  * into a block is not animated. Under reduced motion they appear at once.
  */
 @media (prefers-reduced-motion: no-preference) {
@@ -62,28 +56,13 @@
   }
 }
 
-/* A time separator, centred: before the first prompt and where a day changed or more than an hour passed. */
-.time-separator {
-  display: flex;
-  align-self: stretch;
-  justify-content: center;
-  margin: var(--sp-24) 0 var(--sp-16);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-}
-.turn:first-child .time-separator {
-  margin-top: 0;
-}
-.time-separator time,
 .message-meta time,
 .turn-fact {
   border-radius: var(--r-4);
 }
 
-/* The person's message: a neutral bubble on the right; its time and copy sit under it in the gap below, so revealing
- * them moves nothing. */
+/* The person's message: a neutral bubble on the right; its time and actions overlay the gap below, so revealing them
+ * moves nothing. */
 .message-user {
   position: relative;
   display: flex;
@@ -91,15 +70,40 @@
   align-items: flex-end;
 }
 .user-bubble {
-  max-width: min(80%, 560px);
-  padding: var(--sp-8) var(--sp-16);
-  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 80%;
+  padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--r-16);
   background: var(--bubble);
   color: var(--ink);
   font-size: var(--fs-prose);
   line-height: var(--lh-prose);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.user-bubble-text {
+  min-width: 0;
+}
+.user-bubble[data-clamped] > .user-bubble-text {
+  max-height: 176px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
+}
+.user-bubble-more {
+  margin-top: var(--sp-4);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.user-bubble-more:hover {
+  color: var(--ink);
 }
 .message-meta {
   position: absolute;
@@ -108,24 +112,42 @@
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  height: 20px;
-  margin-top: var(--sp-4);
+  height: 24px;
+  margin-top: var(--sp-2);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
+/* What an undo told the engine, above the prompt it went with. */
+.message-change-note {
+  margin-bottom: var(--sp-4);
+  border-radius: var(--r-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+/* How far the prompt has got: quiet and small under the bubble, gone once the agent answers. */
+.message-delivery {
+  margin-top: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.message-delivery + * {
+  margin-top: 0;
+}
 @media (max-width: 767.98px) {
   .user-bubble {
-    max-width: min(85%, 300px);
+    max-width: 85%;
     padding: var(--sp-8) var(--sp-12);
   }
 }
 
 /*
- * What hovering reveals (a message's time and copy, a turn's footer) rests hidden on desktop and fades in over 120ms
- * while the pointer or focus is on it, and out 120ms after; it keeps its room, so nothing moves. Touch has no hover:
- * the newest prompt and turn keep theirs shown and a tap shows another's.
+ * What hovering reveals (a message's time and actions, a turn's footer) rests hidden on desktop and fades in over 120ms
+ * while the pointer or focus is on it. Touch has no hover: the newest prompt and turn keep theirs shown and a tap shows
+ * another's.
  */
 .message-meta,
 .turn-footer {
@@ -133,7 +155,8 @@
   transition: opacity var(--m-micro) var(--e-micro);
 }
 .message-user:is(:hover, :focus-within, [data-shown]) .message-meta,
-.turn-reply:is(:hover, :focus-within, [data-shown]) .turn-footer,
+.turn:is(:hover, :focus-within) > .turn-reply > .turn-footer,
+.turn-reply[data-shown] > .turn-footer,
 .turn-footer[data-pinned] {
   opacity: 1;
   transition: opacity var(--m-micro) var(--e-micro);
@@ -144,27 +167,35 @@
   }
 }
 
-/* The reply: the source line, then the blocks 8 apart; process groups and evidence take a little more room. */
+/* The reply: the author line, then blocks 12 apart. The work's groups keep their own gap, so a folded one takes none. */
 .turn-reply {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-8);
   min-width: 0;
 }
-/* The source line, once per turn: the harness's tile, its name and the model that answered. */
+.turn-reply > * + * {
+  margin-top: var(--sp-12);
+}
+.turn-reply > .ui-collapse {
+  margin-top: 0;
+}
+/* The author line, on every turn: the Agent's mark and name, then the engine and the model, quieter. */
 .assistant-meta {
   display: flex;
   align-items: center;
-  gap: var(--sp-6);
-  height: 20px;
+  gap: var(--sp-8);
+  height: 18px;
   min-width: 0;
   color: var(--muted);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .assistant-meta-name {
   flex-shrink: 0;
-  color: var(--ink-2);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .assistant-meta-model {
@@ -181,10 +212,10 @@
 .message-text {
   font-size: var(--fs-prose);
   line-height: var(--lh-prose);
-  color: var(--ink);
+  color: var(--ink-2);
 }
 
-/* A blinking caret after the live text; ::after never enters the message's textContent. */
+/* A soft 2px caret after the live text; ::after never enters the message's textContent. */
 .message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
 .message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after,
 .message-assistant.is-live .message-code.is-open code::after {
@@ -194,6 +225,7 @@
   height: 1em;
   margin-left: var(--sp-2);
   vertical-align: -0.15em;
+  border-radius: var(--r-2);
   background: var(--ink-2);
 }
 /* Reduced motion: the caret stands still and still says the reply is coming. */
@@ -201,7 +233,10 @@
   .message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
   .message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after,
   .message-assistant.is-live .message-code.is-open code::after {
-    animation: caret 1s steps(1) infinite;
+    animation: caret 1s steps(2) infinite;
+  }
+  .turn-reply > .message-assistant.is-live {
+    animation: message-fade var(--m-enter) var(--e-micro);
   }
 }
 @keyframes caret {
@@ -210,130 +245,148 @@
   }
 }
 
-/* A note: a quiet line centred in the column; a failure (a model-service error, an interrupted run, a stopped
- * session) is drawn like an error notice. */
-.message-system {
+/* A note: a quiet record line. One that reports a failure is a failed row: a red ✕, its reason, and 重试. */
+.message-system,
+.turn-record {
   display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: var(--sp-6);
-  min-height: 28px;
-  margin: var(--sp-4) 0;
+  align-items: flex-start;
+  gap: 0;
+  min-height: 24px;
   color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-  text-align: center;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
-.message-system > svg {
-  flex-shrink: 0;
-  color: var(--muted);
+.message-system > .process-slot,
+.turn-record > .process-slot {
+  height: var(--lh-ui-para);
 }
 .message-system p {
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.message-system.is-failed {
-  justify-content: flex-start;
-  align-items: flex-start;
-  gap: var(--sp-8);
-  margin: var(--sp-8) 0;
-  padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--red-line);
-  border-radius: var(--r-8);
-  background: var(--red-soft);
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui-para);
-  text-align: left;
+.message-system .ui-button,
+.turn-record .ui-button {
+  flex-shrink: 0;
+  margin-left: var(--sp-8);
 }
-.message-system.is-failed > svg {
-  margin-top: 3px;
+/* Where a session came from, above its first turn. */
+.fork-origin {
+  margin-bottom: var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.message-system.is-failed p,
+.turn-record.outcome-failed > span:not(.process-slot) {
   color: var(--red);
+}
+.message-system.is-failed > .process-slot,
+.turn-record.outcome-failed > .process-slot {
+  color: var(--red);
+}
+.message-system:not(.is-failed) {
+  font-size: var(--fs-caption);
 }
 
 /*
- * A process row: 28 high (32 on phones), a 16px slot for the icon or the spinner, then the verb in muted ink and its
- * object (paths and commands in mono), a flexible gap, its duration and its state. No fill and no rail; under the
- * pointer it takes the hover fill, reaching 6px past the column so its text stays on the column's edge.
+ * A work row: 24 high (32 on phones), a 24 column for the 16px icon or the 12px spinner, the words in secondary ink (paths
+ * in text, commands and queries in mono), the lines it changed and a chevron right after them; its duration shows at the
+ * row's end under the pointer. No fill and no rail. Rows of one kind in a row show the icon once.
  */
-.process-group {
+.work-rows {
   display: flex;
   flex-direction: column;
-  margin: var(--sp-4) 0;
+  gap: var(--sp-2);
+  padding-top: var(--sp-12);
+}
+.work-fold + .work-group > .ui-collapse-inner > .work-rows {
+  padding-top: var(--sp-8);
 }
 .process-row,
 .tool-tray > .tool-card-header {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-6);
-  width: calc(100% + 2 * var(--bleed));
-  min-height: 28px;
-  margin: 0 calc(-1 * var(--bleed));
-  padding: 0 var(--bleed);
+  gap: 0;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
   border: 0;
   border-radius: var(--r-6);
   background: transparent;
-  color: var(--muted);
+  color: var(--ink-2);
   text-align: left;
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.process-row:hover,
-.tool-card:not([data-open]) > .tool-tray > .tool-card-header:hover {
-  background: var(--hover);
 }
 .process-row:focus-visible,
-.tool-tray > .tool-card-header:focus-visible {
+.tool-tray > .tool-card-header:focus-visible,
+.work-fold:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline-offset: 1px;
 }
 @media (max-width: 767.98px) {
   .process-row,
   .tool-tray > .tool-card-header {
-    min-height: 32px;
+    min-height: 28px;
   }
 }
 .process-slot {
   display: grid;
-  place-items: center;
-  width: 16px;
+  place-items: center start;
+  width: 24px;
   flex-shrink: 0;
   color: var(--muted);
+}
+.process-slot .ui-spinner {
+  color: var(--accent);
 }
 .process-label {
   display: inline-flex;
   align-items: baseline;
-  gap: var(--sp-6);
+  gap: var(--sp-4);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 .process-verb {
   flex-shrink: 0;
-  color: var(--muted);
 }
 .process-object {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ink-2);
 }
 .process-object.is-mono {
   font-family: var(--mono);
   font-size: var(--fs-mono);
   line-height: var(--lh-mono);
 }
+.process-stat {
+  flex-shrink: 0;
+  margin-left: var(--sp-8);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-add {
+  color: var(--green);
+}
+.stat-del {
+  color: var(--red);
+}
 .process-fill {
   flex: 1;
   min-width: var(--sp-8);
 }
-/* What ends a tool's row: its duration and its state, on the column's edge. */
+/* What ends a row: a record that stays, and its duration under the pointer. */
 .process-end {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-6);
+  gap: var(--sp-8);
   flex-shrink: 0;
 }
 .process-time {
@@ -344,72 +397,101 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.process-failed {
-  color: var(--red);
-}
-/* The chevron shows on hover or focus on desktop; touch keeps it. Opening turns it a quarter. */
-.process-chevron {
-  flex-shrink: 0;
-  color: var(--muted);
+.process-end > .process-time,
+.thinking-toggle > .process-time {
   opacity: 0;
-  transition:
-    opacity var(--m-micro) var(--e-micro),
-    transform var(--m-panel) var(--e-panel);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
-:is(.process-row, .tool-card-header):is(:hover, :focus-visible) > .process-chevron {
+.tool-card-header:is(:hover, :focus-visible) > .process-end > .process-time,
+.thinking-toggle:is(:hover, :focus-visible) > .process-time,
+.thinking.is-live .process-time {
   opacity: 1;
 }
-:is(.process-row, .tool-card-header)[aria-expanded='true'] > .process-chevron {
-  transform: rotate(90deg);
+.thinking-toggle > .process-time {
+  margin-left: auto;
 }
 @media (hover: none) {
-  .process-chevron {
+  .process-end > .process-time {
     opacity: 1;
   }
 }
-/*
- * With a pointer, a tool row's hidden chevron takes no room, so its duration and state end on the column's edge like
- * everything else right-aligned. Under the pointer or focus the end slides 18px left (120ms) as the chevron fades in
- * where it was; the gap keeps that room free, so the slide never covers the row's words.
- */
-@media (hover: hover) {
-  .tool-tray > .tool-card-header > .process-chevron {
-    position: absolute;
-    top: calc(50% - 6px);
-    right: var(--bleed);
-  }
-  .tool-card[data-open] > .tool-tray > .tool-card-header > .process-chevron {
-    right: var(--sp-8);
-  }
-  .tool-tray > .tool-card-header > .process-fill {
-    min-width: calc(var(--sp-8) + 12px + var(--sp-6));
-  }
-  .tool-tray > .tool-card-header > .process-end {
-    transition: transform var(--m-micro) var(--e-micro);
-  }
-  .tool-tray > .tool-card-header:is(:hover, :focus-visible) > .process-end {
-    transform: translateX(calc(-12px - var(--sp-6)));
-    transition: transform var(--m-micro) var(--e-micro);
-  }
+.process-failed {
+  color: var(--red);
+}
+/* The chevron sits right after the words, in the muted ink; opening turns it a quarter. */
+.process-chevron {
+  flex-shrink: 0;
+  margin-left: var(--sp-6);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
+}
+:is(.process-row, .tool-card-header, .work-fold)[aria-expanded='true'] > .process-chevron {
+  transform: rotate(90deg);
+}
+/* Rows of one kind in a row show the icon once, except right after an opened row, where the gap would read as a mistake,
+ * and never on a row whose icon says more than its kind. */
+.tool-card[data-kind='read']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='read']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='edit']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='edit']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='new']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='new']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='search']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='search']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='execute']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='execute']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='fetch']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='fetch']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > *,
+.tool-card[data-kind='other']:not([data-open], .tool-failed, .tool-running)
+  + .tool-card[data-kind='other']:not(.tool-failed, .tool-running)
+  > .tool-tray
+  > .tool-card-header
+  > .process-slot
+  > * {
+  visibility: hidden;
+}
+/* A file the right panel is showing. */
+.tool-card[data-selected] > .tool-tray > .tool-card-header {
+  background: var(--hover);
 }
 
-/* Reasoning: a process row whose body is the reported thinking, aligned with the row's words, at most 280 high. */
+/* Reasoning: a work row whose body is the reported thinking, in the muted ink, at most 320 high. */
 .thinking {
   display: flex;
   flex-direction: column;
 }
 .thinking-label {
-  color: var(--muted);
+  color: var(--ink-2);
 }
 .thinking-body {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  column-gap: var(--sp-6);
-  padding: var(--sp-4) 0;
+  padding: var(--sp-4) 0 var(--sp-4) 28px;
 }
 .thinking-scroll {
-  grid-column: 2;
-  max-height: 280px;
+  max-height: 320px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -419,83 +501,335 @@
   flex-direction: column-reverse;
 }
 .reasoning-text {
-  color: var(--ink-2);
+  color: var(--muted);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-@media (max-width: 767.98px) {
-  .thinking-scroll {
-    max-height: 240px;
-  }
-}
 
-/* The process before a settled answer, folded into one row; opening it shows the rows as they were. */
-.process-fold {
+/* A settled turn's reads, as one row that opens to the rows they were. */
+.reads-rows,
+.plan-row-body {
   display: flex;
   flex-direction: column;
-  margin: var(--sp-4) 0;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0 var(--sp-4) 24px;
 }
-.fold-summary {
+
+/* 「已工作 2 分 13 秒 ›」: the turn's work on one line, over a hairline. Prose stays where it is whether it is open or not. */
+.work-fold {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 0 var(--sp-4);
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: var(--fs-prose);
+  line-height: var(--lh-ui);
+}
+.work-fold:hover {
+  color: var(--ink-2);
+}
+
+/*
+ * The status line under a running turn: what really runs in the muted ink, with one clock. It asks in amber when the run
+ * has gone quiet, with what can be done about it; when the connection is down it says only when it last knew.
+ */
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-6);
+  min-height: 24px;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-variant-numeric: tabular-nums;
+}
+.status-line.is-amber {
+  color: var(--amber);
+}
+.status-line.is-amber > .ui-icon {
+  color: var(--amber-icon);
+}
+.status-line .ui-button {
+  margin-left: var(--sp-4);
+}
+.status-view {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A run that ended without a plain answer: the line stays, with what nobody can vouch for under it. */
+.run-end {
+  display: grid;
+  gap: var(--sp-6);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.run-end-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-height: 24px;
+}
+.run-end.is-red .run-end-line {
+  color: var(--red);
+}
+.run-end.is-amber .run-end-line {
+  color: var(--amber);
+}
+.run-end-line > svg {
+  flex-shrink: 0;
+}
+.run-end-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0 0 0 var(--sp-24);
+  list-style: none;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  overflow-wrap: anywhere;
+}
+
+/* What a settled turn changed: one card on the column's edges, its rows opening under the header. */
+.turn-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.changed-files {
+  overflow: hidden;
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.changed-files-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-height: 44px;
+  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.changed-files-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+.changed-files-head > .process-stat {
+  margin-left: 0;
+}
+.changed-files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.changed-files-toggle:hover {
+  color: var(--ink-2);
+}
+.changed-files-toggle > svg {
+  transition: transform var(--m-panel) var(--e-panel);
+}
+.changed-files-toggle[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+.changed-files-why {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.changed-files-rows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--sp-8) var(--sp-8);
+}
+.summary-file {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 28px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+button.summary-file:hover {
+  background: var(--hover);
+}
+.summary-file-path {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fold-rows {
+.summary-file-folder {
+  color: var(--muted);
+}
+.summary-file-note {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-caption);
+}
+.summary-file > .process-stat {
+  margin-left: 0;
+}
+.changed-files-confirm {
+  display: grid;
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-12);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.changed-files-warning {
+  color: var(--amber);
+}
+.changed-files-partial {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-12);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+.changed-files-partial p {
+  margin: 0;
+}
+.changed-files-partial .changed-files-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--amber);
+}
+.changed-files-confirm ul,
+.undo-record-missing ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-code);
+  overflow-wrap: anywhere;
+}
+.changed-files-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: var(--sp-8);
-  padding-top: var(--sp-4);
+}
+@media (max-width: 767.98px) {
+  .changed-files-toggle-word,
+  .changed-files-open {
+    display: none;
+  }
 }
 
-/*
- * A turn's footer, 28 high: its facts in hint ink with tabular digits, 「 · 」 between them, then copy and, where it is
- * safe, 重新发送. While the turn runs it is the live line: the phase in words (with its light) or 等你批准 in amber,
- * how long it has worked, the output so far and a stall.
- */
-.turn-footer {
+/* After an undo: the record line, and what it did not reach. It fades in once. */
+.undo-record {
+  display: grid;
+  gap: var(--sp-4);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .undo-record {
+    animation: message-fade var(--m-enter) var(--e-micro);
+  }
+}
+.undo-record-line {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--sp-4);
+  min-height: 24px;
+}
+.undo-record-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.undo-record-missing {
+  display: grid;
+  gap: var(--sp-4);
+  margin-left: 28px;
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-2);
+}
+
+/* A settled turn's footer: facts and actions over the gap under the turn, taking no room of its own. */
+.turn-footer {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1;
   min-width: 0;
+  margin-top: var(--sp-2);
 }
 .turn-footer-row {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
-  min-height: 28px;
+  gap: var(--sp-2);
+  min-height: 24px;
   min-width: 0;
 }
 .turn-facts {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0 var(--sp-6);
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .turn-facts > :not(.sr-only) ~ :not(.sr-only)::before {
   content: '·';
   margin-right: var(--sp-6);
   color: var(--muted);
 }
-.turn-outcome.outcome-failed {
-  color: var(--red);
-}
-.turn-phase {
-  color: var(--ink-2);
-  font-weight: 500;
-}
-.turn-phase.phase-approval {
-  color: var(--amber);
-}
-
 .sending-message {
-  margin-top: var(--sp-16);
+  margin-top: var(--sp-32);
 }
 .sending-message-status,
 .sending-attachments {
@@ -510,17 +844,14 @@
 .sending-message-status[data-state='unknown'] {
   color: var(--amber);
 }
-.turn-footer .ui-copy-button {
-  margin-left: var(--sp-2);
-}
-.turn-retry {
-  color: var(--ink-2);
+.sending-message .message-meta {
+  display: none;
 }
 /* Before resending a turn that may have changed something, one line says what may run again. */
 .turn-retry-confirm {
   display: grid;
   gap: var(--sp-8);
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-12);
   padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--line);
   border-radius: var(--r-8);
@@ -533,11 +864,6 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-8);
-}
-@media (max-width: 767.98px) {
-  .turn-footer-row {
-    min-height: 32px;
-  }
 }
 
 /* New-session helpers: resting cards on the paper, neutral icons. */
@@ -1052,55 +1378,73 @@
   line-height: var(--lh-code);
 }
 
+/* 「生成了 2 个文件」: one row per document, each with 打开. */
 .file-outputs {
-  display: grid;
-  gap: var(--sp-8);
+  overflow: hidden;
   min-width: 0;
-  margin-top: var(--sp-16);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .file-outputs-heading {
-  width: fit-content;
-  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 44px;
+  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
+  color: var(--ink);
+  font-weight: 500;
+}
+.file-outputs-heading .ui-button,
+.file-outputs-heading .changed-files-why {
+  font-weight: 400;
 }
 .file-outputs ul {
   display: grid;
-  gap: var(--sp-4);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .file-outputs li {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-8);
+  min-height: 44px;
   min-width: 0;
+  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-12);
+  border-top: 1px solid var(--line);
 }
-.file-output-change {
-  flex: none;
+.file-output-icon {
+  flex-shrink: 0;
   color: var(--muted);
-  font-size: var(--fs-caption);
 }
-.file-output-deleted {
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-family: var(--mono);
+.file-output-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 500;
 }
-.file-outputs p {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-}
-.file-outputs > .ui-button {
-  justify-self: start;
-}
-
 .file-output-size {
   flex: none;
-  margin-inline-start: auto;
   color: var(--muted);
   font-size: var(--fs-caption);
   white-space: nowrap;
+}
+.file-output-open {
+  flex: none;
+  margin-inline-start: auto;
+}
+.output-notes {
+  display: grid;
+  gap: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .file-output-picture {
   flex: none;
@@ -1125,13 +1469,10 @@
   object-fit: contain;
 }
 
-/* Reduced motion: chevrons turn and row ends shift at once; the chevron still fades in. */
+/* Reduced motion: chevrons turn at once. */
 @media (prefers-reduced-motion: reduce) {
-  .process-chevron {
-    transition: opacity var(--m-micro) var(--e-micro);
-  }
-  .tool-tray > .tool-card-header > .process-end,
-  .tool-tray > .tool-card-header:is(:hover, :focus-visible) > .process-end,
+  .process-chevron,
+  .changed-files-toggle > svg,
   .info-block-chevron,
   .info-disclosure-chevron,
   .info-track > i {

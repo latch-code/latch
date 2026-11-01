@@ -3,7 +3,7 @@
  * 会话 with settings, search and 新建会话, the filter pills, then paper cards (等你处理, and one per group of sessions).
  * Opening a session pushes its page over the list: the new page slides in from the right over --m-push while the list
  * moves a quarter to the left and dims; going back slides it away in 70% of that and the list returns. The page's header is
- * on the ground and the conversation is a sheet of paper rising under it, rounded 16 at the top. A new session is a
+ * on the canvas with the conversation under it. A new session is a
  * bottom sheet over the list. Under reduced motion the page only fades in and nothing moves.
  */
 @media (max-width: 767.98px) {

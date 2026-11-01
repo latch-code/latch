@@ -80,13 +80,13 @@
   border-top: 1px solid var(--line);
 }
 .message-content a {
-  color: var(--accent-ink);
+  color: var(--ink);
   text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
 }
 .message-content a:hover {
-  text-decoration-thickness: 2px;
+  text-decoration-color: currentcolor;
 }
 /* Images are never loaded; a web image is an ordinary link the reader opens. */
 .message-content .message-image {
@@ -125,7 +125,7 @@
   margin: var(--sp-12) 0;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--r-12);
+  border-radius: var(--r-8);
   background: var(--sunken);
 }
 .message-code-toolbar {
@@ -133,9 +133,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-12);
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 var(--sp-4) 0 var(--sp-12);
-  border-bottom: 1px solid var(--line);
 }
 .message-code-language {
   min-width: 0;

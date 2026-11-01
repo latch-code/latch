@@ -70,7 +70,7 @@ describe('top bar', () => {
     expect(html).toMatch(/<span class="topbar-source"[^>]*><span class="ui-tile"/)
   })
 
-  it('heads a phone session page with the way back, the centred title over where it runs, and 会话信息', () => {
+  it('heads a phone session page with the way back, the title over where it runs, and 会话信息', () => {
     const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
@@ -88,7 +88,7 @@ describe('top bar', () => {
     // The title opens the session's menu (a sheet on a phone), 同步最新状态 included.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
     expect(html).toMatch(
-      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span><span class="ui-status-word level-pill"/u,
+      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span><span class="topbar-full-access"/u,
     )
     expect(html).toMatch(/<button[^>]*aria-label="会话信息"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')

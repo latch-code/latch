@@ -13,7 +13,6 @@ import {
   middleFit,
   relativeTime,
   formatSize,
-  separatorLabel,
   sumUsage,
   tokenAmount,
   tokenLines,
@@ -79,12 +78,6 @@ describe('client formatting', () => {
     expect(dayClockTime(localTime(9, 24, 14, 31), today)).toBe('10月24日 14:31:07')
     expect(dayClockTime(new Date(2025, 9, 3, 9, 0, 12).getTime(), today)).toBe('2025年10月3日 09:00:12')
     expect(absoluteTime(localTime(9, 24, 14, 32))).toBe('2026年10月24日 周六 14:32:07')
-    expect(separatorLabel(localTime(9, 24, 14, 2), today, false)).toBe('今天 14:02')
-    expect(separatorLabel(localTime(9, 24, 16, 40), today, true)).toBe('16:40')
-    expect(separatorLabel(localTime(9, 23, 9, 15), today, false)).toBe('昨天 09:15')
-    expect(separatorLabel(localTime(9, 21, 9, 15), today, false)).toBe('周三 09:15')
-    expect(separatorLabel(localTime(9, 2, 9, 15), today, false)).toBe('10月2日 09:15')
-    expect(separatorLabel(new Date(2025, 2, 2, 10, 0).getTime(), today, false)).toBe('2025年3月2日 10:00')
   })
 
   it('names tokens in words, with the exact counts and the parts the Host reported for the tooltip', () => {

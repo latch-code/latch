@@ -11,9 +11,9 @@
   align-items: center;
   gap: var(--sp-12);
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--amber-line);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  background: var(--amber-soft);
+  background: var(--raised);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
@@ -91,7 +91,7 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-/* What the bar says, its parts 4 apart with the middle dot between them evenly: 「1 项待批准 · 写入 docs/notes.md」. */
+/* What the bar says, its parts 4 apart with the middle dot between them evenly: 「尚未确认 · 重试」. */
 .run-bar-what {
   display: flex;
   align-items: center;
@@ -106,26 +106,6 @@
 .run-bar-dot {
   flex-shrink: 0;
   color: var(--muted);
-}
-.run-bar.is-waiting {
-  border-bottom-color: var(--amber-line);
-  background: var(--amber-soft);
-  color: var(--amber);
-}
-/* What the oldest waiting request would do, after its count: hint ink, cut at the end. */
-.run-bar-detail {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-}
-.run-bar-what > .ui-spinner {
-  flex-shrink: 0;
-}
-.run-bar-end {
-  display: flex;
-  margin-left: auto;
 }
 .run-bar-action {
   display: inline-flex;
@@ -146,13 +126,6 @@
 .run-bar-what > .run-bar-action {
   margin-inline-start: calc(-1 * var(--sp-4));
 }
-.run-bar.is-waiting > .run-bar-action {
-  margin-left: auto;
-  margin-right: calc(-1 * var(--sp-4));
-}
-.run-bar.is-waiting .run-bar-end {
-  margin-left: 0;
-}
 @media (pointer: coarse) {
   .run-bar-action {
     min-height: 36px;
@@ -160,9 +133,6 @@
   }
   .run-bar-what > .run-bar-action {
     margin-inline-start: calc(-1 * var(--sp-8));
-  }
-  .run-bar.is-waiting > .run-bar-action {
-    margin-right: calc(-1 * var(--sp-8));
   }
   .run-bar {
     min-height: 36px;
@@ -373,6 +343,14 @@
 /* The height the input is given is its content's plus 2, so the padding leaves 50 for one line. */
 .composer[data-inline] textarea {
   padding: calc((50px - var(--lh-input)) / 2) var(--sp-4) calc((50px - var(--lh-input)) / 2) var(--sp-16);
+}
+/* The 「+」 sits inside the pill, on the input's first line. */
+.composer-row > :first-child:not(textarea, .composer-readonly) {
+  flex-shrink: 0;
+  margin: 0 0 var(--sp-8) var(--sp-8);
+}
+.composer-row > :first-child:not(textarea, .composer-readonly) ~ textarea {
+  padding-left: var(--sp-8);
 }
 .composer[data-inline] .composer-readonly {
   padding: var(--sp-16) var(--sp-4) var(--sp-16) var(--sp-16);

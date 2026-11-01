@@ -1317,10 +1317,7 @@ describe('visual capture of the real product', () => {
       // Running work turns the spinner on its tool row and the turn ends with the live line, which says how long the run
       // has worked; the bar above the input says nothing then, and the open session's own row leaves its running out.
       await target.locator('.tool-card .ui-spinner').first().waitFor()
-      await target
-        .locator('.turn-footer.is-live')
-        .getByText(/^已运行 /)
-        .waitFor()
+      await target.locator('.status-line .status-clock').waitFor()
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
       if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).count()).toBe(0)
       await settleMotion(target)
@@ -1341,7 +1338,7 @@ describe('visual capture of the real product', () => {
       await pages.get(viewport.name)!.context.setOffline(false)
       await connected(target)
 
-      // Stopping, as the bar over the input says it: the outcome of a stop that never answered, then a stop under way.
+      // Stopping: the bar over the input says the outcome of a stop that never answered, the status line a stop under way.
       // Neither request reaches the Host, so the run goes on; the next page load forgets both.
       await target.route('**/link/api/tasks/*/cancel', route => route.abort('connectionreset'))
       await target.getByRole('button', { name: '停止', exact: true }).click()
@@ -1351,12 +1348,8 @@ describe('visual capture of the real product', () => {
       await reachable(runBar.getByRole('button', { name: '重试', exact: true }))
       expect(await target.locator('.composer-stack > .ui-notice').count()).toBe(0)
       await target.locator('.stop-button .stop-glyph').waitFor()
-      // Nothing is known to be stopping: the live line says how long the run has worked again once it has held 正在停止…
-      // its moment, and the top bar claims no 正在取消.
-      await target
-        .locator('.turn-footer.is-live')
-        .getByText(/^已运行 /)
-        .waitFor()
+      // Nothing is known to be stopping: the status line says what runs again, and the top bar claims no 正在取消.
+      await target.locator('.status-line .status-clock').waitFor()
       expect(await target.locator('.topbar').getByText('正在取消', { exact: true }).count()).toBe(0)
       await target.locator('.run-bar-collapse[data-settled]').waitFor()
       await settleMotion(target)
@@ -1372,7 +1365,7 @@ describe('visual capture of the real product', () => {
         await route.abort('connectionreset')
       })
       await runBar.getByRole('button', { name: '重试', exact: true }).click()
-      await runBar.getByText('正在停止…', { exact: true }).waitFor()
+      await target.locator('.status-line').getByText('正在停止…', { exact: true }).waitFor()
       expect(await target.getByRole('button', { name: '停止', exact: true }).getAttribute('aria-disabled')).toBe('true')
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-stopping', 'a stop under way')
@@ -1381,10 +1374,10 @@ describe('visual capture of the real product', () => {
       await target.unroute('**/link/api/tasks/*/cancel')
       expect(await status(sessions.running)).toBe('running')
 
-      // Reasoning still streaming: the thinking row says so with its light and its seconds, the live line keeps only
-      // how long the run has worked.
+      // Reasoning still streaming: the thinking row says so with its light and its seconds, the status line how long the
+      // run has worked.
       await openSession(target, viewport, sessions.thinking)
-      await target.locator('.thinking.is-live').getByText('正在思考', { exact: true }).waitFor()
+      await target.locator('.thinking.is-live').getByText('思考中', { exact: true }).waitFor()
       await target.locator('.thinking.is-live .process-time').waitFor()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-thinking', 'reasoning streams')
@@ -1414,11 +1407,9 @@ describe('visual capture of the real product', () => {
         // A healthy connection is not named: the panel has no footer.
         expect(await sidebar.locator('.sidebar-footer').count()).toBe(0)
       }
-      // The process before the answer has folded into one row; the write's diff stays in view as evidence.
-      const fold = target.locator('.fold-toggle')
-      await fold.getByText(/^已处理 · 思考 6 秒 · 读取 1 个文件/).waitFor()
-      await target.locator('.diff-view').getByText('省略表示保留').first().waitFor()
-      await diffColoured(target)
+      // The work has folded into one line; the prose stays.
+      const fold = target.locator('.work-fold').last()
+      await fold.getByText(/^已工作/).waitFor()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-done', 'done with tools and a diff')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-done', 'done session selected', sidebar)
@@ -1429,7 +1420,6 @@ describe('visual capture of the real product', () => {
       const facts = lastReply.locator('.turn-footer .turn-facts')
       await facts.getByText(/^输入 [\d.]+k? tokens$/).waitFor({ state: 'attached' })
       await facts.getByText(/^输出 [\d.]+k? tokens$/).waitFor({ state: 'attached' })
-      expect(await facts.getByText(/^用时 /).count()).toBe(0)
       if (viewport.touch) await lastReply.locator('.turn-footer[data-pinned]').waitFor()
       else {
         const release = await forceState(target, '.turn:last-child .turn-reply', ['hover'])
@@ -1468,18 +1458,19 @@ describe('visual capture of the real product', () => {
       // Opening the fold shows the rows as they were.
       await reachable(fold)
       await fold.click()
-      await target.locator('.process-fold[data-open] .ui-collapse[data-settled]').waitFor()
+      await target.locator('.work-group[data-settled]').first().waitFor()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-done-fold', 'the folded process opened')
 
-      // The write's diff stays in view; its row opens the card with the call's arguments and output.
-      const write = target.locator('.tool-card', { has: target.locator('.diff-view') }).locator('.tool-card-header')
+      // The write is one row; it opens to a short preview, coloured, with the way to the whole change.
+      const write = target.locator('.tool-card[data-kind="edit"] .tool-card-header').last()
       await reachable(write)
       await write.click()
-      await target.locator('.tool-card[data-open] .tool-card-body').getByText('输出', { exact: true }).waitFor()
+      await target.locator('.tool-card[data-open] .diff-view').getByText('省略表示保留').first().waitFor()
+      await diffColoured(target)
       await write.scrollIntoViewIfNeeded()
       await settleMotion(target)
-      await recorder.capture(target, viewport, 'session-diff', 'done session with its diff and its tool card open')
+      await recorder.capture(target, viewport, 'session-diff', 'done session with a file edit opened to its preview')
 
       await openSession(target, viewport, sessions.plan)
       await shows(target, 'planned')
@@ -1507,7 +1498,7 @@ describe('visual capture of the real product', () => {
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-failed', 'failed session selected', sidebar)
 
       // A failed latest turn offers to send its prompt again; a command it ran may run again, so it asks first.
-      const resend = target.locator('.turn:last-child .turn-footer').getByRole('button', { name: '重新发送', exact: true })
+      const resend = target.locator('.turn:last-child .turn-footer').getByRole('button', { name: '重试', exact: true })
       if (!viewport.touch) await target.locator('.turn:last-child .turn-reply').hover()
       await reachable(resend)
       await resend.click()
@@ -1527,6 +1518,10 @@ describe('visual capture of the real product', () => {
 
       // A rejected write: its row reads 「已拒绝 · 时间」 in the hint ink, once, with no diff under it and no 失败.
       await openSession(target, viewport, sessions.rejected)
+      await target
+        .locator('.work-fold')
+        .getByText(/1 步被拒绝/)
+        .click()
       const record = target.locator('.tool-card .tool-decision-words')
       await record.waitFor()
       expect(await record.textContent()).toMatch(/^已拒绝 · /u)
@@ -1539,7 +1534,7 @@ describe('visual capture of the real product', () => {
       await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
       // The card waits for the person with the one amber status word in its header.
-      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '等你允许' }).waitFor()
+      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '需要你允许' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
       if (viewport.name === 'desktop') {
@@ -1558,7 +1553,6 @@ describe('visual capture of the real product', () => {
         await expectUnmovedByInjectedStyles(target, [
           '[data-approval-id] .tool-card-title',
           '[data-approval-id] .approval-reason',
-          '[data-approval-id] .approval-footnote',
           '[data-approval-id] .diff-fold',
           '[data-approval-id] .diff-path',
           '[data-approval-id] .diff-path-name',
@@ -1689,14 +1683,14 @@ describe('visual capture of the real product', () => {
       await reachable(advisory.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-advisory', 'full-access question shown as advisory')
 
-      // The agent's plan is a chip in the bar above the input; it opens the list.
+      // The agent's plan is a work row; it opens to the list.
       const planChip = target.getByRole('button', { name: '计划 0/2', exact: true })
       await reachable(planChip)
       await planChip.click()
       await target.getByText('List the project root', { exact: true }).last().waitFor()
       await settleMotion(target)
-      await recorder.capture(target, viewport, 'session-plan-popover', "the plan chip's list open")
-      await target.keyboard.press('Escape')
+      await recorder.capture(target, viewport, 'session-plan-popover', "the plan row's list open")
+      await planChip.click()
 
       // The ordinary request on a device without 批准普通操作: the lock and the reason stand where allowing was, and the
       // card still waits for someone (待批准). The snapshot is the Host's own, less that one scope.
@@ -1710,7 +1704,7 @@ describe('visual capture of the real product', () => {
       const locked = target.locator('[data-approval-id]')
       await locked.getByText('这台设备不能允许这一步', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '等你允许' }).waitFor()
+      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '需要你允许' }).waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
@@ -1737,6 +1731,53 @@ describe('visual capture of the real product', () => {
       expect(await legacy.locator('.approval-more').count()).toBe(0)
       await recorder.capture(target, viewport, 'approval-legacy', 'a Host of the previous build: plain allow and reject')
       await target.unroute(`**/link/api/tasks/${sessions.r1}`)
+      await target.unroute('**/link/api/snapshot')
+
+      // A turn taken back, and a record that does not cover its folder. The record is the Host's shape, on a device whose
+      // data scope covers the files.
+      await target.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const snapshot: AppSnapshot = await response.json()
+        snapshot.device.dataScope = 'all'
+        await route.fulfill({ response, json: snapshot })
+      })
+      const doneAt = (await detail(sessions.done)).messages.find((message: { role: string }) => message.role === 'user')?.createdAt
+      const turnList = {
+        scope: 'turn',
+        turnId: 'visual-turn',
+        files: [
+          { root: 'default', path: 'apps/web/src/release.ts', status: 'M', add: 12, del: 3 },
+          { root: 'default', path: 'docs/RELEASE.md', status: 'A', add: 40, del: 0 },
+        ],
+        totals: { files: 2, add: 52, del: 3 },
+        partial: true,
+      }
+      const undoneRecord = { turnId: 'visual-turn', startedAt: doneAt, state: 'settled', files: 2, undone: true, notePending: true }
+      let undoneShown = false
+      await target.route(`**/link/api/tasks/${sessions.done}/changes/turns`, route =>
+        route.fulfill({
+          json: { turns: [undoneShown ? undoneRecord : { turnId: 'visual-turn', startedAt: doneAt, state: 'settled', files: 2 }] },
+        }),
+      )
+      await target.route(`**/link/api/tasks/${sessions.done}/changes?*`, route =>
+        route.fulfill({
+          json: undoneShown
+            ? { ...turnList, undone: true, undo: { available: false, reason: 'undone' }, redo: { available: true } }
+            : { ...turnList, undo: { available: true }, redo: { available: false, reason: 'not-undone' } },
+        }),
+      )
+      await openSession(target, viewport, sessions.done)
+      await target.getByText('记录不完整：文件夹太大', { exact: true }).waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'turn-record-partial', "a turn's card on a record that does not cover the folder")
+      undoneShown = true
+      await home(target)
+      await openSession(target, viewport, sessions.done)
+      await target.getByRole('button', { name: '恢复', exact: true }).waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'turn-undone', 'a turn taken back: the record line and 恢复')
+      await target.unroute(`**/link/api/tasks/${sessions.done}/changes?*`)
+      await target.unroute(`**/link/api/tasks/${sessions.done}/changes/turns`)
       await target.unroute('**/link/api/snapshot')
 
       // Navigation: the drawer on tablets.
@@ -2045,7 +2086,6 @@ describe('visual capture of the real product', () => {
         async () => {
           await openSession(target, viewport, sessions.done)
           await shows(target, /建议再补一条/)
-          await diffColoured(target)
         },
       ],
       [

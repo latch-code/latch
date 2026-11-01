@@ -5,7 +5,10 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { accessSync, constants, statSync } from 'node:fs'
+import { lstat } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
+import type { GitOperation } from '@latch/protocol'
 import type { GitLayout } from '../branch-reader.ts'
 
 /** Every Git process gets these and nothing it could take from the Host's environment or a repository's hooks. */
@@ -71,6 +74,8 @@ export interface IndexListing {
   skipped: Set<string>
   /** Untracked paths that no ignore rule covers. */
   untracked: Set<string>
+  /** Tracked paths Git marks as unmerged. */
+  unmerged: Set<string>
 }
 
 export interface GitReaderOptions {
@@ -181,7 +186,7 @@ export class GitReader {
   /** The index and the untracked files, in one listing. Undefined past `limit` paths. */
   async index(layout: GitLayout, limit: number): Promise<IndexListing | undefined> {
     const out = await this.run(layout, ['ls-files', '-z', '-t', '--cached', '--others', '--exclude-standard'], { maxBytes: limit * 300 })
-    const listing: IndexListing = { tracked: new Set(), skipped: new Set(), untracked: new Set() }
+    const listing: IndexListing = { tracked: new Set(), skipped: new Set(), untracked: new Set(), unmerged: new Set() }
     let count = 0
     for (const record of splitRecords(out)) {
       if (record.length < 3 || record[1] !== 0x20) continue
@@ -191,7 +196,10 @@ export class GitReader {
       if (++count > limit) return undefined
       if (tag === '?') listing.untracked.add(path)
       else if (tag === 'S') listing.skipped.add(path)
-      else listing.tracked.add(path)
+      else {
+        listing.tracked.add(path)
+        if (tag === 'M') listing.unmerged.add(path)
+      }
     }
     return listing
   }
@@ -219,6 +227,28 @@ export class GitReader {
     }
     return blobs
   }
+}
+
+/** What each marker Git leaves in its metadata means. Looked up per work tree: a linked one has its own. */
+const OPERATIONS: ReadonlyArray<[marker: string, operation: GitOperation]> = [
+  ['MERGE_HEAD', 'merge'],
+  ['rebase-merge', 'rebase'],
+  ['rebase-apply', 'rebase'],
+  ['CHERRY_PICK_HEAD', 'cherry-pick'],
+  ['REVERT_HEAD', 'revert'],
+]
+
+/** What Git is in the middle of here. A marker that cannot be read counts as an error, never as nothing under way. */
+export async function gitOperation(layout: GitLayout): Promise<GitOperation | undefined> {
+  for (const [marker, operation] of OPERATIONS) {
+    try {
+      await lstat(join(layout.gitdir, marker))
+      return operation
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw new GitError('failed')
+    }
+  }
+  return undefined
 }
 
 function splitRecords(out: Buffer): Buffer[] {

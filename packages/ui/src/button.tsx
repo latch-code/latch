@@ -7,7 +7,7 @@ import { Tooltip } from './tooltip.tsx'
 
 /**
  * primary: the one blue action of a card, dialog or page, only for something that executes or creates.
- * secondary: a soft neutral fill with no ring; inside an amber or red tint (`data-tint` on the container) it is
+ * secondary: a soft neutral fill with no ring; inside a warning or a risk (`data-tint` on the container) it is
  * outlined instead. outline: raised with a line-strong ring, the quiet partner of a primary (拒绝 beside 允许).
  * ghost: no fill until hovered, for toolbars, row ends and quiet actions such as 重置. link: accent text, only for
  * going to another page or place. danger: an action with consequences on a page, an outline button with red words.

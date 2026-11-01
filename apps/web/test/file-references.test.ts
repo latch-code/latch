@@ -148,7 +148,7 @@ describe('asking main which references are files', () => {
     expect(renderToStaticMarkup(createElement(MessageContent, { text: '`out/deck.pptx`' }))).toContain('<code>out/deck.pptx</code>')
   })
 
-  it("puts a finished tool's files at the top of its opened card, and nothing in an approval", async () => {
+  it("asks about a finished tool's files only, and draws its chips only once the row is opened", async () => {
     const { known } = store(['out/deck.pptx'])
     known.want('out/deck.pptx')
     await new Promise(done => setTimeout(done, 300))
@@ -161,8 +161,8 @@ describe('asking main which references are files', () => {
       tool: { kind: 'edit', input: '{"path":"out/deck.pptx"}', output: '写入后校验失败' },
     }
     const html = within(known, createElement(ToolCard, { message, onDecide: async () => {} }))
-    expect(html).toContain('<h4>文件</h4><p class="tool-files">')
-    expect(html).toContain('<span class="file-chip-name">deck.pptx</span>')
+    expect(html).not.toContain('tool-files')
+    expect(html).toContain('tool-failure')
     const running = within(known, createElement(ToolCard, { message: { ...message, state: 'running' }, onDecide: async () => {} }))
     expect(running).not.toContain('tool-files')
   })

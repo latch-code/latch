@@ -42,8 +42,8 @@ function code(text: string): string {
 const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** The export's own turn headings; the same heading inside model text is escaped so it cannot pose as a turn. */
-const TURN_NAME = /^(?:你|助手(?:（生成中）)?)$/
-const ATX_TURN = /^ {0,3}#{1,6}[ \t]+(?:你|助手(?:（生成中）)?)[ \t#\r]*$/
+const TURN_NAME = /^(?:你|Agent(?:（生成中）)?)$/
+const ATX_TURN = /^ {0,3}#{1,6}[ \t]+(?:你|Agent(?:（生成中）)?)[ \t#\r]*$/
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t\r]*$/
 /** Only fences at the start of a line are tracked: an indented one may belong to a list item that ends without closing it. */
 const FENCE_OPEN = /^(?:(`{3,})[^`]*|(~{3,}).*)$/
@@ -139,7 +139,7 @@ function toolBlock(message: Message): string[] {
 export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string; exportedAt?: Date } = {}): string {
   const { summary } = detail
   const facts = [
-    meta.harness && `Harness：${meta.harness}`,
+    meta.harness && `引擎：${meta.harness}`,
     summary.model && `模型：${summary.model}`,
     `模式：${summary.mode === 'chat' ? '对话' : 'Agent'}`,
     summary.cwd && `项目：${code(summary.cwd)}`,
@@ -150,7 +150,7 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
   for (const message of detail.messages) {
     if (message.role === 'user') out.push('## 你', '', message.text, '')
     else if (message.role === 'assistant') {
-      out.push('## 助手', '')
+      out.push('## Agent', '')
       if (message.reasoning)
         out.push(
           '<details>',
@@ -180,7 +180,7 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
         '',
       )
   }
-  if (detail.liveText) out.push('## 助手（生成中）', '', inertMarkdown(detail.liveText), '')
+  if (detail.liveText) out.push('## Agent（生成中）', '', inertMarkdown(detail.liveText), '')
   return `${out.join('\n').trimEnd()}\n`
 }
 

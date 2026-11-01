@@ -12,6 +12,10 @@ export const SIDEBAR_SNAP_MS = MOTION.panel + 20
 /** The right panel: 520 by default, from 360 up to 70% of the window. */
 export const RIGHT_PANEL_DEFAULT = 520
 export const RIGHT_PANEL_MIN = 360
+/** 变更 asks for more, unless the person chose a width: 660, or 860 when its file tree is wanted, down to what the conversation leaves. */
+const CHANGES_PANEL = 660
+const CHANGES_PANEL_TREE = 860
+const CHANGES_SHEET = 420
 const RIGHT_PANEL_MAX_SHARE = 0.7
 /** The conversation stays at least this wide; below that the right panel overlays it as a sheet. */
 const CONVERSATION_MIN = 480
@@ -84,6 +88,12 @@ export type RightPanelPlacement =
   | { kind: 'sheet'; width: number }
   /** In the conversation's place: a phone's pushed page, or the panel maximised. */
   | { kind: 'page' }
+
+/** How wide 变更 opens beside a conversation, or over one that cannot keep its minimum. */
+export function changesPanelWidth(windowWidth: number, left: number, tree = false): number {
+  const room = windowWidth - left - CONVERSATION_MIN
+  return room >= RIGHT_PANEL_MIN ? Math.min(tree ? CHANGES_PANEL_TREE : CHANGES_PANEL, room) : CHANGES_SHEET
+}
 
 /** Where the open right panel goes; `left` is what stands beside the conversation on its other side (rail and panel). */
 export function placeRightPanel({ windowWidth, width, left }: { windowWidth: number; width?: number; left: number }): RightPanelPlacement {

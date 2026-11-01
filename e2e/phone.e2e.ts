@@ -104,18 +104,13 @@ describe('the phone stack', () => {
       await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('返回会话列表')
       await page.locator('.transcript-content').waitFor()
 
-      // The header is on the ground and the conversation is paper under it, rounded 16 at the top.
+      // The header and the conversation share one canvas.
       const header = page.locator('.topbar[data-phone]')
+      expect((await header.boundingBox())!.height).toBe(52)
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '会话信息', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
-      const paper = await page.locator('.workspace-body').evaluate(element => {
-        const style = getComputedStyle(element)
-        return { top: style.borderTopLeftRadius, background: style.backgroundColor }
-      })
-      expect(paper.top).toBe('16px')
-      expect(await page.locator('main.workspace').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(paper.background)
-      // The input floats in the paper as one row, 52 high at rest, with send at its end.
+      // The input floats as one row, 52 high at rest, with send at its end.
       const composer = page.locator('.composer-dock form.composer')
       expect(await composer.locator('.composer-toolbar').count()).toBe(0)
       const row = await composer.evaluate(form => {

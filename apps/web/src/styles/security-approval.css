@@ -21,7 +21,7 @@
   border-color: var(--red-line) !important;
   background: linear-gradient(var(--red-soft), var(--red-soft)) var(--canvas) !important;
 }
-.tool-card[data-secure].is-r2 :is(.tool-card-name, .approval-meta, .approval-footnote, .approval-keys) {
+.tool-card[data-secure].is-r2 :is(.tool-card-name, .approval-footnote, .approval-keys) {
   color: var(--ink-2) !important;
 }
 .tool-card.has-approval .tool-card-header,
@@ -100,12 +100,6 @@
   color: var(--ink-2) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
-}
-.approval-meta {
-  display: block !important;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
 }
 /* The tone carries the note, so it stays caption-sized and regular beside the reason. */
 .approval-note,
@@ -300,14 +294,14 @@
 }
 .approval-preview .diff-note {
   display: block !important;
-  background: var(--amber-soft) !important;
+  background: transparent !important;
   color: var(--amber) !important;
   font-family: var(--font) !important;
 }
 /* A control, bidirectional or zero-width character, shown as \u{XXXX}. */
 [data-secure] .hidden-char {
   display: inline !important;
-  background: var(--amber-soft) !important;
+  background: var(--hover) !important;
   color: var(--amber) !important;
   font-family: var(--mono) !important;
 }

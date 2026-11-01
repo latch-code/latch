@@ -1,75 +1,52 @@
-import { useId } from 'react'
+import { useRef } from 'react'
 import { ArrowDown } from 'lucide-react'
-import type { TaskDetail } from '@latch/protocol'
-import { livePhase, phaseText, runElapsed } from '../conversation.ts'
-import { hostNow, useTicker } from '../core/hostClock.ts'
-import { formatDuration } from '../format.ts'
-import { ICON_STROKE, MOTION, Spinner, usePresence } from '@latch/ui'
-
-export interface JumpLive {
-  detail: TaskDetail
-  harness: string
-  cancelling: boolean
-  approvals: number
-  fallbackElapsed?: number
-}
-
-/** While the reader is away from the latest output of a running turn, the pill carries what the turn is doing. */
-function LiveStatus({ live, describedBy }: { live: JumpLive; describedBy: string }) {
-  useTicker('second')
-  const now = hostNow()
-  const phase = livePhase(live.detail, { cancelling: live.cancelling, approvals: live.approvals, hostNow: now })
-  const elapsedMs = runElapsed(live.detail, now) ?? live.fallbackElapsed
-  const elapsed = elapsedMs === undefined ? undefined : formatDuration(elapsedMs, true)
-  const words = phaseText(phase, live.harness)
-  return (
-    <>
-      <Spinner size={12} />
-      <span className="jump-latest-phase" aria-hidden="true">
-        {words}
-      </span>
-      {elapsed && (
-        <span className="jump-latest-time" aria-hidden="true">
-          · {elapsed}
-        </span>
-      )}
-      <span id={describedBy} className="sr-only">
-        {words}
-      </span>
-    </>
-  )
-}
+import { ICON_STROKE, MOTION, usePresence } from '@latch/ui'
 
 /**
- * 「回到最新」: shown while the reader has scrolled away from the latest output, it rises in (--m-enter) and fades out
- * as the reader arrives. While a turn runs it shows the spinner, the phase and the time so far; waiting for you it
- * is the plain pill, since the bar above the input says so in amber. Its name stays 「回到最新」; the phase describes it.
+ * Back to the latest output: a 32px round button while the reader is away from it, with how many blocks have arrived since
+ * they left. When something waits for the person and no card of it is in view, the same button takes them to it and
+ * says so, because nothing else on the screen would.
  */
-export function JumpLatest({ show, onJump, live }: { show: boolean; onJump: () => void; live?: JumpLive }) {
-  const { present, leaving } = usePresence(show, MOTION.enterExit)
-  const statusId = useId()
+export function JumpLatest({
+  show,
+  onJump,
+  blocks = 0,
+  waiting,
+  onRevealWaiting,
+}: {
+  show: boolean
+  onJump: () => void
+  /** Blocks in the conversation now. */
+  blocks?: number
+  /** What waits for the person while its card is out of view, in words. */
+  waiting?: string | undefined
+  onRevealWaiting?: () => void
+}) {
+  const asks = waiting !== undefined && onRevealWaiting !== undefined
+  const { present, leaving } = usePresence(show || asks, MOTION.enterExit)
+  // How many blocks there were when the reader left, until they come back.
+  const left = useRef(blocks)
+  if (!show) left.current = blocks
+  const fresh = Math.max(0, blocks - left.current)
   if (!present) return null
-  const phase = live ? livePhase(live.detail, { cancelling: live.cancelling, approvals: live.approvals, hostNow: hostNow() }) : undefined
-  const proxy = live !== undefined && phase?.kind !== 'approval'
+  if (asks) {
+    return (
+      <button type="button" className="jump-latest is-waiting" data-leaving={leaving ? '' : undefined} onClick={onRevealWaiting}>
+        {waiting}
+        <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+      </button>
+    )
+  }
   return (
     <button
       type="button"
-      className={`jump-latest ${proxy ? 'is-live' : ''}`}
+      className={`jump-latest ${fresh > 0 ? 'has-count' : ''}`}
       data-leaving={leaving ? '' : undefined}
-      aria-label="回到最新"
-      aria-describedby={proxy ? statusId : undefined}
+      aria-label={fresh > 0 ? `回到最新，${fresh} 条新内容` : '回到最新'}
+      title="回到最新"
       onClick={onJump}>
-      {proxy && live ? (
-        <>
-          <LiveStatus live={live} describedBy={statusId} />
-          <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        </>
-      ) : (
-        <>
-          <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          回到最新
-        </>
-      )}
+      <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+      {fresh > 0 && <span className="jump-latest-count">{fresh}</span>}
     </button>
   )
 }

@@ -15,7 +15,7 @@ import {
 } from '@latch/ui'
 import { useCoarsePointer, useViewport } from '../breakpoints.ts'
 import { previousState } from '../diff.ts'
-import { argumentView, relativeTime, type ArgumentView } from '../format.ts'
+import { argumentView, type ArgumentView } from '../format.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, DECISION_COPY, CONFIRMATION_COPY } from '../core/securityCopy.ts'
 import { ArgumentList } from './ArgumentList.tsx'
@@ -127,12 +127,6 @@ function previewHeight(args: ArgumentView, covered: readonly string[], diffs: Fi
   return papers.reduce((sum, height) => sum + height, 0) + 8 * Math.max(0, papers.length - 1)
 }
 
-/** 「刚刚」, 「5 分钟前」, 「昨天」: when the request arrived. */
-function requestedText(value: string): string {
-  const text = relativeTime(value)
-  return /(?:分钟|小时|天)$/u.test(text) ? `${text}前` : text
-}
-
 /**
  * The two buttons a card shows (one reject, then allow once or the first allow) and the rest of the offered choices,
  * which go behind ⋯ (更多选项 on phones): a card never shows more than two buttons.
@@ -166,9 +160,9 @@ const moreTrigger = (phone: boolean, running: boolean) =>
   }
 
 /**
- * The decision under a tool card that waits for the person: the agent's reason and when it asked, the notes that
+ * The decision under a tool card that waits for the person: the agent's reason, the notes that
  * change what allowing means (a full-access question, hidden characters, previous content the reviewer cannot see),
- * the preview (arguments and diff, on paper), one sentence on what allowing does, and at most two buttons with the
+ * the preview (arguments and diff, on paper), and at most two buttons with the
  * rest behind ⋯. A device that may not allow sees why, next to 拒绝. While a choice is sent only that button runs; an
  * allow that needs the local confirmation keeps its words while the line under the preview says what to do on this
  * computer, and a confirmation that did not pass returns the buttons with the reason in the card. An unknown outcome
@@ -218,14 +212,7 @@ function ApprovalPanel({
   const previousNotes = (['unavailable', 'unknown'] as const)
     .filter(state => diffs.some(diff => previousState(diff) === state))
     .map(state => PREVIOUS_NOTES[state]!)
-  const footnote =
-    status?.noting && !running
-      ? DECISION_COPY.noteCard
-      : status?.confirming || allow === undefined || gate.confirms
-        ? undefined
-        : gate.kind === 'R1' && allow.kind === 'allow_once'
-          ? APPROVAL_COPY.onceNote
-          : undefined
+  const footnote = status?.noting && !running ? DECISION_COPY.noteCard : undefined
   const uncertainOption =
     uncertain && (gate.options.find(option => option.id === uncertain.optionId) ?? (uncertain.decision === 'allow' ? allow : reject))
   const keys = (event: KeyboardEvent<HTMLElement>) => {
@@ -287,9 +274,6 @@ function ApprovalPanel({
             <VisibleText text={approval.reason} />
           </p>
         )}
-        <p className="approval-meta">
-          <time dateTime={approval.requestedAt}>{requestedText(approval.requestedAt)}</time>
-        </p>
         {gate.note && <p className="approval-note">{gate.note}</p>}
         {hidden && (
           <p className="approval-warning" role="note">
@@ -435,8 +419,11 @@ export function ApprovalSlot(props: {
     element.addEventListener('transitionend', ended)
     element.addEventListener('transitioncancel', ended)
     void Promise.all(folding.map(animation => animation.finished)).then(drop, drop)
+    // A turn that settles folds this row too, and a transition inside a hidden subtree never ends.
+    const hidden = setTimeout(drop, 3000)
     return () => {
       active = false
+      clearTimeout(hidden)
       element.removeEventListener('transitionend', ended)
       element.removeEventListener('transitioncancel', ended)
     }

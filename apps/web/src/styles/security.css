@@ -47,7 +47,6 @@
   color: var(--ink-2) !important;
 }
 .presence-icon[data-tone='warn'] {
-  background: var(--amber-soft) !important;
   color: var(--amber) !important;
 }
 .presence-icon[data-tone='ok'] {
@@ -58,7 +57,7 @@
   background: var(--red-soft) !important;
   color: var(--red) !important;
 }
-/* Waiting does not move: the amber tile, its words and the countdown say it. A new state swaps the glyph in. */
+/* Waiting does not move: the amber glyph, its words and the countdown say it. A new state swaps the glyph in. */
 @media (prefers-reduced-motion: no-preference) {
   .presence-icon > svg {
     animation: presence-swap var(--m-micro) var(--e-micro);
@@ -75,7 +74,7 @@
   height: 2px;
   overflow: hidden;
   border-radius: var(--r-2);
-  background: var(--amber-soft) !important;
+  background: var(--hover) !important;
 }
 .presence-track > i {
   --fraction: 1;
@@ -360,10 +359,6 @@
   color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
-}
-:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] {
-  border-color: var(--amber-line) !important;
-  background: linear-gradient(var(--amber-soft), var(--amber-soft)) var(--raised) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='error'] {
   border-color: var(--red-line) !important;

@@ -17,6 +17,10 @@ export interface Preferences {
   diffScope: 'run' | 'history'
   /** 自动, 上下 or 左右 in the 变更 tab; this device only. */
   diffMode: 'auto' | 'stacked' | 'split'
+  /** 自动换行 in the 变更 tab; off by default. */
+  diffWrap: boolean
+  /** 文件树 in the 变更 tab; absent until the person chooses, so it opens by itself where it fits. */
+  diffTree?: boolean
   onboarding: 'auto' | 'show' | 'hidden'
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
@@ -37,6 +41,7 @@ const defaults: Preferences = {
   diffLayout: 'unified',
   diffScope: 'history',
   diffMode: 'auto',
+  diffWrap: false,
   onboarding: 'auto',
   theme: 'system',
   sendKey: 'enter',
@@ -69,6 +74,8 @@ export function parsePreferences(raw: string | null): Preferences {
       diffLayout: item.diffLayout === 'split' ? 'split' : 'unified',
       diffScope: item.diffScope === 'run' ? 'run' : 'history',
       diffMode: item.diffMode === 'stacked' || item.diffMode === 'split' ? item.diffMode : 'auto',
+      diffWrap: item.diffWrap === true,
+      ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       onboarding: item.onboarding === 'show' || item.onboarding === 'hidden' ? item.onboarding : 'auto',
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',

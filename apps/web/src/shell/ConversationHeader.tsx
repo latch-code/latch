@@ -1,5 +1,5 @@
-import type { RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Folder, PanelRight, Pencil, RefreshCw, ShieldAlert } from 'lucide-react'
+import { useRef, type RefObject } from 'react'
+import { ChevronDown, ChevronLeft, Ellipsis, Folder, GitCompare, PanelRight, Pencil, RefreshCw, ShieldAlert } from 'lucide-react'
 import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import { LEVEL_LABELS, LEVEL_TOOLTIPS } from '../core/permissions.ts'
@@ -66,9 +66,9 @@ const fullAccessPill = (
 )
 
 /**
- * A phone's session page header, on the ground (52): the way back to the session list, the title in the middle (a
- * button with chevron-down that opens the session's menu, 同步最新状态 included) over where it runs and its states that
- * are not the default, and 会话信息. A session just started is pushed before the Host lists it: until then the header
+ * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
+ * opens the session's menu, 同步最新状态 included) over where it runs, its branch and its states that are not the default,
+ * and 会话信息. A session just started is pushed before the Host lists it: until then the header
  * keeps its shape with the title 新会话, and the menu and 会话信息 wait for it.
  */
 function PhoneTopBar({
@@ -84,7 +84,9 @@ function PhoneTopBar({
   menu,
   connection,
   onRefresh,
+  changes,
 }: {
+  changes?: HeaderToggle | undefined
   summary?: TaskSummary
   source?: string
   cancelling: boolean
@@ -102,6 +104,7 @@ function PhoneTopBar({
   const state = summary && sessionPill(summary, cancelling)
   const where = summary && source
   const fullAccess = summary !== undefined && level === 'L3'
+  const branch = summary?.branch
   return (
     <header className="topbar" data-phone="">
       {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeft} onClick={onBack} />}
@@ -109,11 +112,16 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || fullAccess || demo || connectionProblem(connection)) && (
+        {(where || state || fullAccess || branch || demo || connectionProblem(connection)) && (
           <div className="topbar-subline">
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
-            {fullAccess && fullAccessPill}
+            {fullAccess && (
+              <span className="topbar-full-access" title={LEVEL_TOOLTIPS.L3}>
+                {LEVEL_LABELS.L3}
+              </span>
+            )}
+            {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
             {demo && (
               <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
                 演示
@@ -124,7 +132,12 @@ function PhoneTopBar({
         )}
       </div>
       {summary && (
-        <IconButton ref={inspectorRef} size="lg" label="会话信息" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />
+        <span className="topbar-phone-actions">
+          {changes && (
+            <IconButton size="lg" label={changes.label} icon={changes.icon} pressed={changes.pressed} onClick={changes.onToggle} />
+          )}
+          <IconButton ref={inspectorRef} size="lg" label="会话信息" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />
+        </span>
       )}
     </header>
   )
@@ -224,6 +237,7 @@ export function SessionHeader({
         menu={menu}
         connection={connection}
         onRefresh={onRefresh}
+        changes={slots.changes}
       />
     )
   const desktop = currentShell() !== null
@@ -313,7 +327,26 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     topMenu,
     connection,
     resync,
+    canViewChanges,
+    changesOpen,
+    toggleChanges,
+    fileTabs,
+    current,
   } = shell
+  const desktop = currentShell() !== null
+  // A dot while the newest turn changed files nobody has opened here yet.
+  const seen = useRef<Map<string, string>>(new Map())
+  const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
+  const showing = changesOpen && !fileTabs.active
+  if (showing && summary && latest) seen.current.set(summary.id, latest)
+  const unread =
+    !showing
+    && latest !== undefined
+    && !!summary
+    && seen.current.get(summary.id) !== latest
+    && !!current?.messages
+      .slice(current.messages.findLastIndex(message => message.role === 'user'))
+      .some(message => message.outputs?.length)
   return (
     <SessionHeader
       identity={summary?.personal ? identityName : undefined}
@@ -345,6 +378,20 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       onRefresh={() => {
         void resync()
       }}
+      slots={
+        canViewChanges
+          ? {
+              changes: {
+                label: '变更',
+                icon: GitCompare,
+                shortcut: desktop ? '⌘D' : 'Alt D',
+                pressed: showing,
+                dot: unread,
+                onToggle: toggleChanges,
+              },
+            }
+          : {}
+      }
     />
   )
 }

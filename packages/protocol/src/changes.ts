@@ -35,6 +35,8 @@ export interface ChangedFile {
   notRetained?: true
   /** The executable bit changed. */
   modeChanged?: true
+  /** Git scopes: Git marks this file as unmerged (「U」). */
+  conflicted?: true
 }
 
 export interface ChangeTotals {
@@ -81,8 +83,19 @@ export interface ChangeList {
   base?: string
   /** Git scopes: folders that are not the top of a Git work tree, so they have no such changes. */
   notGit?: string[]
+  /** Git scopes: a repository of the session is in the middle of something, so its uncommitted changes cannot be discarded. */
+  conflict?: GitConflict
+  /** Turn and session scopes: sessions that ran in the same folder meanwhile, so the attribution may be off. */
+  otherSessions?: string[]
   /** Why the scope has nothing to show. */
   unavailable?: ChangeUnavailable
+}
+/** What Git is in the middle of; `unmerged`: conflicted files with none of the others under way (a stash that did not apply). */
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'unmerged'
+export interface GitConflict {
+  operation: GitOperation
+  /** Files Git marks as unmerged, over every repository of the session. */
+  files: number
 }
 export type ChangeUnavailable =
   /** Turn and session scopes: no turn of this session was recorded. */
@@ -145,6 +158,8 @@ export interface TurnChanges {
   undone?: true
   /** An undo or redo of this turn is still to be told to the engine, with the next message. */
   notePending?: true
+  /** Sessions that ran in the same folder during this turn, so its attribution may be off. */
+  otherSessions?: string[]
 }
 
 /** A file an undo, redo or discard left as it was, and why. */

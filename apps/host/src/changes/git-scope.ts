@@ -7,9 +7,9 @@ import { isFileMention } from '@latch/protocol'
 import { readGitLayout, type GitLayout } from '../branch-reader.ts'
 import { isIgnoredPath } from '../files/ignore.ts'
 import type { FileRoot } from '../files/resolve.ts'
-import { GitError, blobId, type GitReader, type IndexListing, type TreeEntry } from './git.ts'
+import { GitError, blobId, gitOperation, type GitReader, type IndexListing, type TreeEntry } from './git.ts'
 import type { Pair, Side, WorkSide } from './sides.ts'
-import type { ChangeUnavailable } from '@latch/protocol'
+import type { ChangeUnavailable, GitConflict } from '@latch/protocol'
 import { signature } from './walk.ts'
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
@@ -27,6 +27,7 @@ export interface GitScope {
   base?: string
   partial: boolean
   unavailable?: ChangeUnavailable
+  conflict?: GitConflict
 }
 
 /** Git blob IDs of work-tree files by path and signature, so an unchanged file is hashed once. */
@@ -116,6 +117,12 @@ export async function gitPairs(folders: readonly FileRoot[], scope: 'uncommitted
         result.partial = true
         continue
       }
+      const operation = await gitOperation(layout)
+      if (operation || index.unmerged.size)
+        result.conflict = {
+          operation: result.conflict?.operation ?? operation ?? 'unmerged',
+          files: (result.conflict?.files ?? 0) + index.unmerged.size,
+        }
       result.repositories.set(folder.id, layout)
       compared++
       await compareFolder(folder, tree, index, commit?.length === 64 ? 'sha256' : 'sha1', options, result)
@@ -165,8 +172,9 @@ async function compareFolder(
           if (absent(error)) return undefined
           throw error
         })
+        const conflicted = index.unmerged.has(path) ? { conflicted: true as const } : {}
         if (!info || info.isDirectory()) {
-          compared[at] = { root: folder.id, path, before }
+          compared[at] = { root: folder.id, path, before, ...conflicted }
           continue
         }
         if (!info.isFile()) continue
@@ -174,8 +182,14 @@ async function compareFolder(
         const id = await options.ids.of(absolute(path), info, format, options.hashLimit)
         if (id) result.workIds.set(after, id)
         const executable = (info.mode & 0o111n) !== 0n
-        if (executable === (entry.mode === '100755') && (id ? id === entry.oid : BigInt(entry.size) === info.size)) continue
-        compared[at] = { root: folder.id, path, before, after }
+        // A conflicted file stays listed even when its content matches: it is what the person has to resolve.
+        if (
+          !index.unmerged.has(path)
+          && executable === (entry.mode === '100755')
+          && (id ? id === entry.oid : BigInt(entry.size) === info.size)
+        )
+          continue
+        compared[at] = { root: folder.id, path, before, after, ...conflicted }
       }
     }),
   )
@@ -192,7 +206,7 @@ async function compareFolder(
     const after = work(path, info)
     const id = await options.ids.of(absolute(path), info, format, options.hashLimit)
     if (id) result.workIds.set(after, id)
-    const pair: Pair = { root: folder.id, path, after }
+    const pair: Pair = { root: folder.id, path, after, ...(index.unmerged.has(path) ? { conflicted: true as const } : {}) }
     added.push(pair)
     result.pairs.push(pair)
   }

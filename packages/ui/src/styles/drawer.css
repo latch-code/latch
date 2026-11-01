@@ -1,7 +1,7 @@
 /*
  * Drawers attached to the composer: inset 20 from its card and overlapping it by 14, with a top radius of 16, on the
- * raised surface under a 1px line; a waiting one lays amber-soft over it with an amber-line edge. Extra drawers peek as
- * a cap: 10px in view above the one in front, at 96% width. The stack opens through the grid row, so nothing laid out
+ * raised surface under a 1px line, waiting or not: what waits says so in amber words and an amber glyph. Extra drawers
+ * peek as a cap: 10px in view above the one in front, at 96% width. The stack opens through the grid row, so nothing laid out
  * under it moves. A drawer slides up from behind the card over --m-panel and leaves at 70% of that on the exit curve;
  * reduced motion only fades.
  */
@@ -25,12 +25,6 @@
     inset 0 0 0 1px var(--line),
     var(--sh-drawer);
   transition: grid-template-rows var(--m-panel) var(--e-panel);
-}
-.ui-drawer[data-tone='waiting'] {
-  background: linear-gradient(var(--amber-soft), var(--amber-soft)) var(--raised);
-  box-shadow:
-    inset 0 0 0 1px var(--amber-line),
-    var(--sh-drawer);
 }
 .ui-drawer-body {
   min-width: 0;

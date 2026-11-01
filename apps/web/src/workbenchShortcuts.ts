@@ -5,6 +5,7 @@ export type WorkbenchAction =
   | 'next'
   | 'help'
   | 'files'
+  | 'changes'
   | 'file-search'
   | 'close-file'
   | 'compose'
@@ -23,6 +24,7 @@ export const workbenchBindings = [
   { action: 'new', label: '新建会话', desktop: '⌘N', browser: 'Alt N' },
   { action: 'sidebar', label: '展开或收起侧栏', desktop: '⌘B', browser: 'Alt B' },
   { action: 'side-panel', label: '展开或收起侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
+  { action: 'changes', label: '打开或关闭变更', desktop: '⌘D', browser: 'Alt D' },
   { action: 'entry', label: '切换到会话、Agent、自动化、插件', desktop: '⌘1 – ⌘4', browser: 'Alt 1 – Alt 4' },
   { action: 'settings', label: '打开设置', desktop: '⌘,', browser: 'Alt ,' },
   { action: 'previous', label: '上一个会话', desktop: '⌘[', browser: 'Alt [' },
@@ -57,6 +59,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   const actions: Partial<Record<string, WorkbenchAction>> = {
     KeyN: 'new',
     KeyB: 'sidebar',
+    KeyD: 'changes',
     BracketLeft: 'previous',
     BracketRight: 'next',
     Slash: 'help',

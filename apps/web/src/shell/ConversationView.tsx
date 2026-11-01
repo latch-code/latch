@@ -2,7 +2,7 @@ import { SquarePen } from 'lucide-react'
 import { errorMessage } from '../core/api.ts'
 import { WorkspaceRecovery } from '../components/WorkspaceRecovery.tsx'
 import { projectFor } from '../composerChoice.ts'
-import { SESSION_STOP_TEXT } from '../core/securityCopy.ts'
+import { APPROVAL_COPY, SESSION_STOP_TEXT } from '../core/securityCopy.ts'
 import { ApprovalVisibilityContext } from '../hooks/useApprovalsInView.ts'
 import { GettingStarted } from '../components/GettingStarted.tsx'
 import { FindBar } from '../components/FindBar.tsx'
@@ -11,7 +11,8 @@ import { ApprovalStatuses } from '../components/ApprovalCard.tsx'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
-import { isLive } from '../conversation.ts'
+import { isLive, renderedMessages } from '../conversation.ts'
+import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { Button, InlineNotice, Loading } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { HarnessChoices, SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
@@ -41,6 +42,11 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     harnessInfo,
     harnessName,
     reading,
+    run,
+    approvalsInView,
+    revealApprovals,
+    frozenAt,
+    changesLink,
     approvalVisibility,
     submission,
     choice,
@@ -196,72 +202,88 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     <SendingBubble shell={shell} />
                   </>
                 ) : (
-                  <ApprovalStatuses.Provider value={statuses}>
-                    <ApprovalVisibilityContext.Provider value={approvalVisibility}>
-                      <Transcript
-                        detail={current}
-                        questionActions={{
-                          deviceId: snapshot.device.id,
-                          canAnswer: gate.kind === 'open' && sessionBlock === undefined,
-                          onChanged: refresh,
-                        }}
-                        onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
-                        onFork={
-                          catalog?.features?.fork && access.scopes.has('run')
-                            ? upToMessageId => {
-                                submission.setFork({
-                                  taskId: current.summary.id,
-                                  upToMessageId,
-                                  title: current.summary.title,
-                                })
-                                submission.updateChoice({
-                                  harnessId: current.summary.harnessId,
-                                  workspaceId: projectFor(catalog, current.summary),
-                                  mode: current.summary.mode ?? 'agent',
-                                })
-                                choose(null)
-                                submission.setDraft('请接着这个会话继续。')
-                                if (phone) setNewSheet(true)
-                                requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
-                              }
-                            : undefined
-                        }
-                        approvals={approvals}
-                        busy={approvalBusy}
-                        onDecide={onDecide}
-                        gateFor={gateFor}
-                        harnessName={harnessName}
-                        harness={topHarness}
-                        active={active}
-                        cancelling={cancelState === 'cancelling'}
-                        coarse={coarse}
-                        providerName={providerName}
-                        {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                        {...(retry ? { retry } : {})}
-                      />
-                      <SendingBubble shell={shell} />
-                    </ApprovalVisibilityContext.Provider>
-                  </ApprovalStatuses.Provider>
+                  <ChangesLinkContext.Provider value={changesLink}>
+                    <ApprovalStatuses.Provider value={statuses}>
+                      <ApprovalVisibilityContext.Provider value={approvalVisibility}>
+                        <Transcript
+                          detail={current}
+                          questionActions={{
+                            deviceId: snapshot.device.id,
+                            canAnswer: gate.kind === 'open' && sessionBlock === undefined,
+                            onChanged: refresh,
+                          }}
+                          onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                          onFork={
+                            catalog?.features?.fork && access.scopes.has('run')
+                              ? (upToMessageId, draft = '请接着这个会话继续。') => {
+                                  submission.setFork({
+                                    taskId: current.summary.id,
+                                    upToMessageId,
+                                    title: current.summary.title,
+                                  })
+                                  submission.updateChoice({
+                                    harnessId: current.summary.harnessId,
+                                    workspaceId: projectFor(catalog, current.summary),
+                                    mode: current.summary.mode ?? 'agent',
+                                  })
+                                  choose(null)
+                                  submission.setDraft(draft)
+                                  if (phone) setNewSheet(true)
+                                  requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+                                }
+                              : undefined
+                          }
+                          approvals={approvals}
+                          busy={approvalBusy}
+                          onDecide={onDecide}
+                          gateFor={gateFor}
+                          harnessName={harnessName}
+                          harness={topHarness}
+                          personal={Boolean(summary?.personal)}
+                          demo={demo}
+                          active={active}
+                          changes={{
+                            // The Host shows a session's files only to a device whose data scope covers them.
+                            enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
+                            undo: !access.scopes.has('run')
+                              ? 'read-only'
+                              : !access.local && harnessInfo?.source !== 'builtin'
+                                ? 'mac-only'
+                                : 'open',
+                          }}
+                          {...(run ? { onStop: run.onCancel } : {})}
+                          onReveal={reading.reveal}
+                          {...(frozenAt !== undefined ? { frozenAt } : {})}
+                          cancelling={cancelState === 'cancelling'}
+                          coarse={coarse}
+                          providerName={providerName}
+                          {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                          {...(retry ? { retry } : {})}
+                        />
+                        <SendingBubble shell={shell} />
+                      </ApprovalVisibilityContext.Provider>
+                    </ApprovalStatuses.Provider>
+                  </ChangesLinkContext.Provider>
                 )}
                 {current !== null && current.messages.length === 0 && !isLive(current) && approvals.length === 0 && !active && (
                   <p className="transcript-empty">会话记录会显示在这里。</p>
                 )}
               </div>
             </div>
+            {/* Keyed by session: another session's block count is not news here. */}
             <JumpLatest
+              key={selectedId ?? ''}
               show={!reading.isFollowing}
               onJump={jumpToLatest}
-              {...(current && active
-                ? {
-                    live: {
-                      detail: current,
-                      harness: harnessName,
-                      cancelling: cancelState === 'cancelling',
-                      approvals: approvals.length,
-                      ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
-                    },
-                  }
-                : {})}
+              blocks={current ? renderedMessages(current).length : 0}
+              waiting={
+                approvals.length > 0 && approvalsInView === false
+                  ? APPROVAL_COPY.waiting
+                  : current?.questions?.length && !reading.isFollowing
+                    ? '等你回答'
+                    : undefined
+              }
+              onRevealWaiting={approvals.length > 0 ? revealApprovals : jumpToLatest}
             />
           </div>
           <div className="composer-dock">

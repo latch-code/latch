@@ -1,7 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { readFile, readdir, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -149,12 +149,14 @@ describe('desktop to phone takeover', () => {
     await mobile.getByRole('button', { name: '允许一次', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.find(t => t.id === approvedTask)?.status).toBe('idle')
     await desktop.locator('[data-approval-id]').waitFor({ state: 'detached' })
-    const desktopDetail = await desktop
-      .context()
-      .request.get(host.origin + `/link/api/tasks/${approvedTask}`)
-      .then(r => r.json())
-    const mobileDetail = await phoneContext.request.get(host.origin + `/link/api/tasks/${approvedTask}`).then(r => r.json())
-    expect(mobileDetail).toEqual(desktopDetail)
+    // The Host goes on noting the run's files after it goes idle, so two reads may straddle a change; they must agree once it rests.
+    await vi.waitFor(
+      async () => {
+        const read = (context: BrowserContext) => context.request.get(host.origin + `/link/api/tasks/${approvedTask}`).then(r => r.json())
+        expect(await read(phoneContext)).toEqual(await read(desktop.context()))
+      },
+      { timeout: 15_000, interval: 250 },
+    )
     const files = await readdir(join(directory, 'artifacts'))
     const report = files.find(file => file.includes(approvedTask) && file.startsWith('report-'))!
     expect(report).toBeTruthy()

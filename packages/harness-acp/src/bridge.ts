@@ -743,6 +743,7 @@ export class AcpBridge implements Bridge {
           id: run.userMessageId,
           role: 'user',
           text: prompt,
+          turnId: run.id,
           requestId: create.requestId,
           createdAt: at,
           ...(attachments?.length ? { attachments } : {}),
@@ -840,6 +841,7 @@ export class AcpBridge implements Bridge {
           id: run.userMessageId,
           role: 'user',
           text: prompt,
+          turnId: run.id,
           requestId,
           ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
           ...(fileRefs.length ? { fileRefs } : {}),
@@ -2316,7 +2318,8 @@ export class AcpBridge implements Bridge {
       const lastMessage = messageId ?? run.unrecognized?.messageId
       run.unrecognized = {
         count: (run.unrecognized?.count ?? 0) + 1,
-        at,
+        // Not before `lastEventAt`: a request counts as what the run is stuck on until a later sign of life.
+        at: this.now(),
         method: shown,
         ...(lastMessage ? { messageId: lastMessage } : {}),
       }

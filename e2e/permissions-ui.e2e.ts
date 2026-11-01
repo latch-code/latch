@@ -215,7 +215,6 @@ describe('permission states in a browser', () => {
       `${card} .tool-card-header .ui-status-word`,
       `${card} .tool-card-header .ui-status-word-glyph`,
       `${card} .approval-panel`,
-      `${card} .approval-meta`,
       `${card} .approval-preview .muted-line`,
       `${card} .approval-hint`,
       `${card} .ui-button`,
@@ -338,7 +337,7 @@ describe('permission states in a browser', () => {
       { property: 'grid-template-rows', duration: exit(tokens.panel), easing: tokens.exit },
       { property: 'opacity', duration: exit(tokens.micro), easing: tokens.exit },
     ])
-    await frames('settle', page.locator('.tool-card', { has: page.locator('.approval-slot') }))
+    await frames('settle', page.locator('.transcript'))
     await page.locator('.approval-slot').waitFor({ state: 'detached' })
     await expect.poll(async () => (await detail(arriving)).summary.status).toBe('idle')
 
@@ -380,7 +379,7 @@ describe('permission states in a browser', () => {
     await card.waitFor({ state: 'detached' })
   })
 
-  it('says approvals wait in amber above the input only while none of their cards is in view', async () => {
+  it('says once that an approval waits, and offers the way back only while its card is out of view', async () => {
     // A long request makes the conversation taller than the window, so the card can be scrolled out of view.
     const sessionId = await startHighRisk(Array.from({ length: 40 }, (_, line) => `第 ${line + 1} 行要求`).join('\n'))
     await page.setViewportSize({ width: 1440, height: 640 })
@@ -388,36 +387,36 @@ describe('permission states in a browser', () => {
       await open(sessionId)
       const card = page.locator('[data-approval-id]')
       await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
-      const bar = page.locator('.run-bar-collapse')
       const transcript = page.locator('.transcript')
+      const back = page.locator('.jump-latest.is-waiting')
       const cardShows = () =>
         card.evaluate(element => {
           const box = element.getBoundingClientRect()
           const frame = element.closest('.transcript')!.getBoundingClientRect()
           return box.bottom > frame.top && box.top < frame.bottom
         })
-      // The page opens on the latest output: the card is in view and says so itself, so the bar says nothing.
+      // The page opens on the latest output: the card is in view and says so itself. Nothing above the input repeats it,
+      // and the turn has no line of its own.
       expect(await cardShows()).toBe(true)
-      await expect.poll(() => bar.getAttribute('data-state')).toBe('closed')
-      expect(await page.locator('.run-bar.is-waiting').count()).toBe(0)
+      expect(await back.count()).toBe(0)
+      expect(await page.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
+      expect(await page.locator('.turn').last().locator('.status-line').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/run-bar-card-in-view.png`, animations: 'disabled' })
 
-      // Scrolled away from it by the reader, the bar says it in amber, with what it would do and 查看.
+      // The long request clamps behind 显示全部; opened, it pushes the card out of view when scrolled to the top. Scrolled
+      // away from it by the reader, the way back says why.
+      await page.getByRole('button', { name: '显示全部', exact: true }).click()
       await transcript.hover()
       await page.mouse.wheel(0, -4000)
       await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBe(0)
       expect(await cardShows()).toBe(false)
-      const waiting = page.locator('.run-bar.is-waiting')
-      await waiting.getByText('1 项待批准', { exact: true }).waitFor()
-      await expect.poll(() => bar.getAttribute('data-state')).toBe('open')
-      expect((await waiting.locator('.run-bar-detail').textContent())?.trim()).toBeTruthy()
-      await page.locator('.run-bar-collapse[data-settled]').waitFor()
+      await back.waitFor()
       await page.screenshot({ path: `${OUTPUT}/run-bar-waiting.png`, animations: 'disabled' })
 
-      // 查看 brings the card back into view, and the bar folds away again.
-      await waiting.getByRole('button', { name: '查看', exact: true }).click()
+      // It brings the card back into view, and goes.
+      await back.click()
       await expect.poll(cardShows).toBe(true)
-      await expect.poll(() => bar.getAttribute('data-state')).not.toBe('open')
+      await back.waitFor({ state: 'detached' })
       await rejectWithoutNote(card)
       await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     } finally {
