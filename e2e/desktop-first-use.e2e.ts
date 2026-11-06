@@ -164,8 +164,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
       const project = join(directory, 'rust-learn')
       await mkdir(project)
-      const path = process.env.PATH
-      process.env.PATH = `${bin}:${path}`
       const scripts: string[] = []
       const terminal = { fails: false }
       const host = await startTestHost({
@@ -174,6 +172,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         presenceMode: 'manual',
         detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
         loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+        commandDirectories: () => [bin],
         // Runs the script the terminal would, so what it logs in is what the page then finds.
         loginTerminal: async script => {
           if (terminal.fails) throw new Error('no terminal here')
@@ -213,7 +212,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       } finally {
         await application?.close()
         await host.close()
-        process.env.PATH = path
         await rm(directory, { recursive: true, force: true })
       }
     })
@@ -234,14 +232,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await chmod(adapter, 0o755)
       const project = join(directory, 'rust-learn')
       await mkdir(project)
-      const path = process.env.PATH
-      process.env.PATH = `${bin}:${path}`
       const host = await startTestHost({
         demo: false,
         sessionFolders: true,
         presenceMode: 'manual',
         // Only this adapter is found, whatever is installed on the machine running the test.
         detectPreset: preset => (preset.id === 'codex' ? { found: true, path: adapter } : { found: false }),
+        commandDirectories: () => [bin],
       })
       let application: ElectronApplication | undefined
       try {
@@ -337,7 +334,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.locator('.new-session-title').getByText('second', { exact: true }).first().waitFor()
         await page.locator('#session-navigation').getByText('second', { exact: true }).waitFor()
       } finally {
-        process.env.PATH = path
         await application?.close()
         await host.close()
         await rm(directory, { recursive: true, force: true })

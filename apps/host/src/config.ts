@@ -3,9 +3,12 @@ import { chmod, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/prom
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
+  MAX_THINKING_LEVELS,
+  MODEL_EFFORT,
   PROJECT_GLYPHS,
   PROVIDER_PRESETS,
   type AgentRecord,
+  type ModelCapabilities,
   type ModelRef,
   type ProjectGlyph,
   type ProviderKind,
@@ -32,7 +35,7 @@ export interface ProviderRecord {
   keyPath?: string
   enabled: boolean
   models: string[]
-  modelCapabilities?: Record<string, { vision?: boolean }>
+  modelCapabilities?: Record<string, ModelCapabilities>
   defaultModel: string
 }
 
@@ -122,6 +125,17 @@ const noControl = (value: string) => !/[\u0000-\u001f\u007f]/u.test(value)
 const id = (label: string) => z.string().regex(PROVIDER_ID, `${label}只能包含小写字母、数字、- 和 _，且以字母或数字开头，最长 48 个字符`)
 const modelId = z.string().trim().min(1, '模型 ID 不能为空').max(200, '模型 ID 过长').refine(noControl, '模型 ID 不能包含控制字符')
 const name = z.string().trim().min(1, '名称不能为空').max(80, '名称过长')
+export const modelEffort = z.string().regex(MODEL_EFFORT, '思考深度只能是小写字母、数字、- 与 _')
+/** What the owner declared about one model; thinking levels are distinct and kept in their order. */
+export const modelCapabilitiesSchema = z.strictObject({
+  vision: z.boolean().optional(),
+  thinking: z
+    .array(modelEffort)
+    .min(1)
+    .max(MAX_THINKING_LEVELS)
+    .refine(levels => new Set(levels).size === levels.length, '思考深度不能重复')
+    .optional(),
+})
 const baseURL = z
   .string()
   .max(2048, '服务地址过长')
@@ -204,7 +218,7 @@ const providerSchema = z
     keyOrigin: keyOrigin.optional(),
     keyPath: keyPath.optional(),
     enabled: z.boolean(),
-    modelCapabilities: z.record(modelId, z.strictObject({ vision: z.boolean().optional() })).optional(),
+    modelCapabilities: z.record(modelId, modelCapabilitiesSchema).optional(),
     models: z.array(modelId).min(1, '至少需要一个模型').max(1000, '模型数量过多'),
     defaultModel: modelId,
   })

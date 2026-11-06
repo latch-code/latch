@@ -4,7 +4,7 @@ import { checkedAttachments, promptBlocks } from './attachments.ts'
 import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
@@ -20,6 +20,8 @@ import type {
   DriverTaskDetail,
   TaskStatus,
   DriverTaskSummary,
+  HarnessCatalogue,
+  CatalogueRead,
   ToolDecision,
   UnknownResult,
   UnrecognizedRequests,
@@ -37,9 +39,20 @@ import {
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
+  type SteerOutcome,
 } from '@latch/sdk'
 import { isoTime, ReasoningTimer, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { runEndRecord } from '@latch/core/run-end'
+import {
+  MAX_START_CHOICES,
+  modelListCatalogue,
+  shownCatalogue,
+  START_ORDER,
+  startCatalogue,
+  startChoices,
+  withModelOptions,
+} from './catalogue.ts'
+import { codexOptions, readCodexModels } from './codex-models.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
@@ -76,11 +89,16 @@ import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS, type ProjectConfig } f
 import {
   cancelRequest,
   chunkUpdate,
+  CLIENT_CAPABILITIES,
+  compactionChunk,
+  compactionUpdate,
   configUpdate,
+  contentBlock,
   commandsUpdate,
   infoUpdate,
   initializeResult,
   modeUpdate,
+  noticeUpdate,
   usageUpdate,
   permissionRequest,
   planUpdate,
@@ -89,17 +107,39 @@ import {
   RPC,
   RpcError,
   sessionState,
+  STEER_METHOD,
+  steerResult,
   toolFields,
   updateEnvelope,
+  type ContentBlock,
   type PermissionOption,
   type RpcId,
   type ToolFields,
 } from './protocol.ts'
-import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask } from './store.ts'
+import {
+  childText,
+  childTool,
+  MAX_CHILDREN,
+  MAX_DEPTH,
+  patchSubagent,
+  settleSubagent,
+  subagentRow,
+  subagentUpdate,
+  upsertStep,
+  type Child,
+  type SubagentUpdate,
+} from './subagents.ts'
+import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
 
 export const CLIENT_VERSION = '0.1.0'
 const CANCELLED_OUTCOME = { outcome: { outcome: 'cancelled' } }
+/** A read of the catalogue says nothing worth a long wait: it fails as 「没查到」 and the draft can still start. */
+const READ_TIMEOUT_MS = 20_000
+/** Adding to a turn is answered at once or not at all: past this its result is unknown. */
+const STEER_TIMEOUT_MS = 30_000
+const MAX_CUSTOM_MODELS = 32
+const MAX_CUSTOM_MODEL = 256
 const COMMAND_NAME_LIMIT = 200
 const UNRECOGNIZED_METHOD_LIMIT = 200
 const UNRECOGNIZED_METHODS = 8
@@ -115,14 +155,19 @@ interface Live {
     resume: boolean
     load: boolean
     delete: boolean
+    close: boolean
     additionalDirectories: boolean
     images: boolean
     embeddedContext: boolean
+    /** `_session/steering` adds text to a running turn. */
+    steer: boolean
   }
   authMethods: Array<{ name: string; description?: string }>
   agentVersion?: string
   /** ACP session → Latch task. Updates for unbound sessions, including a session/load replay, are discarded. */
   sessions: Map<string, string>
+  /** Subagent sessions the agent announced on a bound session, by their ACP session. */
+  children: Map<string, Child>
   idleTimer?: NodeJS.Timeout
   /** For choosing which idle process to stop when the process limit is reached. */
   lastUsed: number
@@ -175,6 +220,9 @@ interface Run {
   graceTimer?: NodeJS.Timeout
   /** System notes appended once the turn settles, after its last reply. */
   notes: string[]
+  /** Text added to this turn while it ran (`steer`), in flight or taken, and when the latest was sent. */
+  steers?: number
+  steeredAt?: number
   done: Promise<void>
   resolveDone(): void
 }
@@ -185,6 +233,8 @@ interface Permission {
   rpcId: RpcId
   taskId: string
   tool: ToolState
+  /** Asked by this subagent: its call is a step of the subagent's row. */
+  child?: Child
   /** Everything the agent offered; only `visible` options can be chosen. */
   options: PermissionOption[]
   visible: PermissionOption[]
@@ -249,11 +299,41 @@ function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
+/** A draft's choices as a start may carry them: each option once, IDs and values as a session's `config` bounds them. */
+function checkedStartConfig(config: unknown): Array<{ configId: string; value: string }> {
+  if (config === undefined) return []
+  const invalid = () => new AppError(400, 'config-value-invalid', '开始前选的设置无效')
+  if (!Array.isArray(config) || config.length > MAX_START_CHOICES) throw invalid()
+  const seen = new Set<string>()
+  return config.map((entry: unknown) => {
+    const { configId, value } = (entry ?? {}) as Record<string, unknown>
+    if (typeof configId !== 'string' || !configId || configId.length > 128 || typeof value !== 'string' || value.length > 1024)
+      throw invalid()
+    if (seen.has(configId)) throw invalid()
+    seen.add(configId)
+    return { configId, value }
+  })
+}
+
+/** A choice made in the session replaces what the draft chose for that option. True when there was one. */
+function forgetStartChoice(task: AcpTask, configId: string): boolean {
+  const chosen = task.acp.startConfig
+  if (!chosen?.some(choice => choice.configId === configId)) return false
+  const left = chosen.filter(choice => choice.configId !== configId)
+  if (left.length) task.acp.startConfig = left
+  else delete task.acp.startConfig
+  return true
+}
+
 function assertPrompt(prompt: unknown, requestId: unknown, attachments?: AttachmentRef[]): void {
   if (typeof prompt !== 'string' || (!prompt.trim() && !attachments?.length) || prompt.length > 1_000_000)
     throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
   if (typeof requestId !== 'string' || !requestId || requestId.length > 256)
     throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
+}
+
+function steerUnknown(): AppError {
+  return new AppError(409, 'steer-unknown', '这条追加是否送达无法确认，没有重发；本轮结束后看回复再决定是否重发')
 }
 
 function cancelledBeforeSend(): AppError {
@@ -319,6 +399,7 @@ function describeExit(info: ExitInfo): string {
 const NOTE_PATHS = 8
 /** Recently previewed launch fingerprints kept to tell, at start, which part of a refused one changed. */
 const PREVIEWS = 64
+const DEFINITION_LOOKUP_MS = 5_000
 
 /** Relative to the first of `roots` that holds it, else absolute. */
 function displayPath(path: string, roots: string[]): string {
@@ -352,11 +433,14 @@ export class AcpBridge implements Bridge {
   private readonly tools = new Map<string, { seq: number; calls: Map<string, ToolState> }>()
   /** Assistant text that arrived outside a turn and is being appended to a settled message. */
   private readonly stray = new Map<string, { id: string; acpMessageId?: string }>()
+  /** What each compaction row says so far, by session and compaction ID; the row itself is the record. */
+  private readonly compactions = new Map<string, { status: string; summary: string; error?: string }>()
   /** Setup of a task's ACP session; a cancel before session/prompt aborts it instead of killing the process. */
   private readonly attaching = new Map<string, { promise: Promise<Binding>; controller: AbortController }>()
   /** Background cleanup of removed tasks: session/delete, process stop, temporary directory. */
   private readonly forgetting = new Map<string, Promise<void>>()
   private readonly inflight = new Map<string, { payloadHash: string; promise: Promise<void> }>()
+  private readonly steering = new Map<string, { payloadHash: string; promise: Promise<SteerOutcome> }>()
   private readonly listeners = new Set<(sessionId?: string) => void>()
   private readonly lifetime = new AbortController()
   private readonly lives = new Map<string, Live>()
@@ -373,6 +457,10 @@ export class AcpBridge implements Bridge {
   private readonly previews = new Map<string, Previewed>()
   /** New sessions whose agent is started, to learn whether it takes their folders, before they are recorded. */
   private readonly creating = new Map<string, { payloadHash: string; promise: Promise<{ sessionId: string }> }>()
+  private definitionLookup?: { at: number; hash: string | undefined }
+  /** The catalogue read in progress; every request while it runs shares it. */
+  private reading?: Promise<{ ran: boolean }>
+  private readingNow = false
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -472,11 +560,14 @@ export class AcpBridge implements Bridge {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         const at = this.now()
         const unknown = task.messages.flatMap(item =>
-          item.role === 'tool' && item.state === 'running'
+          item.role === 'tool' && item.state === 'running' && !item.subagent
             ? [{ messageId: item.id, name: item.tool?.title ?? item.toolName ?? 'tool' }]
             : [],
         )
-        for (const item of task.messages) settleToolMessage(item, at)
+        for (const item of task.messages) {
+          if (item.subagent) settleSubagent(item, at, true)
+          else settleToolMessage(item, at)
+        }
         task.summary.status = 'interrupted'
         task.summary.runEnd = runEndRecord('host-stopped', at, unknown)
         // The turn did not settle, so its user message gets no times: its duration is unknown.
@@ -560,6 +651,7 @@ export class AcpBridge implements Bridge {
       ...(task.plan ? { plan: task.plan } : {}),
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
+      ...(active && run && this.steerable(run) ? { steer: true as const } : {}),
     })
   }
 
@@ -604,11 +696,180 @@ export class AcpBridge implements Bridge {
     }
   }
 
+  catalogue(): HarnessCatalogue | undefined {
+    const stored = this.state.catalogue
+    if (!this.loaded || !stored || this.definitionNow() !== stored.definitionHash) return undefined
+    return shownCatalogue(stored)
+  }
+
+  catalogueRead(): CatalogueRead | undefined {
+    if (!this.loaded) return undefined
+    const configured = this.selection.profile?.catalogueRead
+    const last = this.state.catalogueRead
+    const current = last && last.definitionHash === this.definitionNow() ? last : undefined
+    return {
+      when: configured && 'when' in configured ? configured.when : 'select',
+      ...(this.readingNow ? { running: true as const } : {}),
+      ...(current ? { last: { at: current.at, ok: current.ok, ...(current.message ? { message: current.message } : {}) } } : {}),
+    }
+  }
+
+  /**
+   * Reads what a new session would offer without running a turn, and keeps it as the catalogue. Never on a timer: a
+   * draft's selection asks with `auto`, which reads only a `select` harness that nothing is known of for this definition,
+   * once; a person asks without it. A failure is kept as the last read, so a selection does not try again.
+   */
+  readCatalogue(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }> {
+    if (this.reading) return this.reading
+    const reading = (async () => {
+      await this.ready()
+      this.assertOpen()
+      const { definitionHash } = this.currentLaunch()
+      if (options.auto) {
+        const read = this.catalogueRead()
+        if (read?.when !== 'select' || read.last || this.catalogue()) return { ran: false }
+      }
+      await options.before?.()
+      this.readingNow = true
+      this.notify()
+      let failure: string | undefined
+      try {
+        await this.readOnce(definitionHash)
+      } catch (error) {
+        failure = clip(this.publicError(error, undefined).message, 300)
+      }
+      if (this.definitionNow(true) === definitionHash) {
+        this.state.catalogueRead = { definitionHash, at: this.now(), ok: !failure, ...(failure ? { message: failure } : {}) }
+        this.mark()
+        await this.flush()
+      }
+      return { ran: true }
+    })().finally(() => {
+      if (this.reading === reading) this.reading = undefined
+      this.readingNow = false
+      this.notify()
+    })
+    this.reading = reading
+    return reading
+  }
+
+  /** One read in a private empty folder that is removed afterwards, with the process started for it. */
+  private async readOnce(definitionHash: string): Promise<void> {
+    const key = `catalogue-${randomUUID()}`
+    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
+    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'catalogue-')))
+    try {
+      const configured = this.selection.profile?.catalogueRead
+      if (configured && 'codexModels' in configured) {
+        const listed = await this.readCodexModels(key, cwd, configured.codexModels)
+        if (!listed.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有列出可选的模型。`)
+        this.state.catalogue = modelListCatalogue(this.state.catalogue, { ...listed, definitionHash, at: this.now() })
+        return
+      }
+      const launch = this.currentLaunch(await this.projectConfig(cwd))
+      const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      this.enter(this.holds, key)
+      let result: unknown
+      try {
+        // No MCP servers and no prompt: the session exists only to say what it offers.
+        result = await live.connection.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
+        const sessionId = sessionState.safeParse(result).data?.sessionId
+        const end = live.capabilities.delete ? 'session/delete' : live.capabilities.close ? 'session/close' : undefined
+        if (sessionId && end) await live.connection.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
+      } catch (error) {
+        throw this.publicError(error, live)
+      } finally {
+        this.leave(this.holds, key)
+      }
+      const parsed = sessionState.safeParse(result)
+      const folded = parsed.success ? foldConfig(parsed.data) : undefined
+      if (!folded?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有报告可选的模型和设置。`)
+      this.state.catalogue = startCatalogue(this.state.catalogue, {
+        options: folded.options,
+        isMode: option => option.category === 'mode' || (folded.source === 'legacy' && option.id === 'mode'),
+        startMode: this.profile?.expectedMode,
+        definitionHash: launch.definitionHash,
+        launchHash: launch.hash,
+        ...(live.agentVersion ? { agentVersion: live.agentVersion } : {}),
+        at: this.now(),
+        source: 'check',
+      })
+    } finally {
+      await this.discardProcess(key)
+      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  /** Codex's list from its app-server, with the environment and program its sessions get. */
+  private async readCodexModels(key: string, cwd: string, args: readonly string[]): Promise<ReturnType<typeof codexOptions>> {
+    const { command } = this.currentLaunch()
+    const materializedEnv = await this.selection.profile?.materialize?.({ dataDir: this.options.dataDir })
+    const env = agentEnvironment({
+      resolvedCommand: command,
+      profile: this.profile,
+      materializedEnv,
+      definitionEnv: this.agent.env,
+      sessionTmpDir: await this.prepareTmpDir(key),
+    })
+    this.assertOpen()
+    const listed = await readCodexModels(
+      { command, args: [...this.agent.args, ...args], cwd, env, redact: this.redact },
+      { timeoutMs: this.readTimeout(), signal: this.lifetime.signal },
+    ).catch((error: unknown) => {
+      throw this.publicError(error, undefined)
+    })
+    return codexOptions(listed)
+  }
+
+  private readTimeout(): number {
+    return Math.min(this.limits.requestTimeoutMs, READ_TIMEOUT_MS)
+  }
+
+  customModels(): string[] {
+    return this.loaded ? [...(this.state.customModels ?? [])] : []
+  }
+
+  async setCustomModels(models: readonly string[]): Promise<void> {
+    await this.ready()
+    const kept: string[] = []
+    for (const entry of models) {
+      const model = typeof entry === 'string' ? entry.trim() : ''
+      if (!model || model.length > MAX_CUSTOM_MODEL || /[\u0000-\u001f\u007f\u2028\u2029]/u.test(model))
+        throw new AppError(400, 'model-id-invalid', `模型 ID 不能为空，不能换行，最多 ${MAX_CUSTOM_MODEL} 个字符。`)
+      if (!kept.includes(model)) kept.push(model)
+    }
+    if (kept.length > MAX_CUSTOM_MODELS) throw new AppError(400, 'model-id-invalid', `最多填写 ${MAX_CUSTOM_MODELS} 个模型 ID。`)
+    if (kept.length) this.state.customModels = kept
+    else delete this.state.customModels
+    this.mark()
+    await this.flush()
+    this.notify()
+  }
+
+  private isCustomModel(option: SessionConfigOption, value: string): boolean {
+    return option.category === 'model' && (this.state.customModels ?? []).includes(value)
+  }
+
+  /** The current definition's fingerprint, looked up at most every few seconds: every catalog asks. */
+  private definitionNow(fresh = false): string | undefined {
+    const at = Date.now()
+    if (!fresh && this.definitionLookup && at - this.definitionLookup.at < DEFINITION_LOOKUP_MS) return this.definitionLookup.hash
+    let hash: string | undefined
+    try {
+      hash = this.currentLaunch().definitionHash
+    } catch {
+      hash = undefined
+    }
+    this.definitionLookup = { at, hash }
+    return hash
+  }
+
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
     assertPrompt(input.prompt, input.requestId, input.attachments)
     const attachments = checkedAttachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
+    const config = checkedStartConfig(input.config)
     const key = digest(['create', input.requestId])
     const payloadHash = digest({
       prompt: input.prompt,
@@ -617,6 +878,7 @@ export class AcpBridge implements Bridge {
       mode: input.mode ?? 'agent',
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(config.length ? { config } : {}),
       ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
     })
     const pending = this.creating.get(key)
@@ -647,6 +909,7 @@ export class AcpBridge implements Bridge {
     this.assertOpen()
     const attachments = checkedAttachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
+    const config = checkedStartConfig(input.config)
     const key = digest(['create', input.requestId])
     // Folders join the hash only when there are several, so receipts written before they existed still match.
     const payloadHash = digest({
@@ -656,6 +919,7 @@ export class AcpBridge implements Bridge {
       mode,
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(config.length ? { config } : {}),
       ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
     })
     const receipt = this.state.receipts[key]
@@ -680,6 +944,7 @@ export class AcpBridge implements Bridge {
       launch,
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
+      ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -717,8 +982,9 @@ export class AcpBridge implements Bridge {
     launch: Launch
     scope?: Scope
     agentContext?: AgentExecutionContext
+    startConfig?: StartChoice[]
   }): Promise<{ sessionId: string }> {
-    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext } = create
+    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig } = create
     this.assertOpen()
     let context: string
     try {
@@ -770,6 +1036,7 @@ export class AcpBridge implements Bridge {
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
+        ...(startConfig ? { startConfig } : {}),
       },
     }
     this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
@@ -895,6 +1162,93 @@ export class AcpBridge implements Bridge {
     return true
   }
 
+  /**
+   * Text added to the running turn, never a turn of its own: `idleBehavior: "promptRequired"` keeps an agent from starting
+   * one, so completion and failure stay with the turn the prompt began. The receipt is written before the request, so a
+   * retry after a lost answer is refused instead of sending the text twice; the agent mints its own message for each
+   * request and cannot tell a resend from a new one.
+   */
+  async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+    await this.ready()
+    assertPrompt(prompt, requestId)
+    const key = digest(['steer', sessionId, requestId])
+    const payloadHash = digest(prompt)
+    const receipt = this.state.receipts[key]
+    const pending = this.steering.get(key)
+    if (receipt || pending) {
+      if ((receipt ?? pending)!.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
+      if (pending) return pending.promise
+      if (receipt!.steer === 'injected' || receipt!.steer === 'prompt-required') return receipt!.steer
+      throw steerUnknown()
+    }
+    const task = this.task(sessionId)
+    this.assertUsable(task)
+    const run = this.runs.get(sessionId)
+    if (!run || !this.steerable(run)) return 'prompt-required'
+    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId).finally(() => this.steering.delete(key))
+    this.steering.set(key, { payloadHash, promise })
+    return promise
+  }
+
+  private steerable(run: Run): boolean {
+    return run.sent && !run.cancelRequested && run.live?.initialized === true && run.live.capabilities.steer && !!run.acpSessionId
+  }
+
+  private async steerOnce(run: Run, key: string, payloadHash: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+    const live = run.live!
+    this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'sending' }
+    run.steers = (run.steers ?? 0) + 1
+    run.steeredAt = this.clock()
+    this.mark()
+    await this.flush()
+    // The turn may have ended, or been stopped, while the receipt was written.
+    if (this.runs.get(run.taskId) !== run || !this.steerable(run)) {
+      this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'prompt-required' }
+      run.steers--
+      this.mark()
+      await this.flush()
+      return 'prompt-required'
+    }
+    let outcome: string
+    try {
+      const answer = steerResult.safeParse(
+        await live.connection.request(
+          STEER_METHOD,
+          {
+            sessionId: run.acpSessionId,
+            prompt: [{ type: 'text', text: prompt }],
+            _meta: { steering: { idleBehavior: 'promptRequired' } },
+          },
+          Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
+        ),
+      )
+      outcome = answer.success ? answer.data.outcome : 'invalid'
+    } catch (error) {
+      // No answer, or the process went away: the agent may have taken it. The receipt stays `sending`.
+      if (error instanceof RequestTimeout || error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw steerUnknown()
+      outcome = 'failed'
+      this.limits.log(`${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`)
+    }
+    const task = this.state.tasks[run.taskId]
+    if (outcome === 'injected' && task) {
+      if (this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'completed')
+      task.messages.push({ id: randomUUID(), role: 'user', text: prompt, requestId, steered: true, createdAt: this.now() })
+      this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'injected' }
+      this.touch(task)
+    } else {
+      run.steers--
+      if (outcome === 'promptRequired')
+        this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'prompt-required' }
+      else delete this.state.receipts[key]
+    }
+    this.mark()
+    await this.flush()
+    this.notify(run.taskId)
+    if (outcome === 'injected') return 'injected'
+    if (outcome === 'promptRequired') return 'prompt-required'
+    throw new AppError(409, 'steer-failed', `${this.agent.name} 没有接受这条追加，内容没有发出；可以等本轮结束后再发送`)
+  }
+
   approvals(): Approval[] {
     return [...this.permissions.values()].filter(item => !item.claimed).map(item => structuredClone(item.approval))
   }
@@ -966,14 +1320,15 @@ export class AcpBridge implements Bridge {
     const task = this.task(sessionId)
     const option = task.config?.find(item => item.id === configId)
     if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
-    if (typeof value !== 'string' || !option.options.some(item => item.value === value))
+    if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(option, value)))
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
     const mode = this.isModeOption(task, option)
     if (option.currentValue === value) {
-      if (mode && task.acp.expectedMode !== value) {
-        task.acp.expectedMode = value
+      const replaced = forgetStartChoice(task, configId)
+      if ((mode && task.acp.expectedMode !== value) || replaced) {
+        if (mode) task.acp.expectedMode = value
         this.touch(task)
         this.mark()
         this.notify(sessionId)
@@ -987,6 +1342,8 @@ export class AcpBridge implements Bridge {
     this.enter(this.holds, sessionId)
     try {
       options.authorize?.()
+      // Before the session is opened, which would set the draft's choice for this option first, or refuse on it.
+      forgetStartChoice(task, configId)
       const binding = await this.attach(sessionId)
       const legacy = task.acp.configSource === 'legacy'
       const method = !legacy ? 'session/set_config_option' : option.category === 'model' ? 'session/set_model' : 'session/set_mode'
@@ -1421,6 +1778,7 @@ export class AcpBridge implements Bridge {
     const prior = this.modeOption(task)
     task.config = configFromOptions(items)
     task.acp.configSource = 'options'
+    this.noteModelOptions(task, task.config)
     // ACP makes the category optional, so an option once known as the mode keeps that role under its id.
     if (prior && !this.modeOption(task)) {
       const same = task.config.find(item => item.id === prior.id)
@@ -1540,6 +1898,8 @@ export class AcpBridge implements Bridge {
       })
       .finally(() => {
         this.writing = undefined
+        // A change marked after the last write but before this ran found a write still under way and left it to that one.
+        this.pump()
       })
   }
 
@@ -1771,6 +2131,10 @@ export class AcpBridge implements Bridge {
           if (settleTool(state, at)) this.upsert(task, toolMessage(state))
         }
       }
+      for (const item of task.messages) settleSubagent(item, at)
+      // Output after the latest addition is the only sign the agent went on with it; without one, the person is told.
+      if (status !== 'idle' && run.steers && (run.lastOutputAt ?? 0) <= run.steeredAt!)
+        notes.push(`本轮在结束前收到了追加的内容；${this.agent.name} 可能没有读到，需要的话请重新发送。`)
       task.summary.status = status
       // What ran when the process died took effect or not, nobody can say: automations treat it as unknown, not as a failure to retry.
       task.summary.runOutcome =
@@ -1965,9 +2329,19 @@ export class AcpBridge implements Bridge {
       key,
       connection,
       initialized: false,
-      capabilities: { resume: false, load: false, delete: false, additionalDirectories: false, images: false, embeddedContext: false },
+      capabilities: {
+        resume: false,
+        load: false,
+        delete: false,
+        close: false,
+        additionalDirectories: false,
+        images: false,
+        embeddedContext: false,
+        steer: false,
+      },
       authMethods: [],
       sessions: new Map(),
+      children: new Map(),
       lastUsed: Date.now(),
     }
     this.lives.set(key, live)
@@ -1977,7 +2351,7 @@ export class AcpBridge implements Bridge {
           'initialize',
           {
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+            clientCapabilities: CLIENT_CAPABILITIES,
             clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
           },
           this.limits.requestTimeoutMs,
@@ -2001,9 +2375,11 @@ export class AcpBridge implements Bridge {
         resume: capabilities?.sessionCapabilities?.resume != null,
         load: capabilities?.loadSession === true,
         delete: capabilities?.sessionCapabilities?.delete != null,
+        close: capabilities?.sessionCapabilities?.close != null,
         additionalDirectories: isObject(capabilities?.sessionCapabilities?.additionalDirectories),
         images: capabilities?.promptCapabilities?.image === true,
         embeddedContext: capabilities?.promptCapabilities?.embeddedContext === true,
+        steer: result.data._meta?.steering?.supported === true,
       }
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
         name: clip(this.redact(method.name), 200),
@@ -2102,7 +2478,9 @@ export class AcpBridge implements Bridge {
         quiet = true
       }
       const binding = await this.session(taskId, live, signal)
+      const refused = await this.applyStart(taskId, binding, signal)
       await this.verifyMode(taskId, binding, signal)
+      if (refused) throw refused
       return binding
     } catch (error) {
       if (signal.aborted) throw signal.reason
@@ -2157,6 +2535,8 @@ export class AcpBridge implements Bridge {
       target.config = folded.options
       target.acp.configSource = folded.source
       this.applyModel(target)
+      if (!current) this.noteStartCatalogue(target, folded.options)
+      else this.noteModelOptions(target, folded.options)
     }
     // A restored session can come back in another mode than the previous process last reported, so the recorded
     // mode is no evidence; unless this response reports one, the mode is set and read back before the next prompt.
@@ -2173,6 +2553,137 @@ export class AcpBridge implements Bridge {
         throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
+  }
+
+  /**
+   * What the draft chose, set once the session exists and before its first prompt: the model, then what it offers for
+   * that model, then the mode, which `verifyMode` sets and reads back. Each answer is read back. A model or mode no longer
+   * offered, or a model the agent does not take, refuses the turn: the refusal is returned once the rest of the draft is
+   * set too, and the mode after it, so that nothing of the draft is left for later and the session shows what the next
+   * send runs on. Anything else no longer offered is left at the agent's default, and the session says so.
+   */
+  private async applyStart(taskId: string, binding: Binding, signal: AbortSignal): Promise<AppError | undefined> {
+    const task = this.task(taskId)
+    const chosen = task.acp.startConfig
+    if (!chosen?.length) return undefined
+    const name = this.agent.name
+    const live = (configId: string) => this.state.tasks[taskId]?.config?.find(item => item.id === configId)
+    const role = (choice: StartChoice): keyof typeof START_ORDER => {
+      const option = live(choice.configId)
+      const category = option ? (this.isModeOption(task, option) ? 'mode' : option.category) : choice.category
+      return category === 'model' || category === 'mode' ? category : 'other'
+    }
+    const named = (choice: StartChoice) => clip(choice.label ?? choice.value, 64)
+    const left: string[] = []
+    // The first refusal is the one the turn reports.
+    let refused: AppError | undefined
+    for (const choice of chosen.toSorted((a, b) => START_ORDER[role(a)] - START_ORDER[role(b)])) {
+      const kind = role(choice)
+      const option = live(choice.configId)
+      if (!option || !(option.options.some(item => item.value === choice.value) || this.isCustomModel(option, choice.value))) {
+        if (kind === 'model' || kind === 'mode') await this.dropStartChoice(taskId, choice)
+        if (kind === 'model')
+          refused ??= new AppError(
+            409,
+            'model-unavailable',
+            `${name} 现在没有模型「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, option, '模型')}`,
+          )
+        else if (kind === 'mode')
+          refused ??= new AppError(
+            409,
+            'mode-unavailable',
+            `${name} 现在没有「${named(choice)}」这个权限模式，这条消息没有发出。${this.nowUsing(taskId, this.modeOption(task), '权限')}`,
+          )
+        else left.push(named(choice))
+        continue
+      }
+      if (kind === 'mode') {
+        task.acp.expectedMode = choice.value
+        continue
+      }
+      if (option.currentValue !== choice.value) {
+        try {
+          await this.writeStart(taskId, binding, option, choice.value, signal)
+        } catch (error) {
+          // A refusal of the value is the agent's answer; anything else, such as a login or a lost process, is its own.
+          if (!(error instanceof RpcError) || error.code === RPC.authRequired) throw error
+        }
+      }
+      const now = live(choice.configId)
+      if (now?.currentValue === choice.value) continue
+      if (kind === 'model') {
+        await this.dropStartChoice(taskId, choice)
+        refused ??= new AppError(
+          409,
+          'model-unverified',
+          `${name} 没有换到模型「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, now, '模型')}`,
+        )
+        continue
+      }
+      left.push(named(choice))
+    }
+    const current = this.task(taskId)
+    delete current.acp.startConfig
+    if (left.length)
+      current.messages.push({
+        id: randomUUID(),
+        role: 'system',
+        text: `${name} 这次没有提供${left.map(item => `「${item}」`).join('、')}，用它自己的默认值。`,
+      })
+    this.touch(current)
+    this.mark()
+    this.notify(taskId)
+    await this.flush()
+    return refused
+  }
+
+  /**
+   * A model or mode the agent no longer offers, or a model it does not take, refuses the turn once and is dropped at once,
+   * so that it is not tried again even when setting the rest of the draft fails; the session then shows what it runs on.
+   */
+  private async dropStartChoice(taskId: string, choice: StartChoice): Promise<void> {
+    const task = this.task(taskId)
+    if (!forgetStartChoice(task, choice.configId)) return
+    this.touch(task)
+    this.mark()
+    this.notify(taskId)
+    await this.flush()
+  }
+
+  /** The sentence after a refused start: what the next send will use instead, and that it can be changed first. */
+  private nowUsing(taskId: string, option: SessionConfigOption | undefined, control: '模型' | '权限'): string {
+    const value = control === '权限' ? (this.expectedMode(this.task(taskId)) ?? option?.currentValue) : option?.currentValue
+    const shown = option?.options.find(item => item.value === value)?.name ?? value
+    return shown === undefined ? `在${control}里换一个后重试。` : `再发送会用「${clip(shown, 64)}」，也可以先在${control}里换一个。`
+  }
+
+  /** One choice of a start, written the way the session's configuration style takes it, and its answer recorded. */
+  private async writeStart(
+    taskId: string,
+    binding: Binding,
+    option: SessionConfigOption,
+    value: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const legacy = this.task(taskId).acp.configSource === 'legacy'
+    // A legacy agent has a method for its model and its mode only.
+    if (legacy && option.category !== 'model') return
+    const result = await binding.live.connection.request(
+      legacy ? 'session/set_model' : 'session/set_config_option',
+      legacy ? { sessionId: binding.acpSessionId, modelId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
+      this.limits.requestTimeoutMs,
+      signal,
+    )
+    const task = this.state.tasks[taskId]
+    if (!task) return
+    const parsed = configUpdate.safeParse(result)
+    if (!legacy && parsed.success) this.reportConfig(task, parsed.data.configOptions)
+    // A legacy agent answers set_model with nothing to read back but its own success.
+    else if (legacy) {
+      const target = task.config?.find(item => item.id === option.id)
+      if (target) target.currentValue = value
+      this.applyModel(task)
+    }
   }
 
   private publicError(error: unknown, live: Live | undefined): AppError {
@@ -2388,8 +2899,12 @@ export class AcpBridge implements Bridge {
     if (!envelope.success) return
     const taskId = live.sessions.get(envelope.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
-    if (!taskId || !task) return
-    const update = envelope.data.update
+    if (!taskId || !task) {
+      const child = live.children.get(envelope.data.sessionId)
+      if (child) this.onChildUpdate(live, child, envelope.data.update)
+      return
+    }
+    const update = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
     if (run) run.lastEventAt = this.clock()
@@ -2503,6 +3018,33 @@ export class AcpBridge implements Bridge {
         }))
         break
       }
+      case 'notice': {
+        const parsed = noticeUpdate.safeParse(update)
+        if (!parsed.success) return
+        if (run?.segment) this.settleSegment(run, task, 'completed')
+        const { severity, title, description } = parsed.data
+        const said = severity === 'error' ? '报告错误' : severity === 'warning' ? '警告' : '提示'
+        task.messages.push({
+          id: randomUUID(),
+          role: 'system',
+          text: `${this.agent.name} ${said}：${clip(title, 300)}${description ? `\n${clip(description, 2000)}` : ''}`,
+          createdAt: this.now(),
+        })
+        break
+      }
+      case 'subagent_update': {
+        const parsed = subagentUpdate.safeParse(update)
+        if (!parsed.success) return
+        this.announceChild(live, task, run, undefined, parsed.data)
+        break
+      }
+      case 'compaction_update':
+      case 'compaction_summary_chunk': {
+        const parsed = update.sessionUpdate === 'compaction_update' ? compactionUpdate.safeParse(update) : compactionChunk.safeParse(update)
+        if (!parsed.success) return
+        this.applyCompaction(task, run, parsed.data)
+        break
+      }
       // user_message_chunk and unknown kinds carry nothing Latch shows.
       default:
         return
@@ -2510,6 +3052,50 @@ export class AcpBridge implements Bridge {
     this.touch(task)
     this.mark()
     this.notify(taskId)
+  }
+
+  /**
+   * One row per compaction, placed where its first report arrived and patched in place by later ones: its state, and the
+   * summary the agent keeps, sent whole or in pieces. Not a failure of the turn when it fails.
+   */
+  private applyCompaction(
+    task: AcpTask,
+    run: Run | undefined,
+    report: { compactionId: string; status?: string; summary?: unknown[] | null; error?: string | null; content?: ContentBlock },
+  ): void {
+    const id = `compaction:${report.compactionId}`
+    let message = task.messages.find(item => item.id === id)
+    if (!message) {
+      if (run?.segment) this.settleSegment(run, task, 'completed')
+      message = { id, role: 'system', text: '', createdAt: this.now() }
+      task.messages.push(message)
+    }
+    const key = `${task.summary.id}\0${id}`
+    const state = this.compactions.get(key) ?? { status: 'in_progress', summary: '' }
+    this.compactions.set(key, state)
+    if (report.status !== undefined) state.status = report.status
+    if (report.error !== undefined) state.error = report.error ?? undefined
+    if (report.summary === null) state.summary = ''
+    else if (report.summary)
+      state.summary = report.summary
+        .flatMap(item => {
+          const block = contentBlock.safeParse(item)
+          return block.success ? [blockText(block.data)] : []
+        })
+        .join('')
+    if (report.content) state.summary = append(state.summary, blockText(report.content), TOOL_TEXT_LIMIT)
+    const name = this.agent.name
+    const head =
+      state.status === 'completed'
+        ? `${name} 已压缩上下文`
+        : state.status === 'failed'
+          ? `${name} 压缩上下文失败${state.error ? `：${clip(state.error, 500)}` : ''}`
+          : state.status === 'cancelled'
+            ? `${name} 已取消压缩上下文`
+            : state.status === 'in_progress'
+              ? `${name} 正在压缩上下文…`
+              : `${name} 压缩上下文：${clip(state.status, 64)}`
+    message.text = state.summary ? `${head}\n${clip(state.summary, TOOL_TEXT_LIMIT)}` : head
   }
 
   private messageId(task: AcpTask, acpMessageId: string | undefined): string {
@@ -2627,6 +3213,88 @@ export class AcpBridge implements Bridge {
     this.notify(task.summary.id)
   }
 
+  /**
+   * A subagent the agent announced, or a later report about it: its row is placed where the announcement arrived, in the
+   * session's own messages or, for a subagent's own subagent, among that subagent's steps.
+   */
+  private announceChild(live: Live, task: AcpTask, run: Run | undefined, parent: Child | undefined, update: SubagentUpdate): void {
+    const known = live.children.get(update.sessionId)
+    if (known) {
+      // A session is never re-parented, and one Latch already serves is no subagent.
+      if (known.parent !== parent || known.taskId !== task.summary.id) return
+      const row = this.childRow(task, known)
+      if (row) patchSubagent(row, update, this.redact)
+      return
+    }
+    if (live.sessions.has(update.sessionId) || update.sessionId === parent?.acpSessionId) return
+    const depth = (parent?.depth ?? 0) + 1
+    if (live.children.size >= MAX_CHILDREN || depth > MAX_DEPTH) return
+    const row = subagentRow(`subagent:${randomUUID()}`, update, this.redact, this.now())
+    const child: Child = {
+      acpSessionId: update.sessionId,
+      taskId: task.summary.id,
+      messageId: row.id,
+      depth,
+      tools: new Map(),
+      ...(parent ? { parent } : {}),
+    }
+    if (parent) {
+      const holder = this.childRow(task, parent)
+      if (!holder) return
+      parent.textStep = undefined
+      upsertStep(holder, row)
+    } else {
+      if (run?.segment) this.settleSegment(run, task, 'completed')
+      task.messages.push(row)
+    }
+    live.children.set(update.sessionId, child)
+    if (run) run.lastOutputAt = this.clock()
+  }
+
+  /** The row of a subagent, found through the subagents that started it. */
+  private childRow(task: AcpTask, child: Child): Message | undefined {
+    if (!child.parent) return task.messages.find(item => item.id === child.messageId)
+    return this.childRow(task, child.parent)?.subagent?.steps.find(item => item.id === child.messageId)
+  }
+
+  /** What a subagent reports on its own session: its reply, its calls and its own subagents. Its reasoning is not kept. */
+  private onChildUpdate(live: Live, child: Child, raw: { sessionUpdate: string }): void {
+    const task = this.state.tasks[child.taskId]
+    const row = task ? this.childRow(task, child) : undefined
+    if (!task || !row) return
+    const update = this.selection.profile?.normalizeUpdate?.(raw) ?? raw
+    const candidate = this.runs.get(child.taskId)
+    const run = candidate?.sent && candidate.live === live ? candidate : undefined
+    if (run) run.lastEventAt = this.clock()
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk': {
+        const parsed = chunkUpdate.safeParse(update)
+        const piece = parsed.success && parsed.data.content.type === 'text' ? (parsed.data.content.text ?? '') : ''
+        if (!piece) return
+        childText(child, row, piece, this.now())
+        break
+      }
+      case 'tool_call':
+      case 'tool_call_update': {
+        const parsed = toolFields.safeParse(update)
+        if (!parsed.success || !childTool(child, row, parsed.data, this.now())) return
+        break
+      }
+      case 'subagent_update': {
+        const parsed = subagentUpdate.safeParse(update)
+        if (!parsed.success) return
+        this.announceChild(live, task, run, child, parsed.data)
+        break
+      }
+      default:
+        return
+    }
+    if (run) run.lastOutputAt = this.clock()
+    this.touch(task)
+    this.mark()
+    this.notify(task.summary.id)
+  }
+
   private onPermission(live: Live, params: unknown, rpcId: RpcId): Promise<unknown> {
     const parsed = permissionRequest.safeParse(params)
     if (!parsed.success) {
@@ -2634,19 +3302,25 @@ export class AcpBridge implements Bridge {
       this.noteUnrecognized(live, 'session/request_permission', params)
       return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
     }
-    const taskId = live.sessions.get(parsed.data.sessionId)
+    // A subagent asks on its own session; the session that started it is where a person answers.
+    const child = live.sessions.has(parsed.data.sessionId) ? undefined : live.children.get(parsed.data.sessionId)
+    const taskId = child?.taskId ?? live.sessions.get(parsed.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
     const run = taskId ? this.runs.get(taskId) : undefined
+    const row = child && task ? this.childRow(task, child) : undefined
     const filtered = filterPermissionOptions(this.profile, parsed.data.options)
     if (task?.acp.drift) return Promise.resolve(this.rejection(filtered.visible))
-    if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed) return Promise.resolve(CANCELLED_OUTCOME)
+    if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed || (child && !row))
+      return Promise.resolve(CANCELLED_OUTCOME)
     run.lastEventAt = this.clock()
     if (run.segment) this.settleSegment(run, task, 'completed')
-    const state = this.toolState(task, parsed.data.toolCall.toolCallId)
-    mergeTool(state, parsed.data.toolCall, this.now())
+    const state = child ? childTool(child, row!, parsed.data.toolCall, this.now()) : this.toolState(task, parsed.data.toolCall.toolCallId)
+    if (!state) return Promise.resolve(CANCELLED_OUTCOME)
+    if (!child) mergeTool(state, parsed.data.toolCall, this.now())
+    const record = (item: Message) => (child ? upsertStep(row!, item) : this.upsert(task, item))
     if (filtered.autoReject) {
       // Persistent or unknown choices only: nothing Latch could offer, so the request is refused at once.
-      this.upsert(task, toolMessage(state))
+      record(toolMessage(state))
       task.messages.push({
         id: randomUUID(),
         role: 'system',
@@ -2664,7 +3338,8 @@ export class AcpBridge implements Bridge {
       id: randomUUID(),
       sessionId: taskId,
       toolName: toolLabel(state),
-      toolCallId: state.id.slice('tool:'.length),
+      // A subagent's call is no row of the session's own, so nothing links to it there.
+      ...(child ? { subagent: row!.subagent!.title } : { toolCallId: state.id.slice('tool:'.length) }),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
       requestedAt: this.now(),
@@ -2690,8 +3365,9 @@ export class AcpBridge implements Bridge {
         claimed: false,
         answer: resolve,
         fail: reject,
+        ...(child ? { child } : {}),
       })
-      this.upsert(task, toolMessage(state))
+      record(toolMessage(state))
       task.summary.status = 'waiting-approval'
       run.clock.openWait(approval.id)
       run.lastOutputAt = this.clock()
@@ -2717,7 +3393,9 @@ export class AcpBridge implements Bridge {
     const task = this.state.tasks[permission.taskId]
     this.runs.get(permission.taskId)?.clock.closeWait(permission.approval.id)
     if (task) {
-      this.upsert(task, toolMessage(permission.tool))
+      const row = permission.child ? this.childRow(task, permission.child) : undefined
+      if (row) upsertStep(row, toolMessage(permission.tool))
+      else if (!permission.child) this.upsert(task, toolMessage(permission.tool))
       const run = this.runs.get(permission.taskId)
       if (!this.openApprovals(permission.taskId).length) {
         if (task.summary.status === 'waiting-approval') task.summary.status = 'running'
@@ -2727,6 +3405,29 @@ export class AcpBridge implements Bridge {
       this.mark()
     }
     this.notify(permission.taskId)
+  }
+
+  /** What a new session of this definition offered, for drafts; the definition it ran is the one it is kept under. */
+  private noteStartCatalogue(task: AcpTask, options: SessionConfigOption[]): void {
+    const definitionHash = task.acp.definitionHash ?? task.acp.launchHash
+    if (!definitionHash || !task.acp.launchHash) return
+    this.state.catalogue = startCatalogue(this.state.catalogue, {
+      options,
+      isMode: option => this.isModeOption(task, option),
+      startMode: this.profile?.expectedMode,
+      definitionHash,
+      launchHash: task.acp.launchHash,
+      ...(task.acp.agentVersion ? { agentVersion: task.acp.agentVersion } : {}),
+      at: this.now(),
+      source: 'session',
+    })
+  }
+
+  /** Thinking and the like as offered for the model a session runs on, so a draft that picks that model can show them. */
+  private noteModelOptions(task: AcpTask, options: SessionConfigOption[]): void {
+    const stored = this.state.catalogue
+    if (!stored || stored.definitionHash !== (task.acp.definitionHash ?? task.acp.launchHash)) return
+    stored.perModel = withModelOptions(stored.perModel, options)
   }
 
   private applyModel(task: AcpTask): void {

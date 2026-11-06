@@ -110,8 +110,10 @@ function toolKind(kind: string | undefined): ToolKind | undefined {
   return TOOL_KINDS.has(kind) ? (kind as ToolKind) : 'other'
 }
 
+/** The tool's own name; else its kind, unless that says only `other`, where the agent's title names it better. */
 export function toolLabel(state: ToolState): string {
-  return clip(state.name || state.kind || 'tool', 200)
+  const kind = state.kind === 'other' ? undefined : state.kind
+  return clip(state.name || kind || state.title || state.kind || 'tool', 200)
 }
 
 /** What a call runs, on one line: the command it was given when it says, otherwise what it calls itself. */

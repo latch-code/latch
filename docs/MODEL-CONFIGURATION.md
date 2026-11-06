@@ -1,8 +1,12 @@
 ---
-description: Agent 上报的模型、推理级别和模型参数如何进入同一选择菜单，以及权威选中值与未知结果的接线。
+description: Agent 上报的模型、推理级别和模型参数如何进入同一选择菜单，Latch 内置按模型声明的思考深度，以及权威选中值与未知结果的接线。
 sources:
   - apps/web/src/composer/ModelControl.tsx
   - apps/web/src/composer/modelReasoning.ts
+  - apps/web/src/settings/ProvidersSettings.tsx
+  - apps/host/src/plugins/providers/chat-wire.ts
+  - apps/host/src/plugins/providers/anthropic-wire.ts
+  - packages/core/src/runtime.ts
   - apps/web/test/model-reasoning.test.ts
   - packages/protocol/src/types.ts
   - packages/harness-acp/src/mapping.ts
@@ -13,7 +17,13 @@ sources:
 
 输入框页脚的 `SessionModelControl` 用同一个 `@latch/ui` 模型菜单容纳这些选项，其中思考档位是一行分段控件，菜单不随之关闭。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。身份图标为 16px。没有 `thought_level` 时不伪造禁用滑块：标签写「默认思考」，菜单里一句话说明 Agent 没有报告；只有单个可用值时沿用原语的静态值展示。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
 
-Standard 的模型选择继续使用真实 `ModelRef` 与“下一条”草稿语义，没有新增推理字段，所以它的标签写「默认思考」。新会话尚未得到 Agent 的会话配置时也不虚构推理能力：`DraftModelControl` 写「默认模型 · 默认思考」，并说明发第一条消息后可以换。
+新会话用 Harness 上次会话报告或不开会话读到的选项列表（见 [HARNESSES.md](HARNESSES.md#开始前的选项)），和会话里是同一个组件；还没有列表时也不虚构推理能力：`DraftModelControl` 写「默认模型 · 默认思考」，菜单里是读取的入口，不能读取时说明发第一条消息后可以换。
+
+## Latch 内置的思考深度
+
+Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Anthropic 的 `output_config.effort`），默认不设置。没有声明时输入框写「默认思考」并说明去哪里设置。
+
+选择随 `ModelRef.effort` 走，与模型一样是「下一条」生效：输入框标签为「模型 · 高」，菜单里的「默认 · 低 · 中 · 高」分段只列声明过的档位，换档与换模型一样显示「下一条：…」。会话记在 `TaskSummary.effort`；之后不带模型的输入沿用它，带模型却不带档位的输入回到模型默认值。换到另一个模型时，它也声明了同一档位才保留。Host 在开始前核对档位：请求里未声明的返回 400 `effort-unavailable`，会话记着的档位后来被取消时返回 409，要求重新选择；插件发送前再查一次，从不改成别的档位。Anthropic 只发 `output_config.effort`，不发 `thinking`：较新的模型不带它就是自适应思考，并拒绝 token 预算。
 
 ## 配置变更与接线
 

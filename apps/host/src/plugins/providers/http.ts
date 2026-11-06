@@ -1,6 +1,7 @@
 // HTTP plumbing shared by the built-in model protocols (openai-compatible/, anthropic/) and the Host's model
 // service checks. Not a plugin: plugin directories may import this file, never each other.
 import { z } from 'zod'
+import type { ModelMessage, ToolDefinition } from '@latch/sdk'
 
 /**
  * The Host's outbound `fetch`. Declared here rather than imported, because plugins never import
@@ -42,6 +43,42 @@ export async function send(fetcher: FetchLike, url: string, init: RequestInit): 
   } catch (error) {
     throw egressDenial(error) ?? error
   }
+}
+
+/** What a protocol module encodes into one request body. */
+export interface WireRequest {
+  model: string
+  messages: ModelMessage[]
+  tools: ToolDefinition[]
+  /** One of the model's declared thinking levels, already checked. */
+  effort?: string
+}
+
+/** Fetches one page of a model listing from `url` with `headers`; the caller owns limits, timeouts and errors. */
+export type ModelPage = (
+  url: string,
+  headers: Record<string, string>,
+) => Promise<{ data: Array<{ id: string }>; has_more?: boolean | undefined; last_id?: string | null | undefined }>
+
+/**
+ * Sends a streaming request and returns its body once the response is a successful event stream. `safeError` redacts
+ * and clips what the service wrote in an error response.
+ */
+export async function openEventStream(
+  fetcher: FetchLike,
+  url: string,
+  init: RequestInit,
+  safeError: (text: string) => string,
+): Promise<ReadableStream<Uint8Array>> {
+  const response = await send(fetcher, url, init)
+  if (!response.ok)
+    throw new ProviderError(`模型服务 HTTP ${response.status}：${safeError(await readErrorBody(response))}`, 'http-error', response.status)
+  if (!response.body) throw new ProviderError('模型服务没有返回响应体。', 'empty-response')
+  if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
+    await response.body.cancel()
+    throw new ProviderError('模型服务没有返回 SSE 流。', 'invalid-content-type')
+  }
+  return response.body
 }
 
 const MAX_EVENT_CHARS = 1024 * 1024
@@ -99,6 +136,14 @@ export function selectModel(requested: string | undefined, model: string, models
   if (!requested.trim() || requested.length > 200 || (models?.length && !models.includes(requested))) {
     throw new ProviderError(`模型 ${requested.slice(0, 200)} 未在此服务中启用。`, 'model-unavailable')
   }
+  return requested
+}
+
+/** A requested thinking level is sent as-is only when the model declares it; nothing is sent without one. */
+export function selectEffort(requested: string | undefined, model: string, declared: readonly string[] | undefined): string | undefined {
+  if (requested === undefined) return undefined
+  if (!declared?.includes(requested))
+    throw new ProviderError(`模型 ${model} 没有声明思考深度 ${requested.slice(0, 32)}。`, 'effort-unavailable')
   return requested
 }
 

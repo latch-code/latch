@@ -42,6 +42,7 @@ import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, ThinkingRow, type LiveReasoning } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
+import { SubagentRow } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
@@ -119,6 +120,7 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
 
 function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowContext; onRetry?: (() => void) | undefined }) {
   if (item.kind === 'reads') return <ReadsRow messages={item.messages} context={context} />
+  if (item.kind === 'tool' && item.message.subagent) return <SubagentRow message={item.message} frozen={context.frozen} />
   if (item.kind === 'tool') return <ToolRow message={item.message} context={context} onRetry={onRetry} />
   const streaming = item.message.id === context.streamingId
   return (

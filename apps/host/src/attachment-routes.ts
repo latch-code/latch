@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { modelEffort } from './config.ts'
 import {
   isLocalListener,
   type AttachmentCapabilities,
@@ -23,7 +24,9 @@ const selection = z.strictObject({
   harnessId: z.string().min(1).max(128),
   workspaceId: z.string().min(1).max(64).optional(),
   mode: z.enum(['chat', 'agent']).optional(),
-  model: z.strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200) }).optional(),
+  model: z
+    .strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200), effort: modelEffort.optional() })
+    .optional(),
 })
 const context = z.strictObject({ selection, sessionId: z.string().min(1).max(256).optional() })
 const metadata = context.extend({

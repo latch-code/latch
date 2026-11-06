@@ -2,7 +2,7 @@ import { Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { harnessName, nothingInstalled, sameModel } from '../composerChoice.ts'
+import { draftConfig, harnessName, nothingInstalled, sameModel } from '../composerChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
@@ -11,7 +11,7 @@ import { Composer } from '../composer/Composer.tsx'
 import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
 import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
-import { composerOptions } from '../composer/modelReasoning.ts'
+import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
 import { contextUse, draftPermission, permissionView } from '../composer/permission.ts'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -90,6 +90,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     access,
     owner,
     canQueue,
+    steer,
     harnessInfo,
     submission,
     choice,
@@ -149,7 +150,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     selectedId === null
       ? personalDraft
         ? undefined
-        : draftPermission(chosenHarness, choice.mode)
+        : draftPermission(chosenHarness, choice.mode, draftConfig(chosenHarness, choice.config)?.config)
       : !summary
         ? undefined
         : permissionView({
@@ -161,7 +162,12 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             ...(gate.kind === 'open' ? {} : { locked: gate.kind === 'read-only' ? gate.text : '该会话不再接受输入。' }),
           })
   const chooseOption = (option: SessionConfigOption, value: string) => {
-    if (configBusy.has(selectedId ?? '')) return
+    // A draft keeps the pick for its start; a session takes it now.
+    if (selectedId === null) {
+      submission.updateChoice({ config: { ...choice.config, [option.id]: value } })
+      return
+    }
+    if (configBusy.has(selectedId)) return
     void Promise.resolve(setConfig(option.id, value))
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
@@ -342,6 +348,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       coarse={coarse}
       run={run}
       queueable={canQueue && !answer}
+      steerable={steer && !answer}
       inline={phone && selectedId !== null}
       meta={
         showControls && !phone ? (
@@ -385,6 +392,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                     await refresh()
                     submission.forgetDraftPick()
                   }}
+                  onRead={refresh}
                 />
                 <DraftModelControl
                   catalog={catalog}
@@ -396,6 +404,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                   onProvidersChanged={() => {
                     void refresh()
                   }}
+                  onRead={refresh}
                 />
               </>
             ) : (
@@ -410,7 +419,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                     reported={summary.model}
                     onModel={model => {
                       submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
-                      if (model) setToast({ text: `下一轮起用 ${model.model}`, tone: 'ok' })
+                      if (model) setToast({ text: `下一轮起用 ${modelWords(model)}`, tone: 'ok' })
                     }}
                     config={current?.config ?? []}
                     busy={configBusy.get(summary.id) ?? null}

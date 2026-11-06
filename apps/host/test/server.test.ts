@@ -136,7 +136,7 @@ function halfRequest(t: TestHost, path: string, cookie: string, payload: unknown
 
 /** A local OpenAI-compatible server: streams "ok" and lists models; it records what each call carried. */
 async function localModel(models = ['alpha', 'beta', 'gamma']) {
-  const calls: Array<{ model: string; authorization?: string }> = []
+  const calls: Array<{ model: string; authorization?: string; effort?: string }> = []
   const listings: Array<{ authorization?: string }> = []
   const server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/v1/models') {
@@ -148,8 +148,8 @@ async function localModel(models = ['alpha', 'beta', 'gamma']) {
     const data: Buffer[] = []
     req.on('data', chunk => data.push(Buffer.from(chunk)))
     req.on('end', () => {
-      const parsed = JSON.parse(Buffer.concat(data).toString('utf8')) as { model: string }
-      calls.push({ model: parsed.model, authorization: req.headers.authorization })
+      const parsed = JSON.parse(Buffer.concat(data).toString('utf8')) as { model: string; reasoning_effort?: string }
+      calls.push({ model: parsed.model, authorization: req.headers.authorization, effort: parsed.reasoning_effort })
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       res.end('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
     })
@@ -1407,7 +1407,7 @@ describe('agent settings', () => {
     const offered = (await harnesses(desktop)).filter(harness => harness.offer)
     // pi's adapter alone runs nothing, so it is not offered.
     expect(offered).toMatchObject([{ id: 'codex', status: 'ready', level: 'L3', modes: ['agent'], offer: { presetId: 'codex' } }])
-    expect(offered[0]!.permission).toEqual({ approvals: 'prompts', readback: 'mode' })
+    expect(offered[0]!.permission).toEqual({ approvals: 'prompts', readback: 'mode', neverAskModes: ['agent-full-access'] })
     const facts = offered[0]!.capabilities
     expect(facts).toMatchObject({
       permission: { enforcement: 'harness', rejectionNote: false },
@@ -1441,6 +1441,23 @@ describe('agent settings', () => {
     expect((await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.some(harness => harness.offer)).toBe(false)
   })
 
+  it('finds no command by name unless the start script names where to look', async () => {
+    // `node` is on this computer's PATH for certain; a test Host must still not find it, or any agent installed here.
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent) })
+    const desktop = await t.enroll({ listener: 'unix' })
+    await desktop.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'by-name', name: 'By name', command: 'node', args: [], env: {} },
+    })
+    const listed = await desktop.json<{ agents: AgentSettings[]; presets: AgentPresetSettings[] }>('agents')
+    expect(listed.agents[0]!.detected).toEqual({ found: false })
+    expect(
+      listed.presets.filter(preset => preset.detected?.found || preset.detected?.companion?.found || preset.detected?.agent?.found),
+    ).toEqual([])
+    const harness = (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'by-name')!
+    expect(harness).toMatchObject({ status: 'unavailable', statusMessage: '未找到命令 node' })
+  })
+
   it('tells only the desktop app the name of this computer', async () => {
     const t = await testHost({ hostName: 'my-mac.local' })
     expect((await body<EnrollmentInfo>(await t.raw('unix', 'api/enrollment-info'))).hostName).toBe('my-mac')
@@ -1448,21 +1465,13 @@ describe('agent settings', () => {
   })
 
   it('reports the adapter and the agent it connects to separately, and looks again on every read', async () => {
-    const home = await temporaryDirectory('latch-agent-home-')
-    const bin = join(home, '.volta', 'bin')
-    await mkdir(bin, { recursive: true })
-    const saved = { HOME: process.env.HOME, PATH: process.env.PATH }
-    process.env.HOME = home
-    process.env.PATH = '/usr/bin:/bin'
-    cleanups.push(async () => {
-      process.env.HOME = saved.HOME
-      process.env.PATH = saved.PATH
-    })
+    const bin = await temporaryDirectory('latch-agent-bin-')
     const install = async (command: string) => {
       await writeFile(join(bin, command), '#!/bin/sh\n')
       await chmod(join(bin, command), 0o755)
     }
-    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent) })
+    // Only this directory: whatever is installed on the computer running the test is never found.
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent), commandDirectories: () => [bin] })
     const desktop = await t.enroll({ listener: 'unix' })
     const created = await desktop.confirmed('agents', {
       method: 'POST',
@@ -1799,6 +1808,44 @@ describe('full-access (L3) sessions', () => {
     expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({ stepup: 'none' })
     return { t, desktop, browser, enrolled }
   }
+
+  it('lists what the last session offered before the next starts, and starts on what a device chose from it', async () => {
+    const { t, browser, enrolled } = await acpHost()
+    const harness = async () => (await browser.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'fake')!
+    expect((await harness()).catalogue).toBeUndefined()
+    await settled(t, await startTask(browser, 'hello', { harnessId: 'fake' }))
+    const catalogue = (await harness()).catalogue!
+    expect(catalogue.options.find(option => option.category === 'model')?.options.map(item => item.value)).toEqual(['small', 'large'])
+    expect(catalogue.perModel.map(entry => entry.model)).toEqual(['small'])
+
+    const config = [
+      { configId: 'model', value: 'large' },
+      { configId: 'mode', value: 'auto' },
+    ]
+    const sessionId = await startTask(browser, 'again', { harnessId: 'fake', config })
+    await settled(t, sessionId)
+    const detail = await browser.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.config?.find(option => option.id === 'model')?.currentValue).toBe('large')
+    expect(detail.config?.find(option => option.id === 'mode')?.currentValue).toBe('auto')
+    // A wider mode chosen before the start asks nothing either, and what was chosen is on record with the start.
+    expect(t.presence.requests).toHaveLength(enrolled)
+    const records = (await auditRecords(t)).filter(
+      record => record.detail.sessionId === sessionId || record.action === 'task.l3.start-requested',
+    )
+    const configHash = sha256Hex(canonicalJson(config))
+    expect(records.find(record => record.action === 'task.l3.started')).toMatchObject({ detail: { configHash } })
+    expect(records.findLast(record => record.action === 'task.l3.start-requested')).toMatchObject({ detail: { configHash } })
+
+    // The built-in Harness takes a model service instead, so a choice for it is refused rather than dropped.
+    expect(
+      await body(
+        await browser.request('tasks', {
+          method: 'POST',
+          body: { prompt: 'x', requestId: randomUUID(), harnessId: 'standard', config: [{ configId: 'model', value: 'large' }] },
+        }),
+      ),
+    ).toMatchObject({ error: 'config-unsupported' })
+  })
 
   it('widens a mode from any device that may run it, with no prompt, on record', async () => {
     const { t, browser, enrolled } = await acpHost()
@@ -2179,6 +2226,62 @@ describe('providers', () => {
       detail: { reason: 'origin-changed' },
     })
     expect((await browser.request('providers/local-lab', { method: 'DELETE' })).status).toBe(200)
+  })
+
+  it('keeps the thinking levels declared for a model and sends the one a session chose', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const service = {
+      name: 'Local Lab',
+      kind: 'openai-compatible',
+      baseURL: model.baseURL,
+      models: ['alpha', 'beta'],
+      defaultModel: 'alpha',
+    }
+    for (const thinking of [['low', 'low'], ['High'], []]) {
+      const refused = await desktop.request('providers', {
+        method: 'POST',
+        body: { ...service, modelCapabilities: { alpha: { thinking } } },
+      })
+      expect(refused.status).toBe(400)
+    }
+    const created = await desktop.confirmed('providers', {
+      method: 'POST',
+      body: { ...service, confirmOrigin: true, modelCapabilities: { alpha: { vision: true, thinking: ['low', 'medium', 'high'] } } },
+    })
+    expect(created.status).toBe(201)
+    expect((await body<{ provider: ProviderSettings }>(created)).provider.modelCapabilities).toEqual({
+      alpha: { vision: true, thinking: ['low', 'medium', 'high'] },
+    })
+    const catalog = (await desktop.json<AppSnapshot>('snapshot')).catalog
+    expect(catalog?.providers.find(provider => provider.id === 'local-lab')?.modelCapabilities?.alpha?.thinking).toEqual([
+      'low',
+      'medium',
+      'high',
+    ])
+    const refused = await desktop.request('tasks', {
+      body: {
+        prompt: 'x',
+        requestId: randomUUID(),
+        harnessId: 'standard',
+        model: { providerId: 'local-lab', model: 'beta', effort: 'high' },
+      },
+    })
+    expect(refused.status).toBe(400)
+    expect(await body(refused)).toMatchObject({ error: 'effort-unavailable' })
+    const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+      body: {
+        prompt: 'x',
+        requestId: randomUUID(),
+        harnessId: 'standard',
+        mode: 'chat',
+        model: { providerId: 'local-lab', model: 'alpha', effort: 'high' },
+      },
+    })
+    await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'))
+    expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary).toMatchObject({ model: 'alpha', effort: 'high' })
+    expect(model.calls.at(-1)).toMatchObject({ model: 'alpha', effort: 'high' })
   })
 
   it('never uses a service at an unconfirmed address until it is confirmed, and stops at once when it is removed', async () => {

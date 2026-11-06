@@ -6,14 +6,22 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isReservedAgentEnvName, type DriverTaskDetail } from '@latch/protocol'
+import { isReservedAgentEnvName, type DriverTaskDetail, type SessionConfigOption } from '@latch/protocol'
 import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { commandName } from '../src/mapping.ts'
-import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, type AcpAgentOptions, type AgentRecord } from '../src/index.ts'
+import {
+  createAcpAgentPlugin,
+  forgetCommandLookups,
+  personCommandDirectories,
+  resolveCommand,
+  setCommandSearch,
+  type AcpAgentOptions,
+  type AgentRecord,
+} from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
 import { profileFor } from '../src/profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS } from '../src/project-config.ts'
@@ -26,6 +34,8 @@ const QWEN_MODES = 'plan,default,auto-edit,yolo,auto'
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  setCommandSearch(undefined)
+  forgetCommandLookups()
 })
 
 interface LogEntry {
@@ -288,7 +298,13 @@ describe('real ACP attachment exchange', () => {
 describe('ACP driver registration and readiness', () => {
   it('registers one agent-mode driver and reports missing commands without spawning anything', async () => {
     expect(resolveCommand(process.execPath)).toBe(process.execPath)
-    expect(resolveCommand('node')).toMatch(/node(\.exe)?$/)
+    // Until the start script turns the search on, a bare name finds nothing, so no test reaches a real program.
+    expect(resolveCommand('node')).toBeUndefined()
+    const bin = await realpath(await mkdtemp(join(tmpdir(), 'latch-acp-bin-')))
+    cleanups.push(() => rm(bin, { recursive: true, force: true }))
+    await symlink(process.execPath, join(bin, 'node'))
+    setCommandSearch(() => [bin])
+    expect(resolveCommand('node')).toBe(join(bin, 'node'))
     expect(resolveCommand('latch-no-such-agent')).toBeUndefined()
     expect(resolveCommand('./node')).toBeUndefined()
     expect(resolveCommand('')).toBeUndefined()
@@ -323,6 +339,10 @@ describe('ACP driver registration and readiness', () => {
     const pnpmHome = join(home, 'pnpm-home')
     hostEnv({ HOME: home, PATH: '/usr/bin:/bin', FNM_DIR: '', PNPM_HOME: '' })
     const install = installCommand
+    // Every directory the start script would search, but only those in the stand-in home are looked in: the fixed
+    // install directories hold whatever is installed on the computer running the test.
+    expect(personCommandDirectories()).toEqual(expect.arrayContaining(['/opt/homebrew/bin', '/usr/local/bin', join(home, '.volta/bin')]))
+    setCommandSearch(() => personCommandDirectories().filter(directory => directory.startsWith(`${home}/`)))
     const layouts: Array<[string, string]> = [
       [join(home, '.local/share/fnm/aliases/default/bin'), 'agent-fnm'],
       [join(home, '.volta/bin'), 'agent-volta'],
@@ -377,6 +397,8 @@ describe('ACP driver registration and readiness', () => {
     const bin = join(home, '.volta/bin')
     await mkdir(bin, { recursive: true })
     hostEnv({ HOME: home, PATH: '/usr/bin:/bin' })
+    // Only this directory: a real pi installed on this computer must not count.
+    setCommandSearch(() => [bin])
     const driver = await activate(
       createAcpAgentPlugin({ id: 'pi', name: 'pi', presetId: 'pi', command: 'pi-acp', args: [], env: {}, enabled: true }),
     )
@@ -668,6 +690,7 @@ describe('ACP agent environment', () => {
     await chmod(agent, 0o755)
     const environment = (command: string, path: string) =>
       agentEnvironment({ resolvedCommand: command, definitionEnv: {}, sessionTmpDir: root, hostEnv: { PATH: path } })
+    setCommandSearch(() => (process.env.PATH ?? '').split(delimiter))
 
     const env = environment(resolveCommand(agent)!, [oldBin, 'relative/bin', '/usr/bin', '/bin'].join(delimiter))
     expect(env.PATH.split(delimiter).slice(0, 2)).toEqual([agentBin, oldBin])
@@ -807,7 +830,7 @@ describe('ACP agent environment', () => {
     expect(alive(promptPid(log, 'echo two'))).toBe(true)
   })
 
-  it('advertises no client file system or terminal', async () => {
+  it('advertises no client file system or terminal, and that it shows notices, compaction and subagents', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'probe', requestId: rid() })
@@ -822,7 +845,12 @@ describe('ACP agent environment', () => {
     expect(log.some(entry => entry.event === 'raw-separator')).toBe(false)
     expect(received(log, 'initialize')[0].params).toEqual({
       protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      clientCapabilities: {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+        session: { notices: {}, compaction: {} },
+        subagents: {},
+      },
       clientInfo: { name: 'latch', title: 'Latch', version: expect.any(String) },
     })
     expect(received(log, 'session/new')[0].params).toEqual({ cwd: fixture.workspace, mcpServers: [] })
@@ -3410,5 +3438,543 @@ describe('agent context', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), agentContext: context() })
     await settled(bridge, sessionId)
     expect((received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: unknown[] }).mcpServers).toEqual([])
+  })
+})
+
+describe('what a Harness offers before a session, and choosing it before the first prompt', () => {
+  const CODEX = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'read-only,workspace-write,agent-full-access',
+    FAKE_ACP_INITIAL_MODE: 'workspace-write',
+    FAKE_ACP_EFFORT_BY_MODEL: '1',
+  }
+  const values = (option: SessionConfigOption | undefined) => option?.options.map(item => item.value)
+  const option = (options: readonly SessionConfigOption[] | undefined, id: string) => options?.find(item => item.id === id)
+  const set = (log: LogEntry[]) =>
+    received(log, 'session/set_config_option').map(entry => [entry.params?.configId, entry.params?.value] as const)
+
+  it('keeps what new sessions offered, with thinking per model, across a restart, until the definition changes', async () => {
+    const fixture = await preset('codex', CODEX)
+    let bridge = await fixture.open()
+    expect(bridge.catalogue!()).toBeUndefined()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    const first = bridge.catalogue!()!
+    expect(values(option(first.options, 'model'))).toEqual(['small', 'large'])
+    // The mode a new session is set to before its first prompt, not the one the agent happened to start in.
+    expect(option(first.options, 'mode')).toMatchObject({ category: 'mode', currentValue: 'read-only' })
+    expect(first.perModel).toEqual([{ model: 'small', options: [expect.objectContaining({ id: 'effort' })] }])
+    expect(values(first.perModel[0]!.options[0])).toEqual(['low', 'high'])
+
+    await bridge.setConfig!(sessionId, 'model', 'large')
+    const second = bridge.catalogue!()!
+    expect(second.perModel.map(entry => entry.model)).toEqual(['large', 'small'])
+    expect(values(second.perModel[0]!.options[0])).toEqual(['low', 'high', 'max'])
+    // The default the next draft opens on is still what a new session offers.
+    expect(option(second.options, 'model')?.currentValue).toBe('small')
+
+    await bridge.close()
+    bridge = await fixture.open()
+    expect(bridge.catalogue!()).toEqual(second)
+    await bridge.close()
+    const changed = await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })
+    expect(changed.catalogue!()).toBeUndefined()
+  })
+
+  it('sets the model, then what it offers, then the mode, and reads each back before the first prompt', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_INITIAL_MODE: 'read-only' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      config: [
+        { configId: 'mode', value: 'workspace-write' },
+        { configId: 'effort', value: 'max' },
+        { configId: 'model', value: 'large' },
+      ],
+    })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('idle')
+    const log = await fixture.log()
+    // Max exists only on the large model, so it can only be set after it; the mode is set last.
+    expect(set(log)).toEqual([
+      ['model', 'large'],
+      ['effort', 'max'],
+      ['mode', 'workspace-write'],
+    ])
+    const order = log.filter(entry => entry.event === 'recv').map(entry => entry.method)
+    expect(order.lastIndexOf('session/set_config_option')).toBeLessThan(order.indexOf('session/prompt'))
+    expect(detail.config?.map(item => [item.id, item.currentValue])).toEqual([
+      ['mode', 'workspace-write'],
+      ['model', 'large'],
+      ['effort', 'max'],
+    ])
+    expect(detail.permission?.expectedMode).toBe('workspace-write')
+    expect(detail.messages.filter(message => message.role === 'system')).toEqual([])
+  })
+
+  it('refuses the turn when the chosen model is gone, and the next send runs on the model the session shows', async () => {
+    const fixture = await preset('codex', CODEX)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'model', value: 'gone' }] })
+    const failed = await settled(bridge, sessionId)
+    expect(failed.summary.status).toBe('failed')
+    expect(failed.messages.at(-1)?.text).toContain(
+      'Fake 现在没有模型「gone」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。',
+    )
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+    expect(failed.config?.find(item => item.id === 'model')?.currentValue).toBe('small')
+
+    await bridge.prompt(sessionId, 'echo again', rid())
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
+  })
+
+  it('settles the rest of the draft when its model is gone, so the session shows what the next send runs on', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_MODELS: 'small', FAKE_ACP_INITIAL_MODE: 'agent-full-access' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      config: [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'high' },
+        { configId: 'mode', value: 'workspace-write' },
+      ],
+    })
+    const failed = await settled(bridge, sessionId)
+    expect(failed.summary.status).toBe('failed')
+    expect(failed.messages.at(-1)?.text).toContain('Fake 现在没有模型「large」，这条消息没有发出。再发送会用「Small」')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+    const shown = failed.config?.map(item => [item.id, item.currentValue])
+    expect(shown).toEqual([
+      ['mode', 'workspace-write'],
+      ['model', 'small'],
+      ['effort', 'high'],
+    ])
+    const writes = set(await fixture.log()).length
+
+    await bridge.prompt(sessionId, 'echo again', rid())
+    const done = await settled(bridge, sessionId)
+    expect(done.summary.status).toBe('idle')
+    expect(done.config?.map(item => [item.id, item.currentValue])).toEqual(shown)
+    expect(set(await fixture.log())).toHaveLength(writes)
+  })
+
+  it("takes an option picked in the session in place of the draft's", async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_MODELS: 'small' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      config: [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'high' },
+      ],
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    await bridge.setConfig!(sessionId, 'effort', 'low')
+    await bridge.prompt(sessionId, 'echo again', rid())
+    const done = await settled(bridge, sessionId)
+    expect(done.summary.status).toBe('idle')
+    expect(done.config?.find(item => item.id === 'effort')?.currentValue).toBe('low')
+  })
+
+  it('refuses the turn when the chosen mode is gone', async () => {
+    const fixture = await preset('codex', CODEX)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'mode', value: 'yolo' }] })
+    const failed = await settled(bridge, sessionId)
+    expect(failed.summary.status).toBe('failed')
+    expect(failed.messages.at(-1)?.text).toContain(
+      'Fake 现在没有「yolo」这个权限模式，这条消息没有发出。再发送会用「read-only」，也可以先在权限里换一个。',
+    )
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+    // The session shows the mode the next send runs in, not the one the agent happened to start in.
+    expect(failed.config?.find(item => item.id === 'mode')?.currentValue).toBe('read-only')
+  })
+
+  it('leaves thinking the agent no longer offers at its default, and says so in the session', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_EFFORT_BY_MODEL: '0' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'effort', value: 'max' }] })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages.find(message => message.role === 'system')?.text).toBe('Fake 这次没有提供「max」，用它自己的默认值。')
+    expect(set(await fixture.log()).filter(([id]) => id === 'effort')).toEqual([])
+  })
+
+  it('takes a choice into the request the way it takes the prompt', async () => {
+    const fixture = await preset('codex', CODEX)
+    const bridge = await fixture.open()
+    const requestId = rid()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId, config: [{ configId: 'model', value: 'large' }] })
+    await expect(
+      bridge.createTask({ prompt: 'echo hi', requestId, config: [{ configId: 'model', value: 'small' }] }),
+    ).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
+    expect((await bridge.createTask({ prompt: 'echo hi', requestId, config: [{ configId: 'model', value: 'large' }] })).sessionId).toBe(
+      sessionId,
+    )
+    await expect(
+      bridge.createTask({
+        prompt: 'echo hi',
+        requestId: rid(),
+        config: [
+          { configId: 'model', value: 'large' },
+          { configId: 'model', value: 'small' },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: 'config-value-invalid' })
+    await settled(bridge, sessionId)
+  })
+})
+
+describe('reading what a Harness offers without a turn, and model IDs a person types', () => {
+  const OPTIONS = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'delete' }
+  const models = (catalogue: ReturnType<NonNullable<Bridge['catalogue']>>) =>
+    catalogue?.options.find(option => option.category === 'model')?.options.map(item => item.value)
+
+  it('opens one empty session in a private folder, sends no prompt and no MCP server, deletes it, and keeps the list', async () => {
+    const fixture = await setup(OPTIONS)
+    const bridge = await fixture.open()
+    expect(bridge.catalogueRead!()).toEqual({ when: 'select' })
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
+    const catalogue = bridge.catalogue!()!
+    expect(catalogue.source).toBe('check')
+    expect(models(catalogue)).toEqual(['small', 'large'])
+    expect(bridge.catalogueRead!()).toMatchObject({ when: 'select', last: { ok: true } })
+    const log = await fixture.log()
+    const opened = received(log, 'session/new')
+    expect(opened).toHaveLength(1)
+    const cwd = opened[0]!.params!.cwd as string
+    expect(opened[0]!.params!.mcpServers).toEqual([])
+    expect(cwd.startsWith(await realpath(fixture.tmpRoot))).toBe(true)
+    expect(received(log, 'session/prompt')).toEqual([])
+    expect(received(log, 'session/delete')).toHaveLength(1)
+    expect(Object.keys(await fixture.agentSessions())).toEqual([])
+    await expect(stat(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(true))
+
+    // A selection never reads twice; a person can.
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
+    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
+    expect(received(await fixture.log(), 'session/new')).toHaveLength(2)
+  })
+
+  it('closes the session when the agent cannot delete it, and shares one read between requests', async () => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'close' })
+    const bridge = await fixture.open()
+    const [first, second] = await Promise.all([bridge.readCatalogue!({ auto: true }), bridge.readCatalogue!({ auto: false })])
+    expect(first).toEqual({ ran: true })
+    expect(second).toEqual({ ran: true })
+    const log = await fixture.log()
+    expect(received(log, 'session/new')).toHaveLength(1)
+    expect(received(log, 'session/close')).toHaveLength(1)
+  })
+
+  it('keeps a failed read, says why, and a selection does not start the agent again', async () => {
+    const fixture = await setup({ ...OPTIONS, FAKE_ACP_AUTH: 'new' })
+    const bridge = await fixture.open()
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
+    expect(bridge.catalogue!()).toBeUndefined()
+    expect(bridge.catalogueRead!()).toMatchObject({ last: { ok: false, message: 'Fake 还没登录。按它自己的方式登录后重试。' } })
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+    await bridge.close()
+    // Kept across a restart, and forgotten once the definition changes.
+    const reopened = await fixture.open()
+    expect(reopened.catalogueRead!()).toMatchObject({ last: { ok: false } })
+    await reopened.close()
+    expect((await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })).catalogueRead!()).toEqual({ when: 'select' })
+  })
+
+  it('reads pi only when asked, since starting it loads the person’s extensions', async () => {
+    const fixture = await preset('pi', OPTIONS)
+    const bridge = await fixture.open()
+    expect(bridge.catalogueRead!()).toEqual({ when: 'request' })
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
+    expect(await fixture.log()).toEqual([])
+    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
+    expect(models(bridge.catalogue!())).toEqual(['small', 'large'])
+  })
+
+  it("lists Codex's models through the adapter's own app-server, with no session or thread", async () => {
+    const fixture = await preset('codex', { ...OPTIONS, FAKE_CODEX_MODEL: 'gpt-fake-mini' })
+    const bridge = await fixture.open()
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
+    const catalogue = bridge.catalogue!()!
+    expect(catalogue.source).toBe('check')
+    expect(models(catalogue)).toEqual(['gpt-fake', 'gpt-fake-mini'])
+    const model = catalogue.options.find(option => option.id === 'model')!
+    const effort = catalogue.options.find(option => option.id === 'reasoning_effort')!
+    expect(model.currentValue).toBe('gpt-fake-mini')
+    expect(effort).toMatchObject({ category: 'thought_level', currentValue: 'low' })
+    expect(effort.options.map(item => item.value)).toEqual(['low', 'medium'])
+    expect(catalogue.perModel.map(entry => [entry.model, entry.options[0]!.options.map(item => item.value)])).toEqual([
+      ['gpt-fake', ['low', 'medium', 'high']],
+      ['gpt-fake-mini', ['low', 'medium']],
+    ])
+    const log = await fixture.log()
+    const started = log.filter(entry => entry.event === 'start')
+    expect(started.map(entry => entry.argv)).toEqual([['cli', 'app-server']])
+    expect(log.filter(entry => entry.event === 'recv').map(entry => entry.method)).toEqual(['initialize', 'config/read', 'model/list'])
+    // The test Host finds no program of its own: the adapter is told of no Codex, so it can run none.
+    expect(started[0]).toMatchObject({ codexPath: null })
+    expect(fixture.record.command).toBe(process.execPath)
+  })
+
+  it('says why Codex listed nothing', async () => {
+    // The definition's own values never reach the message, and this one names the error.
+    const fixture = await preset('codex', { ...OPTIONS, FAKE_CODEX_LIST_ERROR: 'login' })
+    const bridge = await fixture.open()
+    await bridge.readCatalogue!({ auto: false })
+    expect(bridge.catalogue!()).toBeUndefined()
+    expect(bridge.catalogueRead!()!.last).toMatchObject({ ok: false, message: 'Fake 返回错误：login' })
+  })
+
+  it('sends a typed model the agent does not list, and fails the turn when the agent refuses it', async () => {
+    const fixture = await setup({ ...OPTIONS, FAKE_ACP_STRICT_MODELS: '1' })
+    const bridge = await fixture.open()
+    await expect(bridge.setCustomModels!(['ok', 'two\nlines'])).rejects.toMatchObject({ code: 'model-id-invalid' })
+    await bridge.setCustomModels!([' vendor/custom ', 'vendor/custom', 'other'])
+    expect(bridge.customModels!()).toEqual(['vendor/custom', 'other'])
+    await bridge.readCatalogue!({ auto: true })
+    const refused = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'model', value: 'other' }] })
+    const detail = await settled(bridge, refused.sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(JSON.stringify(detail.messages)).toContain('没有换到模型「other」')
+    expect(received(await fixture.log(), 'session/prompt')).toEqual([])
+    await bridge.close()
+
+    const lenient = await setup(OPTIONS)
+    const open = await lenient.open()
+    await open.setCustomModels!(['vendor/custom'])
+    const { sessionId } = await open.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      config: [{ configId: 'model', value: 'vendor/custom' }],
+    })
+    expect((await settled(open, sessionId)).summary.status).toBe('idle')
+    const sent = received(await lenient.log(), 'session/set_config_option').map(entry => [entry.params?.configId, entry.params?.value])
+    expect(sent).toContainEqual(['model', 'vendor/custom'])
+    await open.setConfig!(sessionId, 'model', 'small')
+    await open.setConfig!(sessionId, 'model', 'vendor/custom')
+    await expect(open.setConfig!(sessionId, 'model', 'not-typed')).rejects.toMatchObject({ code: 'config-value-invalid' })
+    await open.setCustomModels!([])
+    expect(open.customModels!()).toEqual([])
+  })
+
+  it('runs the next send on the model the session shows once the agent refuses a typed one', async () => {
+    const fixture = await setup({ ...OPTIONS, FAKE_ACP_STRICT_MODELS: '1' })
+    const bridge = await fixture.open()
+    await bridge.setCustomModels!(['other'])
+    await bridge.readCatalogue!({ auto: true })
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'model', value: 'other' }] })
+    const failed = await settled(bridge, sessionId)
+    expect(failed.summary.status).toBe('failed')
+    expect(failed.messages.at(-1)?.text).toContain(
+      'Fake 没有换到模型「other」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。',
+    )
+    expect(failed.config?.find(item => item.id === 'model')?.currentValue).toBe('small')
+
+    await bridge.prompt(sessionId, 'echo again', rid())
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const log = await fixture.log()
+    expect(received(log, 'session/prompt')).toHaveLength(1)
+    expect(received(log, 'session/set_config_option').filter(entry => entry.params?.configId === 'model')).toHaveLength(1)
+  })
+})
+
+describe('ACP steering', () => {
+  it('adds text to a running turn only when the agent says it takes it, and never starts a turn with it', async () => {
+    const plain = await (await setup()).open()
+    const first = await plain.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(plain, first.sessionId, detail => assistants(detail).length > 0 || detail.liveText === 'working')
+    expect((await plain.detail(first.sessionId)).steer).toBeUndefined()
+    expect(await plain.steer!(first.sessionId, 'also this', rid())).toBe('prompt-required')
+    await plain.cancel(first.sessionId)
+
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    const running = await until(bridge, sessionId, detail => detail.liveText === 'working')
+    expect(running.steer).toBe(true)
+    const requestId = rid()
+    expect(await bridge.steer!(sessionId, 'look at b.txt too', requestId)).toBe('injected')
+    const detail = await settled(bridge, sessionId)
+    expect(detail.steer).toBeUndefined()
+    expect(detail.summary.runOutcome).toBe('completed')
+    // The reply so far, then the added text, then what the agent made of it: one turn.
+    expect(detail.messages.map(message => [message.role, message.text, message.steered])).toEqual([
+      ['user', 'steerable', undefined],
+      ['assistant', 'working', undefined],
+      ['user', 'look at b.txt too', true],
+      ['assistant', 'steered: look at b.txt too', undefined],
+    ])
+    expect(detail.messages[2]).toMatchObject({ requestId })
+    const [steer] = received(await fixture.log(), '_session/steering')
+    expect(steer.params).toEqual({
+      sessionId: expect.any(String),
+      prompt: [{ type: 'text', text: 'look at b.txt too' }],
+      _meta: { steering: { idleBehavior: 'promptRequired' } },
+    })
+    // A retry answers what the first got; the same ID with other text is refused; nothing is sent again.
+    expect(await bridge.steer!(sessionId, 'look at b.txt too', requestId)).toBe('injected')
+    await expect(bridge.steer!(sessionId, 'other', requestId)).rejects.toMatchObject({ code: 'request-conflict' })
+    // No turn runs: nothing goes to the agent, and the text is left for a turn of its own.
+    expect(await bridge.steer!(sessionId, 'later', rid())).toBe('prompt-required')
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(1)
+    expect((await bridge.detail(sessionId)).messages).toHaveLength(4)
+  })
+
+  it('leaves a steer the agent did not answer unknown, and never sends it again', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer', FAKE_ACP_STEER: 'hang' }, { requestTimeoutMs: 300 })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.liveText === 'working')
+    const requestId = rid()
+    await expect(bridge.steer!(sessionId, 'more', requestId)).rejects.toMatchObject({ status: 409, code: 'steer-unknown' })
+    await expect(bridge.steer!(sessionId, 'more', requestId)).rejects.toMatchObject({ code: 'steer-unknown' })
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(1)
+    await bridge.cancel(sessionId)
+    const detail = await bridge.detail(sessionId)
+    expect(detail.messages.filter(message => message.steered)).toEqual([])
+    // The stop is told that text was added this turn, since nobody knows whether the agent read it.
+    expect(systemText(detail)).toContain('可能没有读到')
+  })
+
+  it('does not warn on a stop when the agent went on after what was added', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable hold', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.liveText === 'working')
+    expect(await bridge.steer!(sessionId, 'and the logs', rid())).toBe('injected')
+    await until(bridge, sessionId, detail => detail.liveText.includes('steered: and the logs'))
+    await bridge.cancel(sessionId)
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary.status).toBe('cancelled')
+    expect(systemText(detail)).not.toContain('可能没有读到')
+  })
+
+  it('says when the agent refuses a steer, and stops taking them once the turn is being stopped', async () => {
+    const refusing = await (await setup({ FAKE_ACP_CAPS: 'steer', FAKE_ACP_STEER: 'failed' })).open()
+    const first = await refusing.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(refusing, first.sessionId, detail => detail.liveText === 'working')
+    const requestId = rid()
+    await expect(refusing.steer!(first.sessionId, 'more', requestId)).rejects.toMatchObject({ status: 409, code: 'steer-failed' })
+    await refusing.cancel(first.sessionId)
+    // A refusal leaves no receipt, and the stop has nothing to warn about.
+    expect(systemText(await refusing.detail(first.sessionId))).not.toContain('可能没有读到')
+
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.liveText === 'working')
+    const stopping = bridge.cancel(sessionId)
+    expect((await bridge.detail(sessionId)).steer).toBeUndefined()
+    expect(await bridge.steer!(sessionId, 'too late', rid())).toBe('prompt-required')
+    await stopping
+    expect(received(await fixture.log(), '_session/steering')).toEqual([])
+  })
+
+  it('keeps a taken steer across a restart, and does not count it as a turn', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer,resume' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable drop', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.liveText === 'working')
+    const requestId = rid()
+    expect(await bridge.steer!(sessionId, 'and this', requestId)).toBe('injected')
+    // The agent ended its turn without reading it: the row still says only that it was added.
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.runOutcome).toBe('completed')
+    expect(detail.messages.filter(message => message.steered).map(message => message.text)).toEqual(['and this'])
+    await bridge.close()
+    const again = await fixture.open()
+    expect((await again.detail(sessionId)).messages.filter(message => message.steered)).toHaveLength(1)
+    expect(await again.steer!(sessionId, 'and this', requestId)).toBe('injected')
+    await again.prompt(sessionId, 'echo next', rid())
+    const next = await settled(again, sessionId)
+    expect(assistants(next).at(-1)?.text).toBe('echo: echo next')
+    expect(
+      received(await fixture.log(), 'session/prompt').map(entry => (entry.params?.prompt as Array<{ text: string }>).at(-1)!.text),
+    ).toEqual(['steerable drop', 'echo next'])
+  })
+})
+
+describe('ACP subagents', () => {
+  const subagents = (detail: DriverTaskDetail) => detail.messages.filter(message => message.subagent)
+
+  it('shows a subagent where it began, with what it said and did, and its own report of how it ended', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate nest', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    const [row] = subagents(detail)
+    expect(row).toMatchObject({ role: 'tool', toolName: 'subagent', state: 'completed' })
+    expect(row!.subagent).toMatchObject({ title: 'Test runner', description: 'Runs the tests', status: 'done' })
+    // Its text in one step, its call merged into one step, its own subagent nested; never its reasoning.
+    const steps = row!.subagent!.steps
+    expect(steps.map(step => [step.role, step.text || step.subagent?.title])).toEqual([
+      ['assistant', 'running the tests'],
+      ['tool', 'all passed'],
+      ['tool', 'Linter'],
+      ['assistant', 'tests pass'],
+    ])
+    expect(steps[2]!.subagent).toMatchObject({ status: 'done', steps: [{ role: 'assistant', text: 'lint clean' }] })
+    expect(JSON.stringify(detail)).not.toContain('hidden reasoning')
+    // The session's own reply follows, and the subagent's words are not the session's.
+    expect(assistants(detail).map(message => message.text)).toEqual(['the subagent says the tests pass'])
+    // Kept across a restart as it was.
+    await bridge.close()
+    expect(subagents(await (await fixture.open()).detail(sessionId))[0]!.subagent!.steps).toHaveLength(4)
+  })
+
+  it("asks for a subagent's call in the session that started it, by the subagent's name", async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate ask', requestId: rid() })
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    const [approval] = waiting.approvals
+    expect(approval).toMatchObject({ sessionId, subagent: 'Test runner', toolName: expect.any(String) })
+    expect(approval!.toolCallId).toBeUndefined()
+    expect(waiting.summary.status).toBe('waiting-approval')
+    expect(subagents(waiting)[0]).toMatchObject({ state: 'awaiting-approval', subagent: { status: 'waiting' } })
+    expect(
+      subagents(waiting)[0]!.subagent!.steps.find(step => step.text === 'Edit a.txt' || step.tool?.title === 'Edit a.txt')?.state,
+    ).toBe('awaiting-approval')
+    expect(await bridge.decide(approval!.id, 'allow')).toBe(true)
+    const detail = await settled(bridge, sessionId)
+    const edit = subagents(detail)[0]!.subagent!.steps.find(step => step.tool?.title === 'Edit a.txt')
+    expect(edit).toMatchObject({ state: 'completed', tool: { decision: { outcome: 'allowed' } } })
+    // The session's own transcript has no row for the subagent's call.
+    expect(detail.messages.some(message => message.tool?.title === 'Edit a.txt')).toBe(false)
+    expect(answers(await fixture.log())).toEqual([])
+    expect((await fixture.log()).find(entry => entry.event === 'child-permission-answer')).toMatchObject({
+      outcome: { outcome: 'selected', optionId: 'allow' },
+    })
+  })
+
+  it("answers a subagent's open request as cancelled when the session is stopped, and leaves no subagent running", async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate ask', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    await bridge.cancel(sessionId)
+    const detail = await bridge.detail(sessionId)
+    expect(detail.approvals).toEqual([])
+    expect(subagents(detail)[0]).toMatchObject({ state: 'cancelled', subagent: { status: 'cancelled' } })
+    expect((await fixture.log()).find(entry => entry.event === 'child-permission-answer')).toMatchObject({
+      outcome: { outcome: 'cancelled' },
+    })
+
+    // A subagent that never says it stopped is not shown as still working once its turn has ended.
+    const { sessionId: second } = await bridge.createTask({ prompt: 'delegate silent', requestId: rid() })
+    await until(bridge, second, detail => subagents(detail)[0]?.subagent?.status === 'running')
+    await bridge.cancel(second)
+    const row = subagents(await bridge.detail(second))[0]!
+    expect(row.subagent!.status).toBe('unknown')
+    expect(row.state).toBeUndefined()
   })
 })

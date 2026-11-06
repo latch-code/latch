@@ -77,9 +77,21 @@ export function extraDirectories(): string[] {
   ]
 }
 
-function searchDirectories(): string[] {
+/** Where a person's programs are: PATH, the login shell's PATH, then the usual install directories. */
+export function personCommandDirectories(): string[] {
   const paths = [loginShellValues().PATH, process.env.PATH].flatMap(path => (path ?? '').split(delimiter))
   return [...new Set([...paths.filter(directory => directory && isAbsolute(directory)), ...extraDirectories()])]
+}
+
+let searched: (() => readonly string[]) | undefined
+
+/**
+ * Where bare command names are looked for. Off until the start script turns it on, so that a test Host, which may hold a
+ * preset's definition around a fake adapter, can never find, describe or start a real agent installed on the same
+ * computer; a test names its own directories.
+ */
+export function setCommandSearch(directories: (() => readonly string[]) | undefined): void {
+  searched = directories
 }
 
 function executable(path: string): boolean {
@@ -92,15 +104,16 @@ function executable(path: string): boolean {
   }
 }
 
-/** Finds `command` on PATH and the usual install directories without spawning a shell. Returns an absolute path. */
+/** Finds `command` where `setCommandSearch` says, without spawning a shell. Returns an absolute path. */
 export function resolveCommand(command: string): string | undefined {
   if (typeof command !== 'string' || !command || command.length > 4096 || command.includes('\0')) return undefined
   if (isAbsolute(command)) return executable(command) ? command : undefined
   // A relative path would depend on the Host's working directory.
   if (command.includes('/') || command.includes('\\')) return undefined
+  if (!searched) return undefined
   const extensions =
     process.platform === 'win32' ? ['', ...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : ['']
-  for (const directory of searchDirectories()) {
+  for (const directory of new Set(searched().filter(directory => directory && isAbsolute(directory)))) {
     for (const extension of extensions) {
       const candidate = join(directory, command + extension)
       if (executable(candidate)) return candidate

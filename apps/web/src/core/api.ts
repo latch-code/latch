@@ -1,4 +1,4 @@
-import { isFileMention, type FileMention } from '@latch/protocol'
+import { MODEL_EFFORT, isFileMention, type FileMention } from '@latch/protocol'
 import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode } from '@latch/protocol'
 import { describeFailure } from './securityCopy.ts'
@@ -302,15 +302,23 @@ export interface PendingSubmission {
   workspaceId?: string
   forkOf?: { taskId: string; upToMessageId: string }
   queue?: true
+  /** Into the running turn when its harness takes that, queued otherwise. */
+  steer?: true
   fileRefs?: FileMention[]
   attachmentIds?: string[]
+  /** A new session's picks from the Harness's own options. */
+  config?: Array<{ configId: string; value: string }>
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
   if (typeof value !== 'object' || value === null) return
   const item = value as Record<string, unknown>
   return typeof item.providerId === 'string' && typeof item.model === 'string'
-    ? { providerId: item.providerId, model: item.model }
+    ? {
+        providerId: item.providerId,
+        model: item.model,
+        ...(typeof item.effort === 'string' && MODEL_EFFORT.test(item.effort) ? { effort: item.effort } : {}),
+      }
     : undefined
 }
 
@@ -324,7 +332,7 @@ export function readPending(key: string): PendingSubmission | null {
       item.assistantId !== undefined
       && (typeof item.assistantId !== 'string'
         || !/^asst_[a-f0-9-]{36}$/u.test(item.assistantId)
-        || ['sessionId', 'mode', 'harnessId', 'model', 'workspaceId', 'forkOf'].some(field => item[field] !== undefined))
+        || ['sessionId', 'mode', 'harnessId', 'model', 'workspaceId', 'forkOf', 'config'].some(field => item[field] !== undefined))
     )
       return null
     for (const field of ['sessionId', 'harnessId', 'workspaceId'] as const)
@@ -332,6 +340,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
+    if (item.steer !== undefined && item.steer !== true) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     if (
@@ -342,6 +351,19 @@ export function readPending(key: string): PendingSubmission | null {
     )
       return null
     if (item.fileRefs !== undefined && (!Array.isArray(item.fileRefs) || item.fileRefs.length > 32 || !item.fileRefs.every(isFileMention)))
+      return null
+    if (
+      item.config !== undefined
+      && (!Array.isArray(item.config)
+        || item.config.length > 16
+        || !item.config.every(
+          (pick: unknown) =>
+            typeof pick === 'object'
+            && pick !== null
+            && typeof (pick as Record<string, unknown>).configId === 'string'
+            && typeof (pick as Record<string, unknown>).value === 'string',
+        ))
+    )
       return null
     const model = modelRef(item.model)
     return {
@@ -354,9 +376,13 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
+      ...(item.steer === true ? { steer: true as const } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
+      ...(Array.isArray(item.config)
+        ? { config: (item.config as Array<{ configId: string; value: string }>).map(({ configId, value }) => ({ configId, value })) }
+        : {}),
     }
   } catch {
     return null
@@ -380,7 +406,14 @@ export function submissionRequest(submission: PendingSubmission): { path: string
   if (submission.sessionId !== undefined) {
     return {
       path: `tasks/${encodeURIComponent(submission.sessionId)}/prompt`,
-      body: { prompt, requestId, ...(model ? { model } : {}), ...(submission.queue ? { queue: true } : {}), ...attachments },
+      body: {
+        prompt,
+        requestId,
+        ...(model ? { model } : {}),
+        ...(submission.queue ? { queue: true } : {}),
+        ...(submission.steer ? { steer: true } : {}),
+        ...attachments,
+      },
     }
   }
   return {
@@ -394,6 +427,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(model ? { model } : {}),
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
+      ...(submission.config?.length ? { config: submission.config } : {}),
     },
   }
 }

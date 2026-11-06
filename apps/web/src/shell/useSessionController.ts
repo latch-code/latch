@@ -151,6 +151,8 @@ export function useSessionController({
     [current, snapshot.approvals, selectedId],
   )
   const active = isActive(summary?.status)
+  /** The running turn takes what is sent now; read from the open session, since it is agreed per run. */
+  const steer = active && current?.steer === true
   const harnessInfo = sessionHarness(catalog, summary)
   const personalName = usePersonalName(summary?.personal?.assistantId, privateVisible, harness.refreshHints + harness.resyncs)
   const harnessName = summary?.personal
@@ -290,12 +292,13 @@ export function useSessionController({
       return
     }
     if (active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
-      submission.setError('排队暂不支持附件或文件引用，请等本轮结束再发送。')
+      submission.setError(`${steer ? '追加' : '排队'}暂不支持附件或文件引用，请等本轮结束再发送。`)
       return
     }
     const ids = await attachmentDraft.wait()
     if (ids && selectedId !== null) clearUnverified(selectedId)
-    if (ids && (await submission.submit(undefined, undefined, active && canQueue, ids, mentionChoice.refs))) {
+    const followUp = !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
+    if (ids && (await submission.submit(undefined, undefined, followUp, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -960,6 +963,7 @@ export function useSessionController({
     access,
     owner,
     canQueue,
+    steer,
     gateFor,
     approvals,
     active,

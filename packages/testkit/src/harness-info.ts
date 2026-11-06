@@ -10,7 +10,7 @@ const FACTS: Record<Kind, Omit<HarnessCapabilities, 'display'>> = {
     tools: { shell: false, fileMentions: true },
   },
   agent: {
-    models: { owner: 'harness', catalogue: 'none', wires: [] },
+    models: { owner: 'harness', catalogue: 'session-check', wires: [] },
     permission: { enforcement: 'harness', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
   },

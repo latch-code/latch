@@ -102,6 +102,46 @@ describe('turns of a conversation', () => {
     ])
   })
 
+  it('keeps text added to a running turn in that turn, as the person said it, between what came before and after', () => {
+    const steered = user('s', { text: '也看看测试', steered: true })
+    const turns = turnsOf([user('u1'), reply('a1', '在读'), steered, reply('a2', '看过测试了'), user('u2')])
+    expect(turns.map(turn => [turn.key, turn.replies.map(message => message.id)])).toEqual([
+      ['u1', ['a1', 's', 'a2']],
+      ['u2', []],
+    ])
+    const html = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail([user('u1'), reply('a1', '在读'), steered, reply('a2', '看过测试了')]),
+        approvals: [],
+        harnessName: 'Latch',
+      }),
+    )
+    // One prompt opens the turn; the added text is a bubble in the reply, marked, and never a second turn.
+    expect(html.match(/data-turn=/gu)).toHaveLength(1)
+    expect(html.indexOf('在读')).toBeLessThan(html.indexOf('也看看测试'))
+    expect(html.indexOf('也看看测试')).toBeLessThan(html.indexOf('看过测试了'))
+    expect(html).toContain('已追加到本轮')
+  })
+
+  it('shows a subagent as one work row with its name and own word for how it is doing, and nothing it did until opened', () => {
+    const row = tool('subagent:1', {
+      toolName: 'subagent',
+      state: 'running',
+      subagent: { title: 'Test runner', status: 'running', steps: [reply('step', '跑完了')] },
+    })
+    const html = renderToStaticMarkup(
+      createElement(Transcript, { detail: detail([user('u'), row], {}, 'running'), approvals: [], harnessName: 'Codex' }),
+    )
+    expect(html).toContain('子 Agent')
+    expect(html).toContain('Test runner')
+    expect(html).toContain('运行中')
+    expect(html).toContain('aria-expanded="false"')
+    expect(livePhase(detail([user('u'), row], {}, 'running'), { cancelling: false, approvals: 0, hostNow: T0 })).toEqual({
+      kind: 'tool',
+      text: '子 Agent Test runner 运行中',
+    })
+  })
+
   it('reads the outcome of the latest turn from the session and of earlier ones from their own messages', () => {
     const turn = firstTurn([user('u'), reply('a', '部分', { state: 'cancelled' })])
     expect(turnOutcome(turn, 'failed')).toBe('failed')

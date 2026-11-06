@@ -97,6 +97,7 @@ import {
   presetOffer,
   presetRecord,
   resolveCommand,
+  setCommandSearch,
   setLoginPrograms,
   validateAgentDefinition,
 } from '@latch/harness-acp'
@@ -165,6 +166,8 @@ import {
   addressOf,
   keyScopeOf,
   keyScopeText,
+  modelCapabilitiesSchema,
+  modelEffort,
   originOf,
   type HostSettings,
   type ProviderRecord,
@@ -257,7 +260,7 @@ const apiKeyText = z
 const PROVIDER_INPUT_ERRORS = new Set(['invalid-url', 'invalid-key'])
 const legacyProviderSchema = z.object({ baseURL: httpURL, apiKey: apiKeyText, model: z.string().trim().min(1).max(200) })
 const modelId = z.string().trim().min(1).max(200)
-const modelRefSchema = z.object({ providerId: z.string().min(1).max(64), model: modelId })
+const modelRefSchema = z.object({ providerId: z.string().min(1).max(64), model: modelId, effort: modelEffort.optional() })
 const promptSchema = z.object({
   fileRefs: fileMentionsSchema,
   prompt: z.string().trim().max(16_000),
@@ -268,7 +271,8 @@ const promptSchema = z.object({
   requestId: z.string().uuid(),
   model: modelRefSchema.optional(),
 })
-const queuedPromptSchema = promptSchema.extend({ queue: z.boolean().optional() })
+/** `steer`: add it to the running turn when the harness takes that, and queue it otherwise. */
+const queuedPromptSchema = promptSchema.extend({ queue: z.boolean().optional(), steer: z.boolean().optional() })
 const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
   forkOf: z
@@ -285,6 +289,12 @@ const createTaskSchema = promptSchema.extend({
   customAgentId: z
     .string()
     .regex(/^agt_[a-f0-9-]{36}$/u)
+    .optional(),
+  /** Choices from the harness's catalogue, set before the first prompt. */
+  config: z
+    .array(z.strictObject({ configId: z.string().min(1).max(128), value: z.string().max(1024) }))
+    .max(16)
+    .refine(entries => new Set(entries.map(entry => entry.configId)).size === entries.length, '每个设置只能选一次')
     .optional(),
 })
 const taskPatchSchema = z
@@ -322,9 +332,7 @@ const keepWaitingSchema = z.strictObject({
 })
 const providerKind = z.enum(['openai-compatible', 'anthropic'])
 const modelList = z.array(modelId).max(1000)
-const modelCapabilitiesSchema = z
-  .record(modelId, z.strictObject({ vision: z.boolean().optional() }))
-  .refine(value => Object.keys(value).length <= 1000)
+const modelCapabilitiesRecord = z.record(modelId, modelCapabilitiesSchema).refine(value => Object.keys(value).length <= 1000)
 /**
  * `confirmOrigin`: confirm the address on this computer in the same request when it is not confirmed yet, or when it
  * needs an outbound allowance it lacks (desktop only). Without it, a keyless service at an unconfirmed address is saved
@@ -338,7 +346,7 @@ const providerCreateSchema = z.object({
   baseURL: httpURL,
   apiKey: apiKeyText.optional(),
   models: modelList.default([]),
-  modelCapabilities: modelCapabilitiesSchema.optional(),
+  modelCapabilities: modelCapabilitiesRecord.optional(),
   defaultModel: modelId,
   enabled: z.boolean().optional(),
   confirmOrigin: z.boolean().optional(),
@@ -348,7 +356,7 @@ const providerUpdateSchema = z.object({
   baseURL: httpURL.optional(),
   apiKey: apiKeyText.nullable().optional(),
   models: modelList.optional(),
-  modelCapabilities: modelCapabilitiesSchema.optional(),
+  modelCapabilities: modelCapabilitiesRecord.optional(),
   defaultModel: modelId.optional(),
   enabled: z.boolean().optional(),
   confirmOrigin: z.boolean().optional(),
@@ -514,6 +522,12 @@ export interface ServerOptions {
    * tests, no real program on this computer can be run to check or start a login.
    */
   loginPrograms?: (command: string) => string | undefined
+  /**
+   * Where a bare command name is looked for: an agent's command, its adapter, the programs a preset points it at. The
+   * start script passes `personCommandDirectories`; left out, as in tests, only absolute commands are found, so no real
+   * agent on this computer can be described, offered or started. Tests name their own directories.
+   */
+  commandDirectories?: () => readonly string[]
   /** Tests: receives a harness's login script instead of a terminal opening. Production never sets it. */
   loginTerminal?: (script: string) => Promise<void>
   /** Tests: how long a run's first prompt and a stop wait for lifecycle listeners. Production never sets it. */
@@ -936,6 +950,9 @@ async function prepareDataDir(dataDir: string): Promise<void> {
 export async function startServer(options: ServerOptions): Promise<StartedHost> {
   assertLoopbackHost(options.host)
   if (options.provider) assertEnvBaseURL(options.provider.baseURL)
+  // Before any harness is loaded: a launch fingerprint holds the path a lookup finds.
+  setCommandSearch(options.commandDirectories)
+  forgetCommandLookups()
   const now = options.now ?? Date.now
   const clock = options.clock ?? Date.now
   const hostTime = () => new Date(clock()).toISOString()
@@ -3684,6 +3701,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)
     }
 
+    /** A saved Harness definition this Host runs and that can start now. */
+    function editableHarness(id: string): HarnessInfo {
+      const harness = hub!.info(id)
+      if (!harness?.editable || !hub!.has(id)) throw new AppError(404, 'agent-not-found', '找不到该 Harness')
+      if (harness.status !== 'ready')
+        throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
+      return harness
+    }
+
     /** A draft's Harness, which may not be saved yet: it decides which folders a file search covers. */
     const draftHarness = (id: string): HarnessInfo | undefined => hub!.info(id) ?? presetsToOffer().find(item => item.id === id)
 
@@ -4529,6 +4555,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             || input.harnessId !== undefined
             || input.mode !== undefined
             || input.model !== undefined
+            || input.config !== undefined
           )
             throw new AppError(400, 'personal-selection-fixed', '个人助手使用已保存的 Harness、模型和插件，请在助手设置中修改。')
           const binding = (
@@ -4586,6 +4613,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.model && harness.capabilities.models.owner !== 'latch')
           throw new AppError(400, 'model-unsupported', `${harness.capabilities.display.label} 自行管理模型，不能指定模型服务`)
         if (input.model) assertModel(input.model)
+        if (input.config?.length && (harness.capabilities.models.owner === 'latch' || customAgentId))
+          throw new AppError(400, 'config-unsupported', `${harness.capabilities.display.label} 不能在开始前这样设置`)
         const workspaceId = input.workspaceId ?? 'default'
         const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
         if (workspaceId !== 'default' && !chosen) throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
@@ -4668,6 +4697,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
           ...(input.model ? { model: input.model } : {}),
+          ...(input.config?.length ? { config: input.config } : {}),
           ...(chosen
             ? { cwd: chosen.folders[0].path }
             : forkFolder
@@ -4768,11 +4798,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           }) !== 'launch'
         // The intent is on record before the driver can spawn anything; the session id exists only once it has, so the
         // record naming it is a commit that may fail without stopping a session the intent already covers.
+        // What the start chose, a wider mode among it, is on record with it; the values are the agent's own words.
+        const configAudited = input.config?.length ? { configHash: sha256Hex(canonicalJson(input.config)) } : {}
         const intent = await audited({
           action: 'task.l3.start-requested',
           actor: actorOf(caller),
           stepup: 'none',
-          detail: { harnessId, launchHash, promptHash, ...foldersAudited },
+          detail: { harnessId, launchHash, promptHash, ...foldersAudited, ...configAudited },
         })
         let created: { sessionId: string }
         try {
@@ -4813,6 +4845,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               launchHash,
               promptHash,
               ...foldersAudited,
+              ...configAudited,
               ...(preview?.definitionHash ? { definitionHash: preview.definitionHash } : {}),
             },
           },
@@ -5053,7 +5086,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (method === 'POST' && action === 'prompt') {
         requireScope(caller, 'run')
         const input = queuedPromptSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
-        if (input.queue && (input.attachmentIds?.length || input.fileRefs?.length))
+        if ((input.queue || input.steer) && (input.attachmentIds?.length || input.fileRefs?.length))
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         recheck(caller, 'run')
         await assertSessionAccess(caller, id)
@@ -5070,7 +5103,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const personalOwner = hub!.personalOf(id)
         if (personalOwner?.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
         if (personalOwner && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
-        if (input.queue) {
+        if (input.steer && !input.model && !personalOwner && input.prompt) {
+          recheck(caller, 'run')
+          if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') {
+            json(res, { steered: true })
+            return true
+          }
+        }
+        if (input.queue || input.steer) {
           const result = await promptQueues.submit(queueActor(caller), id, input)
           json(res, result, 'queued' in result ? 202 : 200)
           return true
@@ -5652,6 +5692,63 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           },
         )
         json(res, result)
+        return true
+      }
+      // What a Harness offers, read before a session: the same gate as starting one, since it starts the same program.
+      const catalogueMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/catalogue$/)
+      if (catalogueMatch && method === 'POST') {
+        requireScope(caller, 'run')
+        const input = z
+          .object({ auto: z.boolean().optional() })
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller, 'run')
+        const id = safeDecode(catalogueMatch[1]!)
+        const harness = editableHarness(id)
+        const auto = input.auto === true
+        const { ran } = await hub!.readHarnessCatalogue(id, auto, async () => {
+          if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+          recheck(caller, 'run')
+          await audited({
+            action: 'agent.catalogue.requested',
+            actor: actorOf(caller),
+            target: id,
+            stepup: 'none',
+            detail: { agentId: id, auto },
+          })
+        })
+        const read = hub!.info(id)?.catalogueRead
+        if (ran)
+          await audited({
+            action: 'agent.catalogue.read',
+            actor: actorOf(caller),
+            target: id,
+            stepup: 'none',
+            detail: { agentId: id, ok: read?.last?.ok === true },
+          })
+        json(res, { ran, ...(read ? { catalogueRead: read } : {}), harness: harness.id })
+        return true
+      }
+      const modelsMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/models$/)
+      if (modelsMatch && method === 'PUT') {
+        requireScope(caller, 'run')
+        const input = z
+          .object({ models: z.array(z.string().max(1024)).max(64) })
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller, 'run')
+        const id = safeDecode(modelsMatch[1]!)
+        editableHarness(id)
+        await hub!.setHarnessModels(id, input.models)
+        const count = hub!.info(id)?.customModels?.length ?? 0
+        await audited({
+          action: 'agent.models.changed',
+          actor: actorOf(caller),
+          target: id,
+          stepup: 'none',
+          detail: { agentId: id, count },
+        })
+        json(res, { models: hub!.info(id)?.customModels ?? [] })
         return true
       }
       const agentMatch = path.match(/^\/link\/api\/agents\/([^/]+)$/)

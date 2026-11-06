@@ -8,7 +8,7 @@ Host 的监听、授权、配置与插件组合根。
 | `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站策略；风险分级；路径与 `latchCodeRoot()` |
 | `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`agent-*.ts`、`personal-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、Agent 与助手、配置与插件（`plugin-packages.ts`） |
-| `src/plugins/<种类>/<id>/` | 内置插件：`providers/{openai-compatible,anthropic,demo}`（共用 `http.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |
+| `src/plugins/<种类>/<id>/` | 内置插件：`providers/{openai-compatible,anthropic,demo}`（共用 `http.ts` 与 `*-wire.ts` 协议）、`tools/{workspace-files,safe-tools}`、`standard` |
 | `scripts/` | 启停、CLI、桌面启动与构建（`build-files.ts`、`build-terminal.ts`） |
 | `test/` | Host 夹具在 `test/helpers/host.ts` |
 

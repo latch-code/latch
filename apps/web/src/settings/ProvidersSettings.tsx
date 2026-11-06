@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, LockKeyhole, Pencil, Plus, Trash } from 'lucide-react'
-import type { AppSnapshot, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
+import type { AppSnapshot, ModelCapabilities, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -45,7 +45,9 @@ import {
   Switch,
   SwitchRow,
   TextField,
+  ValuePicker,
 } from '@latch/ui'
+import { THINKING_SETS, thinkingSetText } from '../composer/modelReasoning.ts'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
@@ -347,6 +349,8 @@ function ModelsGroups({
   onAdd,
   modelCapabilities,
   onVision,
+  kind,
+  onThinking,
 }: {
   models: string[]
   defaultModel: string
@@ -362,8 +366,11 @@ function ModelsGroups({
   onDefault: (model: string) => void
   onRemove: (model: string) => void
   onAdd: (model: string) => void
-  modelCapabilities?: Record<string, { vision?: boolean }>
+  modelCapabilities?: Record<string, ModelCapabilities>
   onVision?: (model: string, vision: boolean) => void
+  /** The service's protocol, which decides the level sets on offer. */
+  kind: ProviderKind
+  onThinking: (model: string, levels: string[] | undefined) => void
 }) {
   const group = useId()
   const [filter, setFilter] = useState('')
@@ -394,7 +401,7 @@ function ModelsGroups({
             获取模型
           </Button>
         }
-        caption={onVision ? `${caption ?? ''}${caption ? ' ' : ''}图片开关需与模型服务的真实能力一致，未开启时只发送文字。` : caption}>
+        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考深度按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考不设置时用模型自己的默认值。`}>
         {models.map(model => (
           <div key={model} className="settings-row model-row" data-leading="" data-check="">
             <span className="settings-row-lead">
@@ -412,6 +419,17 @@ function ModelsGroups({
               <span className="settings-row-title settings-row-name">
                 <code className="settings-mono model-id">{model}</code>
                 {defaultModel === model && <Badge>默认</Badge>}
+              </span>
+              <span className="model-thinking">
+                <ThinkingPicker
+                  model={model}
+                  kind={kind}
+                  levels={modelCapabilities?.[model]?.thinking}
+                  disabled={disabled}
+                  onChange={levels => {
+                    onThinking(model, levels)
+                  }}
+                />
               </span>
             </span>
             <span className="settings-row-end">
@@ -893,6 +911,62 @@ export function ProviderAddForm({
   )
 }
 
+const NO_THINKING = '~none'
+
+/** One model's capabilities with `change` applied; a field set to undefined is removed, and so is a model left with none. */
+function withCapability(
+  all: Record<string, ModelCapabilities> | undefined,
+  model: string,
+  change: ModelCapabilities,
+): Record<string, ModelCapabilities> {
+  const next: ModelCapabilities = { ...all?.[model], ...change }
+  for (const key of Object.keys(next) as Array<keyof ModelCapabilities>) if (next[key] === undefined) delete next[key]
+  const rest = { ...all }
+  delete rest[model]
+  return Object.keys(next).length ? { ...rest, [model]: next } : rest
+}
+
+/**
+ * Which thinking levels a model accepts: not set, or one of the protocol's usual sets. What the service takes is in its
+ * own documentation; a wrong set fails the turn with the service's error, so nothing is preselected.
+ */
+function ThinkingPicker({
+  model,
+  kind,
+  levels,
+  disabled,
+  onChange,
+}: {
+  model: string
+  kind: ProviderKind
+  levels: readonly string[] | undefined
+  disabled: boolean
+  onChange: (levels: string[] | undefined) => void
+}) {
+  const sets = THINKING_SETS[kind]
+  const current = levels?.length ? levels.join(' ') : NO_THINKING
+  // A set saved some other way stays on offer, so the picker never shows a value it cannot list.
+  const offered = levels?.length && !sets.some(set => set.join(' ') === current) ? [...sets, levels] : sets
+  return (
+    <ValuePicker
+      label={`${model} 的思考深度`}
+      size="xs"
+      value={current}
+      valueText={current === NO_THINKING ? '思考：不设置' : `思考：${thinkingSetText(levels!)}`}
+      options={[
+        { value: NO_THINKING, label: '不设置', description: '不发送思考深度，用模型自己的默认值' },
+        ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) })),
+      ]}
+      header={{ title: '这个模型接受的思考深度' }}
+      width={300}
+      disabled={disabled}
+      onValueChange={value => {
+        onChange(value === NO_THINKING ? undefined : value.split(' '))
+      }}
+    />
+  )
+}
+
 /**
  * A saved service's page. Every value applies on its own, as settings values do: the switch, a renamed name or a new
  * address, the key (typed on the Host's desktop), the default model and each added or removed model. A saved key is
@@ -1188,9 +1262,13 @@ function ProviderPage({
         modelCapabilities={provider.modelCapabilities}
         onVision={
           supportsAttachments
-            ? (model, vision) => apply({ modelCapabilities: { ...provider.modelCapabilities, [model]: { vision } } })
+            ? (model, vision) => apply({ modelCapabilities: withCapability(provider.modelCapabilities, model, { vision }) })
             : undefined
         }
+        kind={provider.kind}
+        onThinking={(model, thinking) => {
+          apply({ modelCapabilities: withCapability(provider.modelCapabilities, model, { thinking }) })
+        }}
         models={provider.models}
         defaultModel={provider.defaultModel}
         fetched={probe.fetched}

@@ -263,9 +263,14 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_LOGIN_FILE` | 像真实 CLI：`login status` 按这个文件回答并退出，`login` 写它；文件不存在，或启动时不存在时（进程只读一次登录），`session/new` 与提示都返回 `auth_required` |
 | `FAKE_ACP_LOG` | 逐行 JSON 日志：收到的消息、启动时的 cwd、定义之后的启动参数（`argv`）、收到的 `LATCH_*` 变量名（`latchEnv`，应为空）与 `TMPDIR` |
 | `FAKE_ACP_STORE` | Latch 的 `acp.json`，用来检查收到提示时会话是否已持久化 |
-| `FAKE_ACP_CAPS`、`FAKE_ACP_CAPS_FILE` | `resume`、`load`、`delete`、`dirs`（`sessionCapabilities.additionalDirectories`）的逗号列表；设置了 `FAKE_ACP_CAPS_FILE` 时每个进程启动时从这个文件读取，同一定义之后的进程因此可以改变声明 |
+| `FAKE_ACP_CAPS`、`FAKE_ACP_CAPS_FILE` | `resume`、`load`、`delete`、`close`、`dirs`（`sessionCapabilities.additionalDirectories`）的逗号列表；设置了 `FAKE_ACP_CAPS_FILE` 时每个进程启动时从这个文件读取，同一定义之后的进程因此可以改变声明 |
 | `FAKE_ACP_CONFIG` | `legacy`（旧式 models 与 modes）或 `options`（configOptions） |
 | `FAKE_ACP_MODES`、`FAKE_ACP_INITIAL_MODE` | 模式列表与初始模式 |
+| `FAKE_ACP_MODELS`、`FAKE_ACP_MODELS_FILE` | `options` 下提供的模型（逗号分隔，默认 `small,large`）；文件每个会话读一次，用来让后来的会话不再提供某个模型 |
+| `FAKE_ACP_EFFORT_BY_MODEL` | `1`：`large` 模型多一档 `max` 思考，像思考档位随模型变的 Agent |
+| `FAKE_ACP_EFFORT_ID` | 思考选项的 ID，默认 `effort`；codex-acp 叫 `reasoning_effort` |
+| `FAKE_ACP_STRICT_MODELS=1` | 拒绝设置不在列表里的模型，像不接受自己填写的模型 ID 的 Agent |
+| `FAKE_CODEX_MODELS`、`FAKE_CODEX_MODEL`、`FAKE_CODEX_LIST_ERROR` | 以 `cli app-server` 启动时，假 Agent 像 codex-acp 那样回答 Codex 的 `initialize`、`config/read` 与 `model/list`（`fixtures/fake-codex-app-server.mjs`，每页两个）：模型列表（Codex 的 JSON 形状）、配置里的模型、让 `model/list` 失败 |
 | `FAKE_ACP_STICKY_MODE=1` | 忽略修改模式的请求 |
 | `FAKE_ACP_RESUME_MODE`、`FAKE_ACP_RESUME_SILENT=1` | 恢复或加载后回到的模式；恢复时不报告状态 |
 | `FAKE_ACP_SELF_MODE` | 处理修改模式的请求时自行切换到的模式 |
@@ -286,6 +291,16 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `endturn`、`hang`、`crash` | 取消后以 `end_turn` 结束、永不结束、崩溃退出 |
 | `probe` | 调用 `fs/read_text_file`，检查 Latch 不提供客户端文件系统 |
 | `refuse` | 以 `refusal` 结束 |
+
+### 回放与录制
+
+`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
+
+`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`PI_ACP_PI_COMMAND`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
+
+`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）与 Anthropic Messages（`/v1/messages`），流式或不流式，按脚本给出思考、文本或一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具），并记下每个请求。`apps/host/test/providers.test.ts` 用 Host 自己的两个客户端读它。
+
+`pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，只放行本机连接，挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接，否则不启动 Agent。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连和钥匙串文件、不挡时拒绝启动。测试从不运行真实 Agent。
 
 ## 启动脚本的子进程用例
 
@@ -515,7 +530,7 @@ Web 个人助手：`personal.e2e.ts` 覆盖显式记忆、无项目对话和撤�
 
 `e2e/archive.e2e.ts` 通过临时 Host 的真实已结束会话验证三种宽度的归档批量恢复、删除确认与 Shift 连选；核对请求 ID 集合、实际回执、快照和删除后 404，并保留工作目录中的文件。标为未读经真实菜单操作，刷新后保留，打开对应会话后清除，不把本设备阅读标记当作 Host 内容变化。
 
-`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。这些测试都用 `loginPrograms` 只在临时目录里找程序。
+`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住模型不记住模式，重新载入，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色）。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
 
 `e2e/desktop-first-use.e2e.ts` 使用 `demo:false`、进程内假 Provider、真实假 ACP 和独立 Electron 数据目录检查首次使用与斜杠命令。桌面和平板验证逐步跳过、About 重新显示与首次真实会话后隐藏；手机沿实际新会话面板验证入口。命令来自 Agent 的实际更新，检查模板 ID／名称匹配、键盘只插入草稿、来源分组、排序、空态与三宽可达，并核对 ACP 日志中没有额外 prompt；不启用系统通知。
 

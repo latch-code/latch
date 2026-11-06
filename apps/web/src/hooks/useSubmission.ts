@@ -13,10 +13,13 @@ import {
 } from '../core/api.ts'
 import {
   draftStart,
+  findHarness,
   forkedChoice,
   pinnedChoice,
   readChoice,
+  rememberedConfig,
   resolveChoice,
+  startConfig,
   writeChoice,
   type ComposerChoice,
   type DraftPick,
@@ -35,6 +38,7 @@ const restoredChoice = (pending: PendingSubmission): Partial<ComposerChoice> => 
   ...(pending.harnessId ? { harnessId: pending.harnessId } : {}),
   ...(pending.workspaceId ? { workspaceId: pending.workspaceId } : {}),
   ...(pending.model ? { model: pending.model } : {}),
+  ...(pending.config?.length ? { config: Object.fromEntries(pending.config.map(pick => [pick.configId, pick.value])) } : {}),
 })
 
 const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null, assistantId: string | undefined): boolean =>
@@ -97,7 +101,16 @@ export function useSubmission({
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
+  /** What this device keeps for its next draft: the picks of a Harness's own options, never its mode. */
+  const keep = (choice: ComposerChoice): ComposerChoice => {
+    const { config, ...rest } = choice
+    const kept = rememberedConfig(findHarness(catalog, choice.harnessId), config)
+    return kept ? { ...rest, config: kept } : rest
+  }
   const updateChoice = (patch: Partial<ComposerChoice>) => {
+    // A Harness's options are its own: another Harness starts on its defaults.
+    if (patch.harnessId !== undefined && patch.harnessId !== choice.harnessId && !('config' in patch))
+      patch = { ...patch, config: undefined }
     setFork(previous => {
       if (!previous?.choice) return previous
       // A person picking another place or Harness leaves the source's mode behind.
@@ -109,13 +122,13 @@ export function useSubmission({
       setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
       const kept = { ...stored, ...rest }
       setStored(kept)
-      writeChoice(deviceId, { ...kept, mode: kept.mode ?? remembered.mode })
+      writeChoice(deviceId, keep({ ...kept, harnessId: harnessId ?? choice.harnessId, mode: kept.mode ?? remembered.mode }))
       return
     }
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
     const next = { ...stored, ...remembered, ...patch }
     setStored(next)
-    writeChoice(deviceId, resolveChoice(catalog, next))
+    writeChoice(deviceId, keep(resolveChoice(catalog, next)))
   }
 
   useEffect(() => {
@@ -123,7 +136,9 @@ export function useSubmission({
     const owner = stored && storedOwnsInput(stored, selectedId, assistantId)
     setPending(stored)
     setSendingMessage(
-      stored && !stored.queue ? { submission: stored, sessionId: stored.sessionId ?? null, state: 'unknown', startedAt: Date.now() } : null,
+      stored && !stored.queue && !stored.steer
+        ? { submission: stored, sessionId: stored.sessionId ?? null, state: 'unknown', startedAt: Date.now() }
+        : null,
     )
     if (stored === null) return
     if (owner) {
@@ -193,12 +208,13 @@ export function useSubmission({
 
   /**
    * Sends the draft, retries a pending submission with its own requestId, or (`resend`) sends a prompt of the open
-   * session again as a new turn with a new requestId, leaving the draft alone.
+   * session again as a new turn with a new requestId, leaving the draft alone. `followUp`: the session runs, so the draft
+   * waits in the queue, or goes into the running turn when its harness takes that.
    */
   const submit = async (
     retry?: PendingSubmission,
     resend?: string,
-    queue = false,
+    followUp?: 'queue' | 'steer',
     attachmentIds?: string[],
     fileRefs?: FileMention[],
   ): Promise<boolean> => {
@@ -207,6 +223,7 @@ export function useSubmission({
     if (!retry && selectedId === null && !assistantId && !(await saveOfferedHarness())) return false
     const override =
       selectedId === null || snapshot.tasks.find(task => task.id === selectedId)?.personal ? undefined : overrides[selectedId]
+    const picks = startConfig(findHarness(catalog, choice.harnessId), choice.config)
     const submission: PendingSubmission =
       retry
       ?? (resend !== undefined && selectedId !== null
@@ -223,13 +240,14 @@ export function useSubmission({
               ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
               ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
               ...(choice.model ? { model: choice.model } : {}),
+              ...(picks.length ? { config: picks } : {}),
             }
         : {
             requestId: newRequestId(),
             prompt: draft.trim(),
             sessionId: selectedId,
             ...(override ? { model: override } : {}),
-            ...(queue ? { queue: true } : {}),
+            ...(followUp === 'queue' ? { queue: true } : followUp === 'steer' ? { steer: true } : {}),
           })
     if (fileRefs?.length && !retry && resend === undefined) submission.fileRefs = fileRefs
     if (attachmentIds?.length && !retry && resend === undefined) submission.attachmentIds = attachmentIds
@@ -255,7 +273,9 @@ export function useSubmission({
     setSending(true)
     setPending(submission)
     setSendingMessage(
-      submission.queue ? null : { submission, sessionId: submission.sessionId ?? null, state: 'sending', startedAt: Date.now() },
+      submission.queue || submission.steer
+        ? null
+        : { submission, sessionId: submission.sessionId ?? null, state: 'sending', startedAt: Date.now() },
     )
     setError('')
     try {
@@ -263,7 +283,7 @@ export function useSubmission({
       const result = await api<{ sessionId?: string; queued?: { id: string } }>(path, { method: 'POST', body })
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
-      setSendingMessage(submission.queue ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
+      setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
       const foreground =
         mounted.current
         && destination.current.epoch === origin.epoch
@@ -280,6 +300,11 @@ export function useSubmission({
       if (submission.sessionId === undefined && foreground) setFork(null)
       // The pick went with this session, unless another was made while a slow start was waiting.
       if (submission.sessionId === undefined) setDraftPick(current => (current === draftPick ? null : current))
+      // A mode is chosen for one session; the next draft opens on the starting one again.
+      if (submission.sessionId === undefined && submission.config?.length)
+        setStored(current =>
+          current?.config ? { ...current, config: rememberedConfig(findHarness(catalog, current.harnessId), current.config) } : current,
+        )
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }

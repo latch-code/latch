@@ -4,7 +4,7 @@ import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
-import { loadLoginShell, resolveCommand } from '@latch/harness-acp'
+import { loadLoginShell, personCommandDirectories, resolveCommand } from '@latch/harness-acp'
 import { detectPresetCommands, LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
 import {
   acquireDataDirLock,
@@ -218,6 +218,7 @@ async function main(): Promise<void> {
     sessionFolders,
     detectPreset: detectPresetCommands,
     loginPrograms: resolveCommand,
+    commandDirectories: personCommandDirectories,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),
     port,

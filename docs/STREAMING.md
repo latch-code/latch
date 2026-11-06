@@ -326,6 +326,16 @@ Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消�
 
 详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。 个人助手额外使用 Host 私有的执行摘要，只有 `personalQueue` 能力为真才支持；摘要与原手机窗口不进入公开投影，配置变化时保留文字并暂停，详见 [PERSONAL.md](PERSONAL.md#个人会话队列)。
 
+### 追加到运行中的一轮
+
+`TaskDetail.steer` 为真时，正在运行的这一轮还能接收文字：输入框的发送键是「追加」，提交带 `steer: true`。它只来自本轮进程的协商（ACP Agent 在 `initialize` 的 `_meta.steering.supported` 声明），轮次被要求停止后即消失。Host 经 `Bridge.steer` 转给 Harness，Agent 接收则回答 `{steered:true}`，消息作为带 `steered` 的用户消息进入这一轮，不开新的一轮，客户端也不按它分轮；Harness 不支持、轮次已结束或 Agent 回答 `promptRequired` 时，同一请求按排队处理（有轮次在跑就排队，没有就直接作为新一轮发送）。Agent 拒绝时返回 409 `steer-failed`：内容没有发出，这是确定的结果，不是「结果未知」。
+
+追加用原 `requestId`：重试得到第一次的结果；Agent 没有回答（超时或进程中断）时回执保持「发送中」，之后的重试一律 409 `steer-unknown`，不再发出，因为 Agent 给每次请求另起消息，分不出重发。`steered` 只表示 Agent 接收了，不表示它在本轮结束前读到了；本轮没有正常完成、期间有过追加、而最后一次追加之后 Agent 再没有任何输出时，结束时写一条系统消息说明它可能没有读到。追加不带附件和文件引用，也不替人拒绝等待中的审批。
+
+### 子 Agent
+
+Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）；它的状态只来自它自己的报告，所在的一轮结束时仍未报告停止的记为 `unknown`。它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
+
 ## Agent 提问与回答
 
 `catalog.features.questions` 表示 Host 支持内置问答接口，不代表 ACP Agent 支持。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。

@@ -18,4 +18,6 @@ export const piProfile: HarnessProfile = {
   projectConfigPaths: ['.pi', '.agents/skills'],
   // Packages that project settings declare are installed below `.pi` by pi itself; the declarations are compared.
   projectConfigManaged: { skip: ['.pi/npm', '.pi/git'] },
+  // Starting pi loads the person's extensions and runs their session hooks, so its lists are read only on request.
+  catalogueRead: { when: 'request' },
 }

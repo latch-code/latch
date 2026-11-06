@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AgentRecord } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
-import { redactor } from '../src/command.ts'
+import { personCommandDirectories, redactor, setCommandSearch } from '../src/command.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from '../src/login.ts'
 import { ALWAYS_INHERITED, loadLoginShell, loginShellValues, readLoginShell, setLoginShellValues } from '../src/login-shell.ts'
@@ -21,6 +21,7 @@ const savedPath = process.env.PATH
 afterEach(async () => {
   setLoginShellValues({})
   setLoginPrograms(undefined)
+  setCommandSearch(undefined)
   process.env.PATH = savedPath
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
@@ -60,9 +61,10 @@ async function fakeCodex(directory: string, loginFile: string, names = ['codex',
   return bin
 }
 
-/** Login commands find programs in `bin` alone: never one installed on the computer running this test. */
+/** Commands are found in `bin` alone: never one installed on the computer running this test. */
 function useOnly(bin: string): void {
   process.env.PATH = `${bin}:/usr/bin:/bin`
+  setCommandSearch(() => [bin])
   setLoginPrograms(name => (existsSync(join(bin, name)) ? join(bin, name) : undefined))
 }
 
@@ -122,8 +124,12 @@ describe('reading the login shell', () => {
     )
     await loadLoginShell({ shell, env: { PATH: '/usr/bin:/bin' } })
     expect(loginShellValues()).toMatchObject({ CODEX_HOME: '/home/me/.codex', https_proxy: 'http://proxy.test:8080' })
+    // What the login shell adds is searched; only this test's directories are, so no installed Codex is found.
+    expect(personCommandDirectories()).toContain(elsewhere)
+    setCommandSearch(() => personCommandDirectories().filter(path => path.startsWith(`${directory}/`)))
     const preview = await agentProbePreview(presetRecord('codex')!, { dataDir: directory, cwd: directory })
     expect(preview.command).toBe(join(elsewhere, 'codex-acp'))
+    expect(preview.envNames).not.toContain('CODEX_PATH')
     expect(preview.envNames).toEqual(expect.arrayContaining(['CODEX_HOME', 'https_proxy', '__MISE_DIFF']))
   })
 })

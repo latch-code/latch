@@ -4,12 +4,25 @@ import type { TaskMode } from './sessions.ts'
 export interface ModelRef {
   providerId: string
   model: string
+  /** One of the model's declared `thinking` levels; absent leaves the model's own default. */
+  effort?: string
+}
+
+/** A thinking level as it goes on the wire: `low`, `xhigh`, … */
+export const MODEL_EFFORT = /^[a-z][a-z0-9_-]{0,31}$/u
+export const MAX_THINKING_LEVELS = 8
+
+/** What one model of a service can do, as the owner declared it in settings; nothing is guessed from its name. */
+export interface ModelCapabilities {
+  vision?: boolean
+  /** The thinking levels the model accepts, weakest first, as sent on the wire. Absent: none is ever sent. */
+  thinking?: string[]
 }
 
 export type ProviderKind = 'openai-compatible' | 'anthropic'
 /** Browser-safe provider listing. It never contains credentials. */
 export interface ProviderSummary {
-  modelCapabilities?: Record<string, { vision?: boolean }>
+  modelCapabilities?: Record<string, ModelCapabilities>
   id: string
   name: string
   /** `demo` and `plugin` providers are not editable in settings. */
@@ -88,7 +101,7 @@ export type ProviderDestination = 'preset' | 'confirmed' | 'unconfirmed'
 
 /** Owner-only provider configuration as returned to the browser. */
 export interface ProviderSettings {
-  modelCapabilities?: Record<string, { vision?: boolean }>
+  modelCapabilities?: Record<string, ModelCapabilities>
   id: string
   name: string
   kind: ProviderKind

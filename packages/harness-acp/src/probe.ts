@@ -8,7 +8,7 @@ import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
-import { initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
+import { CLIENT_CAPABILITIES, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
 
 interface ProbeOptions {
   dataDir: string
@@ -119,7 +119,7 @@ export async function probeAgent(
         'initialize',
         {
           protocolVersion: PROTOCOL_VERSION,
-          clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+          clientCapabilities: CLIENT_CAPABILITIES,
           clientInfo: { name: 'latch', title: 'Latch', version: '0.1.0' },
         },
         Math.max(1, Math.min(15_000, options.timeoutMs ?? 15_000)),

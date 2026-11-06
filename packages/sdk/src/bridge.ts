@@ -8,6 +8,8 @@ import type {
   DriverTaskDetail,
   TaskMode,
   DriverTaskSummary,
+  HarnessCatalogue,
+  CatalogueRead,
 } from '@latch/protocol/types'
 
 /** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
@@ -39,6 +41,12 @@ export interface CreateTaskInput {
    * session's lifetime. Others never receive it and use `cwd` alone.
    */
   folders?: ReadonlyArray<ProjectFolder>
+  /**
+   * Choices from `HarnessCatalogue`, by option ID, to set after the session opens and before the first prompt: the model
+   * first, then thinking and the others, then the mode. A model or mode the agent no longer offers fails the turn; any
+   * other option it no longer offers is left at its default, and the session says so.
+   */
+  config?: ReadonlyArray<{ configId: string; value: string }>
   /** L3 drivers: the launch fingerprint this start recorded. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }
@@ -80,6 +88,12 @@ export interface SetConfigOptions {
 }
 
 export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider'
+
+/**
+ * What became of text added to a running turn. `injected`: the agent took it into the turn; nothing says it read it before
+ * the turn ended. `prompt-required`: no turn could take it and nothing was sent, so it waits for the next turn instead.
+ */
+export type SteerOutcome = 'injected' | 'prompt-required'
 
 /** What an L3 session would launch, for the audit and its start. */
 export interface LaunchPreview {
@@ -127,12 +141,30 @@ export interface Bridge {
    * threshold falls due, so it must cost no more than the number of live runs. `TaskSummary.live` carries the same facts.
    */
   liveRuns?(): Array<{ sessionId: string; live: RunLive }>
+  /**
+   * Optional, with `TaskDetail.steer`. Adds text to the session's running turn. `requestId` names it as a prompt's does: a
+   * retry answers what the first request got, and one whose answer was lost is never sent again (409 `steer-unknown`).
+   */
+  steer?(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome>
   /** Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. */
   remove?(sessionId: string): Promise<void>
   /** Optional. Change one of `TaskDetail.config` for later turns. */
   setConfig?(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void>
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
+  /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
+  catalogue?(): HarnessCatalogue | undefined
+  /** Optional, with `readCatalogue`. How the catalogue is read before a session, and how the last read went. */
+  catalogueRead?(): CatalogueRead | undefined
+  /**
+   * Optional. Reads the catalogue without running a turn; one read at a time, and a second call shares it. `auto`: only
+   * when `catalogueRead().when` is `select` and nothing is known yet for this definition; `ran` is false otherwise.
+   * `before` runs once, just before a process starts, and its failure stops the read.
+   */
+  readCatalogue?(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }>
+  /** Optional. Model IDs a person typed; see `HarnessInfo.customModels`. */
+  customModels?(): string[]
+  setCustomModels?(models: readonly string[]): Promise<void>
   /** Optional, L3 drivers. What a new session in `cwd` would launch; `workspaceId` and `folders` as in `CreateTaskInput`. */
   launchPreview?(input: { cwd: string; workspaceId?: string; folders?: ReadonlyArray<ProjectFolder> }): Promise<LaunchPreview>
 }

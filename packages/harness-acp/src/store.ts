@@ -3,11 +3,21 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
-import type { AgentBrief, Message, SessionCommand, PlanEntry, SessionConfigOption, DriverTaskSummary, UsageReport } from '@latch/protocol'
+import type {
+  AgentBrief,
+  Message,
+  SessionCommand,
+  PlanEntry,
+  SessionConfigOption,
+  DriverTaskSummary,
+  HarnessCatalogue,
+  UsageReport,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
 import type { ConfigSource } from './mapping.ts'
+import { MAX_STEPS } from './subagents.ts'
 
 export interface AcpRecord {
   /** Absent until session/new succeeds. */
@@ -43,6 +53,25 @@ export interface AcpRecord {
   folderVia?: 'acp' | 'args'
   /** The session has an agent's skills in its own folder, served to the engine read-only. */
   skills?: true
+  /**
+   * What the draft chose, set before the first prompt and dropped once set. `category` and `label` are what the catalogue
+   * said when the session was created, to name a choice the agent no longer offers.
+   */
+  startConfig?: StartChoice[]
+}
+
+export interface StartChoice {
+  configId: string
+  value: string
+  category?: string
+  label?: string
+}
+
+/** The catalogue of one definition, with what it was learned from. */
+export interface AcpCatalogue extends HarnessCatalogue {
+  definitionHash: string
+  launchHash: string
+  agentVersion?: string
 }
 
 export interface AcpTask {
@@ -61,14 +90,28 @@ export interface AcpTask {
 export interface AcpReceipt {
   taskId: string
   payloadHash: string
-  kind: 'create' | 'prompt'
+  kind: 'create' | 'prompt' | 'steer'
   deleted?: boolean
+  /** A steer: `sending` until the agent answers, and for good when no answer came. */
+  steer?: 'sending' | 'injected' | 'prompt-required'
+}
+
+/** The last read of a definition's catalogue without a turn; a harness read once by selection is not read so again. */
+export interface AcpCatalogueRead {
+  definitionHash: string
+  at: string
+  ok: boolean
+  message?: string
 }
 
 export interface AcpState {
   version: 1
   tasks: Record<string, AcpTask>
   receipts: Record<string, AcpReceipt>
+  catalogue?: AcpCatalogue
+  catalogueRead?: AcpCatalogueRead
+  /** Model IDs a person typed, for every definition of this harness. */
+  customModels?: string[]
 }
 
 const usage = z.object({
@@ -103,6 +146,16 @@ const toolDetail = z.object({
     .optional(),
 })
 const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user']), text: z.string() })) })
+// Its steps are messages, and may hold its own subagents.
+const subagent: z.ZodType = z.lazy(() =>
+  z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    status: z.enum(['running', 'waiting', 'done', 'failed', 'cancelled', 'unknown']).optional(),
+    steps: z.array(message).max(MAX_STEPS),
+    truncated: z.literal(true).optional(),
+  }),
+)
 const message = z.object({
   agentBrief: agentBrief.optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
@@ -116,6 +169,7 @@ const message = z.object({
   text: z.string(),
   requestId: z.string().optional(),
   queuedAt: z.string().optional(),
+  steered: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -131,6 +185,32 @@ const message = z.object({
     .object({ endedAt: z.string().optional(), activeMs: z.number().nonnegative().optional(), waitMs: z.number().nonnegative().optional() })
     .optional(),
   turnId: z.string().max(128).optional(),
+  subagent: subagent.optional(),
+})
+const configOption = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string().optional(),
+  description: z.string().optional(),
+  currentValue: z.string(),
+  options: z.array(z.object({ value: z.string(), name: z.string(), description: z.string().optional() })),
+})
+const hash = z.string().regex(/^[0-9a-f]{64}$/)
+const catalogue = z.object({
+  definitionHash: hash,
+  launchHash: hash,
+  agentVersion: z.string().optional(),
+  options: z.array(configOption),
+  perModel: z.array(z.object({ model: z.string(), options: z.array(configOption) })),
+  reportedAt: z.string(),
+  source: z.enum(['session', 'check']),
+})
+const catalogueRead = z.object({ definitionHash: hash, at: z.string(), ok: z.boolean(), message: z.string().optional() })
+const startChoice = z.object({
+  configId: z.string(),
+  value: z.string(),
+  category: z.string().optional(),
+  label: z.string().optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),
@@ -167,18 +247,7 @@ const stateSchema = z.object({
           }),
         )
         .optional(),
-      config: z
-        .array(
-          z.object({
-            id: z.string(),
-            name: z.string(),
-            category: z.string().optional(),
-            description: z.string().optional(),
-            currentValue: z.string(),
-            options: z.array(z.object({ value: z.string(), name: z.string(), description: z.string().optional() })),
-          }),
-        )
-        .optional(),
+      config: z.array(configOption).optional(),
       commands: z
         .array(
           z.object({
@@ -220,6 +289,7 @@ const stateSchema = z.object({
         folders: z.array(z.string()).optional(),
         folderVia: z.enum(['acp', 'args']).optional(),
         skills: z.literal(true).optional(),
+        startConfig: z.array(startChoice).optional(),
       }),
     }),
   ),
@@ -228,10 +298,15 @@ const stateSchema = z.object({
     z.object({
       taskId: z.string(),
       payloadHash: z.string(),
-      kind: z.enum(['create', 'prompt']),
+      kind: z.enum(['create', 'prompt', 'steer']),
       deleted: z.boolean().optional(),
+      steer: z.enum(['sending', 'injected', 'prompt-required']).optional(),
     }),
   ),
+  // Only a cache: one that does not read back is dropped rather than keeping the sessions from opening.
+  catalogue: catalogue.optional().catch(undefined),
+  catalogueRead: catalogueRead.optional().catch(undefined),
+  customModels: z.array(z.string()).optional(),
 })
 
 export function emptyAcpState(): AcpState {

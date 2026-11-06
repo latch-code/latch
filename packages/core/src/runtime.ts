@@ -2,7 +2,7 @@ import { RunFileTracking, recordFileOutputs } from './file-tracking.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import { fileMentionContext, isAttachmentRef, escapeSecurityText, rejectionNote } from '@latch/protocol'
+import { MODEL_EFFORT, fileMentionContext, isAttachmentRef, escapeSecurityText, rejectionNote } from '@latch/protocol'
 import type {
   AttachmentRef,
   Approval,
@@ -181,6 +181,8 @@ interface Run {
   /** Model ID sent to the provider for every step of this run, and the service that provides it. */
   model: string
   providerId: string
+  /** The thinking level sent with every step; absent, the model's default. */
+  effort?: string
   /** The user message that started the run; it carries the turn's times once the run settles. */
   userMessageId: string
   clock: RunClock
@@ -217,6 +219,7 @@ interface LiveStep {
 interface Selection {
   providerId: string
   model?: string
+  effort?: string
   source: 'request' | 'session' | 'default'
   persist: boolean
 }
@@ -245,7 +248,7 @@ function assertPrompt(prompt: string, requestId: string, attachments?: Attachmen
     throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
   if (!requestId || requestId.length > 256) throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
 }
-/** Returns a detached copy with only the two known keys, so hashes and records stay stable. */
+/** Returns a detached copy with only the known keys, so hashes and records stay stable. */
 function modelRef(value: unknown): ModelRef {
   const ref = value as Partial<ModelRef> | null
   if (
@@ -257,10 +260,11 @@ function modelRef(value: unknown): ModelRef {
     || ref.providerId.length > 128
     || !ref.model.trim()
     || ref.model.length > 256
+    || (ref.effort !== undefined && (typeof ref.effort !== 'string' || !MODEL_EFFORT.test(ref.effort)))
   ) {
     throw new AppError(400, 'invalid-model', '模型选择无效')
   }
-  return { providerId: ref.providerId, model: ref.model }
+  return { providerId: ref.providerId, model: ref.model, ...(ref.effort ? { effort: ref.effort } : {}) }
 }
 function safeCall(call: ToolCall): ToolCall {
   if (
@@ -786,6 +790,7 @@ class HarnessRuntime implements Bridge {
             cwd,
             ...(scope ? { workspaceId: scope.workspaceId, folders: scope.folders } : {}),
             model: run.model,
+            ...(run.effort ? { effort: run.effort } : {}),
             mode,
             ...(selection.persist || agentContext?.personal || agentContext?.agent ? { providerId: selection.providerId } : {}),
             runId: run.id,
@@ -859,7 +864,13 @@ class HarnessRuntime implements Bridge {
         const selection: Selection = model
           ? { ...model, source: 'request', persist: true }
           : task.summary.providerId
-            ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
+            ? {
+                providerId: task.summary.providerId,
+                model: task.summary.model,
+                ...(task.summary.effort ? { effort: task.summary.effort } : {}),
+                source: 'session',
+                persist: true,
+              }
             : { ...this.defaultSelection(), persist: false }
         run = this.allocateRun(
           sessionId,
@@ -902,6 +913,8 @@ class HarnessRuntime implements Bridge {
         if (run.lease.skills?.length) task.summary.skills = run.lease.skills.map(skill => skill.id)
         else delete task.summary.skills
         task.summary.model = run.model
+        if (run.effort) task.summary.effort = run.effort
+        else delete task.summary.effort
         if (selection.persist || agentContext?.personal || agentContext?.agent) task.summary.providerId = selection.providerId
         task.summary.updatedAt = at
         task.revision++
@@ -952,6 +965,13 @@ class HarnessRuntime implements Bridge {
         ? new AppError(400, 'model-unavailable', `模型服务 ${lease.provider.name} 未启用模型 ${model}`)
         : new AppError(409, 'model-unavailable', `模型 ${model} 已不可用，请切换模型后继续`)
     }
+    const effort = selection.effort
+    if (effort !== undefined && !lease.provider.modelCapabilities?.[model]?.thinking?.includes(effort)) {
+      lease.release()
+      throw selection.source === 'request'
+        ? new AppError(400, 'effort-unavailable', `模型 ${model} 没有声明思考深度 ${effort}`)
+        : new AppError(409, 'effort-unavailable', `模型 ${model} 已不再设置思考深度 ${effort}，请在模型菜单里重新选择后继续`)
+    }
     let resolveDone!: () => void
     const done = new Promise<void>(resolve => {
       resolveDone = resolve
@@ -963,6 +983,7 @@ class HarnessRuntime implements Bridge {
       mode,
       model,
       providerId: selection.providerId,
+      ...(effort ? { effort } : {}),
       userMessageId: randomUUID(),
       ...(agentContext?.instructions ? { instructions: agentContext.instructions } : {}),
       ...(agentContext?.sharedMessages
@@ -1327,7 +1348,13 @@ class HarnessRuntime implements Bridge {
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
         let finished = false
-        for await (const delta of run.lease.provider.stream({ messages, tools: [...availableTools], signal, model: run.model })) {
+        for await (const delta of run.lease.provider.stream({
+          messages,
+          tools: [...availableTools],
+          signal,
+          model: run.model,
+          ...(run.effort ? { effort: run.effort } : {}),
+        })) {
           run.lastEventAt = this.clock()
           signal.throwIfAborted()
           if (finished) throw new AppError(502, 'provider-protocol', '模型在结束事件之后继续发送内容')

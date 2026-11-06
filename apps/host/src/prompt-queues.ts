@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { modelEffort } from './config.ts'
 import { LISTENER_CLASSES, type ListenerClass, type ModelRef, type PromptQueueItem, type TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
@@ -44,7 +45,9 @@ const recordSchema = z.strictObject({
   state: z.enum(['waiting', 'parked', 'dropped', 'sending', 'uncertain', 'sent', 'removed']),
   waitRunId: z.string().max(128),
   reason: z.string().max(200).optional(),
-  model: z.strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200) }).optional(),
+  model: z
+    .strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200), effort: modelEffort.optional() })
+    .optional(),
 })
 const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(recordSchema).max(MAX_RECEIPTS) })
 type Record = z.infer<typeof recordSchema>

@@ -21,6 +21,8 @@ export const codexProfile: HarnessProfile = {
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
+  // The same Codex the sessions run: the adapter's `cli` runs the one `CODEX_PATH` names, else its own.
+  catalogueRead: { codexModels: ['cli', 'app-server'] },
   // Every failure exits 1 as well, so only its own sentence means logged out. API keys print partly here: nothing is kept.
   loginStatus: {
     args: ['login', 'status'],

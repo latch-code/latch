@@ -71,4 +71,11 @@ export const opencodeProfile: HarnessProfile = {
     skip: ['.opencode/node_modules', '.opencode/bun.lock', '.opencode/bun.lockb', '.opencode/.gitignore', '.opencode/plans'],
     reduce: { '.opencode/package.json': withoutOwnPlugin },
   },
+  // OpenCode sends a reply's thinking under the ID of its reasoning part, not of the message, which would split one reply
+  // in two; without an ID the thinking joins the reply it belongs to.
+  normalizeUpdate(update) {
+    if (update.sessionUpdate !== 'agent_thought_chunk' || update.messageId === undefined) return update
+    const { messageId: _part, ...rest } = update
+    return rest as typeof update
+  },
 }

@@ -38,6 +38,9 @@ export interface AcpPermissionProfile {
   notes: string[]
 }
 
+/** One `session/update` as the agent sent it: `sessionUpdate` names the kind, the rest is untrusted. */
+type SessionUpdate = { sessionUpdate: string } & Record<string, unknown>
+
 export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
 /** What the harness itself writes below its `projectConfigPaths` when it starts, so that is not a change. */
@@ -90,6 +93,18 @@ export interface HarnessProfile {
     readonly bundledArgs?: readonly string[]
     read(result: { code: number | null; output: string }): LoginStatus
   }
+  /**
+   * How a draft's lists are read before a session. Absent: an empty session in a private folder, once, when a draft
+   * first selects the harness with nothing known. `request`: the same, only when a person asks, because the process loads
+   * more than the harness when it starts. `codexModels`: Codex's own `model/list` through the adapter's bundled CLI, with
+   * these arguments after the definition's, which opens no session or thread.
+   */
+  readonly catalogueRead?: { readonly when: 'request' } | { readonly codexModels: readonly string[] }
+  /**
+   * Rewrites one `session/update` into what ACP says before Latch reads it, where this harness says the same thing its own
+   * way. Returns the update to read; it never adds what the harness did not send.
+   */
+  normalizeUpdate?(update: SessionUpdate): SessionUpdate
   /** Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. */
   materialize?(input: { dataDir: string }): Promise<Record<string, string>>
 }

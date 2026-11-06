@@ -831,6 +831,52 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(backend.release).toHaveBeenCalledTimes(4)
   })
 
+  it('runs a declared thinking level, keeps it with the session, and refuses one the model does not declare', async () => {
+    const dataDir = await directory()
+    const efforts: Array<string | undefined> = []
+    const alpha: ModelProvider = {
+      ...modelsProvider('alpha', ['a-1', 'a-2']),
+      modelCapabilities: { 'a-1': { thinking: ['low', 'high'] } },
+      async *stream({ effort }) {
+        efforts.push(effort)
+        yield { type: 'text', text: 'ok' }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const backend = providers([alpha])
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'alpha' }))
+    await expect(
+      bridge.createTask({ prompt: 'x', requestId: 'undeclared', model: { providerId: 'alpha', model: 'a-2', effort: 'high' } }),
+    ).rejects.toMatchObject({ status: 400, code: 'effort-unavailable' })
+    await expect(
+      bridge.createTask({ prompt: 'x', requestId: 'malformed', model: { providerId: 'alpha', model: 'a-1', effort: 'High!' } }),
+    ).rejects.toMatchObject({ status: 400, code: 'invalid-model' })
+    expect(await bridge.listTasks()).toEqual([])
+
+    const high = { providerId: 'alpha', model: 'a-1', effort: 'high' }
+    const { sessionId } = await bridge.createTask({ prompt: 'x', requestId: 'high', model: high })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary).toMatchObject({ model: 'a-1', effort: 'high' })
+    // A retry with the same choice is the same request; another level is not.
+    expect(await bridge.createTask({ prompt: 'x', requestId: 'high', model: { ...high } })).toEqual({ sessionId })
+    await expect(bridge.createTask({ prompt: 'x', requestId: 'high', model: { ...high, effort: 'low' } })).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
+
+    await bridge.prompt(sessionId, 'y', 'session')
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'z', 'default', { model: { providerId: 'alpha', model: 'a-1' } })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary.effort).toBeUndefined()
+    await bridge.prompt(sessionId, 'w', 'low', { model: { providerId: 'alpha', model: 'a-1', effort: 'low' } })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(efforts).toEqual(['high', 'high', undefined, 'low'])
+
+    alpha.modelCapabilities = { 'a-1': { thinking: ['high'] } }
+    await expect(bridge.prompt(sessionId, 'v', 'stale')).rejects.toMatchObject({ status: 409, code: 'effort-unavailable' })
+    expect(efforts).toHaveLength(4)
+  })
+
   it('runs tools in the session workspace and refuses unknown or removed workspaces', async () => {
     const dataDir = await directory()
     const home = await directory()

@@ -75,7 +75,8 @@ public enum PhoneConversation {
     public static func turns(_ messages: [NativeJSON]) -> [PhoneTurn] {
         var result: [PhoneTurn] = []
         for message in messages {
-            if message["role"].string == "user" { result.append(PhoneTurn(id: message["id"].string ?? "user:\(result.count)", user: message, replies: [])) }
+            // Text added to a running turn (`steered`) stays in that turn.
+            if message["role"].string == "user" && !message["steered"].bool { result.append(PhoneTurn(id: message["id"].string ?? "user:\(result.count)", user: message, replies: [])) }
             else if result.isEmpty { result.append(PhoneTurn(id: "lead:" + (message["id"].string ?? ""), user: nil, replies: [message])) }
             else { result[result.count - 1].replies.append(message) }
         }
@@ -200,6 +201,7 @@ public enum PhoneConversation {
     private static let verbs = ["read": "读取", "edit": "编辑", "delete": "删除", "move": "移动", "search": "搜索", "execute": "运行", "fetch": "获取"]
     /** A verb by the tool's kind and its object; a tool Latch can read nothing from shows its raw name in mono, never a guess. */
     public static func toolLabel(_ message: NativeJSON) -> PhoneToolLabel {
+        if let title = message["subagent"]["title"].string { return PhoneToolLabel(verb: "子 Agent", object: title, mono: false) }
         let tool = message["tool"], diffs = tool["diffs"].array
         if diffs.count > 1 { return PhoneToolLabel(verb: "编辑", object: "\(diffs.count) 个文件", mono: false) }
         if let diff = diffs.first {
@@ -351,7 +353,7 @@ public enum PhoneConversation {
             return PhoneRunStatus(tone: .amber, text: minutes(hostNow.timeIntervalSince(last)) + "没有新输出", clock: nil, actions: [.stop])
         }
         let elapsed = PhoneSessions.runElapsed(started: detail["runStartedAt"], waited: detail["runWaitMs"], waiting: detail["runWaitingSince"], hostNow: hostNow)
-        let running = detail["messages"].array.last { $0["role"].string == "tool" && $0["state"].string == "running" }
+        let running = detail["messages"].array.last { $0["role"].string == "tool" && $0["state"].string == "running" && $0["subagent"] == .null }
         let command = running.flatMap { toolKind($0) == "execute" ? toolLabel($0).object : nil } ?? (live["activity"].string == "command" ? live["commandName"].string : nil)
         return PhoneRunStatus(tone: .plain, text: command.map { "命令运行中 · " + $0 } ?? "运行中", clock: elapsed.map { PhoneTime.runClock(seconds: $0) }, actions: [])
     }
@@ -378,7 +380,9 @@ public enum PhoneConversation {
      * allow-always. A request it cannot allow says so plainly, with no button that looks dead.
      */
     public static func approvalGate(_ approval: NativeJSON, canApproveStandard: Bool, canApproveElevated: Bool, canRun: Bool) -> PhoneApprovalGate {
-        let heading = toolHeading(approval["tool"], toolName: approval["toolName"].string)
+        // A subagent's request says whose it is: its call is no row of the session's own.
+        let asker = approval["subagent"].string.map { "子 Agent \($0) · " } ?? ""
+        let heading = asker + toolHeading(approval["tool"], toolName: approval["toolName"].string)
         let options = approval["options"].array
         let once = options.first { $0["kind"].string == "allow_once" }
         let advisory = approval["advisory"].bool

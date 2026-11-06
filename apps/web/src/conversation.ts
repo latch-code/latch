@@ -26,7 +26,10 @@ export function renderedMessages(detail: TaskDetail): Message[] {
 
 export const toolRowId = (approval: Approval) => (approval.toolCallId ? `tool:${approval.toolCallId}` : undefined)
 
-/** A prompt and everything that answered it, up to the next prompt. Content before any prompt is a turn of its own. */
+/**
+ * A prompt and everything that answered it, up to the next prompt. Content before any prompt is a turn of its own. Text
+ * added to a running turn (`steered`) belongs to that turn, in reading order.
+ */
 export interface Turn {
   /** The prompt's message ID; `lead:<first id>` for content before any prompt. */
   key: string
@@ -38,7 +41,7 @@ export interface Turn {
 export function turnsOf(messages: Message[]): Turn[] {
   const turns: Turn[] = []
   for (const message of messages) {
-    if (message.role === 'user') turns.push({ key: message.id, user: message, replies: [] })
+    if (message.role === 'user' && !message.steered) turns.push({ key: message.id, user: message, replies: [] })
     else {
       const last = turns.at(-1)
       if (last) last.replies.push(message)
@@ -603,6 +606,7 @@ export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; appro
  * (「运行 pnpm test」, 「读取 a.ts」), or 「正在执行」 with its title when it has no kind Latch reads.
  */
 function toolText(message: Message): string {
+  if (message.subagent) return `子 Agent ${message.subagent.title} 运行中`
   const label = toolLabel({ ...message, state: 'running' })
   if (label.verb) return `${label.verb} ${label.object}`
   return message.tool?.toolTitle ? `正在${message.tool.toolTitle}` : `正在执行 ${label.object}`

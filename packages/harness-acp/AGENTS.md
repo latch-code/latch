@@ -15,7 +15,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 探测只做 initialize（有 `loginStatus` 的预设另问一次），经过同一命令、环境和配置指纹检查，15 秒内结束并等待进程停止；不发提示词，authMethods 不作为未登录证据（`test/probe.test.ts`）。
 - 新的持久化字段以可选字段加入 `src/store.ts` 的 zod schema。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts#uses one approval wait timestamp even when every clock read advances`）。
-- 测试只用 testkit 的假 Agent（`FAKE_ACP_AGENT`），不向真实 Agent CLI 发送提示。
+- 测试只用假 Agent 与回放 Agent（`test/replay.test.ts`），不向真实 Agent 发提示。
 
 测试：`pnpm test --project @latch/harness-acp`，另跑 `pnpm test:e2e`（`e2e/permissions-ui.e2e.ts` 用假 Agent）。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 

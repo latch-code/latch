@@ -7,7 +7,7 @@ export const FORK_CONTEXT_LIMIT = 200_000
 export function forkSeed(detail: TaskDetail, upToMessageId: string): { text: string; context: NonNullable<TaskSummary['forkOf']> } {
   const end = detail.messages.findIndex(message => message.id === upToMessageId)
   if (end < 0) throw new AppError(400, 'fork-position', '找不到要分叉的位置，请重新打开原会话')
-  const lastUser = detail.messages.findLastIndex(message => message.role === 'user')
+  const lastUser = detail.messages.findLastIndex(message => message.role === 'user' && !message.steered)
   if (
     (['running', 'waiting-approval'].includes(detail.summary.status) && end >= lastUser)
     || detail.messages.slice(0, end + 1).some(message => ['running', 'queued', 'awaiting-approval'].includes(message.state ?? ''))
@@ -19,7 +19,7 @@ export function forkSeed(detail: TaskDetail, upToMessageId: string): { text: str
   let turn = 0
   for (let index = 0; index <= end; index++) {
     const message = detail.messages[index]!
-    if (message.role === 'user') turn++
+    if (message.role === 'user' && !message.steered) turn++
     // Hidden reasoning and raw tool parameters are not required to continue the conversation.
     const block = `\n\n${{ user: '你', assistant: '助手', tool: '工具结果', system: '会话说明' }[message.role]}：\n${message.text}`
     pieces.push(block.length > FORK_CONTEXT_LIMIT ? block.slice(-FORK_CONTEXT_LIMIT) : block)

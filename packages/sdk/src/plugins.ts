@@ -2,7 +2,7 @@
 import type { HarnessDriver } from './harness.ts'
 import type { TransportDriver } from './transports.ts'
 export type * from './transports.ts'
-import type { TaskSummary, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
+import type { ModelCapabilities, TaskSummary, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
 
 export type { PluginInfo } from '@latch/protocol/types'
 
@@ -91,15 +91,24 @@ export interface ToolDefinition {
   ): Promise<{ text: string }>
 }
 export interface ModelProvider {
-  modelCapabilities?: Readonly<Record<string, { vision?: boolean }>>
+  modelCapabilities?: Readonly<Record<string, ModelCapabilities>>
   id: string
   name: string
   /** Default model ID. */
   model: string
   /** Model IDs the user enabled for this provider. Absent means only `model`. */
   models?: string[]
-  /** `model` in the request overrides the default; providers must not silently substitute another. */
-  stream(request: { messages: ModelMessage[]; tools: ToolDefinition[]; signal: AbortSignal; model?: string }): AsyncIterable<ModelDelta>
+  /**
+   * `model` in the request overrides the default; providers must not silently substitute another. `effort` is one of
+   * `modelCapabilities[model].thinking`; absent leaves the model's default, and a level the model does not declare fails.
+   */
+  stream(request: {
+    messages: ModelMessage[]
+    tools: ToolDefinition[]
+    signal: AbortSignal
+    model?: string
+    effort?: string
+  }): AsyncIterable<ModelDelta>
 }
 export interface PluginContext {
   registerProvider(provider: ModelProvider): void

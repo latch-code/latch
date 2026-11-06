@@ -694,6 +694,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { id: 'a1', role: 'assistant', text: '好了' },
           { id: 'u2', role: 'user', text: '第二轮' },
           { id: 't5', role: 'tool', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } },
+          // Added to the running turn: it stays in that turn and opens none.
+          { id: 's1', role: 'user', text: '也看看日志', steered: true },
+          { id: 'sub', role: 'tool', toolName: 'subagent', state: 'running', subagent: { title: '跑测试', status: 'running', steps: [] } },
         ],
       },
       outputs: [{ path: 'a.ts' }, { path: 'made.pptx', root: 'r' }],
@@ -715,6 +718,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { toolName: 'write_file', risk: 'R2', riskReason: 'outside-workspace' },
         { toolName: 'shell', advisory: true, risk: 'R2' },
         { toolName: 'write_file' },
+        { toolName: 'Edit', advisory: true, risk: 'R2', subagent: '跑测试', tool: { kind: 'edit', title: 'Edit a.txt' } },
       ],
       inputs: [
         { summary: { level: 'L1' }, canRun: true, connected: true },
@@ -777,7 +781,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         del: -1,
       },
       {
-        blocks: [{ work: ['运行 pnpm test'] }, { prose: '还在写' }],
+        blocks: [{ work: ['运行 pnpm test'] }, { steer: '也看看日志' }, { work: ['子 Agent 跑测试'] }, { prose: '还在写' }],
         folds: true,
         fold: '已工作',
         files: ['a.ts', 'made.pptx'],
@@ -797,6 +801,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '在项目文件夹之外' },
       { heading: 'shell', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '高风险' },
+      { heading: '子 Agent 跑测试 · Edit a.txt', canAllow: true, option: '', refusal: '', clause: '' },
     ])
     expect(result.engines).toEqual([
       { id: 'standard', name: 'Latch 内置' },

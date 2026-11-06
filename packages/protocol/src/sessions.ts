@@ -73,6 +73,8 @@ export interface DriverTaskSummary {
   createdAt?: string
   cwd?: string
   model?: string
+  /** Built-in harness: the thinking level `model` runs with; absent, the model's own default. */
+  effort?: string
   /** Missing on historical tasks; those retain the original Agent behavior. */
   mode?: TaskMode
   /** Provider of `model` when the harness runs on the Host's model providers. */
@@ -289,6 +291,11 @@ export interface Message {
   requestId?: string
   /** When this input entered the Host queue, before it was actually sent. */
   queuedAt?: string
+  /**
+   * User: added to a turn that was already running. The agent took it into that turn; whether it read it before the turn
+   * ended is not known. It opens no turn of its own.
+   */
+  steered?: true
   /** Host-only provenance for the first user message. */
   forkContext?: NonNullable<TaskSummary['forkOf']>
   toolName?: string
@@ -319,6 +326,26 @@ export interface Message {
   agentBrief?: AgentBrief
   /** User: the turn it opened in the changes record (`TurnChanges.turnId`); absent when the run reached no folder, or from before this field. */
   turnId?: string
+  /** Tool row: a subagent the harness started for this turn, as it reported it. */
+  subagent?: Subagent
+}
+
+/**
+ * A session the harness started and runs on its own, shown where it began. It takes no messages; its requests for
+ * approval come to the session that started it.
+ */
+export interface Subagent {
+  title: string
+  description?: string
+  /**
+   * What it last said of itself. `unknown`: it said it cannot tell, or the turn that started it ended without its saying
+   * it stopped. Absent: it has not said.
+   */
+  status?: 'running' | 'waiting' | 'done' | 'failed' | 'cancelled' | 'unknown'
+  /** What it said and did, in order, without its reasoning. */
+  steps: Message[]
+  /** It did more than the steps kept. */
+  truncated?: true
 }
 
 export type ApprovalOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
@@ -360,6 +387,8 @@ export interface Approval {
   riskReason?: ApprovalRiskReason
   /** Asked by an L3 harness: a prompt, not a security boundary. */
   advisory?: true
+  /** Asked by a subagent of the session (`Message.subagent`), by its name. */
+  subagent?: string
 }
 
 export interface PlanEntry {
@@ -430,6 +459,8 @@ export interface TaskDetail {
   sync?: { instanceId: string; revision: number; hostTime?: string }
   /** Who enforces this session's permissions and what Latch could verify. */
   permission?: SessionPermission
+  /** The running turn takes more text now (`steer` on a prompt). Absent: what is sent meanwhile waits in the queue. */
+  steer?: true
 }
 
 export interface SessionPermission {

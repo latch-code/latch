@@ -2,8 +2,9 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { HarnessInfo, HostCatalog, SessionConfigOption } from '@latch/protocol'
-import { SessionModelControl } from '../src/composer/ModelControl.tsx'
+import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
+import { DraftModelControl, SessionModelControl } from '../src/composer/ModelControl.tsx'
+import { draftConfig, rememberedConfig, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
 import { contextUse, contextWords, draftPermission, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
@@ -11,6 +12,8 @@ import {
   agentModelControls,
   composerOptions,
   modelChipText,
+  modelWords,
+  thinkingWord,
   unreportedNote,
 } from '../src/composer/modelReasoning.ts'
 
@@ -255,5 +258,178 @@ describe('the model control label', () => {
     expect(unreportedNote('pi', true, [option('model')])).toBe('pi 没有报告思考深度，用它自己的默认值。')
     expect(unreportedNote('pi', true, [option('thought_level')])).toBe('pi 没有报告可选的模型，由它自己决定。')
     expect(unreportedNote('pi', true, [option('model'), option('thought_level')])).toBeUndefined()
+  })
+})
+
+describe("a draft's list of a Harness's own options", () => {
+  const select = (id: string, category: string, currentValue: string, values: string[]): SessionConfigOption => ({
+    id,
+    name: id,
+    category,
+    currentValue,
+    options: values.map(value => ({ value, name: value.toUpperCase() })),
+  })
+  const listed: HarnessInfo = testHarness('codex', {
+    label: 'Codex',
+    permission: { approvals: 'prompts', readback: 'mode', neverAskModes: ['full'] },
+    catalogue: {
+      options: [
+        select('mode', 'mode', 'read', ['read', 'write', 'full']),
+        select('model', 'model', 'small', ['small', 'large', 'huge']),
+        select('effort', 'thought_level', 'low', ['low', 'high']),
+        select('fast', 'model_config', 'off', ['off', 'on']),
+      ],
+      perModel: [
+        { model: 'large', options: [select('effort', 'thought_level', 'low', ['low', 'high', 'max'])] },
+        { model: 'small', options: [select('effort', 'thought_level', 'low', ['low', 'high'])] },
+      ],
+      reportedAt: '2026-11-06T10:00:00.000Z',
+      source: 'session',
+    },
+  })
+  const values = (config: SessionConfigOption[] | undefined, id: string) => config?.find(option => option.id === id)
+
+  it('is what the last session offered, with the picks in it', () => {
+    expect(draftConfig(testHarness('pi'), {})).toBeUndefined()
+    const plain = draftConfig(listed, undefined)!
+    expect(plain.config.map(option => [option.id, option.currentValue])).toEqual([
+      ['mode', 'read'],
+      ['model', 'small'],
+      ['effort', 'low'],
+      ['fast', 'off'],
+    ])
+    expect(plain.thinkingUnknown).toBe(false)
+    const picked = draftConfig(listed, { model: 'small', effort: 'high', mode: 'write' })!
+    expect(picked.config.map(option => option.currentValue)).toEqual(['write', 'small', 'high', 'off'])
+  })
+
+  it('follows the model: the levels a session on it offered, or none known yet', () => {
+    const large = draftConfig(listed, { model: 'large', effort: 'max' })!
+    expect(values(large.config, 'effort')?.options.map(item => item.value)).toEqual(['low', 'high', 'max'])
+    expect(values(large.config, 'effort')?.currentValue).toBe('max')
+    // What followed the default model is not claimed for another.
+    expect(values(large.config, 'fast')).toBeUndefined()
+    const huge = draftConfig(listed, { model: 'huge', effort: 'high' })!
+    expect(values(huge.config, 'effort')).toBeUndefined()
+    expect(huge.thinkingUnknown).toBe(true)
+    // A pick the list no longer has is not carried.
+    expect(values(draftConfig(listed, { model: 'gone' })!.config, 'model')?.currentValue).toBe('small')
+  })
+
+  it('starts with only what was picked and is still offered, and keeps all but the mode for the next draft', () => {
+    expect(startConfig(listed, { model: 'large', effort: 'max', mode: 'write', other: 'x' })).toEqual([
+      { configId: 'model', value: 'large' },
+      { configId: 'effort', value: 'max' },
+      { configId: 'mode', value: 'write' },
+    ])
+    expect(startConfig(listed, { model: 'small', effort: 'max' })).toEqual([{ configId: 'model', value: 'small' }])
+    expect(rememberedConfig(listed, { model: 'large', mode: 'write' })).toEqual({ model: 'large' })
+    expect(rememberedConfig(listed, { mode: 'write' })).toBeUndefined()
+  })
+
+  it('lists model IDs typed for the Harness after its own, and starts on one', () => {
+    const typed = { ...listed, customModels: ['vendor/typed', 'large'] }
+    const model = draftConfig(typed, { model: 'vendor/typed' })!.config.find(option => option.category === 'model')!
+    expect(model.currentValue).toBe('vendor/typed')
+    expect(model.options.map(item => [item.value, item.description])).toEqual([
+      ['small', undefined],
+      ['large', undefined],
+      ['huge', undefined],
+      ['vendor/typed', '自己填写'],
+    ])
+    expect(startConfig(typed, { model: 'vendor/typed' })).toEqual([{ configId: 'model', value: 'vendor/typed' }])
+    expect(startConfig(listed, { model: 'vendor/typed' })).toEqual([])
+  })
+
+  it('lists the modes as a session does, the starting one current and the never-asking one amber', () => {
+    const view = draftPermission(listed, 'agent', draftConfig(listed, { mode: 'full' })!.config)!
+    expect(view.rows?.map(row => [row.value, row.current, row.neverAsks])).toEqual([
+      ['read', false, false],
+      ['write', false, false],
+      ['full', true, true],
+    ])
+    expect(view.amber).toBe(true)
+    expect(draftPermission(listed, 'agent', draftConfig(listed, undefined)!.config)!.label).toBe('READ')
+    // Without a list: what the Harness declares, and that it can be changed after the start.
+    expect(draftPermission(testHarness('codex', { permission: { approvals: 'prompts', readback: 'mode' } }), 'agent')?.note).toContain(
+      '发第一条消息后可以换',
+    )
+  })
+
+  it('drops picks made for another Harness', () => {
+    const built: HostCatalog = { ...catalog, harnesses: [listed, testHarness('pi')], defaults: { ...catalog.defaults, harnessId: 'codex' } }
+    expect(resolveChoice(built, { harnessId: 'codex', config: { model: 'large', mode: 'write' } }).config).toEqual({
+      model: 'large',
+      mode: 'write',
+    })
+    expect(resolveChoice(built, { harnessId: 'pi', config: { model: 'large' } }).config).toBeUndefined()
+  })
+
+  it('draws the draft from the list, says where it came from, and not that it is known only after the start', () => {
+    const markup = renderToStaticMarkup(
+      createElement(DraftModelControl, {
+        catalog: { ...catalog, harnesses: [listed] },
+        choice: { mode: 'agent', harnessId: 'codex', config: { model: 'large' } },
+        onChoice() {},
+        access: { local: true, legacy: false, admin: true, scopes: new Set(['view', 'run'] as const) },
+        disabled: false,
+      }),
+    )
+    expect(markup).toContain('LARGE · LOW')
+    expect(markup).not.toContain('开始后才报告')
+  })
+})
+
+describe('thinking on the built-in Harness', () => {
+  const builtin = testHarness('standard', { kind: 'builtin', label: 'Latch 内置' })
+  const declared: HostCatalog = {
+    harnesses: [builtin],
+    providers: [
+      {
+        id: 'lab',
+        name: 'Lab',
+        kind: 'openai-compatible',
+        models: ['alpha', 'beta', 'gamma'],
+        defaultModel: 'alpha',
+        modelCapabilities: { alpha: { thinking: ['low', 'medium', 'high'] }, beta: { thinking: ['low', 'xhigh'] } },
+      },
+    ],
+    workspaces: [],
+    defaults: { harnessId: builtin.id, mode: 'agent', workspaceId: 'default' },
+  }
+  const session = (model: ModelRef | undefined, current: ModelRef | undefined) =>
+    renderToStaticMarkup(
+      createElement(SessionModelControl, { ...props(), catalog: declared, harness: builtin, model, current, config: [] }),
+    )
+
+  it('reads the declared levels only, and keeps a level across models only where the other model declares it too', () => {
+    expect(thinkingLevels(declared, { providerId: 'lab', model: 'alpha' })).toEqual(['low', 'medium', 'high'])
+    expect(thinkingLevels(declared, { providerId: 'lab', model: 'gamma' })).toEqual([])
+    const high = { providerId: 'lab', model: 'alpha', effort: 'high' }
+    expect(switchModel(declared, high, { providerId: 'lab', model: 'beta' })).toEqual({ providerId: 'lab', model: 'beta' })
+    expect(switchModel(declared, { ...high, effort: 'low' }, { providerId: 'lab', model: 'beta' })).toEqual({
+      providerId: 'lab',
+      model: 'beta',
+      effort: 'low',
+    })
+    expect(sameModel(high, { providerId: 'lab', model: 'alpha' })).toBe(false)
+    expect(sameModel(high, { ...high })).toBe(true)
+    expect(modelWords(high)).toBe('alpha · 高')
+    expect(thinkingWord('xhigh')).toBe('超高')
+    expect(thinkingWord('turbo')).toBe('turbo')
+  })
+
+  it('shows the chosen level on the chip, the declared levels in the menu, and a level switch as the next message', () => {
+    const current = { providerId: 'lab', model: 'alpha', effort: 'high' }
+    expect(session(current, current)).toContain('alpha · 高')
+    expect(session({ providerId: 'lab', model: 'alpha' }, current)).toContain('下一条：alpha')
+    expect(session({ providerId: 'lab', model: 'alpha', effort: 'low' }, current)).toContain('下一条：alpha · 低')
+    expect(session({ providerId: 'lab', model: 'gamma' }, { providerId: 'lab', model: 'gamma' })).toContain('gamma · 默认思考')
+  })
+
+  it('drops a remembered level the owner has since taken away, and keeps one still declared', () => {
+    const stored = (effort: string) => ({ harnessId: builtin.id, model: { providerId: 'lab', model: 'alpha', effort } })
+    expect(resolveChoice(declared, stored('high')).model).toEqual({ providerId: 'lab', model: 'alpha', effort: 'high' })
+    expect(resolveChoice(declared, stored('max')).model).toEqual({ providerId: 'lab', model: 'alpha' })
   })
 })

@@ -14,6 +14,10 @@ export const AGENT_ACTIONS = {
   'automation.ran': z.strictObject({ trigger: z.enum(['schedule', 'manual']), attempt: hex64 }),
   'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),
   'agent.probed': z.strictObject({ agentId: opaqueId, launchHash: hex64, status: z.enum(['ready', 'authentication-required', 'failed']) }),
+  /** A harness started only to say what it offers: an empty session with no prompt, or its own model list. */
+  'agent.catalogue.requested': z.strictObject({ agentId: opaqueId, auto: z.boolean() }),
+  'agent.catalogue.read': z.strictObject({ agentId: opaqueId, ok: z.boolean() }),
+  'agent.models.changed': z.strictObject({ agentId: opaqueId, count: z.number().int().min(0).max(32) }),
   /** The program's status command ran; the status is all that is kept of what it said. */
   'agent.login.checked': z.strictObject({ agentId: opaqueId, status: z.enum(['authenticated', 'unauthenticated', 'unknown']) }),
   'agent.login.opened': z.strictObject({ agentId: opaqueId }),

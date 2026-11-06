@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { PROVIDER_PRESETS, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
-import { anthropicEndpoint, anthropicHeaders, createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
-import { ProviderError, readErrorBody, redactor, send, type FetchLike } from './plugins/providers/http.ts'
-import { createOpenAIPlugin, openaiEndpoint } from './plugins/providers/openai-compatible/index.ts'
+import { createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
+import { listAnthropicModels } from './plugins/providers/anthropic-wire.ts'
+import { listChatModels } from './plugins/providers/chat-wire.ts'
+import { ProviderError, readErrorBody, redactor, send, type FetchLike, type ModelPage } from './plugins/providers/http.ts'
+import { createOpenAIPlugin } from './plugins/providers/openai-compatible/index.ts'
 import { addressOf, keyPathOf, originOf, type ProviderRecord } from './config.ts'
 
 export { originOf }
@@ -136,7 +138,6 @@ export function summarizeProvider(provider: ModelProvider, kind: ProviderSummary
 const LIST_TIMEOUT_MS = 10_000
 const MAX_LIST_BYTES = 8 * 1024 * 1024
 const MAX_LISTED_MODELS = 5000
-const MAX_LIST_PAGES = 10
 const listSchema = z.union([
   z.object({
     data: z.array(z.object({ id: z.string() })),
@@ -266,20 +267,13 @@ export async function listProviderModels(
     }
     if (models.size > MAX_LISTED_MODELS) throw new ProviderError('模型列表条目过多。', 'response-too-large')
   }
+  const page: ModelPage = async (url, headers) => {
+    const result = await fetchPage(options.fetch, url, headers, combined, redacted)
+    collect(result.data)
+    return result
+  }
   try {
-    if (input.kind === 'openai-compatible') {
-      const headers: Record<string, string> = input.apiKey ? { authorization: `Bearer ${input.apiKey}` } : {}
-      collect((await fetchPage(options.fetch, openaiEndpoint(input.baseURL, '/models'), headers, combined, redacted)).data)
-    } else {
-      const endpoint = new URL(anthropicEndpoint(input.baseURL, '/models'))
-      endpoint.searchParams.set('limit', '1000')
-      for (let page = 0; page < MAX_LIST_PAGES; page++) {
-        const result = await fetchPage(options.fetch, endpoint.toString(), anthropicHeaders(input.apiKey), combined, redacted)
-        collect(result.data)
-        if (!result.has_more || !result.last_id) break
-        endpoint.searchParams.set('after_id', result.last_id)
-      }
-    }
+    await (input.kind === 'openai-compatible' ? listChatModels : listAnthropicModels)(input.baseURL, input.apiKey, page)
   } catch (error) {
     if (signal.aborted) throw signal.reason
     if (timeout.aborted) throw new ProviderError('获取模型列表超时，请检查服务地址与网络。', 'timeout')

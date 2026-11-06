@@ -1,6 +1,6 @@
 import type { AgentPreset } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
-import type { TaskMode } from './sessions.ts'
+import type { SessionConfigOption, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own command, in a terminal. */
 export interface HarnessLogin {
@@ -56,6 +56,33 @@ export interface HarnessCapabilities {
   }
 }
 
+/**
+ * What a harness offered when a session of its current definition last started: model, thinking, mode and its other
+ * options, in the shape of a session's `config`, so a draft chooses from the same list a session does. The mode's current
+ * value is the one a new session starts in. A start applies a choice only if the agent offers it again.
+ */
+export interface HarnessCatalogue {
+  options: SessionConfigOption[]
+  /** Options that follow the model, such as thinking, as a session running on that model reported them. */
+  perModel: Array<{ model: string; options: SessionConfigOption[] }>
+  /** When they were reported. */
+  reportedAt: string
+  /** `session`: a real session started with them. `check`: Latch read them without running a turn; see `CatalogueRead`. */
+  source: 'session' | 'check'
+}
+
+/**
+ * Reading what a harness offers before a session: an empty session in a private folder that never receives a prompt, or
+ * the harness's own model list where it has one. Never on a timer.
+ */
+export interface CatalogueRead {
+  /** `select`: a draft that selects the harness while it has no list reads it once by itself. `request`: only when asked. */
+  when: 'select' | 'request'
+  running?: true
+  /** The last read of the current definition. Absent: none, so a `select` harness reads on its next selection. */
+  last?: { at: string; ok: boolean; message?: string }
+}
+
 export interface HarnessInfo {
   /** What it really does; see `HarnessCapabilities`. */
   capabilities: HarnessCapabilities
@@ -82,10 +109,17 @@ export interface HarnessInfo {
    */
   projectFolders?: { access: ProjectFolderAccess; max?: number }
   /**
-   * Display only, known before a session starts: whether the harness asks before it acts, and whether Latch can read its
-   * mode back. Absent: Latch has no profile for it and learns this only after it starts.
+   * Display only, known before a session starts: whether the harness asks before it acts, whether Latch can read its
+   * mode back, and the modes in which it never asks. Absent: Latch has no profile for it and learns this only after it
+   * starts.
    */
-  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none' }
+  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none'; neverAskModes?: string[] }
+  /** Absent: no session or read has told Latch what it offers, or its definition changed since. */
+  catalogue?: HarnessCatalogue
+  /** Absent: what it offers is known only once a session starts. */
+  catalogueRead?: CatalogueRead
+  /** Model IDs a person typed for this harness, offered with its own models; a session sends one even when not listed. */
+  customModels?: string[]
   /** Absent: Latch knows no login command for it. */
   login?: HarnessLogin
   /**

@@ -1,11 +1,14 @@
 import {
   AGENT_PRESETS,
+  MODEL_EFFORT,
   type AgentPreset,
   type AppSnapshot,
+  type HarnessCatalogue,
   type HarnessInfo,
   type HostCatalog,
   type ModelRef,
   type ProviderSummary,
+  type SessionConfigOption,
   type TaskMode,
   type TaskSummary,
   type WorkspaceInfo,
@@ -28,6 +31,93 @@ export interface ComposerChoice {
   workspaceId?: string
   model?: ModelRef
   projectSkipped?: boolean
+  /** Picks from the Harness's own options (`HarnessInfo.catalogue`), by option ID; each one it still offers. */
+  config?: Record<string, string>
+}
+
+/** What a draft shows of a Harness's own options: the list its last session offered, with this draft's picks in it. */
+export interface DraftConfig {
+  config: SessionConfigOption[]
+  /** The picked model is not the one thinking was reported for, so its levels are known only once it starts. */
+  thinkingUnknown: boolean
+  reportedAt: string
+  source: HarnessCatalogue['source']
+}
+
+/** Words beside a model ID a person typed, in every list that shows one. */
+export const TYPED_MODEL = '自己填写'
+
+/** The model option with the IDs a person typed for this Harness after what it lists. */
+export function withTypedModels(config: readonly SessionConfigOption[], typed: readonly string[] | undefined): SessionConfigOption[] {
+  if (!typed?.length) return [...config]
+  return config.map(option => {
+    if (option.category !== 'model') return option
+    const extra = typed.filter(model => !option.options.some(item => item.value === model))
+    return extra.length
+      ? { ...option, options: [...option.options, ...extra.map(model => ({ value: model, name: model, description: TYPED_MODEL }))] }
+      : option
+  })
+}
+
+const followsModel = (option: SessionConfigOption) => option.category === 'thought_level' || option.category === 'model_config'
+const offers = (option: SessionConfigOption | undefined, value: string | undefined) =>
+  value !== undefined && option?.options.some(item => item.value === value) === true
+
+/**
+ * The draft's options as a session lists them. The model goes first, since what else is offered can follow it: for a
+ * model other than the default, the options a session on that model reported, or none when no session ran on it yet.
+ */
+export function draftConfig(
+  harness: Pick<HarnessInfo, 'catalogue' | 'customModels'> | undefined,
+  picks: Record<string, string> | undefined,
+): DraftConfig | undefined {
+  const catalogue = harness?.catalogue
+  if (!catalogue?.options.length) return undefined
+  const listed = withTypedModels(catalogue.options, harness?.customModels)
+  const modelOption = listed.find(option => option.category === 'model')
+  const model = modelOption && offers(modelOption, picks?.[modelOption.id]) ? picks![modelOption.id]! : modelOption?.currentValue
+  const other = modelOption !== undefined && model !== modelOption.currentValue
+  const reported = other ? catalogue.perModel.find(entry => entry.model === model)?.options : undefined
+  const options = listed.flatMap(option => {
+    if (option === modelOption) return [{ ...option, currentValue: model! }]
+    if (other && followsModel(option)) return []
+    return [option]
+  })
+  const config = [...options, ...(reported ?? [])].map(option =>
+    offers(option, picks?.[option.id]) ? { ...option, currentValue: picks![option.id]! } : structuredClone(option),
+  )
+  return {
+    config,
+    thinkingUnknown: other && !reported?.some(option => option.category === 'thought_level'),
+    reportedAt: catalogue.reportedAt,
+    source: catalogue.source,
+  }
+}
+
+/** The picks a start carries: only what the person chose, and only what the list still offers. */
+export function startConfig(
+  harness: Pick<HarnessInfo, 'catalogue' | 'customModels'> | undefined,
+  picks: Record<string, string> | undefined,
+) {
+  const shown = draftConfig(harness, picks)?.config ?? []
+  return Object.entries(picks ?? {}).flatMap(([configId, value]) =>
+    offers(
+      shown.find(option => option.id === configId),
+      value,
+    )
+      ? [{ configId, value }]
+      : [],
+  )
+}
+
+/** What this device keeps of the picks for the next draft: never a mode, since every draft opens on the starting one. */
+export function rememberedConfig(
+  harness: Pick<HarnessInfo, 'catalogue'> | undefined,
+  picks: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const modes = new Set(harness?.catalogue?.options.filter(option => option.category === 'mode').map(option => option.id))
+  const kept = Object.entries(picks ?? {}).filter(([configId]) => !modes.has(configId))
+  return kept.length ? Object.fromEntries(kept) : undefined
 }
 
 export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string => harness.capabilities.display.label
@@ -36,7 +126,20 @@ export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string 
 export const builtinHarness = (catalog: HostCatalog | undefined): HarnessInfo | undefined =>
   catalog?.harnesses.find(harness => harness.capabilities.permission.enforcement === 'latch')
 
-export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined) => a?.providerId === b?.providerId && a?.model === b?.model
+/** The same model with the same thinking level: a different level is a switch like a different model. */
+export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined) =>
+  a?.providerId === b?.providerId && a?.model === b?.model && a?.effort === b?.effort
+
+/** The thinking levels the owner declared for a model of a service; none when nothing was declared. */
+export function thinkingLevels(catalog: HostCatalog, model: ModelRef | undefined): readonly string[] {
+  return (model && findProvider(catalog, model.providerId)?.modelCapabilities?.[model.model]?.thinking) ?? []
+}
+
+/** Another model keeps the thinking level when it declares that level too; otherwise it starts on its own default. */
+export function switchModel(catalog: HostCatalog, from: ModelRef | undefined, to: Omit<ModelRef, 'effort'>): ModelRef {
+  const effort = from?.effort
+  return effort && thinkingLevels(catalog, to).includes(effort) ? { ...to, effort } : { providerId: to.providerId, model: to.model }
+}
 
 export function findHarness(catalog: HostCatalog | undefined, id: string | undefined): HarnessInfo | undefined {
   return catalog?.harnesses.find(harness => harness.id === (id ?? catalog.defaults.harnessId))
@@ -105,7 +208,9 @@ export function findProvider(catalog: HostCatalog | undefined, id: string | unde
 function validModel(catalog: HostCatalog, ref: ModelRef | undefined): ModelRef | undefined {
   if (!ref) return
   const provider = findProvider(catalog, ref.providerId)
-  return provider && (provider.models.length ? provider.models : [provider.defaultModel]).includes(ref.model) ? ref : undefined
+  if (!provider || !(provider.models.length ? provider.models : [provider.defaultModel]).includes(ref.model)) return undefined
+  // A level the owner has since taken away falls back to the model's default rather than failing the send.
+  return ref.effort && !thinkingLevels(catalog, ref).includes(ref.effort) ? { providerId: ref.providerId, model: ref.model } : ref
 }
 
 /** Saved workspaces a new session may use; one the Host disabled for this run shows only in settings. */
@@ -196,11 +301,14 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
   const workspace =
     named?.id === 'default' && !skipped && catalog.sessionFolders ? (workspaces.find(item => item.id !== 'default') ?? named) : named
   const model = harness?.capabilities.models.owner === 'latch' ? (validModel(catalog, stored?.model) ?? defaultModel(catalog)) : undefined
+  // Picks belong to the Harness they were made for, and only what it still offers stays picked.
+  const picks = harness?.id === stored?.harnessId ? startConfig(harness, stored?.config) : []
   return {
     mode: startMode(catalog, harness, workspace?.id),
     ...(harness ? { harnessId: harness.id } : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
+    ...(picks.length ? { config: Object.fromEntries(picks.map(pick => [pick.configId, pick.value])) } : {}),
     ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),
   }
 }
@@ -309,7 +417,9 @@ export function usesDemoModel(snapshot: AppSnapshot, harnessId: string | undefin
 }
 
 export function sessionModel(summary: TaskSummary | undefined): ModelRef | undefined {
-  return summary?.providerId && summary.model ? { providerId: summary.providerId, model: summary.model } : undefined
+  return summary?.providerId && summary.model
+    ? { providerId: summary.providerId, model: summary.model, ...(summary.effort ? { effort: summary.effort } : {}) }
+    : undefined
 }
 
 const choiceKey = (deviceId: string) => `latch.composer.${location.origin}.${deviceId}`
@@ -325,13 +435,29 @@ export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model && typeof model.providerId === 'string' && typeof model.model === 'string'
-        ? { model: { providerId: model.providerId, model: model.model } }
+        ? {
+            model: {
+              providerId: model.providerId,
+              model: model.model,
+              ...(typeof model.effort === 'string' && MODEL_EFFORT.test(model.effort) ? { effort: model.effort } : {}),
+            },
+          }
         : {}),
       ...(item.projectSkipped === true ? { projectSkipped: true } : {}),
+      ...(configRecord(item.config) ? { config: configRecord(item.config)! } : {}),
     }
   } catch {
     return null
   }
+}
+
+/** Picks as stored: a few strings by option ID, nothing else. */
+function configRecord(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[0].length <= 128 && entry[1].length <= 1024,
+  )
+  return entries.length && entries.length <= 16 ? Object.fromEntries(entries) : undefined
 }
 
 export function writeChoice(deviceId: string, choice: ComposerChoice): void {

@@ -11,7 +11,7 @@ import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } f
 export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
 export { loadLoginShell } from './login-shell.ts'
-export { resolveCommand } from './command.ts'
+export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
 
@@ -60,7 +60,9 @@ function folderDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDri
 
 /** What a draft may say before the agent has started: the profile's facts, for an agent Latch has a profile for. */
 function permissionDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDriver, 'permission'> {
-  return profile ? { permission: { approvals: profile.permission.approvals, readback: profile.permission.readback } } : {}
+  if (!profile) return {}
+  const { approvals, readback, neverAskModes } = profile.permission
+  return { permission: { approvals, readback, ...(neverAskModes?.length ? { neverAskModes: [...neverAskModes] } : {}) } }
 }
 
 const ACP_CAPABILITIES = {
@@ -69,12 +71,12 @@ const ACP_CAPABILITIES = {
 } satisfies HarnessDriver['capabilities']
 
 /**
- * What every ACP agent is, with what its profile knows. Nothing can be known before a session starts, and no agent is
- * routed to a model service yet. Without a profile whether it asks is unknown, which counts as not asking.
+ * What every ACP agent is, with what its profile knows. Its models are known from its own sessions, and no agent is routed
+ * to a model service yet. Without a profile whether it asks is unknown, which counts as not asking.
  */
 function agentFacts(name: string, presetId: string | undefined, profile: HarnessProfile | undefined): HarnessCapabilities {
   return {
-    models: { owner: 'harness', catalogue: 'none', wires: [] },
+    models: { owner: 'harness', catalogue: 'session-check', wires: [] },
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
     display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },
@@ -107,6 +109,7 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
     ...(folders.folderAccess ? { projectFolders: folders.folderAccess as NonNullable<HarnessInfo['projectFolders']> } : {}),
     ...permissionDeclaration(profile),
     ...(login ? { login } : {}),
+    catalogueRead: { when: profile?.catalogueRead && 'when' in profile.catalogueRead ? profile.catalogueRead.when : 'select' },
     offer: { presetId: preset.id },
   }
 }

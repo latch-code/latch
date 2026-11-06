@@ -2,7 +2,7 @@ import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMention
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ArrowUp, ListPlus, LockKeyhole } from 'lucide-react'
+import { ArrowUp, CornerDownRight, ListPlus, LockKeyhole } from 'lucide-react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
@@ -29,7 +29,8 @@ const MAX_TEXTAREA = 232
  * card. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
  * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is the one
  * blue control: an arrow (a neutral fill while there is nothing to send, still focusable with its reason as its
- * tooltip), 排队 while a run is active and there is text, or the stop circle, which is never red and steps back while an
+ * tooltip), 追加 while a run that takes more text is active and there is text, 排队 while another run is, or the stop
+ * circle, which is never red and steps back while an
  * approval waits. A device that may only watch sees a dashed, sunken frame with a lock and the reason instead of the
  * input; the drawers and the stop button stay.
  */
@@ -63,12 +64,15 @@ export function Composer({
   inline = false,
   confirmation,
   queueable = false,
+  steerable = false,
   queueTray,
   attachments,
   fileMentions,
   lastPrompt,
 }: {
   queueable?: boolean
+  /** The running turn takes more text: what is written goes into it, and the slot says 追加 instead of 排队. */
+  steerable?: boolean
   queueTray?: ReactNode
   fileMentions?: FileMentionChoice
   lastPrompt?: string
@@ -137,7 +141,7 @@ export function Composer({
   const empty = draft.trim().length === 0 && !attachments?.items.length
   const queueDraft =
     !!run
-    && queueable
+    && (queueable || steerable)
     && !empty
     && !attachments?.items.length
     && !fileMentions?.refs.length
@@ -195,7 +199,8 @@ export function Composer({
     if (sendable) submit()
   }
   const shortcut = sendKey === 'enter' && !coarse ? 'Enter' : `${isMac() ? '⌘' : 'Ctrl'} Enter`
-  const sendTip = blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft ? '本轮完成后发送' : undefined)
+  const sendTip =
+    blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft && !steerable ? '本轮完成后发送' : undefined)
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
   const answering = answer?.kind === 'question' && !empty
@@ -249,6 +254,20 @@ export function Composer({
         </Button>
       ) : run && !queueDraft && !answering ? (
         <StopButton run={run} stepBack={stepBack} />
+      ) : queueDraft && steerable ? (
+        <Tooltip content={sendTip ?? '加到正在运行的这一轮'} shortcut={sendTip === undefined ? shortcut : undefined}>
+          <button
+            type="submit"
+            className="send-button queue-button"
+            aria-label="追加到本轮"
+            aria-disabled={!sendable || undefined}
+            onClick={event => {
+              if (!sendable) event.preventDefault()
+            }}>
+            <CornerDownRight size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            追加
+          </button>
+        </Tooltip>
       ) : queueDraft ? (
         <Tooltip content={sendTip ?? '排队'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
           <button

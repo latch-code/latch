@@ -40,6 +40,11 @@ struct TurnView: View, Equatable {
                 case let .work(_, items):
                     if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, open: open) } } }
                 case let .prose(message): ConversationText(text: message["text"].string ?? "", markdown: true).frame(maxWidth: .infinity, alignment: .leading)
+                case let .note(message) where message["steered"].bool:
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("已追加到本轮").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                        UserBubble(message: message, delivery: nil)
+                    }.frame(maxWidth: .infinity, alignment: .trailing)
                 case let .note(message):
                     Text(message["text"].string ?? "").font(PhoneTheme.caption).foregroundStyle(message["state"].string == "failed" ? PhoneTheme.red : PhoneTheme.muted)
                 }

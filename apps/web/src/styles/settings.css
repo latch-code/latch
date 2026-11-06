@@ -848,6 +848,11 @@
 .model-row .settings-row-name {
   flex-wrap: nowrap;
 }
+/* The model's thinking levels, under its ID so the row's end keeps only the image switch and remove. */
+.model-thinking {
+  display: flex;
+  margin-inline-start: -6px;
+}
 .model-add {
   flex-wrap: wrap;
 }

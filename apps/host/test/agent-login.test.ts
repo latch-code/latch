@@ -31,6 +31,7 @@ async function fixture(options: TestHostOptions = {}) {
     demo: false,
     detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
     loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+    commandDirectories: () => [bin],
     loginTerminal: script => {
       scripts.push(script)
       return Promise.resolve()

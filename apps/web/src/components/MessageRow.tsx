@@ -183,6 +183,13 @@ function UserMessage({
           </p>
         </Tooltip>
       )}
+      {message.steered && (
+        <Tooltip content="发送时这一轮还在运行，Harness 收到了；有没有读到，看它后面的回复">
+          <p className="message-change-note message-steered" tabIndex={0}>
+            已追加到本轮
+          </p>
+        </Tooltip>
+      )}
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
@@ -326,5 +333,6 @@ export const MessageRow = memo(
     && a.message.completedAt === b.message.completedAt
     && a.message.model === b.message.model
     && a.message.attachments === b.message.attachments
-    && a.message.fileRefs === b.message.fileRefs,
+    && a.message.fileRefs === b.message.fileRefs
+    && a.message.steered === b.message.steered,
 )

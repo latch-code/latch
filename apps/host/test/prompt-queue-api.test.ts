@@ -159,3 +159,69 @@ describe('queue HTTP boundaries', () => {
     await expect.poll(async () => (await detail()).queue).toEqual([])
   })
 })
+describe('steering a running turn over HTTP', () => {
+  it('adds a phone message to the running turn when the agent takes it, and queues it when it cannot', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' }),
+      phone = await host.enroll({ scopes: ['view', 'run'] })
+    // This Host looks up no command by name, so no agent installed on this computer can be found or started.
+    const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
+    expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
+    await owner.json('agents', {
+      method: 'POST',
+      body: {
+        id: 'steer-agent',
+        name: 'Steer fixture',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CAPS: 'steer' },
+      },
+    })
+    const created = await phone.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'steer-agent', prompt: 'steerable', requestId: randomUUID() },
+    })
+    const path = `tasks/${created.sessionId}`
+    await expect.poll(async () => (await phone.json<TaskDetail>(path)).steer).toBe(true)
+    const body = { prompt: 'check the tests too', requestId: randomUUID(), steer: true }
+    expect(await phone.json(`${path}/prompt`, { method: 'POST', body })).toEqual({ steered: true })
+    expect(await phone.json(`${path}/prompt`, { method: 'POST', body })).toEqual({ steered: true })
+    await expect.poll(async () => (await phone.json<TaskDetail>(path)).summary.runOutcome).toBe('completed')
+    const detail = await phone.json<TaskDetail>(path)
+    expect(detail.steer).toBeUndefined()
+    expect(detail.messages.filter(message => message.steered).map(message => message.text)).toEqual(['check the tests too'])
+    expect(detail.messages.at(-1)?.text).toBe('steered: check the tests too')
+    // With nothing running the same request starts the next turn, as a queued one would.
+    expect(await phone.json(`${path}/prompt`, { method: 'POST', body: { ...body, prompt: 'echo then', requestId: randomUUID() } })).toEqual(
+      {
+        accepted: true,
+      },
+    )
+    await expect.poll(async () => (await phone.json<TaskDetail>(path)).messages.at(-1)?.text).toBe('echo: echo then')
+  })
+
+  it('queues what a harness without steering is sent while it runs', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.json('agents', {
+      method: 'POST',
+      body: { id: 'plain-agent', name: 'Plain fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'plain-agent', prompt: 'steerable', requestId: randomUUID() },
+    })
+    const path = `tasks/${sessionId}`
+    await expect.poll(async () => (await owner.json<TaskDetail>(path)).summary.status).toBe('running')
+    expect((await owner.json<TaskDetail>(path)).steer).toBeUndefined()
+    const response = await owner.request(`${path}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'later', requestId: randomUUID(), steer: true },
+    })
+    expect(response.status).toBe(202)
+    expect((await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual(['later'])
+    await owner.json(`${path}/cancel`, { method: 'POST', body: { requestId: randomUUID() } })
+  })
+})

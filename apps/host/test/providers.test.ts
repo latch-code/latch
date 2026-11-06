@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PROVIDER_PRESETS } from '@latch/protocol'
+import { startFakeModels } from '@latch/testkit'
 import type { HarnessPlugin, ModelDelta, ModelMessage, ModelProvider, ToolDefinition } from '@latch/sdk'
 import { createDemoPlugin } from '../src/plugins/providers/demo/index.ts'
 import { createToolsPlugin } from '../src/plugins/tools/safe-tools/index.ts'
@@ -354,6 +355,36 @@ describe('OpenAI-compatible model selection and reasoning', () => {
     expect(() => createOpenAIPlugin({ baseURL: `${endpoint}?key=1`, apiKey: '', model: 'a' })).toThrow('HTTP(S)')
   })
 
+  it('sends a declared thinking level as reasoning_effort and refuses an undeclared one before sending', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const endpoint = await listen((_request, response, body) => {
+      bodies.push(JSON.parse(body))
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(frame(chunk({ content: 'ok' }, 'stop')))
+    })
+    const { providers } = await mount(
+      createOpenAIPlugin({
+        baseURL: endpoint,
+        apiKey: '',
+        model: 'model-a',
+        models: ['model-a', 'model-b'],
+        modelCapabilities: { 'model-a': { thinking: ['low', 'high'] } },
+      }),
+    )
+    const provider = providers[0]!
+    await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), effort: 'high' }))
+    await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() }))
+    expect(bodies.map(body => body.reasoning_effort)).toEqual(['high', undefined])
+    for (const [model, effort] of [
+      ['model-a', 'medium'],
+      ['model-b', 'low'],
+    ] as const)
+      await expect(
+        collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), model, effort })),
+      ).rejects.toMatchObject({ name: 'ProviderError', code: 'effort-unavailable' })
+    expect(bodies).toHaveLength(2)
+  })
+
   it('rejects reasoning that arrives after the finish reason', async () => {
     const endpoint = await listen((_request, response) => {
       response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -529,6 +560,33 @@ describe('Anthropic Messages streaming provider', () => {
       collect((await anthropicAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal(), model: 'unlisted' })),
     ).rejects.toMatchObject({ code: 'model-unavailable' })
     expect(urls).toHaveLength(2)
+  })
+
+  it('sends a declared thinking level as output_config.effort, without a thinking block, and refuses an undeclared one', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const endpoint = await listen((_request, response, body) => {
+      bodies.push(JSON.parse(body))
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(messageStart() + textBlock(0, 'ok') + messageEnd('end_turn'))
+    })
+    const { providers } = await mount(
+      createAnthropicPlugin({
+        baseURL: endpoint,
+        apiKey: '',
+        model: 'claude-test',
+        modelCapabilities: { 'claude-test': { vision: true, thinking: ['low', 'medium', 'high', 'max'] } },
+      }),
+    )
+    const provider = providers[0]!
+    await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), effort: 'max' }))
+    await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() }))
+    expect(bodies[0]).toMatchObject({ output_config: { effort: 'max' } })
+    expect(bodies[0]).not.toHaveProperty('thinking')
+    expect(bodies[1]).not.toHaveProperty('output_config')
+    await expect(
+      collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), effort: 'xhigh' })),
+    ).rejects.toMatchObject({ code: 'effort-unavailable' })
+    expect(bodies).toHaveLength(2)
   })
 
   it.each([
@@ -1256,5 +1314,48 @@ describe('demo provider and bounded tools', () => {
     expect(await readFile(target, 'utf8')).toBe('keep')
     expect(await readFile(join(workspaceRoot, 'artifacts/report-session1.txt'), 'utf8')).toBe('new report')
     expect(await readdir(join(workspaceRoot, 'artifacts'))).toEqual(['report-session1.txt'])
+  })
+})
+
+describe("the test kit's fake model services", () => {
+  it("answer both protocols the way the Host's own clients read them, streaming thinking, text and a tool call", async () => {
+    const models = await startFakeModels({
+      replies: [
+        { reasoning: 'Think first.', text: 'Running it now.', tool: { name: 'shell', input: { command: 'npm test' } } },
+        { text: 'All tests pass.' },
+      ],
+    })
+    cleanups.push(() => models.close())
+    const openai = await openaiAt(`${models.origin}/v1`)
+    const anthropic = await anthropicAt(`${models.origin}/v1`)
+    const tools: ToolDefinition[] = []
+    const first = await collect(openai.stream({ messages: [message], tools, signal: freshSignal() }))
+    expect(
+      first
+        .filter(delta => delta.type === 'reasoning')
+        .map(delta => delta.text)
+        .join(''),
+    ).toBe('Think first.')
+    expect(
+      first
+        .filter(delta => delta.type === 'text')
+        .map(delta => delta.text)
+        .join(''),
+    ).toBe('Running it now.')
+    expect(first.find(delta => delta.type === 'tool-call')).toMatchObject({ call: { name: 'shell', arguments: { command: 'npm test' } } })
+    expect(first.at(-1)).toEqual({ type: 'finish', reason: 'tool-calls' })
+    const second = await collect(anthropic.stream({ messages: [message], tools, signal: freshSignal() }))
+    expect(
+      second
+        .filter(delta => delta.type === 'text')
+        .map(delta => delta.text)
+        .join(''),
+    ).toBe('All tests pass.')
+    expect(second.at(-1)).toEqual({ type: 'finish', reason: 'stop' })
+    // What reached them is on record, so a test can tell an agent used them and not a real service.
+    expect(models.requests.map(request => [request.wire, request.stream])).toEqual([
+      ['chat-completions', true],
+      ['anthropic-messages', true],
+    ])
   })
 })

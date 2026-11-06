@@ -17,7 +17,6 @@ describe('logging in to a Harness from a browser', () => {
   let loginFile: string
   let host: TestHost
   let browser: Browser
-  const path = process.env.PATH
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'latch-e2e-login-'))
@@ -36,12 +35,12 @@ describe('logging in to a Harness from a browser', () => {
       )
       await chmod(join(bin, name), 0o755)
     }
-    process.env.PATH = `${bin}:${path}`
     host = await startTestHost({
       demo: false,
       sessionFolders: true,
       detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
       loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+      commandDirectories: () => [bin],
     })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
@@ -49,7 +48,6 @@ describe('logging in to a Harness from a browser', () => {
   afterAll(async () => {
     await browser?.close()
     await host?.close()
-    process.env.PATH = path
     await rm(directory, { recursive: true, force: true })
   })
 

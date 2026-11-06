@@ -21,6 +21,11 @@ if (env.FAKE_ACP_LOGIN_FILE && process.argv[2] === 'login') {
   process.stderr.write('Successfully logged in\n')
   process.exit(0)
 }
+// Like codex-acp, whose `cli` runs Codex: `cli app-server` answers as Codex's app-server instead of as an ACP agent.
+if (process.argv[2] === 'cli' && process.argv[3] === 'app-server') {
+  await import('./fake-codex-app-server.mjs')
+  await new Promise(() => {})
+}
 const loggedInAtStart = !env.FAKE_ACP_LOGIN_FILE || existsSync(env.FAKE_ACP_LOGIN_FILE)
 const notLoggedIn = () => !loggedInAtStart || (env.FAKE_ACP_LOGIN_FILE !== undefined && !existsSync(env.FAKE_ACP_LOGIN_FILE))
 /** The content of FAKE_ACP_CAPS_FILE when set, so a later process of the same definition can advertise other capabilities. */
@@ -31,7 +36,7 @@ const capsFile = (() => {
     return undefined
   }
 })()
-/** Comma list: resume, load, delete, dirs (sessionCapabilities.additionalDirectories). */
+/** Comma list: resume, load, delete, close, dirs (sessionCapabilities.additionalDirectories). */
 const caps = new Set((capsFile ?? env.FAKE_ACP_CAPS ?? '').split(',').filter(Boolean))
 const stateFile = env.FAKE_ACP_STATE
 const logFile = env.FAKE_ACP_LOG
@@ -56,6 +61,22 @@ const selfMode = env.FAKE_ACP_SELF_MODE
 const modeReport = env.FAKE_ACP_MODE_REPORT ?? 'full'
 /** agentInfo.version; 'none' omits it. */
 const version = env.FAKE_ACP_VERSION ?? '1.2.3'
+/**
+ * Comma list of the models offered with FAKE_ACP_CONFIG=options; default small,large. FAKE_ACP_MODELS_FILE, read for
+ * every session, lets a later session of the same agent offer others.
+ */
+const models = () =>
+  (
+    (env.FAKE_ACP_MODELS_FILE && existsSync(env.FAKE_ACP_MODELS_FILE) ? readFileSync(env.FAKE_ACP_MODELS_FILE, 'utf8').trim() : undefined)
+    ?? env.FAKE_ACP_MODELS
+    ?? 'small,large'
+  )
+    .split(',')
+    .filter(Boolean)
+/** With '1', the large model also offers a max effort, as agents whose thinking levels follow the model do. */
+const effortByModel = env.FAKE_ACP_EFFORT_BY_MODEL === '1'
+/** The thinking option's ID; codex-acp names it reasoning_effort. */
+const effortId = env.FAKE_ACP_EFFORT_ID ?? 'effort'
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 function log(event, data = {}) {
@@ -131,6 +152,10 @@ function rpcError(code, message) {
   return Object.assign(new Error(message), { code })
 }
 
+/** What the client said it takes, from initialize. */
+let clientCapabilities = {}
+/** Sessions with a turn running → the text steered into it so far. */
+const running = new Map()
 const cancelled = new Set()
 const cancelWaiters = new Map()
 function waitCancel(sessionId) {
@@ -199,13 +224,10 @@ function configOptions(session, shape = 'full') {
       category: 'model',
       type: 'select',
       currentValue: session.model,
-      options: [
-        { value: 'small', name: 'Small' },
-        { value: 'large', name: 'Large' },
-      ],
+      options: models().map(model => ({ value: model, name: model[0].toUpperCase() + model.slice(1) })),
     },
     {
-      id: 'effort',
+      id: effortId,
       name: 'Effort',
       category: 'thought_level',
       type: 'select',
@@ -217,6 +239,7 @@ function configOptions(session, shape = 'full') {
           options: [
             { value: 'low', name: 'Low' },
             { value: 'high', name: 'High' },
+            ...(effortByModel && session.model === 'large' ? [{ value: 'max', name: 'Max' }] : []),
           ],
         },
       ],
@@ -265,6 +288,7 @@ function restored(sessionId) {
 async function handle(method, params) {
   switch (method) {
     case 'initialize':
+      clientCapabilities = params.clientCapabilities ?? {}
       if (env.FAKE_ACP_INIT_DELAY) await delay(Number(env.FAKE_ACP_INIT_DELAY))
       if (env.FAKE_ACP_INIT_AUTH === '1') throw rpcError(-32000, 'Authentication required')
       if (env.FAKE_ACP_INIT_ERROR) {
@@ -282,17 +306,19 @@ async function handle(method, params) {
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
             ...(caps.has('delete') ? { delete: {} } : {}),
+            ...(caps.has('close') ? { close: {} } : {}),
             ...(caps.has('dirs') ? { additionalDirectories: {} } : {}),
           },
         },
         authMethods: env.FAKE_ACP_AUTH ? [{ id: 'fake-login', name: 'Fake login', description: 'Run `fake login` in a terminal' }] : [],
         agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
+        ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
       }
     case 'session/new': {
       if (env.FAKE_ACP_AUTH === 'new' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
-      sessions[sessionId] = { cwd: params.cwd, history: [], model: 'small', mode: initialMode, effort: 'low' }
+      sessions[sessionId] = { cwd: params.cwd, history: [], model: models()[0] ?? 'small', mode: initialMode, effort: 'low' }
       touched.add(sessionId)
       save()
       return { sessionId, ...configState(sessions[sessionId]) }
@@ -335,7 +361,11 @@ async function handle(method, params) {
     case 'session/set_config_option': {
       const session = existing(params.sessionId)
       const mode = params.configId === 'mode'
-      if (!(stickyMode && mode) && env.FAKE_ACP_IGNORE_CONFIG !== params.configId) session[params.configId] = params.value
+      if (env.FAKE_ACP_STRICT_MODELS === '1' && params.configId === 'model' && !models().includes(params.value))
+        throw rpcError(-32602, `Unknown model ${params.value}`)
+      if (!(stickyMode && mode) && env.FAKE_ACP_IGNORE_CONFIG !== params.configId)
+        session[params.configId === effortId ? 'effort' : params.configId] = params.value
+      if (session.effort === 'max' && session.model !== 'large') session.effort = 'low'
       if (mode && selfMode) {
         session.mode = selfMode
         reportMode(params.sessionId, session)
@@ -343,10 +373,26 @@ async function handle(method, params) {
       save()
       return { configOptions: configOptions(session) }
     }
+    // As codex-acp: a running turn takes the text; with `promptRequired` and no turn, nothing is consumed. FAKE_ACP_STEER:
+    // `failed` answers so, `hang` never answers.
+    case '_session/steering': {
+      existing(params.sessionId)
+      if (params._meta?.steering?.idleBehavior !== 'promptRequired') throw rpcError(-32602, 'idleBehavior must be promptRequired')
+      if (env.FAKE_ACP_STEER === 'hang') return new Promise(() => {})
+      if (env.FAKE_ACP_STEER === 'failed') return { outcome: 'failed' }
+      const turn = running.get(params.sessionId)
+      if (!turn) return { outcome: 'promptRequired', reason: 'noRunningTurn' }
+      turn.push(params.prompt.map(block => block.text ?? '').join(''))
+      return { outcome: 'injected' }
+    }
     case 'session/delete':
       existing(params.sessionId)
       delete sessions[params.sessionId]
       save()
+      return {}
+    case 'session/close':
+      if (!caps.has('close')) throw rpcError(-32601, 'Method not found')
+      existing(params.sessionId)
       return {}
     default:
       throw rpcError(-32601, `Method not found: ${method}`)
@@ -399,7 +445,11 @@ async function prompt({ sessionId, prompt: blocks }) {
   const tool = (value, kind = 'tool_call') => update(sessionId, { sessionUpdate: kind, ...value })
   const permission = (toolCall, options = ALLOW_OPTIONS) => request('session/request_permission', { sessionId, toolCall, options })
   const scenario = scenarios[keyword] ?? scenarios.echo
-  const result = await scenario({ sessionId, session, input, argument, say, think, tool, permission })
+  const steers = []
+  running.set(sessionId, steers)
+  const result = await Promise.resolve()
+    .then(() => scenario({ sessionId, session, input, argument, say, think, tool, permission, steers }))
+    .finally(() => running.delete(sessionId))
   session.history.push({ role: 'agent', text: reply.join('') })
   save()
   return result
@@ -717,4 +767,72 @@ const scenarios = {
     return END
   },
   refuse: () => ({ stopReason: 'refusal' }),
+  // Starts a subagent on its own session, as the ACP subagents draft describes, only for a client that takes them. `ask`:
+  // the subagent asks for permission on its own session; `hang`: it works until the turn is cancelled, `silent` too but
+  // without saying it stopped; `nest`: it starts one of its own.
+  delegate: async ({ sessionId, argument, say }) => {
+    if (!clientCapabilities.subagents) {
+      say('worked alone')
+      return END
+    }
+    const child = `${sessionId}:child`
+    const report = (state, stopReason) =>
+      update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, state: { state, ...(stopReason ? { stopReason } : {}) } })
+    update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, title: 'Test runner', description: 'Runs the tests' })
+    report('running')
+    update(child, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'running ' } })
+    update(child, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the tests' } })
+    update(child, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hidden reasoning' } })
+    const run = { toolCallId: 'call_1', title: 'Run pnpm test', kind: 'execute', status: 'in_progress', rawInput: { command: 'pnpm test' } }
+    update(child, { sessionUpdate: 'tool_call', ...run })
+    if (argument === 'ask') {
+      const edit = { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
+      update(child, { sessionUpdate: 'tool_call', ...edit })
+      report('requires_action')
+      const { result } = await request('session/request_permission', { sessionId: child, toolCall: edit, options: ALLOW_OPTIONS })
+      log('child-permission-answer', { outcome: result?.outcome ?? null })
+      if (result.outcome.outcome === 'cancelled' || cancelled.has(sessionId)) {
+        report('idle', 'cancelled')
+        return { stopReason: 'cancelled' }
+      }
+      report('running')
+      update(child, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_2',
+        status: result.outcome.optionId === 'allow' ? 'completed' : 'failed',
+      })
+    }
+    if (argument === 'hang' || argument === 'silent') {
+      await waitCancel(sessionId)
+      if (argument === 'hang') report('idle', 'cancelled')
+      return { stopReason: 'cancelled' }
+    }
+    if (argument === 'nest') {
+      const grandchild = `${child}:child`
+      update(child, { sessionUpdate: 'subagent_update', sessionId: grandchild, title: 'Linter', state: { state: 'running' } })
+      update(grandchild, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'lint clean' } })
+      update(child, { sessionUpdate: 'subagent_update', sessionId: grandchild, state: { state: 'idle', stopReason: 'end_turn' } })
+    }
+    update(child, { sessionUpdate: 'tool_call_update', toolCallId: 'call_1', status: 'completed', content: [text('all passed')] })
+    update(child, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'tests pass' } })
+    report('idle', 'end_turn')
+    say('the subagent says the tests pass')
+    return END
+  },
+  // Works until text is steered into the turn, then answers it; `drop` ends the turn without reading it, `hold` goes on
+  // working until cancelled. Stops on cancel.
+  steerable: async ({ sessionId, argument, steers, say }) => {
+    say('working')
+    while (!steers.length) {
+      if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
+      await delay(10)
+    }
+    if (argument === 'drop') return END
+    say(`steered: ${steers.join(' | ')}`)
+    if (argument === 'hold') {
+      await waitCancel(sessionId)
+      return { stopReason: 'cancelled' }
+    }
+    return END
+  },
 }

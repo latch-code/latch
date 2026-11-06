@@ -8,10 +8,11 @@ import { MessageRow } from '../src/components/MessageRow.tsx'
 import { submissionRequest } from '../src/core/api.ts'
 const noop = () => {}
 const run = { approvals: 0, cancel: 'idle' as const, onRevealApprovals: noop, onCancel: noop }
-const renderComposer = (queueable: boolean) =>
+const renderComposer = (queueable: boolean, steerable = false) =>
   renderToStaticMarkup(
     createElement(Composer, {
       queueable,
+      steerable,
       textareaRef: { current: null },
       variant: 'session',
       label: 'Continue',
@@ -45,6 +46,16 @@ describe('queued follow-up presentation', () => {
     // Esc stops on a keyboard; touch keeps the button beside 排队.
     expect(capable).not.toContain('aria-label="停止"')
     expect(renderComposer(false)).not.toContain('aria-label="排队发送"')
+  })
+  it('offers 追加 instead of 排队 while the running turn takes more text, and keeps that intent in a retry', () => {
+    const html = renderComposer(true, true)
+    expect(html).toContain('aria-label="追加到本轮"')
+    expect(html).not.toContain('aria-label="排队发送"')
+    expect(renderComposer(false, true)).toContain('aria-label="追加到本轮"')
+    expect(submissionRequest({ sessionId: 'task', prompt: 'Next', requestId: 'same', steer: true })).toEqual({
+      path: 'tasks/task/prompt',
+      body: { prompt: 'Next', requestId: 'same', steer: true },
+    })
   })
   it('keeps the queue intent in an exact retry body', () => {
     expect(submissionRequest({ sessionId: 'task', prompt: 'Next', requestId: 'same', queue: true })).toEqual({

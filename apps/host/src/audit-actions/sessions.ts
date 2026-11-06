@@ -35,6 +35,8 @@ export const SESSION_ACTIONS = {
     launchHash: hex64,
     promptHash: hex64.optional(),
     folderCount: count.optional(),
+    /** What the start chose from the harness's own options, its mode among them. */
+    configHash: hex64.optional(),
   }),
   /** `definitionHash`: the launch fingerprint without the project's configuration, from drivers that report it. */
   'task.l3.started': z.strictObject({
@@ -44,6 +46,7 @@ export const SESSION_ACTIONS = {
     launchHash: hex64,
     definitionHash: hex64.optional(),
     folderCount: count.optional(),
+    configHash: hex64.optional(),
   }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
   'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),

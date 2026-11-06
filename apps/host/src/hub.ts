@@ -23,6 +23,7 @@ import {
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
+  type SteerOutcome,
 } from '@latch/sdk'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
 import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
@@ -628,6 +629,14 @@ export class HarnessHub implements Bridge {
     )
   }
 
+  /** Adds text to the session's running turn; `prompt-required` from a driver that cannot. */
+  async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+    const member = await this.route(sessionId)
+    const bridge = member.bridge
+    if (!bridge.steer) return 'prompt-required'
+    return await this.accept(member, () => bridge.steer!(sessionId, prompt, requestId))
+  }
+
   async cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void> {
     const member = await this.route(sessionId)
     const cancelling = options ? member.bridge.cancel(sessionId, options) : member.bridge.cancel(sessionId)
@@ -929,6 +938,16 @@ export class HarnessHub implements Bridge {
       }
     }
     const login = driver.login?.()
+    let catalogue: HarnessInfo['catalogue']
+    let catalogueRead: HarnessInfo['catalogueRead']
+    let customModels: string[] | undefined
+    try {
+      catalogue = entry.bridge?.catalogue?.()
+      catalogueRead = entry.bridge?.readCatalogue ? entry.bridge.catalogueRead?.() : undefined
+      customModels = entry.bridge?.customModels?.()
+    } catch (error) {
+      this.log(`Harness ${driver.id} 的可选项读取失败：${message(error)}`)
+    }
     return {
       id: driver.id,
       ...(driver.description ? { description: driver.description } : {}),
@@ -944,7 +963,25 @@ export class HarnessHub implements Bridge {
       ...folderInfo(driver),
       ...(driver.permission ? { permission: { ...driver.permission } } : {}),
       ...(login ? { login } : {}),
+      ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
+      ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
+      ...(customModels?.length ? { customModels: [...customModels] } : {}),
     }
+  }
+
+  /** Reads what a harness offers before a session; see `Bridge.readCatalogue`. */
+  async readHarnessCatalogue(id: string, auto: boolean, before: () => Promise<void>): Promise<{ ran: boolean }> {
+    const member = this.member(id)
+    if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
+    if (!member.bridge.readCatalogue) throw new AppError(409, 'catalogue-unsupported', '这个 Harness 不能在开始前读取可选项。')
+    return member.bridge.readCatalogue({ auto, before })
+  }
+
+  async setHarnessModels(id: string, models: readonly string[]): Promise<void> {
+    const member = this.member(id)
+    if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
+    if (!member.bridge.setCustomModels) throw new AppError(409, 'models-unsupported', '这个 Harness 不能填写模型 ID。')
+    await member.bridge.setCustomModels(models)
   }
 
   /** The session's project for an event's listeners; the driver is asked only when one listens and the metadata has none. */

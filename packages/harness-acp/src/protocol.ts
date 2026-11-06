@@ -2,6 +2,18 @@
 import { z } from 'zod'
 
 export const PROTOCOL_VERSION = 1
+
+/**
+ * What Latch tells every agent it can take. No file system, terminal or elicitation, so agents keep those to themselves;
+ * notices and compaction are shown in the transcript, so an agent reports them as such instead of as messages or tools;
+ * subagents are shown where they began, and their requests for approval come to the session that started them.
+ */
+export const CLIENT_CAPABILITIES = {
+  fs: { readTextFile: false, writeTextFile: false },
+  terminal: false,
+  session: { notices: {}, compaction: {} },
+  subagents: {},
+} as const
 export type RpcId = string | number
 
 export const RPC = {
@@ -34,7 +46,12 @@ export const initializeResult = z.object({
       promptCapabilities: z.object({ image: z.boolean().nullish(), embeddedContext: z.boolean().nullish() }).nullish().catch(undefined),
       // Each capability counts when present; additionalDirectories only as an object, as ACP defines it.
       sessionCapabilities: z
-        .object({ resume: z.unknown().optional(), delete: z.unknown().optional(), additionalDirectories: z.unknown().optional() })
+        .object({
+          resume: z.unknown().optional(),
+          delete: z.unknown().optional(),
+          close: z.unknown().optional(),
+          additionalDirectories: z.unknown().optional(),
+        })
         .nullish()
         .catch(undefined),
     })
@@ -45,6 +62,11 @@ export const initializeResult = z.object({
     .nullish()
     .catch(undefined),
   agentInfo: z.object({ name: optionalText, version: optionalText }).nullish().catch(undefined),
+  /** `steering.supported`: the agent takes `_session/steering`, adding text to a running turn. */
+  _meta: z
+    .object({ steering: z.object({ supported: z.boolean().nullish() }).nullish().catch(undefined) })
+    .nullish()
+    .catch(undefined),
 })
 
 export const selectOption = z.object({ value: z.string(), name: z.string(), description: optionalText })
@@ -144,6 +166,21 @@ export const usageUpdate = z.object({
     .catch(undefined),
 })
 
+/** A live advisory from the agent, not part of its history. `severity` is an open set; unknown values read as info. */
+export const noticeUpdate = z.object({
+  severity: z.string().max(64).nullish(),
+  title: z.string().min(1),
+  description: z.string().nullish(),
+})
+/** One compaction, addressed by its ID; later reports patch it. `status` is an open set. */
+export const compactionUpdate = z.object({
+  compactionId: z.string().min(1).max(256),
+  status: z.string().max(64),
+  summary: z.array(z.unknown()).nullish(),
+  error: z.string().nullish(),
+})
+export const compactionChunk = z.object({ compactionId: z.string().min(1).max(256), content: contentBlock })
+
 /** Any string: kinds Latch does not know are filtered out rather than failing the whole request. */
 export const permissionKind = z.string().max(256)
 export const permissionRequest = z.object({
@@ -161,4 +198,8 @@ export const promptResult = z.object({
   stopReason: z.string(),
   usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() }).nullish().catch(undefined),
 })
+/** The answer to `_session/steering`. `outcome` is an open set: anything but `injected` and `promptRequired` is a failure. */
+export const steerResult = z.object({ outcome: z.string().max(64) })
+export const STEER_METHOD = '_session/steering'
+
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })

@@ -39,6 +39,14 @@
 .approval-shield {
   color: var(--amber-icon) !important;
 }
+.approval-subagent {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted) !important;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .approval-pager {
   display: inline-flex !important;
   align-items: center;

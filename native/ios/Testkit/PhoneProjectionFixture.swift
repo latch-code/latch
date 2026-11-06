@@ -24,7 +24,7 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         switch value {
         case let .work(_, items): return ["work": items.map(item)]
         case let .prose(message): return ["prose": message["text"].string ?? ""]
-        case let .note(message): return ["note": message["text"].string ?? ""]
+        case let .note(message): return [message["steered"].bool ? "steer" : "note": message["text"].string ?? ""]
         }
     }
     let choice = PhoneStart.defaults(catalog)

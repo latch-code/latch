@@ -138,6 +138,7 @@ const stateSchema = z.object({
         createdAt: z.string().optional(),
         cwd: z.string().optional(),
         model: z.string().optional(),
+        effort: z.string().optional(),
         mode: z.enum(['chat', 'agent']).optional(),
         status: z.enum(['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted']),
         harnessId: z.string().optional(),

@@ -416,6 +416,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 onProvidersChanged={() => {
                   void refresh()
                 }}
+                onHarnessChanged={refresh}
                 onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
                 onCreateProject={createProject}
                 projectAsk={projectAsk}

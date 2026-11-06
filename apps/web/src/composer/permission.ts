@@ -73,7 +73,7 @@ const chatPermission: PermissionView = {
 export function permissionView(input: {
   harness: PermissionHarness | undefined
   mode?: TaskMode | undefined
-  permission?: SessionPermission
+  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'neverAskModes'>>
   config: readonly SessionConfigOption[]
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   locked?: string
@@ -114,9 +114,25 @@ export function permissionView(input: {
   }
 }
 
-/** Before the first send only what the harness declares is known, and the agent's own modes are not. */
-export function draftPermission(harness: PermissionHarness | undefined, mode: TaskMode): PermissionView | undefined {
-  return harness && (mode === 'chat' ? chatPermission : declaredPermission(harness))
+/**
+ * Before the first send: the modes the Harness's last session offered, with the one this draft picked, when a session has
+ * told Latch; otherwise only what the harness declares.
+ */
+export function draftPermission(
+  harness: PermissionHarness | undefined,
+  mode: TaskMode,
+  config?: readonly SessionConfigOption[],
+): PermissionView | undefined {
+  if (!harness) return undefined
+  if (mode === 'chat') return chatPermission
+  if (!config || !modeOption(config)) return declaredPermission(harness)
+  return permissionView({
+    harness,
+    mode,
+    ...(harness.permission ? { permission: harness.permission } : {}),
+    config,
+    access: { legacy: false, local: true },
+  })
 }
 
 const thousands = (value: number) => (value >= 1000 ? `${Math.round(value / 1000)}K` : String(value))

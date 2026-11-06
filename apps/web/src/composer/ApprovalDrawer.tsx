@@ -39,8 +39,9 @@ export interface ApprovalStatus {
 /** Whether any text the approver reviews hides characters (see VisibleText). */
 function approvalHidesText(approval: Approval, title: string, diffs: readonly FileDiff[]): boolean {
   return (
-    [title, approval.toolName, approval.reason, approval.tool?.input ?? approval.arguments].some(text => hasHiddenCharacters(text))
-    || diffs.some(diff => hasHiddenCharacters(diff.path) || hasHiddenCharacters(diff.newText) || hasHiddenCharacters(diff.oldText))
+    [title, approval.toolName, approval.reason, approval.subagent, approval.tool?.input ?? approval.arguments].some(text =>
+      hasHiddenCharacters(text),
+    ) || diffs.some(diff => hasHiddenCharacters(diff.path) || hasHiddenCharacters(diff.newText) || hasHiddenCharacters(diff.oldText))
   )
 }
 
@@ -303,6 +304,11 @@ function ApprovalPanel({
           <div className="approval-title">
             <Shield className="approval-shield" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             <span>{APPROVAL_COPY.waiting}</span>
+            {approval.subagent && (
+              <span className="approval-subagent">
+                子 Agent · <VisibleText text={approval.subagent} />
+              </span>
+            )}
             {total > 1 && (
               <span className="approval-pager">
                 <IconButton

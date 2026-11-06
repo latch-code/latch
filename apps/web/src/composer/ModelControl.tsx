@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Box, ChevronLeft, Cpu, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import {
@@ -17,12 +17,16 @@ import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 import {
+  draftConfig,
   engineEntries,
   findProvider,
   harnessName,
   isPinnedChoice,
   presetsToAdd,
   sameModel,
+  switchModel,
+  thinkingLevels,
+  withTypedModels,
   type ComposerChoice,
 } from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
@@ -38,43 +42,75 @@ import {
   BUILTIN_THINKING_NOTE,
   DEFAULT_MODEL,
   modelChipText,
+  modelWords,
+  THINKING_AFTER_START,
+  thinkingWord,
   unreportedNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
+import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 
-type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
+type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 /** The most levels a segmented row holds in the popover's width; more go in a row that opens its own list. */
 const SEGMENTED_LEVELS = 5
 const OWN_MODEL = 'own'
 
-const pendingModelText = (model: string) => `下一条：${model}`
-const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${current.model}` : '撤销切换')
+const pendingModelText = (model: ModelRef) => `下一条：${modelWords(model)}`
+const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${modelWords(current)}` : '撤销切换')
+/** The built-in row's first value: no level sent, the model's own default. Not a valid wire level, so it never collides. */
+const MODEL_DEFAULT_LEVEL = '~default'
 
-/** 思考: a segmented row of the levels the engine reported; the menu stays open. */
-function LevelRow({ option, disabled, onChoose }: { option: SessionConfigOption; disabled: boolean; onChoose: (value: string) => void }) {
-  const values = agentConfigValues(option)
+/** 思考: a segmented row of the levels on offer, or a list when there are too many; the menu stays open. */
+function LevelRow({
+  value,
+  options,
+  disabled,
+  onChoose,
+}: {
+  value: string
+  options: Array<{ value: string; label: string }>
+  disabled: boolean
+  onChoose: (value: string) => void
+}) {
   return (
     <div className="model-setting">
       <span className="model-setting-name">思考</span>
-      {values.length <= SEGMENTED_LEVELS ? (
-        <SegmentedControl
-          label="思考"
-          value={option.currentValue}
-          disabled={disabled}
-          options={values.map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
-          onValueChange={onChoose}
-        />
+      {options.length <= SEGMENTED_LEVELS ? (
+        <SegmentedControl label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
       ) : (
-        <ValuePicker
-          variant="row"
-          label="思考"
-          value={option.currentValue}
-          disabled={disabled}
-          options={values.map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
-          onValueChange={onChoose}
-        />
+        <ValuePicker variant="row" label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
       )}
     </div>
+  )
+}
+
+/** 思考 on the built-in Harness: 默认, then the levels declared for this model in settings. A pick goes with the model. */
+function BuiltinThinking({
+  model,
+  levels,
+  disabled,
+  onModel,
+}: {
+  model: ModelRef
+  levels: readonly string[]
+  disabled: boolean
+  onModel: (model: ModelRef) => void
+}) {
+  // A level taken away in settings since the session chose it: the row stays, so 默认 is one press away.
+  const withdrawn = model.effort !== undefined && !levels.includes(model.effort)
+  if (levels.length === 0 && !withdrawn) return <FixedThinking note={BUILTIN_THINKING_NOTE} />
+  return (
+    <>
+      <LevelRow
+        value={model.effort ?? MODEL_DEFAULT_LEVEL}
+        options={[{ value: MODEL_DEFAULT_LEVEL, label: '默认' }, ...levels.map(level => ({ value: level, label: thinkingWord(level) }))]}
+        disabled={disabled}
+        onChoose={value => {
+          onModel({ providerId: model.providerId, model: model.model, ...(value === MODEL_DEFAULT_LEVEL ? {} : { effort: value }) })
+        }}
+      />
+      {withdrawn && <p className="model-note">{`这个模型不再设置「${thinkingWord(model.effort!)}」，重新选一个后再发送。`}</p>}
+    </>
   )
 }
 
@@ -227,6 +263,7 @@ export function DraftHarnessControl({
   onManage,
   onAdded,
   onDefaultsChanged,
+  onRead,
 }: {
   catalog: HostCatalog
   choice: ComposerChoice
@@ -236,6 +273,8 @@ export function DraftHarnessControl({
   onManage?: (() => void) | undefined
   onAdded?: ((agent: AgentSettings) => void) | undefined
   onDefaultsChanged?: (() => void | Promise<void>) | undefined
+  /** A read of a Harness's lists that a selection started has ended. */
+  onRead?: (() => void) | undefined
 }) {
   const [adding, setAdding] = useState(false)
   const entries = engineEntries(catalog, choice.workspaceId)
@@ -266,7 +305,11 @@ export function DraftHarnessControl({
       onOpenChange={open => {
         if (!open) setAdding(false)
       }}
-      onValueChange={harnessId => onChoice({ harnessId })}
+      onValueChange={harnessId => {
+        onChoice({ harnessId })
+        const chosen = entries.find(entry => entry.harness.id === harnessId)?.harness
+        if (readsOnSelect(chosen, access)) readOnSelect(chosen, onRead)
+      }}
       footer={
         <div className="model-footer">
           {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
@@ -379,6 +422,7 @@ export function DraftModelControl({
   disabled,
   onManageModels,
   onProvidersChanged,
+  onRead,
 }: {
   catalog: HostCatalog
   choice: ComposerChoice
@@ -387,12 +431,16 @@ export function DraftModelControl({
   disabled: boolean
   onManageModels?: (() => void) | undefined
   onProvidersChanged?: (() => void) | undefined
+  /** A read of the Harness's lists, or the IDs typed for it, changed. */
+  onRead?: (() => void | Promise<void>) | undefined
 }) {
   const [adding, setAdding] = useState(false)
+  const [typing, setTyping] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
   const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
+  const readingNow = useReading(harness)
   const manage = onManageModels && (
     <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
       管理模型…
@@ -414,23 +462,64 @@ export function DraftModelControl({
     )
   if (harness.capabilities.models.owner !== 'latch') {
     const name = harnessName(harness)
+    const known = draftConfig(harness, choice.config)
+    const modelOption = known?.config.find(option => option.category === 'model')
+    const pick = (configId: string, value: string) => {
+      onChoice({ config: { ...choice.config, [configId]: value } })
+    }
+    const rows = (
+      <CatalogueRows
+        harness={harness}
+        access={access}
+        hasModels={modelOption !== undefined}
+        onRead={onRead}
+        onTypeModel={() => {
+          setTyping(true)
+        }}
+      />
+    )
+    const panel =
+      typing && modelOption ? (
+        <TypedModelsPanel
+          harness={harness}
+          onBack={() => {
+            setTyping(false)
+          }}
+          onChoose={model => {
+            pick(modelOption.id, model)
+            setTyping(false)
+          }}
+          onSaved={onRead}
+        />
+      ) : undefined
+    const opened = (open: boolean) => {
+      if (!open) setTyping(false)
+      // Opening the model menu of a Harness nothing is known of is asking what it offers.
+      if (open && readsOnSelect(harness, access)) readOnSelect(harness, onRead)
+    }
+    // One picker whether the list is known yet, so the menu stays open while a read fills it.
     return (
-      <ValuePicker
-        label="模型"
-        value={OWN_MODEL}
-        valueText={modelChipText(undefined, undefined)}
-        groups={ownModelGroups(catalog, name, [{ value: OWN_MODEL, label: DEFAULT_MODEL }])}
-        width={340}
-        className="model-picker"
-        menuChevron
+      <HarnessModelPicker
+        catalog={catalog}
+        harness={harness}
+        config={known?.config ?? []}
+        busy={null}
         disabled={disabled}
-        onValueChange={() => {}}
-        footer={
-          <div className="model-footer">
-            <FixedThinking note={unreportedNote(name, false, [])} />
-            {manage}
-          </div>
+        note={
+          known
+            ? known.thinkingUnknown
+              ? THINKING_AFTER_START(name)
+              : unreportedNote(name, true, known.config)
+            : harness.catalogueRead
+              ? null
+              : unreportedNote(name, false, [])
         }
+        onConfig={pick}
+        rows={rows}
+        panel={panel}
+        reading={readingNow}
+        onOpenChange={opened}
+        manage={manage}
       />
     )
   }
@@ -449,7 +538,9 @@ export function DraftModelControl({
       label="模型"
       placeholder="选择模型"
       value={choice.model ? modelKey(choice.model) : undefined}
-      {...(choice.model ? { valueText: modelChipText(choice.model.model, undefined) } : {})}
+      {...(choice.model
+        ? { valueText: modelChipText(choice.model.model, choice.model.effort ? thinkingWord(choice.model.effort) : undefined) }
+        : {})}
       groups={groups}
       searchable={count >= 8 && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
@@ -464,11 +555,20 @@ export function DraftModelControl({
       onValueChange={key => {
         rememberModel(key)
         const [providerId = '', model = ''] = key.split('\u0000')
-        onChoice({ model: { providerId, model } })
+        onChoice({ model: switchModel(catalog, choice.model, { providerId, model }) })
       }}
       footer={
         <div className="model-footer">
-          {!noService && <FixedThinking note={BUILTIN_THINKING_NOTE} />}
+          {choice.model && (
+            <BuiltinThinking
+              model={choice.model}
+              levels={thinkingLevels(catalog, choice.model)}
+              disabled={disabled}
+              onModel={model => {
+                onChoice({ model })
+              }}
+            />
+          )}
           <HiddenModelsLink
             shown={showHidden}
             onToggle={() => {
@@ -545,13 +645,6 @@ export function SessionModelControl({
 }) {
   const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
-  const state: AgentConfigState = { busy, ...(feedback ? { feedback } : {}) }
-  const blocked = agentConfigBlocked(state)
-  const choose = (id: string, value: string) => {
-    const intent = agentConfigChoice(config, id, value, state)
-    if (intent) return onConfig(intent.configId, intent.value)
-    return undefined
-  }
   const manage = onManageModels && (
     <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
       管理模型…
@@ -569,7 +662,11 @@ export function SessionModelControl({
         label="模型"
         placeholder="选择模型"
         value={model ? modelKey(model) : undefined}
-        valueText={!model || sameModel(model, current) ? modelChipText(model?.model, undefined) : pendingModelText(model.model)}
+        valueText={
+          !model || sameModel(model, current)
+            ? modelChipText(model?.model, model?.effort ? thinkingWord(model.effort) : undefined)
+            : pendingModelText(model)
+        }
         groups={groups}
         searchable={count >= 8}
         searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
@@ -582,11 +679,15 @@ export function SessionModelControl({
         onValueChange={key => {
           rememberModel(key)
           const [providerId = '', name = ''] = key.split('\u0000')
-          onModel({ providerId, model: name })
+          onModel(switchModel(catalog, model, { providerId, model: name }))
         }}
         footer={
           <div className="model-footer">
-            <FixedThinking note={BUILTIN_THINKING_NOTE} />
+            {model ? (
+              <BuiltinThinking model={model} levels={thinkingLevels(catalog, model)} disabled={locked !== undefined} onModel={onModel} />
+            ) : (
+              <FixedThinking note={BUILTIN_THINKING_NOTE} />
+            )}
             {model && !sameModel(model, current) && (
               <MenuFooterLink
                 chevron={false}
@@ -609,6 +710,69 @@ export function SessionModelControl({
       />
     )
   }
+  return (
+    <HarnessModelPicker
+      catalog={catalog}
+      harness={harness}
+      config={config}
+      reported={reported}
+      busy={busy}
+      {...(feedback ? { feedback } : {})}
+      onRefresh={onRefresh}
+      onConfig={onConfig}
+      manage={manage}
+      locked={locked}
+    />
+  )
+}
+
+/**
+ * A Harness's own models with their thinking and other options, from one list: a running session's `config`, or for a
+ * draft the list its last session offered. A pick is an intent, written to the session or kept for the start.
+ */
+function HarnessModelPicker({
+  catalog,
+  harness,
+  config: given,
+  reported,
+  busy,
+  feedback,
+  onRefresh,
+  onConfig,
+  manage,
+  locked,
+  disabled,
+  note: noteOverride,
+  rows,
+  panel,
+  reading = false,
+  onOpenChange,
+}: AgentConfigState & {
+  catalog: HostCatalog
+  harness: HarnessInfo | undefined
+  config: readonly SessionConfigOption[]
+  reported?: string | undefined
+  onRefresh?: (() => void | Promise<void>) | undefined
+  onConfig: (configId: string, value: string) => void | Promise<void>
+  manage: ReactNode
+  locked?: string | undefined
+  /** For a draft: what to say about thinking instead of what a session would; null for nothing. */
+  note?: string | null | undefined
+  /** For a draft: where the list comes from, reading it again, typing a model ID. */
+  rows?: ReactNode
+  panel?: ReactNode
+  /** A read of the Harness's lists is running. */
+  reading?: boolean
+  onOpenChange?: ((open: boolean) => void) | undefined
+}) {
+  const config = withTypedModels(given, harness?.customModels)
+  const state: AgentConfigState = { busy, ...(feedback ? { feedback } : {}) }
+  const blocked = agentConfigBlocked(state)
+  const choose = (id: string, value: string) => {
+    const intent = agentConfigChoice(config, id, value, state)
+    if (intent) return onConfig(intent.configId, intent.value)
+    return undefined
+  }
   const modelOption = config.find(option => option.category === 'model')
   const thought = config.find(option => option.category === 'thought_level')
   const others = config.filter(option => option.category === 'model_config')
@@ -624,7 +788,7 @@ export function SessionModelControl({
   const name = harness ? harnessName(harness) : 'Harness'
   const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
   const text = modelChipText(reportedOr, thought ? agentConfigLabel(thought) : undefined)
-  const note = unreportedNote(name, true, config)
+  const note = noteOverride === null ? undefined : (noteOverride ?? unreportedNote(name, true, config))
   return (
     <ValuePicker
       label="模型"
@@ -635,10 +799,12 @@ export function SessionModelControl({
       menuChevron
       searchable={(modelOption?.options.length ?? 0) >= 8}
       width={340}
-      pending={busy !== null}
-      pendingLabel="正在切换…"
-      disabled={locked !== undefined}
+      pending={busy !== null || reading}
+      pendingLabel={reading ? '正在读取…' : '正在切换…'}
+      disabled={locked !== undefined || disabled === true}
       disabledReason={locked}
+      {...(panel ? { panel } : {})}
+      {...(onOpenChange ? { onOpenChange } : {})}
       onValueChange={value => {
         if (modelOption) return choose(modelOption.id, value)
         return undefined
@@ -648,7 +814,8 @@ export function SessionModelControl({
           {thought ? (
             <>
               <LevelRow
-                option={thought}
+                value={thought.currentValue}
+                options={agentConfigValues(thought).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
                 disabled={blocked}
                 onChoose={value => {
                   void choose(thought.id, value)
@@ -669,6 +836,7 @@ export function SessionModelControl({
               }}
             />
           ))}
+          {rows}
           {feedback && (
             <InlineNotice
               tone={feedback.kind === 'unknown' ? 'warn' : 'error'}

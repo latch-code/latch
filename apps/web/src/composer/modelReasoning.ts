@@ -1,4 +1,4 @@
-import type { SessionConfigOption } from '@latch/protocol'
+import type { ModelRef, ProviderKind, SessionConfigOption } from '@latch/protocol'
 
 export interface SessionConfigFeedback {
   kind: 'failed' | 'unknown'
@@ -42,8 +42,46 @@ export function unreportedNote(harness: string, started: boolean, config: readon
   return model ? `${harness} 没有报告思考深度，用它自己的默认值。` : `${harness} 没有报告可选的模型，由它自己决定。`
 }
 
-/** On the built-in Harness, where Latch sends the request and sets no thinking level. */
-export const BUILTIN_THINKING_NOTE = 'Latch 内置不设置思考深度，用模型自己的默认值。'
+/** A draft picked a model no session has run on yet, so what thinking it offers is not known. */
+export const THINKING_AFTER_START = (harness: string) => `这个模型有哪些思考深度，${harness} 开始后才告诉 Latch。`
+
+/** On the built-in Harness, for a model with no thinking levels declared in settings. */
+export const BUILTIN_THINKING_NOTE = '这个模型没有设置思考深度，用它自己的默认值。可以在 设置 › 模型 里为它选择。'
+
+const THINKING_WORDS: Readonly<Record<string, string>> = {
+  none: '不思考',
+  minimal: '最少',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '超高',
+  max: '最高',
+}
+
+/** A thinking level in words; a level Latch has no word for shows as sent. */
+export const thinkingWord = (level: string): string => THINKING_WORDS[level] ?? level
+
+/**
+ * The level sets offered when declaring what a model accepts, by protocol: `reasoning_effort` for Chat Completions,
+ * `output_config.effort` for the Messages API. Which one a model takes is the service's to say, so nothing is preselected.
+ */
+export const THINKING_SETS: Readonly<Record<ProviderKind, ReadonlyArray<readonly string[]>>> = {
+  'openai-compatible': [
+    ['low', 'medium', 'high'],
+    ['minimal', 'low', 'medium', 'high'],
+    ['none', 'low', 'medium', 'high', 'xhigh'],
+  ],
+  anthropic: [
+    ['low', 'medium', 'high'],
+    ['low', 'medium', 'high', 'max'],
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+  ],
+}
+
+/** A built-in model with its thinking level, as the chip and the switch notice say it. */
+export const modelWords = (model: ModelRef): string => (model.effort ? `${model.model} · ${thinkingWord(model.effort)}` : model.model)
+
+export const thinkingSetText = (levels: readonly string[]): string => levels.map(thinkingWord).join(' · ')
 
 /**
  * What the composer's 「⋯」 holds: every option no other control shows, so one the Latch does not recognise stays
