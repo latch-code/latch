@@ -5,7 +5,9 @@ sources:
   - apps/web/src/composer/modelReasoning.ts
   - apps/web/src/settings/ProvidersSettings.tsx
   - apps/host/src/plugins/providers/chat-wire.ts
+  - apps/host/src/plugins/providers/responses-wire.ts
   - apps/host/src/plugins/providers/anthropic-wire.ts
+  - apps/host/src/plugins/providers/gemini-wire.ts
   - packages/core/src/runtime.ts
   - apps/web/test/model-reasoning.test.ts
   - packages/protocol/src/types.ts
@@ -21,9 +23,13 @@ sources:
 
 ## Latch 内置的思考深度
 
-Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Anthropic 的 `output_config.effort`），默认不设置。没有声明时输入框写「默认思考」并说明去哪里设置。
+Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Responses 的 `reasoning.effort`；Anthropic 的 `output_config.effort`；Gemini 3 及以后的 `thinkingLevel`），默认不设置。没有声明时输入框写「默认思考」并说明去哪里设置。
 
 选择随 `ModelRef.effort` 走，与模型一样是「下一条」生效：输入框标签为「模型 · 高」，菜单里的「默认 · 低 · 中 · 高」分段只列声明过的档位，换档与换模型一样显示「下一条：…」。会话记在 `TaskSummary.effort`；之后不带模型的输入沿用它，带模型却不带档位的输入回到模型默认值。换到另一个模型时，它也声明了同一档位才保留。Host 在开始前核对档位：请求里未声明的返回 400 `effort-unavailable`，会话记着的档位后来被取消时返回 409，要求重新选择；插件发送前再查一次，从不改成别的档位。Anthropic 的档位是这一强度下的自适应思考：同时发 `thinking: {type: "adaptive"}` 与 `output_config.effort`，不发 token 预算。必须写明 `thinking`，因为 Opus 4.6–4.8 与 Sonnet 4.6 不带它就不思考；Claude 5 系列默认就是自适应思考。Opus 4.5 及更早的模型不接受自适应思考，会返回 400，不要给它们声明档位。
+
+各协议的细节：Responses 发 `reasoning: {effort}`，不请求推理摘要（没有验证的组织请求摘要会被拒），所以只有服务自己发来推理文字时才显示；请求带 `store: false`，因为 Latch 自己保存对话，从不按响应 ID 引用。Gemini 的档位与其他协议一样写成小写（`minimal`、`low`、`medium`、`high`），上线时转成 API 的大写枚举，同时发 `includeThoughts: true`，思考摘要显示在思考里；Gemini 2.5 的 `thinkingBudget` 是 token 数，不是档位，不要给 2.5 声明。思考 tokens 计入输出，也单独记为推理。
+
+服务换协议（设置 › 模型 › 服务页的「协议」，只在这个地址说多种协议时出现）时，Host 清除它为各模型声明的思考深度，图片开关保留；同一请求里给出的新声明照常保存。会话记着的档位随之失效，下一条按上文要求重新选择。
 
 ## 配置变更与接线
 

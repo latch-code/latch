@@ -4,20 +4,15 @@ import { render } from 'vitest-browser-react'
 import { commands } from 'vitest/browser'
 import { Check, Copy } from 'lucide-react'
 import { Collapse, EASING, IconButton, MOTION, Shimmer, Swap, switchTheme, usePresence } from '../src/index.ts'
-import { protocol } from './helpers.ts'
+import { emulateMedia } from './helpers.ts'
 
 const frames = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
 /** The first CSS animation running on an element. */
 const cssAnimation = (element: Element) => element.getAnimations().find((item): item is CSSAnimation => item instanceof CSSAnimation)
 /** Emulates `prefers-reduced-motion: reduce` for the duration of `run`. */
-async function reducedMotion(run: () => Promise<void>): Promise<void> {
-  await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
-  try {
-    await run()
-  } finally {
-    await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-  }
+function reducedMotion(run: () => Promise<void>): Promise<void> {
+  return emulateMedia({ 'prefers-reduced-motion': 'reduce' }, run)
 }
 
 function Disclosure({ initial = false, onReveal }: { initial?: boolean; onReveal?: () => void }) {

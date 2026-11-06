@@ -31,7 +31,7 @@ export class AgentProbes {
         throw new AppError(409, 'request-conflict', '此请求标识已用于其他 Agent 启动内容')
       const latest = await agentProbePreview(input.agent, { dataDir: this.options.dataDir, cwd: attempt.preview.cwd })
       if (latest.launchHash !== attempt.preview.launchHash)
-        throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试并确认。')
+        throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
       return attempt
     }
     for (const [id, pending] of this.attempts) {

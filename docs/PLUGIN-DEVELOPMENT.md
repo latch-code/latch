@@ -40,7 +40,7 @@ pnpm desktop -- --plugin ./examples/text-statistics.mjs
 
 通过 `--plugin` 加载的插件，其启停保存在 `settings.json`；修改原目录源码仍需重启 Host。应用内管理的自定义插件把草稿、已应用版本和批准摘要保存在私有 `plugin-packages/assets.json`，应用后立即发布新代，重启恢复已应用快照；保存草稿不改变正在运行的版本。设置页管理的模型服务与 ACP Agent 也使用插件生命周期（`managed` 为 `provider` / `agent`），应在对应设置页中修改；内置插件（`managed: 'core'`）不能停用。
 
-内置插件与第三方插件用同一组接口：它们在 `apps/host/src/plugins/<种类>/<id>/`，每个插件一个目录（`providers/openai-compatible`、`providers/anthropic`、`providers/demo`、`tools/workspace-files`、`tools/safe-tools`、`standard`），ACP Driver 是单独的包 `@latch/harness-acp`。插件目录只导入 `@latch/sdk`、`@latch/protocol`、已安装的包、本目录的文件与同一种类共用的文件（如 `providers/http.ts`），不导入 Host 或其他插件目录；Host 需要提供的能力（出站 `fetch`、受保护路径）经插件参数传入。`pnpm lint` 检查这些边界（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Workspace 项目」）。
+内置插件与第三方插件用同一组接口：它们在 `apps/host/src/plugins/<种类>/<id>/`，每个插件一个目录（`providers/openai-compatible`、`providers/openai-responses`、`providers/anthropic`、`providers/gemini`、`providers/demo`、`tools/workspace-files`、`tools/safe-tools`、`standard`），ACP Driver 是单独的包 `@latch/harness-acp`。插件目录只导入 `@latch/sdk`、`@latch/protocol`、已安装的包、本目录的文件与同一种类共用的文件（如 `providers/http.ts`），不导入 Host 或其他插件目录；Host 需要提供的能力（出站 `fetch`、受保护路径）经插件参数传入。`pnpm lint` 检查这些边界（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Workspace 项目」）。
 
 ## 组合一个自定义插件
 
@@ -243,7 +243,7 @@ Standard 在每次工具调用执行前请 Host 分级（`HarnessHostOptions.cla
 
 ## 注册模型 Provider
 
-设置页可以直接添加 OpenAI 兼容与 Anthropic 原生服务。只有接入其他协议时才需要编写 Provider 插件：
+设置页可以直接添加用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务。只有接入其他协议时才需要编写 Provider 插件：
 
 ```ts
 interface ModelProvider {
@@ -267,7 +267,7 @@ interface ModelProvider {
 
 把 `signal` 交给底层请求，并在退出时释放读取器。调用 ID 在同一会话历史中须唯一；处理 `ModelMessage.isError`，不要把拒绝或工具错误变成成功信息。`tools: []` 表示对话模式，不能发送工具声明。日志与错误不要包含密钥。
 
-[openai-compatible](../apps/host/src/plugins/providers/openai-compatible/index.ts) 与 [anthropic](../apps/host/src/plugins/providers/anthropic/index.ts) 是完整参考：分片组装、完整参数解析、终止校验、大小限制、取消与密钥脱敏；两者共用的 SSE 分帧、错误响应读取、密钥脱敏与参数解析在 [http.ts](../apps/host/src/plugins/providers/http.ts)。
+内置的四种协议是完整参考：每种协议一个文件（[chat-wire.ts](../apps/host/src/plugins/providers/chat-wire.ts)、[responses-wire.ts](../apps/host/src/plugins/providers/responses-wire.ts)、[anthropic-wire.ts](../apps/host/src/plugins/providers/anthropic-wire.ts)、[gemini-wire.ts](../apps/host/src/plugins/providers/gemini-wire.ts)）负责地址、请求体、分片组装、完整参数解析、终止校验与大小限制，插件工厂 [service.ts](../apps/host/src/plugins/providers/service.ts) 负责模型与思考深度的选择、取消与密钥脱敏；共用的 SSE 分帧、错误响应读取、密钥脱敏与参数解析在 [http.ts](../apps/host/src/plugins/providers/http.ts)。服务给工具调用附带、下一轮必须原样带回的数据（Gemini 的 `thoughtSignature`）放在 `ToolCall.signature` 的 `value`，`by` 写服务与模型；会话历史保存它，界面与审批看不到，Provider 只把 `by` 是自己的发回。
 
 ### 出站请求与密钥
 
@@ -299,7 +299,7 @@ export default {
 - 这些事实是对用户的陈述，描述的一方说了不算，由 Host 钳制：只有内置 Harness 能得到 `enforcement: 'latch'`（其他写了也算 `harness`，会话仍是 L3，也收不到分级器）；只有内置 Harness 能说 `tools.shell: false`；其他 Harness 的名字与内置的相同或只差大小写、宽度、空白与不可见字符时显示为「…（非内置）」，也不能用内置的图标。
 - `status()` 可选，返回 `ready` 或 `unavailable` 与说明，例如依赖的程序未安装。
 - `create(options)` 同步返回尚未启动的 Bridge，异步初始化放进 `start()`。`options`（`HarnessHostOptions`）包括私有 `dataDir`（`<数据目录>/harnesses/<driver-id>`，不要写入用户工作区）、默认 `workspaceRoot`、允许的 `workspaces()`（各项目的主文件夹）、`registry`、`providerId`、`defaultModel()` 与可选 `maxSteps`。
-- `projectFolders: 'all'`（可选）：Driver 能使用项目的全部文件夹。Host 因此在新建会话时传入 `workspaceId` 与 `folders`（`{ id, path }` 的有序列表，`[0]` 就是 `cwd`），并在 `options.projects()` 中列出当前可用的项目及其文件夹（`default` 是启动目录）；Driver 应据此核对 `folders`，在会话中保存它们，并在每次输入前确认它们仍属于该项目（否则 409 `workspace-changed`）。会话应把它们记在 `TaskSummary.workspaceId` 与 `folders` 中。没有声明的 Driver 只收到主文件夹作为 `cwd`，`HarnessInfo.projectFolders` 也不声称它能使用其他文件夹。L3 Driver 同样收到这些字段，`launchPreview` 也收到 `workspaceId` 与 `folders`，并在返回的 `folders` 中列出 Agent 除 `cwd` 之外还会收到的文件夹，本机确认逐个显示并绑定它们。使用 Registry 时在运行开始时取得 `acquire(providerId, { tools })` 租约，并持有到运行真正结束。
+- `projectFolders: 'all'`（可选）：Driver 能使用项目的全部文件夹。Host 因此在新建会话时传入 `workspaceId` 与 `folders`（`{ id, path }` 的有序列表，`[0]` 就是 `cwd`），并在 `options.projects()` 中列出当前可用的项目及其文件夹（`default` 是启动目录）；Driver 应据此核对 `folders`，在会话中保存它们，并在每次输入前确认它们仍属于该项目（否则 409 `workspace-changed`）。会话应把它们记在 `TaskSummary.workspaceId` 与 `folders` 中。没有声明的 Driver 只收到主文件夹作为 `cwd`，`HarnessInfo.projectFolders` 也不声称它能使用其他文件夹。L3 Driver 同样收到这些字段，`launchPreview` 也收到 `workspaceId` 与 `folders`，并在返回的 `folders` 中列出 Agent 除 `cwd` 之外还会收到的文件夹，启动审计记下文件夹的数量。使用 Registry 时在运行开始时取得 `acquire(providerId, { tools })` 租约，并持有到运行真正结束。
 - `folderAccess`（可选）：告诉客户端 Harness 怎样对待项目的其他文件夹，成为 `HarnessInfo.projectFolders`。声明了 `projectFolders: 'all'` 时写 `{ access: 'all', max? }`，`max` 是能在其中新建会话的项目最多有几个文件夹（Host 超出时返回 409 `harness-folder-limit`）；没有声明时可写 `{ access: 'primary' }`（只用主文件夹，默认）、`'primary-asks'`（使用其他文件夹前会询问）或 `'primary-unbounded'`（只收到主文件夹，但不限制能访问的目录）。没有声明 `projectFolders: 'all'` 的 Driver 写 `all` 会被忽略。
 - `options.tmpRoot`：Host 运行目录下私有的 0700 目录（`<运行目录>/tmp`），所有 Driver 共用。在其下为每个会话建立自己的 0700 子目录（ACP 用会话标识的 sha256 前 16 位命名），删除会话时清理；Host 关闭时整个目录被删除，不要在其中保存需要保留的数据。
 - `options.securityEvent(event)`：上报 `permission-drift`（带模式值的哈希 `observedHash`）、`permission-unverified` 或 `approval-auto-rejected`（原因 `persistent-only` 或 `unknown-kind`）。Host 把漂移与自动拒绝写入审计（`task.permission-drift`、`task.approval-auto-rejected`），`permission-unverified` 只写入 Host 日志，然后刷新该会话；调用不会抛错。

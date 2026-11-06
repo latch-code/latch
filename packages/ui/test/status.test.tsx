@@ -15,7 +15,7 @@ import {
   useLivePrevious,
   type SlotStatus,
 } from '../src/index.ts'
-import { protocol } from './helpers.ts'
+import { emulateMedia } from './helpers.ts'
 
 const frames = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
@@ -34,13 +34,8 @@ function token(name: string): string {
 }
 
 /** Emulates `prefers-reduced-motion: reduce` for the duration of `run`. */
-async function reducedMotion(run: () => Promise<void>): Promise<void> {
-  await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
-  try {
-    await run()
-  } finally {
-    await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-  }
+function reducedMotion(run: () => Promise<void>): Promise<void> {
+  return emulateMedia({ 'prefers-reduced-motion': 'reduce' }, run)
 }
 
 /** `epoch` stands for the page's resynchronization epoch: a change made under a new epoch was not seen live. */

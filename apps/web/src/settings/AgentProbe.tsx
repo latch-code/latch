@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { FlaskConical } from 'lucide-react'
-import type { AgentProbeResult, AgentSettings, HarnessLogin } from '@latch/protocol'
+import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentSettings, type HarnessLogin } from '@latch/protocol'
 import { Button, InlineNotice, CopyButton } from '@latch/ui'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -16,7 +16,7 @@ export function probeResultTitle(result: AgentProbeResult | undefined): string {
 }
 
 export function probeRowDescription(result: AgentProbeResult | undefined, busy: boolean): string {
-  if (busy) return '最多等待 15 秒。'
+  if (busy) return `最多等待 ${AGENT_PROBE_MAX_MS / 1000} 秒。`
   if (result?.status === 'ready') {
     if (result.login === 'unauthenticated') return '在终端里登录，再重新测试。'
     return result.login === 'authenticated' ? '模型访问尚未验证。' : '登录状态与模型访问尚未验证。'
@@ -58,7 +58,12 @@ export function AgentProbe({
     setError('')
     const body = { requestId: (pending.current ??= crypto.randomUUID()) }
     try {
-      const next = await api<AgentProbeResult>(`agents/${encodeURIComponent(agent.id)}/probe`, { method: 'POST', body, timeoutMs: 25_000 })
+      // Past the Host's own limit it still stops the program and saves the result.
+      const next = await api<AgentProbeResult>(`agents/${encodeURIComponent(agent.id)}/probe`, {
+        method: 'POST',
+        body,
+        timeoutMs: AGENT_PROBE_MAX_MS + 5_000,
+      })
       setResult(next)
       pending.current = null
       setUncertain(false)

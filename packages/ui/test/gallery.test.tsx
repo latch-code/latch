@@ -3,7 +3,7 @@ import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import layout from './gallery/layout.css?inline'
 import { Gallery } from './gallery/Gallery.tsx'
-import { protocol } from './helpers.ts'
+import { emulateMedia } from './helpers.ts'
 
 /** Every class the primitives' stylesheets style. */
 const styled = new Set(
@@ -96,19 +96,15 @@ describe('gallery of the primitives', () => {
     const primary = () => getComputedStyle(screen.getByRole('button', { name: '允许一次' }).first().element()).backgroundColor
     const surface = () => getComputedStyle(screen.container.querySelector('.ui-dialog-surface')!).backgroundColor
     expect([primary(), surface()]).toEqual(['rgb(36, 97, 224)', 'rgb(255, 255, 255)'])
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
-    try {
+    await emulateMedia({ 'prefers-color-scheme': 'dark' }, async () => {
       // The button's fill eases over --m-micro when the system flips (a page switches without it, theme.ts).
       await expect.poll(() => [primary(), surface()]).toEqual(['rgb(47, 111, 235)', 'rgb(24, 24, 27)'])
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+    })
   })
 
   it('holds the loops still and keeps only short fades when motion is reduced', async () => {
     const screen = await render(<Gallery />)
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
-    try {
+    await emulateMedia({ 'prefers-reduced-motion': 'reduce' }, () => {
       // The spinner and the thinking shimmer stand on their still frames.
       expect(getComputedStyle(screen.container.querySelector('.ui-spinner')!).animationName).toBe('none')
       expect(getComputedStyle(screen.container.querySelector('.ui-shimmer')!).animationName).toBe('none')
@@ -121,8 +117,6 @@ describe('gallery of the primitives', () => {
           selector,
         ).toBe(true)
       }
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+    })
   })
 })

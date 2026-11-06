@@ -1,18 +1,29 @@
-import { z } from 'zod'
 import { PROVIDER_PRESETS, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
-import { listAnthropicModels } from './plugins/providers/anthropic-wire.ts'
-import { listChatModels } from './plugins/providers/chat-wire.ts'
-import { ProviderError, readErrorBody, redactor, send, type FetchLike, type ModelPage } from './plugins/providers/http.ts'
+import { anthropicWire } from './plugins/providers/anthropic-wire.ts'
+import { chatWire } from './plugins/providers/chat-wire.ts'
+import { createGeminiPlugin } from './plugins/providers/gemini/index.ts'
+import { geminiWire } from './plugins/providers/gemini-wire.ts'
+import { ProviderError, readErrorBody, redactor, send, type FetchLike, type ModelPage, type ModelWire } from './plugins/providers/http.ts'
 import { createOpenAIPlugin } from './plugins/providers/openai-compatible/index.ts'
+import { createResponsesPlugin } from './plugins/providers/openai-responses/index.ts'
+import { responsesWire } from './plugins/providers/responses-wire.ts'
 import { addressOf, keyPathOf, originOf, type ProviderRecord } from './config.ts'
 
 export { originOf }
 
 const factories: Record<ProviderKind, typeof createOpenAIPlugin> = {
   'openai-compatible': createOpenAIPlugin,
+  'openai-responses': createResponsesPlugin,
   anthropic: createAnthropicPlugin,
+  gemini: createGeminiPlugin,
+}
+const wires: Record<ProviderKind, ModelWire> = {
+  'openai-compatible': chatWire,
+  'openai-responses': responsesWire,
+  anthropic: anthropicWire,
+  gemini: geminiWire,
 }
 
 /**
@@ -138,15 +149,6 @@ export function summarizeProvider(provider: ModelProvider, kind: ProviderSummary
 const LIST_TIMEOUT_MS = 10_000
 const MAX_LIST_BYTES = 8 * 1024 * 1024
 const MAX_LISTED_MODELS = 5000
-const listSchema = z.union([
-  z.object({
-    data: z.array(z.object({ id: z.string() })),
-    has_more: z.boolean().optional(),
-    last_id: z.string().nullable().optional(),
-  }),
-  z.array(z.object({ id: z.string() })).transform(data => ({ data, has_more: false, last_id: null })),
-])
-
 export interface ModelListInput {
   kind: ProviderKind
   baseURL: string
@@ -214,16 +216,12 @@ async function fetchPage(
       response.status,
     )
   }
-  let value: unknown
+  const text = await readLimited(response, signal)
   try {
-    value = JSON.parse(await readLimited(response, signal))
-  } catch (error) {
-    if (error instanceof ProviderError) throw error
+    return JSON.parse(text) as unknown
+  } catch {
     throw new ProviderError('模型列表不是有效的 JSON。', 'invalid-response')
   }
-  const page = listSchema.safeParse(value)
-  if (!page.success) throw new ProviderError('模型列表格式无效。', 'invalid-response')
-  return page.data
 }
 
 function networkFailure(error: unknown, redacted: (text: string) => string): ProviderError {
@@ -259,21 +257,14 @@ export async function listProviderModels(
   const combined = AbortSignal.any([signal, timeout])
   const redacted = redactor(input.apiKey)
   const models = new Set<string>()
-  const collect = (data: Array<{ id: string }>) => {
-    for (const { id } of data) {
+  const page: ModelPage = (url, headers) => fetchPage(options.fetch, url, headers, combined, redacted)
+  try {
+    for (const { id } of await wires[input.kind].listModels(input.baseURL, input.apiKey, page)) {
       const model = id.trim()
       // Store limits; unusable IDs are skipped rather than failing the whole list.
       if (model && model.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(model)) models.add(model)
+      if (models.size > MAX_LISTED_MODELS) throw new ProviderError('模型列表条目过多。', 'response-too-large')
     }
-    if (models.size > MAX_LISTED_MODELS) throw new ProviderError('模型列表条目过多。', 'response-too-large')
-  }
-  const page: ModelPage = async (url, headers) => {
-    const result = await fetchPage(options.fetch, url, headers, combined, redacted)
-    collect(result.data)
-    return result
-  }
-  try {
-    await (input.kind === 'openai-compatible' ? listChatModels : listAnthropicModels)(input.baseURL, input.apiKey, page)
   } catch (error) {
     if (signal.aborted) throw signal.reason
     if (timeout.aborted) throw new ProviderError('获取模型列表超时，请检查服务地址与网络。', 'timeout')

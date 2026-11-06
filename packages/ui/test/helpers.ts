@@ -2,7 +2,7 @@ import type { CDPSession } from '@vitest/browser-playwright'
 import { cdp, type Locator } from 'vitest/browser'
 
 /** The DevTools protocol of the test's page, typed by the Playwright provider. */
-export const protocol = (): CDPSession => cdp()
+const protocol = (): CDPSession => cdp()
 
 /** The located HTML element (a locator may also find SVG). */
 function html(locator: Locator): HTMLElement {
@@ -26,5 +26,35 @@ export async function onTouchScreen(run: () => Promise<void>): Promise<void> {
     await run()
   } finally {
     await protocol().send('Emulation.setTouchEmulationEnabled', { enabled: false })
+  }
+}
+
+/**
+ * The media the page is emulated with between checks: the colour scheme of the Playwright context in vitest.config.ts,
+ * and Playwright's defaults for the rest. A DevTools call replaces every emulated feature, and a feature it leaves out
+ * falls back to the system's preference, so each call names them all.
+ */
+const CONTEXT_MEDIA = {
+  'prefers-color-scheme': 'light',
+  'prefers-reduced-motion': 'no-preference',
+  'forced-colors': 'none',
+  'prefers-contrast': 'no-preference',
+}
+
+type MediaFeatures = { 'prefers-color-scheme'?: 'light' | 'dark'; 'prefers-reduced-motion'?: 'reduce' | 'no-preference' }
+
+async function setMedia(features: Record<string, string>): Promise<void> {
+  await protocol().send('Emulation.setEmulatedMedia', {
+    features: Object.entries(features).map(([name, value]) => ({ name, value })),
+  })
+}
+
+/** Emulates media features for the duration of `run`, keeping the others, then returns to the context's media. */
+export async function emulateMedia(features: MediaFeatures, run: () => unknown): Promise<void> {
+  await setMedia({ ...CONTEXT_MEDIA, ...features })
+  try {
+    await run()
+  } finally {
+    await setMedia(CONTEXT_MEDIA)
   }
 }

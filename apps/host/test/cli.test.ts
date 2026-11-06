@@ -302,8 +302,9 @@ describe('latch CLI', () => {
     expect(loopback.output.stdout).not.toMatch(/lpi1-/)
     const link = await readFile(join(directory, 'browser.txt'), 'utf8')
     expect(link).toMatch(new RegExp(`^${t.host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}\\n$`))
-    // Without --scopes it offers what the desktop app's link offers, 管理此 Host included.
-    const admin = ['view', 'run', 'approve:standard', 'admin'] as const
+    // Without --scopes it offers what the desktop app's link offers, approving high-risk steps too, and 管理此 Host;
+    // the page asks for all of it unless the person turns management down.
+    const admin = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin'] as const
     const browser = await t.enroll({ invitation: new URL(link.trim()).hash.slice('#pair='.length), scopes: [...admin] })
     expect(browser.device).toMatchObject({ listener: 'loopback-tcp', scopes: admin, pairedBy: { method: 'invitation' } })
     const browserTty = cli({ tty: true })

@@ -108,7 +108,7 @@ export interface LaunchPreview {
   args: string[]
   /** Names only, sorted; values never leave the Host. */
   envNames: string[]
-  /** The names the definition itself sets, sorted, for the system sheet's reason; absent from drivers that do not say. */
+  /** The names the definition itself sets, sorted; absent from drivers that do not say. */
   definitionEnvNames?: string[]
   cwd: string
   /** Folders besides `cwd` the agent receives, as ordered absolute paths. Absent or empty: `cwd` only. */
@@ -118,7 +118,6 @@ export interface LaunchPreview {
   verified: boolean
   approvals: 'prompts' | 'none'
   readback: 'mode' | 'none'
-  notes: string[]
 }
 
 export interface Bridge {

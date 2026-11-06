@@ -932,13 +932,14 @@ describe('this computer', () => {
 })
 
 describe('enrollment', () => {
-  it('tells the holder of an invitation whether it allows management, spending nothing, on its own listener only', async () => {
+  it('tells the holder of an invitation what it may ask for, spending nothing, on its own listener only', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
     const managing = await invitationFor(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
     const plain = await invitationFor(context, loopback, { scopes: ['view', 'run', 'approve:standard'] })
-    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual({ admin: true })
-    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual({ admin: true })
-    expect(context.enrollments.invitationOffer(plain, loopback)).toEqual({ admin: false })
+    const offer = { admin: true, scopes: ['view', 'run', 'approve:standard', 'admin'] }
+    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual(offer)
+    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual(offer)
+    expect(context.enrollments.invitationOffer(plain, loopback)).toEqual({ admin: false, scopes: ['view', 'run', 'approve:standard'] })
     for (const [code, connection] of [
       [managing, tls],
       [managing, unix],

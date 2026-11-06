@@ -72,8 +72,6 @@ export function foldersSigningText(hostId: string, deviceId: string, nonce: stri
   return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
 }
 
-/** A native sheet's proof: domain-separated, bound to this Host, device, ticket and full Host preview. */
-
 export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 /** Key entry stays on the desktop app for now; this one scope is what a device on another listener cannot hold. */
 export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['secrets']
@@ -2210,18 +2208,19 @@ export class EnrollmentService {
     }
   }
 
-  /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
   /**
-   * Whether an invitation lets its holder ask for `admin`, so the page can say so before the person acts. Spends nothing,
-   * and tells the holder nothing a request would not: asking for `admin` under a smaller invitation is refused unspent.
+   * What an invitation lets its holder ask for, `admin` among it, so the page can say so before the person acts and ask
+   * for no more. Spends nothing, and tells the holder nothing a request would not: asking for more than an invitation
+   * grants is refused unspent.
    */
   invitationOffer(code: unknown, connection: ConnectionContext): EnrollmentInvitationOffer {
     this.prune()
     const invitation = this.findInvitation(code, connection)
     if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
-    return { admin: invitation.scopes.includes('admin') }
+    return { admin: invitation.scopes.includes('admin'), scopes: [...invitation.scopes] }
   }
 
+  /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
   private findInvitation(code: unknown, connection: ConnectionContext): Invitation | undefined {
     if (typeof code !== 'string' || !/^lpi1-[A-Z2-7]{26}$/u.test(code)) return undefined
     const hash = sha256Hex(code)

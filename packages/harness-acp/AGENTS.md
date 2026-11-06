@@ -12,7 +12,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Gemini CLI、Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts#gives Codex the full list of other folders over ACP on new, resumed and loaded sessions`、`test/acp.test.ts#never passes other folders to OpenCode, DeepSeek Harness, pi or goose`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 放宽自己的权限模式时停止该轮（`test/acp.test.ts#cancels the turn, rejects pending asks and stops input when the agent widens its own mode`）。
 - 取消须等进程真实结算（`test/acp.test.ts#answers open permissions as cancelled and waits for the prompt to settle`）；带 `runId` 时只取消仍是当前的那一轮（`test/acp.test.ts#names each turn on the session and leaves a turn alone when a cancel names another`）。
-- 探测只做 initialize（`loginStatus`、`programVersion` 另跑一次），经过同一命令、环境和配置指纹检查，15 秒内结束并等待进程停止；不发提示词，authMethods 不作为未登录证据（`test/probe.test.ts`）。
+- 探测只做 initialize（`loginStatus`、`programVersion` 同时另跑），经过同一命令、环境和配置指纹检查，20 秒内结束并等待进程停止；不发提示词，authMethods 不作为未登录证据（`test/probe.test.ts`）。
 - 新的持久化字段以可选字段加入 `src/store.ts` 的 zod schema。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts#uses one approval wait timestamp even when every clock read advances`）。
 - 测试只用假 Agent 与回放 Agent（`test/replay.test.ts`），不向真实 Agent 发提示。

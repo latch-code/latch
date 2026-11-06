@@ -654,7 +654,6 @@ describe('harness hub isolation and lifecycle', () => {
         verified: false,
         approvals: 'prompts' as const,
         readback: 'none' as const,
-        notes: [],
       }))
       previews.set(id, launchPreview)
       await value.attach(driver(id, extra), mount(external([], [], { launchPreview }).bridge, { kind: 'acp' }))
@@ -767,7 +766,6 @@ describe('permission levels', () => {
       verified: true,
       approvals: 'prompts' as const,
       readback: 'mode' as const,
-      notes: [],
     }
     const setConfig = vi.fn(async () => {})
     const classifyConfigChange = vi.fn(async () => 'wider' as const)

@@ -34,8 +34,8 @@ describe('Agent diagnostic presentation', () => {
     expect(html).not.toContain('需要先登录')
   })
   it('says while it runs only how long it waits, since a probe asks for no confirmation', () => {
-    expect(probeRowDescription(undefined, true)).toBe('最多等待 15 秒。')
-    expect(probeRowDescription(base, true)).toBe('最多等待 15 秒。')
+    expect(probeRowDescription(undefined, true)).toBe('最多等待 20 秒。')
+    expect(probeRowDescription(base, true)).toBe('最多等待 20 秒。')
   })
   it('explains why a device cannot run the test without suggesting it can', () => {
     const html = render(undefined, '这台设备没有管理这台 Mac 的权限。')

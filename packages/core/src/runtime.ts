@@ -276,6 +276,11 @@ function safeCall(call: ToolCall): ToolCall {
     || typeof call.arguments !== 'object'
     || call.arguments === null
     || Array.isArray(call.arguments)
+    || (call.signature !== undefined
+      && (typeof call.signature?.by !== 'string'
+        || typeof call.signature.value !== 'string'
+        || call.signature.by.length > 512
+        || call.signature.value.length > 1024 * 1024))
   ) {
     throw new AppError(502, 'invalid-tool-call', '模型返回了无效的工具调用')
   }

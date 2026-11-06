@@ -95,7 +95,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 - 组件用 `vitest-browser-react` 的 `render` 渲染（每个用例后自动卸载，`test/setup.ts` 打开 React 的严格模式，挂载时的副作用都运行两遍）；交互用 `vitest/browser` 的 `userEvent`（Playwright 的真实键盘与指针），断言用 `expect.element(定位器)`，它会等待到条件成立。`aria-disabled` 的控件 Playwright 不肯点击，要验证它拦下点击时用 `test/helpers.ts` 的 `press`（经 DOM 点击）。
 - `test/setup.ts` 按页面的顺序把 `tokens.css` 与 `ui.css` 注入页面（Vite 的 `?inline`），所以样式与层叠层和页面一致；读样式表源码的用例用 `?raw` 或 `import.meta.glob`，读其他文件用 `vitest/browser` 的 `commands.readFile`（路径从仓库根算起）。
-- 触屏用 DevTools 协议模拟：`test/helpers.ts` 的 `onTouchScreen` 打开 `Emulation.setTouchEmulationEnabled`，`(pointer: coarse)` 随之成立；深色与减少动效用 `Emulation.setEmulatedMedia`。手机宽度用 `page.viewport(390, 844)`，用例结束前恢复 1280×800。
+- 触屏用 DevTools 协议模拟：`test/helpers.ts` 的 `onTouchScreen` 打开 `Emulation.setTouchEmulationEnabled`，`(pointer: coarse)` 随之成立；深色与减少动效用同一文件的 `emulateMedia`：`Emulation.setEmulatedMedia` 每次替换全部模拟的媒体特性，没写的特性回到系统偏好，所以它每次写全 `vitest.config.ts` 里 Playwright 上下文的浅色与其余默认值，结束后恢复，系统为深色时后面的用例仍是浅色；不要直接调用 `setEmulatedMedia`。手机宽度用 `page.viewport(390, 844)`，用例结束前恢复 1280×800。
 - 用例导入的依赖在第一个用例之前就预构建（`optimizeDeps.entries` 指向这些用例），运行中途不会因发现新依赖而重新加载页面。
 - `test/gallery/` 是原语总览页：`Gallery.tsx` 由用例渲染（检查每个样式表画的原语都在页上、每个控件都有名称、总览页的排版不改原语的标题、手机宽度下就地画出的对话框与弹层不超出卡片、深色与减少动效），`index.html` 与 `main.tsx` 由视觉截图构建（见[视觉截图](#视觉截图)）。它只在测试中构建，不进入 `dist/web`。
 
@@ -163,7 +163,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 桌面端壳：请求范围与导航、外部链接确认、调试参数、转发与凭据附加、凭据文件（safeStorage、0600、写入失败不留临时文件）、续期（应答丢失、保存失败、失败退避）、CommonJS 的 Host 核对、「在这台电脑的浏览器中打开」（只接受本 Host 的回环链接与顶层页面的 IPC、只在 macOS、不记录链接；页面经转发只能申请手机邀请） | `desktop-proxy.test.ts`（含对测试 Host 的续期与回环邀请用例）、`desktop.e2e.ts` |
 | 桌面端的文件夹操作：只回应主窗口的顶层页面、输入校验、原生对话框与确认、签名提交、Host 拒绝的路径逐个报告、「存为项目」与在访达中显示 | `desktop-folders.test.ts`（含经真实代理与测试 Host 的新建、加入、存为项目与显示）；经真实的主进程、preload 与 Host 见 `desktop.e2e.ts`（面板、访达与 `openPath` 在主进程中记录） |
 | 桌面端的预览浏览器：分区、权限、导航、preload 的参数与事件、截图与标注的上限、遮挡、快捷键转发、开发者工具与清除数据 | `desktop-browser.test.ts`（假的 Electron 对象与真实的 preload）；经真实 Electron 见 `desktop.e2e.ts` |
-| 浏览器登记：回环需要邀请、指纹核对、拒绝后要新邀请、续期、旧版登录、本机确认不可用时不提交、HTTPS 邀请（手机的说明不写终端命令）；一个按钮、折叠的校验码与句子、链接能管理这台 Mac 时的一行与「不要」、桌面端链接与读取失败时不申请、失效的链接当场说明；连接页在注入的样式下不变；离线连接码（只在 `host.sock` 上：本机确认不可用时连接页只提供它，介绍不提 Touch ID） | `enrollment.e2e.ts`；离线连接码在 `desktop.e2e.ts` |
+| 浏览器登记：回环需要邀请、指纹核对、拒绝后要新邀请、续期、旧版登录、本机确认不可用时不提交、HTTPS 邀请（手机的说明不写终端命令）；一个按钮、折叠的校验码与句子、链接能管理这台 Mac 时的一行与「不要」、桌面端链接与读取失败时不申请、权限较少的链接只申请它允许的、失效的链接当场说明；连接页在注入的样式下不变；离线连接码（只在 `host.sock` 上：本机确认不可用时连接页只提供它，介绍不提 Touch ID） | `enrollment.e2e.ts`；离线连接码在 `desktop.e2e.ts` |
 | 启动目录位于 Latch 程序目录内：设置 › 项目、新会话与项目弹层三处的琥珀提示（桌面与手机宽度截图，含深色） | `code-root.e2e.ts` |
 | 权限展示：浏览器上允许 R2、开始并继续 Harness 会话、放宽模式都不弹确认且留审计，漂移停止会话；审批卡与安全横幅在注入的样式下不变（`helpers/security.ts`）；审批卡到达与收起的过渡取自动效令牌（停在 0、60、120、180ms 截图），减少动效时近乎瞬时；「手机可以开始新会话」在浏览器里只能关闭（打开的原因写在行上，Host 也拒绝） | `permissions-ui.e2e.ts`；在桌面端经本机确认调高见 `desktop.e2e.ts` |
 | 电脑到手机、审批、断线与取消 | `takeover.e2e.ts` |
@@ -172,7 +172,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 界面原语（`@latch/ui`）：角色与名称、键盘与焦点、提示框、禁用与运行中、选值与权限菜单（含等待验证）、对话框与底部面板、触屏命中区、展开块（曲线与时长、`until-found` 与页内查找、关闭中 `inert`、延迟渲染）、替换与离开、进行中的文字、动效令牌与 `MOTION` 一致、深色与减少动效、原语样式都在 ui 层 | `packages/ui/test/` 的浏览器用例（见[组件测试](#组件测试浏览器模式)）；总览页的截图在 `visual.e2e.ts`，改 `packages/ui/test/gallery/` 时 `pnpm check -- --plan` 也要求它 |
 | 布局、设置、平板滑出的会话列表、手机的列表根页与新会话面板、控件可达、深色模式 | `design.e2e.ts` |
 | 手机的页面栈：列表是根页，会话页推入与滑回（时长与曲线取自令牌，被盖住的列表不可操作，推入后焦点在页头的返回按钮，返回后焦点回到那一行），减少动效时只淡入；会话页的输入框静止时是 52 高的一行；平台的返回（`page.goBack()`）依次关闭菜单面板、右侧面板与会话页，重新载入不多加历史条目，地址不变；新会话面板（停在 92% 且不随原因换行伸缩、焦点在选中的磁贴上、不能选的磁贴说明原因、对话时没有项目、取消保留草稿）；按住一行打开它的菜单（那一行保持按下，触屏打开时不画焦点底），搜索的「取消」把焦点还给搜索按钮 | `phone.e2e.ts`；历史条目的规则在 `back-stack.test.ts` |
-| 设置的每一页在三宽两色下的真实渲染：模型服务的已连接、密钥无效、连不上与检测中来自本地假服务的回答，组不画框 | `settings-pages.e2e.ts` |
+| 设置的每一页在三宽两色下的真实渲染：模型服务的已连接、密钥无效、连不上与检测中来自本地假服务的回答，组不画框。服务的协议：OpenAI 从 Responses 开始、只有一种协议的预置服务没有这一项、自定义服务四种都可选并按所选保存；服务页换协议前说明会清除思考深度，换后清除，列表与服务页重新载入后都读回新协议 | `settings-pages.e2e.ts`；可选的协议在 `components-settings.test.ts` |
 | 这台电脑上已确认的地址、固定新会话默认、Toast 不盖住输入框的三宽两色渲染，以及进度、失败与移除后的状态 | `e2e/policy-limits.e2e.ts`；经真实 `host.sock`：`e2e/desktop-models.e2e.ts` |
 | 设置的层级动效：手机上第一次进入分区与分区里的页面滑入、返回反向滑出，减少动效时只交叉淡化；从页面回到分区时淡入，离开设置时淡出；时长与曲线取自令牌。添加模型服务：获取模型失败时一句原因与手动添加模型 ID（超出限制时行内说明）、获取已经失败的服务保存后不立即检测，检测时是中性的「无法自动检测」而不是「移除此服务」、需要密钥的预置服务商在不能填写密钥的设备上保存前说明、保存后显示「缺密钥」、未确认地址的开关与检测说明原因且不出现命令行、表单里没有同名按钮。保存 Agent 定义不弹确认、显示「还没有开启过会话」，第一次以它开启完全访问会话（经本机确认）之后不再显示 | `settings.e2e.ts` |
 | 可调宽的侧栏：拖拽、双击复原、键盘步进、吸附收起与展开（逐帧检查是滑过去的）、按断点类别记住、对话画布至少 520；收起与展开时顶栏标题只朝一个方向移动 | `sidebar.e2e.ts`、`sidebar-layout.test.ts`（收紧与偏好）、`packages/ui/test/resize.test.tsx`（把手） |
@@ -302,7 +302,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 `fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`PI_ACP_PI_COMMAND`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
-`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）与 Anthropic Messages（`/v1/messages`），流式或不流式，按脚本给出思考、文本或一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具），并记下每个请求。`apps/host/test/providers.test.ts` 用 Host 自己的两个客户端读它。
+`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它。
 
 `pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
 

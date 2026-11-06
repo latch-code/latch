@@ -45,8 +45,14 @@ export const pendingInvitation = () => invitation
 export const BASE_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated']
 /** What host.sock grants the desktop app; it asks for nothing itself, so this is only for saying so. */
 export const DESKTOP_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
-/** What a browser asks for: management only when the person was shown it and did not turn it down. */
-export const requestedScopes = (admin: boolean): DeviceScope[] => [...BASE_SCOPES, ...(admin ? ['admin' as const] : [])]
+/**
+ * What a browser asks for: management only when the person was shown it and did not turn it down, and, once the Host has
+ * said what the invitation grants, nothing beyond that, which the Host would refuse.
+ */
+export function requestedScopes(admin: boolean, offered?: readonly DeviceScope[]): DeviceScope[] {
+  const wanted: DeviceScope[] = [...BASE_SCOPES, ...(admin ? ['admin' as const] : [])]
+  return offered ? wanted.filter(scope => offered.includes(scope)) : wanted
+}
 
 /** A device name to submit or show: the old one only when the security-text rule would leave it unchanged. */
 export function acceptableName(name: string | undefined): string | undefined {
@@ -154,6 +160,8 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   const [step, setStep] = useState<EnrollmentStep>({ kind: 'loading' })
   const [error, setError] = useState('')
   const [linkAllowsAdmin, setLinkAllowsAdmin] = useState(false)
+  /** What the invitation grants, when the Host said so; null asks for nothing, and the Host grants its default within it. */
+  const [offeredScopes, setOfferedScopes] = useState<DeviceScope[] | null>(null)
   const flight = useRef<Flight | null>(null)
   const alive = useRef(true)
   const shell = currentShell()
@@ -166,6 +174,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
       if (!alive.current) return
       // Anything but a clear answer leaves this false: a person is told before management is asked for, or it is not asked.
       let admin = false
+      let offered: DeviceScope[] | null = null
       if (!shell && invitation !== null) {
         try {
           const offer = await api<EnrollmentInvitationOffer>('enrollment-invitation', {
@@ -174,6 +183,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
             noRenew: true,
           })
           admin = offer.admin === true
+          offered = Array.isArray(offer.scopes) ? offer.scopes : null
         } catch (cause) {
           if (cause instanceof ApiError && cause.code === 'invitation-invalid') {
             invitation = null
@@ -183,6 +193,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
         if (!alive.current) return
       }
       setLinkAllowsAdmin(admin)
+      setOfferedScopes(offered)
       setInfo(next)
       if (!shell && !browserKeySupport()) setStep({ kind: 'unsupported' })
       else if (next.invitationRequired && invitation === null) setStep({ kind: 'invitation-required' })
@@ -286,8 +297,9 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
           body: {
             name,
             ...(key ? { publicKey: key.publicKeySpki } : {}),
-            // The desktop shell enrolls on the Host's own socket, whose defaults are all scopes.
-            ...(shell ? {} : { scopes: requestedScopes(form.admin) }),
+            // The desktop shell enrolls on the Host's own socket, whose defaults are all scopes. Without the Host's answer
+            // about the invitation a browser asks for nothing particular: the Host's default, within the invitation.
+            ...(shell || !offeredScopes ? {} : { scopes: requestedScopes(form.admin, offeredScopes) }),
             ...(invitation ? { invitation } : {}),
             ...(offlineCode ? { offlineCode } : {}),
           },
@@ -318,7 +330,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
         setStep({ kind: 'form' })
       }
     },
-    [info, shell, finish],
+    [info, shell, offeredScopes, finish],
   )
 
   const waitingId = step.kind === 'waiting' ? step.enrollment.id : null
@@ -387,5 +399,17 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
     if (!info) void load()
   }, [info, load])
 
-  return { info, step, error, linkAllowsAdmin, submit, cancel, restart, reload: load, retryConfirm: confirm, electron: shell !== null }
+  return {
+    info,
+    step,
+    error,
+    linkAllowsAdmin,
+    offeredScopes,
+    submit,
+    cancel,
+    restart,
+    reload: load,
+    retryConfirm: confirm,
+    electron: shell !== null,
+  }
 }

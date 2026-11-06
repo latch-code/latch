@@ -47,7 +47,7 @@ export interface AcpRecord {
   profilePresetId?: string
   /**
    * The real paths of the folders the agent receives besides `cwd`, in order, and how (`folderVia`). Both are part of
-   * the confirmed launch; absent when the session passes no other folder.
+   * the launch on record; absent when the session passes no other folder.
    */
   folders?: string[]
   folderVia?: 'acp' | 'args'

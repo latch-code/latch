@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises'
-import type { AgentProbeResult, AgentRecord } from '@latch/protocol'
+import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentRecord } from '@latch/protocol'
 import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { redactor, resolveCommand } from './command.ts'
@@ -14,6 +14,7 @@ interface ProbeOptions {
   dataDir: string
   cwd: string
 }
+const HANDSHAKE_MS = 15_000
 const CAPABILITIES = { embeddedContext: false, images: false, resume: false, load: false, additionalDirectories: false }
 const isObject = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -58,18 +59,21 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     verified: selection.verified,
     approvals: profile?.permission.approvals ?? 'prompts',
     readback: profile?.permission.readback ?? 'none',
-    notes: selection.notes ?? [],
   }
 }
 
-/** One initialize request, no session/new, authenticate or prompt; always waits for the process to stop. */
+/**
+ * One initialize request, no session/new, authenticate or prompt; always waits for the process to stop. `timeoutMs` bounds
+ * the whole of it, login and version reads included, so the page's own wait outlasts it.
+ */
 export async function probeAgent(
   agent: AgentRecord,
   options: ProbeOptions & { expectedLaunchHash: string; signal?: AbortSignal; timeoutMs?: number },
 ): Promise<AgentProbeResult> {
+  const deadline = Date.now() + Math.max(1, options.timeoutMs ?? AGENT_PROBE_MAX_MS)
   const preview = await agentProbePreview(agent, options)
   if (preview.launchHash !== options.expectedLaunchHash)
-    throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试并确认。')
+    throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
   if (options.signal?.aborted) throw new AppError(409, 'probe-cancelled', '测试启动已取消。')
   const mask = redactor(agent.env)
   const shortSecrets = Object.entries(agent.env)
@@ -84,7 +88,7 @@ export async function probeAgent(
   // Recheck after materializing settings; no process may start with a stale definition or after Host shutdown.
   const final = await agentProbePreview(agent, options)
   if (final.launchHash !== preview.launchHash || options.signal?.aborted)
-    throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试并确认。')
+    throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
   const connection = AgentConnection.spawn(
     {
       command: final.command,
@@ -123,7 +127,7 @@ export async function probeAgent(
           clientCapabilities: CLIENT_CAPABILITIES,
           clientInfo: { name: 'latch', title: 'Latch', version: '0.1.0' },
         },
-        Math.max(1, Math.min(15_000, options.timeoutMs ?? 15_000)),
+        Math.max(1, Math.min(HANDSHAKE_MS, deadline - Date.now())),
         options.signal,
       ),
     )
@@ -173,14 +177,20 @@ export async function probeAgent(
     await connection.stop('kill', 0)
   }
   // The handshake says nothing about a login, so a harness that can say gets asked too. Its refusal is as clear an answer.
-  if (result.status === 'authentication-required') result.login = 'unauthenticated'
-  else if (profile?.loginStatus && !options.signal?.aborted)
-    result.login = await checkLogin(agent, options.signal ? { signal: options.signal } : {})
   // Beside the adapter, the program it drives: a pair the adapter was not built for gets a warning, never a refusal.
+  // Both reads run together in the time the handshake left; with none left, the login is as unknown as a timed-out check.
+  const left = deadline - Date.now()
+  const reads = left > 0 ? { timeoutMs: left, ...(options.signal ? { signal: options.signal } : {}) } : undefined
+  const asksLogin = result.status !== 'authentication-required' && profile?.loginStatus !== undefined && !options.signal?.aborted
   const pairing = profile?.programVersion
   const name = selection.preset?.name
-  if (pairing && name && !options.signal?.aborted) {
-    const program = await readProgramVersion(agent, options.signal ? { signal: options.signal } : {})
+  const [login, program] = await Promise.all([
+    asksLogin && reads ? checkLogin(agent, reads) : undefined,
+    pairing && name && reads && !options.signal?.aborted ? readProgramVersion(agent, reads) : undefined,
+  ])
+  if (result.status === 'authentication-required') result.login = 'unauthenticated'
+  else if (asksLogin) result.login = login ?? 'unknown'
+  if (pairing && name && program) {
     const adapter = result.agent?.version
     const version = program.version === undefined ? undefined : bounded(program.version, 100)
     const unchecked =

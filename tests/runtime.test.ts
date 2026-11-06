@@ -8,6 +8,7 @@ import {
   AppError,
   type ModelMessage,
   type ModelProvider,
+  type ToolCall,
   type ToolDefinition,
   type Bridge,
   type FileTrackingInput,
@@ -168,6 +169,45 @@ describe('independent harness runtime', () => {
     const users = (await restarted.detail(first.sessionId)).messages.filter(m => m.role === 'user')
     expect(users).toHaveLength(1)
     expect(users[0]?.requestId).toBe('same-request')
+  })
+
+  it("keeps a call's service signature in the history it sends back, across a restart, and never shows it", async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    let signature: unknown = { by: 'fixture\nfixture-model', value: 'sig-1' }
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream({ messages }) {
+        seen.push(structuredClone(messages))
+        if (messages.at(-1)?.role === 'user') {
+          yield { type: 'tool-call', call: { id: `call-${seen.length}`, name: 'write_note', arguments: {}, signature } as ToolCall }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else {
+          yield { type: 'text', text: '完成' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+    }
+    const backend = registry(provider, [tool(async () => ({ text: 'ok' }), false)])
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'signed' })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(seen[1]?.find(item => item.role === 'assistant')?.toolCalls).toEqual([
+      { id: 'call-1', name: 'write_note', arguments: {}, signature: { by: 'fixture\nfixture-model', value: 'sig-1' } },
+    ])
+    expect(JSON.stringify(await bridge.detail(sessionId))).not.toContain('sig-1')
+    await bridge.close()
+    const reopened = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    signature = { by: 'fixture\nfixture-model', value: 7 }
+    await reopened.prompt(sessionId, 'again', 'signed-again')
+    await waitStatus(reopened, sessionId, 'failed')
+    expect(seen.at(-1)?.find(item => item.role === 'assistant')?.toolCalls?.[0]?.signature).toEqual({
+      by: 'fixture\nfixture-model',
+      value: 'sig-1',
+    })
+    expect((await reopened.detail(sessionId)).messages.at(-1)?.text).toContain('无效的工具调用')
   })
 
   it('persists explicit completion, queue time and input identity through restart', async () => {

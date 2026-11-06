@@ -933,7 +933,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           .getByRole('region', { name: '添加模型服务', exact: true })
           .getByRole('button', { name: '其他服务…', exact: true })
           .click()
-        const custom = page.getByRole('region', { name: '自定义 OpenAI 兼容', exact: true })
+        const custom = page.getByRole('region', { name: '自定义服务', exact: true })
         const customURL = `${models.origin}/custom/v1`
         await custom.getByLabel('名称', { exact: true }).fill('本机自定义模型')
         await custom.getByLabel('地址', { exact: true }).fill(customURL)

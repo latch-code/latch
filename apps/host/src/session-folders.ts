@@ -18,7 +18,7 @@ import { canonicalPath } from './paths.ts'
 
 export const SESSION_FOLDER_NAME = /^\d{8}-[0-9a-f]{4}$/u
 
-/** How long a folder made for a start that has not created its session yet (an L3 start waiting for its confirmation) is kept. */
+/** How long a folder made for a start that has not created its session yet (one that may be retried under its request ID) is kept. */
 const PENDING_TTL_MS = 10 * 60_000
 /** The in-memory cache lifetime; started requests retain their durable mapping. */
 const CREATED_TTL_MS = 60 * 60_000
@@ -67,7 +67,7 @@ export interface SessionFolderOptions {
 }
 
 export class SessionFolders {
-  /** By request ID: a retried request, and the second request of an L3 start after its confirmation, get the same folder. */
+  /** By request ID: a retried request gets the same folder. */
   private readonly requests = new Map<string, RequestFolder>()
   /** Folders sessions were created in during this run, listed even when the session metadata could not be written. */
   private readonly made = new Set<string>()

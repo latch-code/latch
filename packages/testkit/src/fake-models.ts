@@ -1,7 +1,9 @@
 /**
- * Local model services that answer like OpenAI's Chat Completions (`/v1/chat/completions`) and Anthropic's Messages
- * (`/v1/messages`), streamed or not, from a script of replies. No model and no network: they listen on 127.0.0.1, accept
- * any key, and keep every request they get, which is how a test proves an agent reached them and not a real service.
+ * Local model services that answer like OpenAI's Chat Completions (`/v1/chat/completions`) and Responses
+ * (`/v1/responses`), Anthropic's Messages (`/v1/messages`) and Gemini's generateContent
+ * (`/v1beta/models/<model>:streamGenerateContent`, `:generateContent`, also under `/v1`), streamed or not, from a script of replies. No
+ * model and no network: they listen on 127.0.0.1, accept any key, and keep every request they get, which is how a test
+ * proves an agent reached them and not a real service.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -12,10 +14,12 @@ export interface FakeReply {
   text?: string
   /** One tool call; the reply ends asking for it. A pattern names the first tool the request offers that matches it. */
   tool?: { name: string | RegExp; input: Record<string, unknown> }
+  /** Refuse the request with this HTTP status and message, in the protocol's error shape. */
+  error?: { status: number; message: string }
 }
 
 export interface FakeModelRequest {
-  wire: 'chat-completions' | 'anthropic-messages'
+  wire: 'chat-completions' | 'responses' | 'anthropic-messages' | 'gemini'
   path: string
   model?: string
   stream: boolean
@@ -23,7 +27,7 @@ export interface FakeModelRequest {
 }
 
 export interface FakeModels {
-  /** `http://127.0.0.1:<port>`; the services live below `/v1`. */
+  /** `http://127.0.0.1:<port>`; the services live below `/v1`, and Gemini's below `/v1beta`. */
   origin: string
   /** Every request, in order, without its headers. */
   requests: FakeModelRequest[]
@@ -69,9 +73,9 @@ function named(reply: FakeReply, body: Record<string, unknown>): FakeReply {
   if (!reply.tool || typeof reply.tool.name === 'string') return reply
   const pattern = reply.tool.name
   const offered = (Array.isArray(body.tools) ? body.tools : []).flatMap(item => {
-    const tool = item as { name?: unknown; function?: { name?: unknown } }
-    const name = tool.function?.name ?? tool.name
-    return typeof name === 'string' ? [name] : []
+    const tool = item as { name?: unknown; function?: { name?: unknown }; functionDeclarations?: Array<{ name?: unknown }> }
+    const names = tool.functionDeclarations?.map(declaration => declaration.name) ?? [tool.function?.name ?? tool.name]
+    return names.filter((name): name is string => typeof name === 'string')
   })
   const found = offered.find(name => pattern.test(name))
   return found
@@ -188,8 +192,111 @@ function anthropic(reply: FakeReply, model: string, stream: boolean): { events?:
   return { events }
 }
 
+function responses(reply: FakeReply, model: string, stream: boolean): { events?: Array<{ event: string; data: unknown }>; body?: unknown } {
+  const usage = {
+    input_tokens: 10,
+    input_tokens_details: { cached_tokens: 0 },
+    output_tokens: 5,
+    output_tokens_details: { reasoning_tokens: reply.reasoning ? 2 : 0 },
+    total_tokens: 15,
+  }
+  const reasoning = reply.reasoning && {
+    type: 'reasoning',
+    id: 'rs_fake',
+    summary: [{ type: 'summary_text', text: reply.reasoning }],
+  }
+  const message = reply.text && {
+    type: 'message',
+    id: 'msg_fake',
+    role: 'assistant',
+    status: 'completed',
+    content: [{ type: 'output_text', text: reply.text, annotations: [] }],
+  }
+  const call = reply.tool && {
+    type: 'function_call',
+    id: 'fc_fake_1',
+    call_id: 'call_fake_1',
+    name: String(reply.tool.name),
+    arguments: JSON.stringify(reply.tool.input),
+    status: 'completed',
+  }
+  const output = [reasoning, message, call].filter(item => !!item) as Array<Record<string, unknown>>
+  const response = (status: string, items: unknown[]) => ({
+    id: 'resp_fake',
+    object: 'response',
+    model,
+    status,
+    output: items,
+    usage: status === 'completed' ? usage : null,
+  })
+  if (!stream) return { body: response('completed', output) }
+  const events: Array<{ event: string; data: unknown }> = []
+  const push = (type: string, data: Record<string, unknown>) => {
+    events.push({ event: type, data: { type, sequence_number: events.length, ...data } })
+  }
+  push('response.created', { response: response('in_progress', []) })
+  output.forEach((item, index) => {
+    push('response.output_item.added', {
+      output_index: index,
+      item: item.type === 'message' ? { ...item, content: [] } : item.type === 'function_call' ? { ...item, arguments: '' } : item,
+    })
+    if (item.type === 'reasoning')
+      for (const piece of pieces(reply.reasoning ?? ''))
+        push('response.reasoning_summary_text.delta', { item_id: item.id, output_index: index, summary_index: 0, delta: piece })
+    if (item.type === 'message')
+      for (const piece of pieces(reply.text ?? ''))
+        push('response.output_text.delta', { item_id: item.id, output_index: index, content_index: 0, delta: piece, logprobs: [] })
+    if (item.type === 'function_call')
+      push('response.function_call_arguments.delta', { item_id: item.id, output_index: index, delta: item.arguments })
+    push('response.output_item.done', { output_index: index, item })
+  })
+  push('response.completed', { response: response('completed', output) })
+  return { events }
+}
+
+function gemini(reply: FakeReply, stream: boolean): { events?: Array<{ data: unknown }>; body?: unknown } {
+  const usageMetadata = { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: reply.reasoning ? 2 : 0, totalTokenCount: 17 }
+  const call = reply.tool && {
+    functionCall: { id: 'call_fake_1', name: String(reply.tool.name), args: reply.tool.input },
+    thoughtSignature: 'fake-signature',
+  }
+  const chunk = (parts: unknown[], last = false) => ({
+    candidates: [{ index: 0, content: { role: 'model', parts }, ...(last ? { finishReason: 'STOP' } : {}) }],
+    ...(last ? { usageMetadata } : {}),
+    modelVersion: 'fake-model',
+  })
+  if (!stream)
+    return {
+      body: chunk(
+        [
+          ...(reply.reasoning ? [{ text: reply.reasoning, thought: true }] : []),
+          ...(reply.text ? [{ text: reply.text }] : []),
+          ...(call ? [call] : []),
+        ],
+        true,
+      ),
+    }
+  return {
+    events: [
+      ...pieces(reply.reasoning ?? '').map(piece => ({ data: chunk([{ text: piece, thought: true }]) })),
+      ...pieces(reply.text ?? '').map(piece => ({ data: chunk([{ text: piece }]) })),
+      { data: chunk(call ? [call] : [{ text: '' }], true) },
+    ],
+  }
+}
+
+/** The error a protocol answers with: OpenAI's and Anthropic's `error.message`, Gemini's `error.status` as well. */
+function failure(wire: FakeModelRequest['wire'], error: NonNullable<FakeReply['error']>): unknown {
+  if (wire === 'gemini') return { error: { code: error.status, message: error.message, status: 'INVALID_ARGUMENT' } }
+  if (wire === 'anthropic-messages') return { type: 'error', error: { type: 'invalid_request_error', message: error.message } }
+  return { error: { message: error.message, type: 'invalid_request_error', code: null } }
+}
+
+// Gemini answers under `v1` as well as `v1beta`.
+const GEMINI_CALL = /^\/v1(?:beta)?\/models\/([^/:]+):(streamGenerateContent|generateContent)$/u
+
 /**
- * Starts both services on one port. Each request takes the next reply of `replies`; once they run out, the last one
+ * Starts every service on one port. Each request takes the next reply of `replies`; once they run out, the last one
  * repeats, and without any the reply is the text `ok`.
  */
 export async function startFakeModels(options: { replies?: FakeReply[] } = {}): Promise<FakeModels> {
@@ -202,7 +309,23 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
       const path = (request.url ?? '/').split('?')[0]!
       if (request.method === 'GET' && path === '/v1/models')
         return json(response, 200, { object: 'list', data: MODELS.map(id => ({ id, object: 'model', type: 'model', display_name: id })) })
-      const wire = path === '/v1/chat/completions' ? 'chat-completions' : path === '/v1/messages' ? 'anthropic-messages' : undefined
+      if (request.method === 'GET' && path === '/v1beta/models')
+        return json(response, 200, {
+          models: [
+            ...MODELS.map(id => ({ name: `models/${id}`, supportedGenerationMethods: ['generateContent', 'countTokens'] })),
+            { name: 'models/fake-embedding', supportedGenerationMethods: ['embedContent'] },
+          ],
+        })
+      const geminiCall = GEMINI_CALL.exec(path)
+      const wire: FakeModelRequest['wire'] | undefined = geminiCall
+        ? 'gemini'
+        : path === '/v1/chat/completions'
+          ? 'chat-completions'
+          : path === '/v1/responses'
+            ? 'responses'
+            : path === '/v1/messages'
+              ? 'anthropic-messages'
+              : undefined
       if (request.method !== 'POST' || !wire)
         return json(response, 404, { error: { message: `no such endpoint: ${request.method} ${path}` } })
       let body: Record<string, unknown>
@@ -211,11 +334,19 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
       } catch {
         return json(response, 400, { error: { message: 'the body is not JSON' } })
       }
-      const model = typeof body.model === 'string' ? body.model : 'fake-model'
-      const stream = body.stream === true
+      const model = geminiCall ? decodeURIComponent(geminiCall[1]!) : typeof body.model === 'string' ? body.model : 'fake-model'
+      const stream = geminiCall ? geminiCall[2] === 'streamGenerateContent' : body.stream === true
       requests.push({ wire, path, model, stream, body })
       const reply = named(next(), body)
-      const made = wire === 'chat-completions' ? chat(reply, model, stream) : anthropic(reply, model, stream)
+      if (reply.error) return json(response, reply.error.status, failure(wire, reply.error))
+      const made =
+        wire === 'chat-completions'
+          ? chat(reply, model, stream)
+          : wire === 'responses'
+            ? responses(reply, model, stream)
+            : wire === 'gemini'
+              ? gemini(reply, stream)
+              : anthropic(reply, model, stream)
       if (made.events) sse(response, made.events)
       else json(response, 200, made.body)
     })().catch(() => {

@@ -55,7 +55,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 扩展接口 | Provider、Tool、插件、HarnessDriver、Transport、`AppError` | `packages/sdk/src/plugins.ts`、`harness.ts`、`transports.ts`、`errors.ts` |
 | Standard | 模型循环、审批、取消、消息与幂等记录 | `packages/core/src/runtime.ts`、`store.ts` |
 | Node 工具 | Host 与 Harness 共用：`canonicalJson` 与 `sha256Hex`、原子写入 `writeFileAtomic`、日志脱敏 `redactSecrets` | `packages/core/src/node-kit/` |
-| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：OpenAI 兼容与 Anthropic 模型协议（共用 `providers/http.ts`，协议编码、流解码、用量与模型列表在 `providers/chat-wire.ts`、`anthropic-wire.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,anthropic,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
+| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：Chat Completions、Responses、Anthropic Messages 与 Gemini 四种模型协议（共用 `providers/http.ts` 与插件工厂 `providers/service.ts`，协议编码、流解码、用量与模型列表在 `providers/{chat,responses,anthropic,gemini}-wire.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,openai-responses,anthropic,gemini,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
 | ACP Driver | 外部 Agent 的进程、协议、映射、权限配置、启动指纹与存储 | `packages/harness-acp/src`（权限配置在 `profiles/`） |
 | 预设 | 浏览器可用的模型服务与 Agent 预设 | `packages/protocol/src/presets.ts`、`agent-presets.ts` |
 | 命令行 | 启动、停止、设备管理、离线连接、密钥、本机确认组件、审计校验、流量计数 | `apps/host/scripts/start.ts`、`stop.ts`、`latch.ts` |
@@ -372,7 +372,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /health` | 无 | `{"ok":true}` |
 | `GET /host-info` | 无（仅 `host.sock`） | Host 实例信息 |
 | `POST /host/state` | 无（仅 `host.sock`；桌面端页面经转发时主进程返回 403） | 报告睡眠、唤醒与即将停止的原因（见「Host 的生命周期」） |
-| `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接是否允许申请 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记 |
+| `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接允许申请的权限，其中是否有 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记 |
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
@@ -440,7 +440,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |
 | Standard 的 L0 / L2 级别与级别选择 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务与个人助手的例行任务不能开启或运行 |
 | `write_file` 基于原内容哈希的并发检查 | 未实现 |
-| 无人值守运行、自动批准规则、数据范围（`work` / `all`）在会话文件与终端以外的访问限制 | 未实现；相关字段只保存 |
+| 自动批准规则、数据范围（`work` / `all`）在会话文件与终端以外的访问限制 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行（定时任务与个人助手的例行任务）检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消，不自动批准 |
 | 在其他设备上查看会话文件（预览列、句柄内容、`work` 设备的引用集合、远程读取的上限与审计） | 未实现；目前只有桌面端经 `host.sock` 在访达中显示、快速查看与用默认应用打开，其他设备上路径标记的菜单只有「复制路径」，并写明在运行 Latch 的 Mac 上用桌面端打开 |
 | Windows 上用默认应用打开 | 未实现；还没有核对 Windows 的文件关联，只提供在资源管理器中显示 |
 | 阻止 `policy.json` / `settings.json` 的带外修改 | 只检测并审计，不阻止 |

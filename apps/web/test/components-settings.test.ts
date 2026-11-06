@@ -3,9 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceAccess } from '../src/core/permissions.ts'
 import { DEVICES_COPY, ENROLLMENT_COPY, NATIVE_LINK_COPY } from '../src/core/securityCopy.ts'
-import type { AgentPreset, AgentSettings, AppSnapshot } from '@latch/protocol'
+import { PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot } from '@latch/protocol'
 import { AboutSettings } from '../src/settings/AboutSettings.tsx'
 import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
+import { protocolChoices } from '../src/settings/ProvidersSettings.tsx'
 import { usageTotal } from '../src/settings/UsageSettings.tsx'
 import { ProjectRow } from '../src/settings/WorkspacesSettings.tsx'
 
@@ -110,6 +111,26 @@ describe('agent settings', () => {
     expect(missingText(agent(true, false))).toBe('已找到适配器 pi-acp，还没找到 pi')
     expect(missingText(agent(false, true))).toBe('已安装 pi，还差让 Latch 连接它的适配器 pi-acp')
     expect(missingText(agent(false, false))).toBe('未找到 pi 和它的适配器 pi-acp')
+  })
+})
+
+describe('service protocols', () => {
+  const preset = (id: string) => PROVIDER_PRESETS.find(item => item.id === id)
+
+  it('starts an OpenAI service on Responses and still offers Chat Completions', () => {
+    expect(protocolChoices(preset('openai'))).toEqual(['openai-responses', 'openai-compatible'])
+  })
+
+  it('offers every protocol to a custom service and none to choose for a single-protocol preset', () => {
+    expect(protocolChoices(preset('custom'))).toEqual(['openai-compatible', 'openai-responses', 'anthropic', 'gemini'])
+    expect(protocolChoices(undefined)).toEqual(['openai-compatible', 'openai-responses', 'anthropic', 'gemini'])
+    expect(protocolChoices(preset('deepseek'))).toEqual(['openai-compatible'])
+    expect(protocolChoices(preset('gemini'))).toEqual(['gemini'])
+  })
+
+  it('keeps a saved protocol its preset no longer lists, first, so the page never shows another', () => {
+    expect(protocolChoices(preset('deepseek'), 'gemini')).toEqual(['gemini', 'openai-compatible'])
+    expect(protocolChoices(preset('openai'), 'openai-compatible')).toEqual(['openai-responses', 'openai-compatible'])
   })
 })
 

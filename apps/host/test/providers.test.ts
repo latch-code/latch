@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PROVIDER_PRESETS } from '@latch/protocol'
+import { PROVIDER_KINDS, PROVIDER_PRESETS } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
 import type { HarnessPlugin, ModelDelta, ModelMessage, ModelProvider, ToolDefinition } from '@latch/sdk'
 import { createDemoPlugin } from '../src/plugins/providers/demo/index.ts'
@@ -731,7 +731,7 @@ describe('Host provider helpers', () => {
   })
 
   it('builds one plugin per provider record and summarizes it without credentials', async () => {
-    for (const kind of ['openai-compatible', 'anthropic'] as const) {
+    for (const kind of PROVIDER_KINDS) {
       const plugin = providerPlugin(record(kind, 'https://example.test/v1'), { fetch: unusedFetch })
       expect(plugin.id).toBe('svc')
       const { providers } = await mount(plugin)
@@ -892,6 +892,8 @@ describe('Host provider helpers', () => {
     const byId = Object.fromEntries(PROVIDER_PRESETS.map(preset => [preset.id, preset]))
     expect(new Set(PROVIDER_PRESETS.map(preset => preset.id)).size).toBe(PROVIDER_PRESETS.length)
     expect(byId.anthropic).toMatchObject({ kind: 'anthropic', baseURL: 'https://api.anthropic.com', requiresKey: true })
+    expect(byId.openai).toMatchObject({ kind: 'openai-responses', otherKinds: ['openai-compatible'], baseURL: 'https://api.openai.com/v1' })
+    expect(byId.gemini).toMatchObject({ kind: 'gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta' })
     expect(byId.ollama).toMatchObject({ kind: 'openai-compatible', baseURL: 'http://127.0.0.1:11434/v1', requiresKey: false })
     expect(byId.custom).toMatchObject({ baseURL: '', requiresKey: false })
     for (const preset of PROVIDER_PRESETS)

@@ -9,7 +9,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 每个会话可以组合：
 
 - **Harness**：Latch 内置的执行循环（ID `standard`），或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的本机 Agent：开源的 Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
-- **模型**：OpenAI 兼容接口或 Anthropic 原生接口的模型服务，会话中可切换。
+- **模型**：用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务，会话中可切换。
 - **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
 需求包可组合技能、工具、React 会话界面、Provider 与完整 Harness，由 [Cordis](https://github.com/cordiverse/cordis) 统一管理生命周期；既可加载本地目录，也兼容原有模块插件。
@@ -129,6 +129,8 @@ pnpm desktop -- --tailnet \
 ## 模型服务
 
 在「设置 → 模型」添加服务：预置常用服务地址（OpenAI、Anthropic、DeepSeek、OpenRouter、Ollama、LM Studio 等），可获取模型列表、检测连接、设置默认模型。
+
+- **协议**：Latch 内置用服务自己的协议发请求。OpenAI 默认 Responses，也可以选 Chat Completions；Anthropic 用 Messages；Google Gemini 用原生的 generateContent；其他预置服务用 Chat Completions；自定义服务四种都可选。保存后可以在服务页改协议，地址和密钥不变，为模型设置的思考深度会清除，因为各协议的档位不同。
 
 - **密钥**：只能在桌面端填写。预置服务商的地址（OpenAI、Anthropic、DeepSeek、OpenRouter、Gemini、Moonshot、智谱、百炼、火山方舟、硅基流动）和已确认过的地址直接保存，不弹确认；地址还没确认时，密钥随地址一起确认。也可以在 Host 停止时运行 `pnpm latch provider set-key <服务 ID>`（从不回显的终端或标准输入读取）。密钥保存在数据目录的 0600 文件中，不返回浏览器，不写入日志。
 - **自定义与本机地址确认一次**：服务第一次指向预置服务商以外的地址（自定义网关、Ollama、LM Studio 等），无论带不带密钥，都要在桌面端用 Touch ID 或登录密码确认一次；这一次同时确认地址、密钥和出站许可（本机或局域网地址需要的「允许 Host 访问 `127.0.0.1:11434`」）。之后保存同一地址不再确认。确认之前，服务可以保存，但 Latch 不会向它发送任何请求。要撤销确认，在桌面端的「设置 › 模型 › 已确认的地址」移除它，它需要的出站许可一起移除，不需要再次确认；使用它的服务随即停止，这次改动会写入审计。没有桌面端时，在 Host 停止时（`pnpm stop`，⌘Q 不会停止 Host）从 `policy.json` 的 `confirmedAddresses` 移除这个地址，本机或局域网地址另外从 `hostEgressAllow` 移除它的 `host:port`；Host 运行时的修改不生效。从旧版本升级时，已保存密钥的地址和已在出站白名单中的地址视为已确认。

@@ -26,7 +26,7 @@ import {
 } from '@latch/protocol'
 import { AppError, type HarnessPlugin, type ModelProvider, type ToolDefinition } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { renewSigningText, HttpFailure, type TestDevice, makeTestTls, FAKE_ACP_AGENT } from '@latch/testkit'
+import { renewSigningText, HttpFailure, type TestDevice, makeTestTls, FAKE_ACP_AGENT, startFakeModels } from '@latch/testkit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { AuditLog } from '../src/audit.ts'
 import { createOfflineTicket } from '../src/auth.ts'
@@ -271,9 +271,8 @@ async function openStream(device: TestDevice, path: string): Promise<{ text: str
   return state
 }
 
-/** A full-access harness plugin that only records starts; its launch preview carries `notes`. */
-/** A plugin harness that reports a launch preview; tests change `launch` between starts. */
-function launchedHarness(notes: string[] = []) {
+/** A full-access plugin harness that reports a launch preview and only records starts; tests change `launch` between starts. */
+function launchedHarness() {
   const launch: { launchHash: string; definitionHash?: string; command: string; args: string[]; verified: boolean } = {
     launchHash: 'a'.repeat(64),
     command: '/usr/bin/true',
@@ -314,7 +313,6 @@ function launchedHarness(notes: string[] = []) {
             cwd,
             approvals: 'none',
             readback: 'none',
-            notes,
           }),
         }),
       })
@@ -2282,6 +2280,79 @@ describe('providers', () => {
     await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'))
     expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary).toMatchObject({ model: 'alpha', effort: 'high' })
     expect(model.calls.at(-1)).toMatchObject({ model: 'alpha', effort: 'high' })
+  })
+
+  it("changes a saved service's protocol, drops the thinking levels it declared, and sends the next turn on the new one", async () => {
+    const models = await startFakeModels()
+    cleanups.push(() => models.close())
+    const t = await testHost({ demo: false })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const created = await desktop.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'Fake',
+        kind: 'openai-compatible',
+        baseURL: `${models.origin}/v1`,
+        apiKey: 'secret-protocol',
+        models: ['fake-model', 'fake-model-large'],
+        defaultModel: 'fake-model',
+        confirmOrigin: true,
+        modelCapabilities: { 'fake-model': { vision: true, thinking: ['low', 'high'] }, 'fake-model-large': { thinking: ['low'] } },
+      },
+    })
+    expect(created.status).toBe(201)
+    const { provider } = await body<{ provider: ProviderSettings }>(created)
+    const run = async (effort?: string) => {
+      const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+        body: {
+          prompt: 'x',
+          requestId: randomUUID(),
+          harnessId: 'standard',
+          mode: 'chat',
+          model: { providerId: provider.id, model: 'fake-model', ...(effort ? { effort } : {}) },
+        },
+      })
+      await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).not.toBe('running'))
+      const detail = await desktop.json<TaskDetail>(`tasks/${sessionId}`)
+      expect(detail.summary, JSON.stringify(detail.messages.at(-1))).toMatchObject({ status: 'idle' })
+      return detail
+    }
+    await run('high')
+    const changed = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
+      method: 'PUT',
+      body: { kind: 'openai-responses' },
+    })
+    expect(changed.provider).toMatchObject({
+      kind: 'openai-responses',
+      hasKey: true,
+      modelCapabilities: { 'fake-model': { vision: true } },
+    })
+    expect(changed.provider.modelCapabilities).toEqual({ 'fake-model': { vision: true } })
+    const refused = await desktop.request('tasks', {
+      body: {
+        prompt: 'x',
+        requestId: randomUUID(),
+        harnessId: 'standard',
+        model: { providerId: provider.id, model: 'fake-model', effort: 'high' },
+      },
+    })
+    expect(await body(refused)).toMatchObject({ error: 'effort-unavailable' })
+    expect((await run()).messages.at(-1)).toMatchObject({ role: 'assistant', text: 'ok' })
+    const listed = await desktop.json<{ models: string[] }>(`providers/${provider.id}/models`, { method: 'POST' })
+    expect(listed.models).toEqual(['fake-model', 'fake-model-large'])
+    // Levels sent with the new protocol are that protocol's, and stay.
+    const gemini = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
+      method: 'PUT',
+      body: { kind: 'gemini', modelCapabilities: { 'fake-model': { thinking: ['low', 'high'] } } },
+    })
+    expect(gemini.provider.modelCapabilities).toEqual({ 'fake-model': { thinking: ['low', 'high'] } })
+    expect((await run('high')).messages.at(-1)).toMatchObject({ role: 'assistant', text: 'ok' })
+    expect(models.requests.map(request => request.wire)).toEqual(['chat-completions', 'responses', 'gemini'])
+    expect(models.requests[2]?.body).toMatchObject({
+      generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } },
+    })
+    expect(models.requests[0]?.body).toMatchObject({ reasoning_effort: 'high' })
+    expect((await desktop.request(`providers/${provider.id}`, { method: 'PUT', body: { kind: 'grpc' } })).status).toBe(400)
   })
 
   it('never uses a service at an unconfirmed address until it is confirmed, and stops at once when it is removed', async () => {

@@ -164,7 +164,7 @@ async function setup(
     })
     cleanups.push(() => bridge.close())
     await bridge.start()
-    // Stands in for the Host's local confirmation: the launch fingerprint of the preview, unless a test passes its own.
+    // Stands in for the Host's start, which records the launch fingerprint of the preview, unless a test passes its own.
     const create = bridge.createTask.bind(bridge)
     bridge.createTask = async input =>
       'expectedLaunchHash' in input
@@ -908,7 +908,7 @@ describe('ACP agent environment', () => {
   })
 })
 
-describe('ACP launch confirmation', () => {
+describe('ACP launch fingerprint', () => {
   it('starts a session only with a launch fingerprint on record', async () => {
     const fixture = await setup({ FAKE_SECRET: 'top-secret-value' })
     const bridge = await fixture.open()
@@ -933,12 +933,11 @@ describe('ACP launch confirmation', () => {
       args: [FAKE_ACP_AGENT],
       cwd: await realpath(fixture.workspace),
       envNames: expect.arrayContaining(['FAKE_SECRET', 'FAKE_ACP_LOG', 'PATH', 'TMPDIR', 'GIT_CONFIG_COUNT']),
-      // Only what the definition sets, for the system sheet; the launch environment's own names stay out.
+      // Only what the definition sets; the launch environment's own names stay out.
       definitionEnvNames: Object.keys(fixture.record.env).sort(),
       verified: false,
       approvals: 'prompts',
       readback: 'none',
-      notes: [],
     })
     expect(preview.envNames).toEqual([...preview.envNames].sort())
     expect(JSON.stringify(preview)).not.toContain('top-secret-value')
@@ -973,12 +972,12 @@ describe('ACP launch confirmation', () => {
     const detail = await changed.detail(sessionId)
     expect(userTexts(detail)).toEqual(['echo one'])
     expect(received(await fixture.log(), 'session/resume')).toEqual([])
-    // New sessions under the changed definition need a new confirmation.
+    // A new session starts under the changed definition.
     const fresh = await changed.createTask({ prompt: 'echo three', requestId: rid() })
     expect((await settled(changed, fresh.sessionId)).summary.status).toBe('idle')
   })
 
-  it('keeps sessions created before launch confirmation read-only', async () => {
+  it('keeps sessions created before launch fingerprints were recorded read-only', async () => {
     const fixture = await setup()
     await mkdir(fixture.dataDir, { recursive: true })
     const updatedAt = new Date(0).toISOString()
@@ -1034,8 +1033,6 @@ describe('ACP project configuration', () => {
       profileVersion: 1,
       ...launchExtras(record.presetId!),
     })
-  const projectNote = (names: string) =>
-    `项目中有 OpenCode 配置：${names}。启动指纹包含这些配置的内容，确认后如有增删或修改，该会话不能继续`
   const CHANGED = {
     status: 409,
     code: 'project-config-changed',
@@ -1058,17 +1055,15 @@ describe('ACP project configuration', () => {
     await writeFile(join(directory, 'plans', 'plan.md'), '# plan')
   }
 
-  it('names the configuration found in or above the project and binds its content into the launch fingerprint', async () => {
+  it('binds the content of the configuration found in or above the project into the launch fingerprint', async () => {
     const fixture = await opencode()
     const bridge = await fixture.open()
     const preview = () => bridge.launchPreview!({ cwd: fixture.workspace })
     const base = definitionHash(fixture.record)
-    const notes = profileFor('opencode')!.permission.notes
-    expect(await preview()).toMatchObject({ launchHash: base, notes })
+    expect(await preview()).toMatchObject({ launchHash: base })
 
     await writeFile(join(fixture.workspace, 'opencode.json'), '{}')
     const added = await preview()
-    expect(added.notes).toEqual([...notes, projectNote('opencode.json')])
     expect(added.launchHash).not.toBe(base)
     await writeFile(join(fixture.workspace, 'opencode.json'), '{"permission":"allow"}')
     expect((await preview()).launchHash).not.toBe(added.launchHash)
@@ -1078,7 +1073,7 @@ describe('ACP project configuration', () => {
     await mkdir(join(own, 'agent'), { recursive: true })
     await writeFile(join(own, 'agent', 'build.md'), 'permission: allow')
     const agent = await preview()
-    expect(agent.notes.at(-1)).toBe(projectNote('.opencode/agent/build.md、opencode.json'))
+    expect(agent.launchHash).not.toBe(added.launchHash)
     await openCodeOwnWrites(own)
     expect(await preview()).toEqual(agent)
     await writeFile(
@@ -1087,22 +1082,20 @@ describe('ACP project configuration', () => {
     )
     const scripted = await preview()
     expect(scripted.launchHash).not.toBe(agent.launchHash)
-    expect(scripted.notes.at(-1)).toBe(projectNote('.opencode/agent/build.md、.opencode/package.json、opencode.json'))
     await rm(own, { recursive: true })
     await rm(join(fixture.workspace, 'opencode.json'))
 
-    // Above the project it is named by its full path; the home directory holds user configuration and is skipped.
+    // Above the project it counts too; the home directory holds user configuration and is skipped.
     await writeFile(join(fixture.root, 'opencode.jsonc'), '{}')
-    expect((await preview()).notes.at(-1)).toBe(projectNote(join(fixture.root, 'opencode.jsonc')))
+    expect((await preview()).launchHash).not.toBe(base)
     hostEnv({ HOME: fixture.root })
-    expect(await preview()).toMatchObject({ launchHash: base, notes })
+    expect(await preview()).toMatchObject({ launchHash: base })
 
     // Other harnesses do not read these files.
     const goose = await preset('goose')
     await writeFile(join(goose.workspace, 'opencode.json'), '{}')
     expect(await (await goose.open()).launchPreview!({ cwd: goose.workspace })).toMatchObject({
       launchHash: definitionHash(goose.record),
-      notes: [],
     })
   })
 
@@ -1121,13 +1114,10 @@ describe('ACP project configuration', () => {
     const literalParent = join(fixture.root, 'a', 'opencode.json')
     await writeFile(literalParent, '{}')
     const found = await preview()
-    expect(found.notes.at(-1)).toBe(projectNote(literalParent))
     expect(found.launchHash).not.toBe(definitionHash(fixture.record))
     const realParent = join(await realpath(fixture.root), 'b', 'opencode.jsonc')
     await writeFile(realParent, '{}')
-    const both = (await preview()).notes.at(-1)!
-    expect(both).toContain(literalParent)
-    expect(both).toContain(realParent)
+    expect((await preview()).launchHash).not.toBe(found.launchHash)
 
     const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), cwd: given })
     expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
@@ -1136,7 +1126,7 @@ describe('ACP project configuration', () => {
     await expect(bridge.prompt(sessionId, 'echo two', rid())).rejects.toMatchObject(CHANGED)
   })
 
-  it('refuses to start a session whose project configuration changed during the confirmation', async () => {
+  it('refuses to start a session whose project configuration changed after its launch was previewed', async () => {
     const fixture = await opencode()
     const bridge = await fixture.open()
     const preview = await bridge.launchPreview!({ cwd: fixture.workspace })
@@ -1167,7 +1157,7 @@ describe('ACP project configuration', () => {
     await expect(restarted.prompt(sessionId, 'echo two', rid())).rejects.toMatchObject(CHANGED)
     expect(userTexts(await restarted.detail(sessionId))).toEqual(['echo one'])
 
-    // A new session confirms the configuration as it is now; the old one is deleted without starting its agent.
+    // A new session records the configuration as it is now; the old one is deleted without starting its agent.
     const fresh = await restarted.createTask({ prompt: 'echo three', requestId: rid() })
     expect((await settled(restarted, fresh.sessionId)).summary.status).toBe('idle')
     await restarted.remove!(sessionId)
@@ -1399,9 +1389,6 @@ describe('ACP project folders', () => {
 
       const preview = await bridge.launchPreview!(scope.input)
       expect(preview).toMatchObject({ cwd: scope.reals[0], args: [FAKE_ACP_AGENT], folders: others })
-      expect(preview.notes).toContain(
-        '其他 2 个文件夹经 ACP 的 additionalDirectories 传给 Fake；它的当前版本没有声明支持时，会话不会开始。文件夹范围由 Fake 自己执行，不是隔离',
-      )
       // The definition's own fingerprint does not move; the launch with folders does.
       const launched = {
         resolvedCommand: process.execPath,
@@ -1459,19 +1446,17 @@ describe('ACP project folders', () => {
     const alone = (await bridge.launchPreview!(primaryOnly)).launchHash
     const base = await bridge.launchPreview!(scope.input)
 
-    // codex-acp loads the skills of every folder it receives; they are named by their full path.
+    // codex-acp loads the skills of every folder it receives; they count in the fingerprint.
     const skill = join(scope.reals[1]!, '.agents', 'skills', 'deploy')
     await mkdir(skill, { recursive: true })
     await writeFile(join(skill, 'SKILL.md'), '# deploy')
     const skilled = await bridge.launchPreview!(scope.input)
     expect(skilled.launchHash).not.toBe(base.launchHash)
-    expect(skilled.notes.at(-1)).toContain(join(skill, 'SKILL.md'))
     const settings = join(scope.reals[2]!, '.codex')
     await mkdir(settings)
     await writeFile(join(settings, 'config.toml'), '')
     const configured = await bridge.launchPreview!(scope.input)
     expect(configured.launchHash).not.toBe(skilled.launchHash)
-    expect(configured.notes.at(-1)).toContain(join(settings, 'config.toml'))
     // A session of the primary folder alone looks only along that folder, as before.
     expect((await bridge.launchPreview!(primaryOnly)).launchHash).toBe(alone)
 
@@ -1559,10 +1544,7 @@ describe('ACP project folders', () => {
       const bridge = await fixture.open(scope.workspaces, scope.projects)
       const others = scope.reals.slice(1)
       const preview = await bridge.launchPreview!(scope.input)
-      expect(preview).toMatchObject({ args: [FAKE_ACP_AGENT], folders: others })
-      expect(preview.notes, name).toContain(
-        '其他 2 个文件夹以 --include-directories 参数传给 Fake，排在定义的参数之后。文件夹范围由 Fake 自己执行，不是隔离',
-      )
+      expect(preview, name).toMatchObject({ args: [FAKE_ACP_AGENT], folders: others })
       const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input })
       expect((await settled(bridge, sessionId)).summary).toMatchObject({ status: 'idle', folders: scope.folders, folderAccess: 'all' })
       const log = await fixture.log()
@@ -1576,13 +1558,12 @@ describe('ACP project folders', () => {
       const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).tasks[sessionId].acp
       expect(stored).toMatchObject({ folders: others, folderVia: 'args' })
 
-      // Configuration the harness loads from the other folders is named by its full path and fingerprinted.
+      // Configuration the harness loads from the other folders is fingerprinted.
       const settings = join(scope.folders[2]!.path, `.${presetId}`)
       await mkdir(settings)
       await writeFile(join(settings, 'settings.json'), '{}')
       const configured = await bridge.launchPreview!(scope.input)
       expect(configured.launchHash).not.toBe(preview.launchHash)
-      expect(configured.notes.at(-1)).toContain(join(others[1]!, `.${presetId}`, 'settings.json'))
       await expect(bridge.prompt(sessionId, 'echo again', rid())).rejects.toMatchObject({ status: 409, code: 'project-config-changed' })
     }
 
@@ -1969,7 +1950,7 @@ describe('ACP permission mode', () => {
     expect(stricter.events).toEqual([])
   })
 
-  it('classifies mode changes and widens only with local confirmation', async () => {
+  it('classifies mode changes and expects the mode a change widens to', async () => {
     const fixture = await qwen()
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
@@ -2021,16 +2002,16 @@ describe('ACP permission mode', () => {
     const supported = await preset('opencode', { FAKE_ACP_VERSION: '1.4.2', FAKE_ACP_CONFIG: 'legacy', FAKE_ACP_DUMP_ENV: '1' })
     const ok = await supported.open()
     const accepted = await ok.createTask({ prompt: 'echo', requestId: rid() })
-    expect((await settled(ok, accepted.sessionId)).summary.status).toBe('idle')
+    const ran = await settled(ok, accepted.sessionId)
+    expect(ran.summary.status).toBe('idle')
     const env = (await supported.log()).find(entry => entry.event === 'env')!.env as Record<string, string>
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toMatchObject({
       permission: { '*': 'ask', task: 'deny' },
       agent: { build: { permission: { '*': 'ask' } } },
     })
-    // OpenCode also reads project and user configuration, which can replace these rules; the confirmation says so.
-    const preview = await ok.launchPreview!({ cwd: supported.workspace })
-    expect(preview.approvals).toBe('prompts')
-    expect(preview.notes.join('\n')).toContain('.opencode')
+    // OpenCode also reads project and user configuration, which can replace these rules; the session's permission says so.
+    expect((await ok.launchPreview!({ cwd: supported.workspace })).approvals).toBe('prompts')
+    expect(ran.permission?.notes.join('\n')).toContain('.opencode')
   })
 
   it('notes OpenCode definitions whose variables move where it reads its configuration', async () => {
@@ -2039,7 +2020,7 @@ describe('ACP permission mode', () => {
     const preview = await other.launchPreview!({ cwd: redirected.workspace })
     const note =
       '定义设置了 XDG_CONFIG_HOME，OpenCode 可能改从其他位置读取配置、Agent 定义与插件，覆盖 Latch 设置的询问规则；该定义不作为已验证的预设'
-    expect(preview).toMatchObject({ verified: false, notes: [...profileFor('opencode')!.permission.notes, note] })
+    expect(preview).toMatchObject({ verified: false })
     const { sessionId } = await other.createTask({ prompt: 'echo', requestId: rid() })
     expect((await settled(other, sessionId)).permission?.notes).toEqual([...profileFor('opencode')!.permission.notes, note])
   })
@@ -2071,8 +2052,9 @@ describe('ACP permission mode', () => {
       verified: false,
       approvals: 'none',
       readback: 'none',
-      notes: ['pi 执行工具前不请求审批'],
     })
+    const { sessionId } = await pi.createTask({ prompt: 'echo', requestId: rid() })
+    expect((await settled(pi, sessionId)).permission?.notes).toContain('pi 执行工具前不请求审批')
   })
 })
 

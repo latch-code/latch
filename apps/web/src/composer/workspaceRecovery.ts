@@ -47,7 +47,7 @@ export function recoveryWorkspaces(input: Pick<WorkspaceRecoveryInput, 'workspac
   })
 }
 
-/** Display-only guard; POST /tasks revalidates the project, device and any real launch confirmation. */
+/** Display-only guard; POST /tasks revalidates the project, the device and the launch. */
 export function workspaceRecovery(input: WorkspaceRecoveryInput): {
   workspaces: WorkspaceInfo[]
   blockedReason?: string

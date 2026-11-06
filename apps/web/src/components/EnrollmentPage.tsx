@@ -123,7 +123,7 @@ function Waiting({ enrollment, compare, onCancel }: { enrollment: EnrollmentView
 
 export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnrolled: () => Promise<EnrolledResult> }) {
   const enrollment = useEnrollment(onEnrolled)
-  const { info, step, error, linkAllowsAdmin, electron } = enrollment
+  const { info, step, error, linkAllowsAdmin, offeredScopes, electron } = enrollment
   const legacyName = auth.legacyName ?? info?.legacy?.name
   const legacy = auth.reason === 'legacy-reconfirm' || legacyName !== undefined
   const invited = pendingInvitation() !== null
@@ -363,7 +363,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
       {!offlineOnly && chosenName !== null && (
         <ConnectionDetails
           name={chosenName}
-          scopes={electron ? DESKTOP_SCOPES : requestedScopes(wantsAdmin)}
+          scopes={electron ? DESKTOP_SCOPES : requestedScopes(wantsAdmin, offeredScopes ?? undefined)}
           dataScope={electron ? 'all' : 'work'}
         />
       )}

@@ -7,15 +7,17 @@ import {
   MAX_TOOL_CALLS,
   ProviderError,
   errorMessage,
+  invalidListing,
   parseBaseURL,
   sseData,
   toolArguments,
   type ModelPage,
+  type ModelWire,
   type WireRequest,
 } from './http.ts'
 
-/** Chat Completions style URL; a base without a path keeps the historical `/v1` default. */
-export function chatEndpoint(baseURL: string, path: '/chat/completions' | '/models'): string {
+/** OpenAI style URL, for Chat Completions and Responses; a base without a path keeps the historical `/v1` default. */
+export function chatEndpoint(baseURL: string, path: '/chat/completions' | '/responses' | '/models'): string {
   const url = parseBaseURL(baseURL)
   url.pathname = `${url.pathname.replace(/\/+$/u, '') || '/v1'}${path}`
   return url.toString()
@@ -60,7 +62,7 @@ function messageOnWire(message: ModelMessage): Record<string, unknown> {
   }
 }
 
-export function encodeChatRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
+function encodeChatRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
   return {
     model,
     stream: true,
@@ -129,7 +131,7 @@ function readChatUsage(usage: z.infer<typeof usageSchema>): ChatUsage {
 }
 
 /** Decodes a Chat Completions SSE stream. Protocol failures stay failures; usage and calls come after the text. */
-export async function* decodeChatStream(
+async function* decodeChatStream(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   safeError: (text: string) => string,
@@ -201,7 +203,25 @@ export async function* decodeChatStream(
   yield { type: 'finish', reason: finish }
 }
 
-/** One page: the service's `/models`. */
+// Some local servers answer with a bare array.
+const listingSchema = z.union([
+  z.object({ data: z.array(z.object({ id: z.string() })) }).transform(page => page.data),
+  z.array(z.object({ id: z.string() })),
+])
+
+/** One page: the service's `/models`, which Chat Completions and Responses services share. */
 export async function listChatModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>> {
-  return (await page(chatEndpoint(baseURL, '/models'), chatHeaders(apiKey))).data
+  const listed = listingSchema.safeParse(await page(chatEndpoint(baseURL, '/models'), chatHeaders(apiKey)))
+  if (!listed.success) throw invalidListing()
+  return listed.data
+}
+
+export const chatWire: ModelWire = {
+  request: (baseURL, apiKey, request) => ({
+    url: chatEndpoint(baseURL, '/chat/completions'),
+    headers: chatHeaders(apiKey),
+    body: encodeChatRequest(request),
+  }),
+  decode: (body, signal, safeError) => decodeChatStream(body, signal, safeError),
+  listModels: listChatModels,
 }

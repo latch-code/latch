@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
+import type { ProviderSettings } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
@@ -28,7 +29,8 @@ describe('settings pages', () => {
   let browser: Browser
   let service: Server
   let release: () => void = () => {}
-  let add: (name: string, path: string) => Promise<unknown> = async () => {}
+  let add: (name: string, path: string, extra?: Record<string, unknown>) => Promise<unknown> = async () => {}
+  let savedProviders: () => Promise<ProviderSettings[]> = async () => []
   let laterRefuses = false
   const held = new Promise<void>(resolved => {
     release = resolved
@@ -52,7 +54,7 @@ describe('settings pages', () => {
       egressAllow: [`127.0.0.1:${port}`],
     })
     const local = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
-    add = (name: string, path: string) =>
+    add = (name: string, path: string, extra: Record<string, unknown> = {}) =>
       local.confirmed('providers', {
         method: 'POST',
         body: {
@@ -63,8 +65,10 @@ describe('settings pages', () => {
           models: ['fixture-small', 'fixture-large'],
           defaultModel: 'fixture-small',
           confirmOrigin: true,
+          ...extra,
         },
       })
+    savedProviders = async () => ((await (await local.request('providers')).json()) as { providers: ProviderSettings[] }).providers
     await add('能连上的服务', 'ok')
     await add('密钥不对的服务', 'refused')
     await add('还在回答的服务', 'slow')
@@ -260,6 +264,69 @@ describe('settings pages', () => {
     finish()
     await sheet.waitFor({ state: 'hidden' })
     await settings.locator('.provider-row', { hasText: '保存中的服务' }).waitFor()
+    await context.close()
+  })
+
+  it('adds a service on the protocol it chose, and changes the protocol on its page', async () => {
+    await add('换协议的服务', 'ok', { models: ['fixture-small'], modelCapabilities: { 'fixture-small': { thinking: ['low', 'high'] } } })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    context.setDefaultTimeout(15_000)
+    const page = await context.newPage()
+    await enrollBrowser(page, testHost, { name: 'protocols', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+    const settings = await openSettings(page)
+    await openSection(settings, '模型')
+
+    // OpenAI starts on Responses and still offers Chat Completions; a preset that speaks one protocol has no choice.
+    await settings.getByRole('button', { name: '添加服务', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: '添加服务' })
+    await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
+    // The select's name carries its value too, so it is found by the start of its name.
+    const protocol = sheet.getByRole('combobox', { name: /^协议/u })
+    expect(await protocol.inputValue()).toBe('openai-responses')
+    expect(await protocol.locator('option').allTextContents()).toEqual(['Responses', 'Chat Completions'])
+    await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
+    await sheet.getByLabel('地址', { exact: true }).waitFor()
+    expect(await protocol.count()).toBe(0)
+
+    // A custom service offers all four, and is saved on the one picked.
+    await sheet.getByRole('button', { name: '自定义', exact: true }).click()
+    expect(await protocol.locator('option').allTextContents()).toEqual(['Chat Completions', 'Responses', 'Anthropic Messages', 'Gemini'])
+    await protocol.selectOption({ label: 'Gemini' })
+    await sheet.getByLabel('名称', { exact: true }).fill('原生 Gemini 服务')
+    await sheet.getByLabel('地址', { exact: true }).fill('https://models.example.test/v1beta')
+    const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
+    await manual.fill('gemini-fixture')
+    await manual.press('Enter')
+    await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+    await sheet.waitFor({ state: 'hidden' })
+    await settings.locator('.provider-row', { hasText: '原生 Gemini 服务' }).getByText('Gemini · 1 个模型', { exact: true }).waitFor()
+    expect((await savedProviders()).find(item => item.name === '原生 Gemini 服务')?.kind).toBe('gemini')
+
+    // On a saved service the row warns before the switch that the thinking levels go, and they do.
+    const row = settings.locator('.provider-row', { hasText: '换协议的服务' })
+    await row.getByText('Chat Completions · 1 个模型', { exact: true }).waitFor()
+    await row.getByRole('button', { name: '编辑 换协议的服务' }).click()
+    const hint = settings.getByText('换协议会清除为模型设置的思考深度', { exact: true })
+    await hint.waitFor()
+    await settings.getByRole('button', { name: '协议：Chat Completions', exact: true }).click()
+    await page.getByRole('menuitemradio', { name: 'Responses', exact: true }).click()
+    await settings.getByRole('button', { name: '协议：Responses', exact: true }).waitFor()
+    await hint.waitFor({ state: 'detached' })
+    const saved = (await savedProviders()).find(item => item.name === '换协议的服务')
+    expect(saved?.kind).toBe('openai-responses')
+    expect(saved?.modelCapabilities?.['fixture-small']?.thinking).toBeUndefined()
+
+    // A reload reads the protocol back from the Host, on the list and on the page.
+    await page.reload()
+    const reloaded = await openSettings(page)
+    await openSection(reloaded, '模型')
+    const after = reloaded.locator('.provider-row', { hasText: '换协议的服务' })
+    await after.getByText('Responses · 1 个模型', { exact: true }).waitFor()
+    await after.getByRole('button', { name: '编辑 换协议的服务' }).click()
+    await reloaded.getByRole('button', { name: '协议：Responses', exact: true }).waitFor()
+    expect(await reloaded.getByText('换协议会清除为模型设置的思考深度', { exact: true }).count()).toBe(0)
+    await settle(page)
+    await page.screenshot({ path: `${OUTPUT}/service-protocol--desktop--light.png` })
     await context.close()
   })
 })

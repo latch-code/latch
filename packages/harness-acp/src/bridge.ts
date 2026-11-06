@@ -5,7 +5,7 @@ import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills 
 import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
   AgentBrief,
@@ -85,7 +85,7 @@ import {
   type ProfileSelection,
 } from './permission.ts'
 import type { AcpPermissionProfile, ExtensionRequest } from './profiles/index.ts'
-import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS, type ProjectConfig } from './project-config.ts'
+import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   cancelRequest,
   chunkUpdate,
@@ -260,7 +260,7 @@ interface Launch {
   definitionHash: string
 }
 
-/** The launch the owner confirmed for a session, as stored with it. */
+/** The launch on record for a session, stored with it when it started. */
 interface Confirmed {
   launchHash?: string
   definitionHash?: string
@@ -268,7 +268,7 @@ interface Confirmed {
   folders?: LaunchFolders
 }
 
-/** A launch shown in a local confirmation: its definition part, and the folders it passes (`''` for none). */
+/** A previewed launch: its definition part, and the folders it passes (`''` for none). */
 interface Previewed {
   definitionHash: string
   folders: string
@@ -371,7 +371,7 @@ function storedFolders(acp: AcpRecord): LaunchFolders | undefined {
   return acp.folderVia && acp.folders?.length ? { via: acp.folderVia, paths: [...acp.folders] } : undefined
 }
 
-/** What the owner confirmed for a session, from its stored record. */
+/** The launch on record for a session, from its stored record. */
 function confirmedOf(acp: AcpRecord): Confirmed {
   const folders = storedFolders(acp)
   return { launchHash: acp.launchHash, definitionHash: acp.definitionHash, ...(folders ? { folders } : {}) }
@@ -400,20 +400,9 @@ function describeExit(info: ExitInfo): string {
   return `退出码 ${info.code ?? '未知'}`
 }
 
-/** Configuration files named in a note, before the rest are only counted. */
-const NOTE_PATHS = 8
 /** Recently previewed launch fingerprints kept to tell, at start, which part of a refused one changed. */
 const PREVIEWS = 64
 const DEFINITION_LOOKUP_MS = 5_000
-
-/** Relative to the first of `roots` that holds it, else absolute. */
-function displayPath(path: string, roots: string[]): string {
-  for (const root of roots) {
-    const inside = relative(root, path)
-    if (inside && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside)) return inside.split(sep).join('/')
-  }
-  return path
-}
 
 function selected(optionId: string): unknown {
   return { outcome: { outcome: 'selected', optionId } }
@@ -466,7 +455,7 @@ export class AcpBridge implements Bridge {
   private readonly changes = new Map<string, Set<ModeChange>>()
   /** Tasks whose recorded mode dates from an earlier process and has not been reported by the current one. */
   private readonly unconfirmed = new Set<string>()
-  /** Launch fingerprint → its definition part and folders, for launches recently shown in a local confirmation. */
+  /** Launch fingerprint → its definition part and folders, for launches recently previewed. */
   private readonly previews = new Map<string, Previewed>()
   /** New sessions whose agent is started, to learn whether it takes their folders, before they are recorded. */
   private readonly creating = new Map<string, { payloadHash: string; promise: Promise<{ sessionId: string }> }>()
@@ -704,8 +693,6 @@ export class AcpBridge implements Bridge {
       verified: selectProfile(this.agent).verified,
       approvals: this.profile?.approvals ?? 'prompts',
       readback: this.profile?.readback ?? 'none',
-      // Configuration in the other folders is named by its full path, so it never reads as the session directory's.
-      notes: [...this.permissionNotes(), ...this.folderNotes(passed), ...this.projectNotes(project, [given, cwd])],
     }
   }
 
@@ -1604,19 +1591,7 @@ export class AcpBridge implements Bridge {
     return fingerprintProjectConfig(passed ? [cwd, ...passed.paths] : cwd, [...names], profile?.projectConfigManaged)
   }
 
-  /** What the confirmation says about the other folders the agent receives. */
-  private folderNotes(passed: LaunchFolders | undefined): string[] {
-    const take = this.selection.profile?.folders
-    if (!passed || !take) return []
-    const name = this.agent.name
-    const how =
-      take.via === 'acp'
-        ? `经 ACP 的 additionalDirectories 传给 ${name}；它的当前版本没有声明支持时，会话不会开始`
-        : `以 ${take.flag} 参数传给 ${name}，排在定义的参数之后`
-    return [`其他 ${passed.paths.length} 个文件夹${how}。文件夹范围由 ${name} 自己执行，不是隔离`]
-  }
-
-  /** Why a new session's launch is not the confirmed one: its definition, the folders it passes, or the project configuration. */
+  /** Why a new session's launch is not the previewed one: its definition, the folders it passes, or the project configuration. */
   private launchRefusal(expected: string, launch: Launch, passed: LaunchFolders | undefined): AppError {
     const previewed = this.previews.get(expected)
     if (!previewed || previewed.definitionHash !== launch.definitionHash) return definitionChanged()
@@ -1639,15 +1614,6 @@ export class AcpBridge implements Bridge {
     const take = this.selection.profile?.folders
     if (passed?.via !== 'args' || take?.via !== 'args') return []
     return passed.paths.flatMap(path => [take.flag, path])
-  }
-
-  private projectNotes(project: ProjectConfig | undefined, roots: string[]): string[] {
-    if (!project?.digest) return []
-    const names = project.entries.map(entry => `${displayPath(entry.path, roots)}${entry.unreadable ? '（无法读取）' : ''}`)
-    const listed =
-      names.length > NOTE_PATHS ? `${names.slice(0, NOTE_PATHS).join('、')} 等 ${names.length} 项` : names.join('、') || '（未列出）'
-    const partial = project.truncated ? `（文件过多或层级过深，只比较了前 ${PROJECT_CONFIG_LIMITS.entries} 项）` : ''
-    return [`项目中有 ${this.harnessName()} 配置：${listed}。启动指纹包含这些配置的内容${partial}，确认后如有增删或修改，该会话不能继续`]
   }
 
   /**
@@ -1687,7 +1653,7 @@ export class AcpBridge implements Bridge {
     if (!confirmed.launchHash) throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话。')
   }
 
-  /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one the owner confirmed. */
+  /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one on record. */
   private async assertLaunch(cwd: string, confirmed: Confirmed): Promise<Launch> {
     this.assertConfirmed(confirmed)
     const launch = this.currentLaunch(await this.projectConfig(cwd, confirmed.folders), confirmed.folders)
@@ -1697,7 +1663,7 @@ export class AcpBridge implements Bridge {
   }
 
   /**
-   * Input to an existing session: refused after drift, without a confirmed launch, or once the definition changed.
+   * Input to an existing session: refused after drift, without a launch on record, or once the definition changed.
    * The project configuration takes file system reads, so callers check it with `assertLaunch`.
    */
   private assertUsable(task: AcpTask): void {
@@ -2786,7 +2752,7 @@ export class AcpBridge implements Bridge {
 
   /**
    * Cleans up after a removed task in the background: asks the agent to delete its session when it offers that,
-   * starting a process only for the launch the owner confirmed and only in a project the Host still lists, then stops
+   * starting a process only for the launch on record and only in a project the Host still lists, then stops
    * the process and removes its TMPDIR. Otherwise, or after a failure, only the agent's own copy is left behind.
    */
   private forget(

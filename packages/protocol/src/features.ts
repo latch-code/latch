@@ -85,14 +85,18 @@ export interface UsageSummary {
   truncated: boolean
 }
 
+/** The longest a test start runs on the Host: the handshake, then the login and version reads in the time left. */
+export const AGENT_PROBE_MAX_MS = 20_000
+
 /** A bounded initialize-only diagnostic; a successful handshake does not verify login or model access. */
 export interface AgentProbeResult {
   status: 'ready' | 'authentication-required' | 'failed'
   agent?: { name?: string; version?: string }
   /**
-   * The program an adapter drives, as the person installed it, beside the adapter in `agent`; absent when the adapter
-   * runs its own copy, or drives none. No `version`: it could not be read. `unchecked`: both versions are known and the
-   * pair is not one the adapter was built for; a warning only, nothing is refused.
+   * The program an adapter drives, as the person installed it or the definition names it, beside the adapter in
+   * `agent`; absent when the adapter runs its own copy, or drives none. No `version`: it could not be read.
+   * `unchecked`: both versions are known and the pair is not one the adapter was built for; a warning only, nothing is
+   * refused.
    */
   program?: { name: string; version?: string; unchecked?: true }
   capabilities: { embeddedContext?: boolean; images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }

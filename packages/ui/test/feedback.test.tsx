@@ -19,7 +19,7 @@ import {
   Toast,
 } from '../src/index.ts'
 import { ShieldCheck } from 'lucide-react'
-import { press, protocol } from './helpers.ts'
+import { emulateMedia, press } from './helpers.ts'
 
 const color = (element: Element | null) => (element ? getComputedStyle(element).color : '')
 
@@ -203,12 +203,9 @@ describe('tiles', () => {
       expect(contrast(ink, getComputedStyle(screen.container.querySelector('.canvas')!).backgroundColor)).toBeGreaterThanOrEqual(4.5)
     }
     check('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', 'rgb(63, 63, 70)', 'rgb(235, 235, 237)')
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
-    try {
+    await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
       check('rgb(24, 24, 27)', 'rgba(255, 255, 255, 0.05)', 'rgb(244, 244, 245)', 'rgb(212, 212, 216)', 'rgba(255, 255, 255, 0.08)')
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+    })
   })
 
   it('draws a glyph with the same line weight at every tile size, 1.25px when small and 1.5px from 20', async () => {
@@ -230,23 +227,22 @@ describe('tiles', () => {
   })
 
   it("shows the brand's own dark file in the dark theme, by preference or by choice", async () => {
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
     const screen = await render(<Tile size={32} mark={{ src: COLOUR_MARK, dark: MONO_MARK }} />)
     const shown = () =>
       Array.from(screen.container.querySelectorAll<HTMLImageElement>('.ui-tile img'))
         .filter(image => getComputedStyle(image).display !== 'none')
         .map(image => image.getAttribute('src'))
     expect(shown()).toEqual([COLOUR_MARK])
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
-    try {
+    await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
       expect(shown()).toEqual([MONO_MARK])
       // A page that chose light keeps the light file under a dark system preference.
       document.documentElement.dataset.theme = 'light'
-      expect(shown()).toEqual([COLOUR_MARK])
-    } finally {
-      delete document.documentElement.dataset.theme
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+      try {
+        expect(shown()).toEqual([COLOUR_MARK])
+      } finally {
+        delete document.documentElement.dataset.theme
+      }
+    })
     document.documentElement.dataset.theme = 'dark'
     try {
       expect(shown()).toEqual([MONO_MARK])
@@ -256,7 +252,6 @@ describe('tiles', () => {
   })
 
   it('shows an app icon whole, without the plate, the ring or our corners, and lets a file with its own margin span the plate', async () => {
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
     const screen = await render(
       <div>
         <Tile size={32} mark={{ src: COLOUR_MARK, tile: true }} />
@@ -340,14 +335,11 @@ describe('tiles', () => {
       'infinite',
     ])
     expect(getComputedStyle(determinate).animationName).toBe('none')
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
-    try {
+    await emulateMedia({ 'prefers-reduced-motion': 'reduce' }, () => {
       // Still, the arc keeps its quarter, which reads as being checked.
       expect(getComputedStyle(indeterminate).animationName).toBe('none')
       expect(indeterminate.getAttribute('stroke-dasharray')).toBe('25 100')
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+    })
   })
 
   it('cuts a dot or a count out in the colour of the layer it sits on, in both themes', async () => {
@@ -371,14 +363,11 @@ describe('tiles', () => {
         return getComputedStyle(dot).boxShadow.startsWith(getComputedStyle(layer).backgroundColor)
       })
     expect(cutOuts()).toEqual([true, true, true, true])
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
-    try {
+    await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
       expect(cutOuts()).toEqual([true, true, true, true])
       // In the dark theme a raised layer (#18181b) is lighter than the canvas (#111113): the ring is not the canvas's.
       const dot = screen.container.querySelector('.ui-popover .ui-tile-dot')!
       expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(24, 24, 27\) /u)
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+    })
   })
 })

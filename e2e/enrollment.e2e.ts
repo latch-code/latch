@@ -225,6 +225,31 @@ describe('device enrollment in the browser', () => {
     testHost.presence.denyNext()
   })
 
+  it('asks for no more than a link grants, so a narrower link still connects, with or without an answer from the Host', async () => {
+    const testHost = await host({ presenceMode: 'manual' })
+    const scopesAsked = async () =>
+      (await testHost.presence.waitForRequest()).preview.lines.find(line => line.label === '请求的权限')?.value
+
+    const managing = await (await context()).newPage()
+    await managing.goto((await testHost.invite(['view', 'run', 'approve:standard', 'admin'], 'loopback-tcp')).url)
+    await managing.getByText('这个链接还可以管理这台 Mac', { exact: true }).waitFor()
+    await managing.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+    const asked = await scopesAsked()
+    expect(asked).toContain('管理此 Host')
+    expect(asked).not.toContain('批准高风险操作')
+    testHost.presence.approveNext()
+    await connected(managing)
+
+    // Without the answer the page names nothing, and the Host grants its default within the link.
+    const unread = await (await context()).newPage()
+    await unread.route('**/link/api/enrollment-invitation', route => route.abort())
+    await unread.goto((await testHost.invite(['view', 'run'], 'loopback-tcp')).url)
+    await unread.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+    expect(await scopesAsked()).not.toContain('批准')
+    testHost.presence.approveNext()
+    await connected(unread)
+  })
+
   it('says at once that a link no longer works, with nothing to press', async () => {
     const testHost = await host({ presenceMode: 'manual' })
     const spent = await testHost.invite(BROWSER_CEILING, 'loopback-tcp')

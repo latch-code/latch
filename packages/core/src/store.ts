@@ -53,7 +53,12 @@ export interface RuntimeStore {
   close(): Promise<void>
 }
 
-const callSchema = z.object({ id: z.string(), name: z.string(), arguments: z.record(z.string(), z.unknown()) })
+const callSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  arguments: z.record(z.string(), z.unknown()),
+  signature: z.object({ by: z.string().max(512), value: z.string().max(1024 * 1024) }).optional(),
+})
 const usageSchema = z.object({
   inputTokens: z.number().nonnegative(),
   outputTokens: z.number().nonnegative(),

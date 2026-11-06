@@ -197,6 +197,8 @@ export interface EnrollmentView {
 /** What an unspent invitation lets the page ask for, read before anything is asked (`POST /link/api/enrollment-invitation`). */
 export interface EnrollmentInvitationOffer {
   admin: boolean
+  /** Everything the invitation grants; asking for more is refused. */
+  scopes: DeviceScope[]
 }
 
 /**

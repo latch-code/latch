@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, LockKeyhole, Pencil, Plus, Trash } from 'lucide-react'
-import type { AppSnapshot, ModelCapabilities, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
+import {
+  PROVIDER_KINDS,
+  type AppSnapshot,
+  type ModelCapabilities,
+  type ProviderKind,
+  type ProviderPreset,
+  type ProviderSettings,
+} from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -69,7 +76,18 @@ function offlineText(abilities: ProviderAbilities, providerId?: string): string 
   return providerId ? PROVIDER_COPY.confirmOffline(providerId) : PROVIDER_COPY.confirmOfflineNew
 }
 
-const kindLabels: Record<ProviderKind, string> = { 'openai-compatible': 'OpenAI 兼容', anthropic: 'Anthropic 原生' }
+const kindLabels: Record<ProviderKind, string> = {
+  'openai-compatible': 'Chat Completions',
+  'openai-responses': 'Responses',
+  anthropic: 'Anthropic Messages',
+  gemini: 'Gemini',
+}
+
+/** The protocols a service's address speaks, its preset's first; a service with no preset may speak any. */
+export function protocolChoices(preset: ProviderPreset | undefined, current?: ProviderKind): ProviderKind[] {
+  const offered: ProviderKind[] = preset ? [preset.kind, ...(preset.otherKinds ?? [])] : [...PROVIDER_KINDS]
+  return current && !offered.includes(current) ? [current, ...offered] : offered
+}
 
 /** The services one can add, as a grid of brand tiles; the chosen one stays marked while its form shows below. */
 function PresetGrid({
@@ -610,6 +628,7 @@ export function ProviderAddForm({
   const manual = useRef<HTMLInputElement>(null)
   const requiresKey = preset.requiresKey
   const customKind = preset.id === 'custom' || !preset.baseURL
+  const protocols = protocolChoices(preset)
   const destination = destinationOf(baseURL, data)
   // An address that is not confirmed takes a key only together with its confirmation; the desktop without local
   // confirmation saves it keyless and confirms it with the offline command.
@@ -831,17 +850,21 @@ export function ProviderAddForm({
             }}
           />
         )}
-        {customKind && (
+        {protocols.length > 1 && (
           <label className="field">
-            <span>接口类型</span>
+            <span>协议</span>
             <select
               value={kind}
               onChange={event => {
-                setKind(event.target.value === 'anthropic' ? 'anthropic' : 'openai-compatible')
+                const next = protocols.find(item => item === event.target.value)
+                if (next) setKind(next)
                 probe.reset()
               }}>
-              <option value="openai-compatible">{kindLabels['openai-compatible']}</option>
-              <option value="anthropic">{kindLabels.anthropic}</option>
+              {protocols.map(item => (
+                <option key={item} value={item}>
+                  {kindLabels[item]}
+                </option>
+              ))}
             </select>
           </label>
         )}
@@ -1014,7 +1037,10 @@ function ProviderPage({
   const unconfirmed = isUnconfirmed(provider)
   const keyless = missingKey(provider, data.presets)
   const keyEditable = abilities.keys && !(unconfirmed && abilities.offline)
-  const requiresKey = data.presets.find(item => item.id === provider.presetId)?.requiresKey ?? false
+  const preset = data.presets.find(item => item.id === provider.presetId)
+  const requiresKey = preset?.requiresKey ?? false
+  const protocols = protocolChoices(preset, provider.kind)
+  const declaresThinking = Object.values(provider.modelCapabilities ?? {}).some(capabilities => capabilities.thinking?.length)
   const presenter = trackedPresenter(setWaiting)
   const probe = useProbe(async () => {
     try {
@@ -1190,6 +1216,27 @@ function ProviderPage({
             </Button>
           }
         />
+        {protocols.length > 1 && (
+          <SettingsRow
+            title="协议"
+            description={declaresThinking ? '换协议会清除为模型设置的思考深度' : undefined}
+            trailing={
+              <ValuePicker
+                label="协议"
+                value={provider.kind}
+                disabled={busy}
+                bleed="end"
+                options={protocols.map(item => ({ value: item, label: kindLabels[item] }))}
+                onValueChange={value => {
+                  if (value !== provider.kind) {
+                    probe.reset()
+                    apply({ kind: value })
+                  }
+                }}
+              />
+            }
+          />
+        )}
         <CheckRow
           busy={probe.busy === 'check'}
           disabled={busy || unconfirmed || keyless}
@@ -1621,7 +1668,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                   {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
                 </span>
               }
-              description={`${provider.models.length} 个模型`}
+              description={`${kindLabels[provider.kind]} · ${provider.models.length} 个模型`}
               onOpen={() => {
                 setSelection({ kind: 'provider', id: provider.id })
               }}

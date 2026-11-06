@@ -6,6 +6,7 @@ import {
   MAX_THINKING_LEVELS,
   MODEL_EFFORT,
   PROJECT_GLYPHS,
+  PROVIDER_KINDS,
   PROVIDER_PRESETS,
   type AgentRecord,
   type ModelCapabilities,
@@ -211,7 +212,7 @@ const providerSchema = z
   .object({
     id: id('服务标识'),
     name,
-    kind: z.enum(['openai-compatible', 'anthropic']),
+    kind: z.enum(PROVIDER_KINDS),
     presetId: id('预设标识').optional(),
     baseURL,
     apiKey: z.string().max(8192, 'API Key 过长').refine(noControl, 'API Key 不能包含换行或控制字符'),

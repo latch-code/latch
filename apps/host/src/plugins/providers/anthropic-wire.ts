@@ -7,10 +7,12 @@ import {
   MAX_TOOL_CALLS,
   ProviderError,
   errorMessage,
+  invalidListing,
   parseBaseURL,
   sseData,
   toolArguments,
   type ModelPage,
+  type ModelWire,
   type WireRequest,
 } from './http.ts'
 
@@ -20,14 +22,14 @@ const MAX_CONTENT_BLOCKS = 4096
 const MAX_LIST_PAGES = 10
 
 /** Accepts both `https://api.anthropic.com` and a base that already ends in `/v1`. */
-export function anthropicEndpoint(baseURL: string, path: '/messages' | '/models'): string {
+function anthropicEndpoint(baseURL: string, path: '/messages' | '/models'): string {
   const url = parseBaseURL(baseURL)
   const prefix = url.pathname.replace(/\/+$/u, '')
   url.pathname = `${/\/v1$/u.test(prefix) ? prefix : `${prefix}/v1`}${path}`
   return url.toString()
 }
 
-export function anthropicHeaders(apiKey: string): Record<string, string> {
+function anthropicHeaders(apiKey: string): Record<string, string> {
   return { 'anthropic-version': ANTHROPIC_VERSION, ...(apiKey ? { 'x-api-key': apiKey } : {}) }
 }
 
@@ -83,7 +85,7 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
   return { ...(system.length ? { system: system.join('\n\n') } : {}), messages: wire }
 }
 
-export function encodeAnthropicRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
+function encodeAnthropicRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
   return {
     model,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -184,7 +186,7 @@ class AnthropicUsage {
 }
 
 /** Decodes a Messages API SSE stream with the same strictness as the Chat Completions decoder. */
-export async function* decodeAnthropicStream(
+async function* decodeAnthropicStream(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   safeError: (text: string) => string,
@@ -306,16 +308,33 @@ export async function* decodeAnthropicStream(
   yield { type: 'finish', reason: finish }
 }
 
+const listingSchema = z.object({
+  data: z.array(z.object({ id: z.string() })),
+  has_more: z.boolean().optional(),
+  last_id: z.string().nullable().optional(),
+})
+
 /** Every page of `/v1/models`, up to ten. */
-export async function listAnthropicModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>> {
+async function listAnthropicModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>> {
   const endpoint = new URL(anthropicEndpoint(baseURL, '/models'))
   endpoint.searchParams.set('limit', '1000')
   const models: Array<{ id: string }> = []
   for (let index = 0; index < MAX_LIST_PAGES; index++) {
-    const result = await page(endpoint.toString(), anthropicHeaders(apiKey))
-    models.push(...result.data)
-    if (!result.has_more || !result.last_id) break
-    endpoint.searchParams.set('after_id', result.last_id)
+    const result = listingSchema.safeParse(await page(endpoint.toString(), anthropicHeaders(apiKey)))
+    if (!result.success) throw invalidListing()
+    models.push(...result.data.data)
+    if (!result.data.has_more || !result.data.last_id) break
+    endpoint.searchParams.set('after_id', result.data.last_id)
   }
   return models
+}
+
+export const anthropicWire: ModelWire = {
+  request: (baseURL, apiKey, request) => ({
+    url: anthropicEndpoint(baseURL, '/messages'),
+    headers: anthropicHeaders(apiKey),
+    body: encodeAnthropicRequest(request),
+  }),
+  decode: (body, signal, safeError) => decodeAnthropicStream(body, signal, safeError),
+  listModels: listAnthropicModels,
 }

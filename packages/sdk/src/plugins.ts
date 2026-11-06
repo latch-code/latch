@@ -10,6 +10,11 @@ export interface ToolCall {
   id: string
   name: string
   arguments: Record<string, unknown>
+  /**
+   * Opaque text the service attached to the call, such as Gemini's thought signature, and `by`, the service and model
+   * that made it. The session's history keeps it; a provider sends it back only where `by` names itself.
+   */
+  signature?: { by: string; value: string }
 }
 export type AttachmentContent =
   | { type: 'image'; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }

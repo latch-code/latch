@@ -97,10 +97,10 @@ const PROJECT_REMOVE_RUNNING = 'Host 正在运行。请在 Latch 的「设置 �
 const OFFLINE_WARNING = '离线连接依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
 const UNPINNED = '本机确认组件尚未记录。请先在这台电脑上打开一次 Latch，或停止 Host 后重试。'
 /**
- * What a loopback link offers unless --scopes says otherwise: with no desktop app to raise it later, 「管理此 Host」 too, which
- * the desktop app's own link leaves out (apps/desktop/src/proxy.cjs). The confirmation warns when it is asked for.
+ * What a loopback link offers unless --scopes says otherwise: what the desktop app's own link offers (apps/desktop/src/proxy.cjs),
+ * and, with no desktop app to raise it later, 「管理此 Host」 too. The confirmation warns when that is asked for.
  */
-const BROWSER_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
+const BROWSER_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 
 const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
 

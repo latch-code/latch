@@ -1,7 +1,7 @@
 // HTTP plumbing shared by the built-in model protocols (openai-compatible/, anthropic/) and the Host's model
 // service checks. Not a plugin: plugin directories may import this file, never each other.
 import { z } from 'zod'
-import type { ModelMessage, ToolDefinition } from '@latch/sdk'
+import type { ModelDelta, ModelMessage, ToolDefinition } from '@latch/sdk'
 
 /**
  * The Host's outbound `fetch`. Declared here rather than imported, because plugins never import
@@ -52,13 +52,32 @@ export interface WireRequest {
   tools: ToolDefinition[]
   /** One of the model's declared thinking levels, already checked. */
   effort?: string
+  /** The service and model sending, as tool call signatures name them: only the signatures they made go back. */
+  signer: string
 }
 
-/** Fetches one page of a model listing from `url` with `headers`; the caller owns limits, timeouts and errors. */
-export type ModelPage = (
-  url: string,
-  headers: Record<string, string>,
-) => Promise<{ data: Array<{ id: string }>; has_more?: boolean | undefined; last_id?: string | null | undefined }>
+/**
+ * Fetches one page of a model listing from `url` with `headers` and returns its parsed JSON; the caller owns limits,
+ * timeouts and errors, and the protocol module checks the shape.
+ */
+export type ModelPage = (url: string, headers: Record<string, string>) => Promise<unknown>
+
+/** One protocol, as the built-in service plugin uses it. */
+export interface ModelWire {
+  /** Where one streaming call goes, with its headers and body. */
+  request(baseURL: string, apiKey: string, request: WireRequest): { url: string; headers: Record<string, string>; body: unknown }
+  decode(
+    body: ReadableStream<Uint8Array>,
+    signal: AbortSignal,
+    safeError: (text: string) => string,
+    signer: string,
+  ): AsyncIterable<ModelDelta>
+  /** Every model ID the service lists, over as many pages as the protocol has. */
+  listModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>>
+}
+
+/** An invalid model listing, in the same words for every protocol. */
+export const invalidListing = (): ProviderError => new ProviderError('模型列表格式无效。', 'invalid-response')
 
 /**
  * Sends a streaming request and returns its body once the response is a successful event stream. `safeError` redacts

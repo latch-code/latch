@@ -61,20 +61,28 @@ const THINKING_WORDS: Readonly<Record<string, string>> = {
 /** A thinking level in words; a level Latch has no word for shows as sent. */
 export const thinkingWord = (level: string): string => THINKING_WORDS[level] ?? level
 
+const OPENAI_SETS = [
+  ['low', 'medium', 'high'],
+  ['minimal', 'low', 'medium', 'high'],
+  ['none', 'low', 'medium', 'high', 'xhigh'],
+] as const
+
 /**
  * The level sets offered when declaring what a model accepts, by protocol: `reasoning_effort` for Chat Completions,
- * `output_config.effort` for the Messages API. Which one a model takes is the service's to say, so nothing is preselected.
+ * `reasoning.effort` for Responses, `output_config.effort` for the Messages API and `thinkingLevel` for Gemini 3 and
+ * later. Which one a model takes is the service's to say, so nothing is preselected.
  */
 export const THINKING_SETS: Readonly<Record<ProviderKind, ReadonlyArray<readonly string[]>>> = {
-  'openai-compatible': [
-    ['low', 'medium', 'high'],
-    ['minimal', 'low', 'medium', 'high'],
-    ['none', 'low', 'medium', 'high', 'xhigh'],
-  ],
+  'openai-compatible': OPENAI_SETS,
+  'openai-responses': OPENAI_SETS,
   anthropic: [
     ['low', 'medium', 'high'],
     ['low', 'medium', 'high', 'max'],
     ['low', 'medium', 'high', 'xhigh', 'max'],
+  ],
+  gemini: [
+    ['low', 'high'],
+    ['minimal', 'low', 'medium', 'high'],
   ],
 }
 

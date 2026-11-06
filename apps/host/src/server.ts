@@ -38,6 +38,7 @@ import {
   type AgentPreset,
   PROJECT_GLYPHS,
   escapeSecurityText,
+  PROVIDER_KINDS,
   PROVIDER_PRESETS,
   isLocalListener,
   isNativeListener,
@@ -60,6 +61,7 @@ import {
   type HostCatalog,
   type HostStateEvent,
   type HostView,
+  type ModelCapabilities,
   type ModelRef,
   type PermissionLevel,
   type PluginInfo,
@@ -330,7 +332,7 @@ const keepWaitingSchema = z.strictObject({
   runId: z.string().regex(RUN_ID),
   thresholdMs: z.number().int().positive(),
 })
-const providerKind = z.enum(['openai-compatible', 'anthropic'])
+const providerKind = z.enum(PROVIDER_KINDS)
 const modelList = z.array(modelId).max(1000)
 const modelCapabilitiesRecord = z.record(modelId, modelCapabilitiesSchema).refine(value => Object.keys(value).length <= 1000)
 /**
@@ -353,6 +355,7 @@ const providerCreateSchema = z.object({
 })
 const providerUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
+  kind: providerKind.optional(),
   baseURL: httpURL.optional(),
   apiKey: apiKeyText.nullable().optional(),
   models: modelList.optional(),
@@ -362,6 +365,14 @@ const providerUpdateSchema = z.object({
   confirmOrigin: z.boolean().optional(),
 })
 const providerOriginSchema = z.object({ baseURL: httpURL })
+/** Thinking levels are each protocol's own words, so a service that changes protocol keeps none it declared. */
+function withoutThinking(all: Record<string, ModelCapabilities> | undefined): Record<string, ModelCapabilities> | undefined {
+  if (!all) return undefined
+  const kept = Object.entries(all).flatMap(([model, { thinking: _thinking, ...rest }]) =>
+    Object.keys(rest).length ? [[model, rest] as const] : [],
+  )
+  return kept.length ? Object.fromEntries(kept) : undefined
+}
 const providerCheckSchema = z.object({
   kind: providerKind,
   baseURL: httpURL,
@@ -5519,8 +5530,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 baseURL,
                 apiKey,
                 ...(binding ?? {}),
+                ...(input.kind ? { kind: input.kind } : {}),
                 models: withModel(input.models ?? previous.models, defaultModel),
-                modelCapabilities: input.modelCapabilities ?? previous.modelCapabilities,
+                modelCapabilities:
+                  input.modelCapabilities
+                  ?? (input.kind && input.kind !== previous.kind
+                    ? withoutThinking(previous.modelCapabilities)
+                    : previous.modelCapabilities),
                 defaultModel,
                 enabled: input.enabled ?? previous.enabled,
               }

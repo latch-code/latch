@@ -19,7 +19,12 @@ export interface ModelCapabilities {
   thinking?: string[]
 }
 
-export type ProviderKind = 'openai-compatible' | 'anthropic'
+/**
+ * The protocol a model service speaks: OpenAI's Chat Completions (`openai-compatible`, a name kept for saved data),
+ * OpenAI's Responses, Anthropic's Messages or Gemini's generateContent.
+ */
+export const PROVIDER_KINDS = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini'] as const
+export type ProviderKind = (typeof PROVIDER_KINDS)[number]
 /** Browser-safe provider listing. It never contains credentials. */
 export interface ProviderSummary {
   modelCapabilities?: Record<string, ModelCapabilities>

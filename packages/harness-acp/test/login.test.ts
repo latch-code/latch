@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AgentRecord } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
-import { personCommandDirectories, redactor, setCommandSearch } from '../src/command.ts'
+import { personCommandDirectories, redactor, resolveCommand, setCommandSearch } from '../src/command.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from '../src/login.ts'
 import { ALWAYS_INHERITED, loadLoginShell, loginShellValues, readLoginShell, setLoginShellValues } from '../src/login-shell.ts'
@@ -61,11 +61,11 @@ async function fakeCodex(directory: string, loginFile: string, names = ['codex',
   return bin
 }
 
-/** Commands are found in `bin` alone: never one installed on the computer running this test. */
+/** Commands are found in `bin` alone, as the start script finds them: never one installed on the computer running this test. */
 function useOnly(bin: string): void {
   process.env.PATH = `${bin}:/usr/bin:/bin`
   setCommandSearch(() => [bin])
-  setLoginPrograms(name => (existsSync(join(bin, name)) ? join(bin, name) : undefined))
+  setLoginPrograms(resolveCommand)
 }
 
 describe('reading the login shell', () => {
@@ -308,9 +308,9 @@ describe('the program an adapter drives, beside the adapter', () => {
       await chmod(join(bin, name), 0o755)
     }
     useOnly(bin)
-    const record = presetRecord('codex')!
     const options = { dataDir: directory, cwd: directory }
-    const probe = async () => probeAgent(record, { ...options, expectedLaunchHash: (await agentProbePreview(record, options)).launchHash })
+    const probe = async (record: AgentRecord = presetRecord('codex')!) =>
+      probeAgent(record, { ...options, expectedLaunchHash: (await agentProbePreview(record, options)).launchHash })
     return { probe, ran: () => existsSync(marks) }
   }
 
@@ -340,6 +340,56 @@ describe('the program an adapter drives, beside the adapter', () => {
     const failed = await pair('2.5.0', 'fail')
     expect((await failed.probe()).program).toEqual({ name: 'Codex' })
     expect(failed.ran()).toBe(true)
+  })
+
+  it('reads the program the definition points the adapter at, not the one on PATH', async () => {
+    const found = await pair('2.5.0', '0.167.0')
+    const own = join(await root(), 'codex-0.165')
+    const ownMark = `${own}.ran`
+    await writeFile(
+      own,
+      [
+        '#!/bin/sh',
+        `touch '${ownMark}'`,
+        `export FAKE_ACP_CLI_VERSION='0.165.2'`,
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+    )
+    await chmod(own, 0o755)
+    const probe = (env: Record<string, string>) => found.probe({ ...presetRecord('codex')!, env })
+    expect((await probe({ CODEX_PATH: own })).program).toEqual({ name: 'Codex', version: '0.165.2' })
+    expect(existsSync(ownMark)).toBe(true)
+    // A relative path resolves against the project, which a test start does not use: the version stays unknown.
+    expect((await probe({ CODEX_PATH: 'tools/codex' })).program).toEqual({ name: 'Codex' })
+    // An empty value leaves the adapter on its own copy.
+    expect((await probe({ CODEX_PATH: '' })).program).toBeUndefined()
+    expect((await probe({})).program).toEqual({ name: 'Codex', version: '0.167.0', unchecked: true })
+  })
+
+  it('keeps the whole test start, login and version reads included, within its time', { timeout: 40_000 }, async () => {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    const scripts = {
+      'codex-acp': `export FAKE_ACP_VERSION='2.5.0'\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      codex: 'sleep 30',
+    }
+    for (const [name, body] of Object.entries(scripts)) {
+      await writeFile(join(bin, name), `#!/bin/sh\n${body}\n`)
+      await chmod(join(bin, name), 0o755)
+    }
+    useOnly(bin)
+    const record = presetRecord('codex')!
+    const options = { dataDir: directory, cwd: directory }
+    const started = Date.now()
+    const result = await probeAgent(record, {
+      ...options,
+      expectedLaunchHash: (await agentProbePreview(record, options)).launchHash,
+      timeoutMs: 1500,
+    })
+    expect(Date.now() - started).toBeLessThan(4000)
+    expect(result).toMatchObject({ status: 'ready', login: 'unknown', program: { name: 'Codex' } })
+    expect(result.program).not.toHaveProperty('version')
   })
 
   it('shows no program when the adapter runs its own copy, and runs none until the start script turns it on', async () => {

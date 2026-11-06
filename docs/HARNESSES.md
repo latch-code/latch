@@ -59,7 +59,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 每个预设的权限配置是 `packages/harness-acp/src/profiles/` 下的一个 `HarnessProfile`，只在 Host 上使用；浏览器只看到复制进 `TaskDetail.permission` 的展示字段。
 
 - `permission`（`AcpPermissionProfile`）：`approvals`（Agent 是否请求审批）、`defaultEnv`、`expectedMode`、`modeLadder`（严格 → 宽松，由模型代为批准的模式排在询问与不再询问之间）、`hiddenOptionIds`（精确 ID，或以 `*` 结尾的前缀）、`readback`、`versionRule`（见「版本规则」）、`systemSettings`（Gemini CLI）、`configEnv`（见下）与中文 `notes`。
-- `version`：计入启动指纹。改变配置的行为时应递增它，已有会话因此需要重新确认。
+- `version`：计入启动指纹。改变配置的行为时应递增它，已有会话因此停止接受输入，换新会话继续。
 - `projectConfigPaths`、`projectConfigManaged`：见「项目配置」。
 - `materialize`：启动前在 Host 上准备 Agent 需要的文件，返回要加入的环境变量（目前只有 Gemini CLI 使用）。
 
@@ -141,9 +141,9 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 `POST /link/api/agents/:id/probe { requestId }` 接受同时持有 `admin` 与 `run` 的设备，不弹确认。
 
-探测只发送 ACP `initialize`（有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；最多等待 15 秒，随后停止进程组并等待真实退出。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
+探测只发送 ACP `initialize`（有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
 
-适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本：只运行 Host 按 `agentCommand` 找到的程序（`codex --version`），限时，不经过 shell，只留下版本号。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
+适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
 
 结果带 `checkedAt`、`launchHash` 与最多 4 KiB 的诊断；先按定义变量与秘密格式脱敏，再截取结尾。最近结果以可选 `AgentRecord.lastProbe`、`probedDefinitionHash` 保存，`AgentSettings.lastProbe` 只返回同一定义的记录；修改启动内容会清除它。探测通过不等于会话已经启动，不修改 `startedHash`，也不授予以后启动会话的信任。运行前写审计 `agent.probe.requested`，结束后记录 `agent.probed`；审计只含 ID、哈希与状态。当前 Host 生命周期内，同设备同 `requestId` 共享整次探测与记录过程，重试不再执行程序；这份记录只在内存中，Host 重启后同一 `requestId` 会再执行一次探测。
 

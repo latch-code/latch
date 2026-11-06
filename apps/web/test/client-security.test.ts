@@ -470,9 +470,13 @@ describe('error copy', () => {
     expect(defaultDeviceName('a'.repeat(81))).toBe(defaultDeviceName())
   })
 
-  it('asks for management only when told to', () => {
+  it('asks for management only when told to, and for nothing the invitation does not grant', () => {
     expect(requestedScopes(false)).toEqual(['view', 'run', 'approve:standard', 'approve:elevated'])
     expect(requestedScopes(true)).toEqual(['view', 'run', 'approve:standard', 'approve:elevated', 'admin'])
+    const managing: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
+    expect(requestedScopes(true, managing)).toEqual(['view', 'run', 'approve:standard', 'admin'])
+    expect(requestedScopes(false, managing)).toEqual(['view', 'run', 'approve:standard'])
+    expect(requestedScopes(true, ['view', 'run'])).toEqual(['view', 'run'])
   })
 
   it('names a browser so the system sheet says which one asked, within the rule for device names', () => {

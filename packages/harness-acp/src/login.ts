@@ -1,7 +1,7 @@
 /** Whether a harness is logged in, and how a person logs in: its own commands, run in its own environment. */
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { AGENT_PRESETS, type AgentRecord, type HarnessLogin } from '@latch/protocol'
+import { AGENT_PRESETS, isReservedAgentEnvName, type AgentRecord, type HarnessLogin } from '@latch/protocol'
 import { agentEnvironment } from './environment.ts'
 import { selectProfile } from './permission.ts'
 import type { LoginStatus } from './profiles/index.ts'
@@ -80,7 +80,8 @@ function runProgram(
         /* Already gone. */
       }
     }
-    const timer = setTimeout(kill, options.timeoutMs ?? STATUS_TIMEOUT_MS)
+    // A caller may shorten the wait, never lengthen it.
+    const timer = setTimeout(kill, Math.min(options.timeoutMs ?? STATUS_TIMEOUT_MS, STATUS_TIMEOUT_MS))
     options.signal?.addEventListener('abort', kill, { once: true })
     child.stdout.setEncoding('utf8').on('data', keep)
     child.stderr.setEncoding('utf8').on('data', keep)
@@ -113,15 +114,22 @@ export async function checkLogin(record: AgentRecord, options: RunOptions = {}):
 }
 
 /**
- * The version of the program the adapter drives, by the profile's own command, when the person has installed that
- * program; the same rules as a login check. `found: false`: not installed, so the adapter runs the copy it ships. No
- * `version`: the command failed or printed none.
+ * The version of the program the adapter drives, by the profile's own command; the same rules as a login check. That
+ * program is the one the definition names in the profile's variable, which wins in the agent's environment, else the
+ * one installed. `found: false`: neither, so the adapter runs the copy it ships. No `version`: the command failed or
+ * printed none, or the definition names a path relative to the project, which a test start does not run in.
  */
 export async function readProgramVersion(record: AgentRecord, options: RunOptions = {}): Promise<{ found: boolean; version?: string }> {
   const { preset, profile } = selectProfile(record)
   const read = profile?.programVersion
-  const path = read && preset?.agentCommand && locate ? locate(preset.agentCommand) : undefined
-  if (!read || !path) return { found: false }
+  const command = preset?.agentCommand
+  if (!read || !command || !locate) return { found: false }
+  const variable = Object.entries(profile.permission.programEnv ?? {}).find(([, program]) => program === command)?.[0]
+  const own = variable && !isReservedAgentEnvName(variable) && Object.hasOwn(record.env, variable) ? record.env[variable] : undefined
+  // The adapter treats an empty value as unset and runs its own copy.
+  if (own === '') return { found: false }
+  const path = locate(own ?? command)
+  if (!path) return { found: own !== undefined }
   const result = await runProgram(record, path, read.args, options)
   const version = result?.code === 0 ? read.read(result.output) : undefined
   return { found: true, ...(version ? { version } : {}) }
