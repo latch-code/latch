@@ -63,10 +63,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       const page = await application.firstWindow()
       page.setDefaultTimeout(20000)
+      // The first connection on a Host with no enrolled device takes no confirmation.
       await page.getByRole('button', { name: '继续', exact: true }).click()
-      await fixture.presence.waitForRequest(15000)
-      fixture.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      expect(fixture.presence.requests).toHaveLength(0)
       const image = Buffer.concat([
         Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64'),
         Buffer.alloc(2 * 1024 * 1024),

@@ -17,8 +17,8 @@ import { activate, openBridge } from './helpers/replay.ts'
 
 const USAGE = `用法：pnpm harness:record -- --harness <预设> --scenario <场景> [--out <目录>] [--env 名=值]... [--home-file 路径=本地文件]...
 
-在只放行本机地址的沙箱里启动这台电脑上安装的 Agent，让它连接本地假模型服务，按场景操作一遍并记录 ACP 帧。
-Agent 用一个临时的家目录；沙箱只放行本机连接，并挡住你家目录里的钥匙串文件与各 Agent 的登录目录。没有沙箱，或沙箱没挡住外部连接时拒绝运行。
+在只能连接本地假模型服务的沙箱里启动这台电脑上安装的 Agent，按场景操作一遍并记录 ACP 帧。
+Agent 用一个临时的家目录；沙箱只放行到假模型服务端口的连接（本机其他端口可能是通往外网的代理，也挡住），并挡住你家目录里的钥匙串文件与各 Agent 的登录目录。没有沙箱，或沙箱没挡住外部连接或本机其他端口时拒绝运行。自己在本机另开端口通信的 Agent 因此无法这样录制。
 结果经过规范化与脱敏，写到 --out（默认一个新的临时目录），由人读过后再移入 packages/testkit/fixtures/replay/。
 --env 与 --home-file 告诉 Agent 去用假模型服务，值里的 {{MODEL_ORIGIN}} 换成它的地址（如 http://127.0.0.1:端口）。
 

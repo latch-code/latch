@@ -5,7 +5,8 @@ export const dshProfile: HarnessProfile = {
   version: 1,
   permission: {
     approvals: 'prompts',
-    defaultEnv: { DSH_PERMISSION_MODE: 'read-only' },
+    // DeepSeek Harness takes any non-empty DSH_TELEMETRY_DISABLED as off.
+    defaultEnv: { DSH_PERMISSION_MODE: 'read-only', DSH_TELEMETRY_DISABLED: '1' },
     readback: 'none',
     inheritEnv: ['DSH_HOME'],
     notes: ['无法读回权限模式'],

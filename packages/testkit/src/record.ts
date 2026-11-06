@@ -1,8 +1,9 @@
 /**
  * Records a scenario from a real agent, for the owner of this computer to run by hand (`pnpm harness:record`): the real
- * ACP driver plays the scenario while `fixtures/record-tee.mjs` starts the agent in a loopback-only sandbox with a home of
- * its own and writes every frame. The agent's model calls can reach only the fake model services. The result is
- * normalised and redacted, and written to a directory for a person to read before it joins the fixtures.
+ * ACP driver plays the scenario while `fixtures/record-tee.mjs` starts the agent in a sandbox with a home of
+ * its own and writes every frame. Its only network connections are to the fake model services' port on this computer, so
+ * neither a host elsewhere nor a local proxy is reachable; local sockets stay open. The result is normalised and redacted,
+ * and written to a directory for a person to read before it joins the fixtures.
  */
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -54,8 +55,11 @@ export const RECORD_SCENARIOS: Record<string, { steps: ScenarioStep[]; replies: 
   },
 }
 
-/** Loopback only, and nothing from the keychain or the real home's agent logins. */
-export function sandboxProfile(realHome: string): string {
+/**
+ * Connections only to `port` on this computer, the fake model services': any other loopback port may be a proxy off it.
+ * Nothing from the keychain or the real home's agent logins.
+ */
+export function sandboxProfile(realHome: string, port: number): string {
   const denied = [
     'Library/Keychains',
     '.codex',
@@ -75,7 +79,7 @@ export function sandboxProfile(realHome: string): string {
     '(version 1)',
     '(allow default)',
     '(deny network-outbound)',
-    '(allow network-outbound (remote ip "localhost:*"))',
+    `(allow network-outbound (remote ip "localhost:${port}"))`,
     '(allow network-outbound (remote unix-socket))',
     '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.security.agent"))',
     `(deny file-read* file-write* ${denied.map(path => `(subpath ${quote(path)})`).join(' ')})`,
@@ -209,7 +213,7 @@ export async function recordHarness(input: RecordInput): Promise<{ path: string;
       RECORD_KEEP: JSON.stringify(input.keep ?? []),
       RECORD_ENV: JSON.stringify(Object.fromEntries(Object.entries(input.env ?? {}).map(([name, value]) => [name, fill(value)]))),
       RECORD_SANDBOX: sandboxExec,
-      RECORD_PROFILE: sandboxProfile(realHome),
+      RECORD_PROFILE: sandboxProfile(realHome, Number(new URL(models.origin).port)),
       RECORD_STDERR: join(input.outDir, `${input.harness}-${input.scenario}.stderr.txt`),
     },
   }
@@ -264,7 +268,7 @@ export async function recordHarness(input: RecordInput): Promise<{ path: string;
       source: 'recorded',
       agent: { name: info?.name ?? input.harness, version: info?.version ?? 'unknown' },
       basis: [
-        `recorded on ${new Date().toISOString().slice(0, 10)} against the fake model services, in a loopback-only sandbox with a home of its own`,
+        `recorded on ${new Date().toISOString().slice(0, 10)} against the fake model services, in a sandbox that reaches only their port, with a home of its own`,
         'normalised: workspace, home, data and temporary paths, UUIDs in order, times from 2026-01-01, email addresses; then redactSecrets',
       ],
       steps: scenario.steps,

@@ -8,7 +8,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 
 每个会话可以组合：
 
-- **Harness**：Latch 内置的执行循环（ID `standard`），或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的开源 Agent（Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose）。
+- **Harness**：Latch 内置的执行循环（ID `standard`），或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的本机 Agent：开源的 Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
 - **模型**：OpenAI 兼容接口或 Anthropic 原生接口的模型服务，会话中可切换。
 - **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
@@ -214,7 +214,7 @@ pnpm desktop -- --tailnet \
 | `--native-host <具体 IP>`、`--native-port <端口>` | — | 不指定时局域网入口自动选择并跟随手机接入；指定后固定在这个地址，端口默认 `4319` |
 | `--plugin <目录或模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
 
-**连接 iPhone 上的 Latch：** 在桌面端打开「手机 → 连接手机」，用 iPhone 上的 Latch 扫码，再用 Touch ID 确认一次。iPhone 需要和这台 Mac 连接同一个 Wi‑Fi；客户端隔离的网络上配对会失败，可以让 Mac 临时连 iPhone 的个人热点。之后不用再设置：有已配对的手机时局域网入口保持打开。官方中继尚未部署，不在同一网络时目前连不上。新增自建中继与地址目录目前没有界面或接口（尚未实现）；已保存的配置继续生效，可以在「手机 → 关于连接」里移除。不需要的手机在「手机」页移除，手机也可以在设置里「断开这台 Mac」。
+**连接 iPhone 上的 Latch：** 在桌面端打开「手机 → 连接手机」，用 iPhone 上的 Latch 扫码，再用 Touch ID 确认一次。iPhone 需要和这台 Mac 连接同一个 Wi‑Fi；客户端隔离的网络上配对会失败，可以让 Mac 临时连 iPhone 的个人热点。之后不用再设置：有已配对的手机时局域网入口保持打开。官方中继尚未部署，不在同一网络时目前连不上。新增自建中继与地址目录目前没有界面或接口（尚未实现）；已保存的配置继续生效，可以在「手机 → 关于连接」里移除。不需要的手机在「手机」页移除，手机也可以在设置里「断开这台 Mac」。连上之后打开 Latch 就能查看与继续会话，不再要求 Face ID；想要时在手机的「设置 › 安全」打开「查看会话前用 Face ID」（默认关闭，打开与关闭都要验证一次），之后离开 App 或过十分钟再查看时会再次询问。
 
 手机连接没有账号和云端用户库，也不使用 P2P 或 NAT 穿透：手机直接连到你的这台 Mac，设备、权限与会话都由 Mac 上的 Host 决定，网络失败不会改变它们。这个入口与浏览器的 HTTPS 入口分别配置。
 
@@ -222,7 +222,7 @@ pnpm desktop -- --tailnet \
 
 中继只连接 Host 与已获准设备，不能读取端到端正文、签发设备权限或替换 Host 身份。中继的运营方与云服务商仍能看到 IP、时间、填充后的大小与连接关系，同一运营方可以把不同节点、不同日期的连接关联起来。
 
-以下还没有在真机上验收，测试夹具不能代替：Secure Enclave、Face ID、App Attest、Mac 上配对的系统确认表单、Bonjour 本地网络权限、Wi‑Fi 与蜂窝切换，以及手机上的分享与预览。App Attest 与云推送尚未启用，所以手机不能开启完全访问会话或批准高风险操作，也没有通知。
+以下还没有在真机上验收，测试夹具不能代替：Secure Enclave、Face ID、App Attest、Mac 上配对的系统确认表单、Bonjour 本地网络权限、Wi‑Fi 与蜂窝切换，以及手机上的分享与预览。App Attest 与云推送尚未启用，所以手机上没有通知。
 
 同时运行多个 Host 时，为每个 Host 使用不同的 `--data-dir` 与 `--port`。
 

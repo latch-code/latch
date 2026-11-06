@@ -12,7 +12,8 @@ import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
 import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
-import { contextUse, draftPermission, permissionView } from '../composer/permission.ts'
+import { contextUse, draftPermission, draftRead, permissionView } from '../composer/permission.ts'
+import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
 import { WorkspaceRecovery } from '../composer/WorkspaceRecovery.tsx'
@@ -146,11 +147,17 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   }
   const asked = useQuestionDrawer(current?.questions?.[0], selectedId ?? '', questionActions)
   const answersQuestion = asked !== undefined && !asked.locked && gate.kind === 'open' && !earlierDraft.held
+  const draftReading = useReading(chosenHarness)
   const permission =
     selectedId === null
       ? personalDraft
         ? undefined
-        : draftPermission(chosenHarness, choice.mode, draftConfig(chosenHarness, choice.config)?.config)
+        : draftPermission(
+            chosenHarness,
+            choice.mode,
+            draftConfig(chosenHarness, choice.config)?.config,
+            draftRead(chosenHarness, access, draftReading),
+          )
       : !summary
         ? undefined
         : permissionView({
@@ -433,7 +440,18 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               )
             )}
             {permission ? (
-              <PermissionChip view={permission} onChoose={chooseOption} />
+              <PermissionChip
+                view={permission}
+                onChoose={chooseOption}
+                // A draft's modes come from the same read as its model list, so opening this first asks as well.
+                {...(selectedId === null && !newChoicesLocked
+                  ? {
+                      onOpenChange: (open: boolean) => {
+                        if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+                      },
+                    }
+                  : {})}
+              />
             ) : (
               <button type="button" className="chip chip-permission" disabled>
                 <span className="chip-text">权限</span>

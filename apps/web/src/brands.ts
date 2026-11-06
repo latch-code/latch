@@ -29,7 +29,7 @@ import zhipu from './assets/brands/zhipu.svg?no-inline'
  */
 export type BrandArt = { kind: 'mark'; mark: TileMark } | { kind: 'app' } | { kind: 'glyph'; icon: LucideIcon }
 
-/** Every harness preset (agent-presets.ts); a preset without an entry here fails the brand test. */
+/** Every harness preset (agent-presets.ts) but those marked `brandMark: false`, which draw the neutral agent glyph; the brand test checks both. */
 export const HARNESS_MARKS: Record<string, TileMark> = {
   codex: { src: codex, mono: true },
   pi: { src: pi, margin: true },

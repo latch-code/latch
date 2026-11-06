@@ -24,7 +24,7 @@ export interface AgentLoginDeps {
 }
 
 const STATUS_TTL_MS = 30_000
-/** Each check runs a program and adds an audit line, so even `fresh` does not run back to back. */
+/** Each check runs a program and adds audit lines, so even `fresh` does not run back to back. */
 const FRESH_FLOOR_MS = 2_000
 const PATH = /^\/link\/api\/harnesses\/([^/]+)\/login-(status|terminal)$/u
 const statusBody = z.strictObject({ fresh: z.boolean().optional() })
@@ -92,16 +92,20 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
       }
       let flight = running.get(id)
       if (!flight) {
-        flight = checkLogin(record, { signal: stopping.signal })
+        const actor = context.actorOf(caller)
+        // Recorded before the program runs: when the audit cannot be written, it does not run.
+        flight = context.audit
+          .append({ action: 'agent.login.requested', actor, target: id, stepup: 'none', detail: { agentId: id } })
+          .then(() => checkLogin(record, { signal: stopping.signal }))
           .then(async status => {
-            known.set(id, { at: context.now(), status })
             await context.audit.append({
               action: 'agent.login.checked',
-              actor: context.actorOf(caller),
+              actor,
               target: id,
               stepup: 'none',
               detail: { agentId: id, status },
             })
+            known.set(id, { at: context.now(), status })
             return status
           })
           .finally(() => running.delete(id))

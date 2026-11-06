@@ -12,6 +12,7 @@ struct ConversationView: View {
     /** What the 文件 sheet lists, counted when it is asked for: the counts take a diff of every edit in the session. */
     @State private var fileList: [PhoneChangedFile]?
     @Environment(\.horizontalSizeClass) private var width
+    @AppStorage(PhoneFaceID.key) private var faceID = false
     private var summary: NativeJSON { model.currentSummary }
     private var engine: String { model.engineName(summary["harnessId"].string) }
     private var hasContent: Bool { model.detail["summary"]["id"].string == id }
@@ -57,7 +58,7 @@ struct ConversationView: View {
     private var locked: some View {
         VStack(spacing: 12) {
             if model.connected {
-                Button("用 Face ID 查看") { Task { await model.openSession(id) } }.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink)
+                Button(PhoneUnlock.reopenWords(faceID: faceID)) { Task { await model.openSession(id) } }.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink)
             } else { macAway }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

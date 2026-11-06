@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AgentProbeResult, AgentSettings } from '@latch/protocol'
-import { AgentProbe } from '../src/settings/AgentProbe.tsx'
+import { AgentProbe, probeRowDescription } from '../src/settings/AgentProbe.tsx'
 const base: AgentProbeResult = {
   status: 'ready',
   checkedAt: '2026-10-25T06:00:00.000Z',
@@ -33,9 +33,13 @@ describe('Agent diagnostic presentation', () => {
     expect(html).toContain('终端登录')
     expect(html).not.toContain('需要先登录')
   })
-  it('explains where a remote device must go without suggesting it can run the test', () => {
-    const html = render(undefined, '测试启动只能在 Mac 上，通过桌面端进行。')
-    expect(html).toContain('通过桌面端进行')
+  it('says while it runs only how long it waits, since a probe asks for no confirmation', () => {
+    expect(probeRowDescription(undefined, true)).toBe('最多等待 15 秒。')
+    expect(probeRowDescription(base, true)).toBe('最多等待 15 秒。')
+  })
+  it('explains why a device cannot run the test without suggesting it can', () => {
+    const html = render(undefined, '这台设备没有管理这台 Mac 的权限。')
+    expect(html).toContain('没有管理这台 Mac 的权限')
     expect(html).toContain('aria-disabled="true"')
     expect(html).toContain('尚未测试启动')
   })

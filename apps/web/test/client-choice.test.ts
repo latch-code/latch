@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppSnapshot, HostCatalog, TaskSummary } from '@latch/protocol'
+import { AGENT_PRESETS, type AppSnapshot, type HostCatalog, type TaskSummary } from '@latch/protocol'
 import { readPending, submissionRequest, writePending, type PendingSubmission } from '../src/core/api.ts'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { workspaceOptions } from '../src/components/pickerOptions.tsx'
@@ -250,7 +250,15 @@ describe('composer choice', () => {
       ['codex', 'Codex'],
       ['standard', 'Latch 内置'],
     ])
-    expect(presetsToAdd(catalog()).map(preset => preset.id)).toEqual(['opencode', 'dsh', 'gemini', 'qwen', 'goose'])
+    expect(presetsToAdd(catalog()).map(preset => preset.id)).toEqual([
+      'claude-agent',
+      'opencode',
+      'dsh',
+      'gemini',
+      'qwen',
+      'goose',
+      'cursor',
+    ])
   })
 
   it('keeps a valid remembered choice', () => {
@@ -492,8 +500,8 @@ describe('harness entries', () => {
         testHarness('opencode-2', { kind: 'agent', label: 'OpenCode' }),
       ],
     })
-    expect(presetsToAdd(more).map(preset => preset.id)).toEqual(['codex', 'pi', 'dsh', 'gemini', 'qwen', 'goose'])
-    expect(presetsToAdd(undefined)).toHaveLength(7)
+    expect(presetsToAdd(more).map(preset => preset.id)).toEqual(['codex', 'claude-agent', 'pi', 'dsh', 'gemini', 'qwen', 'goose', 'cursor'])
+    expect(presetsToAdd(undefined)).toHaveLength(AGENT_PRESETS.length)
   })
 
   it('starts a new session in the project of the session it is opened from', () => {

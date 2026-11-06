@@ -8,8 +8,15 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { agentConfigValues, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
-import { draftPermission } from '../composer/permission.ts'
-import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from '../composer/harnessCatalogue.tsx'
+import { draftPermission, draftRead } from '../composer/permission.ts'
+import {
+  CatalogueRows,
+  readOnSelect,
+  readsOnPermission,
+  readsOnSelect,
+  TypedModelsPanel,
+  useReading,
+} from '../composer/harnessCatalogue.tsx'
 
 function StaticRow({ label, value }: { label: string; value: string }) {
   return (
@@ -83,7 +90,7 @@ export function NewSessionSheet({
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const known = harness?.capabilities.models.owner === 'latch' ? undefined : draftConfig(harness, choice.config)
   const reading = useReading(harness)
-  const permission = draftPermission(harness, choice.mode, known?.config)
+  const permission = draftPermission(harness, choice.mode, known?.config, draftRead(harness, access, reading))
   const pick = (configId: string, value: string) => {
     onChoice({ config: { ...choice.config, [configId]: value } })
   }
@@ -254,6 +261,10 @@ export function NewSessionSheet({
               className={`new-sheet-row new-sheet-permission${permission.amber ? ' is-amber' : ''}`}
               value={permission.rows ? permission.option!.currentValue : 'current'}
               disabled={disabled && permission.rows !== undefined}
+              // Its modes come from the same read as the model list, so opening it first asks as well.
+              onOpenChange={open => {
+                if (open && !disabled && readsOnPermission(harness, access)) readOnSelect(harness, read)
+              }}
               options={
                 permission.rows?.map(row => ({
                   value: row.value,

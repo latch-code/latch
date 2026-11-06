@@ -72,6 +72,14 @@ export function readsOnSelect(harness: HarnessInfo | undefined, access: Pick<Dev
   )
 }
 
+/**
+ * Whether opening a draft's 权限 reads too: only where the read is what tells Latch the Harness's modes, because it
+ * declares none of its own.
+ */
+export function readsOnPermission(harness: HarnessInfo | undefined, access: Pick<DeviceAccess, 'scopes'>): harness is HarnessInfo {
+  return readsOnSelect(harness, access) && harness.permission === undefined
+}
+
 /** The read a selection starts. Its failure is the Host's to keep and show; nothing here waits for it. */
 export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise<void>): void {
   selected.add(harness.id)

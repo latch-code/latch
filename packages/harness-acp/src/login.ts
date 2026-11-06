@@ -12,8 +12,9 @@ const MAX_OUTPUT = 16 * 1024
 let locate: ((command: string) => string | undefined) | undefined
 
 /**
- * How login commands find the person's programs. Off until the start script turns it on, so that a test Host, which may
- * hold a preset's definition around a fake adapter, can never reach a real program installed on the same computer.
+ * How login commands and version reads find the person's programs. Off until the start script turns it on, so that a
+ * test Host, which may hold a preset's definition around a fake adapter, can never reach a real program installed on the
+ * same computer.
  */
 export function setLoginPrograms(locator: ((command: string) => string | undefined) | undefined): void {
   locate = locator
@@ -43,25 +44,31 @@ export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
   }
 }
 
+interface RunOptions {
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
 /**
- * Runs the profile's status command and reads only its verdict. Three states, like the rest of the page: a command that
- * times out, crashes or says anything else is `unknown`, which no client presents as logged out.
+ * Runs one of the person's programs in the harness's environment, without a shell or a prompt, and gives back how it
+ * ended and what it printed, cut short. Undefined: it could not start, was killed or timed out. The output never leaves
+ * the caller, since it may hold an account or part of a key.
  */
-export async function checkLogin(record: AgentRecord, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<LoginStatus> {
-  const selection = selectProfile(record)
-  const status = selection.profile?.loginStatus
-  const program = loginProgram(record)
-  if (!status || !program) return 'unknown'
-  const args = program.bundled ? status.bundledArgs : status.args
-  if (!args || options.signal?.aborted) return 'unknown'
+function runProgram(
+  record: AgentRecord,
+  path: string,
+  args: readonly string[],
+  options: RunOptions,
+): Promise<{ code: number | null; output: string } | undefined> {
+  if (options.signal?.aborted) return Promise.resolve(undefined)
   const env = agentEnvironment({
-    resolvedCommand: program.path,
-    profile: selection.profile?.permission,
+    resolvedCommand: path,
+    profile: selectProfile(record).profile?.permission,
     definitionEnv: record.env,
     sessionTmpDir: tmpdir(),
   })
-  return new Promise<LoginStatus>(resolve => {
-    const child = spawn(program.path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+  return new Promise(resolve => {
+    const child = spawn(path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
     let output = ''
     const keep = (chunk: string) => {
       if (output.length < MAX_OUTPUT) output += chunk
@@ -77,18 +84,47 @@ export async function checkLogin(record: AgentRecord, options: { signal?: AbortS
     options.signal?.addEventListener('abort', kill, { once: true })
     child.stdout.setEncoding('utf8').on('data', keep)
     child.stderr.setEncoding('utf8').on('data', keep)
-    const done = (verdict: LoginStatus) => {
+    const done = (result: { code: number | null; output: string } | undefined) => {
       clearTimeout(timer)
       options.signal?.removeEventListener('abort', kill)
-      resolve(verdict)
+      resolve(result)
     }
     child.once('error', () => {
-      done('unknown')
+      done(undefined)
     })
     child.once('close', (code, signal) => {
-      done(signal ? 'unknown' : status.read({ code, output }))
+      done(signal ? undefined : { code, output })
     })
   })
+}
+
+/**
+ * Runs the profile's status command and reads only its verdict. Three states, like the rest of the page: a command that
+ * times out, crashes or says anything else is `unknown`, which no client presents as logged out.
+ */
+export async function checkLogin(record: AgentRecord, options: RunOptions = {}): Promise<LoginStatus> {
+  const status = selectProfile(record).profile?.loginStatus
+  const program = loginProgram(record)
+  if (!status || !program) return 'unknown'
+  const args = program.bundled ? status.bundledArgs : status.args
+  if (!args) return 'unknown'
+  const result = await runProgram(record, program.path, args, options)
+  return result ? status.read(result) : 'unknown'
+}
+
+/**
+ * The version of the program the adapter drives, by the profile's own command, when the person has installed that
+ * program; the same rules as a login check. `found: false`: not installed, so the adapter runs the copy it ships. No
+ * `version`: the command failed or printed none.
+ */
+export async function readProgramVersion(record: AgentRecord, options: RunOptions = {}): Promise<{ found: boolean; version?: string }> {
+  const { preset, profile } = selectProfile(record)
+  const read = profile?.programVersion
+  const path = read && preset?.agentCommand && locate ? locate(preset.agentCommand) : undefined
+  if (!read || !path) return { found: false }
+  const result = await runProgram(record, path, read.args, options)
+  const version = result?.code === 0 ? read.read(result.output) : undefined
+  return { found: true, ...(version ? { version } : {}) }
 }
 
 const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`

@@ -84,7 +84,7 @@ import {
   type LaunchFolders,
   type ProfileSelection,
 } from './permission.ts'
-import type { AcpPermissionProfile } from './profiles/index.ts'
+import type { AcpPermissionProfile, ExtensionRequest } from './profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS, type ProjectConfig } from './project-config.ts'
 import {
   cancelRequest,
@@ -119,11 +119,14 @@ import {
 import {
   childText,
   childTool,
+  looseTool,
   MAX_CHILDREN,
   MAX_DEPTH,
+  MAX_TRACKED,
   patchSubagent,
   settleSubagent,
   subagentRow,
+  subagentTitle,
   subagentUpdate,
   upsertStep,
   type Child,
@@ -220,6 +223,8 @@ interface Run {
   graceTimer?: NodeJS.Timeout
   /** System notes appended once the turn settles, after its last reply. */
   notes: string[]
+  /** A subagent of this turn got no row, and the turn's notes say so. */
+  hiddenSubagents?: boolean
   /** Text added to this turn while it ran (`steer`), in flight or taken, and when the latest was sent. */
   steers?: number
   steeredAt?: number
@@ -412,6 +417,14 @@ function displayPath(path: string, roots: string[]): string {
 
 function selected(optionId: string): unknown {
   return { outcome: { outcome: 'selected', optionId } }
+}
+
+/** The option a permission answer selected; undefined when it was cancelled. */
+function chosenOption(result: unknown): string | undefined {
+  const outcome = isObject(result) ? (result as { outcome?: unknown }).outcome : undefined
+  if (!isObject(outcome)) return undefined
+  const { outcome: kind, optionId } = outcome as { outcome?: unknown; optionId?: unknown }
+  return kind === 'selected' && typeof optionId === 'string' ? optionId : undefined
 }
 
 /**
@@ -1184,7 +1197,13 @@ export class AcpBridge implements Bridge {
     const task = this.task(sessionId)
     this.assertUsable(task)
     const run = this.runs.get(sessionId)
-    if (!run || !this.steerable(run)) return 'prompt-required'
+    if (!run || !this.steerable(run)) {
+      // The caller now sends or queues the text as a turn; a retry must get that answer, not steer it into the turn.
+      this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'steer', steer: 'prompt-required' }
+      this.mark()
+      await this.flush()
+      return 'prompt-required'
+    }
     const promise = this.steerOnce(run, key, payloadHash, prompt, requestId).finally(() => this.steering.delete(key))
     this.steering.set(key, { payloadHash, promise })
     return promise
@@ -1259,6 +1278,7 @@ export class AcpBridge implements Bridge {
     if (!permission || permission.claimed || this.closed) return false
     const option = this.chooseOption(permission, decision, options.optionId)
     const via = options.via === 'this-mac' || options.via === 'other-device' ? options.via : undefined
+    if (option && decision === 'allow' && !permission.child) this.answerMovesMode(permission, option.optionId)
     // Claimed synchronously, before any concurrent decision can compete. A note has nowhere to go: a permission answer
     // carries no text, so the page sends it as the next message instead.
     this.closePermission(permission, option ? selected(option.optionId) : CANCELLED_OUTCOME, {
@@ -1267,6 +1287,23 @@ export class AcpBridge implements Bridge {
       ...(via ? { via } : {}),
     })
     return true
+  }
+
+  /**
+   * An answer that switches the harness's mode is the person choosing that mode: it becomes the session's expected mode
+   * before the answer reaches the harness, so the switch it reports next is not taken as the agent widening its own.
+   */
+  private answerMovesMode(permission: Permission, optionId: string): void {
+    const kind = permission.tool.kind
+    const mode = this.profile?.modeAnswers?.find(
+      entry => entry.optionId === optionId && (entry.toolKind === undefined || entry.toolKind === kind),
+    )?.mode
+    const task = this.state.tasks[permission.taskId]
+    if (!mode || !task || task.acp.drift || !this.profile?.modeLadder?.includes(mode)) return
+    if (this.expectedMode(task) === mode) return
+    task.acp.expectedMode = mode
+    this.touch(task)
+    this.mark()
   }
 
   subscribe(listener: (sessionId?: string) => void): () => void {
@@ -1552,11 +1589,7 @@ export class AcpBridge implements Bridge {
   }
 
   private projectConfigChanged(): AppError {
-    return new AppError(
-      409,
-      'project-config-changed',
-      `项目中的 ${this.harnessName()} 配置在确认后发生了变化，该会话不能继续。请新建会话（需要本机确认）。`,
-    )
+    return new AppError(409, 'project-config-changed', `项目中的 ${this.harnessName()} 配置与会话启动时不同，该会话不能继续。请新建会话。`)
   }
 
   /**
@@ -2131,7 +2164,20 @@ export class AcpBridge implements Bridge {
           if (settleTool(state, at)) this.upsert(task, toolMessage(state))
         }
       }
+      for (const child of run.live?.children.values() ?? []) {
+        if (child.taskId !== run.taskId) continue
+        const row = this.childRow(task, child)
+        if (!row) continue
+        for (const state of child.tools.values()) if (settleTool(state, at)) upsertStep(row, toolMessage(state))
+      }
       for (const item of task.messages) settleSubagent(item, at)
+      // The limit on rows counts only subagents that may still report, so a long session keeps showing new ones.
+      for (const child of run.live?.children.values() ?? []) {
+        if (child.taskId !== run.taskId) continue
+        const row = this.childRow(task, child)
+        const status = row ? row.subagent?.status : child.status
+        if (status === 'done' || status === 'failed' || status === 'cancelled') child.ended = true
+      }
       // Output after the latest addition is the only sign the agent went on with it; without one, the person is told.
       if (status !== 'idle' && run.steers && (run.lastOutputAt ?? 0) <= run.steeredAt!)
         notes.push(`本轮在结束前收到了追加的内容；${this.agent.name} 可能没有读到，需要的话请重新发送。`)
@@ -2710,7 +2756,7 @@ export class AcpBridge implements Bridge {
   }
 
   private authMessage(): string {
-    return `${this.agent.name} 还没登录。按它自己的方式登录后重试。`
+    return `${this.agent.name} 还没登录。${this.selection.preset?.signIn ?? '按它自己的方式登录后重试。'}`
   }
 
   private holdIdle(live: Live): void {
@@ -2823,9 +2869,55 @@ export class AcpBridge implements Bridge {
 
   private onRequest(live: Live, method: string, params: unknown, id: RpcId): Promise<unknown> {
     if (method === 'session/request_permission') return this.onPermission(live, params, id)
+    const requests = this.selection.profile?.extensions?.requests
+    const extension = requests && Object.hasOwn(requests, method) ? requests[method] : undefined
+    const answered = extension && this.onExtension(live, extension, params, id)
+    if (answered) return answered
     // File system, terminal and elicitation are not advertised, so agents must not call them.
     this.noteUnrecognized(live, method, params)
     return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
+  }
+
+  /**
+   * A request outside ACP that this harness's profile reads. These carry no session ID, and a process runs one session,
+   * so they belong to the session the process was started for. Undefined: params it cannot read.
+   */
+  private onExtension(live: Live, extension: ExtensionRequest, params: unknown, rpcId: RpcId): Promise<unknown> | undefined {
+    const task = this.state.tasks[live.key]
+    if ('decline' in extension) {
+      const declined = extension.decline(params, this.agent.name)
+      if (!declined) return undefined
+      if (task) {
+        const run = this.runs.get(live.key)
+        if (run?.segment && run.live === live) this.settleSegment(run, task, 'completed')
+        task.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(declined.note), 4000), createdAt: this.now() })
+        this.touch(task)
+        this.mark()
+        this.notify(live.key)
+      }
+      return Promise.resolve(declined.reply)
+    }
+    const ask = extension.ask(params)
+    if (!ask) return undefined
+    const sessionId = task?.acp.acpSessionId
+    if (!sessionId) return Promise.resolve(extension.answer(undefined))
+    return this.onPermission(live, { sessionId, toolCall: { ...ask.toolCall, status: 'pending' }, options: ask.options }, rpcId).then(
+      result => {
+        const chosen = chosenOption(result)
+        // The call is the ask itself, so the answer settles it; the harness sends no update for it.
+        const current = this.state.tasks[live.key]
+        const kind = ask.options.find(option => option.optionId === chosen)?.kind
+        if (current && kind && this.runs.get(live.key)?.live === live) {
+          const state = this.toolState(current, ask.toolCall.toolCallId)
+          mergeTool(state, { toolCallId: ask.toolCall.toolCallId, status: kind === 'allow_once' ? 'completed' : 'failed' }, this.now())
+          this.upsert(current, toolMessage(state))
+          this.touch(current)
+          this.mark()
+          this.notify(live.key)
+        }
+        return extension.answer(chosen)
+      },
+    )
   }
 
   /**
@@ -2884,6 +2976,13 @@ export class AcpBridge implements Bridge {
 
   private onNotification(live: Live, method: string, params: unknown): void {
     if (method === 'session/update') return this.onUpdate(live, params)
+    const notifications = this.selection.profile?.extensions?.notifications
+    if (notifications && Object.hasOwn(notifications, method)) {
+      const sessionId = this.state.tasks[live.key]?.acp.acpSessionId
+      const update = sessionId ? notifications[method]!(params, live.key) : undefined
+      if (update) this.onUpdate(live, { sessionId, update })
+      return
+    }
     if (method === '$/cancel_request') {
       const parsed = cancelRequest.safeParse(params)
       if (!parsed.success) return
@@ -3218,41 +3317,65 @@ export class AcpBridge implements Bridge {
    * session's own messages or, for a subagent's own subagent, among that subagent's steps.
    */
   private announceChild(live: Live, task: AcpTask, run: Run | undefined, parent: Child | undefined, update: SubagentUpdate): void {
-    const known = live.children.get(update.sessionId)
-    if (known) {
+    let child = live.children.get(update.sessionId)
+    if (child) {
       // A session is never re-parented, and one Latch already serves is no subagent.
-      if (known.parent !== parent || known.taskId !== task.summary.id) return
-      const row = this.childRow(task, known)
-      if (row) patchSubagent(row, update, this.redact)
+      if (child.parent !== parent || child.taskId !== task.summary.id) return
+      delete child.ended
+      const shown = this.childRow(task, child)
+      if (shown) {
+        patchSubagent(shown, update, this.redact)
+        child.title = shown.subagent!.title
+        return
+      }
+    } else {
+      if (live.sessions.has(update.sessionId) || update.sessionId === parent?.acpSessionId) return
+      if (live.children.size >= MAX_TRACKED) {
+        // Room is made only by forgetting the oldest one that said it stopped in an earlier turn.
+        const ended = [...live.children].find(([, item]) => item.ended)
+        if (!ended) return
+        live.children.delete(ended[0])
+      }
+      child = {
+        acpSessionId: update.sessionId,
+        taskId: task.summary.id,
+        title: subagentTitle(update.title, this.redact),
+        depth: (parent?.depth ?? 0) + 1,
+        tools: new Map(),
+        ...(parent ? { parent } : {}),
+      }
+      live.children.set(update.sessionId, child)
+    }
+    // It has no row yet: one is placed if there is room, else only its requests reach the person.
+    const row = subagentRow(`subagent:${randomUUID()}`, update, this.redact, this.now(), child)
+    child.title = row.subagent!.title
+    if (row.subagent!.status) child.status = row.subagent!.status
+    else delete child.status
+    const holder = parent ? this.childRow(task, parent) : undefined
+    const rows = [...live.children.values()].filter(item => item.messageId && !item.ended).length
+    if (rows >= MAX_CHILDREN || child.depth > MAX_DEPTH || (parent && !holder)) {
+      if (run && !run.hiddenSubagents) {
+        run.hiddenSubagents = true
+        run.notes.push(
+          `本轮的子 Agent 超过 ${MAX_CHILDREN} 个或嵌套超过 ${MAX_DEPTH} 层，多出的没有单独显示；它们请求的审批照常出现在这个会话里。`,
+        )
+      }
       return
     }
-    if (live.sessions.has(update.sessionId) || update.sessionId === parent?.acpSessionId) return
-    const depth = (parent?.depth ?? 0) + 1
-    if (live.children.size >= MAX_CHILDREN || depth > MAX_DEPTH) return
-    const row = subagentRow(`subagent:${randomUUID()}`, update, this.redact, this.now())
-    const child: Child = {
-      acpSessionId: update.sessionId,
-      taskId: task.summary.id,
-      messageId: row.id,
-      depth,
-      tools: new Map(),
-      ...(parent ? { parent } : {}),
-    }
-    if (parent) {
-      const holder = this.childRow(task, parent)
-      if (!holder) return
-      parent.textStep = undefined
+    child.messageId = row.id
+    if (holder) {
+      parent!.textStep = undefined
       upsertStep(holder, row)
     } else {
       if (run?.segment) this.settleSegment(run, task, 'completed')
       task.messages.push(row)
     }
-    live.children.set(update.sessionId, child)
     if (run) run.lastOutputAt = this.clock()
   }
 
   /** The row of a subagent, found through the subagents that started it. */
   private childRow(task: AcpTask, child: Child): Message | undefined {
+    if (!child.messageId) return undefined
     if (!child.parent) return task.messages.find(item => item.id === child.messageId)
     return this.childRow(task, child.parent)?.subagent?.steps.find(item => item.id === child.messageId)
   }
@@ -3260,8 +3383,8 @@ export class AcpBridge implements Bridge {
   /** What a subagent reports on its own session: its reply, its calls and its own subagents. Its reasoning is not kept. */
   private onChildUpdate(live: Live, child: Child, raw: { sessionUpdate: string }): void {
     const task = this.state.tasks[child.taskId]
-    const row = task ? this.childRow(task, child) : undefined
-    if (!task || !row) return
+    if (!task) return
+    const row = this.childRow(task, child)
     const update = this.selection.profile?.normalizeUpdate?.(raw) ?? raw
     const candidate = this.runs.get(child.taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
@@ -3270,17 +3393,18 @@ export class AcpBridge implements Bridge {
       case 'agent_message_chunk': {
         const parsed = chunkUpdate.safeParse(update)
         const piece = parsed.success && parsed.data.content.type === 'text' ? (parsed.data.content.text ?? '') : ''
-        if (!piece) return
+        if (!piece || !row) return
         childText(child, row, piece, this.now())
         break
       }
       case 'tool_call':
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
-        if (!parsed.success || !childTool(child, row, parsed.data, this.now())) return
+        if (!row || !parsed.success || !childTool(child, row, parsed.data, this.now())) return
         break
       }
       case 'subagent_update': {
+        // Followed even with no row: the subagents it starts may ask the person too.
         const parsed = subagentUpdate.safeParse(update)
         if (!parsed.success) return
         this.announceChild(live, task, run, child, parsed.data)
@@ -3310,14 +3434,19 @@ export class AcpBridge implements Bridge {
     const row = child && task ? this.childRow(task, child) : undefined
     const filtered = filterPermissionOptions(this.profile, parsed.data.options)
     if (task?.acp.drift) return Promise.resolve(this.rejection(filtered.visible))
-    if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed || (child && !row))
-      return Promise.resolve(CANCELLED_OUTCOME)
+    if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed) return Promise.resolve(CANCELLED_OUTCOME)
     run.lastEventAt = this.clock()
     if (run.segment) this.settleSegment(run, task, 'completed')
-    const state = child ? childTool(child, row!, parsed.data.toolCall, this.now()) : this.toolState(task, parsed.data.toolCall.toolCallId)
-    if (!state) return Promise.resolve(CANCELLED_OUTCOME)
-    if (!child) mergeTool(state, parsed.data.toolCall, this.now())
-    const record = (item: Message) => (child ? upsertStep(row!, item) : this.upsert(task, item))
+    const now = this.now()
+    // Past the limits a subagent's call has no step, but the request needs none.
+    const state = child
+      ? ((row && childTool(child, row, parsed.data.toolCall, now)) ?? looseTool(child, parsed.data.toolCall, now))
+      : this.toolState(task, parsed.data.toolCall.toolCallId)
+    if (!child) mergeTool(state, parsed.data.toolCall, now)
+    const record = (item: Message) => {
+      if (!child) this.upsert(task, item)
+      else if (row) upsertStep(row, item)
+    }
     if (filtered.autoReject) {
       // Persistent or unknown choices only: nothing Latch could offer, so the request is refused at once.
       record(toolMessage(state))
@@ -3339,7 +3468,7 @@ export class AcpBridge implements Bridge {
       sessionId: taskId,
       toolName: toolLabel(state),
       // A subagent's call is no row of the session's own, so nothing links to it there.
-      ...(child ? { subagent: row!.subagent!.title } : { toolCallId: state.id.slice('tool:'.length) }),
+      ...(child ? { subagent: row?.subagent?.title ?? child.title } : { toolCallId: state.id.slice('tool:'.length) }),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
       requestedAt: this.now(),

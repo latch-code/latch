@@ -173,7 +173,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 布局、设置、平板滑出的会话列表、手机的列表根页与新会话面板、控件可达、深色模式 | `design.e2e.ts` |
 | 手机的页面栈：列表是根页，会话页推入与滑回（时长与曲线取自令牌，被盖住的列表不可操作，推入后焦点在页头的返回按钮，返回后焦点回到那一行），减少动效时只淡入；会话页的输入框静止时是 52 高的一行；平台的返回（`page.goBack()`）依次关闭菜单面板、右侧面板与会话页，重新载入不多加历史条目，地址不变；新会话面板（停在 92% 且不随原因换行伸缩、焦点在选中的磁贴上、不能选的磁贴说明原因、对话时没有项目、取消保留草稿）；按住一行打开它的菜单（那一行保持按下，触屏打开时不画焦点底），搜索的「取消」把焦点还给搜索按钮 | `phone.e2e.ts`；历史条目的规则在 `back-stack.test.ts` |
 | 设置的每一页在三宽两色下的真实渲染：模型服务的已连接、密钥无效、连不上与检测中来自本地假服务的回答，组不画框 | `settings-pages.e2e.ts` |
-| 这台电脑上已确认的地址与限制、固定新会话默认、Toast 不盖住输入框的三宽两色渲染，以及进度、失败与移除后的状态 | `e2e/policy-limits.e2e.ts`；经真实 `host.sock`：`e2e/desktop-models.e2e.ts` |
+| 这台电脑上已确认的地址、固定新会话默认、Toast 不盖住输入框的三宽两色渲染，以及进度、失败与移除后的状态 | `e2e/policy-limits.e2e.ts`；经真实 `host.sock`：`e2e/desktop-models.e2e.ts` |
 | 设置的层级动效：手机上第一次进入分区与分区里的页面滑入、返回反向滑出，减少动效时只交叉淡化；从页面回到分区时淡入，离开设置时淡出；时长与曲线取自令牌。添加模型服务：获取模型失败时一句原因与手动添加模型 ID（超出限制时行内说明）、获取已经失败的服务保存后不立即检测，检测时是中性的「无法自动检测」而不是「移除此服务」、需要密钥的预置服务商在不能填写密钥的设备上保存前说明、保存后显示「缺密钥」、未确认地址的开关与检测说明原因且不出现命令行、表单里没有同名按钮。保存 Agent 定义不弹确认、显示「还没有开启过会话」，第一次以它开启完全访问会话（经本机确认）之后不再显示 | `settings.e2e.ts` |
 | 可调宽的侧栏：拖拽、双击复原、键盘步进、吸附收起与展开（逐帧检查是滑过去的）、按断点类别记住、对话画布至少 520；收起与展开时顶栏标题只朝一个方向移动 | `sidebar.e2e.ts`、`sidebar-layout.test.ts`（收紧与偏好）、`packages/ui/test/resize.test.tsx`（把手） |
 | Harness 与模型服务的图标：每个预设都有图标，没有图标的有图形，图标文件安全且都被用到 | `brands.test.ts` |
@@ -269,6 +269,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_MODELS`、`FAKE_ACP_MODELS_FILE` | `options` 下提供的模型（逗号分隔，默认 `small,large`）；文件每个会话读一次，用来让后来的会话不再提供某个模型 |
 | `FAKE_ACP_EFFORT_BY_MODEL` | `1`：`large` 模型多一档 `max` 思考，像思考档位随模型变的 Agent |
 | `FAKE_ACP_EFFORT_ID` | 思考选项的 ID，默认 `effort`；codex-acp 叫 `reasoning_effort` |
+| `FAKE_ACP_EFFORT_DESCRIPTIONS=1` | 每档思考带一句英文说明，像 DeepSeek Harness 与 Codex 发来的那样 |
 | `FAKE_ACP_STRICT_MODELS=1` | 拒绝设置不在列表里的模型，像不接受自己填写的模型 ID 的 Agent |
 | `FAKE_CODEX_MODELS`、`FAKE_CODEX_MODEL`、`FAKE_CODEX_LIST_ERROR` | 以 `cli app-server` 启动时，假 Agent 像 codex-acp 那样回答 Codex 的 `initialize`、`config/read` 与 `model/list`（`fixtures/fake-codex-app-server.mjs`，每页两个）：模型列表（Codex 的 JSON 形状）、配置里的模型、让 `model/list` 失败 |
 | `FAKE_ACP_STICKY_MODE=1` | 忽略修改模式的请求 |
@@ -276,6 +277,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_SELF_MODE` | 处理修改模式的请求时自行切换到的模式 |
 | `FAKE_ACP_MODE_REPORT` | 模式报告的形状：`full`、`uncategorized`、`unlisted`、`none` |
 | `FAKE_ACP_VERSION` | `agentInfo.version`；`none` 表示省略 |
+| `FAKE_ACP_CLI_VERSION` | 以 `--version` 启动时像 CLI 那样输出 `fake-cli <版本>` 后退出；`fail` 什么也不输出、以 1 退出 |
+| `FAKE_ACP_MCP=dsh` | 像 DeepSeek Harness 那样接收 `mcpServers`：只收命令为绝对路径的 stdio 服务；会话建立前先让一个临时副本回答 `server/discover`，再启动、`initialize`（2025 版握手）并 `tools/list`，任何一步失败就拒绝建立会话；日志记 `mcp-mounted` 与 `mcp-refused` |
 | `FAKE_ACP_DUMP_ENV=1` | 把完整环境写入日志，检查环境白名单 |
 | `FAKE_ACP_PROTOCOL`、`FAKE_ACP_AUTH`、`FAKE_ACP_INIT_ERROR`、`FAKE_SECRET` | 协议版本、需要登录（`new`、`prompt`）、初始化失败；`FAKE_SECRET` 出现在 stderr 与错误中，检查脱敏 |
 | `FAKE_ACP_SLOW_SETUP`、`FAKE_ACP_EXIT_DELAY`、`FAKE_ACP_IGNORE_TERM`、`FAKE_ACP_GRANDCHILD`、`FAKE_ACP_STARTUP_NOISE` | 慢的会话建立、延迟退出、忽略 SIGTERM、派生孙进程、启动时输出非 JSON |
@@ -290,17 +293,18 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `drift <mode>` | 询问的同时把自己切换到 `<mode>`，然后等待取消 |
 | `endturn`、`hang`、`crash` | 取消后以 `end_turn` 结束、永不结束、崩溃退出 |
 | `probe` | 调用 `fs/read_text_file`，检查 Latch 不提供客户端文件系统 |
+| `skills` | 调用会话第一个 MCP 服务的 `list_skills`，回复它返回的内容 |
 | `refuse` | 以 `refusal` 结束 |
 
 ### 回放与录制
 
-`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
+`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话（同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/<场景>.ndjson`，例如 `opencode/2.x/`，头部的版本必须属于这个大版本）：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
 
 `fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`PI_ACP_PI_COMMAND`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
 `startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）与 Anthropic Messages（`/v1/messages`），流式或不流式，按脚本给出思考、文本或一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具），并记下每个请求。`apps/host/test/providers.test.ts` 用 Host 自己的两个客户端读它。
 
-`pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，只放行本机连接，挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接，否则不启动 Agent。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连和钥匙串文件、不挡时拒绝启动。测试从不运行真实 Agent。
+`pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
 
 ## 启动脚本的子进程用例
 
@@ -443,7 +447,7 @@ GitHub Actions 的工作流在 `.github/workflows/`：
 Git 已设置 `core.hooksPath` 时 lefthook 拒绝安装：不要加 `--force`（会写入那个目录）或 `--reset-hooks-path`（会删除该设置），改为提交前运行 `pnpm exec lefthook run pre-commit`、推送前运行 `pnpm exec lefthook run pre-push`。
 
 
-Agent 诊断的界面回归在 `apps/web/test/agent-probe.test.ts` 与 `e2e/desktop.e2e.ts`：覆盖系统认证票据（测试后端）后的握手、登录未验证说明、定义变更清除旧结果、失败诊断脱敏、无会话副作用，以及三种宽度的浅色/深色截图。
+Agent 诊断的界面回归在 `apps/web/test/agent-probe.test.ts` 与 `e2e/desktop.e2e.ts`：覆盖不弹确认的握手、登录未验证说明、定义变更清除旧结果、失败诊断脱敏、无会话副作用，以及三种宽度的浅色/深色截图。
 
 ## 人工检查本机确认（Touch ID）
 
@@ -498,7 +502,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 `e2e/attachments.e2e.ts` 用真实 Host、浏览器与内存模型覆盖三种宽度、深色、仅图片消息、预览、失败重试、未知提交重试、长粘贴编辑、取消等待和显式文件选择；`e2e/desktop-attachments.e2e.ts` 在独立桌面数据目录验证实际 Electron 上传大于 JSON 限额的图片与私有预览。ACP 的真实假进程用例核对协商、输入块、Agent 图片输出和重启后的 metadata；它不是实际 Agent CLI 验收。
 
-发送投影：`apps/web/test/sending-message.test.ts` 检查设备会话归属、旧 Host 降级、队列/完全访问启动隐藏，以及请求标识和附件/文件引用的精确匹配。`e2e/sending-message.e2e.ts` 在三种宽度延迟实际写请求、模拟连接中断，核对即时文字、发送中、未知状态、原请求重试和唯一的已确认消息。
+发送投影：`apps/web/test/sending-message.test.ts` 检查设备会话归属、旧 Host 降级、队列隐藏、各 Harness 的新会话立即显示，以及请求标识和附件/文件引用的精确匹配。`e2e/sending-message.e2e.ts` 在三种宽度延迟实际写请求、模拟连接中断，核对即时文字、发送中、未知状态、原请求重试和唯一的已确认消息，并核对完全访问 Harness 的新会话同样立即显示。
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
 
 `apps/host/test/file-tree.test.ts` 经真实 Host 检查会话与带 Harness 的项目懒加载、主根限制、隐藏项、符号链接、`work` 拒绝、跨设备句柄、根换序／同路径替换、迟到撤权和哈希审计；受控子进程检查无排队并发和取消后的真实退出。`files-helper.test.ts` 编译真实 Swift 组件，验证私有路径、Unicode 与上限；`native.test.ts` 的文件树用例经真实原生 TLS 验证正文窗口前后与到期迟到结果。非 macOS 跳过实际枚举，缺组件仍检查诚实拒绝。标准 `build:host` 同时构建目录组件，运行测试只用临时 Host 和测试确认后端。
@@ -530,7 +534,7 @@ Web 个人助手：`personal.e2e.ts` 覆盖显式记忆、无项目对话和撤�
 
 `e2e/archive.e2e.ts` 通过临时 Host 的真实已结束会话验证三种宽度的归档批量恢复、删除确认与 Shift 连选；核对请求 ID 集合、实际回执、快照和删除后 404，并保留工作目录中的文件。标为未读经真实菜单操作，刷新后保留，打开对应会话后清除，不把本设备阅读标记当作 Host 内容变化。
 
-`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住模型不记住模式，重新载入，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色）。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
+`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住模型不记住模式，重新载入，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色），以及没有权限 profile 的 Harness 在手机与桌面上先打开权限也会读取并在开始前列出模式。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
 
 `e2e/desktop-first-use.e2e.ts` 使用 `demo:false`、进程内假 Provider、真实假 ACP 和独立 Electron 数据目录检查首次使用与斜杠命令。桌面和平板验证逐步跳过、About 重新显示与首次真实会话后隐藏；手机沿实际新会话面板验证入口。命令来自 Agent 的实际更新，检查模板 ID／名称匹配、键盘只插入草稿、来源分组、排序、空态与三宽可达，并核对 ACP 日志中没有额外 prompt；不启用系统通知。
 

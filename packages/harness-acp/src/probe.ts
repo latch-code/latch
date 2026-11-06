@@ -5,7 +5,7 @@ import { redactSecrets } from '@latch/core/node-kit'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed } from './connection.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
-import { checkLogin } from './login.ts'
+import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
 import { CLIENT_CAPABILITIES, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
@@ -78,7 +78,8 @@ export async function probeAgent(
   const shortPattern = shortSecrets.length ? new RegExp(shortSecrets.join('|'), 'gu') : undefined
   const redact = (text: string) => redactSecrets(mask(shortPattern ? text.replace(shortPattern, '[redacted]') : text))
   const bounded = (text: string, bytes = 4096) => Buffer.from(redact(text), 'utf8').subarray(-bytes).toString('utf8')
-  const profile = selectProfile(agent).profile
+  const selection = selectProfile(agent)
+  const profile = selection.profile
   const materializedEnv = await profile?.materialize?.({ dataDir: options.dataDir })
   // Recheck after materializing settings; no process may start with a stale definition or after Host shutdown.
   const final = await agentProbePreview(agent, options)
@@ -175,6 +176,19 @@ export async function probeAgent(
   if (result.status === 'authentication-required') result.login = 'unauthenticated'
   else if (profile?.loginStatus && !options.signal?.aborted)
     result.login = await checkLogin(agent, options.signal ? { signal: options.signal } : {})
+  // Beside the adapter, the program it drives: a pair the adapter was not built for gets a warning, never a refusal.
+  const pairing = profile?.programVersion
+  const name = selection.preset?.name
+  if (pairing && name && !options.signal?.aborted) {
+    const program = await readProgramVersion(agent, options.signal ? { signal: options.signal } : {})
+    const adapter = result.agent?.version
+    const version = program.version === undefined ? undefined : bounded(program.version, 100)
+    const unchecked =
+      adapter !== undefined
+      && version !== undefined
+      && !pairing.checked.some(pair => new RegExp(pair.adapter, 'u').test(adapter) && new RegExp(pair.program, 'u').test(version))
+    if (program.found) result.program = { name, ...(version ? { version } : {}), ...(unchecked ? { unchecked: true as const } : {}) }
+  }
   result.checkedAt = new Date().toISOString()
   if (diagnostic) result.diagnostic = bounded([diagnostic, connection.stderrTail(4096)].filter(Boolean).join('\n'))
   return result

@@ -206,10 +206,10 @@ describe('opaque HTML previews', () => {
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(20_000)
+        // The first connection on a Host with no enrolled device takes no confirmation.
         await page.getByRole('button', { name: '继续', exact: true }).click()
-        await host.presence.waitForRequest(15_000)
-        host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        expect(host.presence.requests).toHaveLength(0)
         await page.locator(`[data-task-id="${sessionId}"]`).first().click()
         await page.getByRole('button', { name: '预览文件：slides.html', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })

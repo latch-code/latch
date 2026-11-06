@@ -8,6 +8,9 @@ struct PhoneSettingsView: View {
     @EnvironmentObject private var model: PhoneModel
     let addComputer: () -> Void
     @State private var copied = false
+    @AppStorage(PhoneFaceID.key) private var faceID = false
+    @State private var faceIDAvailable = true
+    @State private var changingFaceID = false
     var body: some View {
         NavigationStack {
             Form {
@@ -21,6 +24,18 @@ struct PhoneSettingsView: View {
                     }
                     Button("添加电脑", action: addComputer)
                 }
+                Section {
+                    Toggle("查看会话前用 Face ID", isOn: Binding(get: { faceID }, set: { next in
+                        changingFaceID = true
+                        Task { _ = await PhoneFaceID.change(to: next); changingFaceID = false }
+                    }))
+                    .disabled(changingFaceID || (!faceID && !faceIDAvailable))
+                } header: { Text("安全") } footer: {
+                    if faceID { Text("查看会话内容前先通过 Face ID。离开 App 或过十分钟后，再查看时会再次询问。") }
+                    else if !faceIDAvailable { Text("这台手机没有设置锁屏密码，无法打开。") }
+                    else { Text("关闭时，拿着这台已解锁手机的人可以查看和操作 Mac 上的会话，直到这台手机被移除。") }
+                }
+                .onAppear { faceIDAvailable = PhoneFaceID.available }
                 Section("通知") {
                     LabeledContent("状态通知", value: "这台电脑尚未开通")
                 }

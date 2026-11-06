@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 const env = process.env
 // Like an agent's own CLI: `login status` answers from the login file, `login` writes it. FAKE_ACP_LOGIN_FILE also makes a
@@ -19,6 +19,12 @@ if (env.FAKE_ACP_LOGIN_FILE && process.argv[2] === 'login') {
   }
   writeFileSync(env.FAKE_ACP_LOGIN_FILE, 'logged in\n')
   process.stderr.write('Successfully logged in\n')
+  process.exit(0)
+}
+// Like a CLI's `--version`: FAKE_ACP_CLI_VERSION prints `fake-cli <version>`; `fail` exits 1 having printed nothing.
+if (env.FAKE_ACP_CLI_VERSION && process.argv[2] === '--version') {
+  if (env.FAKE_ACP_CLI_VERSION === 'fail') process.exit(1)
+  process.stdout.write(`fake-cli ${env.FAKE_ACP_CLI_VERSION}\n`)
   process.exit(0)
 }
 // Like codex-acp, whose `cli` runs Codex: `cli app-server` answers as Codex's app-server instead of as an ACP agent.
@@ -77,6 +83,8 @@ const models = () =>
 const effortByModel = env.FAKE_ACP_EFFORT_BY_MODEL === '1'
 /** The thinking option's ID; codex-acp names it reasoning_effort. */
 const effortId = env.FAKE_ACP_EFFORT_ID ?? 'effort'
+/** `1`: each thinking level carries a one-line description, as DeepSeek Harness and Codex send. */
+const described = description => (env.FAKE_ACP_EFFORT_DESCRIPTIONS === '1' ? { description } : {})
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 function log(event, data = {}) {
@@ -193,6 +201,109 @@ function receive(message) {
     )
 }
 
+// ---- MCP servers ---------------------------------------------------------------------------------------------
+
+/**
+ * FAKE_ACP_MCP=dsh takes `mcpServers` the way DeepSeek Harness does: stdio entries only, each with an absolute command,
+ * started and listed before the session exists, and any failure refuses the session. Its MCP client first asks a
+ * throwaway copy of the server for `server/discover` and falls back to the 2025 `initialize` on any other answer.
+ */
+const mcpMode = env.FAKE_ACP_MCP
+const MCP_LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
+/** Session → the MCP servers it holds, in the order they were given. */
+const mcpServers = new Map()
+
+function mcpProcess(server, cwd) {
+  const given = Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value]))
+  const inherited = Object.fromEntries(
+    ['HOME', 'LOGNAME', 'PATH', 'SHELL', 'TERM', 'USER'].flatMap(name => (env[name] ? [[name, env[name]]] : [])),
+  )
+  const child = spawn(server.command, server.args ?? [], { cwd, env: { ...inherited, ...given }, stdio: ['pipe', 'pipe', 'ignore'] })
+  child.stdin.on('error', () => {})
+  let buffer = ''
+  let next = 1
+  const replies = new Map()
+  child.stdout.setEncoding('utf8').on('data', chunk => {
+    buffer += chunk
+    for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+      const line = buffer.slice(0, end)
+      buffer = buffer.slice(end + 1)
+      let message
+      try {
+        message = JSON.parse(line)
+      } catch {
+        continue
+      }
+      replies.get(message.id)?.(message)
+      replies.delete(message.id)
+    }
+  })
+  const gone = new Promise(resolve => {
+    child.once('exit', () => resolve({ closed: true }))
+    child.once('error', () => resolve({ closed: true }))
+  })
+  return {
+    child,
+    ask(method, params, ms = 5_000) {
+      const id = next++
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })}\n`)
+      return Promise.race([new Promise(resolve => replies.set(id, resolve)), gone, delay(ms).then(() => ({ timeout: true }))])
+    },
+    tell(method) {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`)
+    },
+  }
+}
+
+async function mountMcp(sessionId, servers, cwd) {
+  if (mcpMode !== 'dsh') return
+  const names = new Set()
+  servers.forEach((server, index) => {
+    if (typeof server.name !== 'string' || !server.name.trim() || names.has(server.name))
+      throw rpcError(-32602, 'mcpServers contains an invalid or duplicate server name')
+    names.add(server.name)
+    if ('type' in server) throw rpcError(-32602, `mcpServers[${index}] transport ${server.type} is not supported`)
+    if (!isAbsolute(server.command)) throw rpcError(-32602, `mcpServers[${index}].command must be an absolute path`)
+    if (
+      (server.env ?? []).some(entry => !entry.name || entry.name.includes('=') || entry.name.includes('\0') || entry.value.includes('\0'))
+    )
+      throw rpcError(-32602, `mcpServers[${index}].env contains an invalid environment entry`)
+  })
+  const mounted = []
+  try {
+    for (const server of servers) {
+      const probe = mcpProcess(server, cwd)
+      const discovered = await probe.ask('server/discover', { supportedVersions: ['2026-07-28'] }, 2_000)
+      probe.child.kill()
+      if (discovered.result) throw rpcError(-32602, `${server.name}: this fake speaks only the 2025 handshake`)
+      const peer = mcpProcess(server, cwd)
+      mounted.push({ name: server.name, ...peer })
+      const started = await peer.ask('initialize', {
+        protocolVersion: MCP_LEGACY_VERSIONS[0],
+        capabilities: {},
+        clientInfo: { name: 'fake-mcp-client', version: '1' },
+      })
+      if (!MCP_LEGACY_VERSIONS.includes(started.result?.protocolVersion))
+        throw rpcError(-32602, `${server.name}: Server's protocol version is not supported`)
+      peer.tell('notifications/initialized')
+      const listed = await peer.ask('tools/list')
+      if (!Array.isArray(listed.result?.tools)) throw rpcError(-32602, `${server.name}: tools/list failed`)
+      log('mcp-mounted', {
+        sessionId,
+        name: server.name,
+        protocolVersion: started.result.protocolVersion,
+        tools: listed.result.tools.map(tool => tool.name),
+      })
+    }
+  } catch (error) {
+    for (const server of mounted) server.child.kill()
+    log('mcp-refused', { sessionId, message: error.message })
+    throw error
+  }
+  for (const server of mcpServers.get(sessionId) ?? []) server.child.kill()
+  mcpServers.set(sessionId, mounted)
+}
+
 // ---- sessions -----------------------------------------------------------------------------------------------
 
 function existing(sessionId) {
@@ -237,9 +348,11 @@ function configOptions(session, shape = 'full') {
           group: 'levels',
           name: 'Levels',
           options: [
-            { value: 'low', name: 'Low' },
-            { value: 'high', name: 'High' },
-            ...(effortByModel && session.model === 'large' ? [{ value: 'max', name: 'Max' }] : []),
+            { value: 'low', name: 'Low', ...described('Prefer for routine or latency-sensitive tasks.') },
+            { value: 'high', name: 'High', ...described('The default balance for most tasks.') },
+            ...(effortByModel && session.model === 'large'
+              ? [{ value: 'max', name: 'Max', ...described('Reserve for the hardest quality-first tasks.') }]
+              : []),
           ],
         },
       ],
@@ -302,6 +415,7 @@ async function handle(method, params) {
         protocolVersion: Number(env.FAKE_ACP_PROTOCOL ?? 1),
         agentCapabilities: {
           promptCapabilities: { image: caps.has('images'), embeddedContext: caps.has('embedded') },
+          ...(mcpMode === 'dsh' ? { mcpCapabilities: { http: true } } : {}),
           loadSession: caps.has('load'),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
@@ -318,6 +432,7 @@ async function handle(method, params) {
       if (env.FAKE_ACP_AUTH === 'new' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
+      await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
       sessions[sessionId] = { cwd: params.cwd, history: [], model: models()[0] ?? 'small', mode: initialMode, effort: 'low' }
       touched.add(sessionId)
       save()
@@ -341,6 +456,7 @@ async function handle(method, params) {
     case 'session/resume': {
       if (!caps.has('resume')) throw rpcError(-32601, 'Method not found')
       const session = restored(params.sessionId)
+      await mountMcp(params.sessionId, params.mcpServers ?? [], params.cwd)
       return resumeSilent ? {} : configState(session)
     }
     case 'session/prompt':
@@ -458,6 +574,17 @@ async function prompt({ sessionId, prompt: blocks }) {
 const scenarios = {
   echo: ({ input, say }) => {
     say(`echo: ${input}`)
+    return END
+  },
+  // Calls `list_skills` on the first MCP server the session holds and says what came back.
+  skills: async ({ sessionId, say }) => {
+    const server = mcpServers.get(sessionId)?.[0]
+    if (!server) {
+      say('no MCP server')
+      return END
+    }
+    const reply = await server.ask('tools/call', { name: 'list_skills', arguments: {} })
+    say(`${server.name}: ${reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply)}`)
     return END
   },
   count: async ({ sessionId, argument, say }) => {
@@ -645,6 +772,97 @@ const scenarios = {
     say(`codes ${first.error?.code} ${second.error?.code}`)
     return END
   },
+  // Cursor's own requests, which carry no session ID: a plan to approve, a question, then a todo list sent in two parts.
+  'cursor-plan': async ({ say }) => {
+    const plan = '1. Read the code\n2. Change it'
+    const { result } = await request('cursor/create_plan', {
+      toolCallId: 'plan_1',
+      name: 'Tidy up',
+      overview: 'Two steps',
+      plan,
+      todos: [],
+    })
+    say(`plan=${result?.outcome?.outcome}`)
+    return END
+  },
+  'cursor-ask': async ({ say }) => {
+    const { result, error } = await request('cursor/ask_question', {
+      toolCallId: 'ask_1',
+      title: 'Which one?',
+      questions: [
+        {
+          id: 'q1',
+          prompt: 'Pick a colour',
+          options: [
+            { id: 'r', label: 'Red' },
+            { id: 'b', label: 'Blue' },
+          ],
+        },
+      ],
+    })
+    say(`ask=${result?.outcome?.outcome ?? `error ${error?.code}`}`)
+    return END
+  },
+  'cursor-todos': ({ say }) => {
+    const notify = params => send({ jsonrpc: '2.0', method: 'cursor/update_todos', params })
+    notify({
+      toolCallId: 't1',
+      merge: false,
+      todos: [
+        { id: '1', content: 'Read', status: 'completed' },
+        { id: '2', content: 'Write', status: 'in_progress' },
+      ],
+    })
+    notify({
+      toolCallId: 't1',
+      merge: true,
+      todos: [
+        { id: '2', status: 'completed' },
+        { id: '3', content: 'Skip me', status: 'cancelled' },
+        { id: '4', content: 'Ship', status: 'pending' },
+      ],
+    })
+    say('todos sent')
+    return END
+  },
+  // Claude's plan mode: entering asks with a plain allow on a mode-switching call; leaving offers one one-time choice.
+  'enter-plan': async ({ sessionId, session, say, tool, permission }) => {
+    const call = { toolCallId: 'call_plan', title: 'EnterPlanMode', kind: 'switch_mode', status: 'pending', rawInput: {} }
+    tool(call)
+    const { result } = await permission(call, [
+      { optionId: 'allow-once', name: 'Yes, enter plan mode', kind: 'allow_once' },
+      { optionId: 'reject', name: 'No, start implementing now', kind: 'reject_once' },
+    ])
+    if (result.outcome.optionId === 'allow-once') {
+      session.mode = 'plan'
+      reportMode(sessionId, session)
+    }
+    tool({ toolCallId: 'call_plan', status: 'completed' }, 'tool_call_update')
+    say(`mode=${session.mode}`)
+    return END
+  },
+  'exit-plan': async ({ sessionId, session, say, tool, permission }) => {
+    const call = {
+      toolCallId: 'call_exit',
+      title: 'Ready to code?',
+      kind: 'switch_mode',
+      status: 'pending',
+      rawInput: { plan: '1. Do it' },
+    }
+    tool(call)
+    const { result } = await permission(call, [
+      { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
+      { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+      { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+    ])
+    if (result.outcome.optionId === 'exit-plan-default') {
+      session.mode = 'default'
+      reportMode(sessionId, session)
+    }
+    tool({ toolCallId: 'call_exit', status: 'completed' }, 'tool_call_update')
+    say(`mode=${session.mode}`)
+    return END
+  },
   unknownhang: async ({ sessionId }) => {
     await request('terminal/create', { sessionId })
     await request('terminal/create', { sessionId })
@@ -768,13 +986,20 @@ const scenarios = {
   },
   refuse: () => ({ stopReason: 'refusal' }),
   // Starts a subagent on its own session, as the ACP subagents draft describes, only for a client that takes them. `ask`:
-  // the subagent asks for permission on its own session; `hang`: it works until the turn is cancelled, `silent` too but
-  // without saying it stopped; `nest`: it starts one of its own.
+  // the subagent asks for permission on its own session; `crowd` and `long` ask too, after 64 other subagents have finished
+  // or after 200 steps of its own; `hang`: it works until the turn is cancelled, `silent` too but without saying it
+  // stopped; `nest`: it starts one of its own.
   delegate: async ({ sessionId, argument, say }) => {
     if (!clientCapabilities.subagents) {
       say('worked alone')
       return END
     }
+    if (argument === 'crowd')
+      for (let index = 0; index < 64; index++) {
+        const other = `${sessionId}:helper-${randomUUID()}`
+        update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, title: `Helper ${index}`, state: { state: 'running' } })
+        update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, state: { state: 'idle', stopReason: 'end_turn' } })
+      }
     const child = `${sessionId}:child`
     const report = (state, stopReason) =>
       update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, state: { state, ...(stopReason ? { stopReason } : {}) } })
@@ -785,7 +1010,16 @@ const scenarios = {
     update(child, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hidden reasoning' } })
     const run = { toolCallId: 'call_1', title: 'Run pnpm test', kind: 'execute', status: 'in_progress', rawInput: { command: 'pnpm test' } }
     update(child, { sessionUpdate: 'tool_call', ...run })
-    if (argument === 'ask') {
+    if (argument === 'long')
+      for (let index = 0; index < 200; index++)
+        update(child, {
+          sessionUpdate: 'tool_call',
+          toolCallId: `read_${index}`,
+          title: `Read ${index}`,
+          kind: 'read',
+          status: 'completed',
+        })
+    if (argument === 'ask' || argument === 'crowd' || argument === 'long') {
       const edit = { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
       update(child, { sessionUpdate: 'tool_call', ...edit })
       report('requires_action')

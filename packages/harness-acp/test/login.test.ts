@@ -292,6 +292,65 @@ describe('the login check', () => {
   })
 })
 
+describe('the program an adapter drives, beside the adapter', () => {
+  /** `codex-acp` reports `adapter` in its handshake, `codex --version` prints `program`; running `codex` leaves a mark. */
+  async function pair(adapter: string, program: string | undefined) {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    const marks = join(directory, 'marks')
+    const scripts: Record<string, string> = {
+      'codex-acp': `export FAKE_ACP_VERSION='${adapter}'`,
+      ...(program === undefined ? {} : { codex: `touch '${marks}'\nexport FAKE_ACP_CLI_VERSION='${program}'` }),
+    }
+    for (const [name, line] of Object.entries(scripts)) {
+      await writeFile(join(bin, name), ['#!/bin/sh', line, `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`].join('\n'))
+      await chmod(join(bin, name), 0o755)
+    }
+    useOnly(bin)
+    const record = presetRecord('codex')!
+    const options = { dataDir: directory, cwd: directory }
+    const probe = async () => probeAgent(record, { ...options, expectedLaunchHash: (await agentProbePreview(record, options)).launchHash })
+    return { probe, ran: () => existsSync(marks) }
+  }
+
+  it('shows both versions and marks a pair the adapter was not built for, starting either way', async () => {
+    expect(profileFor('codex')!.programVersion!.read('codex-cli 0.165.0\n')).toBe('0.165.0')
+    const built = await pair('2.5.0', '0.165.3')
+    expect(await built.probe()).toMatchObject({
+      status: 'ready',
+      agent: { version: '2.5.0' },
+      program: { name: 'Codex', version: '0.165.3' },
+    })
+    expect((await built.probe()).program).not.toHaveProperty('unchecked')
+    for (const [adapter, program] of [
+      ['2.5.0', '0.167.0'],
+      ['2.5.1-preview.24', '0.166.0'],
+      ['2.3.0', '0.165.0'],
+    ] as const) {
+      const other = await pair(adapter, program)
+      expect(await other.probe(), `${adapter} ${program}`).toMatchObject({
+        status: 'ready',
+        program: { name: 'Codex', version: program, unchecked: true },
+      })
+    }
+  })
+
+  it('says the version is unknown when the command fails, without a warning', async () => {
+    const failed = await pair('2.5.0', 'fail')
+    expect((await failed.probe()).program).toEqual({ name: 'Codex' })
+    expect(failed.ran()).toBe(true)
+  })
+
+  it('shows no program when the adapter runs its own copy, and runs none until the start script turns it on', async () => {
+    expect((await (await pair('2.5.0', undefined)).probe()).program).toBeUndefined()
+    const off = await pair('2.5.0', '0.165.0')
+    setLoginPrograms(undefined)
+    expect((await off.probe()).program).toBeUndefined()
+    expect(off.ran()).toBe(false)
+  })
+})
+
 describe('the login command', () => {
   it('runs the program by its full path in a script that removes itself', async () => {
     const directory = await root()
@@ -318,5 +377,24 @@ describe('the login command', () => {
     expect(harnessLogin(presetRecord('qwen')!)).toMatchObject({ command: 'qwen', note: expect.stringContaining('/auth') })
     expect(harnessLogin({ id: 'mine', name: 'Mine', command: '/usr/bin/true', args: [], env: {}, enabled: true })).toBeUndefined()
     expect(harnessLogin(presetRecord('dsh')!)).toBeUndefined()
+  })
+
+  it('offers no login for Claude Agent even with Claude Code installed, and Cursor’s own login for Cursor', async () => {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    const ran = join(directory, 'ran')
+    for (const name of ['claude', 'claude-agent-acp', 'cursor-agent']) {
+      await writeFile(join(bin, name), `#!/bin/sh\necho "$0 $*" >> '${ran}'\n`)
+      await chmod(join(bin, name), 0o755)
+    }
+    useOnly(bin)
+    expect(harnessLogin(presetRecord('claude-agent')!)).toBeUndefined()
+    expect(loginTerminalScript(presetRecord('claude-agent')!)).toBeUndefined()
+    await expect(checkLogin(presetRecord('claude-agent')!)).resolves.toBe('unknown')
+    expect(harnessLogin(presetRecord('cursor')!)).toEqual({ command: 'cursor-agent login' })
+    expect(loginTerminalScript(presetRecord('cursor')!)).toContain(`'${join(bin, 'cursor-agent')}' 'login'`)
+    // Nothing above ran a program: neither has a status command, and a script is only written.
+    await expect(stat(ran)).rejects.toThrow()
   })
 })

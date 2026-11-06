@@ -43,6 +43,11 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     const thinking = chunkText(transcript, 'agent_thought_chunk')
     if (thinking) expect(assistants(detail)[0]!.reasoning).toBe(thinking)
     expect(detail.config?.some(option => option.category === 'model')).toBe(true)
+    // Where Latch reads the mode back, the agent reported the one Latch expects before the turn, and nothing drifted.
+    if (detail.permission?.readback === 'mode') {
+      expect(detail.permission.drift).toBeUndefined()
+      expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe(detail.permission.expectedMode)
+    }
   },
   tool_approve(detail, transcript) {
     expect(detail.summary.status).toBe('idle')
@@ -64,6 +69,14 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     expect(detail.summary.status).toBe('cancelled')
     expect(tools(detail).length).toBeGreaterThan(0)
     expect(tools(detail).every(message => message.state !== 'running' && message.state !== 'queued')).toBe(true)
+  },
+  // A plan the agent asks the person to accept in its own request, outside ACP's permission request.
+  plan_approve(detail) {
+    expect(detail.summary.status).toBe('idle')
+    const plan = tools(detail).find(message => message.tool?.decision)
+    expect(plan).toMatchObject({ state: 'completed', tool: { decision: { outcome: 'allowed' } } })
+    expect(detail.plan?.map(entry => entry.status)).toEqual(['completed', 'in_progress'])
+    expect(system(detail)).toEqual([])
   },
   auth_required(detail) {
     expect(detail.summary.status).toBe('failed')
@@ -139,11 +152,13 @@ describe('replaying each harness', () => {
       expect(['hand-written', 'recorded']).toContain(header.source)
       expect(header.basis.length).toBeGreaterThan(0)
       expect(SCENARIOS[fixture.scenario], `no expectations for ${fixture.scenario}`).toBeDefined()
+      // A version line's directory holds frames of that major version only.
+      if (fixture.line) expect(header.agent.version.split('.')[0], fixture.path).toBe(fixture.line.split('.')[0])
     }
   })
 
   for (const fixture of fixtures) {
-    it(`${fixture.harness}/${fixture.scenario}`, async () => {
+    it([fixture.harness, fixture.line, fixture.scenario].filter(Boolean).join('/'), async () => {
       const { transcript, detail, pending, status, bin, marks } = await replayTranscript(fixture.path, cleanups)
       expect(status?.failure).toBeUndefined()
       expect(status).toMatchObject({ cursor: status?.total })

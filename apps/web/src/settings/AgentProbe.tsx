@@ -15,6 +15,16 @@ export function probeResultTitle(result: AgentProbeResult | undefined): string {
   return result.status === 'authentication-required' ? '需要先登录' : '测试启动失败'
 }
 
+export function probeRowDescription(result: AgentProbeResult | undefined, busy: boolean): string {
+  if (busy) return '最多等待 15 秒。'
+  if (result?.status === 'ready') {
+    if (result.login === 'unauthenticated') return '在终端里登录，再重新测试。'
+    return result.login === 'authenticated' ? '模型访问尚未验证。' : '登录状态与模型访问尚未验证。'
+  }
+  if (result?.status === 'authentication-required') return '在终端里登录，再重新测试。'
+  return result ? '查看诊断，检查安装、启动配置或登录状态后重试。' : '检查程序能否启动，以及它声明的能力。'
+}
+
 export function AgentProbe({
   agent,
   disabledReason,
@@ -80,21 +90,7 @@ export function AgentProbe({
       captionIcon={disabledReason ? 'lock' : 'info'}>
       <SettingsRow
         title={busy ? '正在测试启动' : probeResultTitle(result)}
-        description={
-          busy
-            ? '在系统表单中核对后，最多等待 15 秒。'
-            : result?.status === 'ready'
-              ? result.login === 'unauthenticated'
-                ? '在终端里登录，再重新测试。'
-                : result.login === 'authenticated'
-                  ? '模型访问尚未验证。'
-                  : '登录状态与模型访问尚未验证。'
-              : result?.status === 'authentication-required'
-                ? '在终端里登录，再重新测试。'
-                : result
-                  ? '查看诊断，检查安装、启动配置或登录状态后重试。'
-                  : '检查程序能否启动，以及它声明的能力。'
-        }
+        description={probeRowDescription(result, busy)}
         trailing={
           <Button
             icon={FlaskConical}
@@ -119,7 +115,17 @@ export function AgentProbe({
                   <VisibleText text={[result.agent.name, result.agent.version].filter(Boolean).join(' ')} />
                 </span>
               )}
+              {result.program && (
+                <span>
+                  <VisibleText text={`${result.program.name} ${result.program.version ?? '版本未知'}`} />
+                </span>
+              )}
             </p>
+            {result.program?.unchecked && (
+              <InlineNotice tone="warn" title="这个组合 Latch 没有核对过">
+                {`仍可以开始会话；会话出现异常时，可能与适配器和 ${result.program.name} 的版本不配套有关。`}
+              </InlineNotice>
+            )}
             {result.status === 'ready' && <p className="agent-probe-meta">{supported ? `声明支持：${supported}` : '没有声明附加能力。'}</p>}
             {result.authMethods.length > 0 && (
               <p className="agent-probe-meta">

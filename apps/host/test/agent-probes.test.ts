@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { AgentProbeResult, AgentSettings, HarnessInfo } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
@@ -51,6 +53,34 @@ describe('Agent probe HTTP boundary', () => {
     await desktop.json('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--changed'] } })
     expect((await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0]!.lastProbe).toBeUndefined()
     expect(t.presence.requests).toHaveLength(0)
+  })
+  it('keeps the version of the program an adapter drives beside the adapter, and marks a pair it was not built for', async () => {
+    const bin = await mkdtemp(join(tmpdir(), 'latch-probe-bin-'))
+    onTestFinished(() => rm(bin, { recursive: true, force: true }))
+    const scripts = { 'codex-acp': 'export FAKE_ACP_VERSION=2.5.0', codex: 'export FAKE_ACP_CLI_VERSION=0.167.0' }
+    for (const [name, line] of Object.entries(scripts)) {
+      await writeFile(join(bin, name), ['#!/bin/sh', line, `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`].join('\n'))
+      await chmod(join(bin, name), 0o755)
+    }
+    const t = await startTestHost({
+      demo: false,
+      // Only this directory: no program installed on the computer running the test is ever found or run.
+      commandDirectories: () => [bin],
+      loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+    })
+    hosts.push(t)
+    const desktop = await t.enroll({ listener: 'unix' })
+    await desktop.json('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
+    })
+    const result = await desktop.json<AgentProbeResult>('agents/codex/probe', { method: 'POST', body: { requestId: randomUUID() } })
+    expect(result).toMatchObject({
+      status: 'ready',
+      agent: { version: '2.5.0' },
+      program: { name: 'Codex', version: '0.167.0', unchecked: true },
+    })
+    expect((await HostConfig.open(t.dataDir)).settings().agents[0]!.lastProbe).toEqual(result)
   })
   it('runs from any device with admin and run, and takes no prompt into the endpoint', async () => {
     const { t, desktop } = await fixture()

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）持有会话、执行权限、密钥、设备登记与审计；Electron 桌面端经 `host.sock`、浏览器经回环地址、手机经运营者提供证书的 HTTPS 连接同一个 Host（HTTP + SSE）。会话组合 Harness（内置 `standard`，或经 ACP 接入的开源 Agent）、模型服务与项目目录；Provider、Tool 与 HarnessDriver 都以 Cordis 插件注册。安全优先：拿不准时拒绝。
+Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）持有会话、执行权限、密钥、设备登记与审计；Electron 桌面端经 `host.sock`、浏览器经回环地址、手机经运营者提供证书的 HTTPS 连接同一个 Host（HTTP + SSE）。会话组合 Harness（内置 `standard`，或经 ACP 接入的本机 Agent）、模型服务与项目目录；Provider、Tool 与 HarnessDriver 都以 Cordis 插件注册。安全优先：拿不准时拒绝。
 
 ## 开始之前
 
@@ -112,7 +112,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 
 - 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`。应用图标为 `apps/web/public/icon.png`（源图 `build/icon.png`），不改动图形。
 - 模型密钥只在这台 Mac 上填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
-- Harness 预设只收录可在本机安装运行、许可证可核对的开源 Agent，并记录许可证；预设使用已安装的命令，不在运行时下载代码。
+- Harness 预设只收录开源 Agent 或厂商官方命令，记录许可证或条款，不下载不修改，不碰凭据；只给命令自己的登录命令，Claude Agent 不给。
 - 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。
 
 ## 完成标准

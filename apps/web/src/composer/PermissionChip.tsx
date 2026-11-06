@@ -13,9 +13,11 @@ import type { PermissionView } from './permission.ts'
 export function PermissionChip({
   view,
   onChoose,
+  onOpenChange,
 }: {
   view: PermissionView
   onChoose: (option: SessionConfigOption, value: string) => void
+  onOpenChange?: ((open: boolean) => void) | undefined
 }) {
   const Glyph = MODE_ICONS[view.icon]
   const label = escapeHiddenCharacters(view.label)
@@ -24,6 +26,7 @@ export function PermissionChip({
       label="权限"
       width={400}
       side="top"
+      {...(onOpenChange ? { onOpenChange } : {})}
       trigger={props => (
         <Tooltip content={escapeHiddenCharacters(view.line)} describe={false}>
           <button {...props} type="button" className={`chip chip-permission${view.amber ? ' is-amber' : ''}`} aria-label={`权限：${label}`}>

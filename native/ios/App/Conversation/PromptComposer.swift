@@ -12,6 +12,7 @@ struct PromptComposer: View {
     @State private var text = ""
     @State private var focused = false
     @State private var nextModel: PhoneModelChoice?
+    @AppStorage(PhoneFaceID.key) private var faceID = false
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
     /** The drawer above already holds the answers, stop among them where it cannot be allowed. */
     private var drawerOpen: Bool { !model.detail["approvals"].array.isEmpty || !model.detail["questions"].array.isEmpty }
@@ -55,7 +56,7 @@ struct PromptComposer: View {
     }
     private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: gate == "Mac 不在线" ? "wifi.slash" : gate == Self.closedWindow ? "faceid" : "laptopcomputer").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
+            Image(systemName: gate == "Mac 不在线" ? "wifi.slash" : gate == Self.closedWindow ? PhoneUnlock.closedWindowSymbol(faceID: faceID) : "laptopcomputer").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
             Text(words).font(.system(size: 15)).foregroundStyle(PhoneTheme.muted).lineLimit(2)
             Spacer(minLength: 4)
             if running && gate != "Mac 不在线" && model.detail["approvals"].array.isEmpty { stopButton(quiet: false) }

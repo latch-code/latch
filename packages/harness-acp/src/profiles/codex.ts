@@ -23,6 +23,16 @@ export const codexProfile: HarnessProfile = {
   projectConfigPaths: ['.codex'],
   // The same Codex the sessions run: the adapter's `cli` runs the one `CODEX_PATH` names, else its own.
   catalogueRead: { codexModels: ['cli', 'app-server'] },
+  // `codex --version` prints `codex-cli <version>`. Each pair is a codex-acp release and the `@openai/codex` range its
+  // package.json depends on, from the npm registry: 2.3.0 ^0.164.0, 2.4.0 and 2.5.0 ^0.165.0.
+  programVersion: {
+    args: ['--version'],
+    read: output => /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/u.exec(output)?.[1],
+    checked: [
+      { adapter: '^2\\.3\\.0$', program: '^0\\.164\\.\\d+$' },
+      { adapter: '^2\\.[45]\\.0$', program: '^0\\.165\\.\\d+$' },
+    ],
+  },
   // Every failure exits 1 as well, so only its own sentence means logged out. API keys print partly here: nothing is kept.
   loginStatus: {
     args: ['login', 'status'],

@@ -16,11 +16,6 @@ export function sendingMessageFor(
   detail: TaskDetail | null,
 ): SendingMessage | null {
   if (!view || !snapshot.catalog?.features?.messageIdentity || view.submission.queue || view.sessionId !== selectedId) return null
-  // A full-access start may still be awaiting local presence; only a confirmed Host message represents that input.
-  if (view.submission.sessionId === undefined) {
-    const harness = snapshot.catalog.harnesses.find(item => item.id === (view.submission.harnessId ?? snapshot.catalog?.defaults.harnessId))
-    if (!harness || harness.level === 'L3') return null
-  }
   const submission = view.submission
   const confirmed =
     detail?.summary.id === selectedId

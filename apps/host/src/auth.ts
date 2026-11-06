@@ -138,6 +138,8 @@ const devicesFile = z.strictObject({
   version: z.literal(2),
   hostId: z.string(),
   devices: z.array(storedDevice).max(1000),
+  /** Set once any device record has existed and never cleared: pruning old records does not make this a new Host again. */
+  enrolled: z.literal(true).optional(),
   /** Read once from files written while the global input pause existed, then dropped (see `load`). */
   nativeInputsPaused: z.boolean().optional(),
 })
@@ -675,6 +677,10 @@ export class DeviceStore {
     const now = this.now()
     const before = this.state.devices.length
     let changed = false
+    if (before > 0 && !this.state.enrolled) {
+      this.state.enrolled = true
+      changed = true
+    }
     this.state.devices = this.state.devices.filter(device => {
       if (device.status === 'revoked' && device.revokedAt !== undefined && now - device.revokedAt > PRUNE_AFTER) return false
       if (device.native && device.status !== 'revoked') return true
@@ -1013,6 +1019,11 @@ export class DeviceStore {
     return this.state.devices.map(publicDevice)
   }
 
+  /** Whether any device was ever enrolled here, revoked and pruned ones included. */
+  everEnrolled(): boolean {
+    return this.state.enrolled === true || this.state.devices.length > 0
+  }
+
   /** The non-expired legacy-pending record matching an old `harness_link` cookie value. */
   legacyMatch(cookieValue: string): Device | undefined {
     if (!/^[\w-]{1,128}$/u.test(cookieValue)) return undefined
@@ -1039,11 +1050,14 @@ export class DeviceStore {
       enrollmentId: string
       native?: NativeRegistrationIdentity
       reservedNativeId?: string
+      /** Unconfirmed, as the first device: refused once any device has been written, here on the store's queue. */
+      firstUse?: true
     },
     actor: AuditActor,
     stepup: StepupMethod,
   ): Promise<{ device: Device; credential: string }> {
     return this.serialize(async () => {
+      if (input.firstUse && this.everEnrolled()) throw new AppError(410, 'enrollment-cancelled', '连接请求已取消，请重新提交')
       const name = deviceName(input.name)
       const { der } = parseP256Spki(Buffer.from(input.publicKeyDer).toString('base64url'))
       const scopes = normalizeScopes(input.scopes)
@@ -1109,6 +1123,7 @@ export class DeviceStore {
       try {
         await this.persist()
       } catch (error) {
+        // `enrolled` stays set: the write may have reached the disk before it failed.
         this.state.devices = this.state.devices.filter(device => device !== record)
         await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
         throw error
@@ -1570,6 +1585,8 @@ export class EnrollmentService {
   private readonly nativeSheets = new Map<string, { expiresAt: number; offNetwork: boolean; session: NativeSession }>()
   private offlineQueue: Promise<unknown> = Promise.resolve()
   private invitationQueue: Promise<unknown> = Promise.resolve()
+  /** The enrollment taking the first use while its request is still being recorded (see `firstUse`). */
+  private firstUseClaim: string | undefined
 
   constructor(options: {
     hostId: string
@@ -1601,13 +1618,15 @@ export class EnrollmentService {
 
   /**
    * The desktop's own first connection, on the Host's socket before any device was ever enrolled here: there is nothing
-   * yet to protect from it, so it needs no confirmation. A revoked device's record stays, so emptying the list does not
-   * reopen this, and one such enrollment at a time can be open. Every later device goes through the confirmation.
+   * yet to protect from it, so it needs no confirmation. The device store remembers that a device was enrolled after
+   * the records themselves are pruned, so revoking or outliving every device does not reopen this, and one such
+   * enrollment at a time can be open. Every later device goes through the confirmation.
    */
   private firstUse(connection: ConnectionContext): boolean {
     return (
       connection.listener === 'unix'
-      && this.devices.list().length === 0
+      && !this.devices.everEnrolled()
+      && this.firstUseClaim === undefined
       && ![...this.enrollments.values()].some(item => item.firstUse && (item.status === 'approved' || item.status === 'completed'))
     )
   }
@@ -1783,7 +1802,18 @@ export class EnrollmentService {
       method = 'invitation'
     }
     const firstUse = method === 'lpc' && this.firstUse(connection)
-    if (firstUse) await this.presence.assertNotHeldBack('device.enroll')
+    // Taken before the first await: a second request on the socket in the meantime goes through the confirmation.
+    if (firstUse) this.firstUseClaim = id
+    const releaseFirstUse = () => {
+      if (this.firstUseClaim === id) this.firstUseClaim = undefined
+    }
+    if (firstUse)
+      try {
+        await this.presence.assertNotHeldBack('device.enroll')
+      } catch (error) {
+        releaseFirstUse()
+        throw error
+      }
     const fingerprint = deviceFingerprint(der)
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
     try {
@@ -1800,6 +1830,7 @@ export class EnrollmentService {
         },
       })
     } catch (error) {
+      releaseFirstUse()
       if (session) session.claim = undefined
       this.restoreInvitation(invitation, session)
       throw error
@@ -1838,6 +1869,8 @@ export class EnrollmentService {
       enrollment.status = 'approved'
       enrollment.expiresAt = Math.max(enrollment.expiresAt, now + ENROLLMENT_SIGNING_WINDOW)
       this.enrollments.set(id, enrollment)
+      // The stored enrollment holds it from here.
+      releaseFirstUse()
       return this.view(enrollment, true)
     }
 
@@ -2363,7 +2396,7 @@ export class EnrollmentService {
     if (enrollment.completing) throw new AppError(409, 'enrollment-pending', '本机尚未确认')
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
     this.verifyEnrollment(enrollment, signature, connection)
-    if (enrollment.firstUse && this.devices.list().length > 0) {
+    if (enrollment.firstUse && this.devices.everEnrolled()) {
       enrollment.status = 'cancelled'
       throw new AppError(410, 'enrollment-cancelled', '连接请求已取消，请重新提交')
     }
@@ -2379,6 +2412,7 @@ export class EnrollmentService {
           enrollmentId: enrollment.id,
           ...(enrollment.native ? { native: enrollment.native } : {}),
           ...(enrollment.reservedNativeId ? { reservedNativeId: enrollment.reservedNativeId } : {}),
+          ...(enrollment.firstUse ? { firstUse: true as const } : {}),
           pairedBy: { method: enrollment.method, ...(enrollment.inviterDeviceId ? { deviceId: enrollment.inviterDeviceId } : {}) },
         },
         actor,
@@ -2400,6 +2434,8 @@ export class EnrollmentService {
           .catch(() => {})
       return { ...result, ...(enrollment.network ? { network: enrollment.network } : {}) }
     } catch (error) {
+      // The store wrote another device first, so this was no longer the first connection.
+      if (error instanceof AppError && error.code === 'enrollment-cancelled') enrollment.status = 'cancelled'
       await this.failed(enrollment.id, 'commit', actor)
       throw error
     } finally {

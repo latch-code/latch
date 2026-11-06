@@ -18,6 +18,8 @@ export const AGENT_ACTIONS = {
   'agent.catalogue.requested': z.strictObject({ agentId: opaqueId, auto: z.boolean() }),
   'agent.catalogue.read': z.strictObject({ agentId: opaqueId, ok: z.boolean() }),
   'agent.models.changed': z.strictObject({ agentId: opaqueId, count: z.number().int().min(0).max(32) }),
+  /** The program's status command is about to run. */
+  'agent.login.requested': z.strictObject({ agentId: opaqueId }),
   /** The program's status command ran; the status is all that is kept of what it said. */
   'agent.login.checked': z.strictObject({ agentId: opaqueId, status: z.enum(['authenticated', 'unauthenticated', 'unknown']) }),
   'agent.login.opened': z.strictObject({ agentId: opaqueId }),

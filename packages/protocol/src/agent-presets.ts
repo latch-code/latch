@@ -1,4 +1,8 @@
-/** Open-source agents that speak ACP over stdio. Browser-safe: no Node imports. Permission behaviour is Host-only. */
+/**
+ * Agents that speak ACP over stdio from a command the person installed: open-source ones, and vendors' own commands
+ * their documentation supports, each with its licence or terms. Browser-safe: no Node imports. Permission behaviour is
+ * Host-only.
+ */
 export interface AgentPreset {
   id: string
   name: string
@@ -17,8 +21,9 @@ export interface AgentPreset {
    */
   companion?: string
   /**
-   * Display only: the program a person already knows, when `command` is an adapter that runs without it. It lets the page
-   * say the program was found and only the adapter is missing; nothing waits on it, unlike `companion`.
+   * The program a person already knows, when `command` is an adapter that runs without it. It lets the page say the
+   * program was found and only the adapter is missing, and a launch test read its version; nothing waits on it, unlike
+   * `companion`.
    */
   agentCommand?: string
   /**
@@ -26,6 +31,13 @@ export interface AgentPreset {
    * opens, for a program that logs in from inside. `bundled`: the same login through an adapter that ships the program.
    */
   login?: { command: string; args: string[]; note?: string; bundled?: { command: string; args: string[] } }
+  /**
+   * For a harness whose terms leave signing in to its vendor's own flow, so Latch shows no login command or button: one
+   * sentence on how the person signs in themselves.
+   */
+  signIn?: string
+  /** False: the vendor's terms allow its name in text only, so pages draw the neutral agent glyph, never its logo. */
+  brandMark?: false
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
 }
@@ -42,6 +54,19 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'npm i -g @agentclientprotocol/codex-acp',
     agentCommand: 'codex',
     login: { command: 'codex', args: ['login'], bundled: { command: 'codex-acp', args: ['cli', 'login'] } },
+  },
+  {
+    id: 'claude-agent',
+    name: 'Claude Agent',
+    command: 'claude-agent-acp',
+    args: [],
+    license: 'Apache-2.0 适配器；Claude Code 专有',
+    homepage: 'https://github.com/agentclientprotocol/claude-agent-acp',
+    description: '通过适配器运行 Claude Code，使用你在 Claude Code 中已有的登录；Latch 不提供登录，也不读取登录信息。',
+    install: 'npm i -g @agentclientprotocol/claude-agent-acp',
+    installNote: '还要在 Claude Code 中登录',
+    signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
+    brandMark: false,
   },
   {
     id: 'pi',
@@ -69,7 +94,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
   },
   {
     id: 'dsh',
-    skillServer: false,
     name: 'DeepSeek Harness',
     command: 'dsh',
     args: ['--profile', 'acp'],
@@ -112,6 +136,19 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'brew install block-goose-cli',
     login: { command: 'goose', args: ['configure'] },
   },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    // The installer links `agent` and `cursor-agent` to one program; only this name cannot belong to something else.
+    command: 'cursor-agent',
+    args: ['acp'],
+    license: '专有（Cursor 服务条款）',
+    homepage: 'https://cursor.com/docs/cli/acp',
+    description: '运行 Cursor 官方 CLI，使用你自己的 Cursor 账号；模型与登录由 Cursor 管理。',
+    install: 'curl https://cursor.com/install -fsS | bash',
+    login: { command: 'cursor-agent', args: ['login'] },
+    brandMark: false,
+  },
 ]
 
 /**
@@ -145,6 +182,7 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'OPENCODE_TEST_HOME',
   'PI_ACP_PI_COMMAND',
   'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
   'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
 ]
 

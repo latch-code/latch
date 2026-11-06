@@ -155,7 +155,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             })
           ).status,
         ).toBeLessThan(300)
-        await owner.json('policy', { method: 'PATCH', body: { remote: { workspaces: ['default'] } } })
         await writeHostState(host.dataDir, {
           version: 2,
           pid: process.pid,
@@ -201,9 +200,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const { policy } = await owner.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
         expect(policy.confirmedAddresses).toEqual([])
         expect(policy.hostEgressAllow).toEqual([])
-
-        await openSection(settings, '手机与设备')
-        await settings.getByText('手机和浏览器只能在这些项目里工作', { exact: true }).waitFor()
         expect(host.presence.requests.length).toBe(asked)
       } finally {
         await application?.close()

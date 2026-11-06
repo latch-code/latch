@@ -1,5 +1,6 @@
 import Foundation
 import LatchNativeCore
+import Security
 
 /** Reads synthetic Host JSON through the App's own projections, and answers in plain values the test can compare. */
 func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
@@ -46,6 +47,8 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "noteTooLong": [PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 500)), PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 501)), PhoneConversation.rejectionNoteTooLong(" " + String(repeating: "字", count: 500) + "\n")],
         "faceId": [("com.apple.LocalAuthentication", -2), ("com.apple.LocalAuthentication", -4), ("com.apple.LocalAuthentication", -1), (kCFErrorDomainOSStatus as String, -128), (kCFErrorDomainOSStatus as String, -25300), ("", 0)]
             .map { SecureDeviceKeys.verificationFailure(domain: $0.0, code: $0.1) == .declined },
+        "verificationAsksPresence": SecureDeviceKeys.verificationAccess.contains(.userPresence),
+        "unlock": [false, true].map { ["reopen": PhoneUnlock.reopenWords(faceID: $0), "symbol": PhoneUnlock.closedWindowSymbol(faceID: $0), "atExpiry": PhoneUnlock.reopensAtExpiry(faceID: $0)] as [String: Any] },
         "rows": tasks.map { words(PhoneSessions.rowStatus($0)) },
         "frozen": tasks.map { words(PhoneSessions.rowStatus($0, frozen: true)) },
         "shelves": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces).map { ["label": $0.label, "ids": $0.tasks.compactMap { $0["id"].string }] },

@@ -238,10 +238,10 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       const app = application,
         page = await app.firstWindow()
       page.setDefaultTimeout(20_000)
+      // The first connection on a Host with no enrolled device takes no confirmation.
       await page.getByRole('button', { name: '继续', exact: true }).click()
-      await testHost.presence.waitForRequest(15_000)
-      testHost.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      expect(testHost.presence.requests).toHaveLength(0)
       expect(
         await page.evaluate(async () => {
           const shell = Reflect.get(globalThis, 'latchShell') as {

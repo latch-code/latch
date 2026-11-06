@@ -48,8 +48,9 @@ export const opencodeProfile: HarnessProfile = {
     expectedMode: 'build',
     modeLadder: ['plan', 'build'],
     readback: 'mode',
-    // The configuration keys above are those of OpenCode 1.x; another major version may read them differently.
-    versionRule: { pattern: '^1\\.', message: 'OpenCode 仅支持 1.x（V1）' },
+    // The configuration keys above are those of OpenCode 1.x, which 2.x still reads as the same ordered rules (`task` as
+    // `subagent`); another major version may read them differently.
+    versionRule: { pattern: '^[12]\\.', message: 'OpenCode 仅支持 1.x 与 2.x' },
     // The user configuration, agents and plugins live under the XDG directories (or the home directory), loaded after
     // OPENCODE_CONFIG_CONTENT; the remaining OPENCODE_* switches have not been checked against the rules above.
     configEnv: ['XDG_*', 'OPENCODE_*', 'USERPROFILE'],
@@ -61,12 +62,14 @@ export const opencodeProfile: HarnessProfile = {
       'OpenCode 启动时会加载项目 .opencode 目录中的插件；在不信任的项目中使用会运行其中的代码',
     ],
   },
-  // OpenCode 1.x takes no other folders over ACP; `external_directory: 'ask'` above asks before it leaves the session directory.
+  // Latch passes no other folders (1.x takes none over ACP); `external_directory: 'ask'` above asks before it leaves the
+  // session directory, which 2.x would otherwise allow.
   folderAccess: 'primary-asks',
   // Searched from the session directory upwards, like OpenCode; `.opencode` loads after the rules above.
   projectConfigPaths: ['opencode.json', 'opencode.jsonc', '.opencode'],
-  // At every start OpenCode installs its plugin package into each `.opencode` directory (package.json, bun.lock,
-  // node_modules, .gitignore); its plan agent writes plans under `.opencode/plans`. None of these is configuration.
+  // At every start OpenCode 1.x installs its plugin package into each `.opencode` directory (package.json, bun.lock,
+  // node_modules, .gitignore); its plan agent writes plans under `.opencode/plans` (2.x under the home directory).
+  // None of these is configuration.
   projectConfigManaged: {
     skip: ['.opencode/node_modules', '.opencode/bun.lock', '.opencode/bun.lockb', '.opencode/.gitignore', '.opencode/plans'],
     reduce: { '.opencode/package.json': withoutOwnPlugin },

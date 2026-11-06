@@ -23,7 +23,7 @@ Host 的监听、授权、配置与插件组合根。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
 - 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则见 [ARCHITECTURE](../../docs/ARCHITECTURE.md#路径与项目目录)。
 - 项目变更与启动串行，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。只读分支规则见 [BRANCHES.md](../../docs/BRANCHES.md)。
-- 原生确认只由本机设备签名批准，仍经 PresenceService；首次启动信任绑定完整指纹和项目目录。
+- 本机确认只经 `PresenceService` 的系统表单（`PRESENCE_ACTIONS`），没有设备签名批准的路径。
 - 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`（[TERMINAL.md](../../docs/TERMINAL.md)）。
 - 根 `dist/` 构建拒绝测试代码（`test/security.test.ts`）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。

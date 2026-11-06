@@ -24,7 +24,7 @@ electron-main 环境：CommonJS，不导入 TypeScript 源码。运行时只依�
 - 文件夹操作需 `folders.protocolVersion: 1`，只回应主窗口顶层页面，窗口有焦点才开原生对话框；路径只来自面板、经原生确认的拖入或 Host 已知会话目录。主进程取 nonce 用设备私钥签名提交，页面的添加路由 403 `shell-managed`；访达只用 `showItemInFolder`（`test/desktop-folders.test.ts`）。
 - 文件操作只收顶层页面的会话引用或句柄（`files.protocolVersion: 2` 另收项目/Harness）。Host 先裁决并审计，主进程复查普通文件、白名单与文件头后只调 `shell.openPath`、`previewFile` 或 `showItemInFolder`，不开目录或应用。页面只转发会话/项目的 resolve/search/list 与句柄内容/meta，`Origin: null` 拒绝。见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#会话文件)、`test/desktop-files.test.ts`。
 - 只经 `host.json` + `host.sock` 找到并核对 Host，不经环境变量或参数传 URL 与凭据。`host.cjs` 镜像 `apps/host/src/host-state.ts` 的检查，两边同改。
-- 原生确认只收票据 ID，主进程取 Host 预览、验哈希并显示系统 sheet 后签名；批准路由对页面封闭，默认取消，共用对话框门禁。
+- 主进程不显示也不批准 Host 的本机确认：它们只是这台 Mac 上 `PresenceService` 的系统表单，页面只能读取与取消票据。
 - 预览标签（`browser.cjs`）不可信：按项目内存分区、无 preload 与 Node，拒绝权限、下载、JS 对话框、打印与新窗口，请求到不了 Host；文件面板等另有例外。
 - 构建不含测试代码（TESTING.md）。
 

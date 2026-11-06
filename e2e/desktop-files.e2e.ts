@@ -150,10 +150,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         }),
       ).toEqual({ files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'], frozen: true })
 
+      // The first connection on a Host with no enrolled device takes no confirmation.
       await page.getByRole('button', { name: '继续', exact: true }).click()
-      await testHost.presence.waitForRequest(15_000)
-      testHost.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      expect(testHost.presence.requests).toHaveLength(0)
 
       // Finder, Quick Look, the default app and the browser are recorded in main instead of being used.
       await application.evaluate(({ BrowserWindow, shell }) => {

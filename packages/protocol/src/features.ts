@@ -89,6 +89,12 @@ export interface UsageSummary {
 export interface AgentProbeResult {
   status: 'ready' | 'authentication-required' | 'failed'
   agent?: { name?: string; version?: string }
+  /**
+   * The program an adapter drives, as the person installed it, beside the adapter in `agent`; absent when the adapter
+   * runs its own copy, or drives none. No `version`: it could not be read. `unchecked`: both versions are known and the
+   * pair is not one the adapter was built for; a warning only, nothing is refused.
+   */
+  program?: { name: string; version?: string; unchecked?: true }
   capabilities: { embeddedContext?: boolean; images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }
   authMethods: Array<{ name: string; description?: string }>
   /** What the program's own status command said; absent when it has none. */

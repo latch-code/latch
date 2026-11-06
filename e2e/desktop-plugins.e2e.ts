@@ -50,10 +50,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(20000)
+        // The first connection on a Host with no enrolled device takes no confirmation.
         await page.getByRole('button', { name: '继续', exact: true }).click()
-        await host.presence.waitForRequest(15000)
-        host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        expect(host.presence.requests).toHaveLength(0)
         const settings = await openSettings(page)
         await openSection(settings, '插件')
         await page.getByRole('button', { name: '添加插件…', exact: true }).click()

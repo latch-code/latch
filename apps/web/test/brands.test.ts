@@ -30,14 +30,16 @@ describe('brand icons', () => {
     }
   })
 
-  it('gives every harness preset its brand icon', () => {
-    expect(Object.keys(HARNESS_MARKS).toSorted()).toEqual(AGENT_PRESETS.map(preset => preset.id).toSorted())
+  it('gives every harness preset its brand icon, and those whose terms allow text only the neutral glyph', () => {
+    const branded = AGENT_PRESETS.filter(preset => preset.brandMark !== false)
+    expect(Object.keys(HARNESS_MARKS).toSorted()).toEqual(branded.map(preset => preset.id).toSorted())
     for (const preset of AGENT_PRESETS) {
       expect({ preset: preset.id, kind: harnessArt(preset.id).kind }).toEqual({
         preset: preset.id,
-        kind: 'mark',
+        kind: preset.brandMark === false ? 'glyph' : 'mark',
       })
     }
+    expect(AGENT_PRESETS.filter(preset => preset.brandMark === false).map(preset => preset.id)).toEqual(['claude-agent', 'cursor'])
     // The built-in harness is Latch itself; an agent command or a plugin without a brand gets a glyph, never a letter.
     expect(harnessArt('latch')).toEqual({ kind: 'app' })
     expect(harnessArt(undefined)).toEqual({ kind: 'glyph', icon: GLYPHS.agent })

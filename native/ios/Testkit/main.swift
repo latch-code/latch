@@ -208,7 +208,7 @@ do {
         let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault)
         let review = try await workspace.install(dial)
         guard review["device"]["status"].string == "active", review["device"]["dataScope"].string == "all",
-              review["device"]["scopes"].array == [.string("view"), .string("run"), .string("approve:standard")] else { throw NativeFailure.identityMismatch }
+              review["device"]["scopes"].array == [.string("view"), .string("run"), .string("approve:standard"), .string("approve:elevated")] else { throw NativeFailure.identityMismatch }
         var requiresWindow = false
         do { _ = try await workspace.events() } catch { requiresWindow = (error as? NativeFailure) == .expired }
         guard requiresWindow else { throw NativeFailure.identityMismatch }

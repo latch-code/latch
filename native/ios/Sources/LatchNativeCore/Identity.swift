@@ -17,15 +17,20 @@ public enum SecureDeviceKeys {
         let prefix = "app.latch.ios.\(UUID().uuidString)."
         let connectionTag = Data((prefix + "connection").utf8), verificationTag = Data((prefix + "verification").utf8)
         do {
-            let connection = try generate(tag: connectionTag, presence: false), verification = try generate(tag: verificationTag, presence: true)
+            let connection = try generate(tag: connectionTag, access: [.privateKeyUsage]), verification = try generate(tag: verificationTag, access: verificationAccess)
             return try DeviceKeyReference(connectionTag: connectionTag, verificationTag: verificationTag, connectionSpki: publicSpki(connection), verificationSpki: publicSpki(verification))
         } catch {
             remove(tag: connectionTag); remove(tag: verificationTag)
             throw NativeFailure.storageUnavailable
         }
     }
-    private static func generate(tag: Data, presence: Bool) throws -> SecKey {
-        let flags: SecAccessControlCreateFlags = presence ? [.privateKeyUsage, .userPresence] : [.privateKeyUsage]
+    /**
+     * Trust is set once, when the phone is connected, so the content-window key signs without asking. Face ID, when the
+     * person turns it on, is asked by `signVerification`. A key made with `.userPresence` keeps it, since access control
+     * cannot change, so signing still lets the system ask.
+     */
+    public static let verificationAccess: SecAccessControlCreateFlags = [.privateKeyUsage]
+    private static func generate(tag: Data, access flags: SecAccessControlCreateFlags) throws -> SecKey {
         guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, nil),
               let key = SecKeyCreateRandomKey([
                 kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
@@ -57,12 +62,16 @@ public enum SecureDeviceKeys {
         guard LinkBytes.equal(try publicSpki(key), reference.connectionSpki) else { throw NativeFailure.identityMismatch }
         return try P256.Signing.ECDSASignature(derRepresentation: signDER(key, statement)).rawRepresentation
     }
-    public static func signVerification(_ reference: DeviceKeyReference, statement: Data) async throws -> Data {
+    public static func signVerification(_ reference: DeviceKeyReference, statement: Data, askOwner: Bool = false) async throws -> Data {
         try await Task.detached(priority: .userInitiated) {
             let context = LAContext()
             context.localizedReason = "查看这台 Mac 上的会话"
             context.touchIDAuthenticationAllowableReuseDuration = 0
             defer { context.invalidate() }
+            if askOwner {
+                do { try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "查看这台 Mac 上的会话") }
+                catch { let failure = error as NSError; throw verificationFailure(domain: failure.domain, code: failure.code) }
+            }
             let key = try find(tag: reference.verificationTag, context: context)
             guard LinkBytes.equal(try publicSpki(key), reference.verificationSpki) else { throw NativeFailure.identityMismatch }
             var failure: Unmanaged<CFError>?

@@ -118,7 +118,7 @@ export function AgentPresetList({
     <div className="setup-list" role="group" aria-label="添加 Harness">
       <p className="setup-list-head">
         <span className="setup-list-title">添加 Harness</span>
-        <span className="setup-list-meta">开源，在这台电脑上运行</span>
+        <span className="setup-list-meta">在这台电脑上运行</span>
       </p>
       {presets.map(preset => (
         <button

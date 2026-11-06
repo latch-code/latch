@@ -52,12 +52,23 @@ test('recognises its message under the note the Host adds after an undo', () => 
   ).toBeNull()
 })
 
-test('never duplicates queued input, a full-access start or a Host without confirmed message identities', () => {
+test('never duplicates queued input or shows one on a Host without confirmed message identities', () => {
   expect(sendingMessageFor(snapshot, { ...view, submission: { ...view.submission, queue: true } }, 'session', detail)).toBeNull()
-  const start = { ...view, submission: { prompt: '你好', requestId: 'request', harnessId: 'external' }, sessionId: null }
-  expect(sendingMessageFor(snapshot, start, null, null)).toBeNull()
-  expect(sendingMessageFor(snapshot, { ...start, submission: { ...start.submission, harnessId: 'standard' } }, null, null)).not.toBeNull()
   expect(sendingMessageFor({ ...snapshot, catalog: { ...snapshot.catalog!, features: {} } }, view, 'session', detail)).toBeNull()
+})
+
+test('shows a new start at once on every Harness, full access too, until its session holds the message', () => {
+  const start: SendingMessage = { ...view, submission: { prompt: '你好', requestId: 'request', harnessId: 'external' }, sessionId: null }
+  expect(sendingMessageFor(snapshot, start, null, null)).toBe(start)
+  expect(sendingMessageFor(snapshot, { ...start, submission: { ...start.submission, harnessId: 'standard' } }, null, null)).not.toBeNull()
+  const accepted: SendingMessage = { ...start, sessionId: 'session', state: 'accepted' }
+  expect(sendingMessageFor(snapshot, accepted, 'session', detail)).toBe(accepted)
+  expect(
+    sendingMessageFor(snapshot, accepted, 'session', {
+      ...detail,
+      messages: [{ id: 'host-user', requestId: 'request', role: 'user', text: '你好' }],
+    }),
+  ).toBeNull()
 })
 
 test('preserves attachment and explicit file identities, including a fork prefix', () => {

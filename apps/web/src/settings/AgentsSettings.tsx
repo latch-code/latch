@@ -35,7 +35,7 @@ interface AgentsResponse {
 type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPreset } | null
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
-const ENGINES_CAPTION = 'Harness 是这台 Mac 上的开源程序，以你的权限运行。Latch 不会替你安装它们。'
+const ENGINES_CAPTION = 'Harness 是这台 Mac 上已安装的程序，以你的权限运行。Latch 不会替你安装它们。'
 const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Harness 自己决定执行范围，Latch 不隔离它。'
 const SAVE_NOTE = '保存后就能用它开始会话，每次启动都留有记录。'
 /** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
@@ -280,7 +280,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
   )
 }
 
-/** Edits an agent's command and arguments in a 560 dialog; only the Host's desktop saves them. */
+/** Edits an agent's command and arguments in a 560 dialog; any admin device saves them. */
 function DefinitionDialog({
   open,
   agent,

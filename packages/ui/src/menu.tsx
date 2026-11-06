@@ -309,7 +309,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
 }
 
 /**
- * A menu footer row that goes to where the setting lives, ending in chevron-right (「电脑与权限上限…」). It keeps the
+ * A menu footer row that goes to where the setting lives, ending in chevron-right (「管理项目…」). It keeps the
  * items' empty leading slot, so its text starts on their titles' column. An action that stays here (「撤销切换」, 「添加
  * 模型服务…」 that turns the layer into a small form) leaves the chevron out and may put a 14px glyph in the slot.
  * `closes` closes the layer before running the action, as choosing an item does. Outside a menu's list (under a list
@@ -351,7 +351,7 @@ export function MenuFooterLink({
 }
 
 /**
- * A menu footer note for what can only change elsewhere (「调高要在这台电脑上验证身份」): the lock in the items' leading
+ * A menu footer note for what can only change elsewhere (「在 Mac 上的 Latch 里添加项目」): the lock in the items' leading
  * slot, the note on their titles' column. A note that is no restriction passes its own glyph (`info` for how to get
  * there, `circle-alert` for something that went wrong), so the lock keeps meaning a refusal.
  */

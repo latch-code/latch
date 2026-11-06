@@ -201,6 +201,39 @@ describe('steering a running turn over HTTP', () => {
     await expect.poll(async () => (await phone.json<TaskDetail>(path)).messages.at(-1)?.text).toBe('echo: echo then')
   })
 
+  it('answers a retried steer that started a turn as the first time, and does not steer the text into that turn', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
+    expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
+    await owner.json('agents', {
+      method: 'POST',
+      body: {
+        id: 'steer-agent',
+        name: 'Steer fixture',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CAPS: 'steer' },
+      },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'steer-agent', prompt: 'hello', requestId: randomUUID() },
+    })
+    const path = `tasks/${sessionId}`
+    await expect.poll(async () => (await owner.json<TaskDetail>(path)).summary.runOutcome).toBe('completed')
+    // Idle: the steer starts a turn. Its retry must not steer the same text into that turn.
+    const started = { prompt: 'steerable', requestId: randomUUID(), steer: true }
+    expect(await owner.json(`${path}/prompt`, { method: 'POST', body: started })).toEqual({ accepted: true })
+    await expect.poll(async () => (await owner.json<TaskDetail>(path)).steer).toBe(true)
+    expect(await owner.json(`${path}/prompt`, { method: 'POST', body: started })).toEqual({ accepted: true })
+    const detail = await owner.json<TaskDetail>(path)
+    expect(detail.messages.filter(message => message.text === 'steerable')).toHaveLength(1)
+    expect(detail.messages.some(message => message.steered)).toBe(false)
+    await owner.json(`${path}/cancel`, { method: 'POST', body: { requestId: randomUUID() } })
+  })
+
   it('queues what a harness without steering is sent while it runs', async () => {
     const host = await startTestHost()
     hosts.push(host)

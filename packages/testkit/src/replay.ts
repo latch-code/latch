@@ -11,7 +11,10 @@ import type { Approval, DriverTaskDetail } from '@latch/protocol'
 
 /** The replay agent; run it as `process.execPath` with this argument and `replayEnv`. */
 export const REPLAY_AGENT: string = fileURLToPath(new URL('../fixtures/replay-agent.mjs', import.meta.url))
-/** `<harness>/<scenario>.ndjson` below this directory. */
+/**
+ * `<harness>/<scenario>.ndjson` below this directory, and `<harness>/<major>.x/<scenario>.ndjson` for another major version
+ * of the same agent whose frames differ.
+ */
 export const REPLAY_FIXTURES: string = fileURLToPath(new URL('../fixtures/replay/', import.meta.url))
 
 export interface LogicalFrame {
@@ -109,16 +112,39 @@ export function readTranscript(path: string): Transcript {
   return parseTranscript(readFileSync(path, 'utf8'))
 }
 
-/** Every fixture below `REPLAY_FIXTURES`, by harness then scenario. */
-export function replayFixtures(root = REPLAY_FIXTURES): Array<{ harness: string; scenario: string; path: string }> {
+export interface ReplayFixture {
+  harness: string
+  scenario: string
+  /** `<major>.x` when the file is in such a directory: the agent's version line its frames follow. */
+  line?: string
+  path: string
+}
+
+function scenarioFiles(directory: string): string[] {
+  return readdirSync(directory).filter(name => name.endsWith('.ndjson'))
+}
+
+/** Every fixture below `REPLAY_FIXTURES`, by harness, then version line, then scenario. */
+export function replayFixtures(root = REPLAY_FIXTURES): ReplayFixture[] {
+  const scenario = (name: string) => name.slice(0, -'.ndjson'.length)
   return readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
-    .flatMap(directory =>
-      readdirSync(join(root, directory.name))
-        .filter(name => name.endsWith('.ndjson'))
-        .map(name => ({ harness: directory.name, scenario: name.slice(0, -'.ndjson'.length), path: join(root, directory.name, name) })),
-    )
-    .sort((a, b) => `${a.harness}/${a.scenario}`.localeCompare(`${b.harness}/${b.scenario}`))
+    .flatMap((directory): ReplayFixture[] => {
+      const base = join(root, directory.name)
+      const lines = readdirSync(base, { withFileTypes: true }).filter(entry => entry.isDirectory() && /^\d+\.x$/u.test(entry.name))
+      return [
+        ...scenarioFiles(base).map(name => ({ harness: directory.name, scenario: scenario(name), path: join(base, name) })),
+        ...lines.flatMap(line =>
+          scenarioFiles(join(base, line.name)).map(name => ({
+            harness: directory.name,
+            scenario: scenario(name),
+            line: line.name,
+            path: join(base, line.name, name),
+          })),
+        ),
+      ]
+    })
+    .sort((a, b) => `${a.harness}/${a.line ?? ''}/${a.scenario}`.localeCompare(`${b.harness}/${b.line ?? ''}/${b.scenario}`))
 }
 
 /** The variables a definition around the replay agent sets. */

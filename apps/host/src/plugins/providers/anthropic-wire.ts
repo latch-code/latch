@@ -88,8 +88,9 @@ export function encodeAnthropicRequest({ model, messages, tools, effort }: WireR
     model,
     max_tokens: MAX_OUTPUT_TOKENS,
     stream: true,
-    // Effort alone: newer models think adaptively when `thinking` is left out, and reject a token budget.
-    ...(effort ? { output_config: { effort } } : {}),
+    // A thinking level is adaptive thinking at that effort. It is named: Opus 4.6 to 4.8 and Sonnet 4.6 run without
+    // thinking when `thinking` is left out, the Claude 5 models take it as their default, and none takes a token budget.
+    ...(effort ? { thinking: { type: 'adaptive' }, output_config: { effort } } : {}),
     ...messagesOnWire(messages),
     ...(tools.length
       ? { tools: tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) }

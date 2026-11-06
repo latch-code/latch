@@ -13,7 +13,7 @@ function Licences() {
   const engines = useMemo(() => AGENT_PRESETS.toSorted((a, b) => a.name.localeCompare(b.name)), [])
   return (
     <>
-      <SectionHeading title="开源许可" />
+      <SectionHeading title="许可与条款" />
       <SettingsGroup>
         <SettingsRow record title="Latch" trailing={<span className="settings-row-value">Apache License 2.0</span>} />
       </SettingsGroup>
@@ -58,7 +58,7 @@ export function AboutSettings({ snapshot, access }: { snapshot: AppSnapshot; acc
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
       <SettingsGroup caption="Harness 和插件以你的权限在这台电脑上运行。" captionIcon={null}>
         <SettingsRow
-          title="开源许可"
+          title="许可与条款"
           trailing={
             <Button
               variant="ghost"
@@ -80,7 +80,7 @@ export function AboutSettings({ snapshot, access }: { snapshot: AppSnapshot; acc
           ? [
               {
                 key: 'licences',
-                title: '开源许可',
+                title: '许可与条款',
                 onBack: () => {
                   setLicences(false)
                 },

@@ -761,6 +761,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.noteTooLong).toEqual([false, true, false])
     // Backing out of Face ID is quiet; a sheet that failed says so, and neither reads as a lost connection.
     expect(result.faceId).toEqual([true, true, false, true, false, false])
+    // Trust is set once when the phone is connected: signing a content window never asks for the person by itself.
+    expect(result.verificationAsksPresence).toBe(false)
+    // Face ID only when the person turned it on; without it, a window that ran out opens again with no tap.
+    expect(result.unlock).toEqual([
+      { reopen: '查看', symbol: 'eye', atExpiry: true },
+      { reopen: '用 Face ID 查看', symbol: 'faceid', atExpiry: false },
+    ])
     expect(result.rows).toEqual(['waiting', 'waiting', 'running', 'silent', 'stopping', 'ended:已强制停止:2', 'failed', 'read', 'read'])
     // A list that may be stale draws nothing live; a run that has already ended still says how.
     expect(result.frozen).toEqual(['frozen', 'frozen', 'frozen', 'frozen', 'frozen', 'ended:已强制停止:2', 'failed', 'read', 'read'])

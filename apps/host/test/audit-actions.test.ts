@@ -120,6 +120,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.catalogue.requested': { agentId: 'codex', auto: true },
   'agent.catalogue.read': { agentId: 'codex', ok: false },
   'agent.models.changed': { agentId: 'codex', count: 2 },
+  'agent.login.requested': { agentId: 'codex' },
   'agent.login.checked': { agentId: 'codex', status: 'unauthenticated' },
   'agent.login.opened': { agentId: 'codex' },
   'agent.defined': { agentId: 'codex', definitionHash: hex, created: true },

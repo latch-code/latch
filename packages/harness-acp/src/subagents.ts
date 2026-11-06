@@ -6,10 +6,12 @@ import type { ToolFields } from './protocol.ts'
 
 /** Steps a subagent row keeps; what comes after is counted as `truncated`. */
 export const MAX_STEPS = 200
-/** Subagents one agent process may announce; more are not shown, and their requests are answered as cancelled. */
+/** Subagent rows one agent process shows at a time; ones that said they stopped in an earlier turn no longer count. */
 export const MAX_CHILDREN = 64
 /** How deep a subagent's own subagents are shown. */
 export const MAX_DEPTH = 4
+/** Subagents one process follows, shown or not; past this the oldest that stopped is forgotten, else a new one is ignored. */
+export const MAX_TRACKED = 1024
 
 /**
  * `subagent_update` on the session that owns the child (ACP subagents RFD). Each field is a patch: absent leaves it,
@@ -32,7 +34,14 @@ export interface Child {
   taskId: string
   /** The child that started this one; absent when the session's own agent did. */
   parent?: Child
-  messageId: string
+  /** Its row; absent past the limits on rows and depth, where only its requests reach the person. */
+  messageId?: string
+  /** Its name, for its requests when it has no row. */
+  title: string
+  /** What it last reported when it has no row; a row keeps its own. */
+  status?: Subagent['status']
+  /** It said it stopped by the end of a turn, and has reported nothing since: it no longer counts toward the rows. */
+  ended?: boolean
   depth: number
   tools: Map<string, ToolState>
   /** The step its text is being appended to, until a tool call comes between. */
@@ -83,10 +92,24 @@ function rowState(status: Subagent['status']): Message['state'] {
   }
 }
 
-/** The row for a newly announced subagent. */
-export function subagentRow(id: string, update: SubagentUpdate, redact: (text: string) => string, at: string): Message {
-  const status = update.state ? reportedStatus(update.state) : undefined
-  const subagent: Subagent = { title: label(update.title, redact) ?? '子 Agent', steps: [] }
+/** A subagent's name as shown. */
+export function subagentTitle(title: string | null | undefined, redact: (text: string) => string): string {
+  return label(title, redact) ?? '子 Agent'
+}
+
+/** The row for a subagent, newly announced or (`known`) followed so far without one. */
+export function subagentRow(
+  id: string,
+  update: SubagentUpdate,
+  redact: (text: string) => string,
+  at: string,
+  known?: Pick<Child, 'title' | 'status'>,
+): Message {
+  const status = update.state ? (reportedStatus(update.state) ?? known?.status) : update.state === null ? undefined : known?.status
+  const subagent: Subagent = {
+    title: update.title === undefined && known ? known.title : subagentTitle(update.title, redact),
+    steps: [],
+  }
   const description = label(update.description, redact, 500)
   if (description) subagent.description = description
   if (status) subagent.status = status
@@ -97,7 +120,7 @@ export function subagentRow(id: string, update: SubagentUpdate, redact: (text: s
 /** Applies a later `subagent_update` to its row. */
 export function patchSubagent(row: Message, update: SubagentUpdate, redact: (text: string) => string): void {
   const subagent = row.subagent!
-  if (update.title !== undefined) subagent.title = label(update.title, redact) ?? '子 Agent'
+  if (update.title !== undefined) subagent.title = subagentTitle(update.title, redact)
   if (update.description !== undefined) {
     const description = label(update.description, redact, 500)
     if (description) subagent.description = description
@@ -144,6 +167,13 @@ export function childText(child: Child, row: Message, piece: string, at: string)
   const id = randomUUID()
   steps.push({ id, role: 'assistant', text: append('', piece, TOOL_TEXT_LIMIT), state: 'completed', createdAt: at })
   child.textStep = id
+}
+
+/** A call kept only for its request: past the subagent's step limit, or of a subagent with no row. */
+export function looseTool(child: Child, fields: ToolFields, at: string): ToolState {
+  const state: ToolState = { id: `tool:${child.acpSessionId}:${fields.toolCallId}`, content: [], locations: [], awaiting: 0 }
+  mergeTool(state, fields, at)
+  return state
 }
 
 /** A tool call of the subagent, merged into its step. */

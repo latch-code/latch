@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { expect, test } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import type { AppSnapshot, TaskDetail } from '@latch/protocol'
+import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
@@ -139,5 +142,55 @@ test('an unconfirmed message says so in another session, opens from there and is
   } finally {
     await browser.close()
     await host.close()
+  }
+}, 60_000)
+
+test('a new full-access session shows what was sent at once, as any other start does', async () => {
+  // Only this empty directory is searched, and nothing is detected: no agent installed here can be found or started.
+  const bin = await mkdtemp(join(tmpdir(), 'latch-e2e-sending-'))
+  const host = await startTestHost({ uiDir: resolve('dist/web'), commandDirectories: () => [bin], detectPreset: () => ({ found: false }) }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const saved = await owner.request('agents', {
+      method: 'POST',
+      body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    expect(saved.status).toBe(201)
+    // A saved agent comes first, so the new draft starts on it.
+    expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'fake')?.level).toBe('L3')
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' }),
+      page = await context.newPage()
+    await enrollBrowser(page, host, { name: '完全访问开始' })
+    await connected(page)
+    let release!: () => void
+    const delayed = new Promise<void>(resolve => {
+        release = resolve
+      }),
+      starts: Array<{ prompt: string; harnessId?: string }> = []
+    await page.route('**/link/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.continue()
+      starts.push(route.request().postDataJSON() as { prompt: string; harnessId?: string })
+      await delayed
+      return route.continue()
+    })
+    const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+    await input.fill('echo 完全访问的第一条')
+    await input.press('Meta+Enter')
+    const pending = page.locator('.sending-message')
+    await expect.poll(() => pending.getByText('echo 完全访问的第一条', { exact: true }).isVisible()).toBe(true)
+    await expect.poll(() => pending.getByText('发送中…', { exact: true }).isVisible()).toBe(true)
+    expect(starts).toMatchObject([{ prompt: 'echo 完全访问的第一条', harnessId: 'fake' }])
+    await page.screenshot({ path: 'test-results/sending-full-access-start.png', fullPage: true })
+    release()
+    await expect.poll(() => pending.count(), { timeout: 20_000 }).toBe(0)
+    expect(await page.locator('.user-bubble').getByText('echo 完全访问的第一条', { exact: true }).count()).toBe(1)
+    const [task] = (await owner.json<AppSnapshot>('snapshot')).tasks
+    expect((await owner.json<TaskDetail>(`tasks/${task!.id}`)).messages.filter(message => message.role === 'user')).toHaveLength(1)
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+    await rm(bin, { recursive: true, force: true })
   }
 }, 60_000)

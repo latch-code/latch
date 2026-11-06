@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
+import net from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { redactSecrets } from '@latch/core/node-kit'
@@ -108,19 +109,31 @@ describe.runIf(sandboxed)('recording a harness', () => {
 const server = net.createServer(socket => socket.end()).listen(0, '127.0.0.1', async () => {
   const reach = (host, port) => new Promise(done => { const s = net.connect(port, host); s.setTimeout(3000, () => { s.destroy(); done('timeout') }); s.on('connect', () => { s.destroy(); done('connected') }); s.on('error', e => done(e.code)) })
   let read; try { readFileSync(process.argv[2]); read = 'read' } catch (e) { read = e.code }
-  console.log(JSON.stringify({ loopback: await reach('127.0.0.1', server.address().port), away: await reach('192.0.2.1', 9), read }))
+  const model = Number(process.argv[3])
+  console.log(JSON.stringify({ model: await reach('127.0.0.1', model), modelByName: await reach('localhost', model), otherPort: await reach('127.0.0.1', server.address().port), away: await reach('192.0.2.1', 9), read }))
   server.close()
 })`,
     )
+    // Only the fake model's port: any other port on this computer may be a proxy that leads off it.
+    const model = net.createServer(socket => socket.end())
+    await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve))
+    cleanups.push(() => new Promise<void>(resolve => model.close(() => resolve())))
+    const port = (model.address() as net.AddressInfo).port
     const { spawnSync } = await import('node:child_process')
     const run = spawnSync(
       '/usr/bin/sandbox-exec',
-      ['-p', sandboxProfile(home), process.execPath, probe, join(home, 'Library/Keychains/login.keychain-db')],
+      ['-p', sandboxProfile(home, port), process.execPath, probe, join(home, 'Library/Keychains/login.keychain-db'), String(port)],
       {
         encoding: 'utf8',
       },
     )
-    expect(JSON.parse(run.stdout)).toEqual({ loopback: 'connected', away: 'EPERM', read: 'EPERM' })
+    expect(JSON.parse(run.stdout)).toEqual({
+      model: 'connected',
+      modelByName: 'connected',
+      otherPort: 'EPERM',
+      away: 'EPERM',
+      read: 'EPERM',
+    })
 
     // A "sandbox" that lets the connection through: the agent is never started.
     const bin = await realpath(await mkdtemp(join(tmpdir(), 'latch-record-bin-')))
@@ -131,5 +144,14 @@ const server = net.createServer(socket => socket.end()).listen(0, '127.0.0.1', a
       /the agent was not started: the sandbox did not block/u,
     )
     await expect(record('simple', { sandboxExec: join(bin, 'missing') })).rejects.toThrow(/needs the macOS sandbox/u)
+    // One that blocks hosts elsewhere but every port on this computer, where a local proxy may listen: refused too.
+    await writeFile(
+      join(bin, 'loopback-sandbox'),
+      `#!/bin/sh\nshift 2\nexec /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote ip "localhost:*"))' "$@"\n`,
+    )
+    await chmod(join(bin, 'loopback-sandbox'), 0o755)
+    await expect(record('simple', { sandboxExec: join(bin, 'loopback-sandbox') })).rejects.toThrow(
+      /the agent was not started: the sandbox did not block a connection to another port on this computer/u,
+    )
   })
 })

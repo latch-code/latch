@@ -9,7 +9,7 @@
 - 只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入本包：只能写在 devDependencies（`tests/boundaries.test.ts#reports a dev-only package listed anywhere but devDependencies, by the root as well`），别处导入即 `pnpm lint` 失败，Host 构建遇到它即失败（`apps/host/test/security.test.ts#fails a Host bundle that reaches test code: @latch/testkit by name, or a file under packages/testkit/ or tests/`）。
 - 不导入 Host：夹具经参数拿到启动函数，`apps/host/test/helpers/host.ts`、`e2e/helpers/host.ts` 与 `apps/desktop/test/helpers/host.ts` 把它绑定到 `startServer` 与 Host 的默认选项。
 - 只用临时目录、端口 0 与回环地址，不读取用户数据与密钥。
-- 录制器只由这台电脑的所有者经 `pnpm harness:record` 对真实 Agent 运行：只放行本机连接的沙箱、临时家目录、白名单环境，沙箱没挡住外连就不启动 Agent；测试只用假 ACP Agent 运行它（`packages/harness-acp/test/record.test.ts`）。
+- 录制器只由这台电脑的所有者经 `pnpm harness:record` 对真实 Agent 运行：只放行假模型服务端口的沙箱、临时家目录、白名单环境，沙箱没挡住外连或本机其他端口就不启动 Agent；测试只用假 ACP Agent 运行它（`packages/harness-acp/test/record.test.ts`）。
 - `fixtures/replay/` 中的文件在第一行写明 `source`：`hand-written` 不得写成 `recorded`。
 - 改向量前读根 `AGENTS.md`「共享安全编码」。
 

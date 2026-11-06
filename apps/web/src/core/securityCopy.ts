@@ -667,6 +667,11 @@ export const MODE_COPY = {
   unverifiableLine: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
   afterStart: '开始后可以选',
   afterStartLine: (agent: string) => `${agent} 开始后才告诉 Latch 它有哪些权限模式`,
+  /** A Harness whose lists can be read before a session: the read reports its modes too. */
+  afterRead: '读取后可以选',
+  afterReadLine: (agent: string) => `${agent} 读取或开始时告诉 Latch 它有哪些权限模式`,
+  reading: '正在读取…',
+  readingLine: (agent: string) => `正在读取 ${agent} 的权限模式…`,
   /** Under the current row before start: the modes come from the agent itself. */
   changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 那时才告诉 Latch 它有哪些模式。`,
   /** Under the modes of a running agent. */

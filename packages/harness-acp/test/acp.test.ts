@@ -6,7 +6,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isReservedAgentEnvName, type DriverTaskDetail, type SessionConfigOption } from '@latch/protocol'
+import { isReservedAgentEnvName, type DriverTaskDetail, type Message, type SessionConfigOption } from '@latch/protocol'
 import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
@@ -1039,7 +1039,7 @@ describe('ACP project configuration', () => {
   const CHANGED = {
     status: 409,
     code: 'project-config-changed',
-    message: '项目中的 OpenCode 配置在确认后发生了变化，该会话不能继续。请新建会话（需要本机确认）。',
+    message: '项目中的 OpenCode 配置与会话启动时不同，该会话不能继续。请新建会话。',
   }
   const stoppedIdle = (fixture: Awaited<ReturnType<typeof setup>>) =>
     vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(true), {
@@ -1997,13 +1997,13 @@ describe('ACP permission mode', () => {
     expect(fixture.events).toEqual([])
   })
 
-  it('refuses OpenCode versions outside the checked major version', async () => {
-    const fixture = await preset('opencode', { FAKE_ACP_VERSION: '2.0.0' })
+  it('refuses OpenCode versions outside the checked major versions', async () => {
+    const fixture = await preset('opencode', { FAKE_ACP_VERSION: '3.0.0' })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
     const detail = await settled(bridge, sessionId)
     expect(detail.summary.status).toBe('failed')
-    expect(systemText(detail)).toContain('Fake 版本 2.0.0 未经验证（OpenCode 仅支持 1.x（V1）），已拒绝启动。')
+    expect(systemText(detail)).toContain('Fake 版本 3.0.0 未经验证（OpenCode 仅支持 1.x 与 2.x），已拒绝启动。')
     const log = await fixture.log()
     expect(received(log, 'session/new')).toEqual([])
     await vi.waitFor(() => expect(alive(log.find(entry => entry.event === 'start')!.pid)).toBe(false), { timeout: 5_000, interval: 20 })
@@ -2013,6 +2013,11 @@ describe('ACP permission mode', () => {
     const task = await other.createTask({ prompt: 'echo', requestId: rid() })
     expect(systemText(await settled(other, task.sessionId))).toContain('Fake 版本 未知 未经验证')
 
+    for (const version of ['2.2.5', '1.19.5']) {
+      const opened = await (await preset('opencode', { FAKE_ACP_VERSION: version, FAKE_ACP_CONFIG: 'legacy' })).open()
+      const started = await opened.createTask({ prompt: 'echo', requestId: rid() })
+      expect((await settled(opened, started.sessionId)).summary.status, version).toBe('idle')
+    }
     const supported = await preset('opencode', { FAKE_ACP_VERSION: '1.4.2', FAKE_ACP_CONFIG: 'legacy', FAKE_ACP_DUMP_ENV: '1' })
     const ok = await supported.open()
     const accepted = await ok.createTask({ prompt: 'echo', requestId: rid() })
@@ -3432,6 +3437,32 @@ describe('agent context', () => {
     await expect(stat(server.args.at(-1)!)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('gives DeepSeek Harness the skills server, which it starts and lists before each session it opens or resumes', async () => {
+    const fixture = await preset('dsh', { FAKE_ACP_MCP: 'dsh', FAKE_ACP_CAPS: 'resume', FAKE_ACP_DUMP_ENV: '1' })
+    expect(fixture.driver.skills).toBe('server')
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), agentContext: context({ skillBodies: skills }) })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await bridge.prompt(sessionId, 'skills', rid(), {})
+    const listed = '[{"id":"plugin:list","name":"审阅清单","description":"逐项检查"}]'
+    expect((await settled(bridge, sessionId)).messages.at(-1)).toMatchObject({ role: 'assistant', text: `latch-skills: ${listed}` })
+    const mounted = { event: 'mcp-mounted', name: 'latch-skills', protocolVersion: '2025-11-25' }
+    expect((await fixture.log()).filter(entry => entry.event.startsWith('mcp-'))).toEqual([
+      expect.objectContaining({ ...mounted, tools: ['list_skills', 'read_skill'] }),
+    ])
+    const env = (await fixture.log()).find(entry => entry.event === 'env')!.env as Record<string, string>
+    expect([env.DSH_PERMISSION_MODE, env.DSH_TELEMETRY_DISABLED]).toEqual(['read-only', '1'])
+
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'skills', rid(), {})
+    expect((await settled(restored, sessionId)).messages.at(-1)).toMatchObject({ text: `latch-skills: ${listed}` })
+    expect(received(await fixture.log(), 'session/resume')).toHaveLength(1)
+    const mounts = (await fixture.log()).filter(entry => entry.event.startsWith('mcp-'))
+    expect(mounts).toEqual([expect.objectContaining(mounted), expect.objectContaining(mounted)])
+    expect(mounts[1]!.sessionId).toBe(mounts[0]!.sessionId)
+  })
+
   it('attaches no server without skills', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
@@ -3874,9 +3905,16 @@ describe('ACP steering', () => {
     await until(bridge, sessionId, detail => detail.liveText === 'working')
     const stopping = bridge.cancel(sessionId)
     expect((await bridge.detail(sessionId)).steer).toBeUndefined()
-    expect(await bridge.steer!(sessionId, 'too late', rid())).toBe('prompt-required')
+    const lateId = rid()
+    expect(await bridge.steer!(sessionId, 'too late', lateId)).toBe('prompt-required')
     await stopping
     expect(received(await fixture.log(), '_session/steering')).toEqual([])
+    // The text went to the queue. A retry of that request while a later turn takes steers keeps the first answer.
+    await bridge.prompt(sessionId, 'steerable', rid())
+    await until(bridge, sessionId, detail => detail.liveText === 'working')
+    expect(await bridge.steer!(sessionId, 'too late', lateId)).toBe('prompt-required')
+    expect(received(await fixture.log(), '_session/steering')).toEqual([])
+    await bridge.cancel(sessionId)
   })
 
   it('keeps a taken steer across a restart, and does not count it as a turn', async () => {
@@ -3956,6 +3994,41 @@ describe('ACP subagents', () => {
     })
   })
 
+  it('still asks for a subagent past the limits on rows and steps, and says what it did not show', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const allowed = async (sessionId: string) => {
+      const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+      const [approval] = waiting.approvals
+      expect(approval).toMatchObject({ subagent: 'Test runner', reason: 'Edit a.txt' })
+      expect(await bridge.decide(approval!.id, 'allow')).toBe(true)
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.runOutcome).toBe('completed')
+      expect((await fixture.log()).filter(entry => entry.event === 'child-permission-answer').at(-1)).toMatchObject({
+        outcome: { outcome: 'selected', optionId: 'allow' },
+      })
+      return detail
+    }
+    // A 65th subagent in one turn has no row, but its request is still the person's to answer.
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate crowd', requestId: rid() })
+    let detail = await allowed(sessionId)
+    expect(subagents(detail)).toHaveLength(64)
+    expect(subagents(detail).some(row => row.subagent!.title === 'Test runner')).toBe(false)
+    expect(systemText(detail)).toContain('没有单独显示')
+    // Subagents that ended in an earlier turn of the same process no longer count toward the limit.
+    await bridge.prompt(sessionId, 'delegate ask', rid())
+    detail = await allowed(sessionId)
+    expect(subagents(detail)).toHaveLength(65)
+    expect(subagents(detail).at(-1)!.subagent).toMatchObject({ title: 'Test runner', status: 'done' })
+
+    // A call past a subagent's 200 steps is asked about too, though its step is not kept.
+    const long = await bridge.createTask({ prompt: 'delegate long', requestId: rid() })
+    detail = await allowed(long.sessionId)
+    const row = subagents(detail)[0]!.subagent!
+    expect(row.steps).toHaveLength(200)
+    expect(row.truncated).toBe(true)
+  })
+
   it("answers a subagent's open request as cancelled when the session is stopped, and leaves no subagent running", async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
@@ -3968,6 +4041,14 @@ describe('ACP subagents', () => {
     expect((await fixture.log()).find(entry => entry.event === 'child-permission-answer')).toMatchObject({
       outcome: { outcome: 'cancelled' },
     })
+    // Its own calls end with the turn as the session's do: the running one unknown, the asked one never run.
+    const stepStates = (row: Message) =>
+      row.subagent!.steps.filter(step => step.role === 'tool').map(step => [step.tool?.title, step.state])
+    const settledSteps = [
+      ['Run pnpm test', 'failed'],
+      ['Edit a.txt', 'cancelled'],
+    ]
+    expect(stepStates(subagents(detail)[0]!)).toEqual(settledSteps)
 
     // A subagent that never says it stopped is not shown as still working once its turn has ended.
     const { sessionId: second } = await bridge.createTask({ prompt: 'delegate silent', requestId: rid() })
@@ -3976,5 +4057,178 @@ describe('ACP subagents', () => {
     const row = subagents(await bridge.detail(second))[0]!
     expect(row.subagent!.status).toBe('unknown')
     expect(row.state).toBeUndefined()
+    expect(stepStates(row)).toEqual([['Run pnpm test', 'failed']])
+
+    // Stored that way.
+    await bridge.close()
+    const again = await fixture.open()
+    expect(stepStates(subagents(await again.detail(sessionId))[0]!)).toEqual(settledSteps)
+    expect(stepStates(subagents(await again.detail(second))[0]!)).toEqual([['Run pnpm test', 'failed']])
+  })
+})
+
+describe('Claude Agent and Cursor presets', () => {
+  const CLAUDE = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'default,acceptEdits,plan,auto,bypassPermissions',
+    // The adapter starts a session in Auto unless the person's settings say otherwise.
+    FAKE_ACP_INITIAL_MODE: 'auto',
+    FAKE_ACP_VERSION: '0.101.0',
+  }
+  const CURSOR = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'agent,plan,ask', FAKE_ACP_INITIAL_MODE: 'agent' }
+  const modeSets = (log: LogEntry[]) =>
+    received(log, 'session/set_config_option')
+      .filter(entry => entry.params?.configId === 'mode')
+      .map(entry => entry.params?.value)
+
+  it('sets Claude Agent to Manual before every turn, offers its modes by its own names, and never asks in Bypass only', async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(assistants(detail).at(-1)?.text).toBe('echo: echo hi')
+    const log = await fixture.log()
+    expect(modeSets(log)).toEqual(['default'])
+    const set = log.findIndex(entry => entry.event === 'recv' && entry.method === 'session/set_config_option')
+    const prompt = log.findIndex(entry => entry.event === 'recv' && entry.method === 'session/prompt')
+    expect(set).toBeLessThan(prompt)
+    expect(detail.permission).toMatchObject({
+      expectedMode: 'default',
+      defaultMode: 'default',
+      readback: 'mode',
+      neverAskModes: ['bypassPermissions'],
+    })
+    expect(detail.config?.find(option => option.category === 'mode')?.options.map(option => option.value)).toEqual([
+      'default',
+      'acceptEdits',
+      'plan',
+      'auto',
+      'bypassPermissions',
+    ])
+  })
+
+  it('refuses a Claude Agent adapter older than the one its modes were read from', async () => {
+    const bridge = await (await preset('claude-agent', { ...CLAUDE, FAKE_ACP_VERSION: '0.50.0' })).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(systemText(detail)).toContain('未经验证（Claude Agent 适配器需要 0.99 或之后的 0.x 版本），已拒绝启动。')
+  })
+
+  it('takes a person entering and leaving Claude plan mode through its own asks as their choice, not as drift', async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'enter-plan', requestId: rid() })
+    const [enter] = (await until(bridge, sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(await bridge.decide(enter.id, 'allow')).toBe(true)
+    let detail = await settled(bridge, sessionId)
+    expect(detail.summary.permissionDrift).toBeFalsy()
+    expect(assistants(detail).at(-1)?.text).toBe('mode=plan')
+    expect(detail.permission?.expectedMode).toBe('plan')
+
+    // The next turn stays in plan: Latch does not put the session back into Manual.
+    await bridge.prompt(sessionId, 'exit-plan', rid())
+    const [exit] = (await until(bridge, sessionId, item => item.approvals.length === 1)).approvals
+    // The choices that would store a mode for good are not offered; leaving with a question before each edit is.
+    expect(exit.options?.map(option => option.id)).toEqual(['exit-plan-default', 'reject'])
+    expect(await bridge.decide(exit.id, 'allow')).toBe(true)
+    detail = await settled(bridge, sessionId)
+    expect(detail.summary.permissionDrift).toBeFalsy()
+    expect(assistants(detail).at(-1)?.text).toBe('mode=default')
+    expect(detail.permission?.expectedMode).toBe('default')
+    expect(modeSets(await fixture.log())).toEqual(['default'])
+  })
+
+  it('still stops a Claude session that leaves plan mode without the person', async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'plan')
+    await bridge.prompt(sessionId, 'drift acceptEdits', rid())
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.permissionDrift).toBe(true)
+    expect(systemText(detail)).toContain('plan → acceptEdits')
+  })
+
+  it('tells a person to sign in to Claude Code themselves, and offers no login of its own', async () => {
+    const fixture = await preset('claude-agent', { ...CLAUDE, FAKE_ACP_AUTH: 'prompt' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.runEnd?.reason).toBe('login-required')
+    expect(JSON.stringify(detail.messages)).toContain(
+      'Fake 还没登录。在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
+    )
+    expect(received(await fixture.log(), 'authenticate')).toEqual([])
+    const init = received(await fixture.log(), 'initialize')[0]!
+    // Without a terminal-auth capability the adapter lists no login methods for Latch to offer.
+    expect(JSON.stringify(init.params?.clientCapabilities)).not.toMatch(/terminal-auth|"auth"/u)
+  })
+
+  it('puts a Cursor plan to the person as an approval and answers in Cursor’s own words', async () => {
+    const fixture = await preset('cursor', CURSOR)
+    const bridge = await fixture.open()
+    const accepted = await bridge.createTask({ prompt: 'cursor-plan', requestId: rid() })
+    const [plan] = (await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(plan).toMatchObject({ reason: '计划：Tidy up', arguments: 'Two steps\n\n1. Read the code\n2. Change it' })
+    expect(plan.options?.map(option => [option.id, option.label])).toEqual([
+      ['accept', '接受计划'],
+      ['reject', '不接受'],
+    ])
+    expect(await bridge.decide(plan.id, 'allow')).toBe(true)
+    expect(assistants(await settled(bridge, accepted.sessionId)).at(-1)?.text).toBe('plan=accepted')
+
+    await bridge.prompt(accepted.sessionId, 'cursor-plan', rid())
+    const [again] = (await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(await bridge.decide(again.id, 'reject')).toBe(true)
+    expect(assistants(await settled(bridge, accepted.sessionId)).at(-1)?.text).toBe('plan=rejected')
+
+    await bridge.prompt(accepted.sessionId, 'cursor-plan', rid())
+    await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)
+    await bridge.cancel(accepted.sessionId)
+    await settled(bridge, accepted.sessionId)
+    const replies = received(await fixture.log(), null)
+      .map(entry => entry.result?.outcome)
+      .filter(Boolean)
+    expect(replies).toEqual([{ outcome: 'accepted' }, { outcome: 'rejected' }, { outcome: 'cancelled' }])
+  })
+
+  it('says a Cursor question was skipped, shows it in the session, and turns its todos into the plan', async () => {
+    const fixture = await preset('cursor', CURSOR)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'cursor-ask', requestId: rid() })
+    let detail = await settled(bridge, sessionId)
+    expect(assistants(detail).at(-1)?.text).toBe('ask=skipped')
+    expect(systemText(detail)).toContain('Fake 问：Which one?\n- Pick a colour（Red / Blue）\nLatch 还不能在这里回答它的提问')
+    expect(systemText(detail)).not.toContain('看不懂')
+
+    await bridge.prompt(sessionId, 'cursor-todos', rid())
+    detail = await settled(bridge, sessionId)
+    expect(detail.plan).toEqual([
+      { content: 'Read', status: 'completed' },
+      { content: 'Write', status: 'completed' },
+      { content: 'Ship', status: 'pending' },
+    ])
+  })
+
+  it('answers Cursor’s own requests as unknown for any other harness', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'cursor-ask', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(assistants(detail).at(-1)?.text).toBe('ask=error -32601')
+    expect(systemText(detail)).toContain('cursor/ask_question')
+  })
+
+  it('never finds the vendors’ programs on the Host’s PATH without the start script’s search', async () => {
+    const bin = await mkdtemp(join(tmpdir(), 'latch-vendor-bin-'))
+    cleanups.push(() => rm(bin, { recursive: true, force: true }))
+    for (const command of ['claude-agent-acp', 'claude', 'cursor-agent', 'agent']) await installCommand(bin, command)
+    hostEnv({ PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` })
+    setCommandSearch(undefined)
+    for (const command of ['claude-agent-acp', 'claude', 'cursor-agent', 'agent']) expect(resolveCommand(command)).toBeUndefined()
+    setCommandSearch(() => [bin])
+    expect(resolveCommand('cursor-agent')).toBe(join(bin, 'cursor-agent'))
   })
 })

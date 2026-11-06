@@ -16,6 +16,13 @@ export interface AcpPermissionProfile {
   neverAskModes?: readonly string[]
   /** Permission option IDs never shown; exact IDs, or prefixes ending in '*'. */
   hiddenOptionIds?: readonly string[]
+  /**
+   * Answers to an ask that move the harness to another mode, because the person chose that (leaving a plan, say). Matched
+   * by option ID, and by the asked call's kind when the harness reuses a plain option ID. Latch records the mode as the
+   * person's choice before the answer reaches the harness, so the switch that follows is not taken as the agent widening
+   * its own mode. Only modes in `modeLadder`.
+   */
+  modeAnswers?: ReadonlyArray<{ optionId: string; toolKind?: string; mode: string }>
   /** Whether the harness reports its mode so Latch can read it back. */
   readback: 'mode' | 'none'
   /** `pattern` is a RegExp source tested against `initialize.agentInfo.version`. */
@@ -39,7 +46,32 @@ export interface AcpPermissionProfile {
 }
 
 /** One `session/update` as the agent sent it: `sessionUpdate` names the kind, the rest is untrusted. */
-type SessionUpdate = { sessionUpdate: string } & Record<string, unknown>
+export type SessionUpdate = { sessionUpdate: string } & Record<string, unknown>
+
+/** An ask put to the person like a permission request: one-time options only, read the same way. */
+interface ExtensionAsk {
+  toolCall: { toolCallId: string; title: string; name?: string; kind?: string; rawInput?: unknown }
+  options: Array<{ optionId: string; name: string; kind: 'allow_once' | 'reject_once' }>
+}
+
+/**
+ * A request a harness sends outside ACP. `ask`: put to the person as an approval in the session, and `answer` turns the
+ * chosen option (undefined when nobody chose, as on a stop) into the harness's own reply. `decline`: answered at once,
+ * with a line in the session that says what it asked. Either returns undefined for params it cannot read, which then
+ * get the usual reply to an unknown request.
+ */
+export type ExtensionRequest =
+  | { readonly ask: (params: unknown) => ExtensionAsk | undefined; readonly answer: (optionId: string | undefined) => unknown }
+  | { readonly decline: (params: unknown, agentName: string) => { note: string; reply: unknown } | undefined }
+
+/**
+ * What a harness sends outside ACP. A notification is rewritten into the `session/update` it means, for the session the
+ * process runs (these carry no session ID); undefined drops it, as an unknown notification is.
+ */
+interface HarnessExtensions {
+  readonly requests?: Readonly<Record<string, ExtensionRequest>>
+  readonly notifications?: Readonly<Record<string, (params: unknown, sessionKey: string) => SessionUpdate | undefined>>
+}
 
 export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
@@ -94,6 +126,17 @@ export interface HarnessProfile {
     read(result: { code: number | null; output: string }): LoginStatus
   }
   /**
+   * For an adapter that drives a program the person installed (`AgentPreset.agentCommand`): how a launch test reads that
+   * program's version, beside the adapter's own, by the rules `loginStatus` follows. `checked`: the pairs, as RegExp
+   * sources over the adapter's `agentInfo.version` and the program's, that the adapter was built for; a page warns about
+   * any other pair and never refuses it.
+   */
+  readonly programVersion?: {
+    readonly args: readonly string[]
+    read(output: string): string | undefined
+    readonly checked: ReadonlyArray<{ readonly adapter: string; readonly program: string }>
+  }
+  /**
    * How a draft's lists are read before a session. Absent: an empty session in a private folder, once, when a draft
    * first selects the harness with nothing known. `request`: the same, only when a person asks, because the process loads
    * more than the harness when it starts. `codexModels`: Codex's own `model/list` through the adapter's bundled CLI, with
@@ -105,6 +148,7 @@ export interface HarnessProfile {
    * way. Returns the update to read; it never adds what the harness did not send.
    */
   normalizeUpdate?(update: SessionUpdate): SessionUpdate
+  readonly extensions?: HarnessExtensions
   /** Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. */
   materialize?(input: { dataDir: string }): Promise<Record<string, string>>
 }

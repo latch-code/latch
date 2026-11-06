@@ -66,10 +66,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       const page = await application.firstWindow()
       page.setDefaultTimeout(20000)
+      // The first connection on a Mac with no enrolled device takes no confirmation.
       await page.getByRole('button', { name: '继续', exact: true }).click()
-      expect((await host.presence.waitForRequest()).preview.action).toBe('device.enroll')
-      host.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      expect(host.presence.requests).toHaveLength(0)
       await openSettings(page, '手机与设备')
       await capture(page, 'ready-desktop')
       await page.locator('.device-connect').waitFor()

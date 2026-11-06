@@ -328,7 +328,7 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   )
   expect(snapshot.device.id).toBe(prepared.deviceId)
   expect(snapshot.device.status).toBe('active')
-  expect(snapshot.device.scopes).toEqual(['view', 'run', 'approve:standard'])
+  expect(snapshot.device.scopes).toEqual(['view', 'run', 'approve:standard', 'approve:elevated'])
   expect(snapshot.device.dataScope).toBe('all')
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(403)
   const challenge = ok<{ nonce: string; appOpenId: string; expiresAt: number }>(

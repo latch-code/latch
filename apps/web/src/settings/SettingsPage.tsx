@@ -60,7 +60,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',
   devices: '手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
-  about: '版本 开源许可',
+  about: '版本 许可与条款',
 }
 
 /** The sections a search names: by their label or by the words on their rows, case aside. */

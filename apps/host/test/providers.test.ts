@@ -562,7 +562,7 @@ describe('Anthropic Messages streaming provider', () => {
     expect(urls).toHaveLength(2)
   })
 
-  it('sends a declared thinking level as output_config.effort, without a thinking block, and refuses an undeclared one', async () => {
+  it('sends a declared thinking level as output_config.effort with adaptive thinking named, and refuses an undeclared one', async () => {
     const bodies: Array<Record<string, unknown>> = []
     const endpoint = await listen((_request, response, body) => {
       bodies.push(JSON.parse(body))
@@ -580,9 +580,10 @@ describe('Anthropic Messages streaming provider', () => {
     const provider = providers[0]!
     await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), effort: 'max' }))
     await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() }))
-    expect(bodies[0]).toMatchObject({ output_config: { effort: 'max' } })
-    expect(bodies[0]).not.toHaveProperty('thinking')
+    // Named, because the 4.6, 4.7 and 4.8 models run without thinking when it is left out.
+    expect(bodies[0]).toMatchObject({ thinking: { type: 'adaptive' }, output_config: { effort: 'max' } })
     expect(bodies[1]).not.toHaveProperty('output_config')
+    expect(bodies[1]).not.toHaveProperty('thinking')
     await expect(
       collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), effort: 'xhigh' })),
     ).rejects.toMatchObject({ code: 'effort-unavailable' })

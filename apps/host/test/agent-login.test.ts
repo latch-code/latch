@@ -3,7 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AppError } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
@@ -18,10 +19,12 @@ async function fixture(options: TestHostOptions = {}) {
   const bin = join(directory, 'bin')
   await mkdir(bin)
   const loginFile = join(directory, 'login')
+  /** Written each time the login program starts. */
+  const ranFile = join(directory, 'ran')
   for (const name of ['codex', 'codex-acp']) {
     await writeFile(
       join(bin, name),
-      `#!/bin/sh\nexport FAKE_ACP_LOGIN_FILE='${loginFile}'\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+      `#!/bin/sh\n${name === 'codex' ? `printf x >> '${ranFile}'\n` : ''}export FAKE_ACP_LOGIN_FILE='${loginFile}'\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
     )
     await chmod(join(bin, name), 0o755)
   }
@@ -39,7 +42,7 @@ async function fixture(options: TestHostOptions = {}) {
     ...options,
   })
   cleanups.push(() => t.close())
-  return { t, scripts, loginFile, bin }
+  return { t, scripts, loginFile, ranFile, bin }
 }
 
 const reply = async (response: Response) => [response.status, await response.json()] as const
@@ -66,6 +69,24 @@ describe('harness login routes', () => {
       { agentId: 'codex', status: 'unauthenticated' },
       { agentId: 'codex', status: 'authenticated' },
     ])
+  })
+
+  it('does not run the program when the audit cannot be written, and keeps nothing from it', async () => {
+    const { t, ranFile } = await fixture()
+    const desktop = await t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
+    const append = t.host.security.audit.append.bind(t.host.security.audit)
+    const failing = vi
+      .spyOn(t.host.security.audit, 'append')
+      .mockImplementation(event =>
+        event.action.startsWith('agent.login.') ? Promise.reject(new AppError(503, 'audit-unavailable', '审计不可用')) : append(event),
+      )
+    expect((await desktop.request('harnesses/codex/login-status', { body: {} })).status).toBe(503)
+    await expect(stat(ranFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    failing.mockRestore()
+    expect(await reply(await desktop.request('harnesses/codex/login-status', { body: {} }))).toEqual([200, { status: 'unauthenticated' }])
+    expect(await readFile(ranFile, 'utf8')).toBe('x')
+    expect((await audited(t, 'agent.login.requested')).map(entry => entry.detail)).toEqual([{ agentId: 'codex' }])
+    expect((await audited(t, 'agent.login.checked')).map(entry => entry.detail)).toEqual([{ agentId: 'codex', status: 'unauthenticated' }])
   })
 
   it('needs `run`, and a preset with no saved definition needs a device that could save one', async () => {

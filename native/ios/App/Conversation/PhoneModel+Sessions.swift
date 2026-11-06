@@ -54,8 +54,8 @@ extension PhoneModel {
         if generation == current { controlsInFlight.remove(path) }
     }
     /**
-     * The Face ID sheet appears by itself the first time content is opened. Declining it is not an error: the conversation
-     * offers the one way back, and nothing else nags.
+     * Content opens without asking. With Face ID turned on in 设置, its sheet appears by itself the first time content is
+     * opened; declining it is not an error: the conversation offers the one way back, and nothing else nags.
      */
     func openSession(_ id: String) async {
         guard let workspace else { sessionId = id; detail = .null; return }

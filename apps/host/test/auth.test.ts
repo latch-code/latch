@@ -876,6 +876,59 @@ describe('this computer', () => {
       else await expect(device).rejects.toMatchObject({ status: 409, code: 'presence-busy' })
     }
   })
+
+  it('keeps asking on host.sock once a device was ever enrolled, after its record is pruned too', async () => {
+    const DAY = 24 * 60 * 60_000
+    const reopened = async (context: Fixture) => {
+      const devices = await context.reopen()
+      const now = () => context.clock.now
+      const presence = new PresenceService({ backend: context.presence, hostId, audit: context.audit, now, blockingTasks: async () => [] })
+      return {
+        devices,
+        enrollments: new EnrollmentService({ hostId, devices, presence, audit: context.audit, directory: context.authDir, now }),
+      }
+    }
+    // Every device revoked, and the revoked records outlived; or the desktop alone, left unused until its record goes.
+    for (const revoke of [true, false]) {
+      const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+      const desktop = await enroll(context, unix)
+      if (revoke) await context.devices.revoke(desktop.id, 'manual', actor)
+      context.clock.now += (revoke ? 0 : CREDENTIAL_LIFETIME) + 91 * DAY
+      const later = await reopened(context)
+      expect(later.devices.list()).toEqual([])
+      expect((await later.enrollments.info(unix)).firstDevice).toBe(false)
+      const view = await later.enrollments.create({ publicKey: testDeviceKey().spki, name: '又一台' }, unix)
+      expect(view.status).toBe('pending')
+      expect(context.presence.requests).toHaveLength(1)
+      // Written down, so a restart does not forget it either.
+      expect((await (await reopened(context)).enrollments.info(unix)).firstDevice).toBe(false)
+    }
+  })
+
+  it('lets only one of two concurrent first connections on host.sock in without a confirmation', async () => {
+    const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+    const keys = [testDeviceKey(), testDeviceKey()]
+    const views = await Promise.all(keys.map(key => context.enrollments.create({ publicKey: key.spki, name: '桌面' }, unix)))
+    expect(views.map(view => view.status).toSorted()).toEqual(['approved', 'pending'])
+    await context.presence.waitForRequest()
+    expect(context.presence.requests).toHaveLength(1)
+
+    // A device written while the first connection completes ends it: it was no longer the first.
+    const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
+    const offlineKey = testDeviceKey()
+    const offline = await context.enrollments.create({ publicKey: offlineKey.spki, name: '离线', offlineCode: ticket.code }, unix)
+    const first = views.findIndex(view => view.status === 'approved')
+    const sign = (key: TestDeviceKey, view: { id: string; nonce?: string }) => key.sign(enrollSigningText(hostId, view.id, view.nonce!))
+    const results = await Promise.allSettled([
+      context.enrollments.complete(offline.id, sign(offlineKey, offline), unix),
+      context.enrollments.complete(views[first]!.id, sign(keys[first]!, views[first]!), unix),
+    ])
+    expect(results[0]).toMatchObject({ status: 'fulfilled' })
+    expect(results[1]).toMatchObject({ status: 'rejected', reason: { status: 410, code: 'enrollment-cancelled' } })
+    expect(context.enrollments.status(views[first]!.id, unix).status).toBe('cancelled')
+    expect(context.devices.list().map(device => device.name)).toEqual(['离线'])
+    expect(context.auditRecords().filter(record => record.action === 'device.enrolled' && record.stepup === 'none')).toEqual([])
+  })
 })
 
 describe('enrollment', () => {

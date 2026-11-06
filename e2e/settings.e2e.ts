@@ -90,7 +90,7 @@ describe('settings navigation motion', () => {
         easing: token.ePush,
       })
       const level = settings.locator('.settings-level[data-state="top"]')
-      await level.getByRole('heading', { name: '开源许可', exact: true, level: 2 }).first().waitFor()
+      await level.getByRole('heading', { name: '许可与条款', exact: true, level: 2 }).first().waitFor()
       // One way back per level: the bar's, named after where it goes; the section's own bar is covered.
       expect(await settings.locator('.settings-back').count()).toBe(0)
       const back = await motions(page, () => level.getByRole('button', { name: '返回关于', exact: true }).click())

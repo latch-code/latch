@@ -183,12 +183,14 @@ public protocol NativeIdentityProvider: Sendable {
 }
 public struct SecureIdentityProvider: NativeIdentityProvider {
     public let reference: DeviceKeyReference
-    public init(reference: DeviceKeyReference) { self.reference = reference }
+    /** Read at each content-window signature, so turning Face ID on or off applies to the next window. */
+    private let askOwner: @Sendable () -> Bool
+    public init(reference: DeviceKeyReference, askOwner: @escaping @Sendable () -> Bool = { false }) { self.reference = reference; self.askOwner = askOwner }
     public var connectionSpki: Data { reference.connectionSpki }
     public var verificationSpki: Data { reference.verificationSpki }
     public func identity() throws -> PlatformIdentity { try SecureDeviceKeys.connectionIdentity(reference) }
     public func signEnrollment(_ statement: Data) throws -> Data { try SecureDeviceKeys.signEnrollment(reference, statement: statement) }
-    public func signVerification(_ statement: Data) async throws -> Data { try await SecureDeviceKeys.signVerification(reference, statement: statement) }
+    public func signVerification(_ statement: Data) async throws -> Data { try await SecureDeviceKeys.signVerification(reference, statement: statement, askOwner: askOwner()) }
 }
 
 public struct NativeEnrollment: Sendable {

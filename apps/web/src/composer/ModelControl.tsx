@@ -60,7 +60,11 @@ const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切
 /** The built-in row's first value: no level sent, the model's own default. Not a valid wire level, so it never collides. */
 const MODEL_DEFAULT_LEVEL = '~default'
 
-/** 思考: a segmented row of the levels on offer, or a list when there are too many; the menu stays open. */
+/**
+ * 思考: a segmented row of the levels on offer, or a list when there are too many; the menu stays open. A level the
+ * Harness describes keeps its own words: on hover in the row, in the list, and under the row for the chosen one, so a
+ * phone shows them too.
+ */
 function LevelRow({
   value,
   options,
@@ -68,19 +72,29 @@ function LevelRow({
   onChoose,
 }: {
   value: string
-  options: Array<{ value: string; label: string }>
+  options: Array<{ value: string; label: string; description?: string }>
   disabled: boolean
   onChoose: (value: string) => void
 }) {
+  const chosen = options.find(option => option.value === value)?.description
   return (
-    <div className="model-setting">
-      <span className="model-setting-name">思考</span>
-      {options.length <= SEGMENTED_LEVELS ? (
-        <SegmentedControl label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
-      ) : (
-        <ValuePicker variant="row" label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
-      )}
-    </div>
+    <>
+      <div className="model-setting">
+        <span className="model-setting-name">思考</span>
+        {options.length <= SEGMENTED_LEVELS ? (
+          <SegmentedControl
+            label="思考"
+            value={value}
+            disabled={disabled}
+            options={options.map(({ description, ...option }) => (description ? { ...option, title: description } : option))}
+            onValueChange={onChoose}
+          />
+        ) : (
+          <ValuePicker variant="row" label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
+        )}
+      </div>
+      {chosen && <p className="model-note">{chosen}</p>}
+    </>
   )
 }
 
@@ -815,7 +829,14 @@ function HarnessModelPicker({
             <>
               <LevelRow
                 value={thought.currentValue}
-                options={agentConfigValues(thought).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
+                options={agentConfigValues(thought).map(item => ({
+                  value: item.value,
+                  label: escapeHiddenCharacters(item.name),
+                  // Some Harnesses repeat the level's name as its description, which says nothing more.
+                  ...(item.description && item.description.trim().toLowerCase() !== item.name.trim().toLowerCase()
+                    ? { description: escapeHiddenCharacters(item.description) }
+                    : {}),
+                }))}
                 disabled={blocked}
                 onChoose={value => {
                   void choose(thought.id, value)

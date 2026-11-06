@@ -49,13 +49,15 @@ enum PhoneArea: String { case personal, projects }
     @Published var controlsInFlight: Set<String> = []
     /** The core keeps one unconfirmed control at a time, so they go out in the order they were asked for. */
     var controlTail: Task<Void, Never>?
-    /** Unsent text the composer took off the screen with a closed window, back after the next Face ID. In memory only. */
+    /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
     var heldDrafts: [String: String] = [:]
     private var shelfCache: (query: String, shelves: [PhoneShelf])?
     private var hostClockOffset: TimeInterval = 0
     /** Where to come back to after the App returns from the background: within this process only. */
     private var resumeSession: String?
     private var lastHostId: String?
+    /** When a window that ran out last opened again by itself; a clock far off the Mac's cannot make it spin. */
+    private var lastReopen: ContinuousClock.Instant?
     /** Drawn on every update of anything, so it is worked out once per list and search. */
     func shelves(query: String) -> [PhoneShelf] {
         if let shelfCache, shelfCache.query == query { return shelfCache.shelves }
@@ -147,7 +149,7 @@ enum PhoneArea: String { case personal, projects }
         do {
             let vault = try await store.hostVault(host)
             guard generation == current else { await vault.lock(); return }
-            let next = try NativeWorkspace(device: host.device, keys: SecureIdentityProvider(reference: host.keys), vault: vault,
+            let next = try NativeWorkspace(device: host.device, keys: SecureIdentityProvider(reference: host.keys, askOwner: { PhoneFaceID.isOn }), vault: vault,
                 onRevoked: { [weak self, store] proof in Task { @MainActor in await self?.retire(host, proof: proof, retiredStore: store) } })
             workspace = next
             bookRefresher = NativeBookRefresher(workspace: next, persist: { device in
@@ -225,7 +227,17 @@ enum PhoneArea: String { case personal, projects }
             guard !Task.isCancelled, current == generation else { return }
             clearPrivateContent(); verifiedUntil = nil
             eventTask?.cancel(); startEvents()
+            // Its own task: opening binds a new lease, which cancels this one.
+            if PhoneUnlock.reopensAtExpiry(faceID: PhoneFaceID.isOn) { Task { await reopenContent(current) } }
         }
+    }
+    /** What was on screen when its window ran out comes back without a tap; nothing asks the person. */
+    private func reopenContent(_ current: UUID) async {
+        guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
+        if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
+        lastReopen = .now
+        if area == .projects, let sessionId { await openSession(sessionId) }
+        else if area == .personal { await refreshPersonal() }
     }
     @discardableResult func refresh(personal: Bool = true) async -> Bool {
         guard let workspace else { return false }

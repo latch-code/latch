@@ -3,9 +3,10 @@ import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
+import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
 import { DraftModelControl, SessionModelControl } from '../src/composer/ModelControl.tsx'
 import { draftConfig, rememberedConfig, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
-import { contextUse, contextWords, draftPermission, permissionView } from '../src/composer/permission.ts'
+import { contextUse, contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
   agentConfigValues,
@@ -200,6 +201,46 @@ describe('the 权限 chip', () => {
     expect(draft({ approvals: 'none', readback: 'none' })).toMatchObject({ label: '不询问 · 由 Fake Agent 决定', amber: true })
     expect(draft({ approvals: 'prompts', readback: 'none' })).toMatchObject({ label: '权限无法确认', amber: true })
     expect(draft()).toMatchObject({ label: '开始后可以选', amber: false })
+  })
+
+  it('says an undeclared Harness that can be read tells its modes when read, not only once started', () => {
+    const readable = { ...harness, catalogueRead: { when: 'select' as const } }
+    const run = { scopes: new Set(['view', 'run'] as const) }
+    expect(draftRead(readable, run, false)).toBe('readable')
+    expect(draftRead(readable, run, true)).toBe('reading')
+    expect(draftRead({ ...readable, catalogueRead: { when: 'select', last: { at: 'x', ok: false } } }, run, false)).toBe('readable')
+    // Nothing to read with: no read, a list already there, a device that cannot start one, or a Harness that cannot start.
+    expect(draftRead(harness, run, false)).toBeUndefined()
+    expect(
+      draftRead({ ...readable, catalogue: { options: [], perModel: [], reportedAt: 'x', source: 'check' } }, run, false),
+    ).toBeUndefined()
+    expect(draftRead(readable, { scopes: new Set(['view'] as const) }, false)).toBeUndefined()
+    expect(draftRead({ ...readable, status: 'unavailable' }, run, false)).toBeUndefined()
+    // Another device's read is still a read under way.
+    expect(draftRead(harness, { scopes: new Set(['view'] as const) }, true)).toBe('reading')
+
+    const before = draftPermission(readable, 'agent', undefined, 'readable')
+    expect(before).toMatchObject({ label: '读取后可以选', amber: false })
+    expect(before?.line).toBe('Fake Agent 读取或开始时告诉 Latch 它有哪些权限模式')
+    expect(draftPermission(readable, 'agent', undefined, 'reading')).toMatchObject({
+      label: '正在读取…',
+      line: '正在读取 Fake Agent 的权限模式…',
+      amber: false,
+    })
+    // Without a read the agent tells only once started.
+    expect(draftPermission(harness, 'agent')?.line).toBe('Fake Agent 开始后才告诉 Latch 它有哪些权限模式')
+    // What a Harness declares, and a chat, need no read.
+    expect(
+      draftPermission({ ...readable, permission: { approvals: 'none', readback: 'none' } }, 'agent', undefined, 'reading'),
+    ).toMatchObject({
+      label: '不询问 · 由 Fake Agent 决定',
+    })
+    expect(draftPermission(readable, 'chat', undefined, 'reading')).toMatchObject({ label: '不读写文件' })
+    // Opening 权限 reads only where the read is what tells Latch the modes.
+    expect(readsOnPermission(readable, run)).toBe(true)
+    expect(readsOnPermission({ ...readable, permission: { approvals: 'prompts', readback: 'mode' } }, run)).toBe(false)
+    expect(readsOnPermission({ ...readable, catalogueRead: { when: 'request' } }, run)).toBe(false)
+    expect(readsOnPermission(readable, { scopes: new Set(['view'] as const) })).toBe(false)
   })
 
   it('offers wider rows on another device too', () => {

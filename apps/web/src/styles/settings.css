@@ -1159,7 +1159,11 @@
   line-height: var(--lh-ui-para);
 }
 .agent-probe-meta > span {
+  /* Each name stays with its version when the line wraps, unless it alone is wider than the line. */
+  display: inline-block;
+  max-width: 100%;
   margin-left: var(--sp-8);
+  overflow-wrap: anywhere;
 }
 .agent-probe-diagnostic {
   display: grid;

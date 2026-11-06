@@ -31,8 +31,25 @@ const modeOption = (config: readonly SessionConfigOption[]) => config.find(optio
 
 type PermissionHarness = Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'>
 
+/** Before the first send, how a draft can still learn the Harness's modes without a session. */
+export type DraftRead = 'reading' | 'readable'
+
+/**
+ * A read of the Harness's lists under way, here or on the Host, or one this device can start because nothing is known
+ * of the Harness yet.
+ */
+export function draftRead(
+  harness: Pick<HarnessInfo, 'catalogue' | 'catalogueRead' | 'status'> | undefined,
+  access: Pick<DeviceAccess, 'scopes'>,
+  reading: boolean,
+): DraftRead | undefined {
+  if (!harness) return undefined
+  if (reading) return 'reading'
+  return harness.catalogueRead && !harness.catalogue && harness.status === 'ready' && access.scopes.has('run') ? 'readable' : undefined
+}
+
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */
-function declaredPermission(harness: PermissionHarness): PermissionView {
+function declaredPermission(harness: PermissionHarness, read?: DraftRead): PermissionView {
   if (harness.level !== 'L3') return { label: MODE_COPY.askFirst, line: MODE_COPY.askBeforeWritesLine, icon: 'shield', amber: false }
   const declared = harness.permission
   if (declared?.approvals === 'none')
@@ -57,7 +74,10 @@ function declaredPermission(harness: PermissionHarness): PermissionView {
       amber: false,
       note: MODE_COPY.changeAfterStart(harness.capabilities.display.label),
     }
-  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(harness.capabilities.display.label), icon: 'shield', amber: false }
+  const name = harness.capabilities.display.label
+  if (read === 'reading') return { label: MODE_COPY.reading, line: MODE_COPY.readingLine(name), icon: 'shield', amber: false }
+  if (read === 'readable') return { label: MODE_COPY.afterRead, line: MODE_COPY.afterReadLine(name), icon: 'shield', amber: false }
+  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(name), icon: 'shield', amber: false }
 }
 
 /** No tools run, so nothing can be asked and no mode applies. */
@@ -115,17 +135,18 @@ export function permissionView(input: {
 }
 
 /**
- * Before the first send: the modes the Harness's last session offered, with the one this draft picked, when a session has
- * told Latch; otherwise only what the harness declares.
+ * Before the first send: the modes the Harness's last session or read offered, with the one this draft picked, when one
+ * has told Latch; otherwise what the harness declares, or that a read can tell (`read`).
  */
 export function draftPermission(
   harness: PermissionHarness | undefined,
   mode: TaskMode,
   config?: readonly SessionConfigOption[],
+  read?: DraftRead,
 ): PermissionView | undefined {
   if (!harness) return undefined
   if (mode === 'chat') return chatPermission
-  if (!config || !modeOption(config)) return declaredPermission(harness)
+  if (!config || !modeOption(config)) return declaredPermission(harness, read)
   return permissionView({
     harness,
     mode,
