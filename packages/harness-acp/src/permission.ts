@@ -110,7 +110,8 @@ export function launchHash(input: {
   args: string[]
   definitionEnv: Record<string, string>
   presetId?: string
-  profileVersion: 1
+  /** The preset's profile version, or 1 for a definition with no profile. */
+  profileVersion: number
   projectConfig?: string
   folders?: LaunchFolders
   /** The names a profile inherits from the person's environment; never their values, since a client receives this hash. */

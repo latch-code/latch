@@ -261,6 +261,9 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | --- | --- |
 | `FAKE_ACP_STATE` | 会话状态文件。多个进程（每会话一个）共享它，每次保存都合并磁盘上的内容 |
 | `FAKE_ACP_LOGIN_FILE` | 像真实 CLI：`login status` 按这个文件回答并退出，`login` 写它；文件不存在，或启动时不存在时（进程只读一次登录），`session/new` 与提示都返回 `auth_required` |
+| `FAKE_ACP_TERMINAL_LOGIN` | 客户端声明 `auth.terminal` 时列出一个 `terminal` 登录（参数 `login`，变量 `FAKE_ACP_LOGIN_VIA`），运行它就写 `FAKE_ACP_LOGIN_FILE`；`bad` 另列一个点名 `NODE_OPTIONS` 的 |
+| `FAKE_ACP_AUTH_STATUS`、`FAKE_ACP_AUTH_STATUS_DELAY` | 在 `initialize` 的回答之后（延迟若干毫秒）与退出登录之后推送 `_auth/status_update`：`1` 按登录文件报 `account`（带客户端不该留下的 email 与组织）或 `none`，`api_key` 报这一类，`silent` 只宣告不推送 |
+| `FAKE_ACP_LOGOUT` | 宣告并处理 ACP `logout`：删掉登录文件 |
 | `FAKE_ACP_LOG` | 逐行 JSON 日志：收到的消息、启动时的 cwd、定义之后的启动参数（`argv`）、收到的 `LATCH_*` 变量名（`latchEnv`，应为空）与 `TMPDIR` |
 | `FAKE_ACP_STORE` | Latch 的 `acp.json`，用来检查收到提示时会话是否已持久化 |
 | `FAKE_ACP_CAPS`、`FAKE_ACP_CAPS_FILE` | `resume`、`load`、`delete`、`close`、`dirs`（`sessionCapabilities.additionalDirectories`）的逗号列表；设置了 `FAKE_ACP_CAPS_FILE` 时每个进程启动时从这个文件读取，同一定义之后的进程因此可以改变声明 |
@@ -534,7 +537,7 @@ Web 个人助手：`personal.e2e.ts` 覆盖显式记忆、无项目对话和撤�
 
 `e2e/archive.e2e.ts` 通过临时 Host 的真实已结束会话验证三种宽度的归档批量恢复、删除确认与 Shift 连选；核对请求 ID 集合、实际回执、快照和删除后 404，并保留工作目录中的文件。标为未读经真实菜单操作，刷新后保留，打开对应会话后清除，不把本设备阅读标记当作 Host 内容变化。
 
-`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住模型不记住模式，重新载入，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色），以及没有权限 profile 的 Harness 在手机与桌面上先打开权限也会读取并在开始前列出模式。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
+`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话、在设置里取消与确认退出登录、「测试启动」读到不同的登录状态时「登录」一组跟着变（Host 丢掉记住的回答也在 `apps/host/test/agent-login.test.ts`）、握手被拒绝而状态命令仍说已登录时这一组写「登录可能已失效」并列出登录方式（手机深色、新开页面后仍在）；Agent 声明的终端登录、登录推送与退出的规则在 `packages/harness-acp/test/auth.test.ts` 与 `apps/host/test/agent-login.test.ts`，状态命令与推送谁更新、页面显示哪一个在 `apps/host/test/agent-login.test.ts` 与 `apps/web/test/harness-login.test.ts`；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，四个模式时「按规则放行」收在「更多」里（展开、收起、再展开后选，手机表单里同样），选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住为这个 Harness 选过的模型、思考与模式，重新载入后也在，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色），以及没有权限 profile 的 Harness 在手机与桌面上先打开权限也会读取并在开始前列出模式。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
 
 `e2e/desktop-first-use.e2e.ts` 使用 `demo:false`、进程内假 Provider、真实假 ACP 和独立 Electron 数据目录检查首次使用与斜杠命令。桌面和平板验证逐步跳过、About 重新显示与首次真实会话后隐藏；手机沿实际新会话面板验证入口。命令来自 Agent 的实际更新，检查模板 ID／名称匹配、键盘只插入草稿、来源分组、排序、空态与三宽可达，并核对 ACP 日志中没有额外 prompt；不启用系统通知。
 

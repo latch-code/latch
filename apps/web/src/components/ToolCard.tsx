@@ -1,5 +1,5 @@
 import { Fragment, memo, useId, useMemo, useRef, useState } from 'react'
-import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, FilePlus, RotateCcw, TimerOff, X } from 'lucide-react'
+import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, FilePlus, RotateCcw, Scale, TimerOff, X } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
@@ -7,6 +7,7 @@ import {
   diffStat,
   failureReason,
   hasDiffs,
+  isReview,
   ranDespite,
   shownToolOutput,
   shownToolState,
@@ -25,6 +26,7 @@ import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
+import { JUDGED_COPY } from '../core/securityCopy.ts'
 import { Button, Collapse, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
 import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
 import { useSeen } from '../preview/viewportGate.ts'
@@ -65,7 +67,9 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && a.output === b.output
     && a.locations?.join('\n') === b.locations?.join('\n')
     && sameDiffs(a.diffs, b.diffs)
-    && sameDecision(a.decision, b.decision))
+    && sameDecision(a.decision, b.decision)
+    && a.judged?.outcome === b.judged?.outcome
+    && a.judged?.by === b.judged?.by)
 
 /** How long the tool ran, ticking every second while it runs and frozen once it settles; nothing under a second. */
 function ToolTime({ message, frozen }: { message: Message; frozen: boolean }) {
@@ -184,7 +188,14 @@ export const ToolCard = memo(
     const rootId = folder && /^[A-Za-z0-9_-]{1,32}$/u.test(folder) ? folder : undefined
     const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
     const failed = shown === 'failed'
-    const KindIcon = newFile ? FilePlus : toolKindIcons[kind]
+    const judged = tool?.judged
+    const review = isReview(tool)
+    // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
+    const judgedWords =
+      judged && (state === 'completed' || state === 'failed') && !(state === 'failed' && judged.outcome === 'unasked')
+        ? JUDGED_COPY[judged.outcome]
+        : undefined
+    const KindIcon = newFile ? FilePlus : review ? Scale : toolKindIcons[kind]
     const glyph = failed ? (
       <X className="process-failed" size={12} strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'cancelled' || shown === 'rejected' ? (
@@ -204,6 +215,7 @@ export const ToolCard = memo(
       title !== label.object ? title : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
+      judged ? (review ? JUDGED_COPY.reviewNote(judged.by) : JUDGED_COPY.unaskedNote(judged.by)) : undefined,
     ]
       .filter(Boolean)
       .join('\n')
@@ -232,7 +244,7 @@ export const ToolCard = memo(
           && (unrun || (decision.outcome === 'allowed' && (state === 'completed' || state === 'running'))) ? (
           <DecisionWords decision={decision} />
         ) : (
-          stateWords[shown]
+          (stateWords[shown] ?? judgedWords)
         )}
       </StatusWords>
     )
@@ -308,7 +320,12 @@ export const ToolCard = memo(
                       ))}
                     </p>
                   )}
-                  {!applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
+                  {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
+                  {review ? (
+                    <p className="muted-line">{JUDGED_COPY.reviewNote(judged!.by)}</p>
+                  ) : (
+                    !applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />
+                  )}
                   {showOutput
                     && !applied
                     && (output ? (

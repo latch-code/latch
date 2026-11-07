@@ -144,6 +144,7 @@ const toolDetail = z.object({
       via: z.enum(['this-mac', 'other-device']).optional(),
     })
     .optional(),
+  judged: z.object({ by: z.string(), outcome: z.enum(['approved', 'denied', 'none', 'unasked']) }).optional(),
 })
 const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user']), text: z.string() })) })
 // Its steps are messages, and may hold its own subagents.

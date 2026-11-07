@@ -161,6 +161,11 @@ export interface Bridge {
    * `before` runs once, just before a process starts, and its failure stops the read.
    */
   readCatalogue?(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }>
+  /**
+   * Optional, with `HarnessLogin.logout`. Asks the harness to log out, so that a person can sign in with another account.
+   * Refused while one of its sessions runs.
+   */
+  logout?(): Promise<void>
   /** Optional. Model IDs a person typed; see `HarnessInfo.customModels`. */
   customModels?(): string[]
   setCustomModels?(models: readonly string[]): Promise<void>

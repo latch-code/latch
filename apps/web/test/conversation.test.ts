@@ -297,6 +297,12 @@ describe("a turn's blocks and its fold", () => {
     expect(foldWords(firstTurn([user('u', { turn: { activeMs: 5000 } }), tool('t', { state: 'failed', text: 'x' })]))).toBe(
       '已工作 5 秒 · 1 步失败',
     )
+    // A Harness's own model stopping a request is its verdict, not a failed step, and the fold does not hide it.
+    const review = (id: string, outcome: 'approved' | 'denied', state: 'completed' | 'failed') =>
+      tool(id, { state, text: 'x', tool: { kind: 'think', judged: { by: 'Codex', outcome } } })
+    expect(foldWords(firstTurn([user('u'), review('r1', 'approved', 'completed'), review('r2', 'denied', 'failed')]))).toBe(
+      '已工作 · 模型拦下 1 次',
+    )
   })
 
   it("joins a settled turn's finished reads into one row, and a live turn's never", () => {

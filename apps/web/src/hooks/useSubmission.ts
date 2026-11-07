@@ -15,9 +15,9 @@ import {
   draftStart,
   findHarness,
   forkedChoice,
+  harnessPicks,
   pinnedChoice,
   readChoice,
-  rememberedConfig,
   resolveChoice,
   startConfig,
   writeChoice,
@@ -101,16 +101,10 @@ export function useSubmission({
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
-  /** What this device keeps for its next draft: the picks of a Harness's own options, never its mode. */
-  const keep = (choice: ComposerChoice): ComposerChoice => {
-    const { config, ...rest } = choice
-    const kept = rememberedConfig(findHarness(catalog, choice.harnessId), config)
-    return kept ? { ...rest, config: kept } : rest
-  }
   const updateChoice = (patch: Partial<ComposerChoice>) => {
-    // A Harness's options are its own: another Harness starts on its defaults.
+    // A Harness's options are its own: another Harness starts on what was last picked for it, else its defaults.
     if (patch.harnessId !== undefined && patch.harnessId !== choice.harnessId && !('config' in patch))
-      patch = { ...patch, config: undefined }
+      patch = { ...patch, ...harnessPicks(choice, patch.harnessId) }
     setFork(previous => {
       if (!previous?.choice) return previous
       // A person picking another place or Harness leaves the source's mode behind.
@@ -122,13 +116,13 @@ export function useSubmission({
       setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
       const kept = { ...stored, ...rest }
       setStored(kept)
-      writeChoice(deviceId, keep({ ...kept, harnessId: harnessId ?? choice.harnessId, mode: kept.mode ?? remembered.mode }))
+      writeChoice(deviceId, { ...kept, harnessId: harnessId ?? choice.harnessId, mode: kept.mode ?? remembered.mode })
       return
     }
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
     const next = { ...stored, ...remembered, ...patch }
     setStored(next)
-    writeChoice(deviceId, keep(resolveChoice(catalog, next)))
+    writeChoice(deviceId, resolveChoice(catalog, next))
   }
 
   useEffect(() => {
@@ -300,11 +294,6 @@ export function useSubmission({
       if (submission.sessionId === undefined && foreground) setFork(null)
       // The pick went with this session, unless another was made while a slow start was waiting.
       if (submission.sessionId === undefined) setDraftPick(current => (current === draftPick ? null : current))
-      // A mode is chosen for one session; the next draft opens on the starting one again.
-      if (submission.sessionId === undefined && submission.config?.length)
-        setStored(current =>
-          current?.config ? { ...current, config: rememberedConfig(findHarness(catalog, current.harnessId), current.config) } : current,
-        )
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }

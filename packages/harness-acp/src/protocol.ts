@@ -7,13 +7,18 @@ export const PROTOCOL_VERSION = 1
  * What Latch tells every agent it can take. No file system, terminal or elicitation, so agents keep those to themselves;
  * notices and compaction are shown in the transcript, so an agent reports them as such instead of as messages or tools;
  * subagents are shown where they began, and their requests for approval come to the session that started them.
+ * `terminalLogin`: the agent may list logins that run its own program in a terminal on this computer, which Latch can
+ * open; false for a harness whose vendor leaves signing in to its own flow.
  */
-export const CLIENT_CAPABILITIES = {
-  fs: { readTextFile: false, writeTextFile: false },
-  terminal: false,
-  session: { notices: {}, compaction: {} },
-  subagents: {},
-} as const
+export function clientCapabilities(terminalLogin: boolean) {
+  return {
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+    session: { notices: {}, compaction: {} },
+    subagents: {},
+    ...(terminalLogin ? { auth: { terminal: true } } : {}),
+  }
+}
 export type RpcId = string | number
 
 export const RPC = {
@@ -54,11 +59,25 @@ export const initializeResult = z.object({
         })
         .nullish()
         .catch(undefined),
+      /** `logout` present: the agent logs out on request. */
+      auth: z.object({ logout: z.unknown().optional() }).nullish().catch(undefined),
+      /** `authStatus` present: the agent pushes `_auth/status_update` after initialize and on each change. */
+      _meta: z.object({ authStatus: z.unknown().optional() }).nullish().catch(undefined),
     })
     .nullish()
     .catch(undefined),
+  /** `type` absent means the agent logs in itself through `authenticate`; Latch reads only `terminal`. */
   authMethods: z
-    .array(z.object({ id: z.string(), name: z.string(), description: optionalText }))
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        description: optionalText,
+        type: optionalText,
+        args: z.array(z.string()).nullish().catch(undefined),
+        env: z.record(z.string(), z.string()).nullish().catch(undefined),
+      }),
+    )
     .nullish()
     .catch(undefined),
   agentInfo: z.object({ name: optionalText, version: optionalText }).nullish().catch(undefined),
@@ -203,3 +222,12 @@ export const steerResult = z.object({ outcome: z.string().max(64) })
 export const STEER_METHOD = '_session/steering'
 
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })
+
+/**
+ * Which kind of credential the agent uses, as it pushes it outside ACP. Only `kind` and `label` are read: the rest
+ * (an account's email and organization among it) is dropped by the schema before anything keeps it.
+ */
+export const AUTH_STATUS_METHOD = '_auth/status_update'
+export const authStatusUpdate = z.object({
+  authStatus: z.object({ kind: z.string().max(64), label: z.string().max(2000).optional().catch(undefined) }),
+})

@@ -168,7 +168,10 @@ export function RunEndNote({
           </Button>
         )}
       </div>
-      {summary.runEnd?.reason === 'login-required' && login && <HarnessLoginSteps {...login} />}
+      {/* Without a command the turn's own note already says how to sign in. */}
+      {summary.runEnd?.reason === 'login-required' && login && (login.login.command !== undefined || login.login.methods) && (
+        <HarnessLoginSteps {...login} />
+      )}
       {line.unknown.length > 0 && (
         <ul className="run-end-list">
           {line.unknown.map(name => (

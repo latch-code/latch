@@ -9,7 +9,7 @@ import type { HarnessProfile } from './profiles/index.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
 
 export { agentProbePreview, probeAgent } from './probe.ts'
-export { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
+export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
 export { loadLoginShell } from './login-shell.ts'
 export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
@@ -61,8 +61,8 @@ function folderDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDri
 /** What a draft may say before the agent has started: the profile's facts, for an agent Latch has a profile for. */
 function permissionDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDriver, 'permission'> {
   if (!profile) return {}
-  const { approvals, readback, neverAskModes } = profile.permission
-  return { permission: { approvals, readback, ...(neverAskModes?.length ? { neverAskModes: [...neverAskModes] } : {}) } }
+  const { approvals, readback, modeTiers } = profile.permission
+  return { permission: { approvals, readback, ...(modeTiers ? { modeTiers: structuredClone(modeTiers) } : {}) } }
 }
 
 const ACP_CAPABILITIES = {

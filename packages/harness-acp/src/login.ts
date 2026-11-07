@@ -2,9 +2,13 @@
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { AGENT_PRESETS, isReservedAgentEnvName, type AgentRecord, type HarnessLogin } from '@latch/protocol'
+import { AppError } from '@latch/sdk'
+import { redactSecrets } from '@latch/core/node-kit'
+import { authFacts, type TerminalLogin } from './auth.ts'
+import { redactor, resolveCommand } from './command.ts'
 import { agentEnvironment } from './environment.ts'
 import { selectProfile } from './permission.ts'
-import type { LoginStatus } from './profiles/index.ts'
+import type { LoginCheck } from './profiles/index.ts'
 
 const STATUS_TIMEOUT_MS = 10_000
 const MAX_OUTPUT = 16 * 1024
@@ -31,17 +35,70 @@ function loginProgram(record: AgentRecord): { command: string; args: readonly st
   return adapter ? { command: login.bundled!.command, args: login.bundled!.args, path: adapter, bundled: true } : undefined
 }
 
-/** What a client shows; Host-only details stay behind. Absent: Latch knows no login command for this harness. */
-export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
-  const selection = selectProfile(record)
-  const program = loginProgram(record)
-  if (!program) return undefined
-  const note = selection.preset?.login?.note
-  return {
-    command: [program.command, ...program.args].join(' '),
-    ...(note ? { note } : {}),
-    ...(selection.profile?.loginStatus ? { checkable: true as const } : {}),
+/** The program and arguments a profile's status command runs, when the Host may run it. */
+function statusProgram(record: AgentRecord): { path: string; args: readonly string[] } | undefined {
+  const { preset, profile } = selectProfile(record)
+  const status = profile?.loginStatus
+  if (!status || !preset || !locate) return undefined
+  if (status.program === 'adapter') {
+    const path = locate(preset.command)
+    return path ? { path, args: status.args } : undefined
   }
+  const program = loginProgram(record)
+  const args = program?.bundled ? status.bundledArgs : status.args
+  return program && args ? { path: program.path, args } : undefined
+}
+
+/**
+ * The logins the harness advertised, by the program it runs now. None for a harness whose vendor leaves signing in to
+ * its own flow: Latch does not ask it for them, and does not run one it lists anyway.
+ */
+function advertised(record: AgentRecord): { path: string; logins: TerminalLogin[]; logout: boolean } | undefined {
+  const path = resolveCommand(record.command)
+  const known = path === undefined ? undefined : authFacts(record)?.advertisedBy(path)
+  if (!path || !known) return undefined
+  return { path, logins: selectProfile(record).preset?.signIn ? [] : known.logins, logout: known.logout }
+}
+
+const PLAIN_WORD = /^[\w./:=@%+,-]+$/u
+const typed = (part: string) => (PLAIN_WORD.test(part) ? part : shellQuote(part))
+
+/** A terminal login as a person would type it, with values that look like secrets masked. */
+function loginLine(record: AgentRecord, login: TerminalLogin): string {
+  const line = [
+    ...Object.entries(login.env).map(([name, value]) => `${name}=${typed(value)}`),
+    ...[record.command, ...record.args, ...login.args].map(typed),
+  ].join(' ')
+  return redactSecrets(redactor(record.env)(line))
+}
+
+/** What a client shows; Host-only details stay behind. Absent: Latch knows nothing about logging in to this harness. */
+export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
+  const preset = selectProfile(record).preset
+  const known = advertised(record)
+  const methods = known?.logins ?? []
+  const program = methods.length ? undefined : loginProgram(record)
+  const note = program ? preset?.login?.note : preset?.signIn
+  const checkable = statusProgram(record) !== undefined
+  const reported = authFacts(record)?.reported()
+  const login: HarnessLogin = {
+    ...(program ? { command: [program.command, ...program.args].join(' ') } : {}),
+    ...(note ? { note } : {}),
+    ...(checkable ? { checkable: true as const } : {}),
+    ...(methods.length
+      ? {
+          methods: methods.map(method => ({
+            id: method.id,
+            name: method.name,
+            ...(method.description ? { description: method.description } : {}),
+            command: loginLine(record, method),
+          })),
+        }
+      : {}),
+    ...(known?.logout ? { logout: true as const } : {}),
+    ...(reported ? { reported } : {}),
+  }
+  return login.command || login.methods || login.checkable || login.logout || login.reported ? login : undefined
 }
 
 interface RunOptions {
@@ -100,17 +157,24 @@ function runProgram(
 }
 
 /**
+ * Whether the status command says something a harness's own report does not, so it runs although there is one: a date,
+ * and for a harness that reads its login again only when a turn starts, a verdict newer than an idle process's report.
+ */
+export function loginCheckAddsDate(record: AgentRecord): boolean {
+  return selectProfile(record).profile?.loginStatus?.expires === true && statusProgram(record) !== undefined
+}
+
+/**
  * Runs the profile's status command and reads only its verdict. Three states, like the rest of the page: a command that
  * times out, crashes or says anything else is `unknown`, which no client presents as logged out.
  */
-export async function checkLogin(record: AgentRecord, options: RunOptions = {}): Promise<LoginStatus> {
+export async function checkLogin(record: AgentRecord, options: RunOptions = {}): Promise<LoginCheck> {
   const status = selectProfile(record).profile?.loginStatus
-  const program = loginProgram(record)
-  if (!status || !program) return 'unknown'
-  const args = program.bundled ? status.bundledArgs : status.args
-  if (!args) return 'unknown'
-  const result = await runProgram(record, program.path, args, options)
-  return result ? status.read(result) : 'unknown'
+  const program = statusProgram(record)
+  if (!status || !program) return { status: 'unknown' }
+  const result = await runProgram(record, program.path, program.args, options)
+  const read = result ? status.read(result) : 'unknown'
+  return typeof read === 'string' ? { status: read } : read
 }
 
 /**
@@ -140,8 +204,35 @@ const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`
 /**
  * A `.command` file that runs the harness's own login in the person's terminal, with the environment that terminal has.
  * It removes itself first, holds no secret, and ends by saying what to do next. Undefined: no login command.
+ *
+ * `method`: one of the logins the harness advertised, run as the program the sessions run now with the definition's
+ * arguments, then the method's own arguments and variables. The definition's variables are not written into the file,
+ * since they may hold a key. A method is refused once the program found is no longer the one that advertised it.
  */
-export function loginTerminalScript(record: AgentRecord): string | undefined {
+export function loginTerminalScript(record: AgentRecord, method?: string): string | undefined {
+  if (method !== undefined) {
+    const login = advertised(record)?.logins.find(item => item.id === method)
+    if (!login) {
+      const before = authFacts(record)?.advertisement()
+      if (before && !selectProfile(record).preset?.signIn && before.logins.some(item => item.id === method))
+        throw new AppError(409, 'login-program-changed', '这个登录方式来自之前找到的程序，现在找到的不是它。请重新检测后再试。')
+      return undefined
+    }
+    const path = resolveCommand(record.command)!
+    const run = [
+      ...Object.entries(login.env).map(([name, value]) => `${name}=${shellQuote(value)}`),
+      ...[path, ...record.args, ...login.args].map(shellQuote),
+    ].join(' ')
+    const done = shellQuote('完成后回到 Latch。这个窗口可以关闭。')
+    const failed = shellQuote('登录没有完成。可以关掉这个窗口，回到 Latch 再试一次。')
+    return [
+      '#!/bin/sh',
+      'rm -f -- "$0"',
+      `printf '%s\\n\\n' ${shellQuote(login.name)}`,
+      `if ${run}; then printf '\\n%s\\n' ${done}; else printf '\\n%s\\n' ${failed}; fi`,
+      '',
+    ].join('\n')
+  }
   const program = loginProgram(record)
   if (!program) return undefined
   const login = selectProfile(record).preset?.login

@@ -22,7 +22,10 @@ export const AGENT_ACTIONS = {
   'agent.login.requested': z.strictObject({ agentId: opaqueId }),
   /** The program's status command ran; the status is all that is kept of what it said. */
   'agent.login.checked': z.strictObject({ agentId: opaqueId, status: z.enum(['authenticated', 'unauthenticated', 'unknown']) }),
-  'agent.login.opened': z.strictObject({ agentId: opaqueId }),
+  /** A login opened in this computer's terminal: `harness`, one the harness advertised; otherwise the preset's command. */
+  'agent.login.opened': z.strictObject({ agentId: opaqueId, source: z.literal('harness').optional() }),
+  /** The harness is about to be asked to log out. */
+  'agent.logout': z.strictObject({ agentId: opaqueId }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),
   'agent.deleted': z.strictObject({ agentId: opaqueId }),
 } as const

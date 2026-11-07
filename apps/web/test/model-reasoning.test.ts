@@ -5,7 +5,16 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
 import { DraftModelControl, SessionModelControl } from '../src/composer/ModelControl.tsx'
-import { draftConfig, rememberedConfig, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
+import {
+  draftConfig,
+  forkedChoice,
+  harnessPicks,
+  resolveChoice,
+  sameModel,
+  startConfig,
+  switchModel,
+  thinkingLevels,
+} from '../src/composerChoice.ts'
 import { contextUse, contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
@@ -150,10 +159,18 @@ describe('the 权限 chip', () => {
     category: 'mode',
     currentValue: 'read-only',
     options: [
-      { value: 'read-only', name: '只读' },
-      { value: 'workspace-write', name: '自动' },
-      { value: 'agent-full-access', name: '完全访问' },
+      { value: 'read-only', name: 'Read-only' },
+      { value: 'workspace-write', name: 'Workspace access' },
+      { value: 'agent', name: 'Auto review', description: 'Only ask for actions detected as potentially unsafe' },
+      { value: 'agent-full-access', name: 'Full access' },
+      { value: 'permission-profile:x', name: 'Profile X' },
     ],
+  }
+  const modeTiers = {
+    'read-only': { tier: 'ask' as const, line: 'Codex 只读；要改文件或联网时先问你' },
+    'workspace-write': { tier: 'rule' as const, line: '在项目里改文件、运行命令不问你' },
+    agent: { tier: 'model' as const, line: '写项目外或联网由 Codex 的模型代你决定，拦下就不做。模型可能判断错' },
+    'agent-full-access': { tier: 'never' as const, line: 'Codex 直接读写这台 Mac 上的文件、联网并运行命令' },
   }
   const permission = {
     level: 'L3' as const,
@@ -162,18 +179,44 @@ describe('the 权限 chip', () => {
     approvals: 'prompts' as const,
     expectedMode: 'read-only',
     defaultMode: 'read-only',
-    neverAskModes: ['agent-full-access'],
+    modeTiers,
     notes: [],
   }
   const local = { legacy: false, local: true }
   const view = (currentValue: string, access = local) =>
     permissionView({ harness, permission, config: [{ ...modes, currentValue }], access })!
 
-  it('always names the mode, amber only where it never asks', () => {
-    expect(view('read-only')).toMatchObject({ amber: false, label: '只读', icon: 'eye' })
-    expect(view('workspace-write')).toMatchObject({ amber: false, label: '自动', icon: 'shield' })
-    expect(view('agent-full-access')).toMatchObject({ amber: true, icon: 'shield-alert' })
+  it("titles each mode by Latch's word with the Harness's own line, amber only where it never asks", () => {
+    expect(view('read-only')).toMatchObject({ amber: false, label: '先问你', icon: 'shield', line: modeTiers['read-only'].line })
+    expect(view('workspace-write')).toMatchObject({ amber: false, label: '按规则放行', icon: 'list-checks' })
+    // The model reviewing requests itself is said so, not as asking the person, and is not amber.
+    expect(view('agent')).toMatchObject({ amber: false, label: '由模型判断', icon: 'scale', line: modeTiers.agent.line })
+    expect(view('agent-full-access')).toMatchObject({ amber: true, label: '不再询问', icon: 'shield-alert' })
     expect(view('read-only').note).toContain('也不隔离它')
+  })
+
+  it('shows at most three main rows, the rest under 更多, and never hides the current one', () => {
+    const rows = (current: string) => view(current).rows!.map(row => [row.value, row.more])
+    expect(rows('read-only')).toEqual([
+      ['read-only', false],
+      ['workspace-write', true],
+      ['agent', false],
+      ['agent-full-access', false],
+    ])
+    // A mode Latch has no word for is left out, unless the agent is in it, where it keeps the agent's own name.
+    expect(rows('workspace-write')).toContainEqual(['workspace-write', false])
+    expect(view('permission-profile:x')).toMatchObject({ label: 'Profile X', amber: false })
+    expect(rows('permission-profile:x').at(-1)).toEqual(['permission-profile:x', false])
+    // Three rows or fewer need no 更多.
+    const two = { ...modes, currentValue: 'read-only', options: modes.options.slice(0, 2) }
+    expect(permissionView({ harness, permission, config: [two], access: local })!.rows!.every(row => !row.more)).toBe(true)
+  })
+
+  it("keeps an unknown Harness's own names and lines, all of them main rows", () => {
+    const { modeTiers: _tiers, ...plain } = permission
+    const own = permissionView({ harness, permission: plain, config: [{ ...modes, currentValue: 'agent' }], access: local })!
+    expect(own).toMatchObject({ label: 'Auto review', amber: false, line: 'Only ask for actions detected as potentially unsafe' })
+    expect(own.rows!.every(row => !row.more && row.tier === undefined)).toBe(true)
   })
 
   it('makes the widest and the unconfirmable case the visible ones', () => {
@@ -243,9 +286,14 @@ describe('the 权限 chip', () => {
     expect(readsOnPermission(readable, { scopes: new Set(['view'] as const) })).toBe(false)
   })
 
-  it('offers wider rows on another device too', () => {
+  it('offers every row, the model and never-asking ones too, on another device without a confirmation', () => {
     const rows = view('workspace-write', { legacy: false, local: false }).rows!
-    expect(rows.map(row => row.disabledReason)).toEqual([undefined, undefined, undefined])
+    expect(rows.map(row => [row.tier, row.disabledReason])).toEqual([
+      ['ask', undefined],
+      ['rule', undefined],
+      ['model', undefined],
+      ['never', undefined],
+    ])
   })
 })
 
@@ -312,7 +360,15 @@ describe("a draft's list of a Harness's own options", () => {
   })
   const listed: HarnessInfo = testHarness('codex', {
     label: 'Codex',
-    permission: { approvals: 'prompts', readback: 'mode', neverAskModes: ['full'] },
+    permission: {
+      approvals: 'prompts',
+      readback: 'mode',
+      modeTiers: {
+        read: { tier: 'ask', line: '只读；改文件前问你' },
+        write: { tier: 'rule', line: '项目里不问你' },
+        full: { tier: 'never', line: '直接运行' },
+      },
+    },
     catalogue: {
       options: [
         select('mode', 'mode', 'read', ['read', 'write', 'full']),
@@ -357,15 +413,13 @@ describe("a draft's list of a Harness's own options", () => {
     expect(values(draftConfig(listed, { model: 'gone' })!.config, 'model')?.currentValue).toBe('small')
   })
 
-  it('starts with only what was picked and is still offered, and keeps all but the mode for the next draft', () => {
+  it('starts with only what was picked and is still offered', () => {
     expect(startConfig(listed, { model: 'large', effort: 'max', mode: 'write', other: 'x' })).toEqual([
       { configId: 'model', value: 'large' },
       { configId: 'effort', value: 'max' },
       { configId: 'mode', value: 'write' },
     ])
     expect(startConfig(listed, { model: 'small', effort: 'max' })).toEqual([{ configId: 'model', value: 'small' }])
-    expect(rememberedConfig(listed, { model: 'large', mode: 'write' })).toEqual({ model: 'large' })
-    expect(rememberedConfig(listed, { mode: 'write' })).toBeUndefined()
   })
 
   it('lists model IDs typed for the Harness after its own, and starts on one', () => {
@@ -382,15 +436,16 @@ describe("a draft's list of a Harness's own options", () => {
     expect(startConfig(listed, { model: 'vendor/typed' })).toEqual([])
   })
 
-  it('lists the modes as a session does, the starting one current and the never-asking one amber', () => {
+  it('lists the modes as a session does, in Latch words, the picked one current and the never-asking one amber', () => {
     const view = draftPermission(listed, 'agent', draftConfig(listed, { mode: 'full' })!.config)!
-    expect(view.rows?.map(row => [row.value, row.current, row.neverAsks])).toEqual([
-      ['read', false, false],
-      ['write', false, false],
-      ['full', true, true],
+    expect(view.rows?.map(row => [row.value, row.name, row.line, row.current, row.neverAsks])).toEqual([
+      ['read', '先问你', '只读；改文件前问你', false, false],
+      ['write', '按规则放行', '项目里不问你', false, false],
+      ['full', '不再询问', '直接运行', true, true],
     ])
-    expect(view.amber).toBe(true)
-    expect(draftPermission(listed, 'agent', draftConfig(listed, undefined)!.config)!.label).toBe('READ')
+    expect(view).toMatchObject({ amber: true, label: '不再询问', line: '直接运行', icon: 'shield-alert' })
+    // Nothing picked: the mode a session starts in, never a wider one.
+    expect(draftPermission(listed, 'agent', draftConfig(listed, undefined)!.config)!.label).toBe('先问你')
     // Without a list: what the Harness declares, and that it can be changed after the start.
     expect(draftPermission(testHarness('codex', { permission: { approvals: 'prompts', readback: 'mode' } }), 'agent')?.note).toContain(
       '发第一条消息后可以换',
@@ -404,6 +459,33 @@ describe("a draft's list of a Harness's own options", () => {
       mode: 'write',
     })
     expect(resolveChoice(built, { harnessId: 'pi', config: { model: 'large' } }).config).toBeUndefined()
+  })
+
+  it("keeps each Harness's picks, the mode too, for when it is chosen again", () => {
+    const built: HostCatalog = { ...catalog, harnesses: [listed, testHarness('pi')], defaults: { ...catalog.defaults, harnessId: 'codex' } }
+    const codex = resolveChoice(built, { harnessId: 'codex', config: { mode: 'full', model: 'large' } })
+    const away = harnessPicks(codex, 'pi')
+    expect(away).toEqual({ config: undefined, otherPicks: { codex: { mode: 'full', model: 'large' } } })
+    const onPi = resolveChoice(built, { ...codex, harnessId: 'pi', ...away })
+    expect(onPi).toMatchObject({ harnessId: 'pi', otherPicks: { codex: { mode: 'full' } } })
+    expect(onPi.config).toBeUndefined()
+    // Back on Codex: the person's own wider pick is the start again, and nothing else is chosen for them.
+    const back = resolveChoice(built, { ...onPi, harnessId: 'codex', ...harnessPicks(onPi, 'codex') })
+    expect(back.config).toEqual({ mode: 'full', model: 'large' })
+    expect(back.otherPicks).toBeUndefined()
+    // A remembered Harness that cannot start now keeps its picks.
+    const gone: HostCatalog = { ...built, harnesses: [testHarness('pi')], defaults: { ...built.defaults, harnessId: 'pi' } }
+    expect(resolveChoice(gone, { harnessId: 'codex', config: { mode: 'write' } })).toMatchObject({
+      harnessId: 'pi',
+      otherPicks: { codex: { mode: 'write' } },
+    })
+    // A fork onto another Harness takes that Harness's own picks, never those of the one remembered.
+    expect(
+      forkedChoice(built, { harnessId: 'pi', config: { mode: 'x' }, otherPicks: { codex: { mode: 'write' } } }, { harnessId: 'codex' })
+        .config,
+    ).toEqual({
+      mode: 'write',
+    })
   })
 
   it('draws the draft from the list, says where it came from, and not that it is known only after the start', () => {

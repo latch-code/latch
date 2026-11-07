@@ -1,19 +1,54 @@
 import type { AgentPreset } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
-import type { SessionConfigOption, TaskMode } from './sessions.ts'
+import type { ModeTier, SessionConfigOption, TaskMode } from './sessions.ts'
 
-/** How a person logs in to a harness: its own command, in a terminal. */
+/** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
 export interface HarnessLogin {
-  /** What to run, as a person would type it. */
-  command: string
-  /** What to do once it opens, for a program that logs in from inside. */
+  /** The preset's login command, as a person would type it, when the harness advertised no login of its own. */
+  command?: string
+  /** What to do: once `command` opens, for a program that logs in from inside; without one, how to sign in at all. */
   note?: string
   /** The Host can ask the program whether it is logged in. Absent: it finds out only when a session is refused. */
   checkable?: true
+  /** The logins the harness itself advertised, each its own program run in a terminal; `command` as a person would type it. */
+  methods?: Array<{ id: string; name: string; description?: string; command: string }>
+  /** The harness logs out when asked, so a person can sign in with another account. */
+  logout?: true
+  /** What a running process of the harness last said: whether it holds a credential, and its own name for which kind. */
+  reported?: { status: HarnessLoginStatus; label?: string }
 }
 
 /** Only a clear answer from the program is `unauthenticated`; everything else is `unknown`, which no client treats as logged out. */
 export type HarnessLoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
+
+/** One answer to `login-status`. `label`: the harness's name for the kind of credential. `expiresAt`: when a stored login ends. */
+export interface HarnessLoginCheck {
+  status: HarnessLoginStatus
+  label?: string
+  expiresAt?: string
+}
+
+const samePush = (a: HarnessLogin['reported'], b: HarnessLogin['reported']) => a?.status === b?.status && a?.label === b?.label
+
+/**
+ * One answer from a check and a running process's push, the newer clear one deciding. `pushedThen`: the push known when
+ * the check was made; a push that differs from it came later. Otherwise the check's verdict stands, since an idle harness
+ * may not notice a login or logout made in another terminal until its next turn. The label comes from the push and the
+ * date from the check, each only when the answer and its own source both say logged in.
+ */
+export function settleLogin(
+  check: HarnessLoginCheck,
+  pushedThen: HarnessLogin['reported'],
+  pushedNow: HarnessLogin['reported'],
+): HarnessLoginCheck {
+  const pushWins =
+    pushedNow !== undefined && pushedNow.status !== 'unknown' && (check.status === 'unknown' || !samePush(pushedThen, pushedNow))
+  const status = pushWins ? pushedNow.status : check.status
+  if (status !== 'authenticated') return { status }
+  const label = (pushWins || !check.label) && pushedNow?.status === 'authenticated' ? pushedNow.label : check.label
+  const expiresAt = check.status === 'authenticated' ? check.expiresAt : undefined
+  return { status, ...(label ? { label } : {}), ...(expiresAt ? { expiresAt } : {}) }
+}
 
 /** The built-in harness's name. Reserved: no other harness is shown under it. */
 export const BUILTIN_HARNESS_LABEL = 'Latch 内置'
@@ -110,10 +145,10 @@ export interface HarnessInfo {
   projectFolders?: { access: ProjectFolderAccess; max?: number }
   /**
    * Display only, known before a session starts: whether the harness asks before it acts, whether Latch can read its
-   * mode back, and the modes in which it never asks. Absent: Latch has no profile for it and learns this only after it
+   * mode back, and Latch's word for each of its modes. Absent: Latch has no profile for it and learns this only after it
    * starts.
    */
-  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none'; neverAskModes?: string[] }
+  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none'; modeTiers?: Record<string, ModeTier> }
   /** Absent: no session or read has told Latch what it offers, or its definition changed since. */
   catalogue?: HarnessCatalogue
   /** Absent: what it offers is known only once a session starts. */

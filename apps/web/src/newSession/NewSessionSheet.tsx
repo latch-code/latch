@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
-import { FlaskConical } from 'lucide-react'
+import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
 import type { AppSnapshot, PersonalAssistantSummary, SessionConfigOption } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
 import { draftConfig, engineEntries, type ComposerChoice } from '../composerChoice.ts'
@@ -9,6 +9,8 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { agentConfigValues, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead } from '../composer/permission.ts'
+import { MODE_ICONS } from '../composer/PermissionList.tsx'
+import { MODE_COPY } from '../core/securityCopy.ts'
 import {
   CatalogueRows,
   readOnSelect,
@@ -91,6 +93,10 @@ export function NewSessionSheet({
   const known = harness?.capabilities.models.owner === 'latch' ? undefined : draftConfig(harness, choice.config)
   const reading = useReading(harness)
   const permission = draftPermission(harness, choice.mode, known?.config, draftRead(harness, access, reading))
+  // As in the menu on a wider screen: the main rows, and the rest under 更多.
+  const [morePermission, setMorePermission] = useState(false)
+  const permissionRows = permission?.rows?.filter(row => morePermission || !row.more)
+  const hiddenPermission = permission?.rows?.some(row => row.more) === true
   const pick = (configId: string, value: string) => {
     onChoice({ config: { ...choice.config, [configId]: value } })
   }
@@ -266,13 +272,33 @@ export function NewSessionSheet({
                 if (open && !disabled && readsOnPermission(harness, access)) readOnSelect(harness, read)
               }}
               options={
-                permission.rows?.map(row => ({
-                  value: row.value,
-                  label: escapeHiddenCharacters(row.name),
-                  ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
-                })) ?? [{ value: 'current', label: permission.label }]
+                permissionRows?.map(row => {
+                  const Glyph = MODE_ICONS[row.icon]
+                  return {
+                    value: row.value,
+                    label: escapeHiddenCharacters(row.name),
+                    ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
+                    media: <Glyph size={16} aria-hidden="true" className={row.neverAsks ? 'permission-never' : undefined} />,
+                  }
+                }) ?? [{ value: 'current', label: permission.label }]
               }
-              footer={<MenuFooterNote>{permission.note ?? permission.line}</MenuFooterNote>}
+              footer={
+                <>
+                  {hiddenPermission && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      icon={morePermission ? ChevronUp : ChevronDown}
+                      aria-expanded={morePermission}
+                      onClick={() => {
+                        setMorePermission(!morePermission)
+                      }}>
+                      {morePermission ? MODE_COPY.fewer : MODE_COPY.more}
+                    </Button>
+                  )}
+                  <MenuFooterNote>{permission.note ?? permission.line}</MenuFooterNote>
+                </>
+              }
               onValueChange={value => {
                 if (permission.option) pick(permission.option.id, value)
               }}

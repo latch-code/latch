@@ -12,6 +12,8 @@ export const MAX_CHILDREN = 64
 export const MAX_DEPTH = 4
 /** Subagents one process follows, shown or not; past this the oldest that stopped is forgotten, else a new one is ignored. */
 export const MAX_TRACKED = 1024
+/** Calls with no step one subagent keeps; past this the oldest that settled is forgotten, else the oldest not asked about. */
+const MAX_LOOSE = MAX_STEPS
 
 /**
  * `subagent_update` on the session that owns the child (ACP subagents RFD). Each field is a patch: absent leaves it,
@@ -44,6 +46,8 @@ export interface Child {
   ended?: boolean
   depth: number
   tools: Map<string, ToolState>
+  /** Its calls with no step, past its step limit or when it has no row: kept for their requests and what was decided. */
+  loose: Map<string, ToolState>
   /** The step its text is being appended to, until a tool call comes between. */
   textStep?: string
 }
@@ -169,16 +173,30 @@ export function childText(child: Child, row: Message, piece: string, at: string)
   child.textStep = id
 }
 
-/** A call kept only for its request: past the subagent's step limit, or of a subagent with no row. */
-export function looseTool(child: Child, fields: ToolFields, at: string): ToolState {
-  const state: ToolState = { id: `tool:${child.acpSessionId}:${fields.toolCallId}`, content: [], locations: [], awaiting: 0 }
+/** A call of the subagent: merged into its step, or past the limits kept with none. */
+export function childCall(child: Child, row: Message | undefined, fields: ToolFields, at: string): ToolState {
+  child.textStep = undefined
+  return (!child.loose.has(fields.toolCallId) && row && childTool(child, row, fields, at)) || looseTool(child, fields, at)
+}
+
+/** A call with no step: past the subagent's step limit, or of a subagent with no row. */
+function looseTool(child: Child, fields: ToolFields, at: string): ToolState {
+  let state = child.loose.get(fields.toolCallId)
+  if (!state) {
+    state = { id: `tool:${child.acpSessionId}:${fields.toolCallId}`, content: [], locations: [], awaiting: 0 }
+    if (child.loose.size >= MAX_LOOSE) {
+      const kept = [...child.loose]
+      const settled = kept.find(([, item]) => !item.awaiting && (item.status === 'completed' || item.status === 'failed'))
+      child.loose.delete((settled ?? kept.find(([, item]) => !item.awaiting) ?? kept[0]!)[0])
+    }
+    child.loose.set(fields.toolCallId, state)
+  }
   mergeTool(state, fields, at)
   return state
 }
 
 /** A tool call of the subagent, merged into its step. */
-export function childTool(child: Child, row: Message, fields: ToolFields, at: string): ToolState | undefined {
-  child.textStep = undefined
+function childTool(child: Child, row: Message, fields: ToolFields, at: string): ToolState | undefined {
   let state = child.tools.get(fields.toolCallId)
   if (!state) {
     if (!room(row)) return undefined
@@ -190,11 +208,14 @@ export function childTool(child: Child, row: Message, fields: ToolFields, at: st
   return state
 }
 
-export function upsertStep(row: Message, step: Message): void {
+/** False when the step is not kept: there was none and there is no room for it. */
+export function upsertStep(row: Message, step: Message): boolean {
   const steps = row.subagent!.steps
   const index = steps.findIndex(item => item.id === step.id)
   if (index >= 0) steps[index] = step
   else if (room(row)) steps.push(step)
+  else return false
+  return true
 }
 
 function room(row: Message): boolean {

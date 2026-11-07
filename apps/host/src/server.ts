@@ -1712,6 +1712,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const {
       native: nativeRoutes,
       terminal: terminalRoutes,
+      agentLogin: agentLoginRoutes,
       routes,
     } = createRoutes(routeContext, {
       native: {
@@ -1757,6 +1758,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)
           ?? (caller.device?.scopes.includes('admin') && presetsToOffer().some(offer => offer.id === id) ? presetRecord(id) : undefined),
+        login: id => hub?.harnessLogin(id),
+        logout: id => hub!.logoutHarness(id),
         ...(options.loginTerminal ? { openTerminal: options.loginTerminal } : {}),
       },
     })
@@ -2838,7 +2841,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return (await classifyCall(input)).risk
     }
 
-    function securityEvent(event: HarnessSecurityEvent): void {
+    function securityEvent(event: HarnessSecurityEvent): void | Promise<void> {
+      if (event.type === 'tool-judged') {
+        const { type: _type, ...detail } = event
+        const written = audit.append({ action: 'task.tool.judged', actor: { listener: 'host' }, target: event.sessionId, detail })
+        written.catch(error => log(`审计记录写入失败：${errorText(error)}`))
+        return written.then(() => undefined)
+      }
       try {
         const actor: AuditActor = { listener: 'host' }
         if (event.type === 'permission-drift') {
@@ -5704,6 +5713,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 latest.probedDefinitionHash = hash
               }
             })
+            if (result.login) agentLoginRoutes.probed(id, result.login)
             refresh()
           },
         )

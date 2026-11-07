@@ -977,6 +977,19 @@ export class HarnessHub implements Bridge {
     return member.bridge.readCatalogue({ auto, before })
   }
 
+  /** Logs a harness out; see `Bridge.logout`. */
+  async logoutHarness(id: string): Promise<void> {
+    const member = this.member(id)
+    if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
+    if (!member.bridge.logout) throw new AppError(409, 'logout-unsupported', '这个 Harness 不能从 Latch 退出登录。')
+    await member.bridge.logout()
+  }
+
+  /** What a harness says about logging in now, as a client sees it. */
+  harnessLogin(id: string): HarnessInfo['login'] {
+    return this.member(id)?.driver.login?.()
+  }
+
   async setHarnessModels(id: string, models: readonly string[]): Promise<void> {
     const member = this.member(id)
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)

@@ -1,6 +1,6 @@
 import type { Approval, Message, TaskDetail, TaskStatus, TokenUsage, ToolDecision, ToolKind } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
-import { DECISION_COPY } from './core/securityCopy.ts'
+import { DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
 import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
@@ -240,6 +240,7 @@ function diffLabel(tool: Message['tool']): ToolLabel | undefined {
 
 export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolLabel {
   const tool = message.tool
+  if (isReview(tool)) return { object: JUDGED_COPY.review(tool!.judged!.by), mono: false }
   const edited = diffLabel(tool)
   if (edited) return edited
   if (tool?.toolTitle) {
@@ -264,11 +265,15 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
   return message.toolName ? { object: message.toolName, mono: true } : { object: '工具调用', mono: false }
 }
 
+/** The row is the harness's own model reviewing a request, not a call of its own. */
+export const isReview = (tool: Message['tool']) => tool?.judged !== undefined && tool.judged.outcome !== 'unasked'
+
 /**
  * The words an approval card and an export name a call by: a titled tool's title and object (「写入文件 notes/plan.md」),
  * else the call's own summary or the tool's name.
  */
 export function toolHeading(tool: Message['tool'], toolName: string | undefined): string {
+  if (isReview(tool)) return JUDGED_COPY.review(tool!.judged!.by)
   if (tool?.toolTitle) {
     const found = titledObject(tool)
     return found ? `${tool.toolTitle} ${found.object}` : tool.toolTitle
@@ -338,6 +343,8 @@ export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expir
 
 export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>): ShownToolState {
   const state = message.state ?? 'completed'
+  // A review that came to 拦下 or to no verdict reports itself failed; it is a verdict, not a failure.
+  if (isReview(message.tool) && state === 'failed') return 'completed'
   return unrunOutcome(message) ?? state
 }
 
@@ -477,9 +484,14 @@ export function foldWords(turn: Turn): string {
     turn.replies.filter(message => message.role === 'tool' && shownToolState(message) === state).length
   const failed = count('failed')
   const rejected = count('rejected')
-  return [`已工作${spent ? ` ${spent}` : ''}`, ...(failed ? [`${failed} 步失败`] : []), ...(rejected ? [`${rejected} 步被拒绝`] : [])].join(
-    ' · ',
-  )
+  // What the Harness's own model stopped happened without the person, so the fold says it.
+  const denied = turn.replies.filter(message => message.role === 'tool' && message.tool?.judged?.outcome === 'denied').length
+  return [
+    `已工作${spent ? ` ${spent}` : ''}`,
+    ...(failed ? [`${failed} 步失败`] : []),
+    ...(rejected ? [`${rejected} 步被拒绝`] : []),
+    ...(denied ? [JUDGED_COPY.deniedCount(denied)] : []),
+  ].join(' · ')
 }
 
 /** One line for a failed row: the first line of what it reported, without the runtime's code, and cut. */

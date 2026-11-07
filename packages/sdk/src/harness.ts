@@ -1,6 +1,6 @@
 import type { Bridge, ProjectFolder } from './bridge.ts'
 import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
-import type { AttachmentRef, FileChange, HarnessCapabilities, HarnessInfo, ModelRef, RiskLevel } from '@latch/protocol/types'
+import type { AttachmentRef, FileChange, HarnessCapabilities, HarnessInfo, ModelRef, RiskLevel, ToolKind } from '@latch/protocol/types'
 
 export interface ToolRiskInput {
   toolName: string
@@ -22,6 +22,19 @@ export type HarnessSecurityEvent =
   | { type: 'permission-drift'; sessionId: string; observedHash: string }
   | { type: 'permission-unverified'; sessionId: string }
   | { type: 'approval-auto-rejected'; sessionId: string; reason: 'persistent-only' | 'unknown-kind' }
+  /**
+   * A call no person was asked about, in a mode where the harness's own model decides: its verdict as the harness reported
+   * it (`agent-report`), or that it ran with no ask seen (`no-ask-seen`). Hashes and enums only.
+   */
+  | {
+      type: 'tool-judged'
+      sessionId: string
+      callHash: string
+      modeHash: string
+      kind: ToolKind
+      outcome: 'approved' | 'denied' | 'timed-out' | 'aborted' | 'unknown' | 'ran-unasked'
+      source: 'agent-report' | 'no-ask-seen'
+    }
 
 export interface FileTrackingResult {
   files: FileChange[]
@@ -68,8 +81,12 @@ export interface HarnessHostOptions {
   classifyToolCall?(input: ToolRiskInput): Promise<RiskLevel>
   /** Private 0700 directory for per-session temporary directories. */
   tmpRoot?: string
-  /** Fire-and-forget security events; the Host audits them. Never throws into the driver. */
-  securityEvent?(event: HarnessSecurityEvent): void
+  /**
+   * Security events; the Host audits them and never throws into the driver. For `tool-judged` it returns the audit write,
+   * which rejects when the record could not be written: the turn then stops, since a call nobody was asked about must
+   * not go unrecorded.
+   */
+  securityEvent?(event: HarnessSecurityEvent): void | Promise<void>
   /** Milliseconds since the epoch for the times a driver records on messages and runs. Default `Date.now`. */
   clock?: () => number
 }

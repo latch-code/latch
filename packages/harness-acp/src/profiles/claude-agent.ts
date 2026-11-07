@@ -1,4 +1,37 @@
-import type { HarnessProfile } from './types.ts'
+import type { HarnessProfile, LoginCheck } from './types.ts'
+
+const DAY_MS = 24 * 60 * 60_000
+
+/** A date a sign-in ends, as seconds or milliseconds since the epoch or a date string; anything implausible is dropped. */
+function loginEnds(value: unknown): string | undefined {
+  const at = typeof value === 'number' ? (value < 1e11 ? value * 1000 : value) : typeof value === 'string' ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(at)) return undefined
+  const now = Date.now()
+  return at < now - 366 * DAY_MS || at > now + 5 * 366 * DAY_MS ? undefined : new Date(at).toISOString()
+}
+
+/**
+ * `claude auth status --json`. It exits 1 when logged out and still prints JSON, so the code says nothing. `loggedIn`
+ * covers only a claude.ai sign-in: a key or another provider counts as a credential too. The JSON also names the
+ * account; only the verdict and the date leave this function.
+ */
+export function readClaudeStatus(output: string): LoginCheck {
+  const start = output.indexOf('{')
+  const end = output.lastIndexOf('}')
+  let parsed: unknown
+  try {
+    parsed = start >= 0 && end > start ? JSON.parse(output.slice(start, end + 1)) : undefined
+  } catch {
+    return { status: 'unknown' }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'unknown' }
+  const { loggedIn, apiKeySource, apiProvider, loginExpiresAt } = parsed as Record<string, unknown>
+  if (typeof loggedIn !== 'boolean') return { status: 'unknown' }
+  const elsewhere =
+    (typeof apiKeySource === 'string' && apiKeySource !== '') || (typeof apiProvider === 'string' && apiProvider !== 'firstParty')
+  const expiresAt = loggedIn ? loginEnds(loginExpiresAt) : undefined
+  return { status: loggedIn || elsewhere ? 'authenticated' : 'unauthenticated', ...(expiresAt ? { expiresAt } : {}) }
+}
 
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
@@ -10,7 +43,14 @@ export const claudeAgentProfile: HarnessProfile = {
     expectedMode: 'default',
     // Planning sits below Manual: it edits nothing, though its commands may go to Claude's own classifier (notes).
     modeLadder: ['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'],
-    neverAskModes: ['bypassPermissions'],
+    // Claude reports no verdict of its classifier, so a call that ran in `auto` is recorded as run unasked.
+    modeTiers: {
+      plan: { tier: 'plan', line: '只看和规划，不改文件；命令可能由分类器决定' },
+      default: { tier: 'ask', line: '改文件或运行命令前问你；读取不问' },
+      acceptEdits: { tier: 'rule', line: '直接改文件；多数命令运行前问你' },
+      auto: { tier: 'model', line: '多数操作由它的分类器模型判断，可能判错' },
+      bypassPermissions: { tier: 'never', line: '直接读写这台 Mac 上的文件并运行命令' },
+    },
     modeAnswers: [
       // ExitPlanMode's one-time choice: leave the plan and ask before each edit.
       { optionId: 'exit-plan-default', mode: 'default' },
@@ -35,4 +75,12 @@ export const claudeAgentProfile: HarnessProfile = {
   projectConfigPaths: ['.claude', '.mcp.json'],
   // Worktrees Claude creates for its own subagents.
   projectConfigManaged: { skip: ['.claude/worktrees'] },
+  // The adapter's `--cli` hands the rest to the Claude CLI it ships, the one its sessions use; it is how the date a
+  // sign-in ends is known without reading the login.
+  loginStatus: {
+    program: 'adapter',
+    expires: true,
+    args: ['--cli', 'auth', 'status', '--json'],
+    read: ({ output }) => readClaudeStatus(output),
+  },
 }

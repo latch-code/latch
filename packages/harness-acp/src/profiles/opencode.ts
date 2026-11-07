@@ -11,10 +11,13 @@ const ASK_FIRST = {
   task: 'deny',
 }
 
-/** Repeated per agent because an agent's own `permission` block would otherwise replace the global one. */
+/**
+ * Repeated per agent because an agent's own `permission` block would otherwise replace the global one. OpenCode applies
+ * the last matching rule, so `plan` refuses edits (its write and patch tools included) and commands after `'*': 'ask'`.
+ */
 const CONFIG = JSON.stringify({
   permission: ASK_FIRST,
-  agent: { build: { permission: ASK_FIRST }, plan: { permission: ASK_FIRST } },
+  agent: { build: { permission: ASK_FIRST }, plan: { permission: { ...ASK_FIRST, edit: 'deny', bash: 'deny' } } },
 })
 
 const OWN_PLUGIN = '@opencode-ai/plugin'
@@ -41,15 +44,19 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 1,
+  version: 2,
   permission: {
     approvals: 'prompts',
     defaultEnv: { OPENCODE_CONFIG_CONTENT: CONFIG },
     expectedMode: 'build',
     modeLadder: ['plan', 'build'],
+    modeTiers: {
+      plan: { tier: 'plan', line: '只看和规划，不改文件也不运行命令；其他工具先问你' },
+      build: { tier: 'ask', line: '读文件不问；其他操作先问你' },
+    },
     readback: 'mode',
     // The configuration keys above are those of OpenCode 1.x, which 2.x still reads as the same ordered rules (`task` as
-    // `subagent`); another major version may read them differently.
+    // `subagent`, `bash` as `shell`); another major version may read them differently.
     versionRule: { pattern: '^[12]\\.', message: 'OpenCode 仅支持 1.x 与 2.x' },
     // The user configuration, agents and plugins live under the XDG directories (or the home directory), loaded after
     // OPENCODE_CONFIG_CONTENT; the remaining OPENCODE_* switches have not been checked against the rules above.

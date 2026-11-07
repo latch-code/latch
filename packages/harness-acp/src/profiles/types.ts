@@ -1,3 +1,5 @@
+import type { ModeTier } from '@latch/protocol'
+
 /**
  * How Latch drives one harness's own permission settings. Host-only: none of this reaches the browser except the
  * display fields copied into `SessionPermission` and `HarnessInfo.permission`. A profile narrows what the harness does by default; it is not an OS
@@ -12,8 +14,16 @@ export interface AcpPermissionProfile {
   expectedMode?: string
   /** Strictest → widest. Modes outside the ladder count as wider. */
   modeLadder?: readonly string[]
-  /** Modes in the ladder where the harness stops asking; the composer names them. Display only. */
-  neverAskModes?: readonly string[]
+  /**
+   * Latch's word for each mode in the ladder and one line on what the harness really does there, at most one mode per
+   * tier. Display only: clients order and title the menu by it, and a mode left out shows under the harness's own name.
+   */
+  modeTiers?: Readonly<Record<string, ModeTier>>
+  /**
+   * The harness reports its own model reviewing a request as a tool call whose ID starts with this. Each verdict is
+   * recorded on its own, so its other calls in a `model` tier mode are not recorded as run unasked.
+   */
+  reviewCallPrefix?: string
   /** Permission option IDs never shown; exact IDs, or prefixes ending in '*'. */
   hiddenOptionIds?: readonly string[]
   /**
@@ -75,6 +85,12 @@ interface HarnessExtensions {
 
 export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
+/** A status command's verdict. `expiresAt`: when a stored login ends, as an ISO date, where the program says. */
+export interface LoginCheck {
+  status: LoginStatus
+  expiresAt?: string
+}
+
 /** What the harness itself writes below its `projectConfigPaths` when it starts, so that is not a change. */
 export interface ProjectConfigManaged {
   /** Paths relative to the directory holding the entry (`.opencode/node_modules`), left out with everything below them. */
@@ -100,7 +116,7 @@ export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
   readonly presetId: string
   /** Part of the launch fingerprint; bump it when the profile's behaviour changes. */
-  readonly version: 1
+  readonly version: number
   readonly permission: AcpPermissionProfile
   /**
    * Set: the driver takes every folder of a project and passes the others this way; the folders it passes are part of
@@ -120,10 +136,17 @@ export interface HarnessProfile {
    * `read` returns `unknown` for anything else. The output never leaves `read`, since it may hold an account or part of a key.
    */
   readonly loginStatus?: {
-    /** After the program `AgentPreset.login` runs, or the adapter's own with `bundledArgs`. */
+    /**
+     * `adapter`: the preset's own command runs it, for a harness whose login Latch does not offer. Otherwise the program
+     * `AgentPreset.login` runs.
+     */
+    readonly program?: 'adapter'
+    /** It says when a stored login ends, which nothing the harness pushes does; so it runs even then. */
+    readonly expires?: true
+    /** After that program, or the adapter's own with `bundledArgs`. */
     readonly args: readonly string[]
     readonly bundledArgs?: readonly string[]
-    read(result: { code: number | null; output: string }): LoginStatus
+    read(result: { code: number | null; output: string }): LoginStatus | LoginCheck
   }
   /**
    * For an adapter that drives a program the person installed (`AgentPreset.agentCommand`): how a launch test reads that

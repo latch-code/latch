@@ -237,7 +237,7 @@ describe('the login check', () => {
     const file = join(directory, 'login')
     await fakeCodex(directory, file)
     setLoginPrograms(undefined)
-    await expect(checkLogin(presetRecord('codex')!)).resolves.toBe('unknown')
+    await expect(checkLogin(presetRecord('codex')!)).resolves.toEqual({ status: 'unknown' })
     expect(harnessLogin(presetRecord('codex')!)).toBeUndefined()
     expect(loginTerminalScript(presetRecord('codex')!)).toBeUndefined()
   })
@@ -247,17 +247,17 @@ describe('the login check', () => {
     const file = join(directory, 'login')
     await fakeCodex(directory, file)
     const record = presetRecord('codex')!
-    await expect(checkLogin(record)).resolves.toBe('unauthenticated')
+    await expect(checkLogin(record)).resolves.toEqual({ status: 'unauthenticated' })
     await writeFile(file, 'yes')
-    await expect(checkLogin(record)).resolves.toBe('authenticated')
+    await expect(checkLogin(record)).resolves.toEqual({ status: 'authenticated' })
     const read = profileFor('codex')!.loginStatus!.read
     expect(read({ code: 1, output: 'Error checking login status: disk on fire' })).toBe('unknown')
     expect(read({ code: null, output: '' })).toBe('unknown')
     expect(read({ code: 127, output: 'Not logged in' })).toBe('unknown')
     // A harness with no such command, or one not installed, is never called logged out.
-    await expect(checkLogin(presetRecord('goose')!)).resolves.toBe('unknown')
+    await expect(checkLogin(presetRecord('goose')!)).resolves.toEqual({ status: 'unknown' })
     setLoginPrograms(() => undefined)
-    await expect(checkLogin(record)).resolves.toBe('unknown')
+    await expect(checkLogin(record)).resolves.toEqual({ status: 'unknown' })
     expect(harnessLogin(record)).toBeUndefined()
   })
 
@@ -268,7 +268,7 @@ describe('the login check', () => {
     await writeFile(join(bin, 'codex'), '#!/bin/sh\nsleep 30\n')
     await chmod(join(bin, 'codex'), 0o755)
     useOnly(bin)
-    await expect(checkLogin(presetRecord('codex')!, { timeoutMs: 100 })).resolves.toBe('unknown')
+    await expect(checkLogin(presetRecord('codex')!, { timeoutMs: 100 })).resolves.toEqual({ status: 'unknown' })
   })
 
   it('uses the copy an adapter ships when the program itself is not installed', async () => {
@@ -276,7 +276,7 @@ describe('the login check', () => {
     const file = join(directory, 'login')
     await fakeCodex(directory, file, ['codex-acp'])
     expect(harnessLogin(presetRecord('codex')!)).toEqual({ command: 'codex-acp cli login', checkable: true })
-    await expect(checkLogin(presetRecord('codex')!)).resolves.toBe('unauthenticated')
+    await expect(checkLogin(presetRecord('codex')!)).resolves.toEqual({ status: 'unauthenticated' })
   })
 
   it('adds the verdict to a test start without keeping what the command printed', async () => {
@@ -435,16 +435,22 @@ describe('the login command', () => {
     await mkdir(bin)
     const ran = join(directory, 'ran')
     for (const name of ['claude', 'claude-agent-acp', 'cursor-agent']) {
-      await writeFile(join(bin, name), `#!/bin/sh\necho "$0 $*" >> '${ran}'\n`)
+      await writeFile(join(bin, name), `#!/bin/sh\necho "$(basename "$0") $*" >> '${ran}'\n`)
       await chmod(join(bin, name), 0o755)
     }
     useOnly(bin)
-    expect(harnessLogin(presetRecord('claude-agent')!)).toBeUndefined()
+    // How to sign in, in words only, and a status check: no command, no button, no terminal.
+    expect(harnessLogin(presetRecord('claude-agent')!)).toEqual({
+      note: expect.stringContaining('Claude Code 自己的方式登录'),
+      checkable: true,
+    })
     expect(loginTerminalScript(presetRecord('claude-agent')!)).toBeUndefined()
-    await expect(checkLogin(presetRecord('claude-agent')!)).resolves.toBe('unknown')
+    await expect(checkLogin(presetRecord('claude-agent')!)).resolves.toEqual({ status: 'unknown' })
+    // The check is the adapter's own, through the CLI it ships; the person's `claude` never runs.
+    expect(await readFile(ran, 'utf8')).toBe('claude-agent-acp --cli auth status --json\n')
     expect(harnessLogin(presetRecord('cursor')!)).toEqual({ command: 'cursor-agent login' })
     expect(loginTerminalScript(presetRecord('cursor')!)).toContain(`'${join(bin, 'cursor-agent')}' 'login'`)
-    // Nothing above ran a program: neither has a status command, and a script is only written.
-    await expect(stat(ran)).rejects.toThrow()
+    // Cursor has no status command, and a script is only written.
+    expect(await readFile(ran, 'utf8')).toBe('claude-agent-acp --cli auth status --json\n')
   })
 })

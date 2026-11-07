@@ -23,8 +23,9 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
-import { profileFor } from '../src/profiles/index.ts'
+import { HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS } from '../src/project-config.ts'
+import { agentProbePreview } from '../src/probe.ts'
 import { initializeResult } from '../src/protocol.ts'
 import { AgentHealth } from '../src/types.ts'
 
@@ -110,7 +111,7 @@ async function setup(
   env: Record<string, string> = {},
   options: AcpAgentOptions = {},
   overrides: Partial<AgentRecord> = {},
-  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock'> = {},
+  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent'> = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -160,6 +161,7 @@ async function setup(
       },
       securityEvent: event => {
         events.push(event)
+        return attachmentOptions.securityEvent?.(event)
       },
     })
     cleanups.push(() => bridge.close())
@@ -595,7 +597,7 @@ describe('ACP driver registration and readiness', () => {
       args: ['acp'],
       definitionEnv: { B: '2', A: '1' },
       presetId: 'goose',
-      profileVersion: 1 as const,
+      profileVersion: 1,
     }
     const hash = launchHash(input)
     expect(hash).toBe(
@@ -617,6 +619,7 @@ describe('ACP driver registration and readiness', () => {
       { args: ['acp', '--yolo'] },
       { definitionEnv: { A: '1', B: '3' } },
       { presetId: undefined },
+      { profileVersion: 2 },
     ])
       expect(launchHash({ ...input, ...changed })).not.toBe(hash)
   })
@@ -830,7 +833,7 @@ describe('ACP agent environment', () => {
     expect(alive(promptPid(log, 'echo two'))).toBe(true)
   })
 
-  it('advertises no client file system or terminal, and that it shows notices, compaction and subagents', async () => {
+  it('advertises no client file system or terminal, and that it shows notices, compaction, subagents and terminal logins', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'probe', requestId: rid() })
@@ -850,6 +853,7 @@ describe('ACP agent environment', () => {
         terminal: false,
         session: { notices: {}, compaction: {} },
         subagents: {},
+        auth: { terminal: true },
       },
       clientInfo: { name: 'latch', title: 'Latch', version: expect.any(String) },
     })
@@ -1030,7 +1034,7 @@ describe('ACP project configuration', () => {
       args: [FAKE_ACP_AGENT],
       definitionEnv: record.env,
       presetId: record.presetId,
-      profileVersion: 1,
+      profileVersion: profileFor(record.presetId!)!.version,
       ...launchExtras(record.presetId!),
     })
   const CHANGED = {
@@ -1908,12 +1912,193 @@ describe('ACP permission mode', () => {
     expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
   })
 
-  it('reports the mode a session starts in and the modes that never ask', async () => {
+  it("reports the mode a session starts in and Latch's word for each mode", async () => {
     const fixture = await qwen()
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
     const detail = await settled(bridge, sessionId)
-    expect(detail.permission).toMatchObject({ defaultMode: 'default', neverAskModes: ['yolo'] })
+    expect(detail.permission).toMatchObject({
+      defaultMode: 'default',
+      modeTiers: {
+        plan: { tier: 'plan' },
+        default: { tier: 'ask' },
+        'auto-edit': { tier: 'rule' },
+        auto: { tier: 'model' },
+        yolo: { tier: 'never' },
+      },
+    })
+  })
+
+  it('records each call that ran unasked while the model decides, and none while it asks or when it was asked', async () => {
+    const fixture = await qwen()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'review', requestId: rid() })
+    let detail = await settled(bridge, sessionId)
+    // In the asking mode nothing is judged, not even what the agent reports as its own review.
+    expect(detail.messages.filter(message => message.tool?.judged)).toEqual([])
+    expect(fixture.events.filter(event => event.type === 'tool-judged')).toEqual([])
+
+    await bridge.setConfig!(sessionId, 'mode', 'auto')
+    await bridge.prompt(sessionId, 'review', rid())
+    detail = await settled(bridge, sessionId)
+    const judged = detail.messages.filter(message => message.tool?.judged)
+    // Qwen Code reports no verdicts, so every call that ran is recorded as run unasked, its review rows too.
+    expect(judged.map(message => [message.id.split(':').at(-1), message.tool!.judged])).toEqual([
+      ['r1', { by: 'Fake', outcome: 'unasked' }],
+      ['r2', { by: 'Fake', outcome: 'unasked' }],
+      ['call_1', { by: 'Fake', outcome: 'unasked' }],
+    ])
+    const recorded = fixture.events.filter(event => event.type === 'tool-judged')
+    expect(recorded).toEqual([
+      {
+        type: 'tool-judged',
+        sessionId,
+        callHash: sha256Hex(judged[0]!.id),
+        modeHash: sha256Hex('auto'),
+        kind: 'think',
+        outcome: 'ran-unasked',
+        source: 'no-ask-seen',
+      },
+      expect.objectContaining({ callHash: sha256Hex(judged[1]!.id), kind: 'think', outcome: 'ran-unasked' }),
+      expect.objectContaining({ callHash: sha256Hex(judged[2]!.id), kind: 'execute', outcome: 'ran-unasked' }),
+    ])
+    // A call a person was asked about is theirs, not the model's.
+    await bridge.prompt(sessionId, 'permission', rid())
+    const approval = await vi.waitFor(async () => {
+      const [first] = await bridge.approvals()
+      expect(first).toBeDefined()
+      return first!
+    })
+    await bridge.decide(approval.id, 'allow')
+    detail = await settled(bridge, sessionId)
+    expect(fixture.events.filter(event => event.type === 'tool-judged')).toHaveLength(3)
+    const asked = detail.messages.findLast(message => message.tool?.decision)
+    expect(asked?.tool).toMatchObject({ decision: { outcome: 'allowed' } })
+    expect(asked?.tool?.judged).toBeUndefined()
+  })
+
+  it("shows Codex's own reviews with their verdicts, records each once, and not its other calls", async () => {
+    const fixture = await preset('codex', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'read-only,workspace-write,agent,agent-full-access',
+      FAKE_ACP_INITIAL_MODE: 'read-only',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'agent')
+    await bridge.prompt(sessionId, 'review', rid())
+    const detail = await settled(bridge, sessionId)
+    const rows = detail.messages.filter(message => message.role === 'tool')
+    expect(rows.map(message => [message.id.split(':').at(-1), message.state, message.tool?.judged])).toEqual([
+      ['r1', 'completed', { by: 'Fake', outcome: 'approved' }],
+      ['r2', 'failed', { by: 'Fake', outcome: 'denied' }],
+      // In-project work runs without an ask in this mode; only what Codex's model decided is its judgement.
+      ['call_1', 'completed', undefined],
+    ])
+    // Never a person's approval, and the agent's own words stay its text.
+    expect(rows.every(message => message.tool?.decision === undefined)).toBe(true)
+    expect(rows[1]!.tool?.output).toContain('<b>denied</b>')
+    const recorded = fixture.events.filter(event => event.type === 'tool-judged')
+    expect(recorded).toEqual([
+      {
+        type: 'tool-judged',
+        sessionId,
+        callHash: sha256Hex(rows[0]!.id),
+        modeHash: sha256Hex('agent'),
+        kind: 'think',
+        outcome: 'approved',
+        source: 'agent-report',
+      },
+      expect.objectContaining({ callHash: sha256Hex(rows[1]!.id), outcome: 'denied', source: 'agent-report' }),
+    ])
+    // No text of the agent's reaches the record.
+    expect(JSON.stringify(recorded)).not.toContain('example.com')
+    expect(detail.permission?.modeTiers?.agent).toMatchObject({ tier: 'model' })
+    // The verdicts are still the model's after the Host restarts.
+    await bridge.close()
+    const reopened = await fixture.open()
+    const kept = (await reopened.detail(sessionId)).messages.filter(message => message.role === 'tool')
+    expect(kept.map(message => message.tool?.judged)).toEqual(rows.map(message => message.tool?.judged))
+  })
+
+  it('gives each mode of a profile one tier, in the order of its ladder, with a line', () => {
+    const order = ['plan', 'ask', 'rule', 'model', 'never']
+    for (const profile of HARNESS_PROFILES.values()) {
+      const { modeTiers, modeLadder, expectedMode } = profile.permission
+      if (!modeTiers) continue
+      const modes = Object.keys(modeTiers)
+      expect(
+        modes.every(mode => modeLadder?.includes(mode)),
+        profile.presetId,
+      ).toBe(true)
+      const tiers = modeLadder!.filter(mode => modes.includes(mode)).map(mode => order.indexOf(modeTiers[mode]!.tier))
+      expect(tiers, profile.presetId).toEqual([...new Set(tiers)].toSorted((a, b) => a - b))
+      expect(
+        modes.every(mode => modeTiers[mode]!.line.length > 0),
+        profile.presetId,
+      ).toBe(true)
+      // A session starts on the asking row, never a wider one.
+      expect(modeTiers[expectedMode!]?.tier, profile.presetId).toBe('ask')
+    }
+    expect(profileFor('codex')!.permission.modeTiers?.agent?.line).toContain('它的模型判断')
+  })
+
+  it("keeps OpenCode's plan agent from changing files or running commands under Latch's rules", () => {
+    const config = JSON.parse(profileFor('opencode')!.permission.defaultEnv!.OPENCODE_CONFIG_CONTENT!) as {
+      agent: Record<'build' | 'plan', { permission: Record<string, string | Record<string, string>> }>
+    }
+    // As OpenCode reads these rules: in the order written, the last one matching the tool and its argument wins.
+    const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/gu, '\\$&').replaceAll('*', '.*')}$`, 'u')
+    const decide = (agent: 'build' | 'plan', tool: string, argument: string) => {
+      let action = 'ask'
+      for (const [key, rule] of Object.entries(config.agent[agent].permission)) {
+        if (!glob(key).test(tool)) continue
+        if (typeof rule === 'string') action = rule
+        else for (const [pattern, value] of Object.entries(rule)) if (glob(pattern).test(argument)) action = value
+      }
+      return action
+    }
+    // OpenCode checks `edit` for its write and patch tools too, and `bash` for every command.
+    expect([decide('plan', 'edit', 'a.txt'), decide('plan', 'bash', 'ls')]).toEqual(['deny', 'deny'])
+    expect([decide('plan', 'read', 'a.txt'), decide('plan', 'read', '.env'), decide('plan', 'webfetch', 'https://a.test')]).toEqual([
+      'allow',
+      'deny',
+      'ask',
+    ])
+    expect([decide('build', 'edit', 'a.txt'), decide('build', 'bash', 'ls')]).toEqual(['ask', 'ask'])
+  })
+
+  it("fingerprints a preset's launch with its profile's version", async () => {
+    const fixture = await preset('opencode', { FAKE_ACP_VERSION: '1.4.2', FAKE_ACP_CONFIG: 'legacy' })
+    const preview = await (await fixture.open()).launchPreview!({ cwd: fixture.workspace })
+    const definition = { resolvedCommand: process.execPath, args: [FAKE_ACP_AGENT], definitionEnv: fixture.record.env }
+    expect(profileFor('opencode')!.version).toBe(2)
+    expect(preview.definitionHash).toBe(launchHash({ ...definition, presetId: 'opencode', profileVersion: 2, ...launchExtras('opencode') }))
+    // A check of the definition starts only the process a session would.
+    const probed = await agentProbePreview(fixture.record, { dataDir: fixture.dataDir, cwd: fixture.workspace })
+    expect(probed.launchHash).toBe(preview.launchHash)
+  })
+
+  it('stops the turn when a judged call cannot be recorded', async () => {
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' },
+      {},
+      { presetId: 'qwen' },
+      { securityEvent: event => (event.type === 'tool-judged' ? Promise.reject(new Error('disk full')) : undefined) },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'auto')
+    await bridge.prompt(sessionId, 'review', rid())
+    const detail = await vi.waitFor(async () => {
+      const current = await bridge.detail(sessionId)
+      expect(systemText(current)).toContain('Latch 没能记下一次由 Fake 的模型代你决定的调用，已取消本轮。')
+      return current
+    })
+    await settled(bridge, sessionId)
+    expect(detail.messages.some(message => message.tool?.judged?.outcome === 'unasked')).toBe(true)
   })
 
   it('keeps tracking a mode option whose category disappears and treats a missing one as drift', async () => {
@@ -4011,6 +4196,80 @@ describe('ACP subagents', () => {
     expect(row.truncated).toBe(true)
   })
 
+  it("marks and records the calls of a subagent that the Harness's model decided, as it does the session's own", async () => {
+    const judgedEvents = (fixture: Awaited<ReturnType<typeof setup>>, sessionId: string) =>
+      fixture.events.filter(event => event.type === 'tool-judged' && event.sessionId === sessionId)
+    const toolSteps = (detail: DriverTaskDetail) => subagents(detail)[0]!.subagent!.steps.filter(step => step.role === 'tool')
+    const allowAll = async (bridge: Bridge, sessionId: string) => {
+      const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+      expect(await bridge.decide(waiting.approvals[0]!.id, 'allow')).toBe(true)
+      return settled(bridge, sessionId)
+    }
+
+    // Codex reports its model's reviews of a subagent's requests on the subagent's own session.
+    const codex = await preset('codex', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'read-only,workspace-write,agent,agent-full-access',
+      FAKE_ACP_INITIAL_MODE: 'read-only',
+    })
+    let bridge = await codex.open()
+    let { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'agent')
+    await bridge.prompt(sessionId, 'delegate review', rid())
+    let detail = await settled(bridge, sessionId)
+    let steps = toolSteps(detail)
+    expect(steps.map(step => [step.id.split(':').at(-1), step.state, step.tool?.judged])).toEqual([
+      ['call_1', 'completed', undefined],
+      ['r1', 'completed', { by: 'Fake', outcome: 'approved' }],
+      ['r2', 'failed', { by: 'Fake', outcome: 'denied' }],
+    ])
+    expect(judgedEvents(codex, sessionId)).toEqual([
+      {
+        type: 'tool-judged',
+        sessionId,
+        callHash: sha256Hex(steps[1]!.id),
+        modeHash: sha256Hex('agent'),
+        kind: 'think',
+        outcome: 'approved',
+        source: 'agent-report',
+      },
+      expect.objectContaining({ callHash: sha256Hex(steps[2]!.id), outcome: 'denied', source: 'agent-report' }),
+    ])
+
+    // A Harness that reports no verdicts: what a subagent ran unasked is recorded, what it asked about is the person's.
+    const qwen = await preset('qwen', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' })
+    bridge = await qwen.open()
+    const inAuto = async (prompt: string) => {
+      const task = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+      await settled(bridge, task.sessionId)
+      await bridge.setConfig!(task.sessionId, 'mode', 'auto')
+      await bridge.prompt(task.sessionId, prompt, rid())
+      return { sessionId: task.sessionId, detail: await allowAll(bridge, task.sessionId) }
+    }
+    ;({ sessionId, detail } = await inAuto('delegate ask'))
+    steps = toolSteps(detail)
+    expect(steps.map(step => [step.tool?.title, step.tool?.judged, step.tool?.decision?.outcome])).toEqual([
+      ['Run pnpm test', { by: 'Fake', outcome: 'unasked' }, undefined],
+      ['Edit a.txt', undefined, 'allowed'],
+    ])
+    expect(judgedEvents(qwen, sessionId)).toEqual([
+      expect.objectContaining({ callHash: sha256Hex(steps[0]!.id), kind: 'execute', outcome: 'ran-unasked', source: 'no-ask-seen' }),
+    ])
+
+    // Past a subagent's 200 steps its calls have no step, and are recorded all the same.
+    ;({ sessionId, detail } = await inAuto('delegate long'))
+    const prefix = toolSteps(detail)[0]!.id.slice(0, -'call_1'.length)
+    const hashes = judgedEvents(qwen, sessionId).map(event => (event as { callHash: string }).callHash)
+    expect(hashes).toHaveLength(201)
+    expect(hashes).toContain(sha256Hex(`${prefix}read_199`))
+    expect(hashes).not.toContain(sha256Hex(`${prefix}call_2`))
+
+    // So are those of a subagent with no row.
+    ;({ sessionId } = await inAuto('delegate crowd'))
+    expect(judgedEvents(qwen, sessionId)).toEqual([expect.objectContaining({ kind: 'execute', outcome: 'ran-unasked' })])
+  })
+
   it("answers a subagent's open request as cancelled when the session is stopped, and leaves no subagent running", async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
@@ -4063,7 +4322,7 @@ describe('Claude Agent and Cursor presets', () => {
       .filter(entry => entry.params?.configId === 'mode')
       .map(entry => entry.params?.value)
 
-  it('sets Claude Agent to Manual before every turn, offers its modes by its own names, and never asks in Bypass only', async () => {
+  it("sets Claude Agent to Manual before every turn, names its modes in Latch's words, and never asks in Bypass only", async () => {
     const fixture = await preset('claude-agent', CLAUDE)
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
@@ -4078,7 +4337,13 @@ describe('Claude Agent and Cursor presets', () => {
       expectedMode: 'default',
       defaultMode: 'default',
       readback: 'mode',
-      neverAskModes: ['bypassPermissions'],
+      modeTiers: {
+        plan: { tier: 'plan' },
+        default: { tier: 'ask' },
+        acceptEdits: { tier: 'rule' },
+        auto: { tier: 'model' },
+        bypassPermissions: { tier: 'never' },
+      },
     })
     expect(detail.config?.find(option => option.category === 'mode')?.options.map(option => option.value)).toEqual([
       'default',

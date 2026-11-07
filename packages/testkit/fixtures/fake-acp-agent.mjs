@@ -5,7 +5,7 @@
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 const env = process.env
@@ -196,7 +196,11 @@ function receive(message) {
   Promise.resolve()
     .then(() => handle(message.method, message.params ?? {}))
     .then(
-      result => send({ jsonrpc: '2.0', id: message.id, result }),
+      result => {
+        send({ jsonrpc: '2.0', id: message.id, result })
+        // As the adapters do: the first push comes after the answer to initialize.
+        if (message.method === 'initialize') setTimeout(pushAuthStatus, Number(env.FAKE_ACP_AUTH_STATUS_DELAY ?? 0))
+      },
       error => send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32603, message: error.message } }),
     )
 }
@@ -398,6 +402,41 @@ function restored(sessionId) {
   return session
 }
 
+/**
+ * FAKE_ACP_TERMINAL_LOGIN lists logins that run this program in a terminal, as ACP's `terminal` methods do: `1` one that
+ * runs `login`, which writes FAKE_ACP_LOGIN_FILE; `bad` adds one naming a variable a client must not let it set.
+ */
+function terminalLogins() {
+  const login = {
+    id: 'fake-terminal',
+    name: 'Fake terminal login',
+    description: 'Log in from a terminal',
+    type: 'terminal',
+    args: ['login'],
+    env: { FAKE_ACP_LOGIN_VIA: 'terminal' },
+  }
+  if (env.FAKE_ACP_TERMINAL_LOGIN !== 'bad') return [login]
+  return [login, { id: 'fake-loader', name: 'Loader', type: 'terminal', args: ['login'], env: { NODE_OPTIONS: '--require /tmp/x.js' } }]
+}
+
+/**
+ * FAKE_ACP_AUTH_STATUS pushes `_auth/status_update` after initialize, and again after a logout: `1` says `account` (with
+ * an email, organization and plan a client must not keep) or `none` from FAKE_ACP_LOGIN_FILE; `api_key` says that kind;
+ * `silent` advertises the push and never sends it.
+ */
+function pushAuthStatus() {
+  const mode = env.FAKE_ACP_AUTH_STATUS
+  if (!mode || mode === 'silent') return
+  const signedIn = !env.FAKE_ACP_LOGIN_FILE || existsSync(env.FAKE_ACP_LOGIN_FILE)
+  const authStatus =
+    mode === 'api_key'
+      ? { kind: 'api_key', label: 'OpenAI API key' }
+      : signedIn
+        ? { kind: 'account', label: 'ChatGPT Plus', account: { email: 'person@example.com', organization: 'Example Org', plan: 'plus' } }
+        : { kind: 'none', label: 'Not logged in' }
+  send({ jsonrpc: '2.0', method: '_auth/status_update', params: { authStatus } })
+}
+
 async function handle(method, params) {
   switch (method) {
     case 'initialize':
@@ -417,6 +456,8 @@ async function handle(method, params) {
           promptCapabilities: { image: caps.has('images'), embeddedContext: caps.has('embedded') },
           ...(mcpMode === 'dsh' ? { mcpCapabilities: { http: true } } : {}),
           loadSession: caps.has('load'),
+          ...(env.FAKE_ACP_LOGOUT === '1' ? { auth: { logout: {} } } : {}),
+          ...(env.FAKE_ACP_AUTH_STATUS ? { _meta: { authStatus: {} } } : {}),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
             ...(caps.has('delete') ? { delete: {} } : {}),
@@ -424,7 +465,10 @@ async function handle(method, params) {
             ...(caps.has('dirs') ? { additionalDirectories: {} } : {}),
           },
         },
-        authMethods: env.FAKE_ACP_AUTH ? [{ id: 'fake-login', name: 'Fake login', description: 'Run `fake login` in a terminal' }] : [],
+        authMethods: [
+          ...(env.FAKE_ACP_AUTH ? [{ id: 'fake-login', name: 'Fake login', description: 'Run `fake login` in a terminal' }] : []),
+          ...(env.FAKE_ACP_TERMINAL_LOGIN && clientCapabilities.auth?.terminal === true ? terminalLogins() : []),
+        ],
         agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
         ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
       }
@@ -501,6 +545,11 @@ async function handle(method, params) {
       turn.push(params.prompt.map(block => block.text ?? '').join(''))
       return { outcome: 'injected' }
     }
+    case 'logout':
+      if (env.FAKE_ACP_LOGOUT !== '1') throw rpcError(-32601, 'Method not found')
+      if (env.FAKE_ACP_LOGIN_FILE) rmSync(env.FAKE_ACP_LOGIN_FILE, { force: true })
+      setTimeout(pushAuthStatus, 0)
+      return {}
     case 'session/delete':
       existing(params.sessionId)
       delete sessions[params.sessionId]
@@ -627,6 +676,35 @@ const scenarios = {
       'tool_call_update',
     )
     say('after')
+    return END
+  },
+  // As codex-acp reports its own model reviewing a request: a `guardian_assessment:` call of kind think with the event
+  // attached. One review approved and one denied, then a plain call that ran without an ask.
+  review: ({ say, tool }) => {
+    const event = (reviewId, status) => ({
+      reviewId,
+      action: { type: 'command', source: 'shell', command: 'curl https://example.com' },
+      review: { status, riskLevel: 'low', userAuthorization: null, rationale: `<b>${status}</b>` },
+    })
+    for (const [reviewId, status, end] of [
+      ['r1', 'approved', 'completed'],
+      ['r2', 'denied', 'failed'],
+    ]) {
+      const id = `guardian_assessment:${reviewId}`
+      tool({ toolCallId: id, title: 'Guardian Review', kind: 'think', status: 'in_progress', rawInput: event(reviewId, 'inProgress') })
+      tool(
+        {
+          toolCallId: id,
+          status: end,
+          rawOutput: event(reviewId, status),
+          content: [text(`Status: ${status}\nRationale: <b>${status}</b>`)],
+        },
+        'tool_call_update',
+      )
+    }
+    tool({ toolCallId: 'call_1', title: 'Run ls', kind: 'execute', status: 'in_progress', rawInput: { command: 'ls' } })
+    tool({ toolCallId: 'call_1', status: 'completed', content: [text('a.txt')] }, 'tool_call_update')
+    say('reviewed')
     return END
   },
   // A new file (oldText null), an edit (oldText text) and an agent that leaves oldText out.
@@ -988,7 +1066,7 @@ const scenarios = {
   // Starts a subagent on its own session, as the ACP subagents draft describes, only for a client that takes them. `ask`:
   // the subagent asks for permission on its own session; `crowd` and `long` ask too, after 64 other subagents have finished
   // or after 200 steps of its own; `hang`: it works until the turn is cancelled, `silent` too but without saying it
-  // stopped; `nest`: it starts one of its own.
+  // stopped; `nest`: it starts one of its own; `review`: its requests are reviewed as `review` reports them.
   delegate: async ({ sessionId, argument, say }) => {
     if (!clientCapabilities.subagents) {
       say('worked alone')
@@ -1036,6 +1114,16 @@ const scenarios = {
         status: result.outcome.optionId === 'allow' ? 'completed' : 'failed',
       })
     }
+    if (argument === 'review')
+      for (const [reviewId, status, end] of [
+        ['r1', 'approved', 'completed'],
+        ['r2', 'denied', 'failed'],
+      ]) {
+        const id = `guardian_assessment:${reviewId}`
+        const review = { reviewId, review: { status, riskLevel: 'low', userAuthorization: null, rationale: status } }
+        update(child, { sessionUpdate: 'tool_call', toolCallId: id, title: 'Guardian Review', kind: 'think', status: 'in_progress' })
+        update(child, { sessionUpdate: 'tool_call_update', toolCallId: id, status: end, rawOutput: review })
+      }
     if (argument === 'hang' || argument === 'silent') {
       await waitCancel(sessionId)
       if (argument === 'hang') report('idle', 'cancelled')

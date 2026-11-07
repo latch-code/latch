@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Approval, AppSnapshot, Message, TaskDetail, TaskSummary } from '@latch/protocol'
+import type { Approval, AppSnapshot, Message, TaskDetail, TaskSummary, ToolKind } from '@latch/protocol'
 import { sha256Hex } from '@latch/core/node-kit'
 import { hashDisplay } from '@latch/host/crypto'
 import { SessionFacts } from '../src/shell/SessionEnvironment.tsx'
@@ -10,6 +10,7 @@ import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView } from '../src/components/DiffView.tsx'
 import { ApprovalDrawer } from '../src/composer/ApprovalDrawer.tsx'
 import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
+import { JUDGED_COPY } from '../src/core/securityCopy.ts'
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
@@ -269,6 +270,33 @@ describe('tool cards', () => {
     expect(closed).toContain('−1')
     expect(closed).not.toContain('class="diff-view"')
     expect(closed).toContain('data-kind="edit"')
+  })
+
+  it("names what the Harness's model decided once a call settled, never as a failure or a person's approval", () => {
+    const row = (state: Message['state'], judged: NonNullable<Message['tool']>['judged'], kind: ToolKind = 'think') =>
+      renderToStaticMarkup(
+        createElement(ToolCard, {
+          message: tool({ state, tool: { kind, title: 'Guardian Review', judged }, toolName: 'Guardian Review' }),
+        }),
+      )
+    const words = (html: string) => /class="[^"]*\btool-card-state\b[^"]*"[^>]*>(.*?)<\/span>/u.exec(html)?.[1] ?? ''
+    const approved = row('completed', { by: 'Codex', outcome: 'approved' })
+    expect(approved).toContain('Codex 的模型审阅')
+    expect(words(approved)).toBe('放行')
+    expect(approved).toContain(`title="${JUDGED_COPY.reviewNote('Codex')}"`)
+    // A denial is the model's verdict: the call did not run, and the row says who stopped it, not that it failed.
+    const denied = row('failed', { by: 'Codex', outcome: 'denied' })
+    expect(words(denied)).toBe('拦下')
+    expect(denied).not.toContain('失败')
+    expect(words(row('failed', { by: 'Codex', outcome: 'none' }))).toBe('没有判断')
+    // A review still running has no verdict yet.
+    expect(words(row('running', { by: 'Codex', outcome: 'approved' }))).toBe('')
+    // A call that ran unasked says so; one that failed before it ran claims nothing.
+    const unasked = row('completed', { by: 'Qwen Code', outcome: 'unasked' }, 'execute')
+    expect(words(unasked)).toBe('没有问你')
+    expect(unasked).not.toContain('的模型审阅')
+    expect(unasked).toContain(`title="${JUDGED_COPY.unaskedNote('Qwen Code')}"`)
+    expect(words(row('failed', { by: 'Qwen Code', outcome: 'unasked' }, 'execute'))).toBe('')
   })
 
   it('numbers a removed line by its old line in the single column phones keep', () => {

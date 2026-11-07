@@ -316,6 +316,18 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
+.permission-list-more {
+  justify-self: start;
+  margin-left: var(--sp-4);
+}
+/* 不再询问: its title and line in amber too, as on the chip, in the menu and in the phone's sheet. */
+.ui-choice:has(.permission-never) :is(.ui-choice-title, .ui-choice-description),
+.ui-menu-item:has(.permission-never) :is(.ui-menu-item-title, .ui-menu-item-description) {
+  color: var(--amber);
+}
+.permission-never {
+  color: var(--amber-icon);
+}
 .permission-list-head {
   display: flex;
   align-items: center;

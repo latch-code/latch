@@ -1,5 +1,5 @@
 /** Pure conversions from ACP payloads to Latch's browser-safe types. */
-import type { FileDiff, Message, PlanEntry, SessionConfigOption, ToolDecision, ToolDetail, ToolKind } from '@latch/protocol'
+import type { FileDiff, Message, PlanEntry, SessionConfigOption, ToolDecision, ToolDetail, ToolJudgement, ToolKind } from '@latch/protocol'
 import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
 
 export const TEXT_LIMIT = 2_000_000
@@ -65,6 +65,8 @@ export interface ToolState {
   final?: { state: 'cancelled' | 'failed'; note: string }
   /** How the latest permission request for this call ended. */
   decision?: ToolDecision
+  /** Decided without asking the person; `recorded` once its audit row was written. */
+  judged?: ToolJudgement & { recorded?: true }
   /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
   createdAt?: string
   startedAt?: string
@@ -105,7 +107,7 @@ export function settleTool(state: ToolState, at: string): boolean {
 }
 
 const TOOL_KINDS = new Set<string>(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other'])
-function toolKind(kind: string | undefined): ToolKind | undefined {
+export function toolKind(kind: string | undefined): ToolKind | undefined {
   if (!kind) return undefined
   return TOOL_KINDS.has(kind) ? (kind as ToolKind) : 'other'
 }
@@ -163,6 +165,7 @@ export function toolDetail(state: ToolState): ToolDetail {
     ...(locations.length ? { locations } : {}),
     ...(diffs.length ? { diffs } : {}),
     ...(state.decision ? { decision: state.decision } : {}),
+    ...(state.judged ? { judged: { by: state.judged.by, outcome: state.judged.outcome } } : {}),
   }
 }
 

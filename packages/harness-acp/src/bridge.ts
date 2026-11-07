@@ -52,6 +52,7 @@ import {
   startChoices,
   withModelOptions,
 } from './catalogue.ts'
+import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { codexOptions, readCodexModels } from './codex-models.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
@@ -71,6 +72,7 @@ import {
   TOOL_TEXT_LIMIT,
   toolDetail,
   commandName,
+  toolKind,
   toolLabel,
   toolMessage,
   type ToolState,
@@ -87,9 +89,10 @@ import {
 import type { AcpPermissionProfile, ExtensionRequest } from './profiles/index.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
+  AUTH_STATUS_METHOD,
   cancelRequest,
   chunkUpdate,
-  CLIENT_CAPABILITIES,
+  clientCapabilities,
   compactionChunk,
   compactionUpdate,
   configUpdate,
@@ -118,8 +121,7 @@ import {
 } from './protocol.ts'
 import {
   childText,
-  childTool,
-  looseTool,
+  childCall,
   MAX_CHILDREN,
   MAX_DEPTH,
   MAX_TRACKED,
@@ -164,6 +166,8 @@ interface Live {
     embeddedContext: boolean
     /** `_session/steering` adds text to a running turn. */
     steer: boolean
+    /** The agent logs out when asked. */
+    logout: boolean
   }
   authMethods: Array<{ name: string; description?: string }>
   agentVersion?: string
@@ -304,6 +308,27 @@ function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
+const REVIEW_STATUS: Record<string, 'approved' | 'denied' | 'timed-out' | 'aborted'> = {
+  approved: 'approved',
+  denied: 'denied',
+  timedOut: 'timed-out',
+  aborted: 'aborted',
+}
+
+/**
+ * The verdict of a review the harness reported: the status in the event it attached, else what a completed report says
+ * (failed says only that it was not approved). Undefined while it runs.
+ */
+function reviewVerdict(state: ToolState): 'approved' | 'denied' | 'timed-out' | 'aborted' | 'unknown' | undefined {
+  for (const raw of [state.rawOutput, state.rawInput]) {
+    const review = typeof raw === 'object' && raw !== null ? (raw as { review?: unknown }).review : undefined
+    const status = typeof review === 'object' && review !== null ? (review as { status?: unknown }).status : undefined
+    if (typeof status === 'string' && Object.hasOwn(REVIEW_STATUS, status)) return REVIEW_STATUS[status]
+  }
+  if (state.status === 'completed') return 'approved'
+  return state.status === 'failed' ? 'unknown' : undefined
+}
+
 /** A draft's choices as a start may carry them: each option once, IDs and values as a session's `config` bounds them. */
 function checkedStartConfig(config: unknown): Array<{ configId: string; value: string }> {
   if (config === undefined) return []
@@ -428,6 +453,8 @@ export class AcpBridge implements Bridge {
   private readonly workspaceRoot: string
   private readonly redact: (text: string) => string
   private readonly selection: ProfileSelection
+  /** What this definition's processes say about logging in, shared with the driver that shows it. */
+  private readonly auth: AuthFacts
   private readonly profile?: AcpPermissionProfile
   private readonly clock: () => number
   private readonly runs = new Map<string, Run>()
@@ -489,6 +516,7 @@ export class AcpBridge implements Bridge {
     this.workspaceRoot = resolve(options.workspaceRoot)
     this.redact = redactor(agent.env)
     this.selection = selectProfile(agent)
+    this.auth = authFacts(agent, true)
     this.profile = this.selection.profile?.permission
     this.clock = options.clock ?? Date.now
   }
@@ -751,6 +779,45 @@ export class AcpBridge implements Bridge {
     })
     this.reading = reading
     return reading
+  }
+
+  /**
+   * Asks the agent to log out, in a process started for it in a private empty folder, when the agent says it can. Refused
+   * while a session runs, since what logging out does to a running turn is the agent's choice. Afterwards idle processes
+   * stop, so that the next turn starts one that reads the login as it is now.
+   */
+  async logout(): Promise<void> {
+    await this.ready()
+    this.assertOpen()
+    const name = this.agent.name
+    const running = () => [...this.runs.keys(), ...this.attaching.keys()].some(key => this.state.tasks[key] !== undefined)
+    if (running()) throw new AppError(409, 'harness-busy', `${name} 有会话正在运行，等它结束后再退出登录。`)
+    const key = `logout-${randomUUID()}`
+    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
+    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'logout-')))
+    try {
+      const launch = this.currentLaunch(await this.projectConfig(cwd))
+      const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      this.enter(this.holds, key)
+      try {
+        if (!live.capabilities.logout) throw new AppError(409, 'logout-unsupported', `${name} 不支持从 Latch 退出登录。`)
+        if (running()) throw new AppError(409, 'harness-busy', `${name} 有会话正在运行，等它结束后再退出登录。`)
+        await live.connection.request('logout', {}, Math.min(this.limits.requestTimeoutMs, 30_000), this.lifetime.signal)
+      } catch (error) {
+        throw this.publicError(error, undefined)
+      } finally {
+        this.leave(this.holds, key)
+      }
+    } finally {
+      await this.discardProcess(key)
+      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+    }
+    this.auth.forgetReports()
+    // Only processes whose sessions can be restored; another keeps its session, with the login it read when it started.
+    for (const live of [...this.lives.values()])
+      if (live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key) && !live.connection.stopping)
+        void live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+    this.notify()
   }
 
   /** One read in a private empty folder that is removed afterwards, with the process started for it. */
@@ -1633,7 +1700,7 @@ export class AcpBridge implements Bridge {
       args: this.agent.args,
       definitionEnv: this.agent.env,
       ...(this.selection.profile ? { presetId: this.selection.profile.presetId } : {}),
-      profileVersion: 1 as const,
+      profileVersion: this.selection.profile?.version ?? 1,
       ...(this.profile?.inheritEnv ? { inheritEnv: this.profile.inheritEnv } : {}),
       programs: programPaths(this.profile),
     }
@@ -1694,7 +1761,7 @@ export class AcpBridge implements Bridge {
       approvals: this.profile?.approvals ?? 'prompts',
       ...(expected !== undefined ? { expectedMode: expected } : {}),
       ...(this.profile?.expectedMode !== undefined ? { defaultMode: this.profile.expectedMode } : {}),
-      ...(this.profile?.neverAskModes ? { neverAskModes: [...this.profile.neverAskModes] } : {}),
+      ...(this.profile?.modeTiers ? { modeTiers: structuredClone(this.profile.modeTiers) } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
       notes: this.permissionNotes(),
     }
@@ -2350,6 +2417,7 @@ export class AcpBridge implements Bridge {
         images: false,
         embeddedContext: false,
         steer: false,
+        logout: false,
       },
       authMethods: [],
       sessions: new Map(),
@@ -2363,7 +2431,7 @@ export class AcpBridge implements Bridge {
           'initialize',
           {
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: CLIENT_CAPABILITIES,
+            clientCapabilities: clientCapabilities(this.selection.preset?.signIn === undefined),
             clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
           },
           this.limits.requestTimeoutMs,
@@ -2392,7 +2460,9 @@ export class AcpBridge implements Bridge {
         images: capabilities?.promptCapabilities?.image === true,
         embeddedContext: capabilities?.promptCapabilities?.embeddedContext === true,
         steer: result.data._meta?.steering?.supported === true,
+        logout: capabilities?.auth?.logout != null,
       }
+      this.auth.learn(command, terminalLogins(result.data.authMethods), live.capabilities.logout)
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
         name: clip(this.redact(method.name), 200),
         ...(method.description ? { description: clip(this.redact(method.description), 500) } : {}),
@@ -2429,6 +2499,7 @@ export class AcpBridge implements Bridge {
 
   private onExit(live: Live, info: ExitInfo): void {
     if (this.lives.get(live.key) === live) this.lives.delete(live.key)
+    this.auth.forget(live)
     clearTimeout(live.idleTimer)
     live.sessions.clear()
     for (const permission of [...this.permissions.values()]) {
@@ -2942,6 +3013,18 @@ export class AcpBridge implements Bridge {
 
   private onNotification(live: Live, method: string, params: unknown): void {
     if (method === 'session/update') return this.onUpdate(live, params)
+    if (method === AUTH_STATUS_METHOD) {
+      const report = reportedLogin(params)
+      if (!report) return
+      // A kind Latch cannot read says nothing, so it does not stand in for one it could.
+      if (report.status === 'unknown') {
+        if (this.auth.forget(live)) this.notify()
+        return
+      }
+      this.auth.report(live, report)
+      this.notify()
+      return
+    }
     const notifications = this.selection.profile?.extensions?.notifications
     if (notifications && Object.hasOwn(notifications, method)) {
       const sessionId = this.state.tasks[live.key]?.acp.acpSessionId
@@ -3265,6 +3348,7 @@ export class AcpBridge implements Bridge {
     if (created && run?.segment) this.settleSegment(run, task, 'completed')
     const state = this.toolState(task, fields.toolCallId)
     mergeTool(state, fields, this.now())
+    this.judge(task, state, fields.toolCallId)
     this.upsert(task, toolMessage(state))
     if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
@@ -3276,6 +3360,80 @@ export class AcpBridge implements Bridge {
     this.touch(task)
     this.mark()
     this.notify(task.summary.id)
+  }
+
+  /**
+   * Marks and records a call no person was asked about while the session's mode leaves decisions to the harness's own
+   * model: each review the harness reports, with its verdict, or, for a harness that reports none, each call that ran in
+   * such a mode with no ask. One audit row per call, once it settled.
+   */
+  private judge(task: AcpTask, state: ToolState, toolCallId: string): void {
+    if (state.judged?.recorded) return
+    const prefix = this.profile?.reviewCallPrefix
+    const settled = state.status === 'completed' || state.status === 'failed'
+    const by = this.agent.name
+    if (prefix !== undefined && toolCallId.startsWith(prefix)) {
+      const verdict = reviewVerdict(state)
+      state.judged = { by, outcome: verdict === 'approved' || verdict === 'denied' ? verdict : 'none' }
+      if (settled) this.recordJudgement(task, state, verdict ?? 'unknown', 'agent-report')
+      return
+    }
+    if (prefix !== undefined || state.judged || state.awaiting > 0 || state.decision) return
+    const ran = state.status === 'completed' || (state.status === 'failed' && state.startedAt !== undefined)
+    if (!ran || this.modeTier(task)?.tier !== 'model') return
+    state.judged = { by, outcome: 'unasked' }
+    this.recordJudgement(task, state, 'ran-unasked', 'no-ask-seen')
+  }
+
+  /** The tier of the mode the session is in now, when Latch knows it. */
+  private modeTier(task: AcpTask) {
+    const mode = this.modeOption(task)?.currentValue ?? this.expectedMode(task)
+    return mode === undefined ? undefined : this.profile?.modeTiers?.[mode]
+  }
+
+  /** The record of one judged call. The turn stops when it cannot be written: such a call never goes unrecorded. */
+  private recordJudgement(
+    task: AcpTask,
+    state: ToolState,
+    outcome: Extract<HarnessSecurityEvent, { type: 'tool-judged' }>['outcome'],
+    source: 'agent-report' | 'no-ask-seen',
+  ): void {
+    state.judged = { ...state.judged!, recorded: true }
+    const taskId = task.summary.id
+    const event: HarnessSecurityEvent = {
+      type: 'tool-judged',
+      sessionId: taskId,
+      callHash: sha256Hex(state.id),
+      modeHash: sha256Hex(this.modeOption(task)?.currentValue ?? this.expectedMode(task) ?? ''),
+      kind: toolKind(state.kind) ?? 'other',
+      outcome,
+      source,
+    }
+    let written: void | Promise<void>
+    try {
+      written = this.options.securityEvent?.(event)
+    } catch (error) {
+      written = Promise.reject(error)
+    }
+    void Promise.resolve(written).catch(() => {
+      this.unrecorded(taskId)
+    })
+  }
+
+  private unrecorded(taskId: string): void {
+    const task = this.state.tasks[taskId]
+    if (!task) return
+    const note = `Latch 没能记下一次由 ${this.agent.name} 的模型代你决定的调用，已取消本轮。`
+    const run = this.runs.get(taskId)
+    if (run && !run.cancelRequested) {
+      run.notes.push(note)
+      this.requestCancel(run, true)
+    } else if (!run) {
+      task.messages.push({ id: randomUUID(), role: 'system', text: note, state: 'failed', createdAt: this.now() })
+      this.touch(task)
+      this.mark()
+    }
+    this.notify(taskId)
   }
 
   /**
@@ -3308,6 +3466,7 @@ export class AcpBridge implements Bridge {
         title: subagentTitle(update.title, this.redact),
         depth: (parent?.depth ?? 0) + 1,
         tools: new Map(),
+        loose: new Map(),
         ...(parent ? { parent } : {}),
       }
       live.children.set(update.sessionId, child)
@@ -3366,7 +3525,11 @@ export class AcpBridge implements Bridge {
       case 'tool_call':
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
-        if (!row || !parsed.success || !childTool(child, row, parsed.data, this.now())) return
+        if (!parsed.success) return
+        const state = childCall(child, row, parsed.data, this.now())
+        // Latch knows no mode of a subagent's own, so its calls are judged by the mode of the session that started it.
+        this.judge(task, state, parsed.data.toolCallId)
+        if (!row || !upsertStep(row, toolMessage(state))) return
         break
       }
       case 'subagent_update': {
@@ -3405,9 +3568,7 @@ export class AcpBridge implements Bridge {
     if (run.segment) this.settleSegment(run, task, 'completed')
     const now = this.now()
     // Past the limits a subagent's call has no step, but the request needs none.
-    const state = child
-      ? ((row && childTool(child, row, parsed.data.toolCall, now)) ?? looseTool(child, parsed.data.toolCall, now))
-      : this.toolState(task, parsed.data.toolCall.toolCallId)
+    const state = child ? childCall(child, row, parsed.data.toolCall, now) : this.toolState(task, parsed.data.toolCall.toolCallId)
     if (!child) mergeTool(state, parsed.data.toolCall, now)
     const record = (item: Message) => {
       if (!child) this.upsert(task, item)

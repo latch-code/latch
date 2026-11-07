@@ -158,13 +158,26 @@ public enum PhoneConversation {
         if let outcome = message["tool"]["decision"]["outcome"].string { return outcome == "allowed" ? nil : outcome }
         return state == "failed" && (message["tool"]["output"].string ?? message["text"].string ?? "").hasPrefix("APPROVAL_REJECTED:") ? "rejected" : nil
     }
+    private static let judgedWords = ["approved": "放行", "denied": "拦下", "none": "没有判断", "unasked": "没有问你"]
+    /**
+     * A call no person was asked about while the Harness's own model decides, as the web names it: a review of a request with
+     * its verdict (`review`), or a call that ran unasked. Never a person's approval.
+     */
+    public static func judgement(_ message: NativeJSON) -> (review: Bool, by: String, words: String)? {
+        let judged = message["tool"]["judged"]
+        guard let by = judged["by"].string, let outcome = judged["outcome"].string, let words = judgedWords[outcome] else { return nil }
+        return (outcome != "unasked", by, words)
+    }
     /** 已工作 2 分 13 秒, with what the fold must not hide. */
     public static func foldWords(_ turn: PhoneTurn) -> String {
         let spent = PhoneTime.duration(seconds: Double(turn.user?["turn"]["activeMs"].integer ?? 0) / 1000)
         let tools = turn.replies.filter { $0["role"].string == "tool" }
         let rejected = tools.filter { unrun($0) == "rejected" }.count
-        let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil }.count
-        return (["已工作" + (spent.map { " " + $0 } ?? "")] + (failed > 0 ? ["\(failed) 步失败"] : []) + (rejected > 0 ? ["\(rejected) 步被拒绝"] : [])).joined(separator: " · ")
+        // A review that came to 拦下 reports itself failed; it is a verdict, not a failed step.
+        let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil && judgement($0)?.review != true }.count
+        let denied = tools.filter { $0["tool"]["judged"]["outcome"].string == "denied" }.count
+        return (["已工作" + (spent.map { " " + $0 } ?? "")] + (failed > 0 ? ["\(failed) 步失败"] : []) + (rejected > 0 ? ["\(rejected) 步被拒绝"] : [])
+            + (denied > 0 ? ["模型拦下 \(denied) 次"] : [])).joined(separator: " · ")
     }
     /** One line for a failed row: the first line it reported, without the runtime's code, and cut. */
     public static func failureReason(_ message: NativeJSON) -> String {
@@ -202,6 +215,7 @@ public enum PhoneConversation {
     /** A verb by the tool's kind and its object; a tool Latch can read nothing from shows its raw name in mono, never a guess. */
     public static func toolLabel(_ message: NativeJSON) -> PhoneToolLabel {
         if let title = message["subagent"]["title"].string { return PhoneToolLabel(verb: "子 Agent", object: title, mono: false) }
+        if let judged = judgement(message), judged.review { return PhoneToolLabel(verb: nil, object: judged.by + " 的模型审阅", mono: false) }
         let tool = message["tool"], diffs = tool["diffs"].array
         if diffs.count > 1 { return PhoneToolLabel(verb: "编辑", object: "\(diffs.count) 个文件", mono: false) }
         if let diff = diffs.first {
@@ -408,18 +422,22 @@ public enum PhoneConversation {
         if !canRun { return "这台手机不能发送消息" }
         return nil
     }
-    /** Engine, a 权限 away from the default, branch, and usage from half the context up. */
-    public static func subtitle(_ detail: NativeJSON, engine: String) -> (parts: [String], fullAccess: Bool) {
+    /** Latch's word for each tier of a Harness's modes, as the web menu titles them. */
+    public static let tierTitles = ["plan": "只看不改", "ask": "先问你", "rule": "按规则放行", "model": "由模型判断", "never": "不再询问"]
+    /** Harness, a 权限 away from the default, branch, and usage from half the context up. */
+    public static func subtitle(_ detail: NativeJSON, engine: String) -> (parts: [String], neverAsks: Bool) {
         let summary = detail["summary"], permission = detail["permission"]
-        var parts = [engine], fullAccess = false
+        var parts = [engine], neverAsks = false
         let level = permission["level"].string ?? summary["level"].string
         if level == "L3" {
             let mode = detail["config"].array.first { $0["category"].string == "mode" }
             if let mode, let current = mode["currentValue"].string {
-                let never = permission["neverAskModes"].array.contains(.string(current))
+                let tier = permission["modeTiers"][current]["tier"].string
                 let standing = permission["defaultMode"].string ?? permission["expectedMode"].string
-                if never { fullAccess = true; parts.append("完全访问") }
-                else if current != standing { parts.append(mode["options"].array.first { $0["value"].string == current }?["name"].string ?? current) }
+                if tier == "never" { neverAsks = true; parts.append(tierTitles["never"]!) }
+                else if current != standing {
+                    parts.append(tier.flatMap { tierTitles[$0] } ?? mode["options"].array.first { $0["value"].string == current }?["name"].string ?? current)
+                }
             } else if permission["approvals"].string == "none" { parts.append("由 " + engine + " 决定") }
             else if permission != .null, permission["readback"].string != "mode" { parts.append("权限无法确认") }
         }
@@ -428,7 +446,7 @@ public enum PhoneConversation {
             let percent = Int((Double(used) / Double(size) * 100).rounded())
             if percent >= 50 { parts.append("\(percent)%") }
         }
-        return (parts, fullAccess)
+        return (parts, neverAsks)
     }
     /** The model a turn's first step used, as the author line names it. */
     public static func turnModel(_ turn: PhoneTurn) -> String? {

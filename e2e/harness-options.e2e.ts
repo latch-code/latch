@@ -59,7 +59,7 @@ describe("choosing a Harness's own options before the first message", () => {
         [
           '#!/bin/sh',
           `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}' FAKE_ACP_MODELS_FILE='${models}'`,
-          'export FAKE_ACP_MODES=read-only,workspace-write,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options',
+          'export FAKE_ACP_MODES=read-only,workspace-write,agent,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options',
           `export FAKE_ACP_EFFORT_BY_MODEL=1 FAKE_ACP_EFFORT_ID=reasoning_effort FAKE_ACP_EFFORT_DESCRIPTIONS=1 FAKE_CODEX_MODELS='${CODEX_MODELS}'`,
           `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
         ].join('\n'),
@@ -163,7 +163,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await startNew(page)
     // What the first session offered, before anything is sent.
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Small · Low')
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('read-only')
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
     await page.getByText(/^来自上次会话 · /u).waitFor()
@@ -177,9 +177,19 @@ describe("choosing a Harness's own options before the first message", () => {
     await shot(page, 'large-thinking-1440-light')
     await page.keyboard.press('Escape')
 
+    // Four modes: the menu lists three, and the one between them waits under 更多, which folds again.
     await chip(page, '权限').click()
-    await row(page, /workspace-write/u).click()
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('workspace-write')
+    await row(page, /由模型判断/u).waitFor()
+    expect(await row(page, /按规则放行/u).count()).toBe(0)
+    const more = page.locator('.permission-list-more')
+    await more.click()
+    await expect.poll(() => more.getAttribute('aria-expanded')).toBe('true')
+    await shot(page, 'permission-more-1440-light')
+    await more.click()
+    await expect.poll(() => row(page, /按规则放行/u).count()).toBe(0)
+    await more.click()
+    await row(page, /按规则放行/u).click()
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await page.keyboard.press('Escape')
     await shot(page, 'picked-1440-light')
 
@@ -189,10 +199,10 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(current(second, 'mode')).toBe('workspace-write')
     expect((await agent()).filter(line => line.includes('"session/set_config_option"')).length).toBeGreaterThanOrEqual(2)
 
-    // The model and its thinking stay picked for the next draft; the mode is back where every draft starts.
+    // The model, its thinking and the mode the person picked stay picked for the next draft.
     await startNew(page)
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · Low')
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('read-only')
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await chip(page, '模型').click()
     // A session ran on Large, so its own levels are known now.
     await page.getByRole('radio', { name: 'Max' }).waitFor()
@@ -208,7 +218,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.reload()
     await connected(page)
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · High')
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('read-only')
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await noHorizontalOverflow(page)
     await page.context().close()
   })
@@ -227,7 +237,8 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.keyboard.press('Escape')
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · High')
     await chip(page, '权限').click()
-    await row(page, /workspace-write/u).click()
+    await page.locator('.permission-list-more').click()
+    await row(page, /按规则放行/u).click()
     await page.keyboard.press('Escape')
     await input(page).fill('第三轮')
     await input(page).press('Meta+Enter')
@@ -249,7 +260,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await shot(page, 'model-gone-1440-dark')
     // The session shows what it runs on now, the rest of the draft with it, and a retry runs on that.
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Small · High')
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('workspace-write')
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await page.getByRole('button', { name: '重试', exact: true }).first().click()
     await page.locator('.transcript').getByText('echo: 第三轮', { exact: true }).first().waitFor({ timeout: 20_000 })
     const retried = await latest()
@@ -311,9 +322,13 @@ describe("choosing a Harness's own options before the first message", () => {
       expect(await sheet.getByText('开始后可以换', { exact: false }).count()).toBe(0)
       await shot(page, `sheet-390-${theme}`)
       await sheet.getByRole('button', { name: /^权限/u }).click()
-      await page.getByText('workspace-write', { exact: true }).waitFor()
+      await page.getByText('由模型判断', { exact: true }).waitFor()
+      expect(await page.getByText('按规则放行', { exact: true }).count()).toBe(0)
+      await page.getByRole('button', { name: '更多', exact: true }).click()
+      await page.getByText('按规则放行', { exact: true }).waitFor()
       await shot(page, `sheet-permission-390-${theme}`)
-      await page.keyboard.press('Escape')
+      await page.getByText('按规则放行', { exact: true }).click()
+      await expect.poll(() => sheet.getByRole('button', { name: /^权限/u }).innerText()).toContain('按规则放行')
       await noHorizontalOverflow(page)
       await page.context().close()
     })

@@ -54,4 +54,13 @@ export const SESSION_ACTIONS = {
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),
+  /** A call no person was asked about, in a mode where the harness's own model decides; written after the fact. */
+  'task.tool.judged': z.strictObject({
+    sessionId: opaqueId,
+    callHash: hex64,
+    modeHash: hex64,
+    kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']),
+    outcome: z.enum(['approved', 'denied', 'timed-out', 'aborted', 'unknown', 'ran-unasked']),
+    source: z.enum(['agent-report', 'no-ask-seen']),
+  }),
 } as const

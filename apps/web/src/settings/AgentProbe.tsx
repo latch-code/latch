@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react'
 import { FlaskConical } from 'lucide-react'
-import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentSettings, type HarnessLogin } from '@latch/protocol'
+import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentSettings } from '@latch/protocol'
 import { Button, InlineNotice, CopyButton } from '@latch/ui'
-import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, inlineError, isUncertain } from '../core/api.ts'
 import { dateTime } from '../format.ts'
@@ -30,12 +29,8 @@ export function AgentProbe({
   disabledReason,
   disabled = false,
   onSaved,
-  login,
-  terminal = false,
 }: {
   agent: AgentSettings
-  login?: HarnessLogin | undefined
-  terminal?: boolean
   disabledReason?: string
   disabled?: boolean
   onSaved(): void
@@ -110,7 +105,6 @@ export function AgentProbe({
       />
       <div className="settings-card-body agent-probe-body">
         {error && <InlineNotice tone="error">{uncertain ? '测试结果未确认；请重试同一次请求以同步结果。' : error}</InlineNotice>}
-        {result?.login === 'unauthenticated' && login && <HarnessLoginSteps harnessId={agent.id} login={login} terminal={terminal} />}
         {result && (
           <>
             <p className="agent-probe-meta">

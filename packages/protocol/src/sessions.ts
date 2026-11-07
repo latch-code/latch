@@ -274,6 +274,20 @@ export interface ToolDetail {
   diffs?: FileDiff[]
   /** How the call's approval ended; absent for calls that needed none, from older Hosts and from plugin drivers. */
   decision?: ToolDecision
+  /** Decided without asking the person, in a mode where the harness's own model decides. */
+  judged?: ToolJudgement
+}
+
+/**
+ * A call no person was asked about, in a mode where the harness's own model decides. `approved`, `denied` and `none`:
+ * this row is that model reviewing a request, with its verdict (`none`: it reached none, it timed out or stopped).
+ * `unasked`: the call ran without an ask, and the harness does not say whether a rule or its model let it through.
+ * Never a person's approval, and never a decision record.
+ */
+export interface ToolJudgement {
+  /** The harness, as its definition names it. */
+  by: string
+  outcome: 'approved' | 'denied' | 'none' | 'unasked'
 }
 
 export interface Message {
@@ -463,6 +477,19 @@ export interface TaskDetail {
   steer?: true
 }
 
+/**
+ * How much a mode lets a harness do without asking the person, strictest first: only reading (`plan`), asking first
+ * (`ask`), letting what its own rules allow through (`rule`), leaving the decision to its own model (`model`), or never
+ * asking (`never`).
+ */
+export type PermissionTier = 'plan' | 'ask' | 'rule' | 'model' | 'never'
+
+/** One of a harness's own modes as Latch states it: its tier and one Chinese line on what the harness really does there. */
+export interface ModeTier {
+  tier: PermissionTier
+  line: string
+}
+
 export interface SessionPermission {
   level: 'L1' | 'L3'
   enforcer: 'LATCH' | 'NONE'
@@ -472,8 +499,8 @@ export interface SessionPermission {
   expectedMode?: string
   /** The mode a session of this harness starts in; `expectedMode` follows later changes. */
   defaultMode?: string
-  /** Modes in which the harness stops asking before it acts. */
-  neverAskModes?: string[]
+  /** Latch's word for each of the harness's own modes it knows; a mode left out shows under the harness's own name. */
+  modeTiers?: Record<string, ModeTier>
   drift?: { at: string; observed: string }
   /** Display-only Chinese notes, e.g. 'pi 执行工具前不请求审批'. */
   notes: string[]

@@ -15,7 +15,12 @@ export const geminiProfile: HarnessProfile = {
     defaultEnv: {},
     expectedMode: 'default',
     modeLadder: ['plan', 'default', 'autoEdit', 'yolo'],
-    neverAskModes: ['yolo'],
+    modeTiers: {
+      plan: { tier: 'plan', line: '只看和规划，不改文件' },
+      default: { tier: 'ask', line: '改文件或运行命令前问你' },
+      autoEdit: { tier: 'rule', line: '直接改文件；运行命令前问你' },
+      yolo: { tier: 'never', line: '直接读写这台 Mac 上的文件并运行命令' },
+    },
     hiddenOptionIds: ['proceed_always_and_save', 'ProceedAlwaysAndSave'],
     readback: 'mode',
     systemSettings: SYSTEM_SETTINGS,

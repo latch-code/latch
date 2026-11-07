@@ -2,19 +2,22 @@ import { realpath } from 'node:fs/promises'
 import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentRecord } from '@latch/protocol'
 import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
+import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed } from './connection.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
-import { CLIENT_CAPABILITIES, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
+import { AUTH_STATUS_METHOD, clientCapabilities, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
 
 interface ProbeOptions {
   dataDir: string
   cwd: string
 }
 const HANDSHAKE_MS = 15_000
+/** How long a harness that pushes its login state gets to push it after the handshake. */
+const PUSH_WAIT_MS = 5_000
 const CAPABILITIES = { embeddedContext: false, images: false, resume: false, load: false, additionalDirectories: false }
 const isObject = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -33,7 +36,7 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     resolvedCommand: command,
     args: agent.args,
     definitionEnv: agent.env,
-    profileVersion: 1 as const,
+    profileVersion: profile?.version ?? 1,
     ...(profile ? { presetId: profile.presetId } : {}),
     ...(profile?.permission.inheritEnv ? { inheritEnv: profile.permission.inheritEnv } : {}),
     programs: programPaths(profile?.permission),
@@ -108,7 +111,13 @@ export async function probeAgent(
       request: async () => {
         throw new RpcError(RPC.methodNotFound, 'Unsupported during initialize-only probe')
       },
-      notification: () => {},
+      notification: (method, params) => {
+        if (method !== AUTH_STATUS_METHOD) return
+        const report = reportedLogin(params)
+        if (report?.status === 'unknown') return
+        pushed = report
+        if (pushed) pushedNow?.()
+      },
       exit: () => {},
     },
   )
@@ -118,13 +127,15 @@ export async function probeAgent(
   options.signal?.addEventListener('abort', abort, { once: true })
   let result: AgentProbeResult
   let diagnostic: string | undefined
+  let pushed: ReportedLogin | undefined
+  let pushedNow: (() => void) | undefined
   try {
     const parsed = initializeResult.safeParse(
       await connection.request(
         'initialize',
         {
           protocolVersion: PROTOCOL_VERSION,
-          clientCapabilities: CLIENT_CAPABILITIES,
+          clientCapabilities: clientCapabilities(selection.preset?.signIn === undefined),
           clientInfo: { name: 'latch', title: 'Latch', version: '0.1.0' },
         },
         Math.max(1, Math.min(HANDSHAKE_MS, deadline - Date.now())),
@@ -138,6 +149,22 @@ export async function probeAgent(
     const rule = profile?.permission.versionRule
     if (rule && (typeof reported !== 'string' || !new RegExp(rule.pattern).test(reported))) throw new Error('Agent 版本未经此预设验证。')
     const caps = data.agentCapabilities
+    const located = resolveCommand(agent.command)
+    if (located) authFacts(agent)?.learn(located, terminalLogins(data.authMethods), caps?.auth?.logout != null)
+    // Pushed after the answer to initialize: a short wait, cut short by the push, the deadline or a cancel.
+    if (caps?._meta?.authStatus != null && !pushed) {
+      let stop = () => {}
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, Math.max(0, Math.min(PUSH_WAIT_MS, deadline - Date.now() - 2_000)))
+        stop = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        pushedNow = stop
+        options.signal?.addEventListener('abort', stop, { once: true })
+      })
+      options.signal?.removeEventListener('abort', stop)
+    }
     result = {
       status: 'ready',
       checkedAt: new Date().toISOString(),
@@ -181,7 +208,8 @@ export async function probeAgent(
   // Both reads run together in the time the handshake left; with none left, the login is as unknown as a timed-out check.
   const left = deadline - Date.now()
   const reads = left > 0 ? { timeoutMs: left, ...(options.signal ? { signal: options.signal } : {}) } : undefined
-  const asksLogin = result.status !== 'authentication-required' && profile?.loginStatus !== undefined && !options.signal?.aborted
+  // What the harness pushed is its own answer, so its status command, whose output may hold part of a key, need not run.
+  const asksLogin = result.status !== 'authentication-required' && !pushed && profile?.loginStatus !== undefined && !options.signal?.aborted
   const pairing = profile?.programVersion
   const name = selection.preset?.name
   const [login, program] = await Promise.all([
@@ -189,7 +217,8 @@ export async function probeAgent(
     pairing && name && reads && !options.signal?.aborted ? readProgramVersion(agent, reads) : undefined,
   ])
   if (result.status === 'authentication-required') result.login = 'unauthenticated'
-  else if (asksLogin) result.login = login ?? 'unknown'
+  else if (pushed) result.login = pushed.status
+  else if (asksLogin) result.login = login?.status ?? 'unknown'
   if (pairing && name && program) {
     const adapter = result.agent?.version
     const version = program.version === undefined ? undefined : bounded(program.version, 100)

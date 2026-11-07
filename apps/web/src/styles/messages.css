@@ -1176,6 +1176,15 @@ button.summary-file:hover {
 .harness-login p {
   margin: 0;
 }
+/* Names a login when the harness offers more than one; its command follows. */
+.harness-login .harness-login-method {
+  margin-top: var(--sp-4);
+  color: var(--ink);
+  font-weight: 500;
+}
+.harness-login .harness-login-method:first-child {
+  margin-top: 0;
+}
 .harness-login-command {
   display: flex;
   flex-wrap: wrap;

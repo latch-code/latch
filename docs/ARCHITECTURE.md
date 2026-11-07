@@ -309,6 +309,8 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 
 **决定记录与拒绝说明。** Host 把决定连同 `via`（`host.sock` 上的桌面端为 `this-mac`，其余入口为 `other-device`）交给 Driver；内置 Harness 与 ACP Driver 把结果写在那次工具调用上，`ToolDetail.decision = { outcome, at, via? }`，并写进各自存储的 zod schema。`outcome` 为 `allowed`、`rejected`（人的选择，带 `via`），或 `expired`、`cancelled`（没有人回答：会话停止、取消、进程结束、Host 重启时还开着的审批，以及权限漂移时 Latch 自己拒绝的询问），后两者不带 `via`，从不记作某人的拒绝。Agent 自己撤回的询问不留记录。设备名与设备 ID 不进这条记录，只在审计里。记录写的是人的决定，不是调用有没有执行：内置 Harness 在允许之前不执行调用，被拒绝时给模型的工具结果是「用户拒绝了本次工具调用，未执行该操作。」，没有内部代码；ACP Agent 是可信本机代码，它的询问只是提示，Agent 之后报告的状态与差异照常记下，界面只把没有开始就结束的调用读作被拒绝（见 [DESIGN.md](./DESIGN.md)「审批」）。Agent 为同一调用询问多次时，记录保留已经给出的允许，之后的拒绝或取消不覆盖它。拒绝可以附一句说明 `note`（「告诉 Harness 改做什么」）：去掉首尾空白、换行统一为 `\n` 后最多 500 个字符，每一行都不能含 `escapeSecurityText` 会标出的字符（`rejectionNote`，[decision.ts](../packages/protocol/src/decision.ts)），否则在审计之前返回 400 `invalid-note`；允许时带说明同样返回 400。Host 只把说明交给 `capabilities.permission.rejectionNote` 为真的 Harness（内置 Harness 声明它，ACP Driver 不声明：ACP 的权限回复不能带文字）；给其他 Harness 的说明经过同样的检查后被丢弃，拒绝照常生效。说明是给模型的输入，所以交给 Harness 时像在会话里输入一样另需 `run` 权限（403 `scope-required`）；只有查看权限的设备仍可以拒绝，但不能附说明。内置 Harness 把它接在拒绝后面交给模型（「…未执行该操作。用户的说明：…」）。页面读取会话所用 Harness 的这项事实，只在为真时才让拒绝等说明。说明是交给模型的输入，不写进审计。
 
+在 Harness 自己的模型代人决定的模式里，没有问人的调用带 `ToolDetail.judged = { by, outcome }`：`approved`、`denied`、`none` 是那个模型对一次请求的审阅与结论，`unasked` 是没有问人就运行了；它不是决定记录，也不是人的批准，每一条另写 `task.tool.judged` 审计（见 [HARNESSES.md](./HARNESSES.md)「权限菜单」）。
+
 审批已被处理或已失效时返回 409 `approval-settled`，`decidedBy` 说明由谁处理：`{ kind: 'device', self, deviceName, decision, optionKind, at }`（`optionKind` 如 `allow_once`、`allow_always`、`reject_once`；`deviceName` 为该设备当前的名称，Host 已不认识该设备时为空），或 `{ kind: 'system' }`（会话结束或取消使其失效）；执行端已不再等待时记录 `approval.stale`。同一设备用同一 `requestId` 重发时返回原回执（`replay: true`），不会再次决定或审计。
 
 取消沿同一个 `AbortSignal` 传给 Provider 与工具，并等待真实结算后才确认；已经发生的副作用不会撤销，不协作的插件无法在同一进程中被安全强杀。取消的请求体为 `{ requestId?, runId? }`：带 `runId` 时只停止那次运行，它已经结束（或之后又开始了新的一轮）时不停止任何东西，回答 `ended`；回答是回执 `{ sessionId, requestId?, runId?, outcome: 'stopped' | 'ended', status?, at }`。ACP Agent 的取消规则见 [HARNESSES.md](./HARNESSES.md#取消)。界面上的取消中、部分输出与超时语义，以及回执的完整规则，见 [STREAMING.md](./STREAMING.md#取消的请求-id-与回执)。
@@ -402,6 +404,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
 | `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin` | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
 | `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
+| `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method? }`。见 [HARNESSES.md](./HARNESSES.md#登录) |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：添加项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |

@@ -153,12 +153,12 @@ struct ConversationView: View {
 
 private struct HeaderTitle: View {
     let title: String
-    let subtitle: (parts: [String], fullAccess: Bool)
+    let subtitle: (parts: [String], neverAsks: Bool)
     @Environment(\.horizontalSizeClass) private var width
     private var line: Text {
         subtitle.parts.enumerated().reduce(Text("")) { text, entry in
             let part = Text((entry.offset > 0 ? " · " : "") + entry.element)
-            return text + (subtitle.fullAccess && entry.element == "完全访问" ? part.foregroundColor(PhoneTheme.amber) : part)
+            return text + (subtitle.neverAsks && entry.element == PhoneConversation.tierTitles["never"] ? part.foregroundColor(PhoneTheme.amber) : part)
         }
     }
     var body: some View {

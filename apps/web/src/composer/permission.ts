@@ -1,14 +1,68 @@
-import type { HarnessInfo, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
+import type { HarnessInfo, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 
-export type ModeIcon = 'eye' | 'shield' | 'shield-alert'
+export type ModeIcon = 'eye' | 'shield' | 'list-checks' | 'scale' | 'shield-alert'
 
 export interface PermissionRow extends ModeRow {
   icon: ModeIcon
+  /** Latch's word for the mode, when Latch knows the harness's modes. */
+  tier?: PermissionTier
   /** The agent never asks in this mode. */
   neverAsks: boolean
   line: string
+  /** Shown under 更多: the menu's main rows are at most three. */
+  more: boolean
+}
+
+const TIER_ORDER: Record<PermissionTier, number> = { plan: 0, ask: 1, rule: 2, model: 3, never: 4 }
+const TIER_ICONS: Record<PermissionTier, ModeIcon> = {
+  plan: 'eye',
+  ask: 'shield',
+  rule: 'list-checks',
+  model: 'scale',
+  never: 'shield-alert',
+}
+
+/**
+ * The menu's main rows, at most three: asking first, one middle row (the model's when there is one, else the rules'),
+ * and never asking. Only reading and the other middle row go under 更多, and only when there are more than three.
+ */
+function mainValues(rows: ReadonlyArray<{ value: string; tier?: PermissionTier }>): Set<string> {
+  if (rows.length <= 3 || !rows.some(row => row.tier)) return new Set(rows.map(row => row.value))
+  const first = (tier: PermissionTier) => rows.find(row => row.tier === tier)
+  const main = [first('ask'), first('model') ?? first('rule'), first('never')].flatMap(row => (row ? [row.value] : []))
+  return new Set(main.length ? main : [rows[0]!.value])
+}
+
+/**
+ * The agent's modes as rows. Where Latch knows its modes, each is titled by its tier with the harness's own line, in tier
+ * order, and a mode Latch has no word for is left out unless it is the current one, which keeps the agent's own name.
+ */
+function tierRows(
+  option: SessionConfigOption,
+  tiers: Readonly<Record<string, ModeTier>> | undefined,
+  locked: string | undefined,
+): PermissionRow[] {
+  const known = tiers !== undefined && Object.keys(tiers).length > 0
+  const rows = modeRows(option, locked).flatMap((row, index) => {
+    const tier = tiers?.[row.value]
+    if (known && !tier && !row.current) return []
+    const icon: ModeIcon = tier ? TIER_ICONS[tier.tier] : !known && index === 0 && option.options.length > 1 ? 'eye' : 'shield'
+    return [
+      {
+        ...row,
+        ...(tier ? { name: MODE_COPY.tierTitles[tier.tier], tier: tier.tier } : {}),
+        icon,
+        neverAsks: tier?.tier === 'never',
+        line: tier?.line ?? row.description ?? '',
+        more: false,
+      },
+    ]
+  })
+  if (known) rows.sort((a, b) => (a.tier ? TIER_ORDER[a.tier] : 5) - (b.tier ? TIER_ORDER[b.tier] : 5))
+  const main = mainValues(rows)
+  return rows.map(row => ({ ...row, more: !row.current && !main.has(row.value) }))
 }
 
 /** What the composer says about who decides, and the rows when the engine has modes to choose from. */
@@ -93,7 +147,7 @@ const chatPermission: PermissionView = {
 export function permissionView(input: {
   harness: PermissionHarness | undefined
   mode?: TaskMode | undefined
-  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'neverAskModes'>>
+  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers'>>
   config: readonly SessionConfigOption[]
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   locked?: string
@@ -112,16 +166,7 @@ export function permissionView(input: {
     })
     return started
   }
-  const never = new Set(permission?.neverAskModes)
-  const rows = modeRows(option, locked).map((row, index): PermissionRow => {
-    const neverAsks = never.has(row.value)
-    return {
-      ...row,
-      neverAsks,
-      icon: neverAsks ? 'shield-alert' : index === 0 && option.options.length > 1 ? 'eye' : 'shield',
-      line: neverAsks ? MODE_COPY.neverAsksLine(harness.capabilities.display.label) : (row.description ?? ''),
-    }
-  })
+  const rows = tierRows(option, permission?.modeTiers, locked)
   const current = rows.find(row => row.current)
   return {
     label: current?.name ?? option.currentValue,

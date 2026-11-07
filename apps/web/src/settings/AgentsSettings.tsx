@@ -26,6 +26,7 @@ import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
+import { LoginGroup } from './LoginGroup.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 
 interface AgentsResponse {
@@ -462,6 +463,7 @@ function AgentPage({
   probe,
   probeDisabledReason,
   loginTerminal = false,
+  run = false,
   onRecheck,
   onSaved,
   onDeleted,
@@ -473,6 +475,8 @@ function AgentPage({
   probe: boolean
   probeDisabledReason?: string
   loginTerminal?: boolean
+  /** This device may start sessions, so it may ask about logging in and log out. */
+  run?: boolean
   onRecheck: () => void
   onSaved: () => void
   onDeleted: () => void
@@ -629,16 +633,8 @@ function AgentPage({
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
-      {probe && (
-        <AgentProbe
-          agent={agent}
-          disabled={busy}
-          disabledReason={probeDisabledReason}
-          onSaved={onSaved}
-          login={harness?.login}
-          terminal={loginTerminal}
-        />
-      )}
+      {harness?.login && <LoginGroup harness={harness} allowed={run} terminal={loginTerminal} probe={agent.lastProbe} />}
+      {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow
           title="删除 Harness"
@@ -952,6 +948,7 @@ export function AgentsSettings({
           checking={checking}
           probe={snapshot.catalog?.features?.agentProbe === true}
           loginTerminal={snapshot.catalog?.features?.loginTerminal === true}
+          run={snapshot.device.scopes?.includes('run') === true}
           probeDisabledReason={
             !snapshot.device.scopes?.includes('admin')
               ? '这台设备没有管理这台 Mac 的权限。'

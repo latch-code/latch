@@ -125,17 +125,21 @@ private struct WorkRow: View {
         let object = label.mono ? Text(label.object).font(PhoneTheme.mono) : Text(label.object)
         let output = (message["tool"]["output"].string ?? message["text"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let diffs = message["tool"]["diffs"].array
+        let judged = PhoneConversation.judgement(message)
         let tail: (String, Color)? = {
+            if let judged, judged.review, state == "completed" || state == "failed" { return (judged.words, PhoneTheme.muted) }
             if let unrun { return (unrun == "rejected" ? "已拒绝" : unrun == "expired" ? "已过期" : "已取消", PhoneTheme.muted) }
             if state == "failed" { return (PhoneConversation.failureReason(message), PhoneTheme.red) }
             if state == "cancelled" { return ("已停止", PhoneTheme.muted) }
+            if let judged, state == "completed" { return (judged.words, PhoneTheme.muted) }
             return nil
         }()
         row(icon: icon(message), words: verb + object, detail: diffs.isEmpty ? (output.isEmpty ? nil : output) : nil, stat: PhoneConversation.diffStat(message["tool"]), tail: tail,
             running: state == "running" && !frozen, diff: diffs, open: diffs.count == 1 ? diffs.first?["path"].string : nil, places: diffs.isEmpty ? message["tool"]["locations"].array.compactMap(\.string) : [])
     }
     private func icon(_ message: NativeJSON) -> String {
-        switch PhoneConversation.toolKind(message) {
+        if PhoneConversation.judgement(message)?.review == true { return "scale.3d" }
+        return switch PhoneConversation.toolKind(message) {
         case "read": "doc.text"; case "edit": "square.and.pencil"; case "delete": "trash"; case "move": "arrow.right.doc.on.clipboard"
         case "search": "magnifyingglass"; case "execute": "terminal"; case "fetch": "globe"; default: "wrench"
         }

@@ -85,6 +85,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.mode.widened': { sessionId, toHash: hex },
   'task.permission-drift': { sessionId, observedHash: hex },
   'task.approval-auto-rejected': { sessionId, reason: 'persistent-only' },
+  'task.tool.judged': { sessionId, callHash: hex, modeHash: hex, kind: 'execute', outcome: 'approved', source: 'agent-report' },
   'device.enroll.requested': { enrollmentId, listener: 'lan-tls', fingerprint: 'A'.repeat(20), scopes: ['view'], invitationId },
   'device.enrolled': {
     deviceId,
@@ -122,7 +123,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.models.changed': { agentId: 'codex', count: 2 },
   'agent.login.requested': { agentId: 'codex' },
   'agent.login.checked': { agentId: 'codex', status: 'unauthenticated' },
-  'agent.login.opened': { agentId: 'codex' },
+  'agent.login.opened': { agentId: 'codex', source: 'harness' },
+  'agent.logout': { agentId: 'codex' },
   'agent.defined': { agentId: 'codex', definitionHash: hex, created: true },
   'agent.deleted': { agentId: 'codex' },
   'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },

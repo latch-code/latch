@@ -33,6 +33,18 @@ export interface ComposerChoice {
   projectSkipped?: boolean
   /** Picks from the Harness's own options (`HarnessInfo.catalogue`), by option ID; each one it still offers. */
   config?: Record<string, string>
+  /** The picks last made for other Harnesses, by Harness ID: each is that Harness's start again once it is chosen. */
+  otherPicks?: Record<string, Record<string, string>>
+}
+
+/** Another Harness is chosen: the picks made for this one are kept, and that one's own come back. */
+export function harnessPicks(
+  choice: Pick<ComposerChoice, 'harnessId' | 'config' | 'otherPicks'>,
+  harnessId: string,
+): Pick<ComposerChoice, 'config' | 'otherPicks'> {
+  const others = { ...choice.otherPicks, ...(choice.harnessId && choice.config ? { [choice.harnessId]: choice.config } : {}) }
+  const { [harnessId]: own, ...rest } = others
+  return { config: own, otherPicks: Object.keys(rest).length ? rest : undefined }
 }
 
 /** What a draft shows of a Harness's own options: the list its last session offered, with this draft's picks in it. */
@@ -108,16 +120,6 @@ export function startConfig(
       ? [{ configId, value }]
       : [],
   )
-}
-
-/** What this device keeps of the picks for the next draft: never a mode, since every draft opens on the starting one. */
-export function rememberedConfig(
-  harness: Pick<HarnessInfo, 'catalogue'> | undefined,
-  picks: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  const modes = new Set(harness?.catalogue?.options.filter(option => option.category === 'mode').map(option => option.id))
-  const kept = Object.entries(picks ?? {}).filter(([configId]) => !modes.has(configId))
-  return kept.length ? Object.fromEntries(kept) : undefined
 }
 
 export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string => harness.capabilities.display.label
@@ -302,13 +304,18 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
     named?.id === 'default' && !skipped && catalog.sessionFolders ? (workspaces.find(item => item.id !== 'default') ?? named) : named
   const model = harness?.capabilities.models.owner === 'latch' ? (validModel(catalog, stored?.model) ?? defaultModel(catalog)) : undefined
   // Picks belong to the Harness they were made for, and only what it still offers stays picked.
-  const picks = harness?.id === stored?.harnessId ? startConfig(harness, stored?.config) : []
+  const own = harness && (harness.id === stored?.harnessId ? stored?.config : stored?.otherPicks?.[harness.id])
+  const picks = harness ? startConfig(harness, own) : []
+  // A remembered Harness that cannot start now keeps its picks for when it can.
+  const away = stored?.harnessId && stored.harnessId !== harness?.id && stored.config ? { [stored.harnessId]: stored.config } : {}
+  const others = Object.entries({ ...stored?.otherPicks, ...away }).filter(([id]) => id !== harness?.id)
   return {
     mode: startMode(catalog, harness, workspace?.id),
     ...(harness ? { harnessId: harness.id } : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
     ...(picks.length ? { config: Object.fromEntries(picks.map(pick => [pick.configId, pick.value])) } : {}),
+    ...(others.length ? { otherPicks: Object.fromEntries(others) } : {}),
     ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),
   }
 }
@@ -319,7 +326,9 @@ export function forkedChoice(
   start: Partial<ComposerChoice> | null,
   borrowed: Partial<ComposerChoice>,
 ): ComposerChoice {
-  const choice = resolveChoice(catalog, { ...start, ...borrowed })
+  const picks =
+    borrowed.harnessId !== undefined && borrowed.harnessId !== start?.harnessId ? harnessPicks(start ?? {}, borrowed.harnessId) : {}
+  const choice = resolveChoice(catalog, { ...start, ...borrowed, ...picks })
   const harness = findHarness(catalog, choice.harnessId)
   return borrowed.mode && harness?.modes.includes(borrowed.mode) ? { ...choice, mode: borrowed.mode } : choice
 }
@@ -445,6 +454,7 @@ export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
         : {}),
       ...(item.projectSkipped === true ? { projectSkipped: true } : {}),
       ...(configRecord(item.config) ? { config: configRecord(item.config)! } : {}),
+      ...(otherPicks(item.otherPicks) ? { otherPicks: otherPicks(item.otherPicks)! } : {}),
     }
   } catch {
     return null
@@ -457,6 +467,16 @@ function configRecord(value: unknown): Record<string, string> | undefined {
   const entries = Object.entries(value as Record<string, unknown>).filter(
     (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[0].length <= 128 && entry[1].length <= 1024,
   )
+  return entries.length && entries.length <= 16 ? Object.fromEntries(entries) : undefined
+}
+
+/** Other Harnesses' picks as stored: a few records by Harness ID. */
+function otherPicks(value: unknown): Record<string, Record<string, string>> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const entries = Object.entries(value as Record<string, unknown>).flatMap(([id, picks]) => {
+    const record = id.length <= 128 ? configRecord(picks) : undefined
+    return record ? [[id, record] as const] : []
+  })
   return entries.length && entries.length <= 16 ? Object.fromEntries(entries) : undefined
 }
 

@@ -30,7 +30,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 3. 新建会话时默认用这台设备上次的 Harness，否则按预设顺序用第一个能开始的，Latch 内置最后，不提问。项目在标题里选；Harness 没有项目、启动目录又是 Host 自己选的（`catalog.sessionFolders`）时，按发送打开项目列表、保留草稿、不开始；选「不选项目」就在新的空文件夹里开始。 发送就开始，没有确认。
 
    这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行：「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。」；从不询问的 Harness 写「pi 执行前不询问，Latch 不限制它。」。Driver 不会收到这一项。
-4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。
+4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。权限菜单的写法见「权限菜单」。
 
 预设收录开源 Agent，以及厂商官方文档支持的已安装命令（Claude Agent、Cursor）；都只使用本机已安装的命令，不使用 `npx` 等运行时下载，不捆绑、不修改它们：
 
@@ -46,7 +46,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 | Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，不用 Claude Code 的名称或 logo，图标是中性图形 |
 | Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | Cursor 官方安装脚本；用这个人自己的 Cursor 账号。安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者，因为 `agent` 这个名字可能属于别的程序；图标是中性图形 |
 
-Claude Agent 与 Cursor 不是开源软件，Latch 只启动这个人自己装好、未经修改的命令。Latch 不提供 Claude 的登录（不写登录命令、不调用 `authenticate`、不声明 terminal auth，所以适配器也不列出登录方法），不读取、保存或转交任何一家的凭据，不调用私有接口。对外发布并宣传「可用 Claude 订阅」之前，需要先取得 Anthropic 的书面确认；在自己的电脑上个人使用不受影响。
+Claude Agent 与 Cursor 不是开源软件，Latch 只启动这个人自己装好、未经修改的命令。Latch 不提供 Claude 的登录（不写登录命令、不调用 `authenticate`、不声明 terminal auth，所以适配器也不列出登录方法），不读取、保存或转交任何一家的凭据，不调用私有接口；它的登录状态命令只读结论与到期日期（见「登录」）。对外发布并宣传「可用 Claude 订阅」之前，需要先取得 Anthropic 的书面确认；在自己的电脑上个人使用不受影响。
 
 Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读出 `PATH` 和下文点名的变量（「进程与环境」），8 秒内没结束就杀掉整个进程组，退回下面这些目录。登录 shell 的 PATH 排在 Host 自己的 PATH 之前。
 
@@ -58,7 +58,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 每个预设的权限配置是 `packages/harness-acp/src/profiles/` 下的一个 `HarnessProfile`，只在 Host 上使用；浏览器只看到复制进 `TaskDetail.permission` 的展示字段。
 
-- `permission`（`AcpPermissionProfile`）：`approvals`（Agent 是否请求审批）、`defaultEnv`、`expectedMode`、`modeLadder`（严格 → 宽松，由模型代为批准的模式排在询问与不再询问之间）、`hiddenOptionIds`（精确 ID，或以 `*` 结尾的前缀）、`readback`、`versionRule`（见「版本规则」）、`systemSettings`（Gemini CLI）、`configEnv`（见下）与中文 `notes`。
+- `permission`（`AcpPermissionProfile`）：`approvals`（Agent 是否请求审批）、`defaultEnv`、`expectedMode`、`modeLadder`（严格 → 宽松，由模型代为批准的模式排在询问与不再询问之间）、`modeTiers`（每个模式的档位与一句话，见「权限菜单」）、`reviewCallPrefix`（Agent 把自己的模型审阅一次请求报告成工具调用时，调用 ID 的前缀）、`hiddenOptionIds`（精确 ID，或以 `*` 结尾的前缀）、`readback`、`versionRule`（见「版本规则」）、`systemSettings`（Gemini CLI）、`configEnv`（见下）与中文 `notes`。
 - `version`：计入启动指纹。改变配置的行为时应递增它，已有会话因此停止接受输入，换新会话继续。
 - `projectConfigPaths`、`projectConfigManaged`：见「项目配置」。
 - `materialize`：启动前在 Host 上准备 Agent 需要的文件，返回要加入的环境变量（目前只有 Gemini CLI 使用）。
@@ -69,9 +69,9 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 | 预设 | Latch 设置的环境变量 | 预期模式 | 模式顺序（严格 → 宽松） | 不提供的模式 | 隐藏的选项 | 读回 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | `INITIAL_AGENT_MODE=read-only` | `read-only` | `read-only`、`workspace-write`、`agent-full-access` | `agent` | `accept_execpolicy_amendment`、`apply_network_policy_amendment*` | 可读回 |
-| Qwen Code | — | `default` | `plan`、`default`、`auto-edit`、`yolo` | `auto` | — | 可读回；恢复会话会恢复旧模式，Latch 每轮前重新设置 |
-| goose | `GOOSE_MODE=approve` | `approve` | `chat`、`approve`、`auto` | `smart_approve` | — | 可读回 |
+| Codex | `INITIAL_AGENT_MODE=read-only` | `read-only` | `read-only`、`workspace-write`、`agent`、`agent-full-access` | — | `accept_execpolicy_amendment`、`apply_network_policy_amendment*` | 可读回 |
+| Qwen Code | — | `default` | `plan`、`default`、`auto-edit`、`auto`、`yolo` | — | — | 可读回；恢复会话会恢复旧模式，Latch 每轮前重新设置 |
+| goose | `GOOSE_MODE=approve` | `approve` | `chat`、`approve`、`smart_approve`、`auto` | — | — | 可读回 |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` | `default` | `plan`、`default`、`autoEdit`、`yolo` | — | `proceed_always_and_save`、`ProceedAlwaysAndSave` | 可读回 |
 | DeepSeek Harness | `DSH_PERMISSION_MODE=read-only`、`DSH_TELEMETRY_DISABLED=1` | — | — | — | — | 无法读回权限模式 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT`（见下） | `build` | `plan`、`build` | — | — | 可读回 |
@@ -81,14 +81,14 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 - DeepSeek Harness：Latch 总是设置 `DSH_TELEMETRY_DISABLED=1`（它把任何非空值当作关闭遥测），定义里同名的变量会被这个值覆盖。会话仍是完全访问（L3），Latch 读不回它的权限模式，也不确认它自己的限制是否生效。
 - Gemini CLI：每次启动进程前，Host 把 `{"security":{"disableAlwaysAllow":true,"enablePermanentToolApproval":false}}` 写入 `<数据目录>/harnesses/<agent-id>/gemini-system-settings.json`，路径通过 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传给 Gemini CLI。这些键名尚未在 Gemini CLI 的正式版本上核对。
-- OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`，禁用子 Agent（`task`）；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
-- Claude Agent：五档都按 Claude 自己的名字与说明给出，Bypass 标为不询问，不预选任何更宽的一档。自动模式由 Claude 的分类器决定是否执行；计划模式在自动模式可用时，命令也可能由分类器决定（适配器默认开启 `useAutoModeDuringPlan`）。会话权限说明还写明：Claude 不需要批准的调用（工作目录内读取、只读命令）不出现在审批里，Claude Code 设置里的允许规则与 hooks 先于 Latch 生效，项目 `.mcp.json` 的服务器直接连接。版本规则要求 0.99 或之后的 0.x 适配器。
+- OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`，禁用子 Agent（`task`）；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置，`plan` 在这些规则之后再拒绝 `edit`（也管写入与补丁工具）和 `bash`，所以计划模式不改文件也不运行命令，它自己的计划文件也不写。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
+- Claude Agent：五档按「权限菜单」的档位给出，Bypass 是不再询问，不预选任何更宽的一档。自动模式由 Claude 的分类器决定是否执行；计划模式在自动模式可用时，命令也可能由分类器决定（适配器默认开启 `useAutoModeDuringPlan`）。会话权限说明还写明：Claude 不需要批准的调用（工作目录内读取、只读命令）不出现在审批里，Claude Code 设置里的允许规则与 hooks 先于 Latch 生效，项目 `.mcp.json` 的服务器直接连接。版本规则要求 0.99 或之后的 0.x 适配器。
 - 人选的换档（`modeAnswers`）：Agent 用一次询问来换模式时，人的「仅此一次」回答就是选了那一档。Claude 的 ExitPlanMode 只留 `exit-plan-default`（回到 Manual，其余是会持久保存的选项），EnterPlanMode 是 `switch_mode` 调用上的 `allow-once`（进入 `plan`）。Latch 在把回答交给 Agent 之前把这一档记为预期模式，所以随后的换档不算漂移；没有人回答的换档仍按漂移处理。
 - 所有预设一律隐藏 `allow_always` 与 `reject_always` 类型的选项，这一点不可配置。
 
 ### 版本规则
 
-预设可以用 `versionRule` 要求 `initialize` 返回的 `agentInfo.version` 匹配一个正则。不匹配或未报告版本时，Latch 结束该进程，会话以 409 `harness-version-unsupported` 失败（`<名称> 版本 <v> 未经验证（<说明>），已拒绝启动。`）。OpenCode 的规则是 `^[12]\.`，说明为 `OpenCode 仅支持 1.x 与 2.x`：上面的配置键是 1.x 的格式，2.x 仍读取 `OPENCODE_CONFIG_CONTENT`，并把 1.x 的 `permission` 与 `agent.<名称>.permission` 换成同样的有序规则（后写的规则优先，没有匹配时询问；`task` 换名为 `subagent`），`build` 与 `plan` 两个 Agent 和模式 ID 不变；3.x 及以后的读取方式未经核对。Claude Agent 的规则见上。核对依据是 2.x 的源码与按它手写的回放（`replay/opencode/2.x/`），不是运行中的 OpenCode。
+预设可以用 `versionRule` 要求 `initialize` 返回的 `agentInfo.version` 匹配一个正则。不匹配或未报告版本时，Latch 结束该进程，会话以 409 `harness-version-unsupported` 失败（`<名称> 版本 <v> 未经验证（<说明>），已拒绝启动。`）。OpenCode 的规则是 `^[12]\.`，说明为 `OpenCode 仅支持 1.x 与 2.x`：上面的配置键是 1.x 的格式，2.x 仍读取 `OPENCODE_CONFIG_CONTENT`，并把 1.x 的 `permission` 与 `agent.<名称>.permission` 换成同样的有序规则（后写的规则优先，没有匹配时询问；`task` 换名为 `subagent`，`bash` 换名为 `shell`），`build` 与 `plan` 两个 Agent 和模式 ID 不变；3.x 及以后的读取方式未经核对。Claude Agent 的规则见上。核对依据是 2.x 的源码与按它手写的回放（`replay/opencode/2.x/`），不是运行中的 OpenCode。
 
 ## 项目配置
 
@@ -141,7 +141,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 `POST /link/api/agents/:id/probe { requestId }` 接受同时持有 `admin` 与 `run` 的设备，不弹确认。
 
-探测只发送 ACP `initialize`（有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
+探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
 
 适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
 
@@ -167,7 +167,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
   没有预设的自定义定义只继承代理、CA 与 `__MISE_DIFF`。`inheritEnv` 不能点名 `*_KEY`、`*_TOKEN` 这类秘密（`test/login.test.ts`）；读登录 shell 时只取点名的变量，其余输出丢弃，不记日志，shell 也拿不到 `LATCH_*` 与 `NODE_OPTIONS`。
 - 启动指纹只计 `inheritEnv` 的名字和 `programEnv` 找到的路径，不计任何值：`launchHash` 会发给客户端，代理地址可能带密码。代理与 CA 的名字是固定的，不进指纹；换代理不影响已有会话。诊断与预览不显示值，带账号密码的代理地址在诊断里被遮盖。
 - 模型服务的密钥、地址等需要在 Agent 自己的配置里设置，或写进 Agent 定义的环境变量。
-- `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；声明 `session.notices` 与 `session.compaction`，见「通知与压缩」。`session/new`、`session/resume`、`session/load` 只在会话带着技能时传一个 MCP 服务器：Latch 的只读技能服务器（`skills-server.ts`，列出并读取技能，不写、不联网），其余情况传空列表；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」（预设写了 `signIn` 的用它：Claude Agent 是「在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。」），并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。这一轮的 `runEnd` 是 `login-required`，页面给出登录命令和「重试」；已有 ACP 会话时下一轮走 `session/resume`，不用新建会话。见「登录」。
+- `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；声明 `session.notices` 与 `session.compaction`，见「通知与压缩」；除写了 `signIn` 的预设外声明 `auth.terminal`，见「登录」。`session/new`、`session/resume`、`session/load` 只在会话带着技能时传一个 MCP 服务器：Latch 的只读技能服务器（`skills-server.ts`，列出并读取技能，不写、不联网），其余情况传空列表；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」（预设写了 `signIn` 的用它：Claude Agent 是「在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。」），并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。这一轮的 `runEnd` 是 `login-required`，页面给出登录命令和「重试」；已有 ACP 会话时下一轮走 `session/resume`，不用新建会话。见「登录」。
 - 空闲 10 分钟且 Agent 支持恢复会话时，进程会被优雅停止，下次需要时再启动。
 - 进程崩溃时，该会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）；之后的重启从 250 ms 开始按最近的崩溃次数加倍延迟（最多 5 秒），同一定义一分钟内崩溃 3 次会暂停自动重启一分钟（503 `agent-paused`）。
 
@@ -180,13 +180,38 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 登录
 
-Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥匙串。它只运行程序自己的命令。
+Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥匙串。它只运行程序自己的命令，并听 Agent 自己怎么说。
 
-- **命令。** `AgentPreset.login` 记录登录命令（`codex login`、`opencode auth login`、`goose configure`、`cursor-agent login`；Claude Agent 没有，页面不显示登录命令或按钮，只在失败时说一句 `signIn`；pi、Gemini CLI、Qwen Code 是进入程序后按说明操作；DeepSeek Harness 没有记录）。Codex 没单独安装时用适配器自带的 `codex-acp cli login`。自定义定义没有。经 `HarnessInfo.login` 发给客户端。
-- **三态。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `authenticated`、`unauthenticated` 或 `unknown`。目前只有 Codex 有说得清的命令：`codex login status`。退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，它的其他错误也退出 1，所以都算 `unknown`；超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。其他 Harness 始终 `unknown`，要到 `session/new` 被拒绝才知道。结果缓存 30 秒。每次实际运行之前写审计 `agent.login.requested`（写不进就不运行），结束后写 `agent.login.checked`，只含 ID 与状态。「测试启动」的结果带 `login`。
-- **页面。** 选中 Harness 时检查一次，窗口回到前台时再查；只在 `unauthenticated` 时显示，不挡发送，因为程序才说了算。一轮被拒绝后在这一轮的结尾显示命令和「重试」。
-- **终端。** `POST /link/api/harnesses/:id/login-terminal` 只接受 `host.sock` 与 `run`（`features.loginTerminal`，仅 macOS）。Host 写一个 0700 的 `.command` 临时文件交给 `open`，用这个人默认的终端和它自己的环境运行程序的绝对路径；脚本先删除自己。写审计 `agent.login.opened`。页面还没有终端界面（[TERMINAL.md](TERMINAL.md)），所以不是内置终端。其他设备只看到命令和「在这台 Mac 的终端里运行」。
+- **Agent 声明的终端登录。** `initialize` 声明 `clientCapabilities.auth.terminal: true`（写了 `signIn` 的预设除外，见下），Agent 于是可以在 `authMethods` 里列出 `type: "terminal"` 的方法（如 OpenCode 2.x 的 `opencode acp --login`）。会话、读取可选项与「测试启动」的握手都记下这些方法，以及宣告它们的程序路径（`src/auth.ts`，只在内存）。方法本身不能指定程序：登录时运行的就是会话运行的那个程序，加定义的参数，再加方法的 `args`；方法的 `env` 只接受普通变量名，点名 Latch 设置或清除的变量（`PATH`、`NODE_OPTIONS`、`DYLD_*`、`CODEX_HOME` 等）的整个方法丢弃，参数与变量有数量和长度上限。打开终端之前重新查找程序，路径和宣告时不同就拒绝（409 `login-program-changed`）。定义自己的环境变量不写进登录脚本，因为里面可能有密钥；脚本在终端自己的环境里运行，结束时按退出码说完成或没有完成。Agent 列了方法时，页面用它们代替预设的命令。
+- **预设的命令。** Agent 没列方法时用 `AgentPreset.login`（`codex login`、`opencode auth login`、`goose configure`、`cursor-agent login`；pi、Gemini CLI、Qwen Code 是进入程序后按说明操作；DeepSeek Harness 没有记录）。Codex 没单独安装时用适配器自带的 `codex-acp cli login`。经 `HarnessInfo.login` 发给客户端。
+- **Claude Agent。** 预设写了 `signIn`：Latch 不对它声明 terminal auth（适配器于是不列出 claude.ai 登录），也不运行它列出的任何登录；说怎么登录时，页面只给出 `signIn` 这句话，没有登录命令，也没有「在终端里登录」。页面显示它报告的登录状态、标签与到期日（见下）；适配器宣告 `logout` 时也显示「退出登录」，之后要在 Claude Code 里自己重新登录。Latch 不读取它的凭据。
+- **Agent 推送的状态。** Codex 与 Claude Agent 的适配器推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）：`initialize` 之后一次，之后只在内容变化时。Codex 的适配器把 Codex 的 `account/updated` 转成推送，在别的终端里登录或退出也会推送。Claude Agent 的只在 `initialize`、建会话与每轮开始时重新读取登录，所以进程空闲时，别的终端里的登录或退出要到下一轮才推送，在那之前推送可能是旧的。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`；`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉，不进内存里的记录、日志、SSE、快照或磁盘。推送只在发出它的进程还在时算数，进程退出就忘掉，回到状态命令。`HarnessInfo.login.reported` 把它发给客户端。
+- **三态。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`，`status` 是 `authenticated`、`unauthenticated` 或 `unknown`。有正在运行的进程推送过、而状态命令说不出推送没有的东西时，直接用推送，不运行程序；否则运行状态命令。Codex 的命令是 `codex login status`：退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，它的其他错误也退出 1，所以都算 `unknown`。Claude Agent 的是适配器自带 CLI 的 `claude-agent-acp --cli auth status --json`：只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`，claude.ai 登录、密钥或其他服务都算已登录，存下的登录到期日期（ISO 字符串或秒、毫秒数，不合理的丢掉）作为 `expiresAt` 返回；有推送时它仍运行，因为推送里没有日期，而且可能是旧的。两者都有时较新的说了算：命令运行之后推送变了，用推送；否则用命令的明确结论，命令说不清时用推送。标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。页面对 Host 的回答也这样：提问之后到达的推送比回答新，否则显示回答，所以「重新检查」显示的是程序刚说的。超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。其他 Harness 始终 `unknown`，要到 `session/new` 被拒绝才知道。结果缓存 30 秒；「测试启动」读到的明确登录状态与缓存不同，或测试结束时还有检查在运行，缓存作废，下一次提问重新运行状态命令（`agent-login.ts` 的 `probed`）。每次实际运行之前写审计 `agent.login.requested`（写不进就不运行），结束后写 `agent.login.checked`，只含 ID 与状态。「测试启动」的结果带 `login`：宣告了推送的 Agent 在握手后最多等 5 秒，收到就不再运行状态命令。页面打开期间完成的测试启动说的与「登录」一组显示的不同时，这一组带 `fresh` 再问一次；页面只显示最后一次提问的回答。
+- **页面。** 选中 Harness 时检查一次，窗口回到前台时再查；新会话上方只在 `unauthenticated` 时显示登录说明，登录在 10 天内到期时显示琥珀色的「<Harness> 的登录 M 月 D 日到期」，都不挡发送，因为程序才说了算。一轮被拒绝后在这一轮的结尾显示命令和「重试」；下一轮启动新进程，读到新的登录。「设置 › Harness › <名称>」有「登录」一组：状态（已登录时带 Agent 的标签与到期日）、「重新检查」、没登录时的登录方式，已登录时的「退出登录」或「换账号」。状态命令说已登录、最近一次测试启动却说还没登录时（例如存下的登录不再被接受，握手被拒绝），这一组写「登录可能已失效」并列出登录方式，直到测试启动不再这样说。
+- **退出登录。** Agent 宣告 `agentCapabilities.auth.logout` 时才显示。`POST /link/api/harnesses/:id/logout`（`run`，空请求体）先写审计 `agent.logout`（写不进就不做），再在私有空文件夹里起一个进程调用 ACP `logout`，然后停掉它；这个 Harness 有会话正在运行时拒绝（409 `harness-busy`），没宣告时 409 `logout-unsupported`。之后停掉能恢复会话的空闲进程，下一轮读到新的登录；不能恢复的进程留着，带着它启动时读到的登录。Agent 的登录可能被这台电脑上别处共用，确认框写明这一点。
+- **终端。** `POST /link/api/harnesses/:id/login-terminal`（可带 `method`，即 Agent 声明的方法）只接受 `host.sock` 与 `run`（`features.loginTerminal`，仅 macOS）。Host 写一个 0700 的 `.command` 临时文件交给 `open`，用这个人默认的终端和它自己的环境运行程序的绝对路径；脚本先删除自己。写审计 `agent.login.opened`，运行 Agent 声明的方法时带 `source: 'harness'`。页面还没有终端界面（[TERMINAL.md](TERMINAL.md)），所以不是内置终端。其他设备只看到命令和「在这台 Mac 的终端里运行」。
 - **测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，也不显示命令；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到（Agent 的命令、适配器、`programEnv` 指向的程序与预设检测都一样）。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`。这样带预设定义和假适配器的测试 Host 碰不到同一台电脑上真实安装的程序；测试要找命令时把自己的临时目录传给 `commandDirectories`。
+
+## 权限菜单
+
+有 profile 的预设给每个模式一个档位和一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽是「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`，Agent 自己的模型代人决定）与「不再询问」（`never`）；菜单的标题用档位词，下面一行是这个 Harness 在这一档实际怎么做：
+
+| 预设 | 只看不改 | 先问你 | 按规则放行 | 由模型判断 | 不再询问 |
+| --- | --- | --- | --- | --- | --- |
+| Codex | — | `read-only` | `workspace-write` | `agent`（codex-acp 的 Auto review：沙箱同 `workspace-write`，本来要问的由 Codex 的审阅模型放行或拦下，不转给人） | `agent-full-access` |
+| Qwen Code | `plan` | `default` | `auto-edit` | `auto`（只读操作与用户自己的允许规则先放行，其余由它的分类器判断，判断不了时问） | `yolo` |
+| goose | `chat` | `approve` | — | `smart_approve`（工具声明或模型判断为只读的不问，其余问） | `auto` |
+| Gemini CLI | `plan` | `default` | `autoEdit` | — | `yolo` |
+| OpenCode | `plan`（Latch 的规则之后再拒绝 `edit` 与 `bash`：不改文件，不运行命令，其他工具先问） | `build` | — | — | — |
+| Claude Agent | `plan` | `default` | `acceptEdits` | `auto`（Claude 的分类器） | `bypassPermissions` |
+
+Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有模式的按 Agent 自己的名字与说明列出，没有模式的只写「不询问 · 由 pi 决定」或「权限无法确认」。Agent 报告了表里没有的模式时，菜单不列它，除非会话正处在这个模式，那时用 Agent 自己的名字显示。
+
+- **三行。** 模式超过三个时，菜单只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余（只看不改、另一个中间档）收在「更多」里；当前的模式总是列出。「不再询问」的标题、说明与触发器是琥珀色，「由模型判断」不是。
+- **谁能选。** 任何有 `run` 的设备都能选任何一档，不弹确认，放宽写 `task.mode.widened`。
+- **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在；分叉用目标 Harness 自己记住的选项。
+- **模型的判断。** Codex 报告自己的模型审阅一次请求：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`、Claude Agent `auto`）在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
+- **记录。** 每个审阅结论、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
 
 ## 权限模式
 
@@ -217,7 +242,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
   - 谁能读：和开始会话同一道门，要 `run` 范围，Harness 可以开始（不可用时 409）；只读设备只看已有列表。同一定义同时只读一次，其他请求共用结果。启动进程之前写审计 `agent.catalogue.requested`（写不进就不启动），结束后写 `agent.catalogue.read`（只记成功与否）。
   - 结果：成功时列表来源为 `check`；失败时保存 `last: { ok: false, message }`，消息经过脱敏，菜单写「没有读到：…」，如「OpenCode 还没登录。按它自己的方式登录后重试。」，不弹登录。定义一变，上次读取的结果也不再下发。
 - **自己填的模型 ID。** 菜单里「填写模型 ID…」把 Harness 没列出的模型 ID 存进这个 Harness 的 `acp.json`（`HarnessInfo.customModels`，`PUT /link/api/agents/:id/models { models }`，要 `run`，最多 32 个，每个最多 256 字符、不能换行，审计 `agent.models.changed` 只记个数），在模型列表里标「自己填写」，换定义也保留。只有列表里有模型选项时才能填，因为 ACP 只能经这个选项设置模型。开始时和会话里都原样发给 Agent；开始时 Agent 拒绝或没换过去，这一轮失败，文字和不再提供时一样说出下一次会用什么（「<名称> 没有换到模型「…」，这条消息没有发出。再发送会用「…」，也可以先在模型里换一个。」），之后的发送用会话显示的模型。
-- **显示。** 新会话的模型、思考与权限都从这份列表画，和会话里是同一个组件；菜单底部写「来自上次会话 · 时间」或「读取于 时间」。选了一个列表没说思考深度的模型时，思考写「开始后才告诉 Latch」。没有列表时写「默认模型 · 默认思考」；能读取时菜单里是读取的入口，读取中写「正在读取…」，不能读取时写「开始后才报告」。Latch 没有权限 profile 的 Harness，权限在能读取时写「读取后可以选」，读取中写「正在读取…」，读到的列表没有模式或这台设备读不了时写「开始后可以选」。设备记住模型与思考的选择（按 Harness），不记住模式：每个新会话都从开始前设好的模式开始。
+- **显示。** 新会话的模型、思考与权限都从这份列表画，和会话里是同一个组件；菜单底部写「来自上次会话 · 时间」或「读取于 时间」。选了一个列表没说思考深度的模型时，思考写「开始后才告诉 Latch」。没有列表时写「默认模型 · 默认思考」；能读取时菜单里是读取的入口，读取中写「正在读取…」，不能读取时写「开始后才报告」。Latch 没有权限 profile 的 Harness，权限在能读取时写「读取后可以选」，读取中写「正在读取…」，读到的列表没有模式或这台设备读不了时写「开始后可以选」。设备按 Harness 记住模型、思考与模式的选择；没有选过时从开始前设好的模式开始，Latch 不替人选更宽的一档。
 - **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。每项都从 Agent 的回答读回。
 - **不再提供时。** 选的模型或模式 Agent 不再提供：这一轮失败，不发提示，文字说出它的名字和下一次会用什么（「Codex 现在没有模型「Large」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。」）。失败之前照常设好草稿里的其他选择，再设好并读回模式，没有哪一项留到下一次，所以会话显示的就是之后运行的。思考等其他选项不再提供或被拒绝：保持 Agent 的默认值，并在会话里加一条系统消息。会话里改了某一项，就取代开始前对这一项的选择。Agent 要先登录时，还没设好的选择留到登录后的那次发送；在那之前会话显示不出它们（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，值是 Agent 自己的文字，不原样记录）。开始前选更宽的模式和会话里一样不弹确认。
@@ -257,6 +282,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent 草案）。Agent 在一个会话上发 `subagent_update` 宣告它启动的子 Agent 后，Latch 在宣告到达的位置放一行 `Message.subagent`：名字、说明、它自己最后报告的状态（`running`、`requires_action`、`idle` 及停止原因、`unknown`），以及它的回复与工具调用（不含思考，最多 200 步，每段文字最多 64 KiB）。子 Agent 自己的子 Agent 放在它的步骤里，最多 4 层；同一进程同时最多 64 行，报告已停止的子 Agent 在一轮结束后不再计入。超出行数、层数或 200 步的部分不显示，会话里写一条说明，但它们请求的审批照常出现，不会被替人取消。子 Agent 不是 Latch 会话，不能发消息、不进侧栏。
 
 - 子 Agent 在自己的会话上请求权限时，审批出现在启动它的会话里，`Approval.subagent` 写明是谁；它的调用只在子 Agent 的步骤里，不在会话自己的记录中。规则与会话自己的审批相同（可选项过滤、任何有 `run` 的设备都能允许）。
+- 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
 - 停止会话时，子 Agent 挂起的请求与会话自己的一起答复为 `cancelled`。
 - 一轮结束时仍说自己在运行或等批准的子 Agent 记为「状态未知」，不当作还在运行；它未完成的调用与会话自己的一样结算：在跑的记为结果未知，还没开始或在等批准的记为未执行，之后它再报告完成或失败时以报告为准。
 - 没有宣告的会话 ID 的更新照旧丢弃，不猜归属；不支持的 Agent 仍把子 Agent 的工作当作普通工具调用报告。
@@ -303,6 +329,9 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | `harness-folder-limit`（409） | 项目的文件夹超过 Agent 能使用的数量（Gemini CLI、Qwen Code 最多 5 个） |
 | `agent-auth-required`（409） | Agent 要求登录；按它自己的方式登录后点重试 |
 | `harness-no-login`（404） | Latch 不知道这个 Harness 的登录命令 |
+| `login-program-changed`（409） | 登录方式来自之前找到的程序，现在找到的不是它；重新检测后再试 |
+| `logout-unsupported`（409） | Agent 没有宣告 `logout` |
+| `harness-busy`（409） | 这个 Harness 有会话正在运行，不能退出登录 |
 | `terminal-open-failed`（502） | 没有打开终端；自己在终端里运行这条命令 |
 | `harness-session-lost`（409） | Agent 无法恢复该会话 |
 | `agent-not-found`、`agent-start-failed`、`agent-paused`、`agent-busy`、`agent-exited`（503） | 命令缺失、启动失败、连续崩溃后暂停、同时运行的进程过多、进程已退出或正在停止 |

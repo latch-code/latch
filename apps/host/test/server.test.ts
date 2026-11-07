@@ -210,10 +210,15 @@ function scripted(name: string, args: Record<string, unknown>, extraTools: ToolD
   }
 }
 
-async function auditRecords(
-  t: TestHost,
-): Promise<
-  Array<{ seq: number; action: string; actor: { deviceId?: string; listener: string }; stepup: string; detail: Record<string, unknown> }>
+async function auditRecords(t: TestHost): Promise<
+  Array<{
+    seq: number
+    action: string
+    actor: { deviceId?: string; listener: string }
+    target?: string
+    stepup: string
+    detail: Record<string, unknown>
+  }>
 > {
   return (await readFile(join(t.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
     .trim()
@@ -1405,7 +1410,11 @@ describe('agent settings', () => {
     const offered = (await harnesses(desktop)).filter(harness => harness.offer)
     // pi's adapter alone runs nothing, so it is not offered.
     expect(offered).toMatchObject([{ id: 'codex', status: 'ready', level: 'L3', modes: ['agent'], offer: { presetId: 'codex' } }])
-    expect(offered[0]!.permission).toEqual({ approvals: 'prompts', readback: 'mode', neverAskModes: ['agent-full-access'] })
+    expect(offered[0]!.permission).toMatchObject({
+      approvals: 'prompts',
+      readback: 'mode',
+      modeTiers: { 'read-only': { tier: 'ask' }, agent: { tier: 'model' }, 'agent-full-access': { tier: 'never' } },
+    })
     const facts = offered[0]!.capabilities
     expect(facts).toMatchObject({
       permission: { enforcement: 'harness', rejectionNote: false },
@@ -1843,6 +1852,52 @@ describe('full-access (L3) sessions', () => {
         }),
       ),
     ).toMatchObject({ error: 'config-unsupported' })
+  })
+
+  it('records each call run unasked while the model decides, by hash and enum, with no prompt to enter that mode', async () => {
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
+    await t.enroll({ listener: 'unix' })
+    const phone = await t.enroll({ scopes: [...ADMIN] })
+    const enrolled = t.presence.requests.length
+    const definition = {
+      id: 'qwen',
+      name: 'Qwen',
+      presetId: 'qwen',
+      command: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      env: {
+        FAKE_ACP_STATE: join(t.root, 'acp-state.json'),
+        FAKE_ACP_MODES: 'plan,default,auto-edit,auto,yolo',
+        FAKE_ACP_INITIAL_MODE: 'default',
+        FAKE_ACP_CONFIG: 'options',
+      },
+    }
+    expect((await phone.request('agents', { method: 'POST', body: definition })).status).toBe(201)
+    const sessionId = await startTask(phone, 'hello', { harnessId: 'qwen' })
+    await settled(t, sessionId)
+    expect(
+      await body(await phone.request(`tasks/${sessionId}/config`, { method: 'POST', body: { configId: 'mode', value: 'auto' } })),
+    ).toEqual({
+      accepted: true,
+    })
+    await phone.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'review', requestId: randomUUID() } })
+    await vi.waitFor(
+      async () => {
+        expect((await auditRecords(t)).filter(record => record.action === 'task.tool.judged')).toHaveLength(3)
+      },
+      { timeout: 8_000, interval: 20 },
+    )
+    const judged = (await auditRecords(t)).filter(record => record.action === 'task.tool.judged')
+    expect(judged.map(record => [record.actor, record.target, record.detail])).toEqual(
+      ['think', 'think', 'execute'].map(kind => [
+        { listener: 'host' },
+        sessionId,
+        { sessionId, callHash: expect.any(String), modeHash: sha256Hex('auto'), kind, outcome: 'ran-unasked', source: 'no-ask-seen' },
+      ]),
+    )
+    expect(t.presence.requests).toHaveLength(enrolled)
+    const detail = await phone.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.messages.filter(message => message.tool?.judged?.outcome === 'unasked')).toHaveLength(3)
   })
 
   it('widens a mode from any device that may run it, with no prompt, on record', async () => {

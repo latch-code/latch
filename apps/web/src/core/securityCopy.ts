@@ -676,9 +676,26 @@ export const MODE_COPY = {
   changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 那时才告诉 Latch 它有哪些模式。`,
   /** Under the modes of a running agent. */
   agentOwnSetting: (agent: string) => `这是 ${agent} 自己的设置。Latch 只核对档位名，不核对它实际怎么做，也不隔离它。`,
-  readOnlyLine: (agent: string) => `${agent} 只看不改`,
-  autoLine: (agent: string) => `${agent} 在项目里改文件和运行命令，越界前问你`,
-  neverAsksLine: (agent: string) => `${agent} 不再询问，直接读写这台 Mac 上的文件并运行命令`,
+  /** Latch's word for each tier of a harness's modes; the line under it is the harness's own. */
+  tierTitles: { plan: '只看不改', ask: '先问你', rule: '按规则放行', model: '由模型判断', never: '不再询问' },
+  more: '更多',
+  fewer: '收起',
+} as const
+
+/**
+ * A call no person was asked about, as its row in the timeline says it: the harness's own model reviewing a request, or a
+ * call that ran unasked while that model decides. Never words for a person's approval.
+ */
+export const JUDGED_COPY = {
+  review: (agent: string) => `${agent} 的模型审阅`,
+  approved: '放行',
+  denied: '拦下',
+  none: '没有判断',
+  /** In a folded turn's words. */
+  deniedCount: (count: number) => `模型拦下 ${count} 次`,
+  reviewNote: (agent: string) => `这是 ${agent} 自己的模型代你做的判断，不是你的批准；它拦下的在这里不能改为允许。`,
+  unasked: '没有问你',
+  unaskedNote: (agent: string) => `${agent} 当时由它的模型代你决定，没有问你就运行了；Latch 不知道是它的规则还是模型放行的。`,
 } as const
 
 /** The drawer's one line when a session cannot go on as it is, and what it offers. */

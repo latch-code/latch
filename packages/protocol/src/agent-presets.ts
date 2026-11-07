@@ -62,7 +62,8 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'Apache-2.0 适配器；Claude Code 专有',
     homepage: 'https://github.com/agentclientprotocol/claude-agent-acp',
-    description: '通过适配器运行 Claude Code，使用你在 Claude Code 中已有的登录；Latch 不提供登录，也不读取登录信息。',
+    description:
+      '通过适配器运行 Claude Code，使用你在 Claude Code 中已有的登录；Latch 不提供登录，也不读取凭据，只显示它报告的登录状态与到期日。',
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',
     installNote: '还要在 Claude Code 中登录',
     signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
