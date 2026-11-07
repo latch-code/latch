@@ -10,6 +10,8 @@ struct TurnView: View, Equatable {
     /** The Mac is out of reach, so nothing here may look as if it is still moving. */
     let frozen: Bool
     let delivery: String?
+    /** The model or thinking changed from the turn before, as `from → to`. */
+    let switched: String?
     let mark: String?
     let engine: String
     /** The run's own line says how it ended, so the footer does not say it twice. */
@@ -18,13 +20,15 @@ struct TurnView: View, Equatable {
     @State private var unfolded = false
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
-            && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid
+            && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
         let blocks = PhoneConversation.blocks(turn, settled: !running)
         let folds = !running && PhoneConversation.workFolds(turn, outcome: outcome)
         VStack(alignment: .leading, spacing: 12) {
+            if let words = PhoneConversation.divider(turn) { TimelineDivider(words: words, symbol: "eraser") }
+            if let switched { TimelineDivider(words: switched, symbol: nil) }
             if let user = turn.user { UserBubble(message: user, delivery: delivery) }
             if !turn.replies.isEmpty || running { AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn)) }
             if folds {
@@ -217,6 +221,21 @@ private struct ChangedFilesCard: View {
         }
         .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(PhoneTheme.line))
+    }
+}
+
+/** A thin line across the column with its words in the middle: the session changed between two turns. */
+private struct TimelineDivider: View {
+    let words: String
+    let symbol: String?
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(PhoneTheme.line).frame(height: 1)
+            Group {
+                if let symbol { Label(words, systemImage: symbol) } else { Text(words) }
+            }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).fixedSize()
+            Rectangle().fill(PhoneTheme.line).frame(height: 1)
+        }.accessibilityElement(children: .combine)
     }
 }
 

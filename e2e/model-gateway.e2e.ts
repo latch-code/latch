@@ -213,7 +213,7 @@ describe('a Harness with its own models on a saved service', () => {
     await sendDraft(page)
     await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).first().waitFor({ timeout: 20_000 })
     const detail = await latest()
-    expect(detail.summary.modelRoute).toEqual({ providerId: openai.id, model: 'fake-model-large' })
+    expect(detail.summary.modelRoute).toEqual({ providerId: openai.id, model: 'fake-model-large', name: 'OpenAI' })
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('fake-model-large')
     // The service received its own key; the agent's environment and messages never held it.
     expect(models.requests.map(request => [request.wire, request.model, request.key])).toEqual([['responses', 'fake-model-large', KEY]])
@@ -232,6 +232,16 @@ describe('a Harness with its own models on a saved service', () => {
 
     // The service turned off: its token stops, and the next turn says why instead of using Codex's own login.
     expect((await owner.request(`providers/${openai.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
+    // The menu says so by the service's name before anything is sent, and offers no model of it.
+    await chip(page, '模型').click()
+    await page.getByText('OpenAI · 已停用', { exact: true }).waitFor()
+    await page
+      .getByText('这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。', { exact: true })
+      .waitFor()
+    await expect.poll(() => row(page, 'fake-model-large').getAttribute('aria-disabled')).toBe('true')
+    expect(await page.getByText(/经 Latch 用|openai · /u).count()).toBe(0)
+    await shot(page, 'service-off-menu-1440-light')
+    await page.keyboard.press('Escape')
     const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
     await composer.fill('model 第二轮')
     await composer.press('Meta+Enter')
@@ -356,7 +366,7 @@ describe('Gemini CLI on a saved Gemini service', () => {
     ])
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks
     const detail = await owner.json<TaskDetail>(`tasks/${tasks[0]!.id}`)
-    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model' })
+    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'MyGemini' })
     await context.close()
   })
 })

@@ -711,6 +711,7 @@ class HarnessRuntime implements Bridge {
       ...(run?.activity ? { activity: run.activity } : {}),
       ...(run ? run.clock.live() : {}),
       ...(run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
+      clearContext: true,
     })
   }
 
@@ -836,9 +837,17 @@ class HarnessRuntime implements Bridge {
     const fileRefs = options.fileRefs ?? []
     const model = options.model === undefined ? undefined : modelRef(options.model)
     const key = digest(['prompt', sessionId, requestId])
+    const fresh = options.freshContext === true
+    // The new context joins the hash only when asked, so receipts written before it existed still match.
     const payloadHash = digest(
-      attachments.length || fileRefs.length
-        ? { prompt, ...(model ? { model } : {}), ...(attachments.length ? { attachments } : {}), ...(fileRefs.length ? { fileRefs } : {}) }
+      attachments.length || fileRefs.length || fresh
+        ? {
+            prompt,
+            ...(model ? { model } : {}),
+            ...(attachments.length ? { attachments } : {}),
+            ...(fileRefs.length ? { fileRefs } : {}),
+            ...(fresh ? { freshContext: true } : {}),
+          }
         : model
           ? { prompt, model }
           : prompt,
@@ -893,6 +902,8 @@ class HarnessRuntime implements Bridge {
         }
         if (fileRefs.length && task.summary.mode === 'chat')
           throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
+        // The messages stay; only what the model is sent starts over.
+        if (fresh) task.history = []
         this.assertAttachments(run, [...attachments, ...task.history.flatMap(message => message.attachmentRefs ?? [])])
         const at = isoTime(run.clock.startedAt)
         task.history.push({ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) })
@@ -900,6 +911,7 @@ class HarnessRuntime implements Bridge {
           id: run.userMessageId,
           role: 'user',
           text: prompt,
+          ...(fresh ? { freshContext: true as const } : {}),
           ...(task.summary.mode === 'chat' ? {} : { turnId: run.id }),
           requestId,
           ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
@@ -1298,6 +1310,7 @@ class HarnessRuntime implements Bridge {
       ...(reasoningMs !== undefined ? { reasoningMs } : {}),
       model: run.model,
       providerId: run.providerId,
+      ...(run.effort ? { thinking: run.effort } : {}),
     }
   }
 

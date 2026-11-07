@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Download, FolderPlus, GitFork, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
+import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, GitFork, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
 import type { TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
@@ -9,6 +9,9 @@ export interface SessionActions {
   archive: () => void
   export: () => void
   fork?: () => void
+  /** The open session: its next prompt starts a new context, or (`clearing`) no longer does. */
+  clear?: () => void
+  clearing?: boolean
   /** A session in its own folder, on the Mac: keep the folder as a project. */
   saveProject?: () => void
   unread?: () => void
@@ -33,11 +36,23 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: Copy, onSelect: actions.copy }] : []), exportItem],
     },
-    ...(actions.fork || actions.saveProject
+    ...(actions.fork || actions.saveProject || actions.clear
       ? [
           {
             id: 'fork',
             items: [
+              ...(actions.clear
+                ? [
+                    {
+                      id: 'clear',
+                      label: actions.clearing ? '保留上下文' : '清空上下文',
+                      icon: Eraser,
+                      disabled: !actions.clearing && isActive(task.status),
+                      disabledReason: '这一轮结束后才能清空上下文',
+                      onSelect: actions.clear,
+                    },
+                  ]
+                : []),
               ...(actions.fork ? [{ id: 'fork', label: '从这里分叉', icon: GitFork, onSelect: actions.fork }] : []),
               ...(actions.saveProject ? [{ id: 'save-project', label: '存为项目…', icon: FolderPlus, onSelect: actions.saveProject }] : []),
             ],

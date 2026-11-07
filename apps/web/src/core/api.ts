@@ -304,6 +304,8 @@ export interface PendingSubmission {
   queue?: true
   /** Into the running turn when its harness takes that, queued otherwise. */
   steer?: true
+  /** This turn starts a new context in the session. */
+  freshContext?: true
   fileRefs?: FileMention[]
   attachmentIds?: string[]
   /** A new session's picks from the Harness's own options. */
@@ -341,6 +343,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
     if (item.steer !== undefined && item.steer !== true) return null
+    if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     if (
@@ -377,6 +380,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
+      ...(item.freshContext === true ? { freshContext: true as const } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
@@ -412,6 +416,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
         ...(model ? { model } : {}),
         ...(submission.queue ? { queue: true } : {}),
         ...(submission.steer ? { steer: true } : {}),
+        ...(submission.freshContext ? { freshContext: true } : {}),
         ...attachments,
       },
     }

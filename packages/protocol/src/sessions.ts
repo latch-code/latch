@@ -82,8 +82,9 @@ export interface DriverTaskSummary {
   /**
    * A harness with its own models whose requests Latch forwards to one of its model services, fixed when the session
    * started: the service and the model chosen then. `bypassed`: a turn had a reply without a request through Latch.
+   * `name`: the service's name in 设置 › 模型, absent once it is deleted; `off`: it is turned off there.
    */
-  modelRoute?: { providerId: string; model: string; bypassed?: true }
+  modelRoute?: { providerId: string; model: string; bypassed?: true; name?: string; off?: true }
   /** Host-level session metadata; it applies to every harness. */
   pinned?: boolean
   archived?: boolean
@@ -315,6 +316,8 @@ export interface Message {
    * ended is not known. It opens no turn of its own.
    */
   steered?: true
+  /** User: this turn began a new context. The agent saw none of the messages before it; they stay in the history. */
+  freshContext?: true
   /** Host-only provenance for the first user message. */
   forkContext?: NonNullable<TaskSummary['forkOf']>
   toolName?: string
@@ -337,6 +340,8 @@ export interface Message {
   reasoningMs?: number
   /** Assistant: the model that answered this step, as the harness names it. */
   model?: string
+  /** Assistant: the thinking level of this step, as the harness names it; the built-in harness gives its effort ID. */
+  thinking?: string
   /** Assistant, built-in harness: the model service of `model`. */
   providerId?: string
   /** User: what the turn this message opened took. */
@@ -480,6 +485,13 @@ export interface TaskDetail {
   permission?: SessionPermission
   /** The running turn takes more text now (`steer` on a prompt). Absent: what is sent meanwhile waits in the queue. */
   steer?: true
+  /** The next prompt may start a new context (`freshContext`). Absent: the driver cannot. */
+  clearContext?: true
+  /**
+   * The agent's earlier context is already gone, because a prompt that asked for a new one was refused or did not
+   * start: the next prompt starts a new context whether or not it asks.
+   */
+  contextCleared?: true
 }
 
 /**

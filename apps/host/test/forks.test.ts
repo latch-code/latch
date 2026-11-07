@@ -44,6 +44,21 @@ describe('Host-generated forks', () => {
     expect(seed.text).toContain('keep me')
     expect(seed.text).toContain('较早的记录已截断')
   })
+  it('starts the seed at the last new context before the fork, still counting turns from the first', () => {
+    const source = detail()
+    source.messages.push(
+      { id: 'later-answer', role: 'assistant', text: 'Later answer', state: 'completed' },
+      { id: 'fresh', role: 'user', text: 'Start over', freshContext: true },
+      { id: 'fresh-answer', role: 'assistant', text: 'Started over', state: 'completed' },
+    )
+    const record = (upTo: string) => forkSeed(source, upTo).text.split('<会话记录>')[1]!
+    expect(record('fresh-answer')).not.toContain('Original question')
+    expect(record('fresh-answer')).not.toContain('Later answer')
+    expect(record('fresh-answer')).toContain('Start over')
+    expect(record('fresh-answer')).toContain('Started over')
+    expect(forkSeed(source, 'fresh-answer').context.turn).toBe(3)
+    expect(record('later-answer')).toContain('Original question')
+  })
   it('rejects missing positions and the unfinished latest turn while allowing a settled earlier turn', () => {
     const source = detail()
     source.summary.status = 'running'

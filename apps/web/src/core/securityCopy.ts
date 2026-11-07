@@ -660,7 +660,8 @@ export const MODE_COPY = {
   /** One meaning only. */
   fullAccessTooltip: 'Harness 可以读写这台 Mac 上的文件并运行命令，不再询问',
   agentDecides: (agent: string) => `不询问 · 由 ${agent} 决定`,
-  agentDecidesLine: (agent: string) => `${agent} 执行前不询问，Latch 不限制它`,
+  /** Only pi declares this: its tools never ask, but an extension's confirmation reaches the person. */
+  agentDecidesLine: (agent: string) => `${agent} 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它`,
   /** The timeline's first row, once per launch in a project: the 权限 chip and the heading must not read as a limit. */
   firstStart: (agent: string) => `${agent} 能读写这台 Mac 上的文件并运行命令。权限是 ${agent} 自己的设置，Latch 不隔离它。`,
   unverifiable: '权限无法确认',

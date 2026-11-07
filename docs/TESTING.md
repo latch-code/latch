@@ -254,7 +254,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ### 假 ACP Agent
 
-`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不调用模型，只有 `model` 一轮访问客户端指给它的模型服务；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败与重新加载。
+`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不调用模型，只有 `model` 一轮访问客户端指给它的模型服务；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复，`FAKE_PI_TOO_OLD=1` 时像 0.84.4 之前的 pi 不认识 `clear_queue`；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败、重新加载，以及会话与测试启动拒绝过旧的 pi。
 
 进程级行为由环境变量决定：
 
@@ -306,7 +306,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 `packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话（同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/<场景>.ndjson`，例如 `opencode/2.x/`，头部的版本必须属于这个大版本）：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；pi 的对话头部写 `protocol: "pi-rpc"`，命令的 `type` 是 `method`、其余字段是 `params`，响应按它回答的命令补上 ID；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
 
-`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
+`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、拒绝早于 0.84.4 的 pi、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败；`replay.test.ts` 还把 Codex 的对话改出带密钥形状文字的提示、压缩失败与 `session/prompt` 错误，检查进入会话前已脱敏。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
 `startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥。
 
@@ -492,7 +492,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 文件内容列回归：`e2e/file-preview.e2e.ts` 用临时 Host、本地假模型与生成的文档验证文本、DOCX、CSV、SVG、音频与秘密文件拒绝，覆盖三种宽度与深浅主题。`e2e/file-chips.e2e.ts` 通过删除响应中的内容能力标记模拟旧 Host 契约，保留旧菜单降级覆盖；后端仍使用真实登记与会话。`preview-frames.test.ts` 和 `desktop-frames.test.ts` 验证文档框入口的拒绝路径。真实 Quick Look 网络行为仍需独立人工验收。
 
-会话分叉由 `apps/host/test/forks.test.ts` 检查边界、截断、权限、幂等、元数据重载与自有目录复用；两种 Driver 的现有重启用例核对用户消息 requestId。`e2e/forks.e2e.ts` 在桌面、平板与手机验证预填、可编辑输入与折叠的真实上下文。
+会话分叉由 `apps/host/test/forks.test.ts` 检查边界、截断、清空上下文后的种子起点、权限、幂等、元数据重载与自有目录复用；清空上下文由 `apps/host/test/fresh-context.test.ts`（路由的拒绝与记录）、`tests/runtime.test.ts`（Latch 内置发给模型的历史）、`packages/harness-acp/test/acp.test.ts` 的「a new context in a session」（新 Agent 会话、选项重设、关闭旧会话、指令重发、被拒绝后的边界）与 `pi.test.ts`（pi 的新会话）覆盖，假 Agent 的 `recall` 说出会话里之前有几条输入，`e2e/context.e2e.ts` 在桌面与手机上走一遍 `/clear`、撤销、会话菜单、选定后重试、分隔线与刷新，`apps/host/test/native-swift.test.ts` 检查 iPhone 的分隔线与 Host 已清空时的提示；两种 Driver 的现有重启用例核对用户消息 requestId。`e2e/forks.e2e.ts` 在桌面、平板与手机验证预填、可编辑输入与折叠的真实上下文。
 
 文档与富文本的定向用例为 `apps/web/test/preview-data.test.ts`、`apps/web/test/rich-rendering.test.ts` 和 `e2e/preview-renderers.e2e.ts`。浏览器用例运行独立临时端口的 Vite 夹具与构建出的 Office/Diagram IIFE，覆盖真实 worker、缓存公式、PDF Range、不可见字符、数学 DOM 与图表。字体/分式和实际 canvas 像素也必须验证，节点存在不等于内容已经渲染。
 
@@ -536,7 +536,7 @@ Web 个人助手：`personal.e2e.ts` 覆盖显式记忆、无项目对话和撤�
 
 客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
 
-配置回执：`apps/host/test/config-requests.test.ts` 覆盖原子前置标记、终态落盘未知、重启与容量；`config-request-api.test.ts` 使用真实假 ACP 验证并发合并、相同编号冲突、失回执不重发、只读查询、真实模式放宽确认及异步撤权。`native.test.ts` 验证已接受请求不改绑新的 App 验证窗口，窗口到期后查询也被拒绝。
+配置回执：`apps/host/test/config-requests.test.ts` 覆盖原子前置标记、终态落盘未知、重启与容量；`config-request-api.test.ts` 使用真实假 ACP 验证并发合并、相同编号冲突、失回执不重发、只读查询、真实模式放宽确认、异步撤权，以及这一轮还在启动时被拒绝的修改记为失败；`e2e/harness-options.e2e.ts` 验证刚选的思考深度在消息之前送达。`native.test.ts` 验证已接受请求不改绑新的 App 验证窗口，窗口到期后查询也被拒绝。
 
 `e2e/archive.e2e.ts` 通过临时 Host 的真实已结束会话验证三种宽度的归档批量恢复、删除确认与 Shift 连选；核对请求 ID 集合、实际回执、快照和删除后 404，并保留工作目录中的文件。标为未读经真实菜单操作，刷新后保留，打开对应会话后清除，不把本设备阅读标记当作 Host 内容变化。
 

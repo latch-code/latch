@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { formatTranscript, readReplayStatus, REPLAY_AGENT, replayEnv, type ReplayEntry, type ReplayHeader } from '@latch/testkit'
-import { createAcpAgentPlugin, forgetCommandLookups, setCommandSearch, type AgentRecord } from '../src/index.ts'
+import {
+  agentProbePreview,
+  createAcpAgentPlugin,
+  forgetCommandLookups,
+  probeAgent,
+  setCommandSearch,
+  type AgentRecord,
+} from '../src/index.ts'
 import { activate, fakePrograms, openBridge, replayTranscript } from './helpers/replay.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -35,6 +42,8 @@ const event = (method: string, params?: Record<string, unknown>): ReplayEntry =>
 const opened: ReplayEntry[] = [
   out('get_state'),
   answer('get_state', STATE),
+  out('clear_queue'),
+  answer('clear_queue', { steering: [], followUp: [] }),
   out('get_state'),
   answer('get_state', STATE),
   out('get_available_models'),
@@ -86,6 +95,57 @@ describe('pi over its own RPC', () => {
     // pi receives the session's folder only, whatever the project holds.
     expect(driver.projectFolders).toBeUndefined()
     // Describing the launch ran nothing: the fake pi leaves a mark when it runs.
+    expect(await readdir(marks)).toEqual([])
+  })
+
+  it('refuses a pi too old to clear its queue, when a session starts and in a test start', async () => {
+    // pi before 0.84.4 answers clear_queue as a command it does not know, and before 0.80.4 never settles a turn.
+    const old: ReplayEntry[] = [
+      out('get_state'),
+      answer('get_state', STATE),
+      out('clear_queue'),
+      { type: 'emit_inbound', frame: { kind: 'response', method: 'clear_queue', error: 'Unknown command: clear_queue' } },
+    ]
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const bin = join(root, 'bin')
+    const marks = join(root, 'marks')
+    await mkdir(marks)
+    await fakePrograms(bin, marks)
+    setCommandSearch(() => [bin])
+    const record = (path: string, status: string): AgentRecord => ({
+      id: 'pi',
+      name: 'pi',
+      presetId: 'pi',
+      command: process.execPath,
+      args: [REPLAY_AGENT],
+      env: replayEnv({ transcript: path, status, workspace: root }),
+      enabled: true,
+    })
+    const refusal = 'pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。'
+
+    const started = join(root, 'started.json')
+    const plugin = createAcpAgentPlugin(record(await transcript('old', [], old), started), {
+      stopGraceMs: 300,
+      requestTimeoutMs: 5_000,
+      log: () => {},
+    })
+    const driver = await activate(plugin, cleanups)
+    const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups)
+    const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: 'old-pi', cwd: root })
+    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status, { timeout: 5_000 }).toBe('failed')
+    const detail = await bridge.detail(sessionId)
+    expect(detail.messages.filter(message => message.role === 'system').map(message => message.text)).toContain(refusal)
+    // Nothing was sent past the check: no session, no prompt.
+    expect(readReplayStatus(started)).toMatchObject({ cursor: old.length, total: old.length })
+
+    const probed = join(root, 'probed.json')
+    const agent = record(await transcript('old-probe', [], old), probed)
+    const options = { dataDir: join(root, 'probe-data'), cwd: root }
+    const preview = await agentProbePreview(agent, options)
+    const result = await probeAgent(agent, { ...options, expectedLaunchHash: preview.launchHash })
+    expect(result.status).toBe('failed')
+    expect(result.diagnostic).toContain(refusal)
     expect(await readdir(marks)).toEqual([])
   })
 
@@ -238,6 +298,46 @@ describe('pi over its own RPC', () => {
     // A service's error that echoes a key reaches the session without it.
     expect(notes[0]).toContain('pi 警告：401 invalid x-api-key')
     expect(notes.join('\n')).not.toContain(KEY)
+  })
+
+  it('starts a new pi session in the same process for a new context, on the same model and thinking', async () => {
+    const turn = (text: string, reply: string): ReplayEntry[] => [
+      out('prompt', { message: text }),
+      answer('prompt', { disposition: 'started' }),
+      event('agent_start'),
+      event('message_start', { message: { role: 'assistant', content: [] } }),
+      event('message_update', { assistantMessageEvent: { type: 'text_delta', delta: reply } }),
+      event('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: reply }], stopReason: 'stop' } }),
+      event('agent_end', { messages: [], willRetry: false }),
+      event('agent_settled', { aborted: false }),
+      ...stats,
+    ]
+    const next = FILE.replace('_1.jsonl', '_2.jsonl')
+    const path = await transcript(
+      'fresh_context',
+      [{ step: 'prompt', text: 'First' }, { step: 'settle' }, { step: 'prompt', text: 'Again', fresh: true }, { step: 'settle' }],
+      [
+        ...opened,
+        ...turn('First', 'one'),
+        out('new_session'),
+        answer('new_session', { cancelled: false }),
+        out('get_state'),
+        answer('get_state', { ...STATE, sessionFile: next, sessionId: '2' }),
+        out('get_available_models'),
+        answer('get_available_models', { models: [MODEL] }),
+        out('get_available_thinking_levels'),
+        answer('get_available_thinking_levels', { levels: ['off', 'low', 'medium', 'high'] }),
+        ...turn('Again', 'two'),
+      ],
+    )
+    const { detail, status } = await replayTranscript(path, cleanups)
+    expect(status?.failure).toBeUndefined()
+    expect(status?.starts).toHaveLength(1)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => [message.text, message.freshContext])).toEqual([
+      ['First', undefined],
+      ['Again', true],
+    ])
+    expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.thinking)).toEqual(['中', '中'])
   })
 
   it("says a compaction failed with the model service's words, keys left out", async () => {

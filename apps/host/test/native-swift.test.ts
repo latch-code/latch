@@ -618,6 +618,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
       delivered: {
         summary: { live: { activity: 'starting' } },
+        contextCleared: true,
         messages: [
           { id: 'u', role: 'user', text: '去做' },
           { id: 'gone', role: 'assistant', text: '', outputs: [{ path: 'old.ts', change: 'deleted' }] },
@@ -711,13 +712,42 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             tool: { kind: 'execute', title: 'Run ls', judged: { by: 'Codex', outcome: 'unasked' } },
           },
           { id: 'a1', role: 'assistant', text: '好了' },
-          { id: 'u2', role: 'user', text: '第二轮' },
+          { id: 'u2', role: 'user', text: '第二轮', freshContext: true },
           { id: 't5', role: 'tool', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } },
           // Added to the running turn: it stays in that turn and opens none.
           { id: 's1', role: 'user', text: '也看看日志', steered: true },
-          { id: 'sub', role: 'tool', toolName: 'subagent', state: 'running', subagent: { title: '跑测试', status: 'running', steps: [] } },
+          {
+            id: 'sub',
+            role: 'tool',
+            toolName: 'subagent',
+            state: 'running',
+            subagent: {
+              title: '跑测试',
+              status: 'running',
+              // What the Harness's model stopped inside a subagent is counted in the fold too.
+              steps: [{ id: 'sr', role: 'tool', state: 'failed', tool: { kind: 'think', judged: { by: 'Codex', outcome: 'denied' } } }],
+            },
+          },
         ],
       },
+      // The same turns as the web's: a line only where both sides recorded a model or a thinking level.
+      switching: [
+        { id: '1', role: 'user', text: 'x' },
+        { id: 'a1', role: 'assistant', text: 'x', model: 'small', thinking: 'low' },
+        { id: '2', role: 'user', text: 'x' },
+        { id: 'a2', role: 'assistant', text: 'x', model: 'small', thinking: 'high' },
+        { id: '3', role: 'user', text: 'x' },
+        { id: '4', role: 'user', text: 'x' },
+        { id: 'a4', role: 'assistant', text: 'x', model: 'large', thinking: 'high' },
+        { id: '5', role: 'user', text: 'x' },
+        { id: 'a5', role: 'assistant', text: 'x', model: 'small', thinking: 'Max' },
+        { id: '6', role: 'user', text: 'x' },
+        { id: 'a6', role: 'assistant', text: 'x', model: 'small' },
+        { id: '7', role: 'user', text: 'x' },
+        { id: 'a7', role: 'assistant', text: 'x', model: 'other' },
+        { id: '8', role: 'user', text: 'x' },
+        { id: 'a8', role: 'assistant', text: 'x', model: 'other', thinking: 'low' },
+      ],
       outputs: [{ path: 'a.ts' }, { path: 'made.pptx', root: 'r' }],
       canApprove: true,
       canApproveElevated: true,
@@ -809,12 +839,21 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       {
         blocks: [{ work: ['运行 pnpm test'] }, { steer: '也看看日志' }, { work: ['子 Agent 跑测试'] }, { prose: '还在写' }],
         folds: true,
-        fold: '已工作',
+        fold: '已工作 · 模型拦下 1 次',
         files: ['a.ts', 'made.pptx'],
         add: -1,
         del: -1,
       },
     ])
+    // The second turn began a new context; a refused first message after a clear leaves the next one on a new context too.
+    expect(result.dividers).toEqual(['', '清空了上下文'])
+    expect(result.switches).toEqual({
+      '2': '思考 低 → 高',
+      '4': '模型 small → large',
+      '5': 'large · 高 → small · Max',
+      '7': '模型 small → other',
+    })
+    expect(result.cleared).toEqual([[], ['下一条消息开始新的上下文', '上下文已经清空，Codex 看不到之前的消息，记录仍留在这里。']])
     expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain', actions: [] })
     expect(result.subtitle).toEqual(['Codex', '不再询问', 'main', '62%'])
     expect(result.neverAsks).toBe(true)

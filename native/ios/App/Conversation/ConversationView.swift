@@ -73,6 +73,7 @@ struct ConversationView: View {
     }
     private var transcript: some View {
         let turns = PhoneConversation.turns(PhoneConversation.rendered(model.detail))
+        let switches = PhoneConversation.switches(turns)
         let status = summary["status"].string ?? model.detail["summary"]["status"].string
         let running = status == "running" || status == "waiting-approval"
         return ScrollView {
@@ -80,7 +81,7 @@ struct ConversationView: View {
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
-                        delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil,
+                        delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
                         mark: model.engineMark(summary["harnessId"].string), engine: engine,
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil, open: openFile).equatable()
                 }
@@ -116,6 +117,16 @@ struct ConversationView: View {
                     ApprovalDrawer(approval: approval, total: model.detail["approvals"].array.count)
                 }
                 if !model.detail["queue"].array.isEmpty { QueueChips(items: model.detail["queue"].array, sessionId: id) }
+                if let cleared = PhoneConversation.clearedNote(model.detail, engine: engine) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "eraser").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(cleared.title).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
+                            Text(cleared.line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                        }
+                        Spacer(minLength: 0)
+                    }.padding(.horizontal, 16).accessibilityElement(children: .combine)
+                }
             }
             if summary["personal"]["groupId"].string == nil && model.groupId == nil {
                 // A stop needs no window, so it stays in reach while the content is closed.

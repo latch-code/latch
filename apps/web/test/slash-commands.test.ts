@@ -27,4 +27,15 @@ describe('advertised slash commands', () => {
     expect(slashOptions('/review arguments', commands, templates)).toEqual([])
     expect(slashOptions('/missing', commands, templates)).toEqual([])
   })
+  it("lists Latch's own actions first, runs them on choice and inserts nothing", () => {
+    const clear = { name: 'clear', description: '清空上下文', run: () => {} }
+    const result = slashOptions('/cl', [{ name: 'clear', description: 'Harness clear' }, { name: 'close' }], [], [clear])
+    expect(result.map(option => [option.kind, option.label])).toEqual([
+      ['action', '/clear'],
+      ['command', '/clear'],
+      ['command', '/close'],
+    ])
+    expect(result[0]).toMatchObject({ text: '', run: clear.run })
+    expect(slashOptions('/clear now', [], [], [clear])).toEqual([])
+  })
 })

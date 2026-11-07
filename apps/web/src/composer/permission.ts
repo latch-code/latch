@@ -123,7 +123,10 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
   if (declared)
     return {
       label: MODE_COPY.askFirst,
-      line: MODE_COPY.askFirstLine(harness.capabilities.display.label),
+      // A profile's one `ask` mode is the one its sessions start in: the line the session's own row shows.
+      line:
+        Object.values(declared.modeTiers ?? {}).find(tier => tier.tier === 'ask')?.line
+        ?? MODE_COPY.askFirstLine(harness.capabilities.display.label),
       icon: 'shield',
       amber: false,
       note: MODE_COPY.changeAfterStart(harness.capabilities.display.label),

@@ -59,6 +59,9 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
             return ["blocks": PhoneConversation.blocks(turn, settled: true).map(block), "folds": PhoneConversation.workFolds(turn, outcome: outcome),
                 "fold": PhoneConversation.foldWords(turn), "files": summary.files.map(\.path), "add": summary.add ?? -1, "del": summary.del ?? -1]
         },
+        "dividers": turns.map { PhoneConversation.divider($0) ?? "" },
+        "switches": PhoneConversation.switches(PhoneConversation.turns(value["switching"].array)),
+        "cleared": [detail, value["delivered"]].map { PhoneConversation.clearedNote($0, engine: "Codex").map { [$0.title, $0.line] } ?? [] },
         "status": ["text": status.text, "clock": status.clock ?? "", "tone": "\(status.tone)", "actions": status.actions.map { "\($0)" }],
         "subtitle": subtitle.parts, "neverAsks": subtitle.neverAsks,
         "judged": PhoneConversation.rendered(detail).compactMap { PhoneConversation.judgement($0).map { "\($0.review):\($0.words)" } },

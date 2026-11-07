@@ -22,18 +22,40 @@ export function slashMatches(draft: string, commands: readonly SessionCommand[])
         .map(item => item.command)
 }
 
+/** Something Latch does in this session, not text for the Harness: choosing it runs it and empties the input. */
+export interface SlashAction {
+  name: string
+  description: string
+  run(): void
+}
+
 export interface SlashOption {
   id: string
-  kind: 'template' | 'command'
+  kind: 'action' | 'template' | 'command'
   label: string
   description: string
   text: string
   score: number
+  run?: () => void
 }
-export function slashOptions(draft: string, commands: readonly SessionCommand[], templates: readonly PromptTemplate[]): SlashOption[] {
+export function slashOptions(
+  draft: string,
+  commands: readonly SessionCommand[],
+  templates: readonly PromptTemplate[],
+  actions: readonly SlashAction[] = [],
+): SlashOption[] {
   const query = slashQuery(draft)
   if (query === null) return []
   const options: SlashOption[] = [
+    ...actions.map(action => ({
+      id: 'action:' + action.name,
+      kind: 'action' as const,
+      label: '/' + action.name,
+      description: action.description,
+      text: '',
+      score: rank(action.name, query),
+      run: action.run,
+    })),
     ...templates.map(template => ({
       id: 'template:' + template.id,
       kind: 'template' as const,
@@ -62,22 +84,28 @@ export function useSlashCommands({
   draft,
   commands = [],
   templates = [],
+  actions = [],
   enabled,
   onDraft,
 }: {
   draft: string
   commands?: readonly SessionCommand[]
   templates?: readonly PromptTemplate[]
+  actions?: readonly SlashAction[]
   enabled: boolean
   onDraft(text: string): void
 }) {
   const id = useId(),
     [dismissed, setDismissed] = useState<string | null>(null),
     [selection, setSelection] = useState({ draft: '', index: 0 })
-  const options = slashOptions(draft, commands, templates)
-  const open = enabled && slashQuery(draft) !== null && dismissed !== draft && (commands.length > 0 || templates.length > 0)
+  const options = slashOptions(draft, commands, templates, actions)
+  const open =
+    enabled && slashQuery(draft) !== null && dismissed !== draft && (commands.length > 0 || templates.length > 0 || actions.length > 0)
   const active = selection.draft === draft ? Math.min(selection.index, Math.max(0, options.length - 1)) : 0
-  const select = (option: SlashOption) => onDraft(option.text)
+  const select = (option: SlashOption) => {
+    onDraft(option.text)
+    option.run?.()
+  }
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!open || event.nativeEvent.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
     if (event.key === 'Escape') {
@@ -103,6 +131,8 @@ export function useSlashCommands({
   return { id, draft, open, options, active, select, keydown }
 }
 
+const GROUPS: Record<SlashOption['kind'], string> = { action: '这个会话', template: '提示模板', command: 'Harness 命令' }
+
 export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashCommands> }) {
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -117,8 +147,8 @@ export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashComman
         {[...new Set(menu.options.map(option => option.kind))].map(kind => {
           const options = menu.options.filter(option => option.kind === kind)
           return options.length ? (
-            <div key={kind} role="group" aria-label={kind === 'template' ? '提示模板' : 'Harness 命令'}>
-              <p>{kind === 'template' ? '提示模板' : 'Harness 命令'}</p>
+            <div key={kind} role="group" aria-label={GROUPS[kind]}>
+              <p>{GROUPS[kind]}</p>
               {options.map(option => {
                 const index = menu.options.indexOf(option)
                 return (

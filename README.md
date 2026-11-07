@@ -154,8 +154,8 @@ pnpm desktop -- --tailnet \
 
 - 在运行 Host 的电脑上安装并登录 Agent，新会话找到预设的命令后就能选，第一次发送时保存定义；自定义命令在「设置 → Harness」填写并保存，有管理权限的设备都能改，每次改动都有记录。Latch 不下载、不安装 Agent，也不代为登录。
 - 发送就开始。这个启动内容第一次运行时，会话最上面说一次它能做什么；每次启动都记入审计（命令、项目配置与第一条输入的哈希）。定义或这些配置变了时，已有会话停止接受输入，换新会话继续。
-- 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批，只有 pi 扩展要求确认时才会问你。
-- Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
+- Latch 把 Agent 设到你选的权限模式（没选时是预设的「先问你」），每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批，只有 pi 扩展要求确认时才会问你。
+- Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，你的代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）与 CA 文件变量（`SSL_CERT_FILE`、`NODE_EXTRA_CA_CERTS` 等），以及预设里这个 Agent 自己的目录变量（如 Codex 的 `CODEX_HOME`）；后三类在 Host 自己的环境里没有时，从登录 shell 读取。每个会话有私有临时目录。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
 - 任何 L3 会话运行或等待审批时，所有本机确认都会被拒绝：桌面端写出是哪个会话，可以查看或停止它，结束后再试。这样 Agent 借不到你的确认。
 
 | 预设 | 启动命令 | 许可证 |

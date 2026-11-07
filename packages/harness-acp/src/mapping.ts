@@ -299,3 +299,10 @@ export function modelName(config: SessionConfigOption[] | undefined): string | u
   if (!option) return undefined
   return option.options.find(value => value.value === option.currentValue)?.name ?? option.currentValue
 }
+
+/** The thinking level the session runs at, as the agent names it. */
+export function thinkingName(config: SessionConfigOption[] | undefined): string | undefined {
+  const option = config?.find(item => item.category === 'thought_level')
+  if (!option) return undefined
+  return option.options.find(value => value.value === option.currentValue)?.name ?? option.currentValue
+}

@@ -80,6 +80,8 @@ export interface HubOptions {
   lifecycle?: SessionLifecycle
   /** Silence thresholds other than the defaults, for tests. */
   silenceThresholds?: typeof SILENCE_THRESHOLDS
+  /** A saved model service as 设置 › 模型 has it, turned on or off; undefined once it is deleted. */
+  service?: (providerId: string) => { name: string; enabled: boolean } | undefined
 }
 
 interface Entry {
@@ -895,6 +897,7 @@ export class HarnessHub implements Bridge {
       automationId: _automationId,
       runId,
       live,
+      modelRoute,
       ...rest
     } = summary
     const meta = this.meta.get(summary.id)
@@ -905,6 +908,7 @@ export class HarnessHub implements Bridge {
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
       ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
       ...(live && typeof live.lastEventAt === 'string' ? { live: this.silence.evaluate(summary.id, live) } : {}),
+      ...(modelRoute ? { modelRoute: this.routeOf(modelRoute) } : {}),
       harnessId,
       level: this.levelOf(harnessId),
       ...(this.entries.get(harnessId)?.driver.projectFolders !== 'all' ? { folderAccess: 'primary' as const } : {}),
@@ -920,6 +924,14 @@ export class HarnessHub implements Bridge {
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
       ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })
+  }
+
+  /** What the route says of its service comes from the Host's records, never from the driver. */
+  private routeOf(route: NonNullable<TaskSummary['modelRoute']>): NonNullable<TaskSummary['modelRoute']> {
+    const { name: _name, off: _off, ...rest } = route
+    const service = this.options.service?.(route.providerId)
+    if (!service) return rest
+    return { ...rest, name: service.name, ...(service.enabled ? {} : { off: true as const }) }
   }
 
   private describe(entry: Entry): HarnessInfo {

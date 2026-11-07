@@ -322,6 +322,14 @@ iOS 客户端把超时的读取当作 Mac 暂时连不上：列表横幅说明�
 
 Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它，客户端据此关联重试和发送中的气泡。Host 为分叉首条消息补充可选 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入；正文仍完整发送给 Harness。折叠只是显示方式，复制消息保留完整正文。旧 Host 不带这些字段时沿用原有显示。
 
+### 清空上下文
+
+`TaskDetail.clearContext` 为真时，`POST /tasks/:id/prompt` 接受 `freshContext: true`：这一轮在新的上下文里开始，Harness 看不到之前的消息，消息仍留在会话记录里。Driver 把它记在这一轮的用户消息上（`Message.freshContext`，两种消息存储的 zod schema 都保留），所以重连、切换会话与刷新都不会丢掉或移动这条边界。它不能与 `queue`、`steer` 一起用（400 `fresh-context-queued`），个人助手会话与不声明的 Driver 回答 409 `clear-context-unsupported`。重试沿用原 `requestId`，带不带它是不同的请求（`request-conflict`）。Latch 内置清空发给模型的历史；ACP 开新的 Agent 会话，见 [HARNESSES.md](./HARNESSES.md#清空上下文)。从边界之后某一轮分叉时，种子从这条边界开始。
+
+发送之前它只是本设备的一个选择（网页与桌面端输入框的 `/clear` 或会话菜单的「清空上下文」；iPhone 还不能选），不写 Host；运行中不能选，一轮开始时选择撤掉。选定后点最新一轮的「重试」，重发的这一轮也带 `freshContext`。它随待发送的提交一起保存，结果未知时原样重试。Driver 在这一轮开始前已经放下旧的上下文、这一轮却被拒绝或没有开始时，详情带 `TaskDetail.contextCleared`：下一条消息不论是否要求都在新的上下文里，网页、桌面端与 iPhone 都写出这一点，不再提供撤销；带 `Message.freshContext` 的一轮在各处都画「清空了上下文」的线。
+
+`Message.thinking` 是助手消息那一步的思考深度（Harness 的叫法，Latch 内置是深度 ID），与 `Message.model` 一起让客户端在两轮之间标出换了什么；没有记录的旧消息不标。
+
 ### 排队状态与实际发送
 
 详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。 个人助手额外使用 Host 私有的执行摘要，只有 `personalQueue` 能力为真才支持；摘要与原手机窗口不进入公开投影，配置变化时保留文字并暂停，详见 [PERSONAL.md](PERSONAL.md#个人会话队列)。

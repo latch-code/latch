@@ -17,9 +17,15 @@ export function forkSeed(detail: TaskDetail, upToMessageId: string): { text: str
   let length = 0
   let truncated = false
   let turn = 0
+  // What the agent knew there: nothing from before the last new context.
+  const start = Math.max(
+    0,
+    detail.messages.slice(0, end + 1).findLastIndex(message => message.role === 'user' && message.freshContext),
+  )
   for (let index = 0; index <= end; index++) {
     const message = detail.messages[index]!
     if (message.role === 'user' && !message.steered) turn++
+    if (index < start) continue
     // Hidden reasoning and raw tool parameters are not required to continue the conversation.
     const block = `\n\n${{ user: '你', assistant: '助手', tool: '工具结果', system: '会话说明' }[message.role]}：\n${message.text}`
     pieces.push(block.length > FORK_CONTEXT_LIMIT ? block.slice(-FORK_CONTEXT_LIMIT) : block)

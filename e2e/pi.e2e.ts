@@ -7,7 +7,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/pi'
 
@@ -19,21 +19,26 @@ describe('pi over its own RPC mode', () => {
   let owner: TestDevice
   let browser: Browser
 
+  /** The pi the Host finds: the fake, as itself or as a pi older than 0.84.4. */
+  const fakePi = async (bin: string, old = false) => {
+    await writeFile(
+      join(bin, 'pi'),
+      [
+        '#!/bin/sh',
+        `export FAKE_PI_LOG='${log}' FAKE_PI_SESSIONS='${join(directory, 'sessions')}'${old ? ' FAKE_PI_TOO_OLD=1' : ''}`,
+        `exec '${process.execPath}' '${FAKE_PI_AGENT}' "$@"`,
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'pi'), 0o755)
+  }
+
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'latch-e2e-pi-'))
     log = join(directory, 'pi.log')
     const bin = join(directory, 'bin')
     await mkdir(bin)
     await mkdir(join(directory, 'sessions'))
-    await writeFile(
-      join(bin, 'pi'),
-      [
-        '#!/bin/sh',
-        `export FAKE_PI_LOG='${log}' FAKE_PI_SESSIONS='${join(directory, 'sessions')}'`,
-        `exec '${process.execPath}' '${FAKE_PI_AGENT}' "$@"`,
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'pi'), 0o755)
+    await fakePi(bin)
     host = await startTestHost({
       demo: false,
       sessionFolders: true,
@@ -136,8 +141,9 @@ describe('pi over its own RPC mode', () => {
     expect(stopped.messages.filter(message => message.role === 'tool').every(message => message.state !== 'running')).toBe(true)
     // Stopping clears what was queued before aborting, so pi does not carry on with it.
     const types = (await received()).flatMap(entry => (entry.type ? [entry.type] : []))
-    expect(types.indexOf('clear_queue')).toBeGreaterThan(-1)
-    expect(types.indexOf('abort')).toBeGreaterThan(types.indexOf('clear_queue'))
+    const abort = types.indexOf('abort')
+    expect(abort).toBeGreaterThan(-1)
+    expect(types.slice(types.lastIndexOf('prompt', abort), abort)).toContain('clear_queue')
     await page.locator('.sidebar-body').getByText('已停止', { exact: true }).waitFor()
     await shot(page, 'stopped-1440-light')
 
@@ -181,5 +187,81 @@ describe('pi over its own RPC mode', () => {
     await page.locator('.transcript').getByText('pi 返回错误：529 overloaded_error: Overloaded', { exact: false }).first().waitFor()
     await shot(page, 'failed-390-dark')
     await page.context().close()
+  })
+  it('refuses a pi older than 0.84.4 when a session starts and in a test start, and says what to do', async () => {
+    const bin = join(directory, 'bin')
+    await fakePi(bin, true)
+    const refusal = 'pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。'
+    try {
+      const page = await open(1440, 'dark')
+      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
+        if (await button.isVisible()) {
+          await button.click()
+          break
+        }
+      }
+      await draft(page).waitFor()
+      await start(page, 'hello from an old pi')
+      await expect.poll(async () => (await latest()).summary.status, { timeout: 20_000 }).toBe('failed')
+      await page.locator('.transcript').getByText(refusal).first().waitFor()
+      const refused = await latest()
+      expect(refused.messages.filter(message => message.role === 'assistant')).toEqual([])
+      expect((await received()).filter(entry => entry.type === 'prompt').map(entry => entry.message)).not.toContain('hello from an old pi')
+      await noHorizontalOverflow(page)
+      await shot(page, 'too-old-1440-dark')
+
+      const saved = await owner.request('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
+      expect([201, 409]).toContain(saved.status)
+      const settings = await openSettings(page)
+      await openSection(settings, 'Harness')
+      await settings.getByRole('button', { name: '编辑 pi', exact: true }).click()
+      const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
+      await probe.getByRole('button', { name: '测试启动', exact: true }).click()
+      await probe.getByText('测试启动失败', { exact: true }).waitFor({ timeout: 25_000 })
+      expect(await probe.locator('pre').innerText()).toContain(refusal)
+      await probe.scrollIntoViewIfNeeded()
+      await shot(page, 'too-old-probe-1440-dark')
+      await page.context().close()
+    } finally {
+      await fakePi(bin)
+    }
+  })
+
+  it("lists a saved service on a phone's new session as on the desktop, with why pi cannot use it", async () => {
+    const created = await owner.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'Relay',
+        kind: 'openai-compatible',
+        baseURL: 'http://127.0.0.1:9/v1',
+        apiKey: 'sk-e2e-service-key-0123456789abcdef',
+        models: ['fake-model'],
+        defaultModel: 'fake-model',
+        confirmOrigin: true,
+      },
+    })
+    expect(created.status).toBe(201)
+    const reason = '让 Latch 把 pi 的请求转给它，尚未实现'
+    for (const width of [1440, 390] as const) {
+      const page = await open(width, 'dark')
+      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
+        if (await button.isVisible()) {
+          await button.click()
+          break
+        }
+      }
+      if (width === 390) {
+        const sheet = page.locator('.new-session-sheet')
+        await sheet.waitFor()
+        await sheet.getByRole('button', { name: /^模型/u }).click()
+      } else await chip(page, '模型').click()
+      await page.getByText('pi 自己的模型', { exact: true }).waitFor()
+      await page.getByText(reason, { exact: true }).waitFor()
+      // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.
+      expect(await page.getByText(/「经 Latch」/u).count()).toBe(0)
+      await noHorizontalOverflow(page)
+      await shot(page, `services-${width}-dark`)
+      await page.context().close()
+    }
   })
 })

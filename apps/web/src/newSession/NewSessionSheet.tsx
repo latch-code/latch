@@ -109,11 +109,15 @@ export function NewSessionSheet({
   const modelOption = known?.config.find(option => option.category === 'model')
   const thought = known?.config.find(option => option.category === 'thought_level')
   const service = servicePick(catalog, harness, choice.config)
-  // A saved service Latch can forward this Harness's requests to: the model row lists services too.
-  const forwards =
+  // With a saved service the model row lists services too, as the composer's menu does: those Latch can forward this
+  // Harness's requests to, and the others with why not.
+  const services =
     catalog !== undefined
     && harness !== undefined
     && harness.capabilities.models.owner !== 'latch'
+    && catalog.providers.some(provider => provider.kind !== 'demo')
+  const forwards =
+    services
     && catalog.providers.some(provider => provider.kind !== 'demo' && pairRoute(harness.capabilities, provider).kind === 'passthrough')
   // A model of its own replaces a service pick; thinking and the rest are kept either way.
   const pick = (configId: string, value: string) => {
@@ -240,7 +244,7 @@ export function NewSessionSheet({
               />
               <StaticRow label="思考" value="模型默认" />
             </>
-          ) : forwards ? (
+          ) : services ? (
             <>
               <ValuePicker
                 variant="row"
@@ -264,7 +268,7 @@ export function NewSessionSheet({
                 footer={
                   <div className="model-footer">
                     {rows(modelOption !== undefined)}
-                    <p className="model-note">{ROUTE_NOTE(harnessName(harness))}</p>
+                    {forwards && <p className="model-note">{ROUTE_NOTE(harnessName(harness))}</p>}
                   </div>
                 }
                 onOpenChange={opened}
@@ -281,7 +285,10 @@ export function NewSessionSheet({
               ) : thought ? (
                 optionRow('思考', thought)
               ) : (
-                <StaticRow label="思考" value={known?.thinkingUnknown ? '开始后才知道' : '默认'} />
+                <StaticRow
+                  label="思考"
+                  value={known?.thinkingUnknown ? '开始后才知道' : known || harness.catalogueRead ? '默认' : '默认 · 开始后可以换'}
+                />
               )}
             </>
           ) : known ? (
@@ -328,6 +335,8 @@ export function NewSessionSheet({
               disabled={disabled && permission.rows !== undefined}
               // Its modes come from the same read as the model list, so opening it first asks as well.
               onOpenChange={open => {
+                // Each opening shows the main rows again, with the current one among them.
+                if (open) setMorePermission(false)
                 if (open && !disabled && readsOnPermission(harness, access)) readOnSelect(harness, read)
               }}
               options={

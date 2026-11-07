@@ -3,7 +3,7 @@
 // until stopped, "fail" ends with
 // a service error, "confirm" asks the person through an extension confirmation first. Text added with `steer` while a
 // turn runs gets its own reply in that turn. FAKE_PI_LOG names a JSONL file of what it received; FAKE_PI_NO_MODELS=1
-// lists no models, as pi does with no login.
+// lists no models, as pi does with no login; FAKE_PI_TOO_OLD=1 answers as a pi older than 0.84.4.
 import { appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -210,6 +210,8 @@ function handle(record) {
       run.steering.push(String(record.message ?? ''))
       return ok(type, id, { disposition: 'queued' })
     case 'clear_queue': {
+      // pi before 0.84.4 has no such command.
+      if (env.FAKE_PI_TOO_OLD === '1') return refuse(type, id, `Unknown command: ${type}`)
       const steering = run ? run.steering.splice(0) : []
       return ok(type, id, { steering, followUp: [] })
     }

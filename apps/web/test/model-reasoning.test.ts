@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
-import { DraftModelControl, ownModelGroups, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
+import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
 import {
   draftConfig,
   forkedChoice,
@@ -221,7 +221,12 @@ describe('the 权限 chip', () => {
 
   it('makes the widest and the unconfirmable case the visible ones', () => {
     const decides = permissionView({ harness, permission: { ...permission, approvals: 'none' }, config: [], access: local })
-    expect(decides).toMatchObject({ amber: true, label: '不询问 · 由 Fake Agent 决定' })
+    // An extension's confirmation still reaches the person, so the line does not say it never asks.
+    expect(decides).toMatchObject({
+      amber: true,
+      label: '不询问 · 由 Fake Agent 决定',
+      line: 'Fake Agent 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它',
+    })
     const blind = permissionView({ harness, permission: { ...permission, readback: 'none' }, config: [], access: local })
     expect(blind).toMatchObject({ amber: true, label: '权限无法确认' })
   })
@@ -244,6 +249,25 @@ describe('the 权限 chip', () => {
     expect(draft({ approvals: 'none', readback: 'none' })).toMatchObject({ label: '不询问 · 由 Fake Agent 决定', amber: true })
     expect(draft({ approvals: 'prompts', readback: 'none' })).toMatchObject({ label: '权限无法确认', amber: true })
     expect(draft()).toMatchObject({ label: '开始后可以选', amber: false })
+  })
+
+  it("gives a draft's 先问你 the line Latch knows for that mode, the same one a session shows", () => {
+    const codex = {
+      ...harness,
+      permission: {
+        approvals: 'prompts' as const,
+        readback: 'mode' as const,
+        modeTiers: {
+          'read-only': { tier: 'ask' as const, line: '只读；改文件或联网前先问你' },
+          'workspace-write': { tier: 'rule' as const, line: '项目里直接改和运行；越界或联网前问你' },
+        },
+      },
+    }
+    expect(draftPermission(codex, 'agent')).toMatchObject({ label: '先问你', line: '只读；改文件或联网前先问你', amber: false })
+    // Without a word for its modes, the general line stays.
+    expect(draftPermission({ ...codex, permission: { approvals: 'prompts', readback: 'mode' } }, 'agent')?.line).toBe(
+      'Fake Agent 改文件或运行命令前问你',
+    )
   })
 
   it('says an undeclared Harness that can be read tells its modes when read, not only once started', () => {
@@ -593,5 +617,37 @@ describe('the services a draft offers through Latch', () => {
     // Its own list not read yet, or a Harness that takes any model: every model of the service.
     for (const list of [options(codex(true, false)), options(codex(false))])
       expect(list?.map(option => option.disabledReason)).toEqual([undefined, undefined])
+  })
+})
+
+describe('the service a session started on through Latch', () => {
+  const openai = { id: 'openai', name: 'OpenAI', kind: 'openai-responses' as const, models: ['gpt-5'], defaultModel: 'gpt-5' }
+  const info = testHarness('codex', { label: 'Codex' })
+  const own = [{ value: 'gpt-5', label: 'gpt-5' }]
+  const route = { providerId: 'openai', model: 'gpt-5', name: 'OpenAI' }
+  const header = (on: HostCatalog, at: typeof route & { off?: true }) => ownModelGroups(on, info, own, { route: at })[0]!
+
+  it('names the service and where requests go while the catalog offers it', () => {
+    const on = { ...catalog, harnesses: [info], providers: [openai] }
+    expect(header(on, route)).toMatchObject({ label: 'OpenAI · 经 Latch', options: [{ value: 'gpt-5' }] })
+    expect(header(on, route).options[0]).not.toHaveProperty('disabledReason')
+    expect(routeService(on, route)).toEqual({ name: 'OpenAI' })
+  })
+
+  it('says by name that the next turn fails once the service is turned off, never its ID or that it goes through Latch', () => {
+    const off = { ...catalog, harnesses: [info], providers: [] }
+    const stopped = { ...route, off: true as const }
+    expect(header(off, stopped)).toMatchObject({ label: 'OpenAI · 已停用', options: [{ disabledReason: '下一轮会失败：服务已停用' }] })
+    expect(routeService(off, stopped).unusable?.note).toBe(
+      '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。',
+    )
+    // Held back for a missing key, it says that instead; deleted, there is no name left to give.
+    const keyless = { ...off, unusableProviders: [{ id: 'openai', name: 'OpenAI', reason: 'key-missing' as const }] }
+    expect(routeService(keyless, route).unusable?.note).toBe(
+      '这个会话开始时用的「OpenAI」没有密钥，下一轮会失败。在设置 › 模型里添加密钥，或新开一个会话。',
+    )
+    const { name: _name, ...deleted } = route
+    expect(header(off, deleted as typeof route).label).toBe('模型服务 · 已经删除')
+    for (const at of [stopped, route]) expect(JSON.stringify(header(off, at))).not.toContain('openai ·')
   })
 })

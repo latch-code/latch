@@ -77,6 +77,11 @@ export interface PromptOptions {
   attachments?: AttachmentRef[]
   /** Switch the session to this model from this turn on. */
   model?: ModelRef
+  /**
+   * Drivers whose detail says `clearContext`: this turn starts a new context in which the agent sees none of the
+   * session's earlier messages. They stay in the history, and the turn's user message carries `freshContext`.
+   */
+  freshContext?: true
 }
 
 export interface DecideOptions {
@@ -164,7 +169,10 @@ export interface Bridge {
   steer?(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome>
   /** Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. */
   remove?(sessionId: string): Promise<void>
-  /** Optional. Change one of `TaskDetail.config` for later turns. */
+  /**
+   * Optional. Change one of `TaskDetail.config` for later turns. Reject with 409 `task-running` only before anything
+   * reaches the agent: the Host records that change as failed, where any other error after its receipt stays unknown.
+   */
   setConfig?(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void>
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>

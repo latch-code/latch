@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, useState } from 'react'
-import { ChevronRight, FileSearch, RotateCcw, X } from 'lucide-react'
+import { ChevronRight, Eraser, FileSearch, RotateCcw, X } from 'lucide-react'
 import {
   splitChangeNote,
   type Approval,
@@ -23,6 +23,7 @@ import {
   stableTurns,
   toolRowId,
   turnBlocks,
+  settingSwitches,
   turnModel,
   turnOutcome,
   turnsOf,
@@ -152,6 +153,8 @@ interface TurnViewProps {
   outcome?: TurnOutcome
   /** The page saw this turn arrive: its prompt rises in. */
   arrived: boolean
+  /** The model or thinking changed from the turn before: what changed, as `from → to`. */
+  switched?: string
   status?: StatusLineProps
   /** How far the prompt has got, while the agent has not answered. */
   delivery?: string
@@ -198,6 +201,18 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
 
 const NONE: readonly never[] = []
 
+/** A line across the conversation where the session itself changed between two turns. */
+function TimelineDivider({ icon: Glyph, text }: { icon?: typeof Eraser; text: string }) {
+  return (
+    <div className="timeline-divider" role="note">
+      <span>
+        {Glyph && <Glyph size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+        {text}
+      </span>
+    </div>
+  )
+}
+
 /** Why a turn did not simply finish, on a line that stays: a failed one in red with 重试, a stopped one quietly. */
 function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOutcome; onRetry?: (() => void) | undefined }) {
   const words = outcomeWords(turn, outcome)
@@ -237,6 +252,7 @@ const TurnView = memo(function TurnView({
   summary,
   plan,
   context: rowContext,
+  switched,
   retry,
   reportedContext,
   onForkFrom,
@@ -282,6 +298,8 @@ const TurnView = memo(function TurnView({
   const showOutcome = outcome !== undefined && outcome !== 'completed' && !runEnd && !(outcome === 'failed' && speaksFailure)
   return (
     <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
+      {turn.user?.freshContext && <TimelineDivider icon={Eraser} text="清空了上下文" />}
+      {switched && <TimelineDivider text={switched} />}
       {turn.user && (
         <MessageRow
           message={turn.user}
@@ -513,6 +531,7 @@ export function Transcript({
   const lastTurns = useRef<Turn[]>([])
   const turns = stableTurns(lastTurns.current, turnsOf(messages))
   lastTurns.current = turns
+  const switches = useMemo(() => settingSwitches(turns), [turns])
   const ids = new Set(messages.map(message => message.id))
   const liveId = isLive(detail) ? liveMessageId(detail) : undefined
   const forkFrom = useStableCallback((messageId: string) => onFork?.(messageId))
@@ -639,6 +658,7 @@ export function Transcript({
                 trailingLive={trailingLive}
                 outcome={outcome}
                 arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+                {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
                 {...(trailingLive ? { status: statusProps } : {})}
                 {...(delivery ? { delivery } : {})}
                 {...(latest ? { summary: detail.summary } : {})}

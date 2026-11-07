@@ -34,7 +34,8 @@ export type ReplayEntry =
 
 /** What a person does in the scenario, in order; the same steps drive a replay and a recording. */
 export type ScenarioStep =
-  | { step: 'prompt'; text: string }
+  /** `fresh`: the turn starts a new context, as 清空上下文 sends it. */
+  | { step: 'prompt'; text: string; fresh?: true }
   /** Waits until the turn has ended. */
   | { step: 'settle' }
   /** Waits for the session's approval and answers it. */
@@ -233,7 +234,7 @@ export function sanitizeEntries(
 /** The parts of a driver's session that a scenario uses; an ACP `Bridge` has them all. */
 export interface ScenarioBridge {
   createTask(input: { prompt: string; requestId: string; cwd?: string }): Promise<{ sessionId: string }>
-  prompt(sessionId: string, prompt: string, requestId: string): Promise<void>
+  prompt(sessionId: string, prompt: string, requestId: string, options?: { freshContext?: true }): Promise<void>
   detail(sessionId: string): Promise<DriverTaskDetail>
   approvals(): Approval[]
   decide(approvalId: string, decision: 'allow' | 'reject'): Promise<boolean>
@@ -287,7 +288,7 @@ export async function playScenario(input: {
   for (const step of input.steps) {
     switch (step.step) {
       case 'prompt':
-        if (sessionId) await bridge.prompt(sessionId, step.text, id())
+        if (sessionId) await bridge.prompt(sessionId, step.text, id(), step.fresh ? { freshContext: true } : {})
         else
           sessionId = (await bridge.createTask({ prompt: step.text, requestId: id(), ...(input.cwd ? { cwd: input.cwd } : {}) })).sessionId
         break

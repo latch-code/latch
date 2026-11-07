@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AGENT_PRESETS, type DriverTaskDetail, type Message } from '@latch/protocol'
@@ -232,4 +235,68 @@ describe('replaying each harness', () => {
       SCENARIOS[fixture.scenario]!(detail, transcript)
     })
   }
+})
+
+describe('what an agent reports about its model service', () => {
+  // Shaped like the keys `redactSecrets` knows; none is real.
+  const KEY = `sk-proj-${'A1b2C3d4'.repeat(4)}`
+  const GATEWAY = `lmg1.${'x'.repeat(43)}`
+
+  /** A copy of a hand-written transcript with some of its frames changed, written where the replay agent reads it. */
+  async function variant(scenario: string, change: (entry: ReplayEntry) => ReplayEntry[]): Promise<string> {
+    const fixture = replayFixtures().find(item => item.harness === 'codex' && !item.line && item.scenario === scenario)!
+    const lines = readFileSync(fixture.path, 'utf8').trim().split('\n')
+    const [header, ...entries] = lines.map(line => JSON.parse(line) as ReplayEntry)
+    const root = await mkdtemp(join(tmpdir(), 'latch-replay-variant-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const path = join(root, `${scenario}.ndjson`)
+    await writeFile(path, `${[header, ...entries.flatMap(change)].map(entry => JSON.stringify(entry)).join('\n')}\n`)
+    return path
+  }
+  const update = (entry: ReplayEntry): Record<string, unknown> | undefined =>
+    entry.type === 'emit_inbound' && entry.frame.method === 'session/update'
+      ? (entry.frame.params as { update: Record<string, unknown> }).update
+      : undefined
+  const texts = (detail: DriverTaskDetail) => detail.messages.map(message => message.text).join('\n')
+
+  it('masks keys in a notice and in a failed compaction', async () => {
+    let compactions = 0
+    const path = await variant('compaction', entry => {
+      if (entry.type !== 'emit_inbound' || update(entry)?.sessionUpdate !== 'compaction_update' || ++compactions !== 2) return [entry]
+      const notice = structuredClone(entry)
+      ;(notice.frame.params as { update: unknown }).update = {
+        sessionUpdate: 'notice',
+        severity: 'error',
+        title: `service said ${KEY}`,
+        description: `token ${GATEWAY}`,
+      }
+      const failed = structuredClone(entry)
+      Object.assign((failed.frame.params as { update: Record<string, unknown> }).update, {
+        status: 'failed',
+        error: `401 Incorrect API key provided: ${KEY}`,
+        summary: [{ type: 'text', text: `retry with ${KEY}` }],
+      })
+      return [notice, failed]
+    })
+    const { detail, marks } = await replayTranscript(path, cleanups)
+    expect(marks).toEqual([])
+    const shown = texts(detail)
+    expect(shown).toContain('Codex 报告错误：service said [redacted]')
+    expect(shown).toContain('Codex 压缩上下文失败：401 Incorrect API key provided: [redacted]')
+    expect(shown).not.toContain(KEY)
+    expect(shown).not.toContain(GATEWAY)
+  })
+
+  it('masks keys in an error the agent answers a prompt with', async () => {
+    const path = await variant('simple', entry =>
+      entry.type === 'emit_inbound' && entry.frame.kind === 'response' && entry.frame.method === 'session/prompt'
+        ? [{ ...entry, frame: { kind: 'response', method: 'session/prompt', error: { code: -32603, message: `upstream 401: ${KEY}` } } }]
+        : [entry],
+    )
+    const { detail, marks } = await replayTranscript(path, cleanups)
+    expect(marks).toEqual([])
+    expect(detail.summary.status).toBe('failed')
+    expect(texts(detail)).toContain('upstream 401: [redacted]')
+    expect(JSON.stringify(detail)).not.toContain(KEY)
+  })
 })

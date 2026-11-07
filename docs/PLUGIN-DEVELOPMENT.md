@@ -326,7 +326,7 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | `subscribe` | 状态变化时通知，带 sessionId 时 Host 会合并通知并推送该会话状态 |
 | `liveRuns?` | 可选。同步返回内存中活动的运行 `{ sessionId, live }`，开销只随活动运行数增长：Host 每次变化与阈值到期时都调用，据此发现沉默；不提供时没有沉默通知 |
 | `remove?` | 可选。删除已结束会话的数据；运行中返回 409 `task-running` |
-| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行 |
+| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行。只在修改还没发给 Agent 时用 409 `task-running` 拒绝（如会话的这一轮还在启动）：Host 把它记为明确失败，其他错误在回执之后都记为结果未知 |
 | `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter` 或 `wider`。Host 只用它决定是否写放宽模式的审计 |
 | `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
 
@@ -378,6 +378,10 @@ pnpm test:e2e
 `CreateTaskInput.fileRefs` / `PromptOptions.fileRefs` 是经 Host 验证的 `{root,path}` 列表，最多 32 条；Standard 与 ACP 保存为 `Message.fileRefs`，保留用户原文，只在模型上下文追加目录映射。插件 Harness 尚未接入该引用实现时，Host 明确拒绝；不能仅凭支持项目目录就宣称支持文件选择。
 
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
+
+### 清空上下文
+
+`PromptOptions.freshContext?: true` 要求这一轮在新的上下文里开始：Harness 看不到会话之前的消息，消息留在记录里，这一轮的用户消息带 `freshContext`。只有在详情里声明 `clearContext: true` 的 Driver 会收到它（Standard 与 ACP 已实现），它要计入请求的幂等哈希。Driver 在这一轮被接纳前就放下了旧的上下文、这一轮却被拒绝时，在详情里带 `contextCleared: true`，直到下一条用户消息记下，页面据此不再提供撤销。助手消息可以带 `thinking`（这一步的思考深度），与 `model` 一样用 Harness 的叫法。
 
 ### 个人助手上下文
 

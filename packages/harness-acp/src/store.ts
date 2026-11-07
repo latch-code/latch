@@ -63,6 +63,10 @@ export interface AcpRecord {
   route?: ModelRoute
   /** The route's model was chosen on the agent's session; until then the next bind chooses it. */
   routeModelSet?: true
+  /** A prompt asked for a new context and no user message has been recorded on the agent's new session yet. */
+  contextCleared?: true
+  /** The agent's sessions from before each new context, which removing the task deletes too. */
+  earlierSessionIds?: string[]
 }
 
 export interface StartChoice {
@@ -176,6 +180,7 @@ const message = z.object({
   requestId: z.string().optional(),
   queuedAt: z.string().optional(),
   steered: z.literal(true).optional(),
+  freshContext: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -187,6 +192,7 @@ const message = z.object({
   reasoningMs: z.number().nonnegative().optional(),
   model: z.string().optional(),
   providerId: z.string().optional(),
+  thinking: z.string().max(200).optional(),
   turn: z
     .object({ endedAt: z.string().optional(), activeMs: z.number().nonnegative().optional(), waitMs: z.number().nonnegative().optional() })
     .optional(),
@@ -308,6 +314,8 @@ const stateSchema = z.object({
           })
           .optional(),
         routeModelSet: z.literal(true).optional(),
+        contextCleared: z.literal(true).optional(),
+        earlierSessionIds: z.array(z.string()).optional(),
       }),
     }),
   ),

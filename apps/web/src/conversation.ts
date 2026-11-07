@@ -4,6 +4,7 @@ import { DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
 import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
+import { thinkingWord } from './composer/modelReasoning.ts'
 
 /*
  * What the conversation shows, derived from the Host's messages alone: turns, their footers, what a work row says, when
@@ -122,6 +123,30 @@ export function turnUsage(turn: Turn): TokenUsage | undefined {
 /** The model the turn's first step used, for the source row. */
 export const turnModel = (turn: Turn): Message | undefined =>
   turn.replies.find(message => message.role === 'assistant' && typeof message.model === 'string' && message.model)
+
+/**
+ * Where the model or thinking level changed from the turn before, by turn key: what changed, as `from → to`. Only a value
+ * the Host recorded on both sides counts; a turn with no answer carries the last one recorded across it.
+ */
+export function settingSwitches(turns: readonly Turn[]): Map<string, string> {
+  const switches = new Map<string, string>()
+  let model: string | undefined
+  let thinking: string | undefined
+  for (const turn of turns) {
+    const step = turnModel(turn)
+    if (!step?.model) continue
+    const nextThinking = step.thinking ? thinkingWord(step.thinking) : undefined
+    const modelChanged = model !== undefined && step.model !== model
+    const thinkingChanged = thinking !== undefined && nextThinking !== undefined && nextThinking !== thinking
+    if (modelChanged && thinkingChanged) switches.set(turn.key, `${model} · ${thinking} → ${step.model} · ${nextThinking}`)
+    else if (modelChanged) switches.set(turn.key, `模型 ${model} → ${step.model}`)
+    else if (thinkingChanged) switches.set(turn.key, `思考 ${thinking} → ${nextThinking}`)
+    model = step.model
+    // A model without levels says nothing about the next one's.
+    thinking = nextThinking ?? (modelChanged ? undefined : thinking)
+  }
+  return switches
+}
 
 export interface TurnTimes {
   /** When the prompt was committed. */
@@ -484,14 +509,24 @@ export function foldWords(turn: Turn): string {
     turn.replies.filter(message => message.role === 'tool' && shownToolState(message) === state).length
   const failed = count('failed')
   const rejected = count('rejected')
-  // What the Harness's own model stopped happened without the person, so the fold says it.
-  const denied = turn.replies.filter(message => message.role === 'tool' && message.tool?.judged?.outcome === 'denied').length
+  // What the Harness's own model stopped happened without the person, so the fold says it, its subagents' too.
+  const denied = deniedJudgements(turn.replies)
   return [
     `已工作${spent ? ` ${spent}` : ''}`,
     ...(failed ? [`${failed} 步失败`] : []),
     ...(rejected ? [`${rejected} 步被拒绝`] : []),
     ...(denied ? [JUDGED_COPY.deniedCount(denied)] : []),
   ].join(' · ')
+}
+
+function deniedJudgements(messages: readonly Message[]): number {
+  return messages.reduce(
+    (sum, message) =>
+      message.role !== 'tool'
+        ? sum
+        : sum + (message.tool?.judged?.outcome === 'denied' ? 1 : 0) + deniedJudgements(message.subagent?.steps ?? []),
+    0,
+  )
 }
 
 /** One line for a failed row: the first line of what it reported, without the runtime's code, and cut. */

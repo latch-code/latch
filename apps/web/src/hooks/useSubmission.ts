@@ -42,6 +42,13 @@ const restoredChoice = (pending: PendingSubmission): Partial<ComposerChoice> => 
   ...(pending.config?.length ? { config: Object.fromEntries(pending.config.map(pick => [pick.configId, pick.value])) } : {}),
 })
 
+const without = (set: ReadonlySet<string>, id: string): ReadonlySet<string> => {
+  if (!set.has(id)) return set
+  const next = new Set(set)
+  next.delete(id)
+  return next
+}
+
 const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null, assistantId: string | undefined): boolean =>
   pending.sessionId === undefined ? selectedId === null && assistantId === pending.assistantId : selectedId === pending.sessionId
 
@@ -101,6 +108,8 @@ export function useSubmission({
   const choice = useMemo(() => (borrowed ? forkedChoice(catalog, start, borrowed) : remembered), [catalog, start, borrowed, remembered])
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
+  /** Sessions whose next prompt starts a new context, as chosen on this device; nothing is sent until that prompt. */
+  const [clearing, setClearing] = useState<ReadonlySet<string>>(() => new Set())
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
     // A Harness's options are its own: another Harness starts on what was last picked for it, else its defaults.
@@ -227,7 +236,13 @@ export function useSubmission({
     const submission: PendingSubmission =
       retry
       ?? (resend !== undefined && selectedId !== null
-        ? { requestId: newRequestId(), prompt: resend, sessionId: selectedId, ...(override ? { model: override } : {}) }
+        ? {
+            requestId: newRequestId(),
+            prompt: resend,
+            sessionId: selectedId,
+            ...(override ? { model: override } : {}),
+            ...(clearing.has(selectedId) ? { freshContext: true } : {}),
+          }
         : undefined)
       ?? (selectedId === null
         ? assistantId
@@ -247,7 +262,13 @@ export function useSubmission({
             prompt: draft.trim(),
             sessionId: selectedId,
             ...(override ? { model: override } : {}),
-            ...(followUp === 'queue' ? { queue: true } : followUp === 'steer' ? { steer: true } : {}),
+            ...(followUp === 'queue'
+              ? { queue: true }
+              : followUp === 'steer'
+                ? { steer: true }
+                : clearing.has(selectedId)
+                  ? { freshContext: true }
+                  : {}),
           })
     if (fileRefs?.length && !retry && resend === undefined) submission.fileRefs = fileRefs
     if (attachmentIds?.length && !retry && resend === undefined) submission.attachmentIds = attachmentIds
@@ -306,6 +327,7 @@ export function useSubmission({
           delete next[sessionId]
           return next
         })
+      if (submission.freshContext) setClearing(previous => without(previous, sessionId))
       await refresh()
       return true
     } catch (cause) {
@@ -349,6 +371,12 @@ export function useSubmission({
     },
     submit,
     resend: (prompt: string) => submit(undefined, prompt),
+    /** The open session's next prompt starts a new context. */
+    clearing: selectedId !== null && clearing.has(selectedId),
+    setClearing: (sessionId: string, on: boolean) =>
+      setClearing(previous =>
+        on ? (previous.has(sessionId) ? previous : new Set([...previous, sessionId])) : without(previous, sessionId),
+      ),
     override: selectedId === null ? undefined : overrides[selectedId],
     setOverride: (sessionId: string, model: ModelRef | undefined) =>
       setOverrides(previous => {

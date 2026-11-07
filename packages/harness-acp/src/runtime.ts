@@ -43,7 +43,7 @@ import {
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
-import { isoTime, ReasoningTimer, RunClock, sha256Hex } from '@latch/core/node-kit'
+import { isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { runEndRecord } from '@latch/core/run-end'
 import {
   MAX_START_CHOICES,
@@ -69,6 +69,7 @@ import {
   foldConfig,
   mergeTool,
   modelName,
+  thinkingName,
   planEntries,
   pretty,
   settleTool,
@@ -571,8 +572,8 @@ export class AgentRuntime implements Bridge {
     })
     this.workspaceRoot = resolve(options.workspaceRoot)
     const own = redactor(agent.env)
-    // An agent's error may echo the gateway token it was given.
-    this.redact = text => [...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text))
+    // An agent's error may echo the gateway token it was given, or part of a key from its own configuration.
+    this.redact = text => redactSecrets([...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text)))
     this.selection = selectProfile(agent)
     this.auth = authFacts(agent, true)
     this.profile = this.selection.profile?.permission
@@ -740,7 +741,48 @@ export class AgentRuntime implements Bridge {
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
       ...(active && run && this.steerable(run) ? { steer: true as const } : {}),
+      clearContext: true,
+      ...(task.acp.contextCleared ? { contextCleared: true as const } : {}),
     })
+  }
+
+  /**
+   * Lets go of the agent's session so that the next bind opens a new one: what the person chose for the model, thinking
+   * and the rest is set on it again, the mode is set and read back as for any session, and an agent's instructions go
+   * with its first turn as they did with the session's first. Until a user message is recorded on the new session, the
+   * task says its context was cleared, so the message that is (whether or not it asked) shows the boundary.
+   */
+  private clearContext(task: AcpTask): void {
+    if (task.acp.contextCleared) return
+    task.acp.contextCleared = true
+    const prior = task.acp.acpSessionId
+    if (prior !== undefined) {
+      const chosen = task.acp.startConfig ?? []
+      const carried = (task.config ?? [])
+        .filter(option => !this.isModeOption(task, option) && !chosen.some(choice => choice.configId === option.id))
+        .map(option => ({
+          configId: option.id,
+          value: option.currentValue,
+          ...(option.category ? { category: option.category } : {}),
+          label: option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue,
+        }))
+      if (carried.length) task.acp.startConfig = [...chosen, ...carried]
+      delete task.acp.acpSessionId
+      task.acp.earlierSessionIds = [...(task.acp.earlierSessionIds ?? []), prior]
+      // The old session's context window and cost say nothing about the new one.
+      delete task.usageReport
+      delete task.plan
+      const brief = task.messages.find(message => message.role === 'user' && message.agentBrief)?.agentBrief
+      if (brief && !task.acp.brief) task.acp.brief = brief
+      const live = this.lives.get(task.summary.id)
+      if (live?.sessions.get(prior) === task.summary.id) {
+        live.sessions.delete(prior)
+        if (live.capabilities.close && !live.wire.stopping)
+          void live.wire.request('session/close', { sessionId: prior }, this.limits.requestTimeoutMs).catch(() => {})
+      }
+    }
+    this.touch(task)
+    this.mark()
   }
 
   async launchPreview(input: {
@@ -1199,13 +1241,16 @@ export class AgentRuntime implements Bridge {
     const key = digest(['prompt', sessionId, requestId])
     const attachments = checkedAttachments(options.attachments)
     const fileRefs = options.fileRefs ?? []
+    const fresh = options.freshContext === true
+    // The new context joins the hash only when asked, so receipts written before it existed still match.
     const payloadHash = digest(
-      attachments.length || fileRefs.length
+      attachments.length || fileRefs.length || fresh
         ? {
             prompt,
             ...(options.model ? { model: options.model } : {}),
             ...(attachments.length ? { attachments } : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
+            ...(fresh ? { freshContext: true } : {}),
           }
         : options.model
           ? { prompt, model: options.model }
@@ -1248,6 +1293,12 @@ export class AgentRuntime implements Bridge {
     run.attachments = attachments
     const promise = (async () => {
       try {
+        if (fresh) {
+          // A bind already under way (a setting changed a moment ago) would put the old session back once it finished.
+          for (let binding = this.attaching.get(sessionId); binding; binding = this.attaching.get(sessionId))
+            await binding.promise.catch(() => {})
+          this.clearContext(this.task(sessionId))
+        }
         // Reattach and confirm the mode before recording, so a refused turn leaves no side effects.
         await this.attach(sessionId)
         this.assertOpen()
@@ -1256,10 +1307,13 @@ export class AgentRuntime implements Bridge {
         this.assertUsable(current)
         current.acp.turnSeq = run.seq
         run.userMessageId = randomUUID()
+        const freshContext = current.acp.contextCleared === true
+        delete current.acp.contextCleared
         current.messages.push({
           id: run.userMessageId,
           role: 'user',
           text: prompt,
+          ...(freshContext ? { freshContext: true as const } : {}),
           turnId: run.id,
           requestId,
           ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
@@ -1451,7 +1505,7 @@ export class AgentRuntime implements Bridge {
     ) {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
-    const { acpSessionId, cwd, deletable } = task.acp
+    const { acpSessionId, earlierSessionIds = [], cwd, deletable } = task.acp
     const recorded = structuredClone(task)
     this.fileTracking.dispose(sessionId)
     if (task.acp.skills) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
@@ -1467,7 +1521,8 @@ export class AgentRuntime implements Bridge {
     this.mark()
     await this.flush()
     this.notify(sessionId)
-    this.forget(sessionId, acpSessionId, cwd, deletable === true, confirmedOf(recorded.acp), () => this.stillListed(recorded))
+    const agentSessionIds = acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId]
+    this.forget(sessionId, agentSessionIds, cwd, deletable === true, confirmedOf(recorded.acp), () => this.stillListed(recorded))
   }
 
   async classifyConfigChange(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass> {
@@ -3029,13 +3084,13 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
-   * Cleans up after a removed task in the background: asks the agent to delete its session when it offers that,
+   * Cleans up after a removed task in the background: asks the agent to delete its sessions when it offers that,
    * starting a process only for the launch on record and only in a project the Host still lists, then stops
    * the process and removes its TMPDIR. Otherwise, or after a failure, only the agent's own copy is left behind.
    */
   private forget(
     key: string,
-    acpSessionId: string | undefined,
+    acpSessionIds: readonly string[],
     cwd: string,
     deletable: boolean,
     confirmed: Confirmed,
@@ -3049,8 +3104,8 @@ export class AgentRuntime implements Bridge {
           await live.wire.exited
           live = undefined
         }
-        if (!acpSessionId) return
-        live?.sessions.delete(acpSessionId)
+        if (!acpSessionIds.length) return
+        for (const id of acpSessionIds) live?.sessions.delete(id)
         if (
           live
             ? !live.capabilities.delete
@@ -3070,10 +3125,11 @@ export class AgentRuntime implements Bridge {
           return
         }
         const target = live ?? (await this.ensureProcess(key, cwd, confirmed))
-        target.sessions.delete(acpSessionId)
+        for (const id of acpSessionIds) target.sessions.delete(id)
         if (!target.capabilities.delete) return
         this.holdIdle(target)
-        await target.wire.request('session/delete', { sessionId: acpSessionId }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        for (const id of acpSessionIds)
+          await target.wire.request('session/delete', { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000)).catch(() => {})
       } catch {
         /* Best effort. */
       } finally {
@@ -3382,7 +3438,7 @@ export class AgentRuntime implements Bridge {
         task.messages.push({
           id: randomUUID(),
           role: 'system',
-          text: `${this.agent.name} ${said}：${clip(title, 300)}${description ? `\n${clip(description, 2000)}` : ''}`,
+          text: `${this.agent.name} ${said}：${clip(this.redact(title), 300)}${description ? `\n${clip(this.redact(description), 2000)}` : ''}`,
           createdAt: this.now(),
         })
         break
@@ -3444,13 +3500,15 @@ export class AgentRuntime implements Bridge {
       state.status === 'completed'
         ? `${name} 已压缩上下文`
         : state.status === 'failed'
-          ? `${name} 压缩上下文失败${state.error ? `：${clip(state.error, 500)}` : ''}`
+          ? `${name} 压缩上下文失败${state.error ? `：${clip(this.redact(state.error), 500)}` : ''}`
           : state.status === 'cancelled'
             ? `${name} 已取消压缩上下文`
             : state.status === 'in_progress'
               ? `${name} 正在压缩上下文…`
-              : `${name} 压缩上下文：${clip(state.status, 64)}`
-    message.text = state.summary ? `${head}\n${clip(state.summary, TOOL_TEXT_LIMIT)}` : head
+              : `${name} 压缩上下文：${clip(this.redact(state.status), 64)}`
+    // What a failed compaction sends may be the service's error rather than a summary.
+    const summary = state.status === 'failed' ? this.redact(state.summary) : state.summary
+    message.text = summary ? `${head}\n${clip(summary, TOOL_TEXT_LIMIT)}` : head
   }
 
   private messageId(task: AcpTask, acpMessageId: string | undefined): string {
@@ -3495,6 +3553,7 @@ export class AgentRuntime implements Bridge {
     if (!segment || (!segment.text && !segment.reasoning)) return
     const reasoningMs = segment.reasoningTimer.end()
     const model = modelName(task.config)
+    const thinking = thinkingName(task.config)
     task.messages.push({
       id: segment.id,
       role: 'assistant',
@@ -3505,6 +3564,7 @@ export class AgentRuntime implements Bridge {
       completedAt: this.now(),
       ...(reasoningMs !== undefined ? { reasoningMs } : {}),
       ...(model ? { model: clip(model, 200) } : {}),
+      ...(thinking ? { thinking: clip(thinking, 200) } : {}),
     })
     this.touch(task)
     this.mark()

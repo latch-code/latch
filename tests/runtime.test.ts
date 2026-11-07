@@ -917,6 +917,57 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(efforts).toHaveLength(4)
   })
 
+  it('starts a new context on request: the model is sent only what follows, the record keeps everything', async () => {
+    const dataDir = await directory()
+    const sent: string[][] = []
+    const alpha: ModelProvider = {
+      ...modelsProvider('alpha', ['a-1']),
+      modelCapabilities: { 'a-1': { thinking: ['low', 'high'] } },
+      async *stream({ messages }) {
+        sent.push(messages.filter(message => message.role === 'user').map(message => message.content))
+        yield { type: 'text', text: 'ok' }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: providers([alpha]), providerId: 'alpha' }))
+    const { sessionId } = await bridge.createTask({
+      prompt: 'one',
+      requestId: 'one',
+      model: { providerId: 'alpha', model: 'a-1', effort: 'high' },
+    })
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'two', 'two')
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'three', 'three', { freshContext: true })
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'four', 'four')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(sent).toEqual([['one'], ['one', 'two'], ['three'], ['three', 'four']])
+    // The same request again is answered; asked another way it is another request.
+    await bridge.prompt(sessionId, 'three', 'three', { freshContext: true })
+    await expect(bridge.prompt(sessionId, 'three', 'three')).rejects.toMatchObject({ code: 'request-conflict' })
+    const detail = await bridge.detail(sessionId)
+    expect(detail.clearContext).toBe(true)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => [message.text, message.freshContext])).toEqual([
+      ['one', undefined],
+      ['two', undefined],
+      ['three', true],
+      ['four', undefined],
+    ])
+    expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.thinking)).toEqual([
+      'high',
+      'high',
+      'high',
+      'high',
+    ])
+    await bridge.close()
+    const restored = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: providers([alpha]), providerId: 'alpha' }))
+    expect((await restored.detail(sessionId)).messages.find(message => message.text === 'three')?.freshContext).toBe(true)
+    await restored.prompt(sessionId, 'five', 'five')
+    await waitStatus(restored, sessionId, 'idle')
+    expect(sent.at(-1)).toEqual(['three', 'four', 'five'])
+  })
+
   it('runs tools in the session workspace and refuses unknown or removed workspaces', async () => {
     const dataDir = await directory()
     const home = await directory()

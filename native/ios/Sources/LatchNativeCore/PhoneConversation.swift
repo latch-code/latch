@@ -175,7 +175,13 @@ public enum PhoneConversation {
         let rejected = tools.filter { unrun($0) == "rejected" }.count
         // A review that came to 拦下 reports itself failed; it is a verdict, not a failed step.
         let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil && judgement($0)?.review != true }.count
-        let denied = tools.filter { $0["tool"]["judged"]["outcome"].string == "denied" }.count
+        // What the Harness's own model stopped happened without the person, its subagents' too.
+        func deniedCount(_ messages: [NativeJSON]) -> Int {
+            messages.filter { $0["role"].string == "tool" }.reduce(0) { sum, message in
+                sum + (message["tool"]["judged"]["outcome"].string == "denied" ? 1 : 0) + deniedCount(message["subagent"]["steps"].array)
+            }
+        }
+        let denied = deniedCount(turn.replies)
         return (["已工作" + (spent.map { " " + $0 } ?? "")] + (failed > 0 ? ["\(failed) 步失败"] : []) + (rejected > 0 ? ["\(rejected) 步被拒绝"] : [])
             + (denied > 0 ? ["模型拦下 \(denied) 次"] : [])).joined(separator: " · ")
     }
@@ -448,8 +454,38 @@ public enum PhoneConversation {
         }
         return (parts, neverAsks)
     }
+    /** The line drawn above a turn whose prompt began a new context. */
+    public static func divider(_ turn: PhoneTurn) -> String? { turn.user?["freshContext"].bool == true ? "清空了上下文" : nil }
+    /** Why the next message starts a new context whether or not it asks: the Host already let go of the old one. */
+    public static func clearedNote(_ detail: NativeJSON, engine: String) -> (title: String, line: String)? {
+        detail["contextCleared"].bool ? ("下一条消息开始新的上下文", "上下文已经清空，" + engine + " 看不到之前的消息，记录仍留在这里。") : nil
+    }
     /** The model a turn's first step used, as the author line names it. */
-    public static func turnModel(_ turn: PhoneTurn) -> String? {
-        turn.replies.first { $0["role"].string == "assistant" && !($0["model"].string ?? "").isEmpty }?["model"].string
+    public static func turnModel(_ turn: PhoneTurn) -> String? { modelStep(turn)?["model"].string }
+    private static func modelStep(_ turn: PhoneTurn) -> NativeJSON? {
+        turn.replies.first { $0["role"].string == "assistant" && !($0["model"].string ?? "").isEmpty }
+    }
+    private static let thinkingWords = ["none": "不思考", "minimal": "最少", "low": "低", "medium": "中", "high": "高", "xhigh": "超高", "max": "最高"]
+    /**
+     * Where the model or thinking level changed from the turn before, by turn ID: what changed, as `from → to`. Only a
+     * value the Host recorded on both sides counts; a turn with no answer carries the last one recorded across it.
+     */
+    public static func switches(_ turns: [PhoneTurn]) -> [String: String] {
+        var result: [String: String] = [:]
+        var model: String?, thinking: String?
+        for turn in turns {
+            guard let step = modelStep(turn), let next = step["model"].string else { continue }
+            let nextThinking = step["thinking"].string.map { thinkingWords[$0] ?? $0 }
+            let fromThinking = thinking.flatMap { level in nextThinking.flatMap { $0 == level ? nil : level } }
+            let fromModel = model.flatMap { $0 == next ? nil : $0 }
+            if let fromModel, let fromThinking, let nextThinking { result[turn.id] = "\(fromModel) · \(fromThinking) → \(next) · \(nextThinking)" }
+            else if let fromModel { result[turn.id] = "模型 \(fromModel) → \(next)" }
+            else if let fromThinking, let nextThinking { result[turn.id] = "思考 \(fromThinking) → \(nextThinking)" }
+            let modelChanged = fromModel != nil
+            model = next
+            // A model without levels says nothing about the next one's.
+            thinking = nextThinking ?? (modelChanged ? nil : thinking)
+        }
+        return result
     }
 }

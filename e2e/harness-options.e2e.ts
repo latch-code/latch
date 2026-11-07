@@ -187,6 +187,14 @@ describe("choosing a Harness's own options before the first message", () => {
     await shot(page, 'permission-more-1440-light')
     await more.click()
     await expect.poll(() => row(page, /按规则放行/u).count()).toBe(0)
+    // Left open, 更多 is folded again the next time 权限 opens.
+    await more.click()
+    await row(page, /按规则放行/u).waitFor()
+    await page.keyboard.press('Escape')
+    await chip(page, '权限').click()
+    await row(page, /由模型判断/u).waitFor()
+    expect(await row(page, /按规则放行/u).count()).toBe(0)
+    expect(await more.getAttribute('aria-expanded')).toBe('false')
     await more.click()
     await row(page, /按规则放行/u).click()
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
@@ -303,6 +311,39 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.context().close()
   })
 
+  it('sends a message after the thinking picked a moment before, so its turn runs on it', async () => {
+    const page = await open(1440, 'light')
+    await send(page, '第五轮')
+    const session = await latest()
+    expect(current(session, 'reasoning_effort')).toBe('low')
+    const order: string[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && /\/tasks\/[^/]+\/prompt$/u.test(request.url())) order.push('prompt sent')
+    })
+    page.on('response', response => {
+      if (response.request().method() === 'POST' && /\/tasks\/[^/]+\/config$/u.test(response.url())) order.push('config answered')
+    })
+    // The change takes a while to reach the Host; the message must not overtake it.
+    await page.route(/\/tasks\/[^/]+\/config$/u, async route => {
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await route.continue()
+    })
+    await chip(page, '模型').click()
+    await page.getByRole('radio', { name: 'High' }).click()
+    await page.keyboard.press('Escape')
+    const next = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await next.fill('第六轮')
+    await next.press('Meta+Enter')
+    await page.locator('.transcript').getByText('echo: 第六轮', { exact: true }).first().waitFor({ timeout: 20_000 })
+    await shot(page, 'thinking-then-send-1440-light')
+    expect(order).toEqual(['config answered', 'prompt sent'])
+    const after = await owner.json<TaskDetail>(`tasks/${session.summary.id}`)
+    expect(current(after, 'reasoning_effort')).toBe('high')
+    expect(await page.getByText('结果未知', { exact: false }).count()).toBe(0)
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('High')
+    await page.context().close()
+  })
+
   for (const theme of ['light', 'dark'] as const)
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
@@ -327,6 +368,14 @@ describe("choosing a Harness's own options before the first message", () => {
       await page.getByRole('button', { name: '更多', exact: true }).click()
       await page.getByText('按规则放行', { exact: true }).waitFor()
       await shot(page, `sheet-permission-390-${theme}`)
+      // Closed with the rest shown, the next opening shows the main rows again.
+      const picker = page.getByRole('dialog', { name: '权限' })
+      await picker.getByRole('button', { name: '取消', exact: true }).click()
+      await picker.waitFor({ state: 'hidden' })
+      await sheet.getByRole('button', { name: /^权限/u }).click()
+      await page.getByText('由模型判断', { exact: true }).waitFor()
+      await expect.poll(() => page.getByText('按规则放行', { exact: true }).count()).toBe(0)
+      await page.getByRole('button', { name: '更多', exact: true }).click()
       await page.getByText('按规则放行', { exact: true }).click()
       await expect.poll(() => sheet.getByRole('button', { name: /^权限/u }).innerText()).toContain('按规则放行')
       await noHorizontalOverflow(page)

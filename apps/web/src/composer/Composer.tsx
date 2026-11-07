@@ -7,7 +7,7 @@ import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
-import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
+import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
 import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
 
 /**
@@ -38,6 +38,7 @@ export function Composer({
   textareaRef,
   commands,
   templates,
+  actions,
   variant,
   label,
   placeholder,
@@ -79,6 +80,8 @@ export function Composer({
   attachments?: AttachmentDraftController
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
+  /** What Latch itself does from the slash menu in this session. */
+  actions?: SlashAction[]
   textareaRef: RefObject<HTMLTextAreaElement | null>
   variant: 'new' | 'session' | 'sheet'
   label: string
@@ -154,6 +157,7 @@ export function Composer({
     draft,
     commands,
     templates,
+    ...(actions ? { actions } : {}),
     enabled: !locked && readOnly === undefined,
     onDraft: value => {
       onDraft(value)

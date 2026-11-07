@@ -163,3 +163,20 @@ test('does not record applied when the actual ACP reports its old value after ac
   expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(503)
   expect(await f.calls()).toBe(1)
 })
+
+test('a change refused while a turn is starting is a failed change, not an unknown one', async () => {
+  const f = await fixture(),
+    request = input()
+  // What the ACP runtime answers when a prompt reached the session first and its turn has not gone out yet.
+  vi.spyOn(f.host.host.bridge, 'setConfig').mockRejectedValueOnce(new AppError(409, 'task-running', '会话正在启动，请稍后再修改设置'))
+  const refused = await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })
+  expect(refused.status).toBe(409)
+  expect(((await refused.json()) as { error: string }).error).toBe('task-running')
+  expect(await f.owner.json(`${f.path}/config-requests/${request.requestId}`)).toEqual({ state: 'failed' })
+  expect(await f.calls()).toBe(0)
+  expect((await f.detail()).config?.find(row => row.id === 'model')?.currentValue).toBe('small')
+  // The same request is not retried as if it might have applied; a new pick goes through.
+  expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(409)
+  expect(await f.owner.json(`${f.path}/config`, { method: 'POST', body: input() })).toEqual({ accepted: true })
+  expect(await f.calls()).toBe(1)
+})

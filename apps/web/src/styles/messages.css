@@ -277,6 +277,35 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+/* Where the session itself changed between two turns: a hairline across the column with the words in the middle. */
+.timeline-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-bottom: var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.timeline-divider::before,
+.timeline-divider::after {
+  content: '';
+  flex: 1;
+  min-width: var(--sp-16);
+  border-top: 1px solid var(--line);
+}
+.timeline-divider > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 80%;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.timeline-divider svg {
+  flex-shrink: 0;
+}
 .fork-origin button {
   padding: 0;
   border: 0;

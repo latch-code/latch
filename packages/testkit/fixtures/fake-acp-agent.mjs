@@ -699,6 +699,11 @@ const scenarios = {
     say(`echo: ${input}`)
     return END
   },
+  // Says how many earlier prompts this session holds, so a test can tell a new session from a continued one.
+  recall: ({ session, say }) => {
+    say(`recall: ${session.history.filter(entry => entry.role === 'user').length - 1} earlier`)
+    return END
+  },
   // `model [as:name]`: asks the model service it was pointed at, with that model or its own, and says what came back.
   model: async ({ session, input, argument, say }) => {
     const answer = await callModel(session, input, argument?.startsWith('as:') ? argument.slice(3) : undefined)

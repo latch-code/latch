@@ -485,7 +485,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 ### 会话分叉
 
-`catalog.features.fork` 表示 `POST /tasks` 接受 `forkOf: { taskId, upToMessageId }`。请求仍需 `run`，且必须有 `view` 才能读取来源；Host 在启动前再次核对权限并生成种子，客户端不提交历史。只允许从已结束的轮次分叉，后续轮次和隐藏推理不进入种子。文本保留最后 20 万 UTF-16 字符，截断时说明，边界不拆开代理对。来源名称取不可变的首条输入，重命名不改变重试内容。项目和 Harness 可重新选择，L3 照常写新会话的启动审计。默认启动目录内 Host 已知的自有目录在分叉时复用，换项目则使用新项目；文件不复制或回滚。来源、位置、轮次与种子长度写入 `sessions-meta.json` 的 zod schema，由 Hub 投影到 `TaskSummary.forkOf` 与首条消息的 `forkContext`，第三方 Driver 的来源声明不作为 Host 元数据。
+`catalog.features.fork` 表示 `POST /tasks` 接受 `forkOf: { taskId, upToMessageId }`。请求仍需 `run`，且必须有 `view` 才能读取来源；Host 在启动前再次核对权限并生成种子，客户端不提交历史。只允许从已结束的轮次分叉，后续轮次和隐藏推理不进入种子；分叉点之前清空过上下文时，种子从最后一次清空开始，那是 Agent 当时知道的。文本保留最后 20 万 UTF-16 字符，截断时说明，边界不拆开代理对。来源名称取不可变的首条输入，重命名不改变重试内容。项目和 Harness 可重新选择，L3 照常写新会话的启动审计。默认启动目录内 Host 已知的自有目录在分叉时复用，换项目则使用新项目；文件不复制或回滚。来源、位置、轮次与种子长度写入 `sessions-meta.json` 的 zod schema，由 Hub 投影到 `TaskSummary.forkOf` 与首条消息的 `forkContext`，第三方 Driver 的来源声明不作为 Host 元数据。
 
 ### 排队输入
 
@@ -520,7 +520,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 ## 会话配置修改回执
 
-`catalog.features.configReceipts` 表示 Host 支持配置修改的设备绑定回执。旧客户端可不传 `requestId`；新客户端为一次不可变的 `{configId,value}` 保留原编号，超时后只查询 `GET /tasks/:id/config-requests/:requestId`。结果为 `pending`、`applied`、`failed` 或 `unknown`；其他设备和没有回执的编号只看到 `unknown`。读取仍检查原设备、会话可见范围与当前手机正文窗口，不能读取另一台设备的结果。接口不返回原始配置内容。
+`catalog.features.configReceipts` 表示 Host 支持配置修改的设备绑定回执。旧客户端可不传 `requestId`；新客户端为一次不可变的 `{configId,value}` 保留原编号，超时后只查询 `GET /tasks/:id/config-requests/:requestId`。结果为 `pending`、`applied`、`failed` 或 `unknown`；Agent 收到之前就被拒绝的修改记为 `failed`，例如这一轮还在启动时 ACP 会话回答的 409 `task-running`，页面可以直接说没有改；其他设备和没有回执的编号只看到 `unknown`。读取仍检查原设备、会话可见范围与当前手机正文窗口，不能读取另一台设备的结果。接口不返回原始配置内容。
 
 Host 在 `sessions-meta.json` 保存设备、编号、请求体 SHA-256、时间与有限状态；不持久化任意自定义 Agent 配置的值或字段名。调用 Agent 前先原子保存 `pending`，保存失败绝不调用。修改返回后读回的实际选项与目标值一致、且终态回执已确认落盘才返回 `applied`；Agent 请求超时、断线或终态写入无法确认时保留 `unknown`。明确的本地无效选项记录 `failed`。重启将未完成的 `pending` 视为 `unknown`，不能根据配置看起来相同就假定原调用成功。重复相同请求只读回执或合并当前执行，未知请求不再调用 Agent；相同编号的不同内容返回冲突。
 

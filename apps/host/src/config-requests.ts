@@ -19,6 +19,8 @@ interface Flight {
 }
 const keyOf = (session: string, device: string, rid: string) => JSON.stringify([session, device, rid])
 const unknown = () => new AppError(503, 'config-outcome-unknown', '配置结果尚未确认，请查询原请求，不能重复执行。')
+/** A driver refuses with this before anything reaches the agent (`Bridge.setConfig`), so the change certainly did not apply. */
+const notSent = (error: unknown) => error instanceof AppError && error.code === 'task-running'
 
 /** A durable fence before the external call. Reading or replaying a receipt never calls the Agent. */
 export class ConfigRequests {
@@ -113,16 +115,16 @@ export class ConfigRequests {
       this.preparations.delete(key)
     } catch (error) {
       if (!reserving && error instanceof AppError && error.code === 'stepup-required') throw error
-      const state: State = reserving ? 'unknown' : 'failed'
+      const uncertain = reserving && !notSent(error)
       try {
-        await record(state)
+        await record(uncertain ? 'unknown' : 'failed')
         this.preparations.delete(key)
       } catch {
         const prepared = this.preparations.get(key)
         if (prepared) prepared.unknown = true
         throw unknown()
       }
-      if (reserving) throw unknown()
+      if (uncertain) throw unknown()
       throw error
     }
   }

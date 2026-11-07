@@ -109,6 +109,7 @@ const messageSchema = z.object({
   text: z.string(),
   requestId: z.string().optional(),
   queuedAt: z.string().optional(),
+  freshContext: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -120,6 +121,7 @@ const messageSchema = z.object({
   reasoningMs: z.number().nonnegative().optional(),
   model: z.string().optional(),
   providerId: z.string().optional(),
+  thinking: z.string().max(200).optional(),
   turn: turnSchema.optional(),
   turnId: z.string().max(128).optional(),
 })

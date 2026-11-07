@@ -278,7 +278,12 @@ const promptSchema = z.object({
   model: modelRefSchema.optional(),
 })
 /** `steer`: add it to the running turn when the harness takes that, and queue it otherwise. */
-const queuedPromptSchema = promptSchema.extend({ queue: z.boolean().optional(), steer: z.boolean().optional() })
+const queuedPromptSchema = promptSchema.extend({
+  queue: z.boolean().optional(),
+  steer: z.boolean().optional(),
+  /** This turn starts a new context: the agent sees none of the earlier messages, which stay in the history. */
+  freshContext: z.literal(true).optional(),
+})
 const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
   forkOf: z
@@ -1384,7 +1389,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const sessionLifecycle = new SessionLifecycle({ log, ...(options.lifecycleBounds ? { bounds: options.lifecycleBounds } : {}) })
     const lifecycleListeners = sessionLifecycle.listenOnly()
-    const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now, lifecycle: sessionLifecycle })
+    const harnessHub = await HarnessHub.open({
+      dataDir,
+      defaultId: defaultHarnessId,
+      log,
+      now,
+      lifecycle: sessionLifecycle,
+      service: id => {
+        const record = effectiveProvider(id)
+        return record && { name: record.name, enabled: record.enabled }
+      },
+    })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
     const fileReferences = await FileReferenceStore.open(dataDir)
@@ -5162,6 +5177,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const input = queuedPromptSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
         if ((input.queue || input.steer) && (input.attachmentIds?.length || input.fileRefs?.length))
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
+        if (input.freshContext && (input.queue || input.steer))
+          throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
         recheck(caller, 'run')
         await assertSessionAccess(caller, id)
         await assertSessionWorkspace(id)
@@ -5177,6 +5194,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const personalOwner = hub!.personalOf(id)
         if (personalOwner?.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
         if (personalOwner && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
+        if (input.freshContext && (personalOwner || !(await hub!.detail(id)).clearContext))
+          throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
         if (input.steer && !input.model && !personalOwner && input.prompt) {
           recheck(caller, 'run')
           if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') {
@@ -5249,6 +5268,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(attachments.length ? { attachments } : {}),
+            ...(input.freshContext ? { freshContext: true as const } : {}),
           })
         } catch (cause) {
           if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)

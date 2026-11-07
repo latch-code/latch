@@ -3870,7 +3870,7 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
   })
 
   it('closes the session when the agent cannot delete it, and shares one read between requests', async () => {
-    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'close' })
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'close,resume' })
     const bridge = await fixture.open()
     const [first, second] = await Promise.all([bridge.readCatalogue!({ auto: true }), bridge.readCatalogue!({ auto: false })])
     expect(first).toEqual({ ran: true })
@@ -4713,5 +4713,128 @@ describe('sessions on a model service through the gateway', () => {
       (await gemini.fixture.open()).launchPreview!({ cwd: gemini.fixture.workspace, modelRoute: gemini.route }),
     ).rejects.toMatchObject(refusal)
     expect(await fixture.log()).toEqual([])
+  })
+})
+
+describe('a new context in a session', () => {
+  const said = (detail: DriverTaskDetail) => assistants(detail).at(-1)?.text
+
+  it('opens a new agent session with the same choices, closes the old one and marks the message, once per request', async () => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'close,resume' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'model', 'large')
+    await bridge.setConfig!(sessionId, 'effort', 'high')
+    await bridge.prompt(sessionId, 'recall', rid())
+    expect(said(await settled(bridge, sessionId))).toBe('recall: 1 earlier')
+    expect(received(await fixture.log(), 'session/new')).toHaveLength(1)
+    const requestId = rid()
+    await bridge.prompt(sessionId, 'recall', requestId, { freshContext: true })
+    const detail = await settled(bridge, sessionId)
+    expect(said(detail)).toBe('recall: 0 earlier')
+    // The history stays; only the agent starts over, on what the person had chosen.
+    expect(userTexts(detail)).toEqual(['echo one', 'recall', 'recall'])
+    expect(detail.messages.filter(message => message.freshContext).map(message => message.text)).toEqual(['recall'])
+    expect(detail.messages.findLast(message => message.role === 'user')?.freshContext).toBe(true)
+    expect(detail.config?.map(option => option.currentValue)).toEqual(['large', 'high'])
+    expect(assistants(detail).at(-1)).toMatchObject({ model: 'Large', thinking: 'High' })
+    const log = await fixture.log()
+    expect(received(log, 'session/new')).toHaveLength(2)
+    const closed = received(log, 'session/close').map(entry => (entry.params as { sessionId: string }).sessionId)
+    expect(closed).toHaveLength(1)
+    const prompts = received(log, 'session/prompt').map(entry => (entry.params as { sessionId: string }).sessionId)
+    expect(prompts.at(-1)).not.toBe(prompts[0])
+    expect(closed[0]).toBe(prompts[0])
+    // A retry is answered, never a second new session; the same request without it is another request.
+    await bridge.prompt(sessionId, 'recall', requestId, { freshContext: true })
+    await expect(bridge.prompt(sessionId, 'recall', requestId)).rejects.toMatchObject({ status: 409, code: 'request-conflict' })
+    expect(received(await fixture.log(), 'session/new')).toHaveLength(2)
+    expect(detail.clearContext).toBe(true)
+    // The boundary is part of the record and the next turn continues the new context.
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).messages.filter(message => message.freshContext)).toHaveLength(1)
+    await restored.prompt(sessionId, 'recall', rid())
+    expect(said(await settled(restored, sessionId))).toBe('recall: 1 earlier')
+  })
+
+  it('sends an agent its instructions again with the first turn of the new context', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const brief = { segments: [{ source: 'user' as const, text: 'ONLY REVIEW' }] }
+    const agentContext = { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', brief, revision: 'a'.repeat(64) }
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hello', requestId: rid(), agentContext })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'echo again', rid(), { agentContext })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'echo fresh', rid(), { agentContext, freshContext: true })
+    const detail = await settled(bridge, sessionId)
+    const sent = received(await fixture.log(), 'session/prompt').map(entry => (entry.params as { prompt: Array<{ text: string }> }).prompt)
+    expect(sent.map(blocks => blocks.map(block => block.text))).toEqual([
+      ['ONLY REVIEW', 'echo hello'],
+      ['echo again'],
+      ['ONLY REVIEW', 'echo fresh'],
+    ])
+    expect(detail.messages.filter(message => message.agentBrief).map(message => message.text)).toEqual(['echo hello', 'echo fresh'])
+  })
+
+  it('keeps the boundary when the new session refuses the turn, so the next message shows where the context began', async () => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODELS_FILE: '' })
+    const modelsFile = join(fixture.root, 'models.txt')
+    await writeFile(modelsFile, 'small,large')
+    const bridge = await fixture.redefine({ env: { ...fixture.record.env, FAKE_ACP_MODELS_FILE: modelsFile } })
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'model', 'large')
+    await writeFile(modelsFile, 'small')
+    await expect(bridge.prompt(sessionId, 'recall', rid(), { freshContext: true })).rejects.toMatchObject({
+      status: 409,
+      code: 'model-unavailable',
+    })
+    const refused = await bridge.detail(sessionId)
+    expect(userTexts(refused)).toEqual(['echo one'])
+    // The old context is gone already, so the page cannot offer to keep it.
+    expect(refused.contextCleared).toBe(true)
+    await bridge.prompt(sessionId, 'recall', rid())
+    const detail = await settled(bridge, sessionId)
+    expect(said(detail)).toBe('recall: 0 earlier')
+    expect(detail.messages.findLast(message => message.role === 'user')?.freshContext).toBe(true)
+    expect(detail.contextCleared).toBeUndefined()
+  })
+
+  it('deletes the agent sessions from before each clear when the session is removed, after a restart too', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'close,resume,delete' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'recall', rid(), { freshContext: true })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'recall', rid(), { freshContext: true })
+    await settled(bridge, sessionId)
+    const sessions = [...new Set(received(await fixture.log(), 'session/prompt').map(entry => entry.params?.sessionId as string))]
+    expect(sessions).toHaveLength(3)
+    expect(Object.keys(await fixture.agentSessions()).sort()).toEqual([...sessions].sort())
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.remove!(sessionId)
+    await vi.waitFor(async () => expect(await fixture.agentSessions()).toEqual({}), { timeout: 5_000, interval: 10 })
+    const deleted = received(await fixture.log(), 'session/delete').map(entry => entry.params?.sessionId as string)
+    expect(deleted.sort()).toEqual([...sessions].sort())
+  })
+
+  it('deletes the session from before the clear when the session is removed before another turn starts', async () => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODELS_FILE: '', FAKE_ACP_CAPS: 'close,delete' })
+    const modelsFile = join(fixture.root, 'models.txt')
+    await writeFile(modelsFile, 'small,large')
+    const bridge = await fixture.redefine({ env: { ...fixture.record.env, FAKE_ACP_MODELS_FILE: modelsFile } })
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'model', 'large')
+    await writeFile(modelsFile, 'small')
+    await expect(bridge.prompt(sessionId, 'recall', rid(), { freshContext: true })).rejects.toMatchObject({ code: 'model-unavailable' })
+    expect(Object.keys(await fixture.agentSessions())).toHaveLength(2)
+    await bridge.remove!(sessionId)
+    await vi.waitFor(async () => expect(await fixture.agentSessions()).toEqual({}), { timeout: 5_000, interval: 10 })
   })
 })

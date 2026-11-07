@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { SessionConfigOption } from '@latch/protocol'
 import { ICON_STROKE, Popover, Tooltip } from '@latch/ui'
@@ -21,12 +22,18 @@ export function PermissionChip({
 }) {
   const Glyph = MODE_ICONS[view.icon]
   const label = escapeHiddenCharacters(view.label)
+  // The list stays mounted while closed: starting it again on closing opens it next time with 更多 folded. On opening
+  // it would drop the row the popover has just focused.
+  const [closings, setClosings] = useState(0)
   return (
     <Popover
       label="权限"
       width={400}
       side="top"
-      {...(onOpenChange ? { onOpenChange } : {})}
+      onOpenChange={open => {
+        if (!open) setClosings(count => count + 1)
+        onOpenChange?.(open)
+      }}
       trigger={props => (
         <Tooltip content={escapeHiddenCharacters(view.line)} describe={false}>
           <button {...props} type="button" className={`chip chip-permission${view.amber ? ' is-amber' : ''}`} aria-label={`权限：${label}`}>
@@ -37,6 +44,7 @@ export function PermissionChip({
         </Tooltip>
       )}>
       <PermissionList
+        key={closings}
         view={view}
         onChoose={value => {
           if (view.option) onChoose(view.option, value)

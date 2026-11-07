@@ -6,11 +6,14 @@
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { redactSecrets } from '@latch/core/node-kit'
+import { AppError } from '@latch/sdk'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import type { AgentWire, WireHandlers } from './types.ts'
 
+/** The oldest pi this wire works with: its turns end on `agent_settled`, `message_update` carries deltas and a stop clears the queue. */
+const PI_MINIMUM = '0.84.4'
 /** Appended to the definition's arguments: the protocol this wire speaks. */
 export const PI_RPC_ARGS: readonly string[] = ['--mode', 'rpc']
 /** Arguments that would change the protocol, the session it runs or make pi exit, which this wire decides. */
@@ -220,7 +223,7 @@ export class PiWire implements AgentWire {
     if (method !== 'session/cancel' || !this.turn) return
     this.turn.cancelled = true
     // Without clearing it first, abort goes on with text queued by an addition to the turn. pi handles the clear before
-    // it reads the abort; a pi too old to clear refuses it, and abort still stops the turn.
+    // it reads the abort.
     void this.send({ type: 'clear_queue' }).then(
       cleared => {
         const steering =
@@ -274,9 +277,22 @@ export class PiWire implements AgentWire {
     })
   }
 
-  /** pi has no handshake: its state answers that it speaks RPC, and the rest is what this wire does. */
+  /**
+   * pi has no handshake: its state answers that it speaks RPC, and the rest is what this wire does. pi reports no version
+   * over RPC, so the newest command this wire relies on stands in for one: `clear_queue` (0.84.4) comes after
+   * `agent_settled` (0.80.4), without which a turn never ends. Nothing is queued yet in a process that just started.
+   */
   private async initialize(timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     readAs(state, await this.send({ type: 'get_state' }, timeoutMs, signal), 'get_state')
+    await this.send({ type: 'clear_queue' }, timeoutMs, signal).catch((error: unknown) => {
+      if (error instanceof RpcError && /^Unknown command\b/u.test(error.message))
+        throw new AppError(
+          409,
+          'harness-version-unsupported',
+          `pi 的版本低于 ${PI_MINIMUM}（它不认识 clear_queue），已拒绝启动。升级到 ${PI_MINIMUM} 或更高版本后再试。`,
+        )
+      throw error
+    })
     return {
       protocolVersion: 1,
       agentInfo: { name: 'pi' },

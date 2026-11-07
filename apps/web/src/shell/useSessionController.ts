@@ -123,6 +123,8 @@ export function useSessionController({
   const stopping = useMemo(() => new Set([...cancelling].filter(id => !cancelUncertain.has(id))), [cancelling, cancelUncertain])
   const [configBusy, setConfigBusy] = useState<ReadonlyMap<string, string>>(new Map())
   const configRequests = useRef(new ConfigRequests())
+  /** A setting change still on its way, per session. */
+  const configFlights = useRef(new Map<string, Promise<void>>())
   const [configFeedback, setConfigFeedback] = useState<ReadonlyMap<string, SessionConfigFeedback>>(new Map())
   const [recoveryProjects, setRecoveryProjects] = useState<ReadonlyMap<string, string>>(new Map())
   const [workspaceChanged, setWorkspaceChanged] = useState<ReadonlySet<string>>(new Set())
@@ -210,6 +212,28 @@ export function useSessionController({
     },
     onRefused: (sessionId, cause, resent) => stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent } : {}) }),
   })
+  /**
+   * The open session can start its next prompt on a new context: the harness takes it and this device may send. Not
+   * when the Host has cleared it already, since nothing is left to keep.
+   */
+  const clearable =
+    current?.clearContext === true
+    && current.contextCleared !== true
+    && !current.summary.personal
+    && (access.legacy || access.scopes.has('run'))
+    && current.messages.some(message => message.role === 'user')
+  const { clearing, setClearing } = submission
+  // A turn that starts meanwhile, here or on another device, ends the choice: what is written now waits behind it. While
+  // the session's detail is still loading nothing is known, so the choice stays.
+  const loaded = current !== null
+  useEffect(() => {
+    if (selectedId !== null && clearing && (active || (loaded && !clearable))) setClearing(selectedId, false)
+  }, [selectedId, clearing, active, loaded, clearable, setClearing])
+  const armClear = useStableCallback((on: boolean) => {
+    if (selectedId === null) return
+    setClearing(selectedId, on)
+    if (on) composerRef.current?.focus()
+  })
   // A remote deletion clears selection without going through choose; never transfer that session's text to a new task.
   useLayoutEffect(() => {
     if (draftSessionId.current === selectedId) return
@@ -295,6 +319,8 @@ export function useSessionController({
       submission.setError(`${steer ? '追加' : '排队'}暂不支持附件或文件引用，请等本轮结束再发送。`)
       return
     }
+    // A setting picked a moment before sending goes first, or the session would refuse it and run the turn on the old one.
+    if (selectedId !== null) await configFlights.current.get(selectedId)
     const ids = await attachmentDraft.wait()
     if (ids && selectedId !== null) clearUnverified(selectedId)
     const followUp = !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
@@ -604,6 +630,11 @@ export function useSessionController({
       return next
     })
     clearAction(id)
+    let settled!: () => void
+    const flight = new Promise<void>(resolve => {
+      settled = resolve
+    })
+    configFlights.current.set(id, flight)
     try {
       await api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
         method: 'POST',
@@ -628,6 +659,8 @@ export function useSessionController({
         next.delete(id)
         return next
       })
+      if (configFlights.current.get(id) === flight) configFlights.current.delete(id)
+      settled()
     }
   }
 
@@ -738,6 +771,14 @@ export function useSessionController({
           remove: () => {
             setDeleting(task)
           },
+          ...(clearable && task.id === selectedId
+            ? {
+                clear: () => {
+                  armClear(!clearing)
+                },
+                clearing,
+              }
+            : {}),
           ...(access.local
           && access.admin
           && shellFolders()?.saveSessionFolder
@@ -753,7 +794,21 @@ export function useSessionController({
         },
         manageable,
       ),
-    [patchTask, exportTask, copyTask, manageable, setRenaming, setDeleting, access, catalog, saveSessionProject],
+    [
+      patchTask,
+      exportTask,
+      copyTask,
+      manageable,
+      setRenaming,
+      setDeleting,
+      access,
+      catalog,
+      saveSessionProject,
+      clearable,
+      selectedId,
+      clearing,
+      armClear,
+    ],
   )
 
   const block = selectedId === null ? startBlock(snapshot, choice) : null
@@ -1028,6 +1083,8 @@ export function useSessionController({
     manageable,
     copyTask,
     sessionMenu,
+    clearable,
+    armClear,
     block,
     chosenHarness,
     chosenScopeCaption,

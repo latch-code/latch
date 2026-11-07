@@ -37,6 +37,7 @@ import {
   turnTimes,
   turnTimeTip,
   turnUsage,
+  settingSwitches,
 } from '../src/conversation.ts'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { hostNow, observeHostTime, resetHostClock } from '../src/core/hostClock.ts'
@@ -303,6 +304,17 @@ describe("a turn's blocks and its fold", () => {
     expect(foldWords(firstTurn([user('u'), review('r1', 'approved', 'completed'), review('r2', 'denied', 'failed')]))).toBe(
       '已工作 · 模型拦下 1 次',
     )
+    // Inside a subagent, and a subagent it started, a verdict is just as unasked.
+    const subagent = (id: string, steps: Message[]) => tool(id, { text: 'x', subagent: { title: id, status: 'done', steps } })
+    expect(
+      foldWords(
+        firstTurn([
+          user('u'),
+          subagent('review', [review('s1', 'denied', 'failed'), subagent('inner', [review('s2', 'denied', 'failed')])]),
+          review('r1', 'denied', 'failed'),
+        ]),
+      ),
+    ).toBe('已工作 · 模型拦下 3 次')
   })
 
   it("joins a settled turn's finished reads into one row, and a live turn's never", () => {
@@ -726,5 +738,43 @@ describe('stable turns', () => {
     expect(sameData({ a: undefined }, { b: undefined })).toBe(false)
     expect(sameData({ a: 1 }, { a: 1, b: 2 })).toBe(false)
     expect(sameData(null, {})).toBe(false)
+  })
+})
+
+describe('lines between turns', () => {
+  it('says where the model or thinking changed, only between values the Host recorded on both sides', () => {
+    const turns = turnsOf([
+      user('1'),
+      reply('a1', 'x', { model: 'small', thinking: 'low' }),
+      user('2'),
+      reply('a2', 'x', { model: 'small', thinking: 'high' }),
+      user('3'),
+      user('4'),
+      reply('a4', 'x', { model: 'large', thinking: 'high' }),
+      user('5'),
+      reply('a5', 'x', { model: 'small', thinking: 'Max' }),
+      user('6'),
+      reply('a6', 'x', { model: 'small' }),
+      user('7'),
+      reply('a7', 'x', { model: 'other' }),
+      user('8'),
+      reply('a8', 'x', { model: 'other', thinking: 'low' }),
+    ])
+    expect([...settingSwitches(turns)]).toEqual([
+      ['2', '思考 低 → 高'],
+      ['4', '模型 small → large'],
+      ['5', 'large · 高 → small · Max'],
+      ['7', '模型 small → other'],
+    ])
+  })
+
+  it('draws a line above the turn that began a new context', () => {
+    const html = settledTranscript(
+      [user('1'), reply('a1', 'one'), user('2', { freshContext: true }), reply('a2', 'two', { model: 'm' })],
+      'idle',
+    )
+    expect(html.match(/timeline-divider/g)).toHaveLength(1)
+    expect(html).toContain('清空了上下文')
+    expect(html.indexOf('清空了上下文')).toBeGreaterThan(html.indexOf('one'))
   })
 })

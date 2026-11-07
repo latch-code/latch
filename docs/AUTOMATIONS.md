@@ -10,7 +10,7 @@ sources:
 ---
 # 定时任务
 
-定时任务按时用一个 Agent 新开会话，做一件保存好的事。可以用任一 Harness：选了外部 Harness 的 Agent 就在它上面运行，开启不需要确认，每次运行都写启动审计（`task.l3.started`，带第一条输入的哈希）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
+定时任务按时用一个 Agent 新开会话，做一件保存好的事；每次运行都是新的会话，所以总从新的上下文开始，不带上一次的对话。可以用任一 Harness：选了外部 Harness 的 Agent 就在它上面运行，开启不需要确认，每次运行都写启动审计（`task.l3.started`，带第一条输入的哈希）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
 
 | 接口 | 作用 |
 | --- | --- |

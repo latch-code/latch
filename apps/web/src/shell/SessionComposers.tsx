@@ -1,4 +1,4 @@
-import { Info, ShieldAlert } from 'lucide-react'
+import { Eraser, Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -179,6 +179,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
   const use = selectedId === null ? undefined : contextUse(current?.usageReport)
+  // A new-context send that did not start has cleared it on the Host already: there is nothing left to keep.
+  const hostCleared = current?.contextCleared === true && current.summary.id === selectedId
   const branch =
     selectedId === null
       ? personalDraft
@@ -242,6 +244,23 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           {...(run ? { onStop: run.onCancel } : {})}
         />
       )}
+      {selectedId !== null && (submission.clearing || hostCleared) && (
+        <section className="composer-drawer clearing-drawer" aria-label="清空上下文">
+          <Icon icon={Eraser} size={14} />
+          <p role="status">
+            <strong>下一条消息开始新的上下文</strong>
+            <span>
+              {hostCleared ? '上下文已经清空，' : ''}
+              {harnessInfo ? harnessName(harnessInfo) : 'Harness'} 看不到之前的消息，记录仍留在这里。
+            </span>
+          </p>
+          {!hostCleared && (
+            <Button size="xs" onClick={() => shell.armClear(false)}>
+              保留上下文
+            </Button>
+          )}
+        </section>
+      )}
       {selectedId !== null && current?.queue && current.queue.length > 0 && (
         <QueueDrawer
           key={selectedId}
@@ -285,6 +304,17 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
       commands={current?.commands}
+      {...(shell.clearable && !shell.active
+        ? {
+            actions: [
+              {
+                name: 'clear',
+                description: '清空上下文：之后的消息从头开始，记录仍留在这里',
+                run: () => shell.armClear(true),
+              },
+            ],
+          }
+        : {})}
       templates={scopedTemplates(
         promptTemplates,
         selectedId === null

@@ -29,7 +29,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 2. 新会话直接列出命令已经装好的预设（`catalog.harnesses` 中带 `offer` 的项，只发给有 `admin` 的设备），不用先添加；第一次发送时页面先保存它的定义，再开始会话，保存不运行任何东西。`startServer` 只有收到 `detectPreset`（启动脚本传入）才找命令，测试不传，所以运行测试的电脑上装的 Agent 不会被选中。也可以在「设置 → Harness」选择预设或填写自定义命令（可执行文件名或绝对路径、参数、环境变量）；有 `admin` 的设备都能改，每次改动都有 `agent.defined` 审计，变量的值不返回。可以先「测试启动」，不发送内容地核对程序能否运行。
 3. 新建会话时默认用这台设备上次的 Harness，否则按预设顺序用第一个能开始的，Latch 内置最后，不提问。项目在标题里选；Harness 没有项目、启动目录又是 Host 自己选的（`catalog.sessionFolders`）时，按发送打开项目列表、保留草稿、不开始；选「不选项目」就在新的空文件夹里开始。 发送就开始，没有确认。
 
-   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行：「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。」；从不询问的 Harness 写「pi 执行前不询问，Latch 不限制它。」。Driver 不会收到这一项。
+   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行：「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。」；执行工具前不询问的 Harness 写「pi 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它。」。Driver 不会收到这一项。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。权限菜单的写法见「权限菜单」。
 
 预设收录开源 Agent，以及厂商官方文档支持的已安装命令（Claude Agent、Cursor）；都只使用本机已安装的命令，不使用 `npx` 等运行时下载，不捆绑、不修改它们：
@@ -152,6 +152,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 - 会话、启动指纹、权限模式、审批与取消只有一份，在 `runtime.ts`；它说 ACP 的方法、读 ACP 的会话更新，经 `wires/` 里的一条线与进程交谈。`wires/process.ts` 启动、读写与停止进程，`wires/acp.ts` 把 ACP 原样经 JSON-RPC 发出。
 - 每个 Latch 会话有自己的 Agent 子进程（一个 ACP 会话），首次需要时启动，工作目录为该会话的主文件夹；Gemini CLI 与 Qwen Code 的参数之后追加其他文件夹（见「项目的多个文件夹」）。同一个 Agent 定义最多同时运行 8 个进程（`AcpAgentOptions.maxProcesses`）；达到上限时，Latch 停止最久未使用的、可以恢复的空闲进程，没有可停的进程时返回 503 `agent-busy`（`同时运行的 <名称> 会话过多，请先结束一些会话`）。
 - 子进程在独立进程组中运行。stderr 持续读取到 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写入 Host 日志，不进入会话记录。
+- Agent 自己写的文字（回复、思考、工具输出）原样进入会话。它报告的错误、提示（`notice`）、压缩失败与停止原因先遮蔽定义的变量值、Host 的秘密变量与网关凭据，再经 `redactSecrets` 去掉认得出形状的密钥，才进入会话记录：模型服务的报错常带着密钥的一部分。
 - Agent 得到的环境来自 `agentEnvironment`，后者覆盖前者：Host 的白名单（`HOME`、`LANG`、`LC_*`、`TERM`、`USER`、`SHELL`）；代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）、CA 文件（`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE`）与 `__MISE_DIFF`；profile 的 `inheritEnv`（各家的 home，见下表）；profile 的 `programEnv`（`CODEX_PATH`，指向 Host 找到的程序，没装就不设，适配器用自带的）；Agent 定义的变量；profile 的 `defaultEnv` 和 Latch 强制的值（`TMPDIR`、`NODE_TLS_REJECT_UNAUTHORIZED=1`、Git 设置）。最后删除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`。从终端启动的 Host 已有的变量优先于登录 shell 读到的。
 
   | 预设 | 继承的 home |
@@ -182,20 +183,20 @@ Harness 说某个模型服务的协议时，会话可以不用它自己的登录
 | Gemini CLI | Gemini | 环境变量 `GOOGLE_GEMINI_BASE_URL`（网关地址）与 `GEMINI_API_KEY`（网关凭据），以及会话临时目录里自己的系统设置文件：`security.auth.selectedType: "gateway"`、`model.name` |
 
 - **网关**（`apps/host/src/model-gateway.ts`）是单独的回环临时端口，只有模型路径，不是 API 的入口类别，持有凭据的进程不能当设备用。凭据形如 `lmg1.<43 字符>`，每次启动 Agent 进程签发一个，内存里只存哈希，绑定会话、服务与服务的模型列表；进程退出、Host 关闭或服务的协议、地址、密钥、启用状态或可用性变化时失效。失效后下一轮开始前换掉进程，新进程拿新凭据；服务不能用了，这一轮失败并说原因，不退回 Agent 自己的登录。
-- **请求**：只接受 `Host` 为 `127.0.0.1:<端口>` 或 `localhost:<端口>`、不带 `Origin` 的请求，不发 CORS 头。Responses 只有 `POST /v1/responses` 与 `GET /v1/models`；Gemini 只有 `POST /v1beta/models/<模型>:generateContent|streamGenerateContent|countTokens` 与 `GET /v1beta/models`。模型列表只回绑定的列表，不访问服务。请求体最多 32 MiB，`model`（Gemini 是路径里的模型）必须在绑定的列表里。入站的认证头、Cookie 与其他头一律丢掉，只转发 `accept` 与 `openai-beta`；Gemini 的查询参数只保留 `alt=sse`。
+- **请求**：只接受 `Host` 为 `127.0.0.1:<端口>` 或 `localhost:<端口>`、不带 `Origin` 的请求，不发 CORS 头。Responses 只有 `POST /v1/responses` 与 `GET /v1/models`；Gemini 只有 `POST /<版本>/models/<模型>:generateContent|streamGenerateContent|countTokens` 与 `GET /<版本>/models`，`<版本>` 是 `v1`、`v1beta` 或 `v1alpha`；转给上游时用服务地址里的版本，地址没写时用 `v1beta`。模型列表只回绑定的列表，不访问服务。请求体最多 32 MiB，`model`（Gemini 是路径里的模型）必须在绑定的列表里。入站的认证头、Cookie 与其他头一律丢掉，只转发 `accept` 与 `openai-beta`；Gemini 的查询参数只保留 `alt=sse`。
 - **上游**走内置 Harness 用的同一个出站：只发往服务地址之下、预置或已确认的地址，经出站策略，`redirect: 'error'`；密钥只在 Host 加上。错误正文去掉密钥的各种写法与 `redactSecrets` 认得的秘密后原样返回，回复只保留 `content-type`、`retry-after`、`x-request-id`。Agent 断开时中止上游请求，取消仍是真的。
 - **代理**：走网关的进程，`NO_PROXY` 与 `no_proxy` 补上 `127.0.0.1`、`localhost`、`::1`。不读 `NO_PROXY` 的 Agent（Gemini CLI 配了代理时对任何地址都走代理）会把网关请求交给代理；本机代理能转回来，远端代理连不上。
 - **每轮核对**：一轮有回复而网关没收到这个进程的请求（网关拒绝的请求也算收到，读模型列表不算），会话追加「这一轮没有经过 Latch：<Harness> 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。」，`summary.modelRoute.bypassed` 置真，写审计 `task.model.bypassed`；会话照常继续。只有整轮绕过看得出来：一轮里一部分请求走了别处（例如另一个评审模型）看不出来。
 - **Gemini CLI 的辅助调用**：网页抓取、循环检测、编辑修正、摘要与上下文压缩等辅助调用用 Gemini CLI 内置的固定模型（如 `gemini-3-flash-preview`、`gemini-3-pro-preview` 与 flash-lite 一档），和会话的模型走同一个网关。服务的模型列表里没有这些模型时网关拒绝它们（403），这些功能在会话里失败，用会话模型的回复不受影响。要用它们，在「设置 › 模型」里把这些模型也加进这个服务；凭据绑定的是签发时的模型列表，Gemini CLI 的进程下一次启动（例如新开的会话）才用上新列表。
 - **Codex 的模型**：`providers/set` 之后 codex-acp 只留下网关列出、且 Codex 自己认识的模型；所选模型在第一轮前选中，Codex 不认识它时这一轮失败并说明。所以 Codex 声明 `models.knownOnly`：草稿读过 Codex 自己的模型列表后，服务里不在这份列表上的模型（按小写、去掉厂商前缀与日期后缀比较，`modelIdKey`）不能选，写「Codex 不认识这个模型」；还没读过时都列出。这样的会话的模型列表不当作 Codex 自己的列表保存。
 - **审计**：`task.l3.start-requested` 与 `task.l3.started` 带 `providerId` 与路由的哈希 `routeHash`；凭据不进审计、日志、会话记录、启动预览或磁盘。凭据只在 Agent 进程的环境变量里（Gemini CLI，子进程会继承，`printenv` 能把它带进会话）或 ACP 的请求头里（Codex）。它不是模型密钥，但同一用户的进程拿到它就能经这台 Mac 花这个服务的额度，直到它失效；Agent 也仍然读得到 `providers.json`，因为没有操作系统沙箱。
-- 会话开始后不能换服务（模型菜单写「换服务要新开会话：开始时确认的是这个服务。」）。会话的模型选项只有网关会转发的模型（Agent 进程的凭据绑定的列表），客户端照此列出，切换也只接受其中的：Gemini CLI 不管指向哪个服务都列自己的一组固定模型，经 Latch 时换成服务的模型列表，切换走 `session/set_model`，它接受任何模型名；Codex 保留它列出的、服务里也有的模型。为 Agent 自己的登录填写的模型 ID 不在其中。
+- 会话开始后不能换服务（模型菜单写「换服务要新开会话：开始时确认的是这个服务。」）。服务停用、删除或缺了密钥与地址确认后，网关拒绝这个会话的下一轮，模型菜单在发送前就按服务名说明；重新打开后下一轮换新的网关凭据继续。会话的模型选项只有网关会转发的模型（Agent 进程的凭据绑定的列表），客户端照此列出，切换也只接受其中的：Gemini CLI 不管指向哪个服务都列自己的一组固定模型，经 Latch 时换成服务的模型列表，切换走 `session/set_model`，它接受任何模型名；Codex 保留它列出的、服务里也有的模型。为 Agent 自己的登录填写的模型 ID 不在其中。
 
 ## pi 的 RPC 模式
 
 pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接在定义的参数后面，启动预览里也列出），把运行时的 ACP 方法换成 pi 的命令，把 pi 的事件换成 ACP 的会话更新，所以启动指纹、项目配置、取消、审批与持久化和其他 Harness 是同一份代码。依据 pi 自己的 `rpc-types.ts`、`rpc-mode.ts` 与 `docs/rpc*.md`、`docs/json.md`。
 
-- **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
+- **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。pi 的 RPC 不报告版本，所以进程启动时 `get_state` 之后先发一次 `clear_queue`（刚启动的进程没有排队的内容）：pi 答「Unknown command」时它早于 0.84.4，会话与测试启动都拒绝并写「pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。」（409 `harness-version-unsupported`），不会开会话，也不会停在一轮永远不结束的运行里。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
 - **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件，再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。pi 没有删除会话的命令，删除 Latch 的会话时留下 pi 自己的副本。pi 不接收 MCP 服务器。
 - **模型与思考。** `get_available_models` 列出模型（值写作 `provider/model`），一个都没有说明 pi 还没有可用的登录或密钥，按未登录处理；`get_available_thinking_levels` 列出当前模型的思考深度，换模型后重读，读回 `get_state` 才算换好。列表只在人点「读取 pi 的模型列表」时读，因为 pi 启动时会加载这个人的扩展、运行会话钩子。
 - **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
@@ -232,7 +233,7 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 | 预设 | 只看不改 | 先问你 | 按规则放行 | 由模型判断 | 不再询问 |
 | --- | --- | --- | --- | --- | --- |
 | Codex | — | `read-only` | `workspace-write` | `agent`（codex-acp 的 Auto review：沙箱同 `workspace-write`，本来要问的由 Codex 的审阅模型放行或拦下，不转给人） | `agent-full-access` |
-| Qwen Code | `plan` | `default` | `auto-edit` | `auto`（只读操作与用户自己的允许规则先放行，其余由它的分类器判断，判断不了时问） | `yolo` |
+| Qwen Code | `plan` | `default` | `auto-edit` | `auto`（用户自己的允许规则、只读工具与项目里的文件编辑先放行，`.git`、`package.json` 等会影响之后运行的文件除外；其余由它的分类器判断，判断不了时问） | `yolo` |
 | goose | `chat` | `approve` | — | `smart_approve`（工具声明或模型判断为只读的不问，其余问） | `auto` |
 | Gemini CLI | `plan` | `default` | `autoEdit` | — | `yolo` |
 | OpenCode | `plan`（Latch 的规则之后再拒绝 `edit` 与 `bash`：不改文件，不运行命令，其他工具先问） | `build` | — | — | — |
@@ -310,6 +311,12 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，运行中的输入经 `_session/steering` 加入当前这一轮，始终带 `_meta.steering.idleBehavior: "promptRequired"`，让 Agent 在没有轮次时不自己开新一轮，完成、用量与失败都留在原来的 `session/prompt` 上。`injected` 记为这一轮里的用户消息；`promptRequired` 交回 Host 排队；其他结果或错误不发出、报错；30 秒没有回答记为结果未知，不重发。停止开始后不再追加。没有声明的 Agent 照常排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
 
+## 清空上下文
+
+一条带 `freshContext` 的输入在新的 ACP 会话里开始（语义见 [STREAMING.md](./STREAMING.md#清空上下文)）：Latch 放下当前的 Agent 会话，Agent 声明 `session/close` 时关闭它，在同一个进程上用 `session/new` 开新的（pi 是 `new_session`）。人在这个会话里选的模型、思考与其他选项作为开始前的选项在新会话上重新设置，权限模式照常设置并读回；Agent 不再提供所选模型时这一轮被拒绝，与开始前选项的规则相同。Agent 的指令（`agentBrief`）随新上下文的第一轮再发一次，因为新会话里没有它们。旧会话的上下文用量、费用与计划不再显示。从请求到新会话上记下第一条用户消息之前，任务记着上下文已清空（`acp.json` 的 `contextCleared`，详情里的 `TaskDetail.contextCleared`）：这一轮被拒绝或进程退出时，下一条消息不论是否要求，都在新会话里并带分隔线，页面写「上下文已经清空」且不给「保留上下文」，不会出现记录还在而 Agent 已不知道、界面却不说的情况。重试同一请求不会再开一个会话。
+
+每一步助手消息在 `Message.model` 之外记下当时的思考深度 `Message.thinking`（Agent 的叫法，来自 `thought_level` 选项的当前值）。
+
 ## 子 Agent
 
 Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent 草案）。Agent 在一个会话上发 `subagent_update` 宣告它启动的子 Agent 后，Latch 在宣告到达的位置放一行 `Message.subagent`：名字、说明、它自己最后报告的状态（`running`、`requires_action`、`idle` 及停止原因、`unknown`），以及它的回复与工具调用（不含思考，最多 200 步，每段文字最多 64 KiB）。子 Agent 自己的子 Agent 放在它的步骤里，最多 4 层；同一进程同时最多 64 行，报告已停止的子 Agent 在一轮结束后不再计入。超出行数、层数或 200 步的部分不显示，会话里写一条说明，但它们请求的审批照常出现，不会被替人取消。子 Agent 不是 Latch 会话，不能发消息、不进侧栏。
@@ -340,7 +347,7 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 - 数据保存在 `<数据目录>/harnesses/<agent-id>/acp.json`，与 Standard 相同的原子写入与锁文件，字段由 `packages/harness-acp/src/store.ts` 的 zod schema 校验。请求回执与用户消息在发送 `session/prompt` 之前写入。每个会话还记录启动指纹、定义指纹、经确认的预期模式、漂移记录、选中的预设，以及收到全部文件夹的会话的项目、文件夹与交给 Agent 的文件夹；旧文件没有这些字段时照常读取。
 - Host 重启后，运行中或待审批的会话转为 `interrupted`，不会自动重发输入。
 - 继续一个进程已退出的会话时，先核对启动指纹（含项目配置），再依次尝试 `session/resume`、`session/load`（丢弃重放的历史，因为 Latch 已保存），然后读回权限模式；都不支持时返回 409 `harness-session-lost`，需要新建会话。恢复与加载都重新发送完整的 `additionalDirectories`。会话的项目目录或文件夹已不在 Host 的项目列表中时返回 409 `workspace-changed`。
-- 删除会话会删除 Latch 的记录、结束该会话的进程并清理临时目录；只有 Agent 声明支持时才调用 `session/delete`，否则 Agent 自己的存储中仍保留该会话。进程已退出时，只有项目目录仍在 Host 的项目列表中（收到全部文件夹的会话还要求它的文件夹都仍属于该项目）才会为此启动进程，因为 Agent 启动时可能运行工作目录中的代码；项目已移除时只删除 Latch 的记录，Agent 中的副本保留，并在 Host 日志中注明。
+- 删除会话会删除 Latch 的记录、结束该会话的进程并清理临时目录；只有 Agent 声明支持时才调用 `session/delete`，否则 Agent 自己的存储中仍保留该会话。清空过上下文的会话，每次清空前的 Agent 会话也一并删除（`acp.json` 的 `earlierSessionIds`）。进程已退出时，只有项目目录仍在 Host 的项目列表中（收到全部文件夹的会话还要求它的文件夹都仍属于该项目）才会为此启动进程，因为 Agent 启动时可能运行工作目录中的代码；项目已移除时只删除 Latch 的记录，Agent 中的副本保留，并在 Host 日志中注明。
 
 ## 错误
 
@@ -384,11 +391,13 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
 | Cursor 的选择题（`cursor/ask_question`）放进提问卡片 | 未实现；提问卡片还没有接到 ACP 驱动上，现在回答 `skipped` 并把问题写进会话 |
 | Claude Agent 的其他文件夹（`additionalDirectories`） | 未实现；Claude 访问会话目录以外的路径时逐次询问 |
-| pi 的分叉（`fork`） | 未实现；Latch 的会话还没有分叉 |
+| pi 的分叉（`fork`） | 未实现；Latch 的分叉以背景文本开启新会话，不用 pi 自己的分叉 |
+| ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在所有 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
 | Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单里写「尚未实现」 |
 | 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
+| 在 iPhone 上选清空上下文 | 未实现；手机只显示「清空了上下文」的线与 Host 已经清空时的提示，要在网页或桌面端选 |
 | 网关解析转发请求的用量 | 未实现；用量仍是 Agent 报告的 |
 
 ## 测试

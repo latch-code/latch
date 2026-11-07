@@ -440,12 +440,41 @@ export const ROUTE_NOTE = (name: string) =>
   `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`
 const ROUTE_LOCKED = '换服务要新开会话：开始时确认的是这个服务。'
 
+/**
+ * The service a session's route goes to, as its menu names it, and why its next turn cannot go through Latch when the
+ * catalog no longer offers it: the gateway refuses a service sessions may not use.
+ */
+export function routeService(
+  catalog: HostCatalog,
+  route: NonNullable<TaskSummary['modelRoute']>,
+): { name: string; unusable?: { words: string; note: string } } {
+  const listed = findProvider(catalog, route.providerId)
+  if (listed) return { name: listed.name }
+  const held = catalog.unusableProviders?.find(provider => provider.id === route.providerId)
+  const name = held?.name ?? route.name
+  if (name === undefined)
+    return {
+      name: '模型服务',
+      unusable: { words: '已经删除', note: '这个会话开始时用的模型服务已经删除，下一轮会失败。要接着做，新开一个会话。' },
+    }
+  const [words, fix] =
+    held?.reason === 'key-missing'
+      ? ['没有密钥', '在设置 › 模型里添加密钥']
+      : held?.reason === 'origin-unconfirmed'
+        ? ['地址还没确认', '在这台 Mac 上确认它的地址']
+        : route.off
+          ? ['已停用', '在设置 › 模型里重新打开它']
+          : ['现在不能用', '在设置 › 模型里看看它']
+  return { name, unusable: { words, note: `这个会话开始时用的「${name}」${words}，下一轮会失败。${fix}，或新开一个会话。` } }
+}
+
 /** What a session on a route says of it in its model menu. */
 function routeNote(catalog: HostCatalog, name: string, route: NonNullable<TaskSummary['modelRoute']>): string {
-  const service = findProvider(catalog, route.providerId)?.name ?? route.providerId
+  const service = routeService(catalog, route)
+  if (service.unusable) return service.unusable.note
   return route.bypassed
     ? `这个会话有一轮没有经过 Latch：那一轮可能用了 ${name} 自己的登录或配置。`
-    : `这个会话经 Latch 用「${service}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`
+    : `这个会话经 Latch 用「${service.name}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`
 }
 
 /**
@@ -467,11 +496,14 @@ export function ownModelGroups(
     harness?.capabilities.models.knownOnly && known?.length
       ? new Set(known.flatMap(item => [modelIdKey(item.value), modelIdKey(item.name)]))
       : undefined
-  const routed = session?.route ? findProvider(catalog, session.route.providerId) : undefined
+  const routed = session?.route ? routeService(catalog, session.route) : undefined
   const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
   // On a route, the Host offers only the service's models, the ones the gateway forwards.
-  const ownLabel = session?.route ? `${routed?.name ?? session.route.providerId} · 经 Latch` : `${name} 自己的模型`
-  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, options: own }]
+  const ownLabel = routed ? `${routed.name} · ${routed.unusable?.words ?? '经 Latch'}` : `${name} 自己的模型`
+  const ownOptions = routed?.unusable
+    ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed.unusable!.words}` }))
+    : own
+  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, options: ownOptions }]
   const disabled: Array<PickerGroup<string>['options'][number]> = []
   for (const provider of services) {
     const reason = harness ? serviceReason(harness, provider) : `让 Latch 把 ${name} 的请求转给它，尚未实现`

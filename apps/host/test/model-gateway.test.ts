@@ -320,7 +320,8 @@ describe('sessions of a harness with its own models on a saved service', () => {
     })
     const detail = await phone.json<TaskDetail>(`tasks/${sessionId}`)
     expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual(['model: via the gateway'])
-    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model' })
+    // The service's name is the Host's, from 设置 › 模型.
+    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'Gemini' })
     expect(t.presence.requests).toHaveLength(prompts)
     // The service got its own key; the agent never had it.
     expect(fake.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model', key: KEY }])
@@ -352,7 +353,7 @@ describe('sessions of a harness with its own models on a saved service', () => {
     const refused = await phone.json<TaskDetail>(`tasks/${sessionId}`)
     expect(refused.messages.findLast(message => message.role === 'assistant')?.text).toContain('model error 403')
     expect(refused.messages.filter(message => message.role === 'system').map(message => message.text)).toEqual([])
-    expect(refused.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model' })
+    expect(refused.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'Gemini' })
     expect((await audit(t.dataDir)).filter(record => record.action === 'task.model.bypassed')).toEqual([])
 
     // A turn that answers without the service is said and recorded; the session goes on.
@@ -363,6 +364,18 @@ describe('sessions of a harness with its own models on a saved service', () => {
     expect((await audit(t.dataDir)).filter(record => record.action === 'task.model.bypassed')).toEqual([
       expect.objectContaining({ target: sessionId, detail: { sessionId } }),
     ])
+
+    // Turned off, the session still names its service and says it is off; deleted, the name goes with it.
+    expect((await phone.request(`providers/${gemini.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
+    expect((await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute).toMatchObject({ name: 'Gemini', off: true })
+    expect((await phone.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === sessionId)?.modelRoute).toMatchObject({
+      name: 'Gemini',
+      off: true,
+    })
+    expect((await phone.request(`providers/${gemini.id}`, { method: 'DELETE' })).status).toBe(200)
+    const gone = (await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute
+    expect(gone).not.toHaveProperty('name')
+    expect(gone).not.toHaveProperty('off')
   })
 
   it('refuses a pair that needs translation, a model the service does not list, and a service it cannot use, before anything starts', async () => {
