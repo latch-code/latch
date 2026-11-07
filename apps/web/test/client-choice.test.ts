@@ -16,7 +16,6 @@ import { workspaceSections } from '../src/components/Pickers.tsx'
 import { workspaceOptions } from '../src/components/pickerOptions.tsx'
 import {
   engineEntries,
-  forkedChoice,
   noProjectLine,
   needsProject,
   nothingInstalled,
@@ -34,6 +33,7 @@ import {
   type ComposerChoice,
   type DraftPick,
 } from '../src/composerChoice.ts'
+import { forkedChoice } from '../src/forkChoice.ts'
 import { GeneralSettings } from '../src/settings/GeneralSettings.tsx'
 
 function catalog(overrides: Partial<HostCatalog> = {}): HostCatalog {
@@ -126,9 +126,9 @@ describe('composer choice', () => {
   it('lets a fork keep its source mode while the Harness has it', () => {
     const hostChosen = catalog({ sessionFolders: true })
     const borrowed = { harnessId: 'standard', workspaceId: 'default', projectSkipped: true }
-    expect(forkedChoice(hostChosen, null, { ...borrowed, mode: 'agent' })).toMatchObject({ mode: 'agent' })
-    expect(forkedChoice(catalog(), null, { ...borrowed, mode: 'chat' })).toMatchObject({ mode: 'chat' })
-    expect(forkedChoice(hostChosen, null, { ...borrowed, harnessId: 'codex', mode: 'chat' })).toMatchObject({ mode: 'agent' })
+    expect(forkedChoice(hostChosen, null, { ...borrowed, mode: 'agent' }).choice).toMatchObject({ mode: 'agent' })
+    expect(forkedChoice(catalog(), null, { ...borrowed, mode: 'chat' }).choice).toMatchObject({ mode: 'chat' })
+    expect(forkedChoice(hostChosen, null, { ...borrowed, harnessId: 'codex', mode: 'chat' }).choice).toMatchObject({ mode: 'agent' })
   })
 
   it('says what 不选项目 does for this Harness', () => {

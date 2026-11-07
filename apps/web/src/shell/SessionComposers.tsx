@@ -3,6 +3,7 @@ import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { draftConfig, harnessName, nothingInstalled, sameModel } from '../composerChoice.ts'
+import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
@@ -212,6 +213,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               upToMessageId,
               title: current.summary.title,
               choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
+              source: forkSource(current, harnessInfo),
             })
             submission.setDraft(draft)
             if (phone) setNewSheet(true)
@@ -303,7 +305,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
-      commands={current?.commands}
+      commands={shell.active ? current?.commands?.filter(command => !command.idleOnly) : current?.commands}
       {...(shell.clearable && !shell.active
         ? {
             actions: [
@@ -566,6 +568,17 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
       {submission.fork && (
         <InlineNotice tone="neutral">
           正在从「{submission.fork.title ?? submission.fork.taskId}」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。
+          {chosenHarness?.capabilities.fork === 'native' && submission.fork.source?.harnessId === chosenHarness.id && (
+            <span className="fork-own">
+              在同一个文件夹里，{chosenHarness.capabilities.display.label}{' '}
+              用它自己的记录分叉，带上到这一轮为止的完整上下文；做不到时改为以文字带上，并在会话里说明。
+            </span>
+          )}
+          {submission.forkMissed.map(line => (
+            <span key={line} className="fork-missed">
+              {line}
+            </span>
+          ))}
           <Button size="xs" variant="ghost" onClick={() => submission.setFork(null)}>
             取消分叉
           </Button>

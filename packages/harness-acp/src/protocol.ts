@@ -227,6 +227,12 @@ export const promptResult = z.object({
 /** The answer to `_session/steering`. `outcome` is an open set: anything but `injected` and `promptRequired` is a failure. */
 export const steerResult = z.object({ outcome: z.string().max(64) })
 export const STEER_METHOD = '_session/steering'
+/**
+ * Latch's own request to a wire that forks the agent's record (`AgentWire.forks`): a new session holding the source
+ * session's history as it stood before `before`, the time the source's next turn began. Params `{ sessionId, cwd,
+ * before }`, answered like `session/new`; `ForkRefused` when the agent cannot, with the process left ready for one.
+ */
+export const FORK_METHOD = '_latch/session/fork'
 
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })
 

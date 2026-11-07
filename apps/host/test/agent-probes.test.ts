@@ -141,7 +141,7 @@ describe("a Harness's lists read before a session, and typed model IDs", () => {
       required: 'run',
     })
     await expect(readFile(log)).rejects.toMatchObject({ code: 'ENOENT' })
-    expect((await harnessInfo(viewer)).catalogueRead).toEqual({ when: 'select' })
+    expect((await harnessInfo(viewer)).catalogueRead).toEqual({ when: 'select', modes: true })
 
     const phone = await t.enroll({ scopes: ['view', 'run'] })
     const confirmations = t.presence.requests.length

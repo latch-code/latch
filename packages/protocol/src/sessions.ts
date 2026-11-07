@@ -10,6 +10,11 @@ export interface SessionCommand {
   name: string
   description?: string
   inputHint?: string
+  /**
+   * Latch runs it through the harness's own protocol rather than sending its text, and only while no turn runs: it is
+   * neither queued nor added to a running turn.
+   */
+  idleOnly?: true
 }
 
 /** Browser-safe product state, independent of a particular harness driver. */
@@ -363,6 +368,11 @@ export interface Message {
   steered?: true
   /** User: this turn began a new context. The agent saw none of the messages before it; they stay in the history. */
   freshContext?: true
+  /**
+   * User, the first message of a fork (`forkContext`): the harness forked its own record of the source session at that
+   * turn, so the agent has that history and the text record before the person's words was not sent to it.
+   */
+  nativeFork?: true
   /** Host-only provenance for the first user message. */
   forkContext?: NonNullable<TaskSummary['forkOf']>
   toolName?: string

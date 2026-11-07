@@ -1,5 +1,6 @@
 import {
   modelIdKey,
+  splitChangeNote,
   type Approval,
   type Message,
   type RoutedModel,
@@ -675,6 +676,15 @@ export function resendWarning(effects: SideEffects): string | undefined {
   if (effects.unknown > 0) parts.push(`上一次有 ${effects.unknown} 个操作结果未知，可能已经执行。`)
   parts.push('重新发送后，Harness 可能再次执行它们。')
   return parts.join('')
+}
+
+/**
+ * What resending a turn sends again: the person's words, without the Host's note about an undo. A fork's text record of
+ * its source stays unless the Harness forked its own record, since the record may never have reached it otherwise.
+ */
+export function resendText(message: Pick<Message, 'text' | 'forkContext' | 'nativeFork'>): string {
+  const own = message.forkContext && message.nativeFork ? message.forkContext.prefixLength : 0
+  return splitChangeNote(message.text.slice(own)).text
 }
 
 // ---- The live run -----------------------------------------------------------------------------------------------

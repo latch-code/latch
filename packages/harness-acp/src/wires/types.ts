@@ -26,4 +26,11 @@ export interface AgentWire {
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo>
   stderrTail(limit?: number): string
+  /** Commands the wire runs itself when a prompt is one of them, never sent as text, and only between turns. */
+  readonly idleCommands?: ReadonlySet<string>
+  /** It answers `FORK_METHOD`. */
+  readonly forks?: true
 }
+
+/** The agent cannot fork its own record of that session, and the process has no session of Latch's open: why, in Chinese. */
+export class ForkRefused extends Error {}

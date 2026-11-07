@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
-import { chromium } from '@playwright/test'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { chromium, type Page } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protocol'
+import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 
 describe('conversation forks', () => {
@@ -56,6 +59,195 @@ describe('conversation forks', () => {
     } finally {
       await browser.close()
       await host.close()
+    }
+  })
+
+  it("keeps the source's model, thinking and row over what the device remembers, and maps them onto another Harness", async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-forks-'))
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    const fake = async (name: string, env: string) => {
+      await writeFile(
+        join(bin, name),
+        [
+          '#!/bin/sh',
+          `export FAKE_ACP_STATE='${join(directory, `${name}.json`)}' FAKE_ACP_LOG='${join(directory, `${name}.log`)}'`,
+          `export FAKE_ACP_CONFIG=options ${env}`,
+          `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+        ].join('\n'),
+      )
+      await chmod(join(bin, name), 0o755)
+    }
+    await fake('qwen', 'FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default')
+    // goose has no 按规则放行 and no large model.
+    await fake('goose', 'FAKE_ACP_MODES=chat,approve,smart_approve,auto FAKE_ACP_INITIAL_MODE=approve FAKE_ACP_MODELS=small,medium')
+    const found: string[] = []
+    const host = await startTestHost({
+      uiDir: resolve('dist/web'),
+      sessionFolders: true,
+      // Only the fakes in this test's folder are ever found.
+      detectPreset: preset => {
+        if (preset.id !== 'qwen' && preset.id !== 'goose') return { found: false }
+        found.push(preset.id)
+        return { found: true, path: join(bin, preset.id) }
+      },
+      commandDirectories: () => [bin],
+    })
+    const browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      for (const id of ['qwen', 'goose']) {
+        const preset = AGENT_PRESETS.find(item => item.id === id)!
+        await owner.json('agents', {
+          method: 'POST',
+          body: { id, name: preset.name, presetId: id, command: preset.command, args: preset.args, env: {}, enabled: true },
+        })
+      }
+      const values = async (sessionId: string) => {
+        await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 30_000 }).toBe('idle')
+        const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+        return Object.fromEntries((detail.config ?? []).map(option => [option.id, option.currentValue]))
+      }
+      const source = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          prompt: '换一个方向',
+          requestId: randomUUID(),
+          harnessId: 'qwen',
+          workspaceId: 'default',
+          config: [
+            { configId: 'mode', value: 'auto-edit' },
+            { configId: 'model', value: 'large' },
+            { configId: 'effort', value: 'high' },
+          ],
+        },
+      })
+      expect(await values(source.sessionId)).toMatchObject({ mode: 'auto-edit', model: 'large', effort: 'high' })
+
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' })
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '分叉沿用' })
+      await connected(page)
+      const label = async (name: RegExp) => (await page.getByRole('button', { name }).first().getAttribute('aria-label')) ?? ''
+      const pick = (page: Page, name: string) =>
+        page
+          .getByRole('radio', { name: new RegExp(name, 'u') })
+          .or(page.getByRole('menuitemradio', { name: new RegExp(name, 'u') }))
+          .first()
+      const notice = page.locator('.ui-notice', { hasText: '正在从' }).first()
+      // This device remembers a wider row for Qwen Code.
+      await page
+        .getByRole('button', { name: /^Harness：/u })
+        .first()
+        .click()
+      await pick(page, 'Qwen Code').click()
+      await expect.poll(() => label(/^权限：/u), { timeout: 20_000 }).toContain('先问你')
+      await page
+        .getByRole('button', { name: /^权限：/u })
+        .first()
+        .click()
+      await pick(page, '不再询问').click()
+      await expect.poll(() => label(/^权限：/u)).toContain('不再询问')
+
+      await page.keyboard.press('Meta+k')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.getByRole('searchbox').fill('换一个方向')
+      await palette.getByRole('option').filter({ hasText: '换一个方向' }).first().click()
+      await page.locator('.turn-reply').first().hover()
+      await page.getByRole('button', { name: '从这里分叉', exact: true }).first().click()
+      await notice.waitFor()
+      // The same Harness: the source's row, model and thinking, with nothing to explain.
+      expect(await label(/^权限：/u)).toContain('按规则放行')
+      expect(await page.locator('.composer').first().innerText()).toContain('Large · High')
+      expect(await notice.locator('.fork-missed').count()).toBe(0)
+
+      // Another Harness: what maps is kept, the row is never wider than the source's, and the draft says what changed.
+      await page
+        .getByRole('button', { name: /^Harness：/u })
+        .first()
+        .click()
+      // goose's options are read only now: every line the notice shows meanwhile is kept, so a wrong one is caught too.
+      expect(
+        await owner
+          .json<AppSnapshot>('snapshot')
+          .then(snapshot => snapshot.catalog?.harnesses.find(item => item.id === 'goose')?.catalogue),
+      ).toBeUndefined()
+      await page.evaluate(() => {
+        const seen: string[] = []
+        ;(window as unknown as { forkLines: string[] }).forkLines = seen
+        new MutationObserver(() => {
+          for (const line of document.querySelectorAll('.fork-missed')) seen.push(line.textContent ?? '')
+        }).observe(document.body, { subtree: true, childList: true, characterData: true })
+      })
+      await pick(page, 'goose').click()
+      const mapped = [
+        '没有沿用来源会话的模型「Large」：goose 在这里不能选。',
+        '来源会话的权限是「按规则放行」，goose 没有这一档，这里用更严的「先问你」。',
+      ]
+      await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
+      const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))
+      expect([...shown].filter(line => !mapped.includes(line))).toEqual([
+        '来源会话的模型「Large」、思考「High」与权限「按规则放行」要等读到 goose 的选项后才能沿用。',
+      ])
+      expect(await label(/^权限：/u)).toContain('先问你')
+      await page.screenshot({ path: 'test-results/fork-carry-1280.png', fullPage: true })
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.fill('在 goose 里接着做')
+      await input.press('Enter')
+      await page.locator('.fork-context summary').waitFor({ timeout: 30_000 })
+      const forked = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === source.sessionId)!
+      expect(forked.harnessId).toBe('goose')
+      expect(await values(forked.id)).toMatchObject({ mode: 'approve', model: 'small', effort: 'high' })
+      // The device still remembers its own wider row for Qwen Code: the fork's were for its draft.
+      expect(JSON.stringify(await page.evaluate(() => ({ ...localStorage })))).toContain('yolo')
+
+      // Qwen Code moves itself from 先问你 to 不再询问 mid-turn: the session it is continued in starts where the person had it.
+      const asked = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '先问一下', requestId: randomUUID(), harnessId: 'qwen', workspaceId: 'default' },
+      })
+      expect(await values(asked.sessionId)).toMatchObject({ mode: 'default' })
+      await owner.json(`tasks/${asked.sessionId}/prompt`, { method: 'POST', body: { prompt: 'drift yolo', requestId: randomUUID() } })
+      // The turn ends cancelled, and the session reports the mode the agent moved into.
+      await expect
+        .poll(
+          async () => {
+            const detail = await owner.json<TaskDetail>(`tasks/${asked.sessionId}`)
+            return [
+              detail.summary.status,
+              detail.summary.permissionDrift,
+              detail.config?.find(option => option.id === 'mode')?.currentValue,
+            ]
+          },
+          { timeout: 20_000 },
+        )
+        .toEqual(['cancelled', true, 'yolo'])
+      await page.keyboard.press('Meta+k')
+      await palette.getByRole('searchbox').fill('先问一下')
+      await palette.getByRole('option').filter({ hasText: '先问一下' }).first().click()
+      await palette.waitFor({ state: 'hidden' })
+      await page.getByText('这个 Harness 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
+      await page.getByRole('button', { name: '在新会话中继续', exact: true }).click()
+      await notice.waitFor()
+      await expect.poll(() => label(/^权限：/u)).toContain('先问你')
+      expect(await notice.locator('.fork-missed').count()).toBe(0)
+      await page.screenshot({ path: 'test-results/fork-drift-1280.png', fullPage: true })
+      await input.fill('换个会话接着问')
+      await input.press('Enter')
+      await expect
+        .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === asked.sessionId)?.id, {
+          timeout: 30_000,
+        })
+        .toBeDefined()
+      const continued = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === asked.sessionId)!
+      expect(await values(continued.id)).toMatchObject({ mode: 'default' })
+      await context.close()
+      expect(found.toSorted()).toEqual(expect.arrayContaining(['goose', 'qwen']))
+      expect(await readFile(join(directory, 'goose.log'), 'utf8')).toContain('session/prompt')
+    } finally {
+      await browser.close()
+      await host.close()
+      await rm(directory, { recursive: true, force: true })
     }
   })
 })

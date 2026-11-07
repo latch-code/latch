@@ -188,6 +188,119 @@ describe('pi over its own RPC mode', () => {
     await shot(page, 'failed-390-dark')
     await page.context().close()
   })
+  it("compacts with pi's own /compact between turns, and refuses it while a turn runs", async () => {
+    const page = await open(1440, 'light')
+    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
+      if (await button.isVisible()) {
+        await button.click()
+        break
+      }
+    }
+    await draft(page).waitFor()
+    await start(page, 'say hello first')
+    await reply(page, 'echo: say hello first').waitFor({ timeout: 20_000 })
+    const menu = page.locator('.slash-commands')
+    await composer(page).fill('/comp')
+    await menu.getByRole('option', { name: /^\/compact/u }).waitFor()
+    await shot(page, 'compact-menu-1440-light')
+    await composer(page).press('Enter')
+    expect(await composer(page).inputValue()).toBe('/compact ')
+    await composer(page).pressSequentially('keep the test names')
+    await composer(page).press('Meta+Enter')
+    await page.locator('.transcript').getByText('keeping: keep the test names', { exact: false }).waitFor({ timeout: 20_000 })
+    const compacted = await latest()
+    expect(compacted.summary.status).toBe('idle')
+    expect(compacted.messages.map(message => `${message.role}:${message.text}`).slice(-2)).toEqual([
+      'user:/compact keep the test names',
+      'system:pi 已压缩上下文\nSummary of the conversation so far, keeping: keep the test names.',
+    ])
+    // pi got its own command, not the text as a prompt.
+    const sent = await received()
+    expect(sent.filter(entry => entry.type === 'compact')).toEqual([expect.objectContaining({ customInstructions: 'keep the test names' })])
+    expect(sent.filter(entry => entry.type === 'prompt').map(entry => entry.message)).not.toContain('/compact keep the test names')
+    await shot(page, 'compacted-1440-light')
+
+    await composer(page).fill('sleep a while')
+    await composer(page).press('Meta+Enter')
+    await expect
+      .poll(async () => (await latest()).messages.some(message => message.role === 'tool' && message.state === 'running'))
+      .toBe(true)
+    // pi stops what it is doing to compact, so the command is not offered meanwhile, and refused when typed.
+    await composer(page).fill('/')
+    await expect.poll(() => menu.isVisible()).toBe(false)
+    await composer(page).fill('/compact')
+    await composer(page).press('Meta+Enter')
+    const refusal = page.getByText('/compact 不能排队或追加，请等本轮结束后发送。', { exact: true })
+    await refusal.waitFor()
+    const [notice, box] = await Promise.all([refusal.boundingBox(), page.locator('form.composer').boundingBox()])
+    expect(notice!.y + notice!.height).toBeLessThanOrEqual(box!.y)
+    expect(await composer(page).inputValue()).toBe('/compact')
+    expect((await received()).filter(entry => entry.type === 'compact')).toHaveLength(1)
+    expect((await latest()).summary.status).toBe('running')
+    await noHorizontalOverflow(page)
+    await shot(page, 'compact-refused-1440-light')
+    await composer(page).fill('')
+    await page.getByRole('button', { name: '停止', exact: true }).click()
+    await expect.poll(async () => (await latest()).summary.status, { timeout: 20_000 }).toBe('cancelled')
+    await page.context().close()
+  })
+
+  it("forks a pi session from a turn in pi's own record, and sends the person's words alone", async () => {
+    const page = await open(1440, 'light')
+    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
+      if (await button.isVisible()) {
+        await button.click()
+        break
+      }
+    }
+    await draft(page).waitFor()
+    await start(page, 'first idea')
+    await reply(page, 'echo: first idea').waitFor({ timeout: 20_000 })
+    await composer(page).fill('second idea')
+    await composer(page).press('Meta+Enter')
+    await reply(page, 'echo: second idea').waitFor({ timeout: 20_000 })
+    await expect.poll(async () => (await latest()).summary.status).toBe('idle')
+    const turn = page.locator('.turn-reply').first()
+    await turn.hover()
+    await turn.getByRole('button', { name: '从这里分叉', exact: true }).click({ force: true })
+    await expect.poll(() => page.locator('.fork-own').innerText()).toContain('pi 用它自己的记录分叉')
+    await draft(page).fill('recall what came before')
+    await draft(page).press('Meta+Enter')
+    // The fork holds pi's record up to the first turn and no further.
+    await reply(page, 'remembers: first idea').waitFor({ timeout: 20_000 })
+    await page.getByText('pi 自己带着会话「', { exact: false }).waitFor()
+    expect(await page.locator('details.fork-context').count()).toBe(0)
+    const forked = await latest()
+    expect(forked.messages.find(message => message.role === 'user')?.nativeFork).toBe(true)
+    const sent = await received()
+    expect(sent.filter(entry => entry.type === 'fork')).toHaveLength(1)
+    expect(sent.filter(entry => entry.type === 'prompt').at(-1)?.message).toBe('recall what came before')
+    await noHorizontalOverflow(page)
+    await shot(page, 'forked-1440-light')
+
+    // Retrying that first turn sends the words again, not the text record pi never got.
+    const transcript = page.locator('.transcript')
+    await reply(page, 'remembers: first idea').hover()
+    await transcript.getByRole('button', { name: '重试', exact: true }).last().click()
+    await expect
+      .poll(async () =>
+        (await latest()).messages
+          .filter(message => message.role === 'user')
+          .map(message => message.text.endsWith('recall what came before')),
+      )
+      .toEqual([true, true])
+    await expect.poll(async () => (await latest()).summary.status, { timeout: 20_000 }).toBe('idle')
+    const retried = (await latest()).messages.filter(message => message.role === 'user')
+    expect(retried[1]).toMatchObject({ text: 'recall what came before' })
+    expect(retried[1]?.forkContext).toBeUndefined()
+    expect((await received()).filter(entry => entry.type === 'prompt').at(-1)?.message).toBe('recall what came before')
+    // pi's own record now holds the first turn and the words sent before, and nothing else.
+    await reply(page, 'remembers: first idea | recall what came before').waitFor({ timeout: 20_000 })
+    expect(await transcript.getByText('到第 1 轮为止的记录', { exact: false }).count()).toBe(1)
+    await shot(page, 'fork-retried-1440-light')
+    await page.context().close()
+  })
+
   it('refuses a pi older than 0.84.4 when a session starts and in a test start, and says what to do', async () => {
     const bin = join(directory, 'bin')
     await fakePi(bin, true)

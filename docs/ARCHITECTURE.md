@@ -487,6 +487,8 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 `catalog.features.fork` 表示 `POST /tasks` 接受 `forkOf: { taskId, upToMessageId }`。请求仍需 `run`，且必须有 `view` 才能读取来源；Host 在启动前再次核对权限并生成种子，客户端不提交历史。只允许从已结束的轮次分叉，后续轮次和隐藏推理不进入种子；分叉点之前清空过上下文时，种子从最后一次清空开始，那是 Agent 当时知道的。文本保留最后 20 万 UTF-16 字符，截断时说明，边界不拆开代理对。来源名称取不可变的首条输入，重命名不改变重试内容。项目和 Harness 可重新选择，L3 照常写新会话的启动审计。默认启动目录内 Host 已知的自有目录在分叉时复用，换项目则使用新项目；文件不复制或回滚。来源、位置、轮次与种子长度写入 `sessions-meta.json` 的 zod schema，由 Hub 投影到 `TaskSummary.forkOf` 与首条消息的 `forkContext`，第三方 Driver 的来源声明不作为 Host 元数据。
 
+Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到与来源同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`；Host 照常生成种子并放在 prompt 开头，`prefixLength` 是它的长度。Driver 在第一轮打开新会话时让 Harness 分叉它自己的记录（第一轮在会话打开前就结束时，之后不再分叉），成功时第一轮不发这段种子，首条用户消息带 `nativeFork`（ACP 消息存储的 zod schema 保留它），页面不再展开种子，写「pi 自己带着会话「…」到第 N 轮为止的记录」；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话、同一个工作目录；Host 不比较目录，由 Driver 核对。没有声明的 Harness 收不到 `fork`，`capabilities.fork` 缺省即只用种子。pi 的做法见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式)。
+
 ### 排队输入
 
 `catalog.features.queue` 表示 `POST /tasks/:id/prompt` 接受 `queue: true`。运行中返回 202 `{ queued: { id } }`，空闲且没有队列时立即发送。每会话最多 5 项，Host 最多 1000 项可见内容；会话存续期间保留设备绑定回执，最多每设备 10000 项、Host 共 100000 项，已发送或移除的回执不保留正文，达到上限拒绝新增。`PATCH /tasks/:id/queue/:itemId {text}` 修改内容并更换实际派发 requestId，原提交回执不变；DELETE 移除，`POST .../:itemId/send` 显式继续首项。附件与文件引用暂不支持排队，非空 attachmentIds/fileRefs 明确拒绝。

@@ -1,6 +1,7 @@
 /** What an agent offered at the start of its sessions, kept per definition so a draft can choose before it starts one. */
-import type { HarnessCatalogue, SessionConfigOption } from '@latch/protocol'
+import type { CatalogueRead, HarnessCatalogue, SessionConfigOption } from '@latch/protocol'
 import { clip } from './mapping.ts'
+import type { HarnessProfile } from './profiles/index.ts'
 import type { AcpCatalogue, StartChoice } from './store.ts'
 
 /** Every catalog the Host sends carries it, and a phone reads that catalog whole, so it stays small. */
@@ -14,6 +15,13 @@ const MAX_VALUE = 256
 const MAX_BYTES = 64 * 1024
 /** At most this many choices reach a start; there are never more options than that to choose. */
 export const MAX_START_CHOICES = MAX_OPTIONS
+
+/** When a draft reads the harness's lists, and whether that read reports its modes: Codex's model list does not. */
+export function catalogueReadOf(profile: Pick<HarnessProfile, 'catalogueRead'> | undefined): Pick<CatalogueRead, 'when' | 'modes'> {
+  const configured = profile?.catalogueRead
+  if (configured && 'codexModels' in configured) return { when: 'select', modes: false }
+  return { when: configured?.when ?? 'select', modes: true }
+}
 
 /** The options that follow the model: the agent may offer other ones for another model. */
 const followsModel = (option: SessionConfigOption) => option.category === 'thought_level' || option.category === 'model_config'

@@ -73,7 +73,7 @@ export function withTypedModels(config: readonly SessionConfigOption[], typed: r
 }
 
 const followsModel = (option: SessionConfigOption) => option.category === 'thought_level' || option.category === 'model_config'
-const offers = (option: SessionConfigOption | undefined, value: string | undefined) =>
+export const offers = (option: SessionConfigOption | undefined, value: string | undefined) =>
   value !== undefined && option?.options.some(item => item.value === value) === true
 
 /**
@@ -244,7 +244,7 @@ export function findProvider(catalog: HostCatalog | undefined, id: string | unde
   return id === undefined ? undefined : catalog?.providers.find(provider => provider.id === id)
 }
 
-function validModel(catalog: HostCatalog, ref: ModelRef | undefined): ModelRef | undefined {
+export function validModel(catalog: HostCatalog, ref: ModelRef | undefined): ModelRef | undefined {
   if (!ref) return
   const provider = findProvider(catalog, ref.providerId)
   if (!provider || !(provider.models.length ? provider.models : [provider.defaultModel]).includes(ref.model)) return undefined
@@ -358,19 +358,6 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
     ...(others.length ? { otherPicks: Object.fromEntries(others) } : {}),
     ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),
   }
-}
-
-/** A fork keeps the mode of its source, while the Harness it now names has that mode: an agent session's folder goes with it. */
-export function forkedChoice(
-  catalog: HostCatalog | undefined,
-  start: Partial<ComposerChoice> | null,
-  borrowed: Partial<ComposerChoice>,
-): ComposerChoice {
-  const picks =
-    borrowed.harnessId !== undefined && borrowed.harnessId !== start?.harnessId ? harnessPicks(start ?? {}, borrowed.harnessId) : {}
-  const choice = resolveChoice(catalog, { ...start, ...borrowed, ...picks })
-  const harness = findHarness(catalog, choice.harnessId)
-  return borrowed.mode && harness?.modes.includes(borrowed.mode) ? { ...choice, mode: borrowed.mode } : choice
 }
 
 /**

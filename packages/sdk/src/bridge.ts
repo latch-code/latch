@@ -64,6 +64,13 @@ export interface CreateTaskInput {
    * other option it no longer offers is left at its default, and the session says so.
    */
   config?: ReadonlyArray<{ configId: string; value: string }>
+  /**
+   * Drivers that declare `fork: 'native'`, for a fork of one of their own sessions: the source and the last message of
+   * the turn it forks after. `prompt` then begins with the Host's text record of that history, `prefixLength` characters
+   * long; a driver that forks its own record instead leaves those characters out of what it sends, and marks the first
+   * user message `nativeFork`.
+   */
+  fork?: { taskId: string; upToMessageId: string; prefixLength: number }
   /** L3 drivers: the launch fingerprint this start recorded. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }

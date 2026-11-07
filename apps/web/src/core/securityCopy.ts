@@ -673,12 +673,23 @@ export const MODE_COPY = {
   afterReadLine: (agent: string) => `${agent} 读取或开始时告诉 Latch 它有哪些权限模式`,
   reading: '正在读取…',
   readingLine: (agent: string) => `正在读取 ${agent} 的权限模式…`,
-  /** Under the current row before start: the modes come from the agent itself. */
-  changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 那时才告诉 Latch 它有哪些模式。`,
+  /** Under the current row before start: the modes Latch can set are the ones the agent's session offers. */
+  changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 开始会话时给出能换的模式。`,
+  /** The same, for a Harness whose read reports them before any session. */
+  changeAfterRead: (agent: string) => `读取 ${agent} 的模式后可以换。`,
+  modesReading: (agent: string) => `正在读取 ${agent} 的模式…`,
+  modesUnread: (agent: string) => `没有读到 ${agent} 的模式。发第一条消息后可以换。`,
   /** Under the modes of a running agent. */
   agentOwnSetting: (agent: string) => `这是 ${agent} 自己的设置。Latch 只核对档位名，不核对它实际怎么做，也不隔离它。`,
   /** Latch's word for each tier of a harness's modes; the line under it is the harness's own. */
   tierTitles: { plan: '只看不改', ask: '先问你', rule: '按规则放行', model: '由模型判断', never: '不再询问' },
+  /** A fork onto a Harness without the source's row: the row it takes instead, never a wider one unless there is none. */
+  forkOtherRow: (was: string, agent: string, now: string, stricter: boolean) =>
+    stricter
+      ? `来源会话的权限是「${was}」，${agent} 没有这一档，这里用更严的「${now}」。`
+      : `来源会话的权限是「${was}」，${agent} 没有这一档或更严的，这里用它最严的「${now}」。`,
+  forkNoRow: (was: string, agent: string) => `来源会话的权限是「${was}」，${agent} 的模式对应不上，这里从它的默认模式开始。`,
+  forkDrifted: (agent: string) => `来源会话的权限被它的 Harness 自己改过，没有沿用，这里从 ${agent} 的默认模式开始。`,
   more: '更多',
   fewer: '收起',
 } as const

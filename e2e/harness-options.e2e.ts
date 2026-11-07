@@ -146,6 +146,14 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型 · 默认思考')
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
     expect(await agent()).toEqual([])
+    // Codex's own model list says nothing of its modes, so 权限 reads nothing and says they come with the session.
+    await chip(page, '权限').click()
+    await page
+      .locator('.permission-list-note')
+      .getByText('发第一条消息后可以换：Codex 开始会话时给出能换的模式。', { exact: true })
+      .waitFor()
+    await shot(page, 'permission-before-read-1440-light')
+    await page.keyboard.press('Escape')
     // Opening the menu of a Harness nothing is known of reads its list: Codex's own model list, with no session.
     await chip(page, '模型').click()
     await page.getByText(/^读取于 /u).waitFor()
@@ -344,6 +352,39 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.context().close()
   })
 
+  it('resends a turn after the thinking picked a moment before, so the retry runs on it', async () => {
+    const page = await open(1440, 'dark')
+    await send(page, '第七轮')
+    const session = await latest()
+    expect(current(session, 'reasoning_effort')).toBe('low')
+    const order: string[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && /\/tasks\/[^/]+\/prompt$/u.test(request.url())) order.push('prompt sent')
+    })
+    page.on('response', response => {
+      if (response.request().method() === 'POST' && /\/tasks\/[^/]+\/config$/u.test(response.url())) order.push('config answered')
+    })
+    await page.route(/\/tasks\/[^/]+\/config$/u, async route => {
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await route.continue()
+    })
+    await chip(page, '模型').click()
+    await page.getByRole('radio', { name: 'High' }).click()
+    await page.keyboard.press('Escape')
+    const transcript = page.locator('.transcript')
+    await transcript.getByText('echo: 第七轮', { exact: true }).hover()
+    await transcript.getByRole('button', { name: '重试', exact: true }).last().click()
+    await expect.poll(() => transcript.getByText('echo: 第七轮', { exact: true }).count(), { timeout: 20_000 }).toBe(2)
+    await shot(page, 'thinking-then-retry-1440-dark')
+    expect(order).toEqual(['config answered', 'prompt sent'])
+    const after = await owner.json<TaskDetail>(`tasks/${session.summary.id}`)
+    expect(current(after, 'reasoning_effort')).toBe('high')
+    expect(after.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['第七轮', '第七轮'])
+    expect(await page.getByText('结果未知', { exact: false }).count()).toBe(0)
+    expect(await page.getByText('设置未能切换', { exact: false }).count()).toBe(0)
+    await page.context().close()
+  })
+
   for (const theme of ['light', 'dark'] as const)
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
@@ -503,6 +544,94 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       await shot(page, 'permission-read-1280-light')
     } finally {
       await page.context().close()
+    }
+  })
+})
+
+/** A Harness Latch has a profile for, whose read opens a session and so reports its modes too. */
+describe('opening 权限 first on a Harness whose read reports its modes', () => {
+  let directory: string
+  let log: string
+  let host: TestHost
+  let browser: Browser
+
+  beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'latch-e2e-permission-modes-'))
+    log = join(directory, 'agent.log')
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'gemini'),
+      [
+        '#!/bin/sh',
+        `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}'`,
+        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=options',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'gemini'), 0o755)
+    host = await startTestHost({
+      demo: false,
+      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
+      // Only this directory: no agent installed on the computer running the test is ever found.
+      commandDirectories: () => [bin],
+    })
+    const owner = await host.enroll({ listener: 'unix' })
+    const offered = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.filter(harness => harness.offer)
+    expect(offered.map(harness => [harness.id, harness.catalogueRead])).toEqual([['gemini', { when: 'select', modes: true }]])
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(OUTPUT, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  it('says it is reading, then offers the modes before the first message', async () => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      colorScheme: 'dark',
+      locale: 'zh-CN',
+      reducedMotion: 'reduce',
+    })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      await connected(page)
+      const shot = (name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
+      const sent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(line => line.includes('"session/new"'))
+      expect(
+        await page
+          .getByRole('button', { name: /^Harness：/u })
+          .first()
+          .getAttribute('aria-label'),
+      ).toBe('Harness：Gemini CLI')
+      const chip = page.getByRole('button', { name: /^权限：/u }).first()
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：先问你')
+      expect(await sent()).toEqual([])
+      // The read takes a moment; until it answers the menu says so.
+      await page.route(/\/agents\/[^/]+\/catalogue$/u, async route => {
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        await route.continue()
+      })
+      await chip.click()
+      await page.locator('.permission-list-note').getByText('正在读取 Gemini CLI 的模式…', { exact: true }).waitFor()
+      await shot('permission-reading-1280-dark')
+      const rule = page
+        .getByRole('menuitemradio', { name: /按规则放行/u })
+        .or(page.getByRole('radio', { name: /按规则放行/u }))
+        .first()
+      await rule.waitFor({ timeout: 20_000 })
+      expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
+      await shot('permission-read-1280-dark')
+      expect(await sent()).toHaveLength(1)
+      await rule.click()
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
+      await noHorizontalOverflow(page)
+    } finally {
+      await context.close()
     }
   })
 })

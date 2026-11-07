@@ -1409,7 +1409,16 @@ describe('agent settings', () => {
     const harnesses = async (client: typeof desktop) => (await client.json<AppSnapshot>('snapshot')).catalog!.harnesses
     const offered = (await harnesses(desktop)).filter(harness => harness.offer)
     // A program without the adapter that connects it runs nothing, so it is not offered.
-    expect(offered).toMatchObject([{ id: 'codex', status: 'ready', level: 'L3', modes: ['agent'], offer: { presetId: 'codex' } }])
+    expect(offered).toMatchObject([
+      {
+        id: 'codex',
+        status: 'ready',
+        level: 'L3',
+        modes: ['agent'],
+        catalogueRead: { when: 'select', modes: false },
+        offer: { presetId: 'codex' },
+      },
+    ])
     expect(offered[0]!.permission).toMatchObject({
       approvals: 'prompts',
       readback: 'mode',

@@ -136,6 +136,36 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
       'assistant:Hello after compacting.',
     ])
   },
+  // pi's own `/compact`, run by its RPC command: the message stays, the compaction row says how it went, and the turn
+  // does not fail with it.
+  compact_command(detail) {
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`)).toEqual([
+      'user:Say hello',
+      'assistant:Hello!',
+      'user:/compact Keep the test names',
+      'system:pi 已压缩上下文\n## Goal\nSay hello.\n\n## Progress\n- Greeted the user.\n\n## Keep\n- The test names.',
+    ])
+    expect(detail.commands).toEqual([expect.objectContaining({ name: 'compact', idleOnly: true })])
+    // pi knows the context's size again only once a reply follows the compaction.
+    expect(detail.usageReport?.contextUsed).toBeUndefined()
+    expect(detail.usageReport?.contextSize).toBe(200000)
+  },
+  compact_failed(detail) {
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`).slice(2)).toEqual([
+      'user:/compact',
+      'system:pi 压缩上下文失败：Nothing to compact (session too small)',
+    ])
+  },
+  // One of pi's extensions cancelled it.
+  compact_cancelled(detail) {
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`).slice(2)).toEqual([
+      'user:/compact Drop the tool output',
+      'system:pi 已取消压缩上下文',
+    ])
+  },
   resume(detail, transcript) {
     expect(detail.summary.status).toBe('idle')
     expect(assistants(detail).map(message => message.text)).toEqual(replies(transcript))

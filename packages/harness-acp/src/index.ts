@@ -1,6 +1,7 @@
 import { basename, isAbsolute } from 'node:path'
 import { AGENT_PRESETS, isHarnessMark, type AgentPreset, type HarnessCapabilities, type HarnessInfo } from '@latch/protocol'
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
+import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
 import { resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
@@ -80,6 +81,8 @@ function agentFacts(name: string, presetId: string | undefined, profile: Harness
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
     display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },
+    // Its wire forks pi's own session files.
+    ...(profile?.wire === 'pi' ? { fork: 'native' as const } : {}),
   }
 }
 
@@ -109,7 +112,7 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
     ...(folders.folderAccess ? { projectFolders: folders.folderAccess as NonNullable<HarnessInfo['projectFolders']> } : {}),
     ...permissionDeclaration(profile),
     ...(login ? { login } : {}),
-    catalogueRead: { when: profile?.catalogueRead && 'when' in profile.catalogueRead ? profile.catalogueRead.when : 'select' },
+    catalogueRead: catalogueReadOf(profile),
     offer: { presetId: preset.id },
   }
 }

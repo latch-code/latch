@@ -47,6 +47,7 @@ import {
 import { isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { runEndRecord } from '@latch/core/run-end'
 import {
+  catalogueReadOf,
   MAX_START_CHOICES,
   modelListCatalogue,
   shownCatalogue,
@@ -60,7 +61,7 @@ import { codexOptions, readCodexModels } from './codex-models.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
-import type { AgentWire } from './wires/types.ts'
+import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import {
   append,
@@ -118,6 +119,7 @@ import {
   RPC,
   RpcError,
   sessionState,
+  FORK_METHOD,
   STEER_METHOD,
   steerResult,
   toolFields,
@@ -399,6 +401,27 @@ function checkedRoute(route: unknown): ModelRoute | undefined {
   if (!text(providerId, 128) || !text(model, 200) || !WIRES.has(wire) || !text(origin, 300))
     throw new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
   return { providerId, model, wire: wire as ModelRoute['wire'], origin }
+}
+
+/** A fork's position, as a creation's payload names it. */
+function forkKey(fork: unknown): { taskId: unknown; upToMessageId: unknown } {
+  const { taskId, upToMessageId } = (fork ?? {}) as Record<string, unknown>
+  return { taskId, upToMessageId }
+}
+
+/** The Host's fork as a driver keeps it: the source and position bounded, the text record a part of the prompt. */
+function checkedFork(fork: unknown, prompt: string): NonNullable<AcpRecord['fork']> {
+  const { taskId, upToMessageId, prefixLength } = (fork ?? {}) as Record<string, unknown>
+  const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 128
+  if (
+    !id(taskId)
+    || !id(upToMessageId)
+    || !Number.isSafeInteger(prefixLength)
+    || (prefixLength as number) < 0
+    || (prefixLength as number) > prompt.length
+  )
+    throw new AppError(400, 'fork-invalid', '分叉的位置无效')
+  return { taskId, upToMessageId, prefixLength: prefixLength as number }
 }
 
 /** A choice made in the session replaces what the draft chose for that option. True when there was one. */
@@ -844,11 +867,10 @@ export class AgentRuntime implements Bridge {
 
   catalogueRead(): CatalogueRead | undefined {
     if (!this.loaded) return undefined
-    const configured = this.selection.profile?.catalogueRead
     const last = this.state.catalogueRead
     const current = last && last.definitionHash === this.definitionNow() ? last : undefined
     return {
-      when: configured && 'when' in configured ? configured.when : 'select',
+      ...catalogueReadOf(this.selection.profile),
       ...(this.readingNow ? { running: true as const } : {}),
       ...(current ? { last: { at: current.at, ok: current.ok, ...(current.message ? { message: current.message } : {}) } } : {}),
     }
@@ -1061,6 +1083,7 @@ export class AgentRuntime implements Bridge {
       ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
       ...(config.length ? { config } : {}),
       ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
+      ...(input.fork ? { fork: forkKey(input.fork) } : {}),
     })
     const pending = this.creating.get(key)
     if (pending) {
@@ -1103,6 +1126,7 @@ export class AgentRuntime implements Bridge {
       ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
       ...(config.length ? { config } : {}),
       ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
+      ...(input.fork ? { fork: forkKey(input.fork) } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -1129,6 +1153,7 @@ export class AgentRuntime implements Bridge {
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
       ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
       ...(route ? { route } : {}),
+      ...(input.fork ? { fork: checkedFork(input.fork, input.prompt) } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -1169,8 +1194,9 @@ export class AgentRuntime implements Bridge {
     agentContext?: AgentExecutionContext
     startConfig?: StartChoice[]
     route?: ModelRoute
+    fork?: NonNullable<AcpRecord['fork']>
   }): Promise<{ sessionId: string }> {
-    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route } = create
+    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route, fork } = create
     this.assertOpen()
     let context: string
     try {
@@ -1225,6 +1251,7 @@ export class AgentRuntime implements Bridge {
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
         ...(route ? { route } : {}),
+        ...(fork ? { fork } : {}),
       },
     }
     this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
@@ -2299,6 +2326,9 @@ export class AgentRuntime implements Bridge {
       run.live = binding.live
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
+      const fork = this.state.tasks[run.taskId]?.acp.fork
+      // The agent forked its own record of the source: the Host's text record of it is not sent as well.
+      if (fork?.native && run.seq === 1) run.prompt = run.prompt.slice(fork.prefixLength)
       const content = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
       const brief = this.state.tasks[run.taskId]?.acp.brief
       const blocks = brief ? [{ type: 'text', text: brief.segments.map(segment => segment.text).join('\n') }, ...content] : content
@@ -2881,7 +2911,7 @@ export class AgentRuntime implements Bridge {
     let acpSessionId: string
     let result: unknown
     if (!current) {
-      result = await setup('session/new', { cwd, mcpServers, ...directories })
+      result = (await this.ownFork(taskId, live, setup, mcpServers)) ?? (await setup('session/new', { cwd, mcpServers, ...directories }))
       const id = sessionState.safeParse(result)
       if (!id.success || !id.data.sessionId) throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
       acpSessionId = id.data.sessionId
@@ -2928,6 +2958,81 @@ export class AgentRuntime implements Bridge {
         throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
+  }
+
+  /**
+   * A session forked from another of this driver's, opened as the agent's own fork of the source's record: the answer,
+   * like `session/new`'s. Undefined when it is no such fork, or when the agent cannot fork there, which the session then
+   * says, so that its first prompt sends the Host's text record instead.
+   */
+  private async ownFork(
+    taskId: string,
+    live: Live,
+    setup: (method: string, params: unknown) => Promise<unknown>,
+    mcpServers: unknown[],
+  ): Promise<unknown> {
+    const task = this.task(taskId)
+    const fork = task.acp.fork
+    if (!fork || fork.native) return undefined
+    // Only the first turn's prompt carries the text record that a fork replaces or falls back to. A first turn that
+    // ended before the session opened leaves a later one to open it as any new session would.
+    if (this.runs.get(taskId)?.seq !== 1) {
+      delete task.acp.fork
+      this.mark()
+      return undefined
+    }
+    const point = this.forkPoint(task, fork, live)
+    let reason: string
+    if (typeof point === 'string') reason = point
+    else
+      try {
+        const result = await setup(FORK_METHOD, { sessionId: point.source, cwd: task.acp.cwd, before: point.before, mcpServers })
+        const forked = this.state.tasks[taskId]
+        if (forked?.acp.fork) {
+          forked.acp.fork.native = true
+          const first = forked.messages.find(message => message.role === 'user')
+          if (first) first.nativeFork = true
+        }
+        return result
+      } catch (error) {
+        if (!(error instanceof ForkRefused)) throw error
+        reason = error.message
+      }
+    const target = this.state.tasks[taskId]
+    if (target) {
+      delete target.acp.fork
+      target.messages.push({
+        id: randomUUID(),
+        role: 'system',
+        text: `${this.agent.name} 没有用它自己的记录分叉：${clip(this.redact(reason), 300)}。这次以文字带上来源会话到这一轮为止的记录。`,
+        createdAt: this.now(),
+      })
+      this.touch(target)
+      this.mark()
+      this.notify(taskId)
+    }
+    return undefined
+  }
+
+  /**
+   * Where the agent's own record of the source session is to be forked: the session to fork and the time its next turn
+   * began, before which everything it wrote belongs to the turns up to the fork. Or why it cannot be forked there.
+   */
+  private forkPoint(task: AcpTask, fork: NonNullable<AcpRecord['fork']>, live: Live): { source: string; before: string } | string {
+    if (!live.wire.forks) return '它不能分叉自己的会话'
+    const source = this.state.tasks[fork.taskId]
+    if (!source) return '找不到来源会话'
+    if (source.acp.cwd !== task.acp.cwd) return '新会话不在来源会话的文件夹里'
+    const end = source.messages.findIndex(message => message.id === fork.upToMessageId)
+    if (end < 0) return '找不到分叉的位置'
+    const later = source.messages.slice(end + 1)
+    // Its record of an earlier context is another session, and a pending new context has none yet.
+    if (source.acp.contextCleared || later.some(message => message.role === 'user' && message.freshContext))
+      return '来源会话在这一轮之后清空过上下文'
+    if (!source.acp.acpSessionId) return '来源会话还没有它自己的记录'
+    const next = later.find(message => message.role === 'user' && !message.steered)
+    if (next && !next.createdAt) return '来源会话没有记下下一轮开始的时间'
+    return { source: source.acp.acpSessionId, before: next?.createdAt ?? this.now() }
   }
 
   /**
@@ -3466,6 +3571,7 @@ export class AgentRuntime implements Bridge {
           name: command.name,
           ...(command.description ? { description: command.description } : {}),
           ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
+          ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
         }))
         break
       }

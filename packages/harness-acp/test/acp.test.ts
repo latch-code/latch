@@ -3919,7 +3919,8 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
   it('opens one empty session in a private folder, sends no prompt and no MCP server, deletes it, and keeps the list', async () => {
     const fixture = await setup(OPTIONS)
     const bridge = await fixture.open()
-    expect(bridge.catalogueRead!()).toEqual({ when: 'select' })
+    // An empty session reports the modes a session starts with, as well as its models.
+    expect(bridge.catalogueRead!()).toEqual({ when: 'select', modes: true })
     expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
     const catalogue = bridge.catalogue!()!
     expect(catalogue.source).toBe('check')
@@ -3967,12 +3968,17 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
     const reopened = await fixture.open()
     expect(reopened.catalogueRead!()).toMatchObject({ last: { ok: false } })
     await reopened.close()
-    expect((await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })).catalogueRead!()).toEqual({ when: 'select' })
+    expect((await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })).catalogueRead!()).toEqual({
+      when: 'select',
+      modes: true,
+    })
   })
 
   it("lists Codex's models through the adapter's own app-server, with no session or thread", async () => {
     const fixture = await preset('codex', { ...OPTIONS, FAKE_CODEX_MODEL: 'gpt-fake-mini' })
     const bridge = await fixture.open()
+    // Codex's model list says nothing of its modes; those come with a session.
+    expect(bridge.catalogueRead!()).toEqual({ when: 'select', modes: false })
     expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
     const catalogue = bridge.catalogue!()!
     expect(catalogue.source).toBe('check')

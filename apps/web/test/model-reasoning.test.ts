@@ -5,16 +5,8 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
 import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
-import {
-  draftConfig,
-  forkedChoice,
-  harnessPicks,
-  resolveChoice,
-  sameModel,
-  startConfig,
-  switchModel,
-  thinkingLevels,
-} from '../src/composerChoice.ts'
+import { draftConfig, harnessPicks, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
+import { forkedChoice } from '../src/forkChoice.ts'
 import { contextUse, contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
@@ -270,12 +262,40 @@ describe('the 权限 chip', () => {
     )
   })
 
+  it("says when a declared Harness's modes can be changed, from whether its read reports them", () => {
+    const declared = { approvals: 'prompts' as const, readback: 'mode' as const }
+    const run = { scopes: new Set(['view', 'run'] as const) }
+    const reads = { ...harness, permission: declared, catalogueRead: { when: 'select' as const, modes: true } }
+    const note = (target: Parameters<typeof draftPermission>[0], read?: 'reading' | 'readable') =>
+      draftPermission(target, 'agent', undefined, read)?.note
+    // Its read opens a session, which reports the modes: the menu reads it, and the rows come once it is read.
+    expect(readsOnPermission(reads, run)).toBe(true)
+    expect(note(reads, 'reading')).toBe('正在读取 Fake Agent 的模式…')
+    expect(note(reads, 'readable')).toBe('读取 Fake Agent 的模式后可以换。')
+    expect(note({ ...reads, catalogueRead: { ...reads.catalogueRead, last: { at: 'x', ok: false } } }, 'readable')).toBe(
+      '没有读到 Fake Agent 的模式。发第一条消息后可以换。',
+    )
+    // Its read lists models only, as Codex's own model list does: the modes come with the session.
+    const models = { ...reads, catalogueRead: { when: 'select' as const, modes: false } }
+    expect(readsOnPermission(models, run)).toBe(false)
+    for (const read of ['reading', 'readable', undefined] as const)
+      expect(note(models, read)).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
+    expect(note({ ...reads, catalogueRead: undefined }, undefined)).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
+    // What it reported had no modes: nothing to change to, so no promise of it.
+    const none = { options: [], perModel: [], reportedAt: 'x' }
+    expect(note({ ...reads, catalogue: { ...none, source: 'check' } })).toBeUndefined()
+    expect(note({ ...models, catalogue: { ...none, source: 'session' } })).toBeUndefined()
+    expect(note({ ...models, catalogue: { ...none, source: 'check' } })).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
+  })
+
   it('says an undeclared Harness that can be read tells its modes when read, not only once started', () => {
-    const readable = { ...harness, catalogueRead: { when: 'select' as const } }
+    const readable = { ...harness, catalogueRead: { when: 'select' as const, modes: true } }
     const run = { scopes: new Set(['view', 'run'] as const) }
     expect(draftRead(readable, run, false)).toBe('readable')
     expect(draftRead(readable, run, true)).toBe('reading')
-    expect(draftRead({ ...readable, catalogueRead: { when: 'select', last: { at: 'x', ok: false } } }, run, false)).toBe('readable')
+    expect(draftRead({ ...readable, catalogueRead: { when: 'select', modes: true, last: { at: 'x', ok: false } } }, run, false)).toBe(
+      'readable',
+    )
     // Nothing to read with: no read, a list already there, a device that cannot start one, or a Harness that cannot start.
     expect(draftRead(harness, run, false)).toBeUndefined()
     expect(
@@ -305,8 +325,7 @@ describe('the 权限 chip', () => {
     expect(draftPermission(readable, 'chat', undefined, 'reading')).toMatchObject({ label: '不读写文件' })
     // Opening 权限 reads only where the read is what tells Latch the modes.
     expect(readsOnPermission(readable, run)).toBe(true)
-    expect(readsOnPermission({ ...readable, permission: { approvals: 'prompts', readback: 'mode' } }, run)).toBe(false)
-    expect(readsOnPermission({ ...readable, catalogueRead: { when: 'request' } }, run)).toBe(false)
+    expect(readsOnPermission({ ...readable, catalogueRead: { when: 'request', modes: true } }, run)).toBe(false)
     expect(readsOnPermission(readable, { scopes: new Set(['view'] as const) })).toBe(false)
   })
 
@@ -506,7 +525,7 @@ describe("a draft's list of a Harness's own options", () => {
     // A fork onto another Harness takes that Harness's own picks, never those of the one remembered.
     expect(
       forkedChoice(built, { harnessId: 'pi', config: { mode: 'x' }, otherPicks: { codex: { mode: 'write' } } }, { harnessId: 'codex' })
-        .config,
+        .choice.config,
     ).toEqual({
       mode: 'write',
     })

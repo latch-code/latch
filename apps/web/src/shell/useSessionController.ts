@@ -310,6 +310,10 @@ export function useSessionController({
     setProjectNotice(notice)
     setProjectRequest(request => request + 1)
   }
+  // A setting picked a moment before sending goes first, or the session would refuse it and run the turn on the old one.
+  const settingsLanded = async () => {
+    if (selectedId !== null) await configFlights.current.get(selectedId)
+  }
   const sendDraft = async () => {
     if (selectedId === null && !personalDraft && !submission.fork && needsProject(catalog, choice)) {
       askProject()
@@ -319,8 +323,7 @@ export function useSessionController({
       submission.setError(`${steer ? '追加' : '排队'}暂不支持附件或文件引用，请等本轮结束再发送。`)
       return
     }
-    // A setting picked a moment before sending goes first, or the session would refuse it and run the turn on the old one.
-    if (selectedId !== null) await configFlights.current.get(selectedId)
+    await settingsLanded()
     const ids = await attachmentDraft.wait()
     if (ids && selectedId !== null) clearUnverified(selectedId)
     const followUp = !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
@@ -330,7 +333,9 @@ export function useSessionController({
     }
   }
   const retryDraft = async () => {
-    if (submission.pending && (await submission.submit(submission.pending))) {
+    if (!submission.pending) return
+    await settingsLanded()
+    if (await submission.submit(submission.pending)) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -832,12 +837,15 @@ export function useSessionController({
     stopCode === undefined || stopLocksInput(stopCode)
       ? undefined
       : retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
+  const resend = async (prompt: string) => {
+    if (selectedId === null) return
+    clearUnverified(selectedId)
+    await settingsLanded()
+    await submission.resend(prompt)
+  }
   const retryStopped = () => {
     if (stopRetry?.kind === 'draft') void sendDraft()
-    else if (stopRetry?.kind === 'prompt' && selectedId !== null) {
-      clearUnverified(selectedId)
-      void submission.resend(stopRetry.prompt)
-    }
+    else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt)
   }
   const gate =
     selectedId === null
@@ -939,8 +947,7 @@ export function useSessionController({
     && !submission.sending
       ? {
           onResend: (prompt: string) => {
-            if (selectedId !== null) clearUnverified(selectedId)
-            void submission.resend(prompt)
+            void resend(prompt)
           },
         }
       : undefined

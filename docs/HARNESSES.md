@@ -204,8 +204,10 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 - **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容写进会话：「pi 提示：停止前追加的内容还没送到 pi，已撤回」。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer` 加进去，pi 在手上的工具调用结束后、下一次请求模型之前读到它；其他时候交回 Host 排队。
+- **`/compact`。** pi 的 RPC 不列出它自己界面里的 `/compact`，当作文字发出去会交给模型，所以会话第一轮开始时 Latch 把它列为 pi 的命令（「把之前的对话总结成摘要，腾出上下文；可以在命令后写总结时要注意什么」）。一条消息只有 `/compact`，或 `/compact` 后跟空白和说明、不带图片时，发 pi 的 `compact` 命令（说明放在 `customInstructions`），不发 `prompt`。这条消息留在记录里，作为一轮运行：pi 的 `compaction_start`、`compaction_end` 成为已有的压缩行（「pi 已压缩上下文」加摘要，「pi 压缩上下文失败：原因」，或「pi 已取消压缩上下文」，pi 自己加在原因前的 `Compaction failed: ` 去掉），pi 回答 `compact` 时这一轮结束；pi 报告了压缩时，压缩失败或被扩展取消都不让这一轮失败，还没报告压缩就拒绝时这一轮失败并写 pi 的原因（遮住像密钥的部分）。停止照常先 `clear_queue` 再 `abort`，pi 会中止压缩，这一轮是已停止。之后的上下文占用未知，直到下一条回复，因为 pi 在压缩后不报告它。pi 压缩前会先中止手上的事，所以 `/compact` 只在两轮之间：它的命令带 `idleOnly`，运行中斜杠菜单不列它，排队或追加时 Host 拒绝（409 `command-queued`，「/compact 不能排队或追加，请等本轮结束后发送。」），线也不把它当作追加。pi 自己的其他命令（`get_commands` 列出的扩展、提示与技能命令）还没有列出。
 - **工具与其他事件。** `tool_execution_*` 成为工具行：`bash` 是命令，`read` 是读取，`edit`、`write` 是改文件，`grep`、`find`、`ls` 是搜索，`edit` 的 diff 以文本显示。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。模型服务的错误可能带出一段密钥：pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
 - **扩展的提问。** 扩展的 `confirm` 像审批一样交给人，选项是「允许」「拒绝」；`select`、`input`、`editor` 按「看不懂的请求」写进会话，并回答 pi「已取消」。
+- **分叉。** 从一个 pi 会话分叉到同一个 pi 定义、同一个文件夹时（「从这里分叉」与「从这里编辑」都是），Latch 用 pi 自己的会话文件分叉：新会话带着 pi 到那一轮为止的原样记录，第一条只发人写的话，不发背景文本（`HarnessCapabilities.fork: 'native'`，见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。做法：新会话的进程 `switch_session` 到来源的会话文件，`get_entries` 读出记录，沿 pi 所在的分支找来源下一轮开始（那条用户消息记下的时间）之后的第一条用户消息，`fork` 在它之前；分叉点就是最新一轮时 `clone` 整条分支。Latch 在上一轮结算之后才开始下一轮，所以这个时间之前写下的都属于分叉点及以前；pi 与 Host 在同一台电脑上用同一个时钟。分叉后用 `get_entries` 从预期的最后一条往后读，核对 pi 复制出的新文件正好停在那里（pi 复制时保留条目 ID；之后只能有设置、标签之类模型看不到的条目）。分叉在发送时才做，而且只在第一轮做：第一轮在 pi 打开会话之前就结束了（停止、进程没能启动）时，下一轮像其他新会话一样开始，不再分叉，也不写分叉的原因；背景文本只在第一条消息里，重试第一轮会连同它一起重发，另写一条新消息则不带。pi 的 `fork` 返回的那条消息文字不用：「从这里编辑」已经把 Latch 记下的原文放进输入框，pi 的文字里还有 Latch 附加的指令块与文件引用。做不到时退回背景文本，并在新会话里写一行「pi 没有用它自己的记录分叉：<原因>。这次以文字带上来源会话到这一轮为止的记录。」：不在来源的文件夹里、分叉点之后清空过上下文、来源会话文件已不在（pi 打开不存在的文件得到空会话，`get_entries` 没有记录）、下一轮开始之后的压缩（例如 `/compact`）会被带进来、扩展取消了 `switch_session` 或 `fork`、pi 拒绝命令或复制出的文件没有停在那一轮。退回前进程先 `new_session` 离开来源（这一步也被扩展取消时停止进程），Latch 的会话不会在来源的文件上继续，分叉也不往来源的文件里写（pi 的扩展在打开会话时自己写的除外）。已知限制：系统时钟在两轮之间往回拨时，按时间找到的位置可能错一轮，核对只能确认 pi 停在了所要求的条目上。
 
 ## 通知与压缩
 
@@ -246,7 +248,7 @@ Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有�
 
 - **三行。** 模式超过三个时，菜单只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余（只看不改、另一个中间档）收在「更多」里；当前的模式总是列出。「不再询问」的标题、说明与触发器是琥珀色，「由模型判断」不是。
 - **谁能选。** 任何有 `run` 的设备都能选任何一档，不弹确认，放宽写 `task.mode.widened`。
-- **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在；分叉用目标 Harness 自己记住的选项。
+- **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在。分叉的草稿用来源会话当时的模型、思考与模式，而不是这台设备记住的；模式是 Latch 让来源会话保持的那一档（`permission.expectedMode`，人选的），不是 Harness 报告的、它自己换到的那一档，所以设置被 Harness 自己改了之后的「在新会话中继续」仍从人选的档位开始，Latch 不知道人选的档位时从目标 Harness 的默认模式开始并写明。具体是：还是同一个 Harness 时照原样带上（经 Latch 转发到保存的服务的，带上那个服务与模型）；换了 Harness 时，模型与思考按同样的值带上，模式按档位找同一档，没有这一档时用比它严的最宽一档，比它严的也没有时用最严的一档；来源没有模式或档位对应不上时从 Harness 的默认模式开始。草稿里写明哪些没有沿用（「没有沿用来源会话的模型「Large」：goose 在这里不能选。」「来源会话的权限是「按规则放行」，goose 没有这一档，这里用更严的「先问你」。」）；目标 Harness 的选项还没读到时（读取中、读取失败，或像 pi 那样要人去读），还不知道它有没有这些，草稿不说没有沿用，只写「来源会话的模型「Large」、思考「High」与权限「按规则放行」要等读到 goose 的选项后才能沿用。」，读到后换成上面的说明。人仍可以在草稿里改；分叉草稿里选的模型、思考与模式只用于这一份草稿，不写入设备记住的选项。
 - **模型的判断。** Codex 报告自己的模型审阅一次请求：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。Claude Agent 只报告它拦下的调用：适配器把这次调用报为 `failed` 的 `tool_call_update`，内容是「Permission denied: <理由>」，`_meta.claudeCode.toolResponse` 带 `decisionReasonType` 与理由（`decisionReason`，没有时是 `message`）。来源是 `classifier`（它的自动模式询问的模型）时，这一行仍是那次调用本身，写「拦下」，下面一行「Claude Agent 的模型审阅：<理由>」；会话在「由模型判断」档时它带 `ToolDetail.judged`（`denied`）并记录。来源是 `rule` 或 `mode` 时写「拦下」与「被 Claude Agent 自己的规则拦下：<理由>」，在任何档都这样，不算模型的判断，不记录。两种都放在 `ToolDetail.blocked`（`by`、`source`、`reason`），不显示成失败；理由是 Agent 的不可信文字，Host 限 1000 字，页面只显示第一行的前 120 字。折叠的一轮写「模型拦下 N 次」「规则拦下 N 次」，不算失败的步骤。其他来源（钩子、安全检查等 Latch 叫不出名字的）照旧是一行失败；问过人的调用、已经开始运行的调用不算 Claude 自己拦下的。`classifier` 这个取值来自适配器注释对来源的称呼，没有在它的测试里出现，要用真实的自动模式核对；取值不同时这些调用照旧是失败，不会被说成模型的判断。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`）与不报告放行的 Claude Agent `auto`，在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
 - **记录。** 每个审阅结论、每个被模型拦下的调用（来源 `agent-report`）、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
 
@@ -274,12 +276,12 @@ Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有�
 ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new` 返回。所以 Harness 的选项来自它自己的会话，或者一次不发提示的读取：
 
 - **记录。** 每个新会话的 `session/new` 回答记为这个 Harness 的选项列表（`HarnessInfo.catalogue`：`options` 与会话的 `config` 同形状，`perModel` 是各模型下跟着模型变的选项，如思考深度，`reportedAt` 是时间，`source` 是 `session` 或 `check`）。会话之后报告的选项（换模型后、`config_option_update`）只更新 `perModel`。列表存在该 Harness 的 `acp.json`，按定义指纹（`definitionHash`）保存，同时记下启动指纹与 Agent 版本；定义一变就不再下发，读坏时丢弃，不影响会话。模式的当前值写成预设每次开始前设好的模式（如 Codex 的 `read-only`），不是 Agent 碰巧报告的那个。条目数、文字长度与总大小（64 KiB，超出时先丢最早见过的模型，再整份不下发）有上限，因为每份目录都带着它，手机整份读取，超过 1 MiB 就拒收。
-- **读取。** 还没有列表时，可以不开始会话就读一次（`HarnessInfo.catalogueRead`，`POST /link/api/agents/:id/catalogue { auto? }`）：在 Host 临时目录下新建的空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多等 20 秒。Codex 预设不开会话：用定义的命令加 `cli app-server`（codex-acp 用 `CODEX_PATH` 指向的 Codex，没有就用自带的），只发 `initialize`、`config/read` 与 `model/list`（按 `nextCursor` 翻页，最多 5 页），不开线程；结果写成 codex-acp 会话里同样的 `model` 与 `reasoning_effort` 选项，所以开始前的选择能直接用在随后的会话上，列表里原有的其他选项保留。
-  - 什么时候读：新会话里选中这个 Harness，或打开它的模型菜单，或打开 Latch 没有权限 profile 的 Harness 的权限菜单（它的模式只能从读取或会话得知），而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就不读，返回 `ran: false`）。从不按时间读，失败后也不再自动重读。pi 只在菜单里点「读取 pi 的模型列表」时读，因为它启动时会加载用户的扩展、运行会话钩子。菜单里随时可以「重新读取」。
+- **读取。** 还没有列表时，可以不开始会话就读一次（`HarnessInfo.catalogueRead`，`POST /link/api/agents/:id/catalogue { auto? }`）：在 Host 临时目录下新建的空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多等 20 秒。Codex 预设不开会话：用定义的命令加 `cli app-server`（codex-acp 用 `CODEX_PATH` 指向的 Codex，没有就用自带的），只发 `initialize`、`config/read` 与 `model/list`（按 `nextCursor` 翻页，最多 5 页），不开线程；结果写成 codex-acp 会话里同样的 `model` 与 `reasoning_effort` 选项，所以开始前的选择能直接用在随后的会话上，列表里原有的其他选项保留。它不报告模式，所以 `catalogueRead.modes` 是 `false`；开会话的读取和开始时一样报告模式，是 `true`。
+  - 什么时候读：新会话里选中这个 Harness，或打开它的模型菜单，或打开读取会报告模式的 Harness 的权限菜单（`catalogueRead.modes`；Codex 的模型列表不报告，所以打开它的权限菜单不读取），而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就不读，返回 `ran: false`）。从不按时间读，失败后也不再自动重读。pi 只在菜单里点「读取 pi 的模型列表」时读，因为它启动时会加载用户的扩展、运行会话钩子。菜单里随时可以「重新读取」。
   - 谁能读：和开始会话同一道门，要 `run` 范围，Harness 可以开始（不可用时 409）；只读设备只看已有列表。同一定义同时只读一次，其他请求共用结果。启动进程之前写审计 `agent.catalogue.requested`（写不进就不启动），结束后写 `agent.catalogue.read`（只记成功与否）。
   - 结果：成功时列表来源为 `check`；失败时保存 `last: { ok: false, message }`，消息经过脱敏，菜单写「没有读到：…」，如「OpenCode 还没登录。按它自己的方式登录后重试。」，不弹登录。定义一变，上次读取的结果也不再下发。
 - **自己填的模型 ID。** 菜单里「填写模型 ID…」把 Harness 没列出的模型 ID 存进这个 Harness 的 `acp.json`（`HarnessInfo.customModels`，`PUT /link/api/agents/:id/models { models }`，要 `run`，最多 32 个，每个最多 256 字符、不能换行，审计 `agent.models.changed` 只记个数），在模型列表里标「自己填写」，换定义也保留。只有列表里有模型选项时才能填，因为 ACP 只能经这个选项设置模型。开始时和会话里都原样发给 Agent；开始时 Agent 拒绝或没换过去，这一轮失败，文字和不再提供时一样说出下一次会用什么（「<名称> 没有换到模型「…」，这条消息没有发出。再发送会用「…」，也可以先在模型里换一个。」），之后的发送用会话显示的模型。
-- **显示。** 新会话的模型、思考与权限都从这份列表画，和会话里是同一个组件；菜单底部写「来自上次会话 · 时间」或「读取于 时间」。选了一个列表没说思考深度的模型时，思考写「开始后才告诉 Latch」。没有列表时写「默认模型 · 默认思考」；能读取时菜单里是读取的入口，读取中写「正在读取…」，不能读取时写「开始后才报告」。Latch 没有权限 profile 的 Harness，权限在能读取时写「读取后可以选」，读取中写「正在读取…」，读到的列表没有模式或这台设备读不了时写「开始后可以选」。设备按 Harness 记住模型、思考与模式的选择；没有选过时从开始前设好的模式开始，Latch 不替人选更宽的一档。
+- **显示。** 新会话的模型、思考与权限都从这份列表画，和会话里是同一个组件；菜单底部写「来自上次会话 · 时间」或「读取于 时间」。选了一个列表没说思考深度的模型时，思考写「开始后才告诉 Latch」。没有列表时写「默认模型 · 默认思考」；能读取时菜单里是读取的入口，读取中写「正在读取…」，不能读取时写「开始后才报告」。Latch 没有权限 profile 的 Harness，权限在能读取时写「读取后可以选」，读取中写「正在读取…」，读到的列表没有模式或这台设备读不了时写「开始后可以选」。有 profile 的 Harness 开始前只有它开始时的那一档，菜单下方说其他档什么时候能换：读取会报告模式的，读取中写「正在读取 <Harness> 的模式…」，能读取时写「读取 <Harness> 的模式后可以换。」，上次没读到时写「没有读到 <Harness> 的模式。发第一条消息后可以换。」；Codex 等读取不报告模式的，或这台设备读不了时，写「发第一条消息后可以换：<Harness> 开始会话时给出能换的模式。」；上次会话或读取报告的选项里没有模式时不写这一句。设备按 Harness 记住模型、思考与模式的选择；没有选过时从开始前设好的模式开始，Latch 不替人选更宽的一档。
 - **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。每项都从 Agent 的回答读回。
 - **不再提供时。** 选的模型或模式 Agent 不再提供：这一轮失败，不发提示，文字说出它的名字和下一次会用什么（「Codex 现在没有模型「Large」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。」）。失败之前照常设好草稿里的其他选择，再设好并读回模式，没有哪一项留到下一次，所以会话显示的就是之后运行的。思考等其他选项不再提供或被拒绝：保持 Agent 的默认值，并在会话里加一条系统消息。会话里改了某一项，就取代开始前对这一项的选择。Agent 要先登录时，还没设好的选择留到登录后的那次发送；在那之前会话显示不出它们（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，值是 Agent 自己的文字，不原样记录）。开始前选更宽的模式和会话里一样不弹确认。
@@ -394,8 +396,7 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
 | Cursor 的选择题（`cursor/ask_question`）放进提问卡片 | 未实现；提问卡片还没有接到 ACP 驱动上，现在回答 `skipped` 并把问题写进会话 |
 | Claude Agent 的其他文件夹（`additionalDirectories`） | 未实现；Claude 访问会话目录以外的路径时逐次询问 |
-| pi 的分叉（`fork`） | 未实现；Latch 的分叉以背景文本开启新会话，不用 pi 自己的分叉 |
-| ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在所有 Harness 的分叉都由 Host 以背景文本开启新会话 |
+| ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在 pi 以外的 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
 | Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单里写「尚未实现」 |
@@ -408,9 +409,9 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 
 ### 会话命令
 
-ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands` 发送给客户端，并随 ACP 会话持久化。每次更新替换之前的列表（空列表撤下命令）；最多 200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符，畸形更新不接受。名称不能包含空白或控制字符。界面只在草稿开头的 `/` 词项匹配它们，选择后插入可编辑草稿；不会自动发送或由 Host 执行另一个命令。名称与说明按可见安全文本显示，旧 Host 没有该字段时不展示命令建议。
+ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands` 发送给客户端，并随 ACP 会话持久化。每次更新替换之前的列表（空列表撤下命令）；最多 200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符，畸形更新不接受。名称不能包含空白或控制字符。界面只在草稿开头的 `/` 词项匹配它们，选择后插入可编辑草稿；不会自动发送或由 Host 执行另一个命令。名称与说明按可见安全文本显示，旧 Host 没有该字段时不展示命令建议。线自己用 Agent 的协议执行的命令（线的 `idleCommands`，现在只有 pi 的 `compact`）带 `idleOnly`：运行中不列出，排队或追加到正在运行的一轮时 Host 以 409 `command-queued` 拒绝。
 
-分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
+分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
 Host 队列只在明确 runOutcome=completed 后自动派发。ACP 只有 session/prompt 的 end_turn 算 completed，取消、输出上限、拒绝、未知 stopReason 与断连都暂停。Standard 仍要求 Provider 的有效 finish 事件。两种 Driver 接收 PromptOptions.queuedAt，只作为用户消息的排队时间，不改变输入幂等哈希与权限；第三方 Driver 没有明确 outcome 时，由用户继续。
 
@@ -418,6 +419,6 @@ ACP 附件只走 `session/prompt` 的内容块。initialize 的 `promptCapabilit
 
 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 仅在本轮模型输入里追加真实目录映射，公开消息保留原文与引用 metadata。附件及文件引用 schema 都随会话持久化；假进程回归覆盖实际协商、内容块、图片输出与重启。
 
-分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
+分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。

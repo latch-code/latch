@@ -15,7 +15,7 @@ export interface PermissionRow extends ModeRow {
   more: boolean
 }
 
-const TIER_ORDER: Record<PermissionTier, number> = { plan: 0, ask: 1, rule: 2, model: 3, never: 4 }
+export const TIER_ORDER: Record<PermissionTier, number> = { plan: 0, ask: 1, rule: 2, model: 3, never: 4 }
 const TIER_ICONS: Record<PermissionTier, ModeIcon> = {
   plan: 'eye',
   ask: 'shield',
@@ -84,6 +84,7 @@ export interface PermissionView {
 const modeOption = (config: readonly SessionConfigOption[]) => config.find(option => option.category === 'mode')
 
 type PermissionHarness = Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'>
+  & Partial<Pick<HarnessInfo, 'catalogue' | 'catalogueRead'>>
 
 /** Before the first send, how a draft can still learn the Harness's modes without a session. */
 export type DraftRead = 'reading' | 'readable'
@@ -100,6 +101,21 @@ export function draftRead(
   if (!harness) return undefined
   if (reading) return 'reading'
   return harness.catalogueRead && !harness.catalogue && harness.status === 'ready' && access.scopes.has('run') ? 'readable' : undefined
+}
+
+/**
+ * Under a draft's one declared row: when the other modes can be chosen. A read reports them where it opens a session;
+ * Codex's own model list does not, so its modes come with the first session.
+ */
+function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { note?: string } {
+  const name = harness.capabilities.display.label
+  const readsModes = harness.catalogueRead?.modes === true
+  // What a session or such a read reported had no modes: there is nothing to change to.
+  if (harness.catalogue && (harness.catalogue.source === 'session' || readsModes)) return {}
+  if (readsModes && read === 'reading') return { note: MODE_COPY.modesReading(name) }
+  if (readsModes && read === 'readable')
+    return { note: harness.catalogueRead?.last?.ok === false ? MODE_COPY.modesUnread(name) : MODE_COPY.changeAfterRead(name) }
+  return { note: MODE_COPY.changeAfterStart(name) }
 }
 
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */
@@ -129,7 +145,7 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
         ?? MODE_COPY.askFirstLine(harness.capabilities.display.label),
       icon: 'shield',
       amber: false,
-      note: MODE_COPY.changeAfterStart(harness.capabilities.display.label),
+      ...modesNote(harness, read),
     }
   const name = harness.capabilities.display.label
   if (read === 'reading') return { label: MODE_COPY.reading, line: MODE_COPY.readingLine(name), icon: 'shield', amber: false }

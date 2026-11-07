@@ -8,9 +8,9 @@ import { z } from 'zod'
 import { redactSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { RPC, RpcError, STEER_METHOD } from '../protocol.ts'
+import { FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
-import type { AgentWire, WireHandlers } from './types.ts'
+import { ForkRefused, type AgentWire, type WireHandlers } from './types.ts'
 
 /** The oldest pi this wire works with: its turns end on `agent_settled`, `message_update` carries deltas and a stop clears the queue. */
 const PI_MINIMUM = '0.84.4'
@@ -57,6 +57,23 @@ const LEVEL_NAMES: Readonly<Record<string, string>> = {
 }
 /** Dialogs a pi extension opens that need an answer; the rest of its interface asks nothing. */
 const DIALOGS = new Set(['select', 'input', 'editor'])
+/**
+ * pi's own `/compact`, which its RPC runs as the `compact` command and does not list: sent as a prompt, the text would go
+ * to the model. pi aborts what it is doing before it compacts, so it is offered only between turns.
+ */
+const COMPACT = {
+  name: 'compact',
+  description: '把之前的对话总结成摘要，腾出上下文；可以在命令后写总结时要注意什么',
+  input: { hint: '总结时要注意什么（可选）' },
+}
+
+/** `/compact`, alone or followed by what the summary should keep, as pi's own interface reads it; anything else is a prompt. */
+function compactCommand(text: string): { customInstructions?: string } | undefined {
+  const match = /^\/compact(?:\s+([\s\S]*))?$/u.exec(text.trim())
+  if (!match) return undefined
+  const instructions = match[1]?.trim()
+  return instructions ? { customInstructions: instructions } : {}
+}
 
 const text = z.string()
 const model = z.object({ provider: text.min(1).max(256), id: text.min(1).max(512), name: text.max(1000).optional().catch(undefined) })
@@ -82,6 +99,63 @@ const promptParams = z.object({
 const optionParams = z.object({ sessionId: text, configId: text, value: text.max(1024) })
 const steerParams = z.object({ sessionId: text, prompt: z.array(z.object({ type: text, text: text.optional() })) })
 const sessionParams = z.object({ sessionId: text.optional(), mcpServers: z.array(z.unknown()).optional() })
+const forkParams = z.object({ sessionId: text, before: text, mcpServers: z.array(z.unknown()).optional() })
+const entry = z.object({
+  type: text,
+  id: text,
+  parentId: text.nullable(),
+  timestamp: text,
+  message: z.object({ role: text.optional() }).optional().catch(undefined),
+})
+type Entry = z.infer<typeof entry>
+const listing = z.object({ entries: z.array(z.unknown()), leafId: text.nullable() })
+/** Entries that are not part of what the model sees: settings, labels, usage and an extension's own data. */
+const OUTSIDE_CONTEXT = new Set(['model_change', 'thinking_level_change', 'label', 'session_info', 'custom', 'usage'])
+
+/**
+ * How to fork pi's record (`get_entries`) so that the new session holds what pi wrote before `before`, the time the
+ * source's next turn began: `fork` before the first user message written since then on the branch pi is on, or, when
+ * there is none, `clone` of the whole branch. `keep` is the entry the new session must end at. Or why it cannot.
+ */
+export function forkPlan(data: unknown, before: string): { command: Record<string, unknown>; keep: string } | string {
+  const cut = Date.parse(before)
+  const read = listing.safeParse(data)
+  if (!Number.isFinite(cut) || !read.success) return '它的会话记录读不懂'
+  const byId = new Map<string, Entry>()
+  for (const raw of read.data.entries) {
+    const parsed = entry.safeParse(raw)
+    if (!parsed.success || byId.has(parsed.data.id)) return '它的会话记录读不懂'
+    byId.set(parsed.data.id, parsed.data)
+  }
+  // Only the branch pi is on is what the model saw; other branches of its tree stay out.
+  const branch: Entry[] = []
+  for (let id = read.data.leafId; id !== null;) {
+    const found = byId.get(id)
+    if (!found || branch.length >= byId.size) return '它的会话记录不完整'
+    branch.push(found)
+    id = found.parentId
+  }
+  branch.reverse()
+  const time = (item: Entry) => Date.parse(item.timestamp)
+  if (branch.some(item => !Number.isFinite(time(item)))) return '它的会话记录缺少时间'
+  const next = branch.findIndex(item => item.type === 'message' && item.message?.role === 'user' && time(item) >= cut)
+  const kept = next < 0 ? branch : branch.slice(0, next)
+  if (!kept.length) return '找不到来源会话在这一轮之前的记录'
+  // A later turn that wrote no message of its own, such as a /compact, would otherwise come along.
+  if (kept.some(item => !OUTSIDE_CONTEXT.has(item.type) && time(item) > cut)) return '它的记录在这一轮之后还有别的内容，例如压缩'
+  return { command: next < 0 ? { type: 'clone' } : { type: 'fork', entryId: branch[next]!.id }, keep: kept.at(-1)!.id }
+}
+
+/** pi's entries after `keep` in the new session: none, or only ones outside what the model sees. */
+function endsAt(data: unknown, keep: string): boolean {
+  const read = listing.safeParse(data)
+  if (!read.success) return false
+  const added = read.data.entries.map(raw => entry.safeParse(raw))
+  return (
+    added.every(item => item.success && OUTSIDE_CONTEXT.has(item.data.type))
+    && (read.data.leafId === keep || added.some(item => item.success && item.data.id === read.data.leafId))
+  )
+}
 
 interface Pending {
   resolve(data: unknown): void
@@ -94,6 +168,8 @@ interface Turn {
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
+  /** A turn that is a `/compact`; `reported` once pi has shown its compaction, which then says how it went. */
+  compaction?: { reported: boolean }
   /** How pi ended the last reply of the turn, and what it said when that was an error. */
   stopReason?: string
   errorMessage?: string
@@ -156,17 +232,23 @@ export function piArgs(args: readonly string[]): string[] {
 
 export class PiWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
+  readonly idleCommands: ReadonlySet<string> = new Set([COMPACT.name])
+  readonly forks = true
   private readonly process: AgentProcess
   private nextId = 0
   private readonly pending = new Map<string, Pending>()
   /** The session file pi runs, which is the session's ID on this wire: pi resumes a session from its file. */
   private sessionId?: string
+  /** pi may be on another session's file, or a copy of it that is not the fork asked for: Latch's must not go on there. */
+  private foreign = false
   private turn?: Turn
   /** pi is running a turn's model calls and tools; an addition is taken only meanwhile. */
   private running = false
   private reply?: Reply
   private replies = 0
   private compactions = 0
+  /** The session pi's own commands were listed for; a new session lists them again. */
+  private listedFor?: string
   private models: PiModel[] = []
   private levels: string[] = []
   private current: { model?: PiModel; thinkingLevel?: string } = {}
@@ -208,6 +290,8 @@ export class PiWire implements AgentWire {
         return this.open(undefined, params, timeoutMs, signal)
       case 'session/resume':
         return this.open(sessionParams.safeParse(params).data?.sessionId ?? '', params, timeoutMs, signal)
+      case FORK_METHOD:
+        return this.fork(params, timeoutMs, signal)
       case 'session/prompt':
         return this.prompt(params)
       case 'session/set_config_option':
@@ -308,16 +392,18 @@ export class PiWire implements AgentWire {
   /** The session pi started with (`resume` undefined), or the one in that file; then what it offers. */
   private async open(resume: string | undefined, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     if (sessionParams.safeParse(params).data?.mcpServers?.length) throw new RpcError(RPC.invalidParams, 'pi takes no MCP servers')
-    // One process runs one session; a second new one must not share the file of the first.
-    if (resume === undefined && this.sessionId) {
+    // One process runs one session; a second new one must not share the file of the first, or of a fork's source.
+    if (resume === undefined && (this.sessionId || this.foreign)) {
       const started = await this.send({ type: 'new_session' }, timeoutMs, signal)
       if (isRecord(started) && started.cancelled === true) throw new RpcError(RPC.internal, 'A pi extension cancelled the new session')
+      this.foreign = false
     }
     if (resume !== undefined && resume !== this.sessionId) {
       if (!isAbsolute(resume) || !resume.endsWith('.jsonl')) throw new RpcError(RPC.notFound, 'Session not found')
       const switched = await this.send({ type: 'switch_session', sessionPath: resume }, timeoutMs, signal)
       if (isRecord(switched) && switched.cancelled === true)
         throw new RpcError(RPC.internal, 'A pi extension cancelled resuming the session')
+      this.foreign = false
     }
     const read = readAs(state, await this.send({ type: 'get_state' }, timeoutMs, signal), 'get_state')
     if (!read.sessionFile) throw new RpcError(RPC.internal, 'pi did not say which file keeps the session')
@@ -334,6 +420,55 @@ export class PiWire implements AgentWire {
     this.current = { ...(read.model ? { model: read.model } : {}), ...(read.thinkingLevel ? { thinkingLevel: read.thinkingLevel } : {}) }
     await this.readLevels(timeoutMs, signal)
     return { sessionId: this.sessionId, configOptions: this.options() }
+  }
+
+  /**
+   * pi's own fork of the source session's file (`FORK_METHOD`): switched to the source, forked at the plan's point, and
+   * opened as this process's session. When pi cannot, or its copy does not end where asked, a `ForkRefused` after pi
+   * has left for a new session of its own; a pi that cannot leave is stopped, so nothing goes on in the source.
+   */
+  private async fork(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    const parsed = forkParams.safeParse(params)
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    if (parsed.data.mcpServers?.length) throw new RpcError(RPC.invalidParams, 'pi takes no MCP servers')
+    if (this.sessionId) throw new ForkRefused('这个进程已经打开了别的会话')
+    const source = parsed.data.sessionId
+    if (!isAbsolute(source) || !source.endsWith('.jsonl')) throw new ForkRefused('来源会话不是它的会话文件')
+    this.foreign = true
+    try {
+      const switched = await this.send({ type: 'switch_session', sessionPath: source }, timeoutMs, signal)
+      if (isRecord(switched) && switched.cancelled === true) throw new ForkRefused('它的扩展取消了打开来源会话')
+      const plan = forkPlan(await this.send({ type: 'get_entries' }, timeoutMs, signal), parsed.data.before)
+      if (typeof plan === 'string') throw new ForkRefused(plan)
+      const forked = await this.send(plan.command, timeoutMs, signal)
+      if (isRecord(forked) && forked.cancelled === true) throw new ForkRefused('它的扩展取消了分叉')
+      const read = readAs(state, await this.send({ type: 'get_state' }, timeoutMs, signal), 'get_state')
+      if (!read.sessionFile || read.sessionFile === source) throw new ForkRefused('它没有为分叉新建会话文件')
+      // pi copies the branch with its entry IDs, so the copy is read from where it was asked to end.
+      const copied = await this.send({ type: 'get_entries', since: plan.keep }, timeoutMs, signal).catch((error: unknown) => {
+        if (error instanceof RpcError && error.code === RPC.internal) return undefined
+        throw error
+      })
+      if (!endsAt(copied, plan.keep)) throw new ForkRefused('分叉出的记录没有停在这一轮')
+    } catch (error) {
+      if (!(error instanceof ConnectionClosed)) await this.leave(timeoutMs, signal)
+      // pi's own refusal of a command, such as an entry it does not know.
+      if (error instanceof RpcError && error.code === RPC.internal) throw new ForkRefused(`它回答「${clip(error.message, 200)}」`)
+      throw error
+    }
+    this.foreign = false
+    return this.open(undefined, { mcpServers: [] }, timeoutMs, signal)
+  }
+
+  /** From the source, or a copy that is not the fork, to a new session of pi's own; a pi that cannot is stopped. */
+  private async leave(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
+    const left = await this.send({ type: 'new_session' }, timeoutMs, signal).catch(() => undefined)
+    if (isRecord(left) && left.cancelled !== true) {
+      this.foreign = false
+      return
+    }
+    void this.process.stop('kill', 0)
+    throw new ConnectionStopping()
   }
 
   /** The levels the current model takes; a pi too old to list them offers the one it runs at. */
@@ -420,12 +555,33 @@ export class PiWire implements AgentWire {
         images.push({ type: 'image', data: block.data, mimeType: block.mimeType })
       else throw new RpcError(RPC.invalidParams, `pi takes no ${clip(block.type, 64)} content`)
     }
+    // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
+    if (this.listedFor !== this.sessionId) {
+      this.listedFor = this.sessionId
+      this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
+    }
+    const compact = images.length ? undefined : compactCommand(texts.join('\n\n'))
     const done = new Promise<unknown>((resolve, reject) => {
-      this.turn = { resolve, reject, cancelled: false }
+      this.turn = { resolve, reject, cancelled: false, ...(compact ? { compaction: { reported: false } } : {}) }
     })
     const turn = this.turn!
     // A process that exits before pi answers the prompt rejects the turn too, and nobody waits on it then.
     done.catch(() => {})
+    if (compact) {
+      // Answered once pi has compacted, failed or been stopped; there is no run to settle.
+      const answered = (error?: unknown): void => {
+        // An exit has already failed the turn.
+        if (this.turn !== turn) return
+        // A compaction pi reported says itself how it ended; a refusal before one is the turn's failure.
+        if (error !== undefined && !turn.compaction!.reported && !turn.cancelled) {
+          turn.stopReason = 'error'
+          turn.errorMessage = error instanceof Error ? error.message : undefined
+        }
+        void this.settle(false)
+      }
+      this.send({ type: 'compact', ...compact }).then(() => answered(), answered)
+      return done
+    }
     let accepted: z.infer<typeof disposition>
     try {
       accepted = disposition.parse(await this.send({ type: 'prompt', message: texts.join('\n\n'), ...(images.length ? { images } : {}) }))
@@ -442,8 +598,10 @@ export class PiWire implements AgentWire {
     const parsed = steerParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
-    if (!this.turn || this.turn.cancelled || !this.running) return { outcome: 'promptRequired' }
     const textOf = parsed.data.prompt.flatMap(block => (block.type === 'text' && block.text !== undefined ? [block.text] : []))
+    // pi would abort the running turn to compact; it runs only between turns, never as text added to one.
+    if (compactCommand(textOf.join('\n\n'))) throw new RpcError(RPC.invalidParams, '/compact runs only between turns')
+    if (!this.turn || this.turn.cancelled || !this.running) return { outcome: 'promptRequired' }
     // pi queues it into the running turn, after the calls in flight and before the model's next request.
     await this.send({ type: 'steer', message: textOf.join('\n\n') }, timeoutMs, signal)
     return { outcome: 'injected' }
@@ -564,11 +722,13 @@ export class PiWire implements AgentWire {
       }
       case 'compaction_start':
         this.reply = undefined
+        if (this.turn?.compaction) this.turn.compaction.reported = true
         this.update({ sessionUpdate: 'compaction_update', compactionId: `compaction-${++this.compactions}`, status: 'in_progress' })
         return
       case 'compaction_end': {
         const result = isRecord(event.result) ? event.result : undefined
-        const failed = typeof event.errorMessage === 'string' ? event.errorMessage : undefined
+        // pi puts its own "Compaction failed: " before the reason, which the row already says.
+        const failed = typeof event.errorMessage === 'string' ? event.errorMessage.replace(/^Compaction failed: /u, '') : undefined
         this.update({
           sessionUpdate: 'compaction_update',
           compactionId: `compaction-${this.compactions}`,
@@ -618,7 +778,8 @@ export class PiWire implements AgentWire {
         this.running = false
         return
       case 'agent_settled':
-        void this.settle(event.aborted === true)
+        // A `/compact` ends with pi's answer to it: there is no run of its own to settle.
+        if (!this.turn?.compaction) void this.settle(event.aborted === true)
         return
       default:
         // Runs, turns, queues and the rest say nothing a session shows.

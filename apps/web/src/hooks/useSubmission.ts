@@ -14,7 +14,6 @@ import {
 import {
   draftStart,
   findHarness,
-  forkedChoice,
   harnessPicks,
   pinnedChoice,
   readChoice,
@@ -25,14 +24,20 @@ import {
   type ComposerChoice,
   type DraftPick,
 } from '../composerChoice.ts'
+import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 
 /**
- * A new session forked from another. `choice`: what it borrows from its source, for this draft only. The source's engine
- * may be one the person never picked here, so it stays out of what this device remembers.
+ * A new session forked from another. `choice`: what it borrows from its source and what the person picks in the draft,
+ * for this draft only; the source's engine may be one the person never picked here, so it stays out of what this device
+ * remembers. `source`: what the source ran with, kept where the draft's Harness offers it.
  */
-export type ForkDraft = NonNullable<PendingSubmission['forkOf']> & { title?: string; choice?: Partial<ComposerChoice> }
+export type ForkDraft = NonNullable<PendingSubmission['forkOf']> & {
+  title?: string
+  choice?: Partial<ComposerChoice>
+  source?: ForkSource
+}
 
 const restoredChoice = (pending: PendingSubmission): Partial<ComposerChoice> => ({
   ...(pending.mode ? { mode: pending.mode } : {}),
@@ -105,28 +110,44 @@ export function useSubmission({
   const start = useMemo(() => draftStart(catalog, stored, draftPick, { legacy, local }), [catalog, stored, draftPick, legacy, local])
   const remembered = useMemo(() => resolveChoice(catalog, start), [catalog, start])
   const borrowed = fork?.choice
-  const choice = useMemo(() => (borrowed ? forkedChoice(catalog, start, borrowed) : remembered), [catalog, start, borrowed, remembered])
+  const forkSource = fork?.source
+  const forked = useMemo(
+    () => (borrowed ? forkedChoice(catalog, start, borrowed, forkSource) : undefined),
+    [catalog, start, borrowed, forkSource],
+  )
+  const choice = forked?.choice ?? remembered
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
   /** Sessions whose next prompt starts a new context, as chosen on this device; nothing is sent until that prompt. */
   const [clearing, setClearing] = useState<ReadonlySet<string>>(() => new Set())
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
+    if (fork?.choice) {
+      const forkPatch = patch
+      setFork(previous => {
+        if (!previous?.choice) return previous
+        // A person picking another place or Harness leaves the source's mode behind, and another Harness takes what
+        // maps from the source afresh: the picks made in this draft were for the one before.
+        const { mode: _source, ...rest } = previous.choice
+        const { config: _config, model: _model, otherPicks: _others, ...place } = rest
+        const moved = forkPatch.harnessId !== undefined && forkPatch.harnessId !== previous.choice.harnessId
+        const base = moved ? place : forkPatch.workspaceId || forkPatch.harnessId ? rest : previous.choice
+        return { ...previous, choice: { ...base, ...forkPatch } }
+      })
+      // What is picked in a fork's draft is for that draft; only a Harness or project chosen in it is remembered.
+      const { config: _config, model: _model, otherPicks: _others, ...remember } = patch
+      if (!Object.keys(remember).length) return
+      patch = remember
+    }
     // A Harness's options are its own: another Harness starts on what was last picked for it, else its defaults.
-    if (patch.harnessId !== undefined && patch.harnessId !== choice.harnessId && !('config' in patch))
-      patch = { ...patch, ...harnessPicks(choice, patch.harnessId) }
-    setFork(previous => {
-      if (!previous?.choice) return previous
-      // A person picking another place or Harness leaves the source's mode behind.
-      const { mode: _source, ...rest } = previous.choice
-      return { ...previous, choice: { ...(patch.workspaceId || patch.harnessId ? rest : previous.choice), ...patch } }
-    })
+    if (patch.harnessId !== undefined && patch.harnessId !== remembered.harnessId && !('config' in patch))
+      patch = { ...patch, ...harnessPicks(remembered, patch.harnessId) }
     if (pinnedChoice(catalog, { legacy, local })) {
       const { harnessId, model, ...rest } = patch
       setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
       const kept = { ...stored, ...rest }
       setStored(kept)
-      writeChoice(deviceId, { ...kept, harnessId: harnessId ?? choice.harnessId, mode: kept.mode ?? remembered.mode })
+      writeChoice(deviceId, { ...kept, harnessId: harnessId ?? remembered.harnessId, mode: kept.mode ?? remembered.mode })
       return
     }
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
@@ -364,6 +385,8 @@ export function useSubmission({
     error,
     setError,
     choice,
+    /** What a fork's draft could not take from its source as it was. */
+    forkMissed: forked?.missed ?? [],
     updateChoice,
     /** The pin just moved, so a pick made before that says nothing about the new one. */
     forgetDraftPick: () => {

@@ -1,6 +1,7 @@
 import { ShieldAlert } from 'lucide-react'
 import { errorMessage } from '../core/api.ts'
 import { projectFor } from '../composerChoice.ts'
+import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
 import { NewSession } from '../newSession/NewSession.tsx'
@@ -86,6 +87,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
       upToMessageId: last.id,
       title: current.summary.title,
       choice: forkChoice(),
+      source: forkSource(current, harnessInfo),
     })
     submission.setDraft(draft)
     if (phone) setNewSheet(true)
@@ -166,6 +168,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                                 upToMessageId,
                                 title: current.summary.title,
                                 choice: forkChoice(),
+                                source: forkSource(current, harnessInfo),
                               })
                               choose(null)
                               submission.setDraft(draft)

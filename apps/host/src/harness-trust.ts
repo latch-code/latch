@@ -58,6 +58,7 @@ export function harnessFacts(declared: HarnessDeclaration | undefined, name: str
     },
     tools: { shell: kind !== 'builtin' || declared?.tools?.shell !== false, fileMentions: declared?.tools?.fileMentions === true },
     display: { label: label(declared?.display?.label, name, kind), ...(shown ? { mark: shown } : {}) },
+    ...(declared?.fork === 'native' ? { fork: 'native' as const } : {}),
   }
 }
 

@@ -17,6 +17,7 @@ import {
   liveMessageId,
   outcomeWords,
   renderedMessages,
+  resendText,
   resendWarning,
   runEndLine,
   sameData,
@@ -310,6 +311,7 @@ const TurnView = memo(function TurnView({
           message={turn.user}
           coarse={rowContext.coarse}
           arrived={arrived}
+          harness={harnessName}
           {...(delivery ? { delivery } : {})}
           {...(onEdit ? { onEdit } : {})}
         />
@@ -626,7 +628,7 @@ export function Transcript({
                 ? {
                     warning: resendWarning(sideEffects(turn)),
                     onResend: () => {
-                      retry.onResend(splitChangeNote(turn.user!.text).text)
+                      retry.onResend(resendText(turn.user!))
                     },
                   }
                 : undefined

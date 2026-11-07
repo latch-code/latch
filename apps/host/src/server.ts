@@ -4774,6 +4774,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const task: HubCreateInput = {
           prompt,
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
+          // A harness that forks its own record does so only for its own sessions; the text record stays in the prompt
+          // for when it cannot.
+          ...(fork && harness.capabilities.fork === 'native' && fork.source.harnessId === harnessId
+            ? { fork: { taskId: fork.context.taskId, upToMessageId: fork.context.upToMessageId, prefixLength: fork.context.prefixLength } }
+            : {}),
           ...(fileRefs.length ? { fileRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
           requestId: personal ? sha256Hex(canonicalJson(['personal-session', caller.device.id, input.requestId])) : input.requestId,
@@ -5196,6 +5201,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (personalOwner && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
         if (input.freshContext && (personalOwner || !(await hub!.detail(id)).clearContext))
           throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
+        const named = (input.queue || input.steer) && /^\/(\S+)/u.exec(input.prompt)?.[1]
+        if (named && (await hub!.detail(id)).commands?.some(command => command.idleOnly && command.name === named))
+          throw new AppError(409, 'command-queued', `/${named} 不能排队或追加，请等本轮结束后发送。`)
         if (input.steer && !input.model && !personalOwner && input.prompt) {
           recheck(caller, 'run')
           if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') {

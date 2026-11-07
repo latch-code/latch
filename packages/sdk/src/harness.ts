@@ -140,6 +140,7 @@ export interface HarnessDeclaration {
   permission?: Partial<HarnessCapabilities['permission']>
   tools?: Partial<HarnessCapabilities['tools']>
   display?: Partial<HarnessCapabilities['display']>
+  fork?: HarnessCapabilities['fork']
 }
 
 /** A complete harness implementation. This is distinct from a model API adapter. */

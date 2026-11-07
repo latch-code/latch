@@ -320,7 +320,7 @@ iOS 客户端把超时的读取当作 Mac 暂时连不上：列表横幅说明�
 
 ### 输入身份与分叉上下文
 
-Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它，客户端据此关联重试和发送中的气泡。Host 为分叉首条消息补充可选 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入；正文仍完整发送给 Harness。折叠只是显示方式，复制消息保留完整正文。旧 Host 不带这些字段时沿用原有显示。
+Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它，客户端据此关联重试和发送中的气泡。Host 为分叉首条消息补充可选 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入；正文仍完整发送给 Harness，只有消息带 `nativeFork` 时例外：Harness 用自己的记录分叉了，开头的上下文没有发给它（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)）。重试这一轮时页面同样处理：带 `nativeFork` 的只重发新输入；其余的连同上下文一起重发，因为第一轮失败时上下文可能还没有到达 Harness。折叠只是显示方式，复制消息保留完整正文。旧 Host 不带这些字段时沿用原有显示。
 
 ### 清空上下文
 

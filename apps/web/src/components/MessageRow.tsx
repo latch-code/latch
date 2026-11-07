@@ -152,12 +152,14 @@ function UserMessage({
   coarse,
   arrived,
   delivery,
+  harness,
   onEdit,
 }: {
   message: Message
   coarse: boolean
   arrived: boolean
   delivery?: string
+  harness?: string
   onEdit?: (message: Message) => void
 }) {
   const at = parseTime(message.createdAt)
@@ -204,7 +206,15 @@ function UserMessage({
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
           <div className="user-bubble-text" ref={bubble}>
-            {message.forkContext && (
+            {message.forkContext && message.nativeFork && (
+              // The harness forked its own record: the text record was not sent, so there is none to show.
+              <p className="fork-context">
+                {harness ?? 'Harness'} 自己带着会话「
+                <VisibleText text={message.forkContext.title} />
+                」到第 {message.forkContext.turn} 轮为止的记录
+              </p>
+            )}
+            {message.forkContext && !message.nativeFork && (
               <details className="fork-context">
                 <summary>
                   以下是会话「
@@ -290,6 +300,7 @@ export const MessageRow = memo(
     coarse = false,
     arrived = false,
     delivery,
+    harness,
     onEdit,
     onRetry,
   }: {
@@ -303,13 +314,15 @@ export const MessageRow = memo(
     arrived?: boolean
     /** How far this prompt has got, while the agent has not answered. */
     delivery?: string
+    /** The session's Harness by name, for what its first prompt says about a fork. */
+    harness?: string
     /** Forks before this prompt with its text in the composer. */
     onEdit?: (message: Message) => void
     /** Resends the turn, from a failed note. */
     onRetry?: () => void
   }) {
     if (message.role === 'user')
-      return <UserMessage message={message} coarse={coarse} arrived={arrived} delivery={delivery} onEdit={onEdit} />
+      return <UserMessage message={message} coarse={coarse} arrived={arrived} delivery={delivery} harness={harness} onEdit={onEdit} />
     if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} />
     return (
       <article
@@ -331,11 +344,13 @@ export const MessageRow = memo(
     && a.coarse === b.coarse
     && a.arrived === b.arrived
     && a.delivery === b.delivery
+    && a.harness === b.harness
     && a.onEdit === b.onEdit
     && a.onRetry === b.onRetry
     && a.message.id === b.message.id
     && a.message.text === b.message.text
     && a.message.forkContext === b.message.forkContext
+    && a.message.nativeFork === b.message.nativeFork
     && a.message.state === b.message.state
     && a.message.role === b.message.role
     && a.message.createdAt === b.message.createdAt

@@ -99,6 +99,11 @@ export interface HarnessCapabilities {
     /** A key of the client's fixed set of icons, not a URL or an image. Absent: the neutral agent glyph. */
     mark?: string
   }
+  /**
+   * `native`: a fork of one of its own sessions into a new one of it, in the same folder, carries the harness's own
+   * record of the source up to that turn; where it cannot, the Host's text record does. Absent: always the text record.
+   */
+  fork?: 'native'
 }
 
 /**
@@ -123,6 +128,11 @@ export interface HarnessCatalogue {
 export interface CatalogueRead {
   /** `select`: a draft that selects the harness while it has no list reads it once by itself. `request`: only when asked. */
   when: 'select' | 'request'
+  /**
+   * The read reports the modes a session starts with, so a draft can offer them. False: it lists models only, and the
+   * modes come with the first session.
+   */
+  modes: boolean
   running?: true
   /** The last read of the current definition. Absent: none, so a `select` harness reads on its next selection. */
   last?: { at: string; ok: boolean; message?: string }

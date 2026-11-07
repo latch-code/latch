@@ -67,6 +67,12 @@ export interface AcpRecord {
   contextCleared?: true
   /** The agent's sessions from before each new context, which removing the task deletes too. */
   earlierSessionIds?: string[]
+  /**
+   * A fork of another session of this driver (`CreateTaskInput.fork`): tried as the agent's own fork when the session
+   * first opens, and dropped when it cannot be, so the first prompt sends the Host's text record. `native` once the
+   * agent forked, from then on the first prompt leaves the text record out.
+   */
+  fork?: { taskId: string; upToMessageId: string; prefixLength: number; native?: true }
 }
 
 export interface StartChoice {
@@ -200,6 +206,7 @@ const message = z.object({
   queuedAt: z.string().optional(),
   steered: z.literal(true).optional(),
   freshContext: z.literal(true).optional(),
+  nativeFork: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -293,6 +300,7 @@ const stateSchema = z.object({
             name: z.string().min(1).max(100),
             description: z.string().max(1000).optional(),
             inputHint: z.string().max(500).optional(),
+            idleOnly: z.literal(true).optional(),
           }),
         )
         .max(200)
@@ -340,6 +348,14 @@ const stateSchema = z.object({
         routeModelSet: z.literal(true).optional(),
         contextCleared: z.literal(true).optional(),
         earlierSessionIds: z.array(z.string()).optional(),
+        fork: z
+          .object({
+            taskId: z.string(),
+            upToMessageId: z.string(),
+            prefixLength: z.number().int().nonnegative(),
+            native: z.literal(true).optional(),
+          })
+          .optional(),
       }),
     }),
   ),

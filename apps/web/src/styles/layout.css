@@ -650,6 +650,12 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .new-session-question > span:first-child {
   white-space: nowrap;
 }
+/* How a fork carries its source, and what it could not take from it: each on its own line under the fork's sentence. */
+.fork-own,
+.fork-missed {
+  display: block;
+  margin-top: var(--sp-4);
+}
 /* The list of what to install is tall: the page starts higher, so the input is not left below the window. */
 .new-session-inner:has(.harness-install) {
   padding-top: var(--sp-48);
