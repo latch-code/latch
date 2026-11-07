@@ -187,14 +187,10 @@ export interface AgentRecord {
   probedDefinitionHash?: string
 }
 
-/**
- * Result of resolving a command on the Host's PATH and install directories; with a preset that names a companion (the
- * agent an adapter connects to), whether that was found too. Older Hosts send no `companion`.
- */
+/** Result of resolving a command on the Host's PATH and install directories. */
 export interface CommandDetection {
   found: boolean
   path?: string
-  companion?: { command: string; found: boolean }
   /** Display only, see `AgentPreset.agentCommand`. */
   agent?: { command: string; found: boolean }
 }

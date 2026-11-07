@@ -4,7 +4,8 @@ import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
-import { AgentConnection, ConnectionClosed } from './connection.ts'
+import { openWire, wireArgs } from './wires/index.ts'
+import { ConnectionClosed } from './wires/process.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
@@ -54,7 +55,7 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
   return {
     command,
     cwd,
-    args: [...agent.args],
+    args: [...agent.args, ...wireArgs(profile?.wire)],
     envNames: Object.keys(env).sort(),
     definitionEnvNames: Object.keys(agent.env).sort(),
     launchHash: hash,
@@ -92,7 +93,8 @@ export async function probeAgent(
   const final = await agentProbePreview(agent, options)
   if (final.launchHash !== preview.launchHash || options.signal?.aborted)
     throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
-  const connection = AgentConnection.spawn(
+  const connection = openWire(
+    profile?.wire,
     {
       command: final.command,
       args: [...agent.args],

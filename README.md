@@ -8,7 +8,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 
 每个会话可以组合：
 
-- **Harness**：Latch 内置的执行循环（ID `standard`），或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的本机 Agent：开源的 Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
+- **Harness**：Latch 内置的执行循环（ID `standard`），或接入的本机 Agent：经 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）的开源 Codex、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，经 pi 自己的 RPC 模式的 pi，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
 - **模型**：用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务，会话中可切换。
 - **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
@@ -25,7 +25,7 @@ Latch 用 Harness 自己的登录，不需要 API 密钥。在这台 Mac 上装�
 | Harness | 安装 | 登录与模型 |
 | --- | --- | --- |
 | Codex | 先装 Codex，再 `npm i -g @agentclientprotocol/codex-acp`（让 Latch 连接它的适配器） | `codex login` |
-| pi | 先装 pi，再 `npm i -g pi-acp`（让 Latch 连接它的适配器） | 在 pi 里配置 |
+| pi | `npm i -g @earendil-works/pi-coding-agent`（0.84.4 或更高版本） | 运行 `pi`，输入 `/login` |
 | OpenCode | `npm i -g opencode-ai` | `opencode auth login` |
 | DeepSeek Harness | `npm i -g @deepseek-ai/dsh`（0.2.1-rc.2 或更高版本） | 在 DeepSeek Harness 里配置 |
 | Gemini CLI | `npm i -g @google/gemini-cli` | 运行 `gemini` 按提示登录 |
@@ -153,14 +153,14 @@ pnpm desktop -- --tailnet \
 
 - 在运行 Host 的电脑上安装并登录 Agent，新会话找到预设的命令后就能选，第一次发送时保存定义；自定义命令在「设置 → Harness」填写并保存，有管理权限的设备都能改，每次改动都有记录。Latch 不下载、不安装 Agent，也不代为登录。
 - 发送就开始。这个启动内容第一次运行时，会话最上面说一次它能做什么；每次启动都记入审计（命令、项目配置与第一条输入的哈希）。定义或这些配置变了时，已有会话停止接受输入，换新会话继续。
-- 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
+- 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批，只有 pi 扩展要求确认时才会问你。
 - Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
 - 任何 L3 会话运行或等待审批时，所有本机确认都会被拒绝：桌面端写出是哪个会话，可以查看或停止它，结束后再试。这样 Agent 借不到你的确认。
 
 | 预设 | 启动命令 | 许可证 |
 | --- | --- | --- |
 | [Codex](https://github.com/agentclientprotocol/codex-acp) | `codex-acp` | Apache-2.0 |
-| [pi](https://github.com/svkozak/pi-acp) | `pi-acp` | MIT |
+| [pi](https://github.com/earendil-works/pi) | `pi --mode rpc` | MIT |
 | [OpenCode](https://github.com/anomalyco/opencode) | `opencode acp` | MIT |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh --profile acp` | MIT |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp --approval-mode default` | Apache-2.0 |

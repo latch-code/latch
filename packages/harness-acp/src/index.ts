@@ -1,7 +1,7 @@
 import { basename, isAbsolute } from 'node:path'
 import { AGENT_PRESETS, isHarnessMark, type AgentPreset, type HarnessCapabilities, type HarnessInfo } from '@latch/protocol'
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
-import { AcpBridge, CLIENT_VERSION } from './bridge.ts'
+import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
 import { resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
 import { selectProfile, validateAgentDefinition } from './permission.ts'
@@ -26,22 +26,14 @@ export function forgetCommandLookups(): void {
 }
 
 /**
- * What is missing for an agent to start, in words, or undefined when nothing is: the command, or with an adapter
- * preset the adapter, the agent it connects to, or both.
+ * What is missing for an agent to start, in words, or undefined when nothing is: the command, or for an adapter whose
+ * program is installed, only the adapter.
  */
 function missingParts(command: string, found: boolean, preset: AgentPreset | undefined): string | undefined {
-  const companion = preset?.companion
-  if (!companion) {
-    if (found) return undefined
-    return preset?.agentCommand && resolveCommand(preset.agentCommand) !== undefined
-      ? `已安装 ${preset.agentCommand}，还差让 Latch 连接它的适配器 ${command}`
-      : `未找到命令 ${command}`
-  }
-  const agent = resolveCommand(companion) !== undefined
-  if (found && agent) return undefined
-  if (found) return `已找到适配器 ${command}，还没找到 ${companion}`
-  if (agent) return `已安装 ${companion}，还差让 Latch 连接它的适配器 ${command}`
-  return `未找到 ${companion} 和它的适配器 ${command}`
+  if (found) return undefined
+  return preset?.agentCommand && resolveCommand(preset.agentCommand) !== undefined
+    ? `已安装 ${preset.agentCommand}，还差让 Latch 连接它的适配器 ${command}`
+    : `未找到命令 ${command}`
 }
 
 /** Short form for pickers; the full command stays in the agent settings. */
@@ -120,7 +112,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
   if (!validation.ok) throw validation.error
   const limits = resolveOptions(options)
   const record: AgentRecord = structuredClone(agent)
-  const description = `通过 ACP 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
+  const protocol = selectProfile(record).profile?.wire === 'pi' ? 'pi 的 RPC 模式' : 'ACP'
+  const description = `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
   return {
     id: `agent-${record.id}`,
     name: record.name,
@@ -128,7 +121,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
     description,
     activate(context) {
       const health = new AgentHealth()
-      const bridges = new Set<AcpBridge>()
+      const bridges = new Set<AgentRuntime>()
       let lookup: { at: number; epoch: number; path?: string } | undefined
       const located = (): string | undefined => {
         const at = Date.now()
@@ -159,7 +152,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           return health.lastError ? { status: 'ready', statusMessage: `上次运行异常：${health.lastError}` } : { status: 'ready' }
         },
         create(hostOptions) {
-          const bridge: AcpBridge = new AcpBridge(record, hostOptions, health, limits, () => bridges.delete(bridge))
+          const bridge: AgentRuntime = new AgentRuntime(record, hostOptions, health, limits, () => bridges.delete(bridge))
           bridges.add(bridge)
           return bridge
         },

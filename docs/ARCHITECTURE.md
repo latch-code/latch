@@ -56,7 +56,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | Standard | 模型循环、审批、取消、消息与幂等记录 | `packages/core/src/runtime.ts`、`store.ts` |
 | Node 工具 | Host 与 Harness 共用：`canonicalJson` 与 `sha256Hex`、原子写入 `writeFileAtomic`、日志脱敏 `redactSecrets` | `packages/core/src/node-kit/` |
 | 内置插件 | 每个插件一个目录 `<种类>/<id>/`：Chat Completions、Responses、Anthropic Messages 与 Gemini 四种模型协议（共用 `providers/http.ts` 与插件工厂 `providers/service.ts`，协议编码、流解码、用量与模型列表在 `providers/{chat,responses,anthropic,gemini}-wire.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,openai-responses,anthropic,gemini,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
-| ACP Driver | 外部 Agent 的进程、协议、映射、权限配置、启动指纹与存储 | `packages/harness-acp/src`（权限配置在 `profiles/`） |
+| ACP Driver | 外部 Agent 的进程、协议、映射、权限配置、启动指纹与存储 | `packages/harness-acp/src`（会话在 `runtime.ts`，进程与协议在 `wires/`，权限配置在 `profiles/`） |
 | 预设 | 浏览器可用的模型服务与 Agent 预设 | `packages/protocol/src/presets.ts`、`agent-presets.ts` |
 | 命令行 | 启动、停止、设备管理、离线连接、密钥、本机确认组件、审计校验、流量计数 | `apps/host/scripts/start.ts`、`stop.ts`、`latch.ts` |
 | 测试辅助 | 只供测试：Host 夹具、测试确认后端、共享安全向量、假 ACP Agent、测试证书 | `packages/testkit`；Host 的绑定在 `apps/host/test/helpers/host.ts`、`e2e/helpers/host.ts` 与 `apps/desktop/test/helpers/host.ts` |

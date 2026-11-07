@@ -4,7 +4,7 @@
  */
 import { z } from 'zod'
 import type { SessionConfigOption } from '@latch/protocol'
-import { AgentConnection } from './connection.ts'
+import { AcpWire } from './wires/acp.ts'
 import { clip } from './mapping.ts'
 import { RPC, RpcError } from './protocol.ts'
 
@@ -94,7 +94,7 @@ export async function readCodexModels(
   spec: { command: string; args: readonly string[]; cwd: string; env: Record<string, string>; redact: (text: string) => string },
   options: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<CodexModels> {
-  const connection = AgentConnection.spawn(
+  const connection = AcpWire.spawn(
     { command: spec.command, args: [...spec.args], cwd: spec.cwd, env: spec.env, maxLineBytes: 4 * 1024 * 1024, redact: spec.redact },
     {
       request: async () => {

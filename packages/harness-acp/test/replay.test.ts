@@ -12,16 +12,40 @@ afterEach(async () => {
   forgetCommandLookups()
 })
 
+const pi = (transcript: Transcript) => transcript.header.protocol === 'pi-rpc'
 const inbound = (transcript: Transcript, kind: string): Array<Record<string, unknown>> =>
   transcript.entries.flatMap((entry: ReplayEntry) => {
     if (entry.type !== 'emit_inbound' || entry.frame.method !== 'session/update') return []
     const update = (entry.frame.params as { update: Record<string, unknown> }).update
     return update.sessionUpdate === kind ? [update] : []
   })
+/** pi's pieces of each reply, in order: `text_delta` or `thinking_delta`. */
+const piDeltas = (transcript: Transcript, type: string): string[][] => {
+  const replies: string[][] = []
+  for (const entry of transcript.entries) {
+    if (entry.type !== 'emit_inbound') continue
+    const params = (entry.frame.params ?? {}) as { message?: { role?: string }; assistantMessageEvent?: { type?: string; delta?: string } }
+    if (entry.frame.method === 'message_start' && params.message?.role === 'assistant') replies.push([])
+    if (entry.frame.method === 'message_update' && params.assistantMessageEvent?.type === type)
+      replies.at(-1)!.push(params.assistantMessageEvent.delta ?? '')
+  }
+  return replies
+}
 const chunkText = (transcript: Transcript, kind: string) =>
-  inbound(transcript, kind)
-    .map(update => (update.content as { text?: string }).text ?? '')
-    .join('')
+  pi(transcript)
+    ? piDeltas(transcript, kind === 'agent_message_chunk' ? 'text_delta' : 'thinking_delta')
+        .flat()
+        .join('')
+    : inbound(transcript, kind)
+        .map(update => (update.content as { text?: string }).text ?? '')
+        .join('')
+/** The text of each reply the agent wrote, as a person reads them. */
+const replies = (transcript: Transcript) =>
+  pi(transcript)
+    ? piDeltas(transcript, 'text_delta')
+        .map(pieces => pieces.join(''))
+        .filter(Boolean)
+    : inbound(transcript, 'agent_message_chunk').map(update => (update.content as { text: string }).text)
 /** Where each process begins: the first entry, and the one after each exit. */
 const starts = (transcript: Transcript) => [
   0,
@@ -111,9 +135,35 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
   },
   resume(detail, transcript) {
     expect(detail.summary.status).toBe('idle')
-    expect(assistants(detail).map(message => message.text)).toEqual(
-      inbound(transcript, 'agent_message_chunk').map(update => (update.content as { text: string }).text),
-    )
+    expect(assistants(detail).map(message => message.text)).toEqual(replies(transcript))
+  },
+  // Text added while a call runs is the person's, in the turn, before the reply that follows it.
+  steer(detail, transcript) {
+    expect(detail.summary.status).toBe('idle')
+    const added = detail.messages.findIndex(message => message.role === 'user' && message.steered)
+    expect(detail.messages[added]).toMatchObject({ text: 'Also update the README' })
+    expect(tools(detail).every(message => message.state === 'completed')).toBe(true)
+    expect(detail.messages.findLastIndex(message => message.role === 'assistant')).toBeGreaterThan(added)
+    expect(assistants(detail).at(-1)!.text).toBe(replies(transcript).at(-1))
+    expect(system(detail)).toEqual([])
+  },
+  // A question from one of the harness's extensions is the person's to answer, like a permission request.
+  extension_confirm(detail) {
+    expect(detail.summary.status).toBe('idle')
+    const asked = tools(detail).find(message => message.tool?.decision)
+    expect(asked).toMatchObject({ state: 'completed', tool: { decision: { outcome: 'allowed' } } })
+    expect(tools(detail).every(message => message.state === 'completed')).toBe(true)
+    // pi asked through an extension, so what Latch says of pi's approvals must leave room for that.
+    expect(detail.permission?.notes).toEqual(['pi 执行工具前不请求审批，只有扩展要求确认时才会问你'])
+  },
+  model_switch(detail) {
+    expect(detail.summary.status).toBe('idle')
+    const model = detail.config?.find(option => option.category === 'model')
+    expect(model?.currentValue).toBe('openai/gpt-5.5')
+    expect(detail.summary.model).toBe('GPT-5.5')
+    // What the new model thinks with, as pi lists it for that model.
+    expect(detail.config?.find(option => option.category === 'thought_level')?.options.map(option => option.value)).toContain('xhigh')
+    expect(assistants(detail)).toHaveLength(2)
   },
   process_exit_mid_turn(detail) {
     expect(detail.summary.status).toBe('failed')
@@ -148,7 +198,13 @@ describe('replaying each harness', () => {
     expect(new Set(fixtures.map(fixture => fixture.harness))).toEqual(new Set(AGENT_PRESETS.map(preset => preset.id)))
     for (const fixture of fixtures) {
       const { header } = readTranscript(fixture.path)
-      expect(header).toMatchObject({ harness: fixture.harness, scenario: fixture.scenario, protocol: 'acp', version: 1 })
+      // pi has no adapter: its transcripts are in its own RPC.
+      expect(header).toMatchObject({
+        harness: fixture.harness,
+        scenario: fixture.scenario,
+        protocol: fixture.harness === 'pi' ? 'pi-rpc' : 'acp',
+        version: 1,
+      })
       expect(['hand-written', 'recorded']).toContain(header.source)
       expect(header.basis.length).toBeGreaterThan(0)
       expect(SCENARIOS[fixture.scenario], `no expectations for ${fixture.scenario}`).toBeDefined()
@@ -168,14 +224,11 @@ describe('replaying each harness', () => {
       // One process per run of the agent the transcript holds; a test that started more found something it did not expect.
       expect(status!.starts.map(start => start.at)).toEqual(starts(transcript))
       for (const start of status!.starts) {
-        expect(start.argv).toEqual([])
-        for (const name of ['CODEX_PATH', 'PI_ACP_PI_COMMAND']) {
-          const value = start.env[name]
-          if (value !== null) expect(value.startsWith(`${bin}/`)).toBe(true)
-        }
+        expect(start.argv).toEqual(fixture.harness === 'pi' ? ['--mode', 'rpc'] : [])
+        const value = start.env.CODEX_PATH
+        if (value !== null) expect(value.startsWith(`${bin}/`)).toBe(true)
       }
       if (fixture.harness === 'codex') expect(status!.starts[0]!.env.CODEX_PATH).toBe(join(bin, 'codex'))
-      if (fixture.harness === 'pi') expect(status!.starts[0]!.env.PI_ACP_PI_COMMAND).toBe(join(bin, 'pi'))
       SCENARIOS[fixture.scenario]!(detail, transcript)
     })
   }

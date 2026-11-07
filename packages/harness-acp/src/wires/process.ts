@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { RPC, RpcError, type RpcId } from './protocol.ts'
 
 export interface ExitInfo {
   code: number | null
@@ -36,14 +35,6 @@ export class RequestTimeout extends Error {
   }
 }
 
-export interface ConnectionHandlers {
-  /** Agent-to-client request. The returned value or error is always sent back. */
-  request(method: string, params: unknown, id: RpcId): Promise<unknown>
-  notification(method: string, params: unknown): void
-  /** Called once, after pending requests were rejected. */
-  exit(info: ExitInfo): void
-}
-
 export interface SpawnSpec {
   command: string
   args: string[]
@@ -53,10 +44,11 @@ export interface SpawnSpec {
   redact(text: string): string
 }
 
-interface Pending {
-  resolve(value: unknown): void
-  reject(error: Error): void
-  cleanup(): void
+/** What a wire reads from its process: one JSON object per line, then the end of the process. */
+export interface ProcessEvents {
+  record(message: Record<string, unknown>): void
+  /** Called once, before `exited` resolves. */
+  closed(info: ExitInfo): void
 }
 
 const STDERR_LIMIT = 64 * 1024
@@ -65,24 +57,16 @@ const WRITE_QUEUE_LIMIT = 64 * 1024 * 1024
 /** After the leader exits, a grandchild could hold the pipes open; stop waiting for them. */
 const CLOSE_FALLBACK_MS = 2_000
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function rpcError(error: unknown): { code: number; message: string; data?: unknown } {
-  if (error instanceof RpcError)
-    return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
-  return { code: RPC.internal, message: 'Internal error' }
-}
-
-/** One agent process speaking newline-delimited JSON-RPC 2.0 over stdio. */
-export class AgentConnection {
+/** One agent process exchanging newline-delimited JSON objects over stdio, whatever protocol they carry. */
+export class AgentProcess {
   readonly exited: Promise<ExitInfo>
-  /** Lines on stdout that were not JSON-RPC messages. */
+  /** Lines on stdout that were not messages of the protocol. */
   noise = 0
   private resolveExited!: (info: ExitInfo) => void
-  private nextId = 0
-  private readonly pending = new Map<RpcId, Pending>()
   private parts: Buffer[] = []
   private partLength = 0
   private stderr: Buffer[] = []
@@ -103,7 +87,7 @@ export class AgentConnection {
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly spec: SpawnSpec,
-    private readonly handlers: ConnectionHandlers,
+    private readonly events: ProcessEvents,
   ) {
     this.exited = new Promise(resolve => {
       this.resolveExited = resolve
@@ -119,7 +103,7 @@ export class AgentConnection {
   }
 
   /** Throws only for invalid arguments; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, handlers: ConnectionHandlers): AgentConnection {
+  static spawn(spec: SpawnSpec, events: ProcessEvents): AgentProcess {
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env,
@@ -128,11 +112,15 @@ export class AgentConnection {
       detached: process.platform !== 'win32',
       windowsHide: true,
     })
-    return new AgentConnection(child, spec, handlers)
+    return new AgentProcess(child, spec, events)
   }
 
   get closed(): boolean {
     return this.info !== undefined
+  }
+  /** The exit, once the process is gone. */
+  get exit(): ExitInfo | undefined {
+    return this.info
   }
   /** Exited, being stopped, or no longer accepting input: hand no new work to it. */
   get stopping(): boolean {
@@ -142,38 +130,19 @@ export class AgentConnection {
     return this.child.pid
   }
 
-  /** A timeout or an aborted `signal` withdraws the request with `$/cancel_request`; a late reply is dropped. */
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
-    if (this.info) return Promise.reject(new ConnectionClosed(this.info))
-    // Once stdin ends the line would be dropped silently and the caller would wait for the exit instead.
-    if (this.stopping) return Promise.reject(new ConnectionStopping())
-    if (signal?.aborted) return Promise.reject(new RpcError(RPC.cancelled, 'Request cancelled'))
-    const id = this.nextId++
-    return new Promise((resolve, reject) => {
-      let timer: NodeJS.Timeout | undefined
-      const withdraw = (error: Error): void => {
-        if (!this.pending.delete(id)) return
-        cleanup()
-        this.notify('$/cancel_request', { requestId: id })
-        reject(error)
-      }
-      const onAbort = (): void => withdraw(new RpcError(RPC.cancelled, 'Request cancelled'))
-      const cleanup = (): void => {
-        clearTimeout(timer)
-        signal?.removeEventListener('abort', onAbort)
-      }
-      if (timeoutMs) {
-        timer = setTimeout(() => withdraw(new RequestTimeout(method)), timeoutMs)
-        timer.unref()
-      }
-      signal?.addEventListener('abort', onAbort, { once: true })
-      this.pending.set(id, { resolve, reject, cleanup })
-      this.write({ jsonrpc: '2.0', id, method, params })
-    })
-  }
-
-  notify(method: string, params: unknown): void {
-    this.write({ jsonrpc: '2.0', method, params })
+  write(message: unknown): void {
+    if (this.info || this.child.stdin.destroyed || this.child.stdin.writableEnded) return
+    // Agents that read with line splitters treating U+2028/U+2029 as breaks would otherwise see a torn message.
+    const line = `${JSON.stringify(message)
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029')}\n`
+    if (this.blocked) {
+      this.queue.push(line)
+      this.queued += line.length
+      if (this.queued > WRITE_QUEUE_LIMIT) void this.stop('kill', 0)
+      return
+    }
+    this.blocked = !this.child.stdin.write(line)
   }
 
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
@@ -228,21 +197,6 @@ export class AgentConnection {
     }
   }
 
-  private write(message: unknown): void {
-    if (this.info || this.child.stdin.destroyed || this.child.stdin.writableEnded) return
-    // Agents that read with line splitters treating U+2028/U+2029 as breaks would otherwise see a torn message.
-    const line = `${JSON.stringify(message)
-      .replace(/\u2028/g, '\\u2028')
-      .replace(/\u2029/g, '\\u2029')}\n`
-    if (this.blocked) {
-      this.queue.push(line)
-      this.queued += line.length
-      if (this.queued > WRITE_QUEUE_LIMIT) void this.stop('kill', 0)
-      return
-    }
-    this.blocked = !this.child.stdin.write(line)
-  }
-
   private onDrain(): void {
     this.blocked = false
     while (!this.blocked && this.queue.length) {
@@ -295,47 +249,7 @@ export class AgentConnection {
       this.noise++
       return
     }
-    const id = message.id
-    // Request IDs from the two directions overlap, so the presence of `method` decides the direction.
-    if (typeof message.method === 'string') {
-      const method = message.method
-      if (id === undefined || id === null) {
-        try {
-          this.handlers.notification(method, message.params)
-        } catch {
-          this.noise++
-        }
-        return
-      }
-      if (typeof id !== 'string' && typeof id !== 'number') {
-        this.noise++
-        return
-      }
-      let reply: Promise<unknown>
-      try {
-        reply = this.handlers.request(method, message.params, id)
-      } catch (error) {
-        reply = Promise.reject(error)
-      }
-      reply.then(
-        result => this.write({ jsonrpc: '2.0', id, result: result ?? {} }),
-        error => this.write({ jsonrpc: '2.0', id, error: rpcError(error) }),
-      )
-      return
-    }
-    if (typeof id !== 'string' && typeof id !== 'number') {
-      this.noise++
-      return
-    }
-    const entry = this.pending.get(id)
-    if (!entry) return
-    this.pending.delete(id)
-    entry.cleanup()
-    if (isRecord(message.error)) {
-      const code = typeof message.error.code === 'number' ? message.error.code : RPC.internal
-      const text = typeof message.error.message === 'string' ? message.error.message : 'Agent error'
-      entry.reject(new RpcError(code, text.slice(0, 4000), message.error.data))
-    } else entry.resolve(message.result)
+    this.events.record(message)
   }
 
   private onStderr(chunk: Buffer): void {
@@ -385,18 +299,12 @@ export class AgentConnection {
       ...(this.cause ? { cause: this.cause } : {}),
       ...(this.spawnError ? { error: this.spawnError } : {}),
     }
-    const closed = new ConnectionClosed(this.info)
-    for (const entry of this.pending.values()) {
-      entry.cleanup()
-      entry.reject(closed)
-    }
-    this.pending.clear()
     this.queue = []
     this.queued = 0
     this.stderr = []
     this.stderrLength = 0
     try {
-      this.handlers.exit(this.info)
+      this.events.closed(this.info)
     } finally {
       this.resolveExited(this.info)
     }

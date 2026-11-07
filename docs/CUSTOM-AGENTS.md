@@ -10,7 +10,7 @@ sources:
   - packages/protocol/src/custom-agents.ts
   - packages/core/src/runtime.ts
   - packages/core/src/registry.ts
-  - packages/harness-acp/src/bridge.ts
+  - packages/harness-acp/src/runtime.ts
   - packages/harness-acp/src/skills-server.ts
 ---
 # 我的 Agent

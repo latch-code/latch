@@ -502,6 +502,6 @@ export interface SessionPermission {
   /** Latch's word for each of the harness's own modes it knows; a mode left out shows under the harness's own name. */
   modeTiers?: Record<string, ModeTier>
   drift?: { at: string; observed: string }
-  /** Display-only Chinese notes, e.g. 'pi 执行工具前不请求审批'. */
+  /** Display-only Chinese notes on how far the harness's own permissions go. */
   notes: string[]
 }

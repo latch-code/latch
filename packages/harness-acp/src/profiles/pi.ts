@@ -2,14 +2,14 @@ import type { HarnessProfile } from './types.ts'
 
 export const piProfile: HarnessProfile = {
   presetId: 'pi',
-  version: 1,
+  version: 2,
+  wire: 'pi',
   permission: {
     approvals: 'none',
     defaultEnv: {},
     readback: 'none',
     inheritEnv: ['PI_CODING_AGENT_DIR'],
-    programEnv: { PI_ACP_PI_COMMAND: 'pi' },
-    notes: ['pi 执行工具前不请求审批'],
+    notes: ['pi 执行工具前不请求审批，只有扩展要求确认时才会问你'],
   },
   // pi has no other folders to receive and does not limit the paths its tools use.
   folderAccess: 'primary-unbounded',

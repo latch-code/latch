@@ -61,7 +61,7 @@ export async function openBridge(
 export async function fakePrograms(bin: string, marks: string): Promise<void> {
   await mkdir(bin, { recursive: true })
   const names = new Set(
-    AGENT_PRESETS.flatMap(preset => [preset.command, preset.companion, preset.login?.command].filter(Boolean) as string[]),
+    AGENT_PRESETS.flatMap(preset => [preset.command, preset.agentCommand, preset.login?.command].filter(Boolean) as string[]),
   )
   for (const name of names) {
     await writeFile(join(bin, name), `#!/bin/sh\necho "$0 $*" > "${marks}/${name}-$$"\nexit 3\n`)

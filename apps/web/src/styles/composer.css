@@ -295,8 +295,20 @@
   text-align: left;
 }
 .model-setting-name {
+  flex: none;
   color: var(--muted);
+  white-space: nowrap;
   margin-right: auto;
+}
+/* On a phone the levels take their own line under 思考, as a segmented control in a settings row does. */
+@media (max-width: 767.98px) {
+  .model-setting:has(> .ui-segmented) {
+    flex-wrap: wrap;
+    padding-block: var(--sp-4);
+  }
+  .model-setting > .ui-segmented {
+    flex: 1 1 100%;
+  }
 }
 .model-setting-value {
   display: inline-flex;

@@ -55,7 +55,9 @@ import {
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { codexOptions, readCodexModels } from './codex-models.ts'
 import { redactor, resolveCommand } from './command.ts'
-import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
+import { openWire, wireArgs } from './wires/index.ts'
+import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
+import type { AgentWire } from './wires/types.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import {
   append,
@@ -154,7 +156,7 @@ const UNRECOGNIZED_PARAMS_LIMIT = 2000
 interface Live {
   /** Latch task this process serves; also names its private temporary directory. */
   key: string
-  connection: AgentConnection
+  wire: AgentWire
   initialized: boolean
   capabilities: {
     resume: boolean
@@ -446,7 +448,7 @@ function chosenOption(result: unknown): string | undefined {
  * Latch task ↔ ACP session is 1:1. Every session is full access (L3): the agent's own permission mode and questions
  * are advisory, and Latch only refuses to continue when it cannot confirm that mode.
  */
-export class AcpBridge implements Bridge {
+export class AgentRuntime implements Bridge {
   private state: AcpState = emptyAcpState()
   private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
@@ -711,7 +713,7 @@ export class AcpBridge implements Bridge {
       launchHash: launch.hash,
       definitionHash: launch.definitionHash,
       command: launch.command,
-      args: [...this.agent.args],
+      args: [...this.agent.args, ...wireArgs(this.selection.profile?.wire)],
       envNames: Object.keys(env).sort(),
       definitionEnvNames: Object.keys(this.agent.env).sort(),
       cwd,
@@ -802,7 +804,7 @@ export class AcpBridge implements Bridge {
       try {
         if (!live.capabilities.logout) throw new AppError(409, 'logout-unsupported', `${name} 不支持从 Latch 退出登录。`)
         if (running()) throw new AppError(409, 'harness-busy', `${name} 有会话正在运行，等它结束后再退出登录。`)
-        await live.connection.request('logout', {}, Math.min(this.limits.requestTimeoutMs, 30_000), this.lifetime.signal)
+        await live.wire.request('logout', {}, Math.min(this.limits.requestTimeoutMs, 30_000), this.lifetime.signal)
       } catch (error) {
         throw this.publicError(error, undefined)
       } finally {
@@ -815,8 +817,8 @@ export class AcpBridge implements Bridge {
     this.auth.forgetReports()
     // Only processes whose sessions can be restored; another keeps its session, with the login it read when it started.
     for (const live of [...this.lives.values()])
-      if (live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key) && !live.connection.stopping)
-        void live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+      if (live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key) && !live.wire.stopping)
+        void live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
     this.notify()
   }
 
@@ -839,10 +841,10 @@ export class AcpBridge implements Bridge {
       let result: unknown
       try {
         // No MCP servers and no prompt: the session exists only to say what it offers.
-        result = await live.connection.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
+        result = await live.wire.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
         const sessionId = sessionState.safeParse(result).data?.sessionId
         const end = live.capabilities.delete ? 'session/delete' : live.capabilities.close ? 'session/close' : undefined
-        if (sessionId && end) await live.connection.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
+        if (sessionId && end) await live.wire.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
       } catch (error) {
         throw this.publicError(error, live)
       } finally {
@@ -1285,7 +1287,7 @@ export class AcpBridge implements Bridge {
     let outcome: string
     try {
       const answer = steerResult.safeParse(
-        await live.connection.request(
+        await live.wire.request(
           STEER_METHOD,
           {
             sessionId: run.acpSessionId,
@@ -1447,7 +1449,7 @@ export class AcpBridge implements Bridge {
         let result: unknown
         try {
           options.authorize?.()
-          result = await binding.live.connection.request(method, params, this.limits.requestTimeoutMs)
+          result = await binding.live.wire.request(method, params, this.limits.requestTimeoutMs)
         } catch (error) {
           if (this.state.tasks[sessionId]?.acp.drift) throw permissionDrift()
           if (error instanceof RpcError && error.code === RPC.methodNotFound)
@@ -1806,7 +1808,7 @@ export class AcpBridge implements Bridge {
   ): Promise<void> {
     const legacy = this.task(taskId).acp.configSource === 'legacy'
     await this.changeMode(taskId, [value, option.currentValue], async () => {
-      const result = await binding.live.connection.request(
+      const result = await binding.live.wire.request(
         legacy ? 'session/set_mode' : 'session/set_config_option',
         legacy ? { sessionId: binding.acpSessionId, modeId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
         this.limits.requestTimeoutMs,
@@ -1895,7 +1897,7 @@ export class AcpBridge implements Bridge {
     const live = this.lives.get(taskId)
     if (live) {
       void (run?.done ?? Promise.resolve()).then(() => {
-        if (this.lives.get(taskId) === live) void live.connection.stop('stop', this.limits.stopGraceMs)
+        if (this.lives.get(taskId) === live) void live.wire.stop('stop', this.limits.stopGraceMs)
       })
     }
   }
@@ -2045,7 +2047,7 @@ export class AcpBridge implements Bridge {
       run.sent = true
       this.phase(run, 'model')
       this.notify(run.taskId)
-      const answer = binding.live.connection.request('session/prompt', {
+      const answer = binding.live.wire.request('session/prompt', {
         sessionId: binding.acpSessionId,
         prompt: blocks,
       })
@@ -2275,7 +2277,7 @@ export class AcpBridge implements Bridge {
     if (!run.cancelRequested) {
       run.cancelRequested = true
       this.phase(run, 'cancelling', run.activity.toolName)
-      if (run.sent && run.live && run.acpSessionId) run.live.connection.notify('session/cancel', { sessionId: run.acpSessionId })
+      if (run.sent && run.live && run.acpSessionId) run.live.wire.notify('session/cancel', { sessionId: run.acpSessionId })
       // Nothing reached the agent yet: withdraw the session setup instead of waiting for it.
       else if (!run.sent)
         this.attaching
@@ -2296,7 +2298,7 @@ export class AcpBridge implements Bridge {
   /** The only way to settle a turn the agent will not end. The process serves only this session. */
   private forceStop(run: Run): void {
     if (this.runs.get(run.taskId) !== run || !run.live) return
-    void run.live.connection.stop('kill', this.limits.stopGraceMs, run.taskId)
+    void run.live.wire.stop('kill', this.limits.stopGraceMs, run.taskId)
   }
 
   // ---- process and session lifecycle ----------------------------------------------------------------------------
@@ -2325,7 +2327,7 @@ export class AcpBridge implements Bridge {
   }
 
   private async stopAll(): Promise<void> {
-    await Promise.all([...this.lives.values()].map(live => live.connection.stop('stop', this.limits.stopGraceMs)))
+    await Promise.all([...this.lives.values()].map(live => live.wire.stop('stop', this.limits.stopGraceMs)))
   }
 
   private async ensureProcess(key: string, cwd: string, confirmed: Confirmed): Promise<Live> {
@@ -2333,10 +2335,10 @@ export class AcpBridge implements Bridge {
       const pending = this.spawning.get(key)
       if (pending) return pending
       const live = this.lives.get(key)
-      if (live?.initialized && !live.connection.stopping) return live
+      if (live?.initialized && !live.wire.stopping) return live
       // A process being stopped would drop new requests; start its successor only once it is gone.
       if (live) {
-        await live.connection.exited
+        await live.wire.exited
         continue
       }
       const spawn = this.spawnProcess(key, cwd, confirmed).finally(() => {
@@ -2349,14 +2351,14 @@ export class AcpBridge implements Bridge {
 
   /** Stops the least recently used idle process whose session can be restored, when the limit is reached. */
   private makeRoom(): void {
-    const running = [...this.lives.values()].filter(live => !live.connection.stopping)
+    const running = [...this.lives.values()].filter(live => !live.wire.stopping)
     if (running.length < this.limits.maxProcesses) return
     const victim = running
       .filter(live => live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key))
       .sort((a, b) => a.lastUsed - b.lastUsed)[0]
     if (!victim) throw new AppError(503, 'agent-busy', `同时运行的 ${this.agent.name} 会话过多，请先结束一些会话`)
     this.holdIdle(victim)
-    void victim.connection.stop('stop', this.limits.stopGraceMs)
+    void victim.wire.stop('stop', this.limits.stopGraceMs)
   }
 
   private async spawnProcess(key: string, cwd: string, confirmed: Confirmed): Promise<Live> {
@@ -2376,9 +2378,10 @@ export class AcpBridge implements Bridge {
     this.assertOpen()
     this.makeRoom()
     let live!: Live
-    let connection: AgentConnection
+    let wire: AgentWire
     try {
-      connection = AgentConnection.spawn(
+      wire = openWire(
+        this.selection.profile?.wire,
         {
           command,
           args: [...this.agent.args, ...this.folderArgs(confirmed.folders)],
@@ -2406,7 +2409,7 @@ export class AcpBridge implements Bridge {
     }
     live = {
       key,
-      connection,
+      wire,
       initialized: false,
       capabilities: {
         resume: false,
@@ -2427,7 +2430,7 @@ export class AcpBridge implements Bridge {
     this.lives.set(key, live)
     try {
       const result = initializeResult.safeParse(
-        await connection.request(
+        await wire.request(
           'initialize',
           {
             protocolVersion: PROTOCOL_VERSION,
@@ -2472,7 +2475,7 @@ export class AcpBridge implements Bridge {
       this.health.lastError = undefined
       return live
     } catch (error) {
-      const info = error instanceof ConnectionClosed ? error.info : await connection.stop('kill', this.limits.stopGraceMs)
+      const info = error instanceof ConnectionClosed ? error.info : await wire.stop('kill', this.limits.stopGraceMs)
       if (error instanceof AppError) {
         this.health.lastError = clip(error.message, 300)
         throw error
@@ -2574,9 +2577,8 @@ export class AcpBridge implements Bridge {
   }
 
   private async session(taskId: string, live: Live, signal: AbortSignal): Promise<Binding> {
-    const connection = live.connection
-    const setup = (method: string, params: unknown): Promise<unknown> =>
-      connection.request(method, params, this.limits.requestTimeoutMs, signal)
+    const wire = live.wire
+    const setup = (method: string, params: unknown): Promise<unknown> => wire.request(method, params, this.limits.requestTimeoutMs, signal)
     const task = this.task(taskId)
     const cwd = task.acp.cwd
     const current = task.acp.acpSessionId
@@ -2586,7 +2588,7 @@ export class AcpBridge implements Bridge {
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
     const mcpServers = task.acp.skills ? [skillsServer(skillsDirectory(this.options.dataDir, taskId))] : []
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
-      void live.connection.stop('stop', this.limits.stopGraceMs)
+      void live.wire.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)
     }
     let acpSessionId: string
@@ -2632,7 +2634,7 @@ export class AcpBridge implements Bridge {
       // A prompt follows at once. Were the Host to crash before this is durable, the task could not find the agent
       // session that received it, and the next prompt would quietly start a fresh one.
       await this.flush()
-      if (connection.stopping || live.sessions.get(acpSessionId) !== taskId)
+      if (wire.stopping || live.sessions.get(acpSessionId) !== taskId)
         throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
@@ -2751,7 +2753,7 @@ export class AcpBridge implements Bridge {
     const legacy = this.task(taskId).acp.configSource === 'legacy'
     // A legacy agent has a method for its model and its mode only.
     if (legacy && option.category !== 'model') return
-    const result = await binding.live.connection.request(
+    const result = await binding.live.wire.request(
       legacy ? 'session/set_model' : 'session/set_config_option',
       legacy ? { sessionId: binding.acpSessionId, modelId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
       this.limits.requestTimeoutMs,
@@ -2789,7 +2791,7 @@ export class AcpBridge implements Bridge {
 
   /** An agent may read its login once at startup, so a retry after logging in has to reach a new process. */
   private forgetProcessAfterAuth(live: Live | undefined): void {
-    if (live) void live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+    if (live) void live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
   }
 
   private authMessage(): string {
@@ -2805,14 +2807,14 @@ export class AcpBridge implements Bridge {
   /** Stops a task's idle process only when its session can be restored later. */
   private scheduleIdle(key: string): void {
     const live = this.lives.get(key)
-    if (!live?.initialized || live.connection.stopping || this.closed) return
+    if (!live?.initialized || live.wire.stopping || this.closed) return
     this.holdIdle(live)
     if (!live.capabilities.resume && !live.capabilities.load) return
     if (this.busy(key)) return
     live.idleTimer = setTimeout(() => {
       live.idleTimer = undefined
-      // stop() marks the connection as stopping at once, so ensureProcess hands no new work to it.
-      if (this.lives.get(key) === live && !this.busy(key)) void live.connection.stop('stop', this.limits.stopGraceMs)
+      // stop() marks the wire as stopping at once, so ensureProcess hands no new work to it.
+      if (this.lives.get(key) === live && !this.busy(key)) void live.wire.stop('stop', this.limits.stopGraceMs)
     }, this.limits.idleMs)
     live.idleTimer.unref()
   }
@@ -2838,8 +2840,8 @@ export class AcpBridge implements Bridge {
       try {
         await this.spawning.get(key)?.catch(() => undefined)
         let live = this.lives.get(key)
-        if (live && (!live.initialized || live.connection.stopping)) {
-          await live.connection.exited
+        if (live && (!live.initialized || live.wire.stopping)) {
+          await live.wire.exited
           live = undefined
         }
         if (!acpSessionId) return
@@ -2866,12 +2868,12 @@ export class AcpBridge implements Bridge {
         target.sessions.delete(acpSessionId)
         if (!target.capabilities.delete) return
         this.holdIdle(target)
-        await target.connection.request('session/delete', { sessionId: acpSessionId }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        await target.wire.request('session/delete', { sessionId: acpSessionId }, Math.min(this.limits.requestTimeoutMs, 10_000))
       } catch {
         /* Best effort. */
       } finally {
         const live = this.lives.get(key)
-        if (live) await live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+        if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
         await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
       }
     })().finally(() => {
@@ -2884,7 +2886,7 @@ export class AcpBridge implements Bridge {
   private async discardProcess(key: string): Promise<void> {
     await this.spawning.get(key)?.catch(() => undefined)
     const live = this.lives.get(key)
-    if (live) await live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+    if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
     await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
   }
 

@@ -16,14 +16,8 @@ export interface AgentPreset {
   /** What the install command does not say, such as a version it needs. */
   installNote?: string
   /**
-   * The agent an adapter command connects to, which must be installed as well (pi for pi-acp). The Host looks for it
-   * the same way, so the page can say which of the two is missing.
-   */
-  companion?: string
-  /**
    * The program a person already knows, when `command` is an adapter that runs without it. It lets the page say the
-   * program was found and only the adapter is missing, and a launch test read its version; nothing waits on it, unlike
-   * `companion`.
+   * program was found and only the adapter is missing, and a launch test read its version; nothing waits on it.
    */
   agentCommand?: string
   /**
@@ -73,13 +67,13 @@ export const AGENT_PRESETS: AgentPreset[] = [
     id: 'pi',
     skillServer: false,
     name: 'pi',
-    command: 'pi-acp',
+    command: 'pi',
     args: [],
     license: 'MIT',
-    homepage: 'https://github.com/svkozak/pi-acp',
-    description: '通过适配器运行 pi。pi 执行工具前不请求审批，Latch 不会显示审批。',
-    install: 'npm i -g pi-acp',
-    companion: 'pi',
+    homepage: 'https://github.com/earendil-works/pi',
+    description: '模型与登录由 pi 管理。pi 执行工具前不请求审批，只有 pi 扩展要求确认时 Latch 才会问你。',
+    install: 'npm i -g @earendil-works/pi-coding-agent',
+    installNote: '0.84.4 或更高版本',
     login: { command: 'pi', args: [], note: '进入 pi 后输入 /login，按提示登录。' },
   },
   {
@@ -181,7 +175,6 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'OPENCODE_CONFIG_DIR',
   'OPENCODE_PERMISSION',
   'OPENCODE_TEST_HOME',
-  'PI_ACP_PI_COMMAND',
   'CODEX_HOME',
   'CLAUDE_CONFIG_DIR',
   'GEMINI_CLI_SYSTEM_SETTINGS_PATH',

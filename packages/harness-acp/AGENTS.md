@@ -1,6 +1,6 @@
 # @latch/harness-acp
 
-ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/bridge.ts`（会话、启动指纹、权限模式）、`connection.ts`、`protocol.ts`（ACP v1）、`probe.ts`、`mapping.ts`、`command.ts`、`login-shell.ts`、`login.ts`、`auth.ts`、`environment.ts`、`permission.ts`、`project-config.ts`、`store.ts`，预设的权限配置在 `src/profiles/`。不负责浏览器可见的预设（`packages/protocol/src/agent-presets.ts`）与 Agent 定义的保存（Host）。
+ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/runtime.ts`（会话、启动指纹、权限模式）、`wires/`（进程与协议）、`protocol.ts`（ACP v1）、`probe.ts`、`mapping.ts`、`login*.ts`、`auth.ts`、`command.ts`、`environment.ts`、`permission.ts`、`project-config.ts`、`store.ts`，预设的权限配置在 `profiles/`。不负责浏览器可见的预设（`packages/protocol/src/agent-presets.ts`）与保存 Agent 定义（Host）。
 
 运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`、`./file-tracking` 与 `./run-end`）与 `zod`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
 
@@ -9,7 +9,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 子进程环境只来自 `agentEnvironment`：白名单加这个人的代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写）（`test/acp.test.ts#applies the definition, then the profile, then the forced values, and removes loader and npm variables`）。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
 - 登录 shell 只读点名的变量；登录与版本命令只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序；状态命令的输出不离开 `read`（`test/login.test.ts`）。
 - 会话只启动与开始时记录的 `launchHash` 一致的进程（`test/acp.test.ts#starts a session only with a launch fingerprint on record`）；指纹覆盖命令、参数、定义的环境变量、预设、profile 版本、profile 列出的项目配置、`inheritEnv` 的名字（不含值）与 `programEnv` 的路径（`test/acp.test.ts#fingerprints the command, arguments, variable names and values, preset and profile version`）。
-- 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Gemini CLI、Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts#gives Codex the full list of other folders over ACP on new, resumed and loaded sessions`、`test/acp.test.ts#never passes other folders to OpenCode, DeepSeek Harness, pi or goose`）。
+- 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Gemini CLI、Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts#gives Codex the full list of other folders over ACP on new, resumed and loaded sessions`、`test/acp.test.ts#never passes other folders to OpenCode, DeepSeek Harness or goose`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 放宽自己的权限模式时停止该轮（`test/acp.test.ts#cancels the turn, rejects pending asks and stops input when the agent widens its own mode`）。
 - 取消须等进程真实结算（`test/acp.test.ts#answers open permissions as cancelled and waits for the prompt to settle`）；带 `runId` 时只取消仍是当前的那一轮（`test/acp.test.ts#names each turn on the session and leaves a turn alone when a cancel names another`）。
 - 探测只做 initialize（`loginStatus`、`programVersion` 另跑），经过同一命令、环境和配置指纹检查，20 秒内结束并等待进程停止；不发提示词，authMethods 不算未登录证据（`test/probe.test.ts`）。

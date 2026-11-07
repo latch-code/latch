@@ -1,4 +1,5 @@
 import type { ModeTier } from '@latch/protocol'
+import type { WireKind } from '../wires/index.ts'
 
 /**
  * How Latch drives one harness's own permission settings. Host-only: none of this reaches the browser except the
@@ -117,6 +118,8 @@ export interface HarnessProfile {
   readonly presetId: string
   /** Part of the launch fingerprint; bump it when the profile's behaviour changes. */
   readonly version: number
+  /** The protocol the harness speaks. Absent: ACP. */
+  readonly wire?: WireKind
   readonly permission: AcpPermissionProfile
   /**
    * Set: the driver takes every folder of a project and passes the others this way; the folders it passes are part of

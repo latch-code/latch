@@ -7,7 +7,7 @@ sources:
   - apps/host/src/files/reference-store.ts
   - packages/core/src/file-tracking.ts
   - packages/core/src/runtime.ts
-  - packages/harness-acp/src/bridge.ts
+  - packages/harness-acp/src/runtime.ts
   - apps/web/src/components/FileOutputs.tsx
 ---
 # 运行期间的文件变化

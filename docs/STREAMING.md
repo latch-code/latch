@@ -6,7 +6,7 @@ sources:
   - packages/sdk/src/bridge.ts
   - packages/protocol/src/types.ts
   - packages/harness-acp/src/mapping.ts
-  - packages/harness-acp/src/bridge.ts
+  - packages/harness-acp/src/runtime.ts
   - packages/core/src/node-kit/timing.ts
   - apps/host/src/server.ts
   - apps/host/src/hub.ts
@@ -189,7 +189,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 
 ## 时间与用量
 
-源码：[timing.ts](../packages/core/src/node-kit/timing.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[bridge.ts](../packages/harness-acp/src/bridge.ts)、[hostClock.ts](../apps/web/src/core/hostClock.ts)、[conversation.ts](../apps/web/src/conversation.ts)。
+源码：[timing.ts](../packages/core/src/node-kit/timing.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[runtime.ts](../packages/harness-acp/src/runtime.ts)、[hostClock.ts](../apps/web/src/core/hostClock.ts)、[conversation.ts](../apps/web/src/conversation.ts)。
 
 界面上的每个时间与计数都来自 Host 的记录，客户端不估算；字段都是可选的，旧 Host、插件 Driver 与记录这些字段之前的历史没有它们，缺少时对应的部分不显示。时间是 Host 时钟的 ISO 字符串，由 `ServerOptions.clock`（默认 `Date.now`）给出，内置 Harness 与 ACP Driver 经 `HarnessHostOptions.clock` 用同一个时钟。
 
@@ -200,7 +200,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 
 ## 运行的真实状态
 
-源码：[run-silence.ts](../apps/host/src/run-silence.ts)、[hub.ts](../apps/host/src/hub.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[bridge.ts](../packages/harness-acp/src/bridge.ts)、[sessions.ts](../packages/protocol/src/sessions.ts)。
+源码：[run-silence.ts](../apps/host/src/run-silence.ts)、[hub.ts](../apps/host/src/hub.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[runtime.ts](../packages/harness-acp/src/runtime.ts)、[sessions.ts](../packages/protocol/src/sessions.ts)。
 
 已运行时间不代表进展。Host 记录每次运行最后一次有动静的时间，只说事实，**从不因为沉默而停止运行**。`catalog.features.runLiveness` 声明这些都可用；旧 Host 没有这些字段，旧客户端忽略它们。
 

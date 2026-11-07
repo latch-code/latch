@@ -1,6 +1,7 @@
 /**
- * Replay transcripts: one harness's ACP conversation as NDJSON, played back by `fixtures/replay-agent.mjs` in place of the
- * real agent, so the driver, its mapping and the session it builds are exercised against the frames that agent sends.
+ * Replay transcripts: one harness's conversation as NDJSON, in ACP or in the harness's own protocol, played back by
+ * `fixtures/replay-agent.mjs` in place of the real agent, so the driver, its wire, its mapping and the session it builds
+ * are exercised against the frames that agent sends.
  * A transcript is hand-written from the agent's public protocol and source, or recorded from the real agent against a
  * fake model service; its header says which.
  */
@@ -40,6 +41,8 @@ export type ScenarioStep =
   | { step: 'answer'; decision: 'allow' | 'reject' }
   /** Waits until the turn shows a tool call (`tool`) or text (`text`), then stops the turn. */
   | { step: 'cancel'; when: 'tool' | 'text' }
+  /** Waits as `cancel` does, then adds text to the running turn. */
+  | { step: 'steer'; text: string; when: 'tool' | 'text' }
   /** Sets an option of the session by its category, as the composer does. */
   | { step: 'set'; category: string; value: string }
   /** Closes the driver and opens it again on the same data, as a Host restart does. */
@@ -49,7 +52,8 @@ export interface ReplayHeader {
   type: 'transcript_start'
   /** The preset ID. */
   harness: string
-  protocol: 'acp'
+  /** `pi-rpc`: pi's RPC records, whose `type` is a frame's method. */
+  protocol: 'acp' | 'pi-rpc'
   version: 1
   scenario: string
   /** `hand-written`: from the agent's protocol and source, not captured; `recorded`: captured by `pnpm harness:record`. */
@@ -235,6 +239,7 @@ export interface ScenarioBridge {
   decide(approvalId: string, decision: 'allow' | 'reject'): Promise<boolean>
   cancel(sessionId: string): Promise<boolean | void>
   setConfig?(sessionId: string, configId: string, value: string): Promise<void>
+  steer?(sessionId: string, prompt: string, requestId: string): Promise<unknown>
   close(): Promise<void>
 }
 
@@ -295,6 +300,7 @@ export async function playScenario(input: {
         break
       }
       case 'cancel':
+      case 'steer':
         await waitFor(
           step.when === 'tool' ? 'a tool call' : 'text',
           async () => {
@@ -305,7 +311,9 @@ export async function playScenario(input: {
           timeout,
           stopped,
         )
-        await bridge.cancel(session())
+        if (step.step === 'cancel') await bridge.cancel(session())
+        else if (bridge.steer) await bridge.steer(session(), step.text, id())
+        else throw new Error('the session takes no addition to a running turn')
         break
       case 'set': {
         const option = (await bridge.detail(session())).config?.find(item => item.category === step.category)

@@ -1,5 +1,7 @@
-// Plays one ACP transcript back over stdio, in place of a real agent: no network, no model. It checks every frame the
-// client sends against the transcript's next `expect_outbound`, and sends the `emit_inbound` frames that follow.
+// Plays one transcript back over stdio, in place of a real agent: no network, no model. It checks every frame the
+// client sends against the transcript's next `expect_outbound`, and sends the `emit_inbound` frames that follow. The
+// header's protocol says how a logical frame is written: ACP's JSON-RPC, or pi's RPC records (`pi-rpc`), where a
+// command's `type` is the method, its other fields the params, and a response names the command it answers.
 // REPLAY_TRANSCRIPT names the NDJSON file, REPLAY_STATUS the JSON file it reports into (where it got to, the first
 // mismatch, and how each process was started), REPLAY_WORKSPACE what `<workspace>` stands for (default: its cwd).
 // A transcript can span processes: after a `runtime_exit` the next process carries on from there.
@@ -18,8 +20,9 @@ const lines = readFileSync(transcriptPath, 'utf8')
   .filter(line => line.trim())
 const header = JSON.parse(lines[0])
 const entries = lines.slice(1).map(line => JSON.parse(line))
+const pi = header.protocol === 'pi-rpc'
 // Variables whose value a test asserts: where the person's home is, and the programs an adapter is pointed at.
-const WATCHED = ['HOME', 'CODEX_PATH', 'PI_ACP_PI_COMMAND', 'TMPDIR']
+const WATCHED = ['HOME', 'CODEX_PATH', 'TMPDIR']
 
 function previous() {
   try {
@@ -105,6 +108,7 @@ function matches(expected, actual) {
 }
 
 function logical(message) {
+  if (pi) return piLogical(message)
   if (typeof message.method === 'string') {
     const request = message.id !== undefined && message.id !== null
     return {
@@ -123,8 +127,48 @@ function logical(message) {
   }
 }
 
+/** A pi record from the client: a command, or the answer to a dialog this agent opened. */
+function piLogical(message) {
+  const { type, id, ...rest } = message
+  if (typeof type !== 'string') return undefined
+  if (type === 'extension_ui_response') {
+    const method = agentRequests.get(String(id))
+    if (method === undefined) return undefined
+    return { kind: 'response', method, result: rest }
+  }
+  return { kind: id === undefined ? 'notification' : 'request', method: type, ...(Object.keys(rest).length ? { params: rest } : {}) }
+}
+
+function piWire(value) {
+  switch (value.kind) {
+    case 'notification':
+      return { type: value.method, ...value.params }
+    case 'request': {
+      const id = `ui-${nextAgentId++}`
+      agentRequests.set(id, value.method)
+      return { type: value.method, id, ...value.params }
+    }
+    case 'response': {
+      const id = clientRequests.get(value.method)
+      if (id === undefined) return fail(`no request from the client to answer: ${value.method}`, value)
+      clientRequests.delete(value.method)
+      return {
+        type: 'response',
+        id,
+        command: value.method,
+        success: value.error === undefined,
+        ...(value.result === undefined ? {} : { data: value.result }),
+        ...(value.error === undefined ? {} : { error: value.error }),
+      }
+    }
+    default:
+      return fail('emit_inbound frame has no kind', value)
+  }
+}
+
 function wire(frame) {
   const value = expand(frame)
+  if (pi) return piWire(value)
   switch (value.kind) {
     case 'notification':
       return { jsonrpc: '2.0', method: value.method, ...(value.params === undefined ? {} : { params: value.params }) }
@@ -178,7 +222,9 @@ function receive(message) {
   const entry = entries[cursor]
   if (!actual || entry?.type !== 'expect_outbound' || !matches(entry.frame, actual)) {
     fail(actual ? 'unexpected frame from the client' : 'a response to no request of the agent', actual ?? message)
-    if (message.method && message.id !== undefined)
+    if (pi && actual?.kind === 'request')
+      send({ type: 'response', id: message.id, command: actual.method, success: false, error: 'replay mismatch' })
+    else if (message.method && message.id !== undefined)
       send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'replay mismatch' } })
     return
   }

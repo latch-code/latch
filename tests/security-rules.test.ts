@@ -36,7 +36,7 @@ describe('security scan', () => {
       'apps/host/src/plugins/providers/demo/index.ts': ["import { request } from 'node:https'"],
       'apps/host/src/server.ts': ["import { request } from 'node:https'", 'return new Function(code)'],
       'apps/desktop/src/main.cjs': ['webPreferences: { contextIsolation: false }', 'win.loadURL(target)'],
-      'packages/harness-acp/src/connection.ts': ['spawn(command, { env: { ...process.env } })'],
+      'packages/harness-acp/src/wires/process.ts': ['spawn(command, { env: { ...process.env } })'],
       'scripts/tool.ts': ['eval(code)'],
     })
     expect(findings.map(finding => `${finding.path} ${finding.rule}`)).toEqual([
@@ -47,7 +47,7 @@ describe('security scan', () => {
       'apps/host/src/server.ts dynamic-code',
       'apps/web/src/core/api.ts event-source',
       'apps/web/src/core/api.ts html-injection',
-      'packages/harness-acp/src/connection.ts agent-environment',
+      'packages/harness-acp/src/wires/process.ts agent-environment',
     ])
   })
 

@@ -854,25 +854,22 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
   }
 }
 
-/** What this computer has of a command and, for an adapter, of the agent it connects to. */
-function detectCommand(command: string, companion: string | undefined, agent?: string): CommandDetection {
+/** What this computer has of a command and, for an adapter, of the program it drives. */
+function detectCommand(command: string, agent?: string): CommandDetection {
   const path = resolveCommand(command)
   return {
     ...(path ? { found: true, path } : { found: false }),
-    ...(companion ? { companion: { command: companion, found: resolveCommand(companion) !== undefined } } : {}),
     ...(agent ? { agent: { command: agent, found: resolveCommand(agent) !== undefined } } : {}),
   }
 }
 
 /** What this computer has of a preset's commands. */
-export const detectPresetCommands = (preset: AgentPreset): CommandDetection =>
-  detectCommand(preset.command, preset.companion, preset.agentCommand)
+export const detectPresetCommands = (preset: AgentPreset): CommandDetection => detectCommand(preset.command, preset.agentCommand)
 
 /** PATH lookups touch the file system and the catalog is read often; as long as a driver's own status keeps one. */
 const PRESET_LOOKUP_TTL_MS = 5_000
 
 function agentSettings(agent: AgentRecord): AgentSettings {
-  const companion = AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.companion
   const verdict = validateAgentDefinition(agent)
   return {
     id: agent.id,
@@ -882,7 +879,7 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
     enabled: agent.enabled,
-    detected: detectCommand(agent.command, companion),
+    detected: detectCommand(agent.command, AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.agentCommand),
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
     ...(agent.startedHash === undefined ? {} : { started: agent.startedHash === definitionHash(agent) }),
@@ -3712,10 +3709,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!presetLookup || Date.now() - presetLookup.at > PRESET_LOOKUP_TTL_MS)
         presetLookup = {
           at: Date.now(),
-          found: AGENT_PRESETS.filter(preset => {
-            const detected = detect(preset)
-            return detected.found && (detected.companion?.found ?? true)
-          }),
+          found: AGENT_PRESETS.filter(preset => detect(preset).found),
         }
       const saved = new Set(config.settings().agents.map(agent => agent.presetId))
       return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)

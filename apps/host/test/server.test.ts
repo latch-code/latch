@@ -1400,15 +1400,15 @@ describe('agent settings', () => {
       detectPreset: preset =>
         preset.id === 'codex'
           ? { found: true, path: '/fake/codex-acp' }
-          : preset.id === 'pi'
-            ? { found: true, path: '/fake/pi-acp', companion: { command: 'pi', found: false } }
+          : preset.id === 'claude-agent'
+            ? { found: false, agent: { command: 'claude', found: true } }
             : { found: false },
     })
     const desktop = await t.enroll({ listener: 'unix' })
     const browser = await t.enroll({ listener: 'loopback-tcp' })
     const harnesses = async (client: typeof desktop) => (await client.json<AppSnapshot>('snapshot')).catalog!.harnesses
     const offered = (await harnesses(desktop)).filter(harness => harness.offer)
-    // pi's adapter alone runs nothing, so it is not offered.
+    // A program without the adapter that connects it runs nothing, so it is not offered.
     expect(offered).toMatchObject([{ id: 'codex', status: 'ready', level: 'L3', modes: ['agent'], offer: { presetId: 'codex' } }])
     expect(offered[0]!.permission).toMatchObject({
       approvals: 'prompts',
@@ -1458,9 +1458,7 @@ describe('agent settings', () => {
     })
     const listed = await desktop.json<{ agents: AgentSettings[]; presets: AgentPresetSettings[] }>('agents')
     expect(listed.agents[0]!.detected).toEqual({ found: false })
-    expect(
-      listed.presets.filter(preset => preset.detected?.found || preset.detected?.companion?.found || preset.detected?.agent?.found),
-    ).toEqual([])
+    expect(listed.presets.filter(preset => preset.detected?.found || preset.detected?.agent?.found)).toEqual([])
     const harness = (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'by-name')!
     expect(harness).toMatchObject({ status: 'unavailable', statusMessage: '未找到命令 node' })
   })
@@ -1471,7 +1469,7 @@ describe('agent settings', () => {
     expect((await body<EnrollmentInfo>(await t.raw('loopback-tcp', 'api/enrollment-info'))).hostName).toBeUndefined()
   })
 
-  it('reports the adapter and the agent it connects to separately, and looks again on every read', async () => {
+  it('reports an adapter and the program it drives separately, and looks again on every read', async () => {
     const bin = await temporaryDirectory('latch-agent-bin-')
     const install = async (command: string) => {
       await writeFile(join(bin, command), '#!/bin/sh\n')
@@ -1482,24 +1480,29 @@ describe('agent settings', () => {
     const desktop = await t.enroll({ listener: 'unix' })
     const created = await desktop.confirmed('agents', {
       method: 'POST',
-      body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi-acp', args: [], env: {} },
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })
     expect(created.status).toBe(201)
     const detected = async () => (await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0].detected
-    const harness = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'pi')!
+    const harness = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'codex')!
     // Each preset carries what this computer has of it too, before any agent is added from it.
     const preset = async (id: string) =>
       (await desktop.json<{ presets: AgentPresetSettings[] }>('agents')).presets.find(item => item.id === id)!.detected
     expect(await preset('goose')).toEqual({ found: false })
-    expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: false } })
-    expect(await preset('pi')).toEqual({ found: false, companion: { command: 'pi', found: false } })
-    expect((await harness()).statusMessage).toBe('未找到 pi 和它的适配器 pi-acp。安装：npm i -g pi-acp')
-    await install('pi')
-    expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: true } })
-    await install('pi-acp')
+    // pi runs as itself, with no adapter to look for.
+    expect(await preset('pi')).toEqual({ found: false })
+    expect(await detected()).toEqual({ found: false, agent: { command: 'codex', found: false } })
+    expect(await preset('codex')).toEqual({ found: false, agent: { command: 'codex', found: false } })
+    expect((await harness()).statusMessage).toBe('未找到命令 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp')
+    await install('codex')
+    expect(await detected()).toEqual({ found: false, agent: { command: 'codex', found: true } })
+    expect((await harness()).statusMessage).toBe(
+      '已安装 codex，还差让 Latch 连接它的适配器 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp',
+    )
+    await install('codex-acp')
     // Reading the settings is the re-check: the catalog that follows does not show the earlier lookup.
-    expect(await detected()).toEqual({ found: true, path: join(bin, 'pi-acp'), companion: { command: 'pi', found: true } })
-    expect(await preset('pi')).toEqual({ found: true, path: join(bin, 'pi-acp'), companion: { command: 'pi', found: true } })
+    expect(await detected()).toEqual({ found: true, path: join(bin, 'codex-acp'), agent: { command: 'codex', found: true } })
+    expect(await preset('codex')).toEqual({ found: true, path: join(bin, 'codex-acp'), agent: { command: 'codex', found: true } })
     expect((await harness()).status).toBe('ready')
   })
 })

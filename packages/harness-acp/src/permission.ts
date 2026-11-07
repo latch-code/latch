@@ -8,6 +8,7 @@ import { resolveCommand } from './command.ts'
 import { HARNESS_PROFILES, type AcpPermissionProfile, type HarnessProfile } from './profiles/index.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
+import { piArgs } from './wires/pi.ts'
 
 export interface ProfileSelection {
   profile?: HarnessProfile
@@ -91,7 +92,15 @@ export function validateAgentDefinition(
       return { ok: false, error: new AppError(400, 'agent-env-reserved', `环境变量 ${name} 由 Latch 管理，不能在 Agent 定义中设置`) }
     }
   }
-  return { ok: true, verified: selectProfile(record, locate).verified }
+  const selection = selectProfile(record, locate)
+  if (selection.profile?.wire === 'pi') {
+    try {
+      piArgs(record.args)
+    } catch (error) {
+      return { ok: false, error: new AppError(400, 'agent-args-reserved', error instanceof Error ? error.message : String(error)) }
+    }
+  }
+  return { ok: true, verified: selection.verified }
 }
 
 /** The folders a session passes to its agent besides the session directory: how, and their real paths in order. */

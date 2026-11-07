@@ -253,7 +253,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ### 假 ACP Agent
 
-`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不访问网络、不调用模型；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。
+`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不访问网络、不调用模型；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败与重新加载。
 
 进程级行为由环境变量决定：
 
@@ -301,9 +301,9 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ### 回放与录制
 
-`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话（同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/<场景>.ndjson`，例如 `opencode/2.x/`，头部的版本必须属于这个大版本）：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
+`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话（同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/<场景>.ndjson`，例如 `opencode/2.x/`，头部的版本必须属于这个大版本）：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；pi 的对话头部写 `protocol: "pi-rpc"`，命令的 `type` 是 `method`、其余字段是 `params`，响应按它回答的命令补上 ID；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
 
-`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`PI_ACP_PI_COMMAND`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
+`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
 `startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它。
 

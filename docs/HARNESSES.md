@@ -1,5 +1,5 @@
 ---
-description: 经 ACP 接入外部 Agent：完全访问（L3）、使用、预设的权限配置、项目配置、项目的多个文件夹、启动诊断、进程、映射、审批、取消、持久化与恢复、错误与测试。
+description: 经 ACP 或 pi 的 RPC 模式接入外部 Agent：完全访问（L3）、使用、预设的权限配置、项目配置、项目的多个文件夹、启动诊断、进程、映射、审批、取消、持久化与恢复、错误与测试。
 sources:
   - packages/harness-acp/src
   - packages/protocol/src/agent-presets.ts
@@ -7,7 +7,7 @@ sources:
 ---
 # 接入外部 Harness（ACP）
 
-Latch 用 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动外部 Agent。每个启用的 Agent 定义成为一个 HarnessDriver，与内置 `standard` 并列出现在新会话的 Harness 选择器中。实现是包 `@latch/harness-acp`（`packages/harness-acp/`，只有 Host 依赖它）；浏览器可见的预设（命令、参数、许可证、安装提示）位于 `packages/protocol/src/agent-presets.ts`，只在 Host 上使用的权限配置位于 `packages/harness-acp/src/profiles/`（每个预设一个文件）。整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+Latch 用 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动外部 Agent，pi 用它自己的 RPC 模式（见「pi 的 RPC 模式」）。每个启用的 Agent 定义成为一个 HarnessDriver，与内置 `standard` 并列出现在新会话的 Harness 选择器中。实现是包 `@latch/harness-acp`（`packages/harness-acp/`，只有 Host 依赖它）；浏览器可见的预设（命令、参数、许可证、安装提示）位于 `packages/protocol/src/agent-presets.ts`，只在 Host 上使用的权限配置位于 `packages/harness-acp/src/profiles/`（每个预设一个文件）。整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 ## 权限级别：完全访问（L3）
 
@@ -37,7 +37,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 | 预设 | 命令 | 许可证 | 说明 |
 | --- | --- | --- | --- |
 | Codex | `codex-acp` | Apache-2.0 | `npm i -g @agentclientprotocol/codex-acp`；登录、模型与沙箱由 Codex 管理 |
-| pi | `pi-acp` | MIT | `npm i -g pi-acp`，需要已安装 pi（预设的 `companion`，与适配器分别检测）；pi 执行工具前不请求审批 |
+| pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本；不用适配器；pi 执行工具前不请求审批，扩展要求确认时交给人 |
 | OpenCode | `opencode acp` | MIT | `npm i -g opencode-ai`；支持 1.x 与 2.x |
 | DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.1-rc.2 或更高；按完整消息回复 |
 | Gemini CLI | `gemini --acp --approval-mode default` | Apache-2.0 | `npm i -g @google/gemini-cli` |
@@ -52,7 +52,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 启动脚本让 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
 
-预设可以声明 `companion`：适配器命令要连接的另一个程序（pi-acp 连接 pi）。Host 用同样的规则查找它，「设置 → Harness」与选择器据此写出缺的是哪一个（「已安装 pi，还差让 Latch 连接它的适配器 pi-acp」「已找到适配器 pi-acp，还没找到 pi」或两者都没找到）；缺任何一个时这个 Agent 都不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
+预设可以声明 `agentCommand`：适配器驱动的那个人熟悉的程序（codex-acp 驱动 codex）。Host 用同样的规则查找它，只装了程序时「设置 → Harness」与选择器写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」；适配器才是启动的命令，没有它这个 Agent 不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
 
 ## 预设的权限配置
 
@@ -75,7 +75,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` | `default` | `plan`、`default`、`autoEdit`、`yolo` | — | `proceed_always_and_save`、`ProceedAlwaysAndSave` | 可读回 |
 | DeepSeek Harness | `DSH_PERMISSION_MODE=read-only`、`DSH_TELEMETRY_DISABLED=1` | — | — | — | — | 无法读回权限模式 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT`（见下） | `build` | `plan`、`build` | — | — | 可读回 |
-| pi | — | — | — | — | — | 无法读回；pi 执行工具前不请求审批 |
+| pi | — | — | — | — | — | 无法读回；pi 执行工具前不请求审批，扩展要求确认时交给人 |
 | Claude Agent | — | `default`（Manual） | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | — | — | 可读回；适配器新会话默认进 `auto`，Latch 每轮前设回预期模式 |
 | Cursor | — | `agent` | `ask`、`plan`、`agent` | — | `allow-always` | 可读回 |
 
@@ -149,9 +149,10 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 进程与环境
 
+- 会话、启动指纹、权限模式、审批与取消只有一份，在 `runtime.ts`；它说 ACP 的方法、读 ACP 的会话更新，经 `wires/` 里的一条线与进程交谈。`wires/process.ts` 启动、读写与停止进程，`wires/acp.ts` 把 ACP 原样经 JSON-RPC 发出。
 - 每个 Latch 会话有自己的 Agent 子进程（一个 ACP 会话），首次需要时启动，工作目录为该会话的主文件夹；Gemini CLI 与 Qwen Code 的参数之后追加其他文件夹（见「项目的多个文件夹」）。同一个 Agent 定义最多同时运行 8 个进程（`AcpAgentOptions.maxProcesses`）；达到上限时，Latch 停止最久未使用的、可以恢复的空闲进程，没有可停的进程时返回 503 `agent-busy`（`同时运行的 <名称> 会话过多，请先结束一些会话`）。
 - 子进程在独立进程组中运行。stderr 持续读取到 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写入 Host 日志，不进入会话记录。
-- Agent 得到的环境来自 `agentEnvironment`，后者覆盖前者：Host 的白名单（`HOME`、`LANG`、`LC_*`、`TERM`、`USER`、`SHELL`）；代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）、CA 文件（`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE`）与 `__MISE_DIFF`；profile 的 `inheritEnv`（各家的 home，见下表）；profile 的 `programEnv`（`CODEX_PATH`、`PI_ACP_PI_COMMAND`，指向 Host 找到的程序，没装就不设，适配器用自带的）；Agent 定义的变量；profile 的 `defaultEnv` 和 Latch 强制的值（`TMPDIR`、`NODE_TLS_REJECT_UNAUTHORIZED=1`、Git 设置）。最后删除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`。从终端启动的 Host 已有的变量优先于登录 shell 读到的。
+- Agent 得到的环境来自 `agentEnvironment`，后者覆盖前者：Host 的白名单（`HOME`、`LANG`、`LC_*`、`TERM`、`USER`、`SHELL`）；代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）、CA 文件（`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE`）与 `__MISE_DIFF`；profile 的 `inheritEnv`（各家的 home，见下表）；profile 的 `programEnv`（`CODEX_PATH`，指向 Host 找到的程序，没装就不设，适配器用自带的）；Agent 定义的变量；profile 的 `defaultEnv` 和 Latch 强制的值（`TMPDIR`、`NODE_TLS_REJECT_UNAUTHORIZED=1`、Git 设置）。最后删除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`。从终端启动的 Host 已有的变量优先于登录 shell 读到的。
 
   | 预设 | 继承的 home |
   | --- | --- |
@@ -170,6 +171,19 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 - `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；声明 `session.notices` 与 `session.compaction`，见「通知与压缩」；除写了 `signIn` 的预设外声明 `auth.terminal`，见「登录」。`session/new`、`session/resume`、`session/load` 只在会话带着技能时传一个 MCP 服务器：Latch 的只读技能服务器（`skills-server.ts`，列出并读取技能，不写、不联网），其余情况传空列表；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」（预设写了 `signIn` 的用它：Claude Agent 是「在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。」），并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。这一轮的 `runEnd` 是 `login-required`，页面给出登录命令和「重试」；已有 ACP 会话时下一轮走 `session/resume`，不用新建会话。见「登录」。
 - 空闲 10 分钟且 Agent 支持恢复会话时，进程会被优雅停止，下次需要时再启动。
 - 进程崩溃时，该会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）；之后的重启从 250 ms 开始按最近的崩溃次数加倍延迟（最多 5 秒），同一定义一分钟内崩溃 3 次会暂停自动重启一分钟（503 `agent-paused`）。
+
+## pi 的 RPC 模式
+
+pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接在定义的参数后面，启动预览里也列出），把运行时的 ACP 方法换成 pi 的命令，把 pi 的事件换成 ACP 的会话更新，所以启动指纹、项目配置、取消、审批与持久化和其他 Harness 是同一份代码。依据 pi 自己的 `rpc-types.ts`、`rpc-mode.ts` 与 `docs/rpc*.md`、`docs/json.md`。
+
+- **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
+- **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件，再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。pi 没有删除会话的命令，删除 Latch 的会话时留下 pi 自己的副本。pi 不接收 MCP 服务器。
+- **模型与思考。** `get_available_models` 列出模型（值写作 `provider/model`），一个都没有说明 pi 还没有可用的登录或密钥，按未登录处理；`get_available_thinking_levels` 列出当前模型的思考深度，换模型后重读，读回 `get_state` 才算换好。列表只在人点「读取 pi 的模型列表」时读，因为 pi 启动时会加载这个人的扩展、运行会话钩子。
+- **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
+- **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容写进会话：「pi 提示：停止前追加的内容还没送到 pi，已撤回」。
+- **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer` 加进去，pi 在手上的工具调用结束后、下一次请求模型之前读到它；其他时候交回 Host 排队。
+- **工具与其他事件。** `tool_execution_*` 成为工具行：`bash` 是命令，`read` 是读取，`edit`、`write` 是改文件，`grep`、`find`、`ls` 是搜索，`edit` 的 diff 以文本显示。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。模型服务的错误可能带出一段密钥：pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
+- **扩展的提问。** 扩展的 `confirm` 像审批一样交给人，选项是「允许」「拒绝」；`select`、`input`、`editor` 按「看不懂的请求」写进会话，并回答 pi「已取消」。
 
 ## 通知与压缩
 
@@ -263,7 +277,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - 一个会话可以同时存在多个审批；多设备竞争时只有一个决定生效。不在进行中的一轮里的询问答复为取消。
 - 允许 ACP 询问要求 `run` 权限，任何设备都可以（不弹确认，不提供「始终允许」）；拒绝可以在任何已登记且有查看权限的设备上进行。
 - 询问结束后，那次工具调用带上决定记录 `ToolDetail.decision`（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「决定记录与拒绝说明」）：人的允许或拒绝记 `allowed`、`rejected` 与在哪里决定；取消、一轮结束、进程退出、Host 重启时还开着的询问，以及权限漂移时 Latch 自己拒绝的询问，记 `cancelled`，不算作某人的拒绝；Agent 撤回的询问不留记录；同一调用询问多次时，已经给出的允许不被之后的拒绝或取消覆盖。拒绝不保证 Agent 不执行：Agent 之后报告的开始、完成与差异照常显示。ACP 的权限回复不能带文字，所以拒绝附带的说明（「告诉 Harness 改做什么」）不会转给 Agent。
-- 有些 Agent（例如 pi，或处于自动批准模式的 Agent）不请求审批，Latch 不会显示审批卡片。Latch 的审批不是操作系统沙箱。
+- 有些 Agent（例如处于自动批准模式的 Agent）不请求审批，Latch 就不会显示审批卡片。pi 执行工具前不请求审批，但它的扩展要求确认时，Latch 照样显示审批卡片（见[pi 的 RPC 模式](#pi-的-rpc-模式)）。Latch 的审批不是操作系统沙箱。
 
 ## 取消
 
@@ -351,6 +365,8 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
 | Cursor 的选择题（`cursor/ask_question`）放进提问卡片 | 未实现；提问卡片还没有接到 ACP 驱动上，现在回答 `skipped` 并把问题写进会话 |
 | Claude Agent 的其他文件夹（`additionalDirectories`） | 未实现；Claude 访问会话目录以外的路径时逐次询问 |
+| pi 的分叉（`fork`） | 未实现；Latch 的会话还没有分叉 |
+| 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
 
 ## 测试

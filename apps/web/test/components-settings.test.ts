@@ -14,10 +14,10 @@ const noop = () => {}
 afterEach(() => {
   vi.unstubAllGlobals()
 })
-/** An adapter preset's detection: the adapter `found`, and the agent it connects to when `companion` is given. */
-const adapter = (found: boolean, companion?: boolean) => ({
-  command: 'pi-acp',
-  detected: { found, ...(companion === undefined ? {} : { companion: { command: 'pi', found: companion } }) },
+/** An adapter preset's detection: the adapter `found`, and the program it drives when `program` is given. */
+const adapter = (found: boolean, program?: boolean) => ({
+  command: 'codex-acp',
+  detected: { found, ...(program === undefined ? {} : { agent: { command: 'codex', found: program } }) },
 })
 
 describe('about', () => {
@@ -39,7 +39,7 @@ describe('engine rows', () => {
       presetId: 'pi',
       enabled: true,
       verified: true,
-      command: 'pi-acp',
+      command: 'pi',
       args: [],
       detected: { found: true },
       ...overrides,
@@ -103,14 +103,12 @@ describe('phone pairing', () => {
 })
 
 describe('agent settings', () => {
-  it('names both programs when an adapter preset is missing one of them', () => {
-    const agent = adapter
-    expect(missingText(agent(true))).toBeUndefined()
-    expect(missingText(agent(false))).toBe('未找到命令 pi-acp')
-    expect(missingText(agent(true, true))).toBeUndefined()
-    expect(missingText(agent(true, false))).toBe('已找到适配器 pi-acp，还没找到 pi')
-    expect(missingText(agent(false, true))).toBe('已安装 pi，还差让 Latch 连接它的适配器 pi-acp')
-    expect(missingText(agent(false, false))).toBe('未找到 pi 和它的适配器 pi-acp')
+  it('says when only the adapter of an installed program is missing', () => {
+    expect(missingText(adapter(true))).toBeUndefined()
+    expect(missingText(adapter(false))).toBe('未找到命令 codex-acp')
+    expect(missingText(adapter(true, false))).toBeUndefined()
+    expect(missingText(adapter(false, true))).toBe('已安装 codex，还差让 Latch 连接它的适配器 codex-acp')
+    expect(missingText(adapter(false, false))).toBe('未找到命令 codex-acp')
   })
 })
 

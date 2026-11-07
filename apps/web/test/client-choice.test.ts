@@ -31,7 +31,7 @@ function catalog(overrides: Partial<HostCatalog> = {}): HostCatalog {
     harnesses: [
       testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
       testHarness('codex', { kind: 'agent', label: 'Codex' }),
-      testHarness('pi', { kind: 'agent', label: 'pi', status: 'unavailable', statusMessage: '未找到命令 pi-acp' }),
+      testHarness('pi', { kind: 'agent', label: 'pi', status: 'unavailable', statusMessage: '未找到命令 pi' }),
     ],
     providers: [
       {

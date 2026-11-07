@@ -137,7 +137,7 @@ export function AgentPresetList({
             <span className="setup-list-description">{preset.description}</span>
           </span>
           <span className="setup-list-end">
-            {preset.detected?.found && (preset.detected.companion?.found ?? true) ? '已找到' : '添加'}
+            {preset.detected?.found ? '已找到' : '添加'}
             <Icon icon={ChevronRight} size={12} />
           </span>
         </button>

@@ -10,7 +10,8 @@ import { isReservedAgentEnvName, type DriverTaskDetail, type Message, type Sessi
 import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
-import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
+import { AcpWire } from '../src/wires/acp.ts'
+import { ConnectionStopping } from '../src/wires/process.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { commandName } from '../src/mapping.ts'
 import {
@@ -393,36 +394,33 @@ describe('ACP driver registration and readiness', () => {
     expect(resolveCommand('a-directory')).toBeUndefined()
   })
 
-  it('says which part of an adapter preset is missing, and looks again after a re-check', async () => {
+  it('says when only the adapter of an installed program is missing, and looks again after a re-check', async () => {
     const home = await realpath(await mkdtemp(join(tmpdir(), 'latch-acp-home-')))
     cleanups.push(() => rm(home, { recursive: true, force: true }))
     const bin = join(home, '.volta/bin')
     await mkdir(bin, { recursive: true })
     hostEnv({ HOME: home, PATH: '/usr/bin:/bin' })
-    // Only this directory: a real pi installed on this computer must not count.
+    // Only this directory: a real Codex installed on this computer must not count.
     setCommandSearch(() => [bin])
     const driver = await activate(
-      createAcpAgentPlugin({ id: 'pi', name: 'pi', presetId: 'pi', command: 'pi-acp', args: [], env: {}, enabled: true }),
+      createAcpAgentPlugin({ id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {}, enabled: true }),
     )
     const install = (command: string) => installCommand(bin, command)
-    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: '未找到 pi 和它的适配器 pi-acp。安装：npm i -g pi-acp' })
-    await install('pi')
+    expect(driver.status?.()).toEqual({
+      status: 'unavailable',
+      statusMessage: '未找到命令 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp',
+    })
+    await install('codex')
     // The lookup is cached for a few seconds; a re-check drops it.
     forgetCommandLookups()
     expect(driver.status?.()).toEqual({
       status: 'unavailable',
-      statusMessage: '已安装 pi，还差让 Latch 连接它的适配器 pi-acp。安装：npm i -g pi-acp',
+      statusMessage: '已安装 codex，还差让 Latch 连接它的适配器 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp',
     })
-    await install('pi-acp')
+    await install('codex-acp')
     expect(driver.status?.().status).toBe('unavailable')
     forgetCommandLookups()
     expect(driver.status?.()).toEqual({ status: 'ready' })
-    await rm(join(bin, 'pi'))
-    forgetCommandLookups()
-    expect(driver.status?.()).toEqual({
-      status: 'unavailable',
-      statusMessage: '已找到适配器 pi-acp，还没找到 pi',
-    })
   })
 
   it('refuses definitions that set variables Latch manages', () => {
@@ -447,7 +445,6 @@ describe('ACP driver registration and readiness', () => {
       'GOOSE_MODE',
       'DSH_PERMISSION_MODE',
       'OPENCODE_CONFIG_CONTENT',
-      'PI_ACP_PI_COMMAND',
       'CODEX_HOME',
       'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
       'NODE_TLS_REJECT_UNAUTHORIZED',
@@ -1585,11 +1582,10 @@ describe('ACP project folders', () => {
     expect(await fixture.log()).toEqual([])
   })
 
-  it('never passes other folders to OpenCode, DeepSeek Harness, pi or goose', async () => {
+  it('never passes other folders to OpenCode, DeepSeek Harness or goose', async () => {
     for (const [presetId, env] of [
       ['opencode', { FAKE_ACP_CONFIG: 'legacy' }],
       ['dsh', {}],
-      ['pi', {}],
       ['goose', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' }],
     ] as const) {
       // Even when the agent advertises them, and when folders reach the driver anyway.
@@ -2238,8 +2234,6 @@ describe('ACP permission mode', () => {
       approvals: 'none',
       readback: 'none',
     })
-    const { sessionId } = await pi.createTask({ prompt: 'echo', requestId: rid() })
-    expect((await settled(pi, sessionId)).permission?.notes).toContain('pi 执行工具前不请求审批')
   })
 })
 
@@ -3062,7 +3056,7 @@ describe('ACP sessions across processes', () => {
   it('rejects a request at once when the connection is stopping instead of queuing it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-acp-conn-'))
     cleanups.push(() => rm(root, { recursive: true, force: true }))
-    const connection = AgentConnection.spawn(
+    const connection = AcpWire.spawn(
       {
         command: process.execPath,
         args: [FAKE_ACP_AGENT],
@@ -3886,16 +3880,6 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
     expect(reopened.catalogueRead!()).toMatchObject({ last: { ok: false } })
     await reopened.close()
     expect((await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })).catalogueRead!()).toEqual({ when: 'select' })
-  })
-
-  it('reads pi only when asked, since starting it loads the person’s extensions', async () => {
-    const fixture = await preset('pi', OPTIONS)
-    const bridge = await fixture.open()
-    expect(bridge.catalogueRead!()).toEqual({ when: 'request' })
-    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
-    expect(await fixture.log()).toEqual([])
-    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
-    expect(models(bridge.catalogue!())).toEqual(['small', 'large'])
   })
 
   it("lists Codex's models through the adapter's own app-server, with no session or thread", async () => {
