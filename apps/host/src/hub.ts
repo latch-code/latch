@@ -20,6 +20,7 @@ import {
   type CreateTaskInput,
   type DecideOptions,
   type LaunchPreview,
+  type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
@@ -387,13 +388,21 @@ export class HarnessHub implements Bridge {
     harnessId: string,
     cwd: string,
     project?: { workspaceId: string; folders: ReadonlyArray<ProjectFolder> },
+    modelRoute?: ModelRoute,
   ): Promise<LaunchPreview | undefined> {
     const member = this.member(harnessId)
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 当前不可用`)
-    if (!member.bridge.launchPreview) return undefined
-    return member.bridge.launchPreview(
-      member.driver.projectFolders === 'all' && project ? { cwd, workspaceId: project.workspaceId, folders: project.folders } : { cwd },
-    )
+    if (!member.bridge.launchPreview) {
+      if (modelRoute)
+        throw new AppError(400, 'model-route-unsupported', `${this.describe(member).capabilities.display.label} 不能经 Latch 使用模型服务`)
+      return undefined
+    }
+    return member.bridge.launchPreview({
+      ...(member.driver.projectFolders === 'all' && project
+        ? { cwd, workspaceId: project.workspaceId, folders: project.folders }
+        : { cwd }),
+      ...(modelRoute ? { modelRoute } : {}),
+    })
   }
 
   info(id: string): HarnessInfo | undefined {

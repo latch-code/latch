@@ -2,7 +2,15 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AGENT_PRESETS, type AppSnapshot, type HostCatalog, type TaskSummary } from '@latch/protocol'
+import {
+  AGENT_PRESETS,
+  pairRoute,
+  type AppSnapshot,
+  type HarnessInfo,
+  type HostCatalog,
+  type ModelWire,
+  type TaskSummary,
+} from '@latch/protocol'
 import { readPending, submissionRequest, writePending, type PendingSubmission } from '../src/core/api.ts'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { workspaceOptions } from '../src/components/pickerOptions.tsx'
@@ -21,6 +29,8 @@ import {
   usesDemoModel,
   isPinnedChoice,
   pinnedChoice,
+  servicePick,
+  withServicePick,
   type ComposerChoice,
   type DraftPick,
 } from '../src/composerChoice.ts'
@@ -512,5 +522,63 @@ describe('harness entries', () => {
     const unusable = catalog({ workspaces: [{ id: 'docs', name: 'docs', path: '/work/docs', unavailable: '目录不存在' }] })
     expect(projectFor(unusable, task('/work/docs'))).toBeUndefined()
     expect(projectFor(undefined, task('/work/docs'))).toBeUndefined()
+  })
+})
+
+describe('a model service for a Harness with its own models', () => {
+  const speaking = (harness: HarnessInfo, wires: ModelWire[], experimental?: true): HarnessInfo => ({
+    ...harness,
+    capabilities: { ...harness.capabilities, models: { ...harness.capabilities.models, wires, ...(experimental ? { experimental } : {}) } },
+  })
+  const services = catalog({
+    harnesses: [
+      testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
+      speaking(testHarness('codex', { label: 'Codex' }), ['responses'], true),
+    ],
+    providers: [
+      { id: 'openai', name: 'OpenAI', kind: 'openai-responses', models: ['gpt-5.5', 'gpt-5.5-mini'], defaultModel: 'gpt-5.5' },
+      { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+      { id: 'demo', name: 'Demo', kind: 'demo', models: ['demo'], defaultModel: 'demo' },
+    ],
+  })
+  const codex = services.harnesses[1]!
+
+  it('routes a pair by protocol: forwarded when the Harness speaks it, a translation Latch lacks otherwise', () => {
+    expect(pairRoute(codex.capabilities)).toEqual({ kind: 'own' })
+    expect(pairRoute(codex.capabilities, { kind: 'openai-responses' })).toEqual({
+      kind: 'passthrough',
+      wire: 'responses',
+      experimental: true,
+    })
+    expect(pairRoute(codex.capabilities, { kind: 'openai-compatible' })).toEqual({
+      kind: 'translate',
+      from: 'chat-completions',
+      speaks: ['responses'],
+    })
+    expect(pairRoute(codex.capabilities, { kind: 'demo' })).toEqual({ kind: 'unavailable', reason: 'not-a-service' })
+    expect(pairRoute(testHarness('goose').capabilities, { kind: 'gemini' })).toEqual({ kind: 'unavailable', reason: 'not-forwarded' })
+    expect(pairRoute(services.harnesses[0]!.capabilities, { kind: 'anthropic' })).toEqual({ kind: 'direct' })
+  })
+
+  it("keeps a service pick as that Harness's own, and only while Latch can forward the pair", () => {
+    const picked = withServicePick({ model: 'gpt-5.5-codex', effort: 'high' }, { providerId: 'openai', model: 'gpt-5.5-mini' }, 'model')
+    expect(picked).toEqual({ effort: 'high', '~service': 'openai\u0000gpt-5.5-mini' })
+    expect(servicePick(services, codex, picked)).toEqual({ providerId: 'openai', model: 'gpt-5.5-mini' })
+    expect(withServicePick(picked, undefined)).toEqual({ effort: 'high' })
+    // A service it does not speak, a model the service does not list, the demo model and the built-in Harness are no pick.
+    expect(servicePick(services, codex, { '~service': 'deepseek\u0000deepseek-chat' })).toBeUndefined()
+    expect(servicePick(services, codex, { '~service': 'openai\u0000gone' })).toBeUndefined()
+    expect(servicePick(services, codex, { '~service': 'demo\u0000demo' })).toBeUndefined()
+    expect(servicePick(services, services.harnesses[0], { '~service': 'openai\u0000gpt-5.5' })).toBeUndefined()
+
+    expect(resolveChoice(services, { harnessId: 'codex', config: picked })).toMatchObject({
+      harnessId: 'codex',
+      config: { '~service': 'openai\u0000gpt-5.5-mini' },
+    })
+    expect(resolveChoice(services, { harnessId: 'codex', config: { '~service': 'deepseek\u0000deepseek-chat' } }).config).toBeUndefined()
+    // Another Harness never inherits it: the pick stays with Codex's own.
+    const away = resolveChoice(services, { harnessId: 'standard', otherPicks: { codex: picked! } })
+    expect(away.config).toBeUndefined()
+    expect(away.model).toEqual({ providerId: 'deepseek', model: 'deepseek-chat' })
   })
 })

@@ -1,6 +1,7 @@
-// Deterministic ACP v1 agent for tests. No network, no model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
+// Deterministic ACP v1 agent for tests. No model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
 // FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
-// turn, which writes two files in the session's working directory.
+// turn, which writes two files in the session's working directory. Its only network use is the `model` turn, which calls
+// the model service a client pointed it at, as Codex (`providers/set`) and Gemini CLI (its gateway variables) would.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
@@ -71,7 +72,7 @@ const version = env.FAKE_ACP_VERSION ?? '1.2.3'
  * Comma list of the models offered with FAKE_ACP_CONFIG=options; default small,large. FAKE_ACP_MODELS_FILE, read for
  * every session, lets a later session of the same agent offer others.
  */
-const models = () =>
+const known = () =>
   (
     (env.FAKE_ACP_MODELS_FILE && existsSync(env.FAKE_ACP_MODELS_FILE) ? readFileSync(env.FAKE_ACP_MODELS_FILE, 'utf8').trim() : undefined)
     ?? env.FAKE_ACP_MODELS
@@ -79,6 +80,14 @@ const models = () =>
   )
     .split(',')
     .filter(Boolean)
+/**
+ * FAKE_ACP_PROVIDERS=1 advertises ACP `providers/*` as codex-acp does: one provider, FAKE_ACP_PROVIDER_ID (default
+ * `openai`), API type `openai`. `providers/set` lists the models at `<baseUrl>/models` with the headers it was given, and
+ * the agent then offers only the models it knows that the listing has. FAKE_ACP_PROVIDERS_SET=fail refuses the set.
+ */
+let provider
+let served
+const models = () => (served ? known().filter(model => served.has(model)) : known())
 /** With '1', the large model also offers a max effort, as agents whose thinking levels follow the model do. */
 const effortByModel = env.FAKE_ACP_EFFORT_BY_MODEL === '1'
 /** The thinking option's ID; codex-acp names it reasoning_effort. */
@@ -457,6 +466,7 @@ async function handle(method, params) {
           ...(mcpMode === 'dsh' ? { mcpCapabilities: { http: true } } : {}),
           loadSession: caps.has('load'),
           ...(env.FAKE_ACP_LOGOUT === '1' ? { auth: { logout: {} } } : {}),
+          ...(env.FAKE_ACP_PROVIDERS === '1' ? { providers: {} } : {}),
           ...(env.FAKE_ACP_AUTH_STATUS ? { _meta: { authStatus: {} } } : {}),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
@@ -477,7 +487,7 @@ async function handle(method, params) {
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
-      sessions[sessionId] = { cwd: params.cwd, history: [], model: models()[0] ?? 'small', mode: initialMode, effort: 'low' }
+      sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: 'low' }
       touched.add(sessionId)
       save()
       return { sessionId, ...configState(sessions[sessionId]) }
@@ -505,6 +515,29 @@ async function handle(method, params) {
     }
     case 'session/prompt':
       return prompt(params)
+    case 'providers/list':
+      if (env.FAKE_ACP_PROVIDERS !== '1') throw rpcError(-32601, `Method not found: ${method}`)
+      return {
+        providers: [
+          {
+            providerId: env.FAKE_ACP_PROVIDER_ID ?? 'openai',
+            supported: ['openai'],
+            required: false,
+            current: provider ? { apiType: 'openai', baseUrl: provider.baseUrl } : null,
+          },
+        ],
+      }
+    case 'providers/set': {
+      if (env.FAKE_ACP_PROVIDERS !== '1') throw rpcError(-32601, `Method not found: ${method}`)
+      if (env.FAKE_ACP_PROVIDERS_SET === 'fail') throw rpcError(-32603, 'Model discovery for provider "openai" failed')
+      if (params.apiType !== 'openai') throw rpcError(-32602, `Unsupported provider apiType "${params.apiType}"`)
+      const response = await fetch(`${params.baseUrl.replace(/\/+$/u, '')}/models`, { headers: params.headers ?? {} })
+      if (!response.ok) throw rpcError(-32603, `Model listing failed: ${response.status}`)
+      served = new Set(((await response.json()).data ?? []).map(entry => entry.id))
+      provider = { baseUrl: params.baseUrl, headers: params.headers ?? {} }
+      log('providers-set', { providerId: params.providerId, baseUrl: params.baseUrl, headerNames: Object.keys(params.headers ?? {}) })
+      return {}
+    }
     case 'session/set_model':
       existing(params.sessionId).model = params.modelId
       save()
@@ -620,9 +653,75 @@ async function prompt({ sessionId, prompt: blocks }) {
   return result
 }
 
+/** A new session's model: as Gemini CLI does, the one its system settings name, listed or not; else the first listed. */
+function startModel() {
+  const settings = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8')) : {}
+  return settings.model?.name ?? models()[0] ?? 'small'
+}
+
+/**
+ * One request to the model service the client pointed this agent at, as Codex and Gemini CLI send it: Responses for a
+ * `providers/set` route, Gemini for GOOGLE_GEMINI_BASE_URL with the session's model. Undefined when none
+ * was given, which is a reply that bypasses the client.
+ */
+const responsesText = event => (event.type === 'response.output_text.delta' ? event.delta : '')
+const geminiText = event => (event.candidates?.[0]?.content?.parts ?? []).map(part => (part.thought ? '' : (part.text ?? ''))).join('')
+
+async function callModel(session, input, model) {
+  if (provider) {
+    const url = `${provider.baseUrl.replace(/\/+$/u, '')}/responses`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { ...provider.headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: model ?? session.model, input: [{ role: 'user', content: text }], stream: true }),
+    })
+    return {
+      status: response.status,
+      text: await response.text(),
+      pick: responsesText,
+    }
+  }
+  if (env.GOOGLE_GEMINI_BASE_URL) {
+    const name = model ?? session.model
+    const url = `${env.GOOGLE_GEMINI_BASE_URL.replace(/\/+$/u, '')}/v1beta/models/${encodeURIComponent(name)}:streamGenerateContent?alt=sse`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': env.GEMINI_API_KEY ?? '', 'content-type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: input }] }] }),
+    })
+    return { status: response.status, text: await response.text(), pick: geminiText }
+  }
+  return undefined
+}
+
 const scenarios = {
   echo: ({ input, say }) => {
     say(`echo: ${input}`)
+    return END
+  },
+  // `model [as:name]`: asks the model service it was pointed at, with that model or its own, and says what came back.
+  model: async ({ session, input, argument, say }) => {
+    const answer = await callModel(session, input, argument?.startsWith('as:') ? argument.slice(3) : undefined)
+    if (!answer) {
+      say('answered without a model service')
+      return END
+    }
+    log('model-call', { status: answer.status })
+    if (answer.status !== 200) {
+      say(`model error ${answer.status}: ${answer.text}`)
+      return END
+    }
+    const events = answer.text
+      .split('\n')
+      .filter(line => line.startsWith('data: '))
+      .flatMap(line => {
+        try {
+          return [JSON.parse(line.slice(6))]
+        } catch {
+          return []
+        }
+      })
+    say(`model: ${events.map(answer.pick).join('')}`)
     return END
   },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.

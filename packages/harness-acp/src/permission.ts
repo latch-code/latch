@@ -109,6 +109,15 @@ export interface LaunchFolders {
   paths: string[]
 }
 
+/** What a launch says of a gateway route: `names` are the variables an `env` route sets, `providerId` what `providers/set` names. */
+export interface LaunchRoute {
+  providerId: string
+  origin: string
+  wire: string
+  via: 'providers' | 'env'
+  names: string[]
+}
+
 /**
  * Fingerprint of what a session launches. Values enter only as one digest, so the preview can show it without them.
  * `projectConfig` is the digest of the project configuration found; without one the fingerprint is the definition's.
@@ -127,6 +136,8 @@ export function launchHash(input: {
   inheritEnv?: readonly string[]
   /** Variable to the path of the program it points at. */
   programs?: Record<string, string>
+  /** A session on a gateway route: the service, its origin and protocol, and how the harness is pointed there. Never the token. */
+  route?: LaunchRoute
 }): string {
   return sha256Hex(
     canonicalJson({
@@ -141,6 +152,7 @@ export function launchHash(input: {
       ...(input.folders?.paths.length ? { folders: { via: input.folders.via, paths: input.folders.paths } } : {}),
       ...(input.inheritEnv?.length ? { inheritEnv: [...input.inheritEnv].sort() } : {}),
       ...(input.programs && Object.keys(input.programs).length ? { programs: input.programs } : {}),
+      ...(input.route ? { route: input.route } : {}),
     }),
   )
 }

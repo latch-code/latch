@@ -79,6 +79,11 @@ export interface DriverTaskSummary {
   mode?: TaskMode
   /** Provider of `model` when the harness runs on the Host's model providers. */
   providerId?: string
+  /**
+   * A harness with its own models whose requests Latch forwards to one of its model services, fixed when the session
+   * started: the service and the model chosen then. `bypassed`: a turn had a reply without a request through Latch.
+   */
+  modelRoute?: { providerId: string; model: string; bypassed?: true }
   /** Host-level session metadata; it applies to every harness. */
   pinned?: boolean
   archived?: boolean

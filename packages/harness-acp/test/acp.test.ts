@@ -7,9 +7,19 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isReservedAgentEnvName, type DriverTaskDetail, type Message, type SessionConfigOption } from '@latch/protocol'
-import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
+import type {
+  HarnessHostOptions,
+  HarnessDriver,
+  HarnessSecurityEvent,
+  HarnessPlugin,
+  Bridge,
+  HostProject,
+  ModelGateway,
+  ModelRoute,
+  ProjectFolder,
+} from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { FAKE_ACP_AGENT, startFakeModels, type FakeModels } from '@latch/testkit'
 import { AcpWire } from '../src/wires/acp.ts'
 import { ConnectionStopping } from '../src/wires/process.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
@@ -112,7 +122,10 @@ async function setup(
   env: Record<string, string> = {},
   options: AcpAgentOptions = {},
   overrides: Partial<AgentRecord> = {},
-  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent'> = {},
+  attachmentOptions: Pick<
+    HarnessHostOptions,
+    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway'
+  > = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -179,6 +192,7 @@ async function setup(
                 cwd: input.cwd ?? workspace,
                 ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
                 ...(input.folders ? { folders: input.folders } : {}),
+                ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
               })
             ).launchHash,
           })
@@ -4461,5 +4475,243 @@ describe('Claude Agent and Cursor presets', () => {
     for (const command of ['claude-agent-acp', 'claude', 'cursor-agent', 'agent']) expect(resolveCommand(command)).toBeUndefined()
     setCommandSearch(() => [bin])
     expect(resolveCommand('cursor-agent')).toBe(join(bin, 'cursor-agent'))
+  })
+})
+
+describe('sessions on a model service through the gateway', () => {
+  const GEMINI = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'plan,default,autoEdit,yolo', FAKE_ACP_INITIAL_MODE: 'default' }
+  const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
+
+  /** Stands in for the Host's gateway: the fake service itself, with a token that only it is told to expect. */
+  function gateway(models: FakeModels) {
+    const leases: Array<{ sessionId: string; token: string; closed: boolean }> = []
+    let usable = true
+    const access: ModelGateway = {
+      open({ sessionId, route }) {
+        const lease = { sessionId, token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`, closed: false }
+        leases.push(lease)
+        return {
+          baseURL: route.wire === 'responses' ? `${models.origin}/v1` : models.origin,
+          token: lease.token,
+          requests: () => models.requests.filter(request => request.key === lease.token).length,
+          models: ['fake-model', 'fake-model-large'],
+          active: () => usable && !lease.closed,
+          close: () => {
+            lease.closed = true
+          },
+        }
+      },
+    }
+    return {
+      access,
+      leases,
+      revoke() {
+        usable = false
+      },
+    }
+  }
+
+  async function routed(presetId: string, env: Record<string, string>, route: Omit<ModelRoute, 'origin'>) {
+    const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const events: HarnessSecurityEvent[] = []
+    const fixture = await setup(
+      { ...env, FAKE_ACP_DUMP_ENV: '1' },
+      { idleMs: 60_000 },
+      { presetId },
+      { modelGateway: stub.access, securityEvent: event => void events.push(event) },
+    )
+    return { fixture, models, stub, events, route: { ...route, origin: models.origin } satisfies ModelRoute }
+  }
+
+  const envOf = (log: LogEntry[]) => log.filter(entry => entry.event === 'env').map(entry => entry.env as Record<string, string>)
+
+  it('points Gemini CLI at the gateway with a token in its environment, and its system settings at the route', async () => {
+    const { fixture, models, stub, route } = await routed('gemini', GEMINI, {
+      providerId: 'gemini-svc',
+      model: 'fake-model-large',
+      wire: 'gemini',
+    })
+    const bridge = await fixture.open()
+    const own = await bridge.launchPreview!({ cwd: fixture.workspace })
+    const preview = await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })
+    expect(preview.launchHash).not.toBe(own.launchHash)
+    expect(preview.definitionHash).toBe(own.definitionHash)
+    expect(preview.envNames).toEqual(expect.arrayContaining(['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'NO_PROXY']))
+    // A start recorded without the route does not launch one.
+    await expect(
+      bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route, expectedLaunchHash: own.launchHash }),
+    ).rejects.toMatchObject({ status: 409 })
+
+    const { sessionId } = await bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(
+      assistants(detail)
+        .map(message => message.text)
+        .join(''),
+    ).toBe('model: from the service')
+    expect(detail.summary.modelRoute).toEqual({ providerId: 'gemini-svc', model: 'fake-model-large' })
+    expect(systemText(detail)).not.toContain('没有经过 Latch')
+    const [lease] = stub.leases
+    expect(models.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model-large', key: lease!.token, stream: true }])
+
+    const log = await fixture.log()
+    const [agentEnv] = envOf(log)
+    expect(agentEnv).toMatchObject({ GOOGLE_GEMINI_BASE_URL: models.origin, GEMINI_API_KEY: lease!.token })
+    expect(agentEnv!.NO_PROXY!.split(',')).toEqual(expect.arrayContaining(['127.0.0.1', 'localhost']))
+    // The settings that select the gateway are the session's own; the shared file keeps the person's login.
+    const settings = JSON.parse(await readFile(agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!, 'utf8')) as Record<string, unknown>
+    expect(settings).toMatchObject({ security: { auth: { selectedType: 'gateway' } }, model: { name: 'fake-model-large' } })
+    expect(agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!.startsWith(fixture.tmpRoot)).toBe(true)
+    // The token is in no argument, no stored record and nothing the session shows.
+    expect(JSON.stringify(log.filter(entry => entry.event === 'start'))).not.toContain(lease!.token)
+    expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(lease!.token)
+    expect(JSON.stringify(detail)).not.toContain(lease!.token)
+
+    await bridge.close()
+    expect(lease!.closed).toBe(true)
+  })
+
+  it('says a turn that replied without the gateway did not go through Latch, records it, and takes the next turn', async () => {
+    const { fixture, events, route } = await routed('gemini', GEMINI, { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(systemText(detail)).toBe('这一轮没有经过 Latch：Fake 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。')
+    expect(detail.summary.modelRoute).toEqual({ providerId: 'gemini-svc', model: 'fake-model', bypassed: true })
+    expect(events).toEqual([{ type: 'model-route-bypassed', sessionId }])
+    await bridge.prompt(sessionId, 'model again', rid())
+    const next = await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
+    expect(assistants(next).at(-1)!.text).toBe('model: from the service')
+    expect(events).toHaveLength(1)
+  })
+
+  it("offers on a Gemini CLI route the service's models, not Gemini CLI's own list, and sends a switch to the service", async () => {
+    // As Gemini CLI does: a fixed list of its own models, and the current one from its settings, listed or not.
+    const { fixture, models, route } = await routed(
+      'gemini',
+      { ...GEMINI, FAKE_ACP_CONFIG: 'legacy' },
+      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
+    )
+    const bridge = await fixture.open()
+    // An ID typed for its own login is not the service's either.
+    await bridge.setCustomModels!(['typed-model'])
+    const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    const option = detail.config?.find(item => item.category === 'model')
+    expect(option).toMatchObject({ currentValue: 'fake-model', options: [{ value: 'fake-model' }, { value: 'fake-model-large' }] })
+    // Its own models are not offered: the gateway would refuse them.
+    for (const value of ['large', 'typed-model'])
+      await expect(bridge.setConfig!(sessionId, option!.id, value)).rejects.toMatchObject({ status: 400 })
+    await bridge.setConfig!(sessionId, option!.id, 'fake-model-large')
+    await bridge.prompt(sessionId, 'model two', rid())
+    const next = await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
+    expect(assistants(next).at(-1)!.text).toBe('model: from the service')
+    expect(models.requests.map(request => request.model)).toEqual(['fake-model', 'fake-model-large'])
+    expect(systemText(next)).not.toContain('没有经过 Latch')
+  })
+
+  it('replaces a process whose token stopped working before its next turn', async () => {
+    const { fixture, stub, route } = await routed(
+      'gemini',
+      { ...GEMINI, FAKE_ACP_CAPS: 'load' },
+      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
+    await settled(bridge, sessionId)
+    stub.revoke()
+    let refreshed = false
+    stub.access.open = (original => input => {
+      refreshed = true
+      return { ...original(input), active: () => true }
+    })(stub.access.open.bind(stub.access))
+    await bridge.prompt(sessionId, 'model two', rid())
+    await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
+    expect(refreshed).toBe(true)
+    expect(stub.leases).toHaveLength(2)
+    expect(stub.leases[0]!.closed).toBe(true)
+    const tokens = envOf(await fixture.log()).map(env => env.GEMINI_API_KEY)
+    expect(new Set(tokens).size).toBe(2)
+  })
+
+  it('sets Codex up over providers/set with the token in a header, then chooses the route model from what it lists', async () => {
+    const { fixture, models, stub, route } = await routed(
+      'codex',
+      { ...CODEX, FAKE_ACP_PROVIDERS: '1', FAKE_ACP_MODELS: 'fake-model,fake-model-large,codex-only' },
+      { providerId: 'openai-svc', model: 'fake-model-large', wire: 'responses' },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(
+      assistants(detail)
+        .map(message => message.text)
+        .join(''),
+    ).toBe('model: from the service')
+    const [lease] = stub.leases
+    expect(models.requests).toMatchObject([{ wire: 'responses', model: 'fake-model-large', key: lease!.token }])
+    const log = await fixture.log()
+    expect(log.filter(entry => entry.event === 'providers-set')).toEqual([
+      expect.objectContaining({ providerId: 'openai', baseUrl: `${models.origin}/v1`, headerNames: ['authorization'] }),
+    ])
+    // Codex lists only the service's models it knows; the route's is chosen before the first prompt.
+    expect(detail.config?.find(option => option.category === 'model')).toMatchObject({
+      currentValue: 'fake-model-large',
+      options: [{ value: 'fake-model' }, { value: 'fake-model-large' }],
+    })
+    // Codex's own program is never looked up in a test, and nothing but the header carries the token.
+    expect(envOf(log)[0]).not.toHaveProperty('CODEX_PATH')
+    expect(JSON.stringify(envOf(log))).not.toContain(lease!.token)
+    expect(fixture.diagnostics.join('\n')).not.toContain(lease!.token)
+  })
+
+  it('refuses a Codex route the agent cannot take, saying why, and keeps no token open', async () => {
+    for (const [env, message] of [
+      [{}, 'Fake 这个版本不接受 Latch 设置模型服务，不能经 Latch 使用这个模型服务。'],
+      [{ FAKE_ACP_PROVIDERS: '1', FAKE_ACP_PROVIDER_ID: 'other' }, 'Fake 没有可以设置的模型服务，不能经 Latch 使用这个模型服务。'],
+      [
+        { FAKE_ACP_PROVIDERS: '1', FAKE_ACP_MODELS: 'codex-only' },
+        'Fake 没有列出模型「fake-model」：经 Latch 时它只用自己认识的模型。这条消息没有发出。',
+      ],
+    ] as const) {
+      const { fixture, stub, route, models } = await routed(
+        'codex',
+        { ...CODEX, ...env },
+        { providerId: 'openai-svc', model: 'fake-model', wire: 'responses' },
+      )
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route })
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('failed')
+      expect(systemText(detail)).toContain(message)
+      expect(models.requests.filter(request => request.wire === 'responses')).toEqual([])
+      await bridge.close()
+      expect(stub.leases.every(lease => lease.closed)).toBe(true)
+    }
+  })
+
+  it('refuses a route for a harness Latch cannot point at the gateway, or over a protocol it does not speak', async () => {
+    const { fixture, route } = await routed(
+      'goose',
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' },
+      {
+        providerId: 'svc',
+        model: 'fake-model',
+        wire: 'chat-completions',
+      },
+    )
+    const bridge = await fixture.open()
+    const refusal = { status: 400, code: 'model-route-unsupported' }
+    await expect(bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })).rejects.toMatchObject(refusal)
+    await expect(
+      bridge.createTask({ prompt: 'echo', requestId: rid(), modelRoute: route, expectedLaunchHash: 'a'.repeat(64) }),
+    ).rejects.toMatchObject(refusal)
+    const gemini = await routed('gemini', GEMINI, { providerId: 'svc', model: 'fake-model', wire: 'responses' })
+    await expect(
+      (await gemini.fixture.open()).launchPreview!({ cwd: gemini.fixture.workspace, modelRoute: gemini.route }),
+    ).rejects.toMatchObject(refusal)
+    expect(await fixture.log()).toEqual([])
   })
 })

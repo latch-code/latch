@@ -8,6 +8,7 @@ import type {
   DriverTaskDetail,
   TaskMode,
   DriverTaskSummary,
+  ModelWire,
   HarnessCatalogue,
   CatalogueRead,
 } from '@latch/protocol/types'
@@ -16,6 +17,17 @@ import type {
 export interface ProjectFolder {
   id: string
   path: string
+}
+
+/**
+ * A model service a harness's requests go to through the Host's gateway, as the Host derives it from its own records: the
+ * service, the model chosen, the protocol both speak and the service's `scheme://host:port`. Never a key or a token.
+ */
+export interface ModelRoute {
+  providerId: string
+  model: string
+  wire: ModelWire
+  origin: string
 }
 
 export interface CreateTaskInput {
@@ -28,6 +40,11 @@ export interface CreateTaskInput {
   mode?: TaskMode
   /** Model for drivers that run on the Host's providers. Others may ignore it. */
   model?: ModelRef
+  /**
+   * Drivers that declare `models.wires`: the service this session's requests go to through `HarnessHostOptions.modelGateway`
+   * instead of the harness's own login. Set by the Host only; part of the launch, so the start's fingerprint covers it.
+   */
+  modelRoute?: ModelRoute
   /** Absolute working directory chosen from the Host's workspaces. Absent means the driver default. */
   cwd?: string
   /**
@@ -170,5 +187,10 @@ export interface Bridge {
   customModels?(): string[]
   setCustomModels?(models: readonly string[]): Promise<void>
   /** Optional, L3 drivers. What a new session in `cwd` would launch; `workspaceId` and `folders` as in `CreateTaskInput`. */
-  launchPreview?(input: { cwd: string; workspaceId?: string; folders?: ReadonlyArray<ProjectFolder> }): Promise<LaunchPreview>
+  launchPreview?(input: {
+    cwd: string
+    workspaceId?: string
+    folders?: ReadonlyArray<ProjectFolder>
+    modelRoute?: ModelRoute
+  }): Promise<LaunchPreview>
 }

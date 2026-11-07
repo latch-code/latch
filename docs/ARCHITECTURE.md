@@ -45,7 +45,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
-| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
+| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
 | 进程发现 | `host.json`、数据目录锁、经 `host.sock` 核对 Host | `apps/host/src/host-state.ts` |
@@ -267,7 +267,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 - **审批按来源路由。** `approvals()` 合并所有 Driver；`decide` 找到持有该审批的 Driver。
 - **权限级别。** Hub 由 `trustOf` 给会话标注级别：Driver 的来源由注册它的插件得出，内置且声明 Latch 把关的是 L1，ACP 与插件 Harness 是 L3（未知来源按 L3），Driver 只能往低了说（`apps/host/src/harness-trust.ts`）；会话详情带 `permission` 说明由谁把关、能否读回模式与漂移状态。
 - **故障隔离。** 某个 Driver 列表失败不影响快照；非必需 Driver 启动失败只会在目录中标为不可用。
-- **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。
+- **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。自己带模型的 Harness 选了模型服务时，Host 用 `pairRoute` 重算这一对，只把 `modelRoute`（服务、模型、协议与源）交给声明了 `models.wires` 的 Driver，Driver 经 `modelGateway` 为每个进程换一个网关凭据（见 [HARNESSES.md](./HARNESSES.md#经-latch-使用模型服务)）。
 - **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效；审批决定与取消的回执也随会话保存在这里（见「审批与取消」）。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`，删除成功后一并删除该会话的元数据与回执。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化（Standard 与 ACP 都如此；不记录运行的外部 Driver 不提供）。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **生命周期事件。** `session-lifecycle.ts` 把会话与 Host 的变化发给 Host 内按会话保存状态的模块，路由模块经 `RouteContext.lifecycle` 拿到的对象只有 `on`，只能订阅、不能发出。没有监听器时这些事件不增加任何读取或等待。

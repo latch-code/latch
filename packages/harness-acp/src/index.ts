@@ -63,12 +63,20 @@ const ACP_CAPABILITIES = {
 } satisfies HarnessDriver['capabilities']
 
 /**
- * What every ACP agent is, with what its profile knows. Its models are known from its own sessions, and no agent is routed
- * to a model service yet. Without a profile whether it asks is unknown, which counts as not asking.
+ * What every ACP agent is, with what its profile knows. Its models are known from its own sessions; a profile that points
+ * it at the Host's gateway names the protocols Latch can forward for it. Without a profile whether it asks is unknown,
+ * which counts as not asking.
  */
 function agentFacts(name: string, presetId: string | undefined, profile: HarnessProfile | undefined): HarnessCapabilities {
+  const gateway = profile?.gateway
   return {
-    models: { owner: 'harness', catalogue: 'session-check', wires: [] },
+    models: {
+      owner: 'harness',
+      catalogue: 'session-check',
+      wires: [...(gateway?.wires ?? [])],
+      ...(gateway?.experimental ? { experimental: true as const } : {}),
+      ...(gateway?.knownOnly ? { knownOnly: true as const } : {}),
+    },
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
     display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },

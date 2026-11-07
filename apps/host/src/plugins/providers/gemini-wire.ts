@@ -25,14 +25,14 @@ const MAX_SIGNATURE_CHARS = 1024 * 1024
 const SKIP_SIGNATURE = 'skip_thought_signature_validator'
 
 /** Accepts `https://generativelanguage.googleapis.com` and a base that already names its version. */
-function geminiEndpoint(baseURL: string, path: string): URL {
+export function geminiEndpoint(baseURL: string, path: string): URL {
   const url = parseBaseURL(baseURL)
   const prefix = url.pathname.replace(/\/+$/u, '')
   url.pathname = `${/\/v1(?:beta|alpha)?$/u.test(prefix) ? prefix : `${prefix}/v1beta`}${path}`
   return url
 }
 
-function geminiHeaders(apiKey: string): Record<string, string> {
+export function geminiHeaders(apiKey: string): Record<string, string> {
   // In the header, never the URL's `key=`: a URL ends up in logs.
   return apiKey ? { 'x-goog-api-key': apiKey } : {}
 }

@@ -138,6 +138,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 多 Harness 路由、审批路由、权限级别、会话元数据 | `hub.test.ts`、`harness-host.test.ts` |
 | 会话生命周期事件：运行开始先于第一条提示到达模型或 Agent，带会话的项目与文件夹；运行结束每次一个，只在真实结算之后（请求取消不算）；归档与删除各一次，带项目；停止时先于关闭 Driver 与监听入口，未结束的运行不再有运行结束事件；等待中的运行可被取消，Host 停止时不会再发出提示；没有监听器时不读 Driver，读取有合并，迟到的读取不影响新一轮；监听器抛错、拒绝或超时不影响运行与停止；订阅者拿到的对象只能监听 | `session-lifecycle.test.ts` |
 | ACP：环境白名单与私有临时目录、启动指纹、项目配置、权限模式读回与漂移、映射、审批与选项过滤、取消、崩溃与恢复、进程上限 | `acp.test.ts`（另见 [HARNESSES.md](HARNESSES.md) 的「测试」） |
+| 经 Latch 使用模型服务：网关只认回环 `Host`、不带 `Origin`、认得的凭据与绑定的模型，入站认证头不转发，错误去掉密钥，不跟随重定向，Agent 断开即中止上游，进程结束或服务设置变化即失效；Host 重算一对能否转发、审计路由；Codex 的 `providers/set` 与 Gemini CLI 的变量、凭据换新进程、路由会话只列服务的模型、被拒绝的请求不算绕过、绕过的提示 | `apps/host/test/model-gateway.test.ts`、`acp.test.ts` 的 `sessions on a model service through the gateway`；页面与真实 Host 见 `e2e/model-gateway.e2e.ts`（Codex 草稿、会话与 Gemini CLI 会话的模型菜单） |
 | 工作区工具（含 `folder` 参数与 `list_folders`）、受保护路径、写入预览与路径检查 | `workspace.test.ts` |
 | 改动：每轮快照（克隆、跨卷只存小文件、像密钥的文件不读）、四种范围与「由命令修改」的归因、撤销与恢复本轮、撤销文件与全部改动、补丁、保留上限、git 只跑只读底层命令、写入前先审计 | `changes-snapshots.test.ts`、`changes-diff.test.ts`、`changes-git.test.ts`、`changes-engine.test.ts`；路由、权限、下一条消息的说明与确认：`changes-routes.test.ts`、`e2e/changes.e2e.ts` |
 | 终端：帧格式、环境白名单与 Latch 标记、回放与输出上限、「加入对话」的文本与脱敏、观看名额与数据范围、只有 `host.sock` 上数据范围为 `all` 的设备能打开输入关闭、流随设备与凭据结束、归档时不结束这台电脑的 shell、配对码不显示在 Latch 终端里、真实组件的进程清理 | `terminal-frames.test.ts`、`terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-service.test.ts`、`terminal-helper.test.ts`、`terminal-cli.test.ts`、`terminal-routes.test.ts`（路由、审计、入口、能力标记、归档与删除的检查） |
@@ -253,7 +254,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ### 假 ACP Agent
 
-`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不访问网络、不调用模型；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败与重新加载。
+`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不调用模型，只有 `model` 一轮访问客户端指给它的模型服务；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败与重新加载。
 
 进程级行为由环境变量决定：
 
@@ -283,6 +284,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_CLI_VERSION` | 以 `--version` 启动时像 CLI 那样输出 `fake-cli <版本>` 后退出；`fail` 什么也不输出、以 1 退出 |
 | `FAKE_ACP_MCP=dsh` | 像 DeepSeek Harness 那样接收 `mcpServers`：只收命令为绝对路径的 stdio 服务；会话建立前先让一个临时副本回答 `server/discover`，再启动、`initialize`（2025 版握手）并 `tools/list`，任何一步失败就拒绝建立会话；日志记 `mcp-mounted` 与 `mcp-refused` |
 | `FAKE_ACP_DUMP_ENV=1` | 把完整环境写入日志，检查环境白名单 |
+| `FAKE_ACP_PROVIDERS`、`FAKE_ACP_PROVIDER_ID`、`FAKE_ACP_PROVIDERS_SET` | `1`：像 codex-acp 那样宣告并处理 ACP `providers/*`：一个可设置的服务（ID 默认 `openai`，类型 `openai`）；`providers/set` 用给它的头读 `<baseUrl>/models`，之后只提供它认识而列表里也有的模型，日志只记头的名字；`fail` 拒绝设置 |
 | `FAKE_ACP_PROTOCOL`、`FAKE_ACP_AUTH`、`FAKE_ACP_INIT_ERROR`、`FAKE_SECRET` | 协议版本、需要登录（`new`、`prompt`）、初始化失败；`FAKE_SECRET` 出现在 stderr 与错误中，检查脱敏 |
 | `FAKE_ACP_SLOW_SETUP`、`FAKE_ACP_EXIT_DELAY`、`FAKE_ACP_IGNORE_TERM`、`FAKE_ACP_GRANDCHILD`、`FAKE_ACP_STARTUP_NOISE` | 慢的会话建立、延迟退出、忽略 SIGTERM、派生孙进程、启动时输出非 JSON |
 
@@ -298,6 +300,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `probe` | 调用 `fs/read_text_file`，检查 Latch 不提供客户端文件系统 |
 | `skills` | 调用会话第一个 MCP 服务的 `list_skills`，回复它返回的内容 |
 | `refuse` | 以 `refusal` 结束 |
+| `model [as:<模型>]` | 向客户端指给它的模型服务发一次请求并回复拿到的文字：`providers/set` 设过的走 Responses，有 `GOOGLE_GEMINI_BASE_URL` 时走 Gemini（模型取系统设置里的 `model.name`）；都没有时不访问任何服务就回复，用来检查绕过的提示 |
 
 ### 回放与录制
 
@@ -305,7 +308,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 `fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
-`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它。
+`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥。
 
 `pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
 

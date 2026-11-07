@@ -7,6 +7,22 @@ import type { HarnessProfile } from './types.ts'
 const SYSTEM_SETTINGS = { security: { disableAlwaysAllow: true, enablePermanentToolApproval: false } }
 const FILE = 'gemini-system-settings.json'
 
+/**
+ * Through the gateway: Gemini CLI's `gateway` login, which reads its address and key from the environment. The person's
+ * own `security.auth.selectedType` would win over the environment, and system settings win over theirs.
+ */
+const routed = (model: string) => ({
+  security: { ...SYSTEM_SETTINGS.security, auth: { selectedType: 'gateway' } },
+  model: { name: model },
+})
+
+async function writeSettings(directory: string, settings: unknown): Promise<string> {
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const path = join(directory, FILE)
+  await writeFileAtomic(path, `${JSON.stringify(settings, null, 2)}\n`)
+  return path
+}
+
 export const geminiProfile: HarnessProfile = {
   presetId: 'gemini',
   version: 1,
@@ -31,11 +47,20 @@ export const geminiProfile: HarnessProfile = {
   folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
   // Workspace settings, commands and extensions; `.gemini/.env` is looked up from the session directory upwards.
   projectConfigPaths: ['.gemini'],
-  /** Rewrites the file before every spawn (0600, replaced by rename so a planted symlink is replaced, not followed). */
-  async materialize({ dataDir }) {
-    await mkdir(dataDir, { recursive: true, mode: 0o700 })
-    const path = join(dataDir, FILE)
-    await writeFileAtomic(path, `${JSON.stringify(SYSTEM_SETTINGS, null, 2)}\n`)
+  gateway: {
+    wires: ['gemini'],
+    via: 'env',
+    envNames: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY'],
+    env: access => ({ GOOGLE_GEMINI_BASE_URL: access.baseURL, GEMINI_API_KEY: access.token }),
+  },
+  /**
+   * Rewrites the file before every spawn (0600, replaced by rename so a planted symlink is replaced, not followed). A
+   * session on a gateway route gets its own, in its private directory, since it names the session's model.
+   */
+  async materialize({ dataDir, route }) {
+    const path = route
+      ? await writeSettings(join(route.directory, 'gateway'), routed(route.route.model))
+      : await writeSettings(dataDir, SYSTEM_SETTINGS)
     return { GEMINI_CLI_SYSTEM_SETTINGS_PATH: path }
   },
 }

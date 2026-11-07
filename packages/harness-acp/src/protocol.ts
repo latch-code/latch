@@ -43,6 +43,11 @@ export class RpcError extends Error {
 
 const optionalText = z.string().nullish()
 
+/** `providers/list`: what the agent lets a client route, without secrets. Bounded, since nothing else limits it. */
+export const providersList = z.object({
+  providers: z.array(z.object({ providerId: z.string().max(256), supported: z.array(z.string().max(64)).max(16) })).max(64),
+})
+
 export const initializeResult = z.object({
   protocolVersion: z.number().int(),
   agentCapabilities: z
@@ -61,6 +66,8 @@ export const initializeResult = z.object({
         .catch(undefined),
       /** `logout` present: the agent logs out on request. */
       auth: z.object({ logout: z.unknown().optional() }).nullish().catch(undefined),
+      /** Present: the agent takes `providers/list`, `providers/set` and `providers/disable`. */
+      providers: z.unknown().optional(),
       /** `authStatus` present: the agent pushes `_auth/status_update` after initialize and on each change. */
       _meta: z.object({ authStatus: z.unknown().optional() }).nullish().catch(undefined),
     })

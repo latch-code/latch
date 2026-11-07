@@ -33,7 +33,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `.agents/skills/` | `latch-verify`、`latch-security-review`、`latch-ui-check`；`.claude/skills/` 由 `pnpm agents:sync` 生成 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |
 
-依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`（箭头指向被依赖的包）；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`（仓库根也在其中），由 `pnpm check:boundaries`、`pnpm knip` 与 `pnpm lint` 执行；违规在边界上修，不加例外。
+依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `pnpm check:boundaries`、`pnpm knip` 与 `pnpm lint` 执行；违规在边界上修，不加例外。
 
 ## 命令
 
@@ -41,9 +41,9 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 ```sh
 pnpm install
-pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents，几秒内完成
+pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents
 pnpm check                                   # check:quick 加 knip 与 test，逐项汇报
-pnpm check -- --plan                         # 按改动路径列出要运行与不需要运行的检查；--base <ref> 指定比较的提交
+pnpm check -- --plan                         # 按改动列出要运行与不需要运行的检查；--base <ref> 指定比较的提交
 pnpm fmt                                     # oxfmt 写入格式；不处理 Markdown 与 packages/testkit/vectors/
 pnpm test --project @latch/host              # 只跑一个项目（项目名见 vitest.config.ts）
 pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
@@ -77,7 +77,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 
 **安全**
 
-- **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。
+- **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。网关凭据 `lmg1.` 只给所属 Agent 进程，不进参数、URL 与日志。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存中、也只存哈希。模型密钥只在数据目录的 0600 文件中，不返回浏览器；`LATCH_API_KEY` 只在内存中使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。

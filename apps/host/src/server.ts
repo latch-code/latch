@@ -36,7 +36,9 @@ import { z } from 'zod'
 import {
   AGENT_PRESETS,
   type AgentPreset,
+  pairRoute,
   PROJECT_GLYPHS,
+  WIRE_NAMES,
   escapeSecurityText,
   PROVIDER_KINDS,
   PROVIDER_PRESETS,
@@ -86,6 +88,7 @@ import {
   type HarnessDriver,
   type HarnessSecurityEvent,
   type HostProject,
+  type ModelRoute,
   type ProjectFolder,
   type ToolRiskInput,
   type HarnessPlugin,
@@ -118,6 +121,7 @@ import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
+import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
@@ -1575,6 +1579,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => harnessHub.close())
+    const modelGateway = new ModelGatewayServer({ service: gatewayService, fetchFor: providerFetchFor, log })
+    await modelGateway.start()
+    startupCleanup.push(() => modelGateway.close())
     const requiredHarness = options.harnessId ?? STANDARD
     if (!registry.harnesses().some(driver => driver.id === requiredHarness)) {
       throw new AppError(409, 'harness-unavailable', `请先配置并启用 Harness ${requiredHarness}`)
@@ -2450,6 +2457,49 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
+    /**
+     * A saved service as the gateway may forward to it now: enabled, its plugin running, and offered to sessions. The
+     * fingerprint changes with its protocol, address, key and where requests to it may go, never with its name or models.
+     */
+    function gatewayService(id: string): GatewayService | undefined {
+      const record = effectiveProvider(id)
+      const plugin = pluginInfo(id)
+      if (!record?.enabled || plugin?.managed !== 'provider' || !plugin.enabled || unusableReason(record) !== undefined) return undefined
+      const apiKey = usableKey(record)
+      return {
+        kind: record.kind,
+        baseURL: record.baseURL,
+        apiKey,
+        models: record.models.length ? [...record.models] : [record.defaultModel],
+        fingerprint: sha256Hex(
+          canonicalJson({ kind: record.kind, baseURL: record.baseURL, key: sha256Hex(apiKey), destination: recordDestination(record) }),
+        ),
+      }
+    }
+
+    /**
+     * The route a session of `harness` takes to the service of `model`, as the Host computes it from its own records:
+     * only a pair that needs no translation, on a service sessions may use, with a model it lists.
+     */
+    function modelRouteFor(harness: HarnessInfo, model: ModelRef): ModelRoute {
+      const name = harness.capabilities.display.label
+      const service = gatewayService(model.providerId)
+      const record = effectiveProvider(model.providerId)
+      if (!service || !record) throw new AppError(409, 'model-route-unavailable', '这个模型服务现在不能用，会话没有开始。')
+      const route = pairRoute(harness.capabilities, { kind: record.kind })
+      if (route.kind !== 'passthrough')
+        throw new AppError(
+          400,
+          'model-route-unavailable',
+          route.kind === 'translate'
+            ? `${name} 只说 ${route.speaks.map(wire => WIRE_NAMES[wire]).join('、')} 协议，${record.name} 用 ${WIRE_NAMES[route.from]}，Latch 转换协议尚未实现。`
+            : `让 Latch 把 ${name} 的请求转给模型服务，尚未实现。`,
+        )
+      if (!service.models.includes(model.model))
+        throw new AppError(400, 'model-unavailable', `${record.name} 里没有模型「${model.model.slice(0, 64)}」`)
+      return { providerId: record.id, model: model.model, wire: route.wire, origin: originOf(record.baseURL) }
+    }
+
     /** Enabled services left out of the catalog, with the reason a page names (at most 20). */
     function unusableProviders(): UnusableProvider[] {
       return effectiveProviders()
@@ -2856,6 +2906,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               detail: { sessionId: event.sessionId, observedHash: event.observedHash },
             })
             .catch(error => log(`审计记录写入失败：${errorText(error)}`))
+        } else if (event.type === 'model-route-bypassed') {
+          void audit
+            .append({ action: 'task.model.bypassed', actor, target: event.sessionId, detail: { sessionId: event.sessionId } })
+            .catch(error => log(`审计记录写入失败：${errorText(error)}`))
         } else if (event.type === 'approval-auto-rejected') {
           void audit
             .append({
@@ -2914,6 +2968,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tmpRoot: runtime.tmpRoot,
             securityEvent,
             clock,
+            // Only a driver that says it can be pointed at a service gets tokens for one.
+            ...(hub!.info(driver.id)?.capabilities.models.wires.length ? { modelGateway } : {}),
             trackFiles: async input => {
               await runStarting(driver.id, input)
               return fileTracking.start(input)
@@ -4624,9 +4680,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
         if (input.mode && !harness.modes.includes(input.mode))
           throw new AppError(400, 'mode-unsupported', `${harness.capabilities.display.label} 不支持该会话模式`)
-        if (input.model && harness.capabilities.models.owner !== 'latch')
-          throw new AppError(400, 'model-unsupported', `${harness.capabilities.display.label} 自行管理模型，不能指定模型服务`)
         if (input.model) assertModel(input.model)
+        // A harness with its own models takes a service only through the gateway, by the Host's own reckoning of the pair.
+        const modelRoute = input.model && harness.capabilities.models.owner !== 'latch' ? modelRouteFor(harness, input.model) : undefined
         if (input.config?.length && (harness.capabilities.models.owner === 'latch' || customAgentId))
           throw new AppError(400, 'config-unsupported', `${harness.capabilities.display.label} 不能在开始前这样设置`)
         const workspaceId = input.workspaceId ?? 'default'
@@ -4711,6 +4767,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
           ...(input.model ? { model: input.model } : {}),
+          ...(modelRoute ? { modelRoute } : {}),
           ...(input.config?.length ? { config: input.config } : {}),
           ...(chosen
             ? { cwd: chosen.folders[0].path }
@@ -4780,7 +4837,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
             : prompt,
         )
-        const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined)
+        const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined, modelRoute)
         // The folders the agent receives besides its working directory, for the audit.
         const passed = [
           ...new Set([
@@ -4814,11 +4871,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // record naming it is a commit that may fail without stopping a session the intent already covers.
         // What the start chose, a wider mode among it, is on record with it; the values are the agent's own words.
         const configAudited = input.config?.length ? { configHash: sha256Hex(canonicalJson(input.config)) } : {}
+        // The service its requests go to, by ID, and the route as the launch fingerprint covers it.
+        const routeAudited = modelRoute ? { providerId: modelRoute.providerId, routeHash: sha256Hex(canonicalJson(modelRoute)) } : {}
         const intent = await audited({
           action: 'task.l3.start-requested',
           actor: actorOf(caller),
           stepup: 'none',
-          detail: { harnessId, launchHash, promptHash, ...foldersAudited, ...configAudited },
+          detail: { harnessId, launchHash, promptHash, ...foldersAudited, ...configAudited, ...routeAudited },
         })
         let created: { sessionId: string }
         try {
@@ -4860,6 +4919,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               promptHash,
               ...foldersAudited,
               ...configAudited,
+              ...routeAudited,
               ...(preview?.definitionHash ? { definitionHash: preview.definitionHash } : {}),
             },
           },
@@ -6402,6 +6462,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => promptQueues.close(),
             () => agentProbes.close(),
             () => harnessHub.close(),
+            () => modelGateway.close(),
             () => questions.close(),
             () => personalStore.close(),
             () => customAgents.close(),

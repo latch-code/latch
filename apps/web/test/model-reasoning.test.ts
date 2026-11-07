@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
-import { DraftModelControl, SessionModelControl } from '../src/composer/ModelControl.tsx'
+import { DraftModelControl, ownModelGroups, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
 import {
   draftConfig,
   forkedChoice,
@@ -554,5 +554,44 @@ describe('thinking on the built-in Harness', () => {
     const stored = (effort: string) => ({ harnessId: builtin.id, model: { providerId: 'lab', model: 'alpha', effort } })
     expect(resolveChoice(declared, stored('high')).model).toEqual({ providerId: 'lab', model: 'alpha', effort: 'high' })
     expect(resolveChoice(declared, stored('max')).model).toEqual({ providerId: 'lab', model: 'alpha' })
+  })
+})
+
+describe('the services a draft offers through Latch', () => {
+  const relay = {
+    id: 'relay',
+    name: 'Relay',
+    kind: 'openai-responses' as const,
+    models: ['GPT-5-2025-08-07', 'deepseek-v3'],
+    defaultModel: 'deepseek-v3',
+  }
+  const codex = (knownOnly: boolean, read = true): HarnessInfo => {
+    const info = testHarness('codex', { label: 'Codex' })
+    info.capabilities.models = { ...info.capabilities.models, wires: ['responses'], ...(knownOnly ? { knownOnly: true as const } : {}) }
+    if (read)
+      info.catalogue = {
+        options: [{ ...model, currentValue: 'gpt-5', options: [{ value: 'gpt-5', name: 'GPT-5' }] }],
+        perModel: [],
+        reportedAt: '2026-11-07T00:00:00.000Z',
+        source: 'session',
+      }
+    // A model typed for it is its own login's, not one it knows.
+    info.customModels = ['deepseek-v3']
+    return info
+  }
+  const options = (info: HarnessInfo) =>
+    ownModelGroups({ ...catalog, harnesses: [info], providers: [relay] }, info, []).find(group => group.id === '~service-relay')?.options
+
+  it('offers of a service only the models a Harness that uses no others knows, as its own list names them', () => {
+    expect(options(codex(true))).toEqual([
+      expect.not.objectContaining({ disabledReason: expect.anything() }),
+      expect.objectContaining({
+        value: serviceValue({ providerId: 'relay', model: 'deepseek-v3' }),
+        disabledReason: 'Codex 不认识这个模型',
+      }),
+    ])
+    // Its own list not read yet, or a Harness that takes any model: every model of the service.
+    for (const list of [options(codex(true, false)), options(codex(false))])
+      expect(list?.map(option => option.disabledReason)).toEqual([undefined, undefined])
   })
 })

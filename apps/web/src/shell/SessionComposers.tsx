@@ -435,6 +435,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                     onConfig={setConfig}
                     onManageModels={manageProviders}
                     locked={gate.kind === 'read-only' ? gate.text : undefined}
+                    route={summary.modelRoute}
                   />
                 </>
               )

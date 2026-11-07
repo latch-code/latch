@@ -1,4 +1,4 @@
-import type { Bridge, ProjectFolder } from './bridge.ts'
+import type { Bridge, ModelRoute, ProjectFolder } from './bridge.ts'
 import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
 import type { AttachmentRef, FileChange, HarnessCapabilities, HarnessInfo, ModelRef, RiskLevel, ToolKind } from '@latch/protocol/types'
 
@@ -35,6 +35,8 @@ export type HarnessSecurityEvent =
       outcome: 'approved' | 'denied' | 'timed-out' | 'aborted' | 'unknown' | 'ran-unasked'
       source: 'agent-report' | 'no-ask-seen'
     }
+  /** A turn of a session on `CreateTaskInput.modelRoute` had a reply, and no request of it reached the gateway. */
+  | { type: 'model-route-bypassed'; sessionId: string }
 
 export interface FileTrackingResult {
   files: FileChange[]
@@ -52,6 +54,29 @@ export interface FileTrackingInput {
   runId: string
   folders: ReadonlyArray<ProjectFolder>
   onChange(result: FileTrackingResult): void
+}
+
+/**
+ * One process's way to a model service through the Host: a loopback address and a token that only this process holds.
+ * The token is a credential: it never goes into arguments, a URL, a log, a message or a recording.
+ */
+export interface ModelGatewayLease {
+  /** Where the harness sends requests of the route's protocol, as that protocol's base URL. */
+  baseURL: string
+  token: string
+  /** Requests that reached the gateway with this token so far, forwarded or refused; reading the model list aside. */
+  requests(): number
+  /** The service's models this token may use: the gateway refuses any other. */
+  models: readonly string[]
+  /** False once the token stops working: closed, or the service's settings changed since it was issued. */
+  active(): boolean
+  /** Revokes the token. Idempotent. */
+  close(): void
+}
+
+export interface ModelGateway {
+  /** A token bound to the session and the route's service and models; throws when the service cannot be used now. */
+  open(input: { sessionId: string; route: ModelRoute }): ModelGatewayLease
 }
 
 /** Host capabilities offered to a driver, without prescribing its loop or persistence. */
@@ -89,6 +114,8 @@ export interface HarnessHostOptions {
   securityEvent?(event: HarnessSecurityEvent): void | Promise<void>
   /** Milliseconds since the epoch for the times a driver records on messages and runs. Default `Date.now`. */
   clock?: () => number
+  /** Drivers that declare `models.wires`: the Host's forwarding to its model services. */
+  modelGateway?: ModelGateway
 }
 
 /** A driver's own account of `HarnessCapabilities`, with the modes and attachments it takes. */

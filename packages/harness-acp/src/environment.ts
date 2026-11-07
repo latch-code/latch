@@ -48,11 +48,22 @@ export function programPaths(profile: AcpPermissionProfile | undefined): Record<
   return paths
 }
 
+/** Requests to the gateway stay on this computer even where the person's proxy would take every other one. */
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1']
+
+function withLoopback(value: string): string {
+  const listed = value
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+  return [...new Set([...listed, ...LOOPBACK])].join(',')
+}
+
 /**
  * Later steps win: Host allowlist, what the person's own environment names for this agent, the programs it finds, the
- * definition's variables, the profile's, then values Latch forces. A Host started from a terminal already holds its
- * variables, and those beat the login shell's. `*_BASE_URL` is never inherited, and neither is a name ending in KEY or
- * TOKEN: the agent reads its own login from its own home.
+ * definition's variables, the profile's, then values Latch forces, the gateway's last. A Host started from a terminal
+ * already holds its variables, and those beat the login shell's. `*_BASE_URL` is never inherited, and neither is a name
+ * ending in KEY or TOKEN: the agent reads its own login from its own home.
  */
 export function agentEnvironment(input: {
   resolvedCommand: string
@@ -61,6 +72,8 @@ export function agentEnvironment(input: {
   materializedEnv?: Record<string, string>
   definitionEnv: Record<string, string>
   sessionTmpDir: string
+  /** A session on a gateway route: the variables that point the harness at it. Its token is among the values. */
+  gatewayEnv?: Record<string, string>
   hostEnv?: NodeJS.ProcessEnv
   shellEnv?: Readonly<Record<string, string>>
 }): Record<string, string> {
@@ -88,6 +101,12 @@ export function agentEnvironment(input: {
     env[`GIT_CONFIG_KEY_${index}`] = key
     env[`GIT_CONFIG_VALUE_${index}`] = value
   })
+  if (input.gatewayEnv) {
+    Object.assign(env, input.gatewayEnv)
+    const bypass = withLoopback([env.NO_PROXY, env.no_proxy].filter(Boolean).join(','))
+    env.NO_PROXY = bypass
+    env.no_proxy = bypass
+  }
   for (const name of Object.keys(env)) if (removed(name)) delete env[name]
   return env
 }

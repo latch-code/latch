@@ -24,6 +24,10 @@ export interface FakeModelRequest {
   model?: string
   stream: boolean
   body: unknown
+  /** The key it carried, in whichever header its protocol puts one, so a test can tell which credential arrived. */
+  key?: string
+  /** Header names it carried, lower case and sorted, without their values. */
+  headerNames: string[]
 }
 
 export interface FakeModels {
@@ -336,7 +340,17 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
       }
       const model = geminiCall ? decodeURIComponent(geminiCall[1]!) : typeof body.model === 'string' ? body.model : 'fake-model'
       const stream = geminiCall ? geminiCall[2] === 'streamGenerateContent' : body.stream === true
-      requests.push({ wire, path, model, stream, body })
+      const bearer = request.headers.authorization?.replace(/^Bearer\s+/iu, '')
+      const key = bearer ?? [request.headers['x-goog-api-key'], request.headers['x-api-key']].find(value => typeof value === 'string')
+      requests.push({
+        wire,
+        path,
+        model,
+        stream,
+        body,
+        ...(typeof key === 'string' ? { key } : {}),
+        headerNames: Object.keys(request.headers).sort(),
+      })
       const reply = named(next(), body)
       if (reply.error) return json(response, reply.error.status, failure(wire, reply.error))
       const made =

@@ -1,6 +1,18 @@
 import { useState, type ReactNode } from 'react'
 import { Box, ChevronLeft, Cpu, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
-import type { AgentPresetSettings, AgentSettings, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
+import {
+  modelIdKey,
+  pairRoute,
+  WIRE_NAMES,
+  type AgentPresetSettings,
+  type AgentSettings,
+  type HarnessInfo,
+  type HostCatalog,
+  type ModelRef,
+  type ProviderSummary,
+  type SessionConfigOption,
+  type TaskSummary,
+} from '@latch/protocol'
 import {
   Button,
   IconButton,
@@ -24,8 +36,11 @@ import {
   isPinnedChoice,
   presetsToAdd,
   sameModel,
+  serviceModels,
+  servicePick,
   switchModel,
   thinkingLevels,
+  withServicePick,
   withTypedModels,
   type ComposerChoice,
 } from '../composerChoice.ts'
@@ -53,7 +68,7 @@ import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReadin
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 /** The most levels a segmented row holds in the popover's width; more go in a row that opens its own list. */
 const SEGMENTED_LEVELS = 5
-const OWN_MODEL = 'own'
+export const OWN_MODEL = 'own'
 
 const pendingModelText = (model: ModelRef) => `下一条：${modelWords(model)}`
 const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${modelWords(current)}` : '撤销切换')
@@ -401,30 +416,89 @@ function unusableGroups(catalog: HostCatalog): Array<PickerGroup<string>> {
   }))
 }
 
-/** A Harness with its own models lists them first; each saved service follows, disabled, until Latch can forward to it. */
-function ownModelGroups(
+/** A model of a service as the picker's value: never an agent's own option value, which has no NUL in it. */
+const SERVICE_VALUE = '~service\u0000'
+export const serviceValue = (model: ModelRef) => `${SERVICE_VALUE}${model.providerId}\u0000${model.model}`
+export function serviceRef(value: string): ModelRef | undefined {
+  if (!value.startsWith(SERVICE_VALUE)) return undefined
+  const [providerId = '', model = ''] = value.slice(SERVICE_VALUE.length).split('\u0000')
+  return providerId && model ? { providerId, model } : undefined
+}
+
+/** Whether a session on `harness` can be started on `provider` through Latch, as a draft states it. */
+function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string | undefined {
+  const name = harnessName(harness)
+  const route = pairRoute(harness.capabilities, provider)
+  if (route.kind === 'passthrough') return undefined
+  if (route.kind === 'translate')
+    return `${name} 只说 ${route.speaks.map(wire => WIRE_NAMES[wire]).join('、')} 协议，转换 ${WIRE_NAMES[route.from]} 尚未实现`
+  return `让 Latch 把 ${name} 的请求转给它，尚未实现`
+}
+
+// Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
+export const ROUTE_NOTE = (name: string) =>
+  `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`
+const ROUTE_LOCKED = '换服务要新开会话：开始时确认的是这个服务。'
+
+/** What a session on a route says of it in its model menu. */
+function routeNote(catalog: HostCatalog, name: string, route: NonNullable<TaskSummary['modelRoute']>): string {
+  const service = findProvider(catalog, route.providerId)?.name ?? route.providerId
+  return route.bypassed
+    ? `这个会话有一轮没有经过 Latch：那一轮可能用了 ${name} 自己的登录或配置。`
+    : `这个会话经 Latch 用「${service}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`
+}
+
+/**
+ * A Harness with its own models lists them first, then each saved service. In a draft, a service Latch can forward the
+ * Harness's requests to lists its models under 「经 Latch」; the others say why they cannot be chosen. A Harness that
+ * uses only models it knows is offered only those its own list names, once read. In a session the service is the one it
+ * started with, so every service is listed without a choice.
+ */
+export function ownModelGroups(
   catalog: HostCatalog,
-  name: string,
+  harness: HarnessInfo | undefined,
   own: Array<PickerGroup<string>['options'][number]>,
+  session?: { route?: TaskSummary['modelRoute'] },
 ): Array<PickerGroup<string>> {
-  const services = catalog.providers.filter(provider => provider.kind !== 'demo')
-  return [
-    { id: '~own', label: `${name} 自己的模型`, options: own },
-    ...(services.length
-      ? [
-          {
-            id: '~services',
-            label: '模型服务',
-            options: services.map(provider => ({
-              value: `~service-${provider.id}`,
-              label: provider.name,
-              media: <ProviderTile provider={provider} size={16} />,
-              disabledReason: `让 Latch 把 ${name} 的请求转给它，尚未实现`,
-            })),
-          },
-        ]
-      : []),
-  ]
+  const name = harness ? harnessName(harness) : 'Harness'
+  // What it read of its own models, without the IDs a person typed for it.
+  const known = harness?.catalogue?.options.find(option => option.category === 'model')?.options
+  const knows =
+    harness?.capabilities.models.knownOnly && known?.length
+      ? new Set(known.flatMap(item => [modelIdKey(item.value), modelIdKey(item.name)]))
+      : undefined
+  const routed = session?.route ? findProvider(catalog, session.route.providerId) : undefined
+  const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
+  // On a route, the Host offers only the service's models, the ones the gateway forwards.
+  const ownLabel = session?.route ? `${routed?.name ?? session.route.providerId} · 经 Latch` : `${name} 自己的模型`
+  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, options: own }]
+  const disabled: Array<PickerGroup<string>['options'][number]> = []
+  for (const provider of services) {
+    const reason = harness ? serviceReason(harness, provider) : `让 Latch 把 ${name} 的请求转给它，尚未实现`
+    const media = <ProviderTile provider={provider} size={16} />
+    if (session || reason !== undefined) {
+      disabled.push({
+        value: `~service-${provider.id}`,
+        label: provider.name,
+        media,
+        disabledReason: reason ?? (session?.route ? ROUTE_LOCKED : '要经 Latch 用它，新开一个会话。'),
+      })
+      continue
+    }
+    const experimental = harness?.capabilities.models.experimental ? '实验性 · ' : ''
+    groups.push({
+      id: `~service-${provider.id}`,
+      label: `${provider.name} · ${experimental}经 Latch`,
+      options: serviceModels(provider).map(model => ({
+        value: serviceValue({ providerId: provider.id, model }),
+        label: model,
+        media,
+        ...(knows && !knows.has(modelIdKey(model)) ? { disabledReason: `${name} 不认识这个模型` } : {}),
+      })),
+    })
+  }
+  if (disabled.length) groups.push({ id: '~services', label: '模型服务', options: disabled })
+  return groups
 }
 
 /** The model and thinking of a new session. A Harness with its own models tells Latch nothing before it starts, and this says so in place. */
@@ -478,8 +552,14 @@ export function DraftModelControl({
     const name = harnessName(harness)
     const known = draftConfig(harness, choice.config)
     const modelOption = known?.config.find(option => option.category === 'model')
+    const service = servicePick(catalog, harness, choice.config)
+    // A model of its own replaces a service pick; thinking and the rest are the Harness's own, kept either way.
     const pick = (configId: string, value: string) => {
-      onChoice({ config: { ...choice.config, [configId]: value } })
+      const base = configId === modelOption?.id ? withServicePick(choice.config, undefined) : choice.config
+      onChoice({ config: { ...base, [configId]: value } })
+    }
+    const pickService = (model: ModelRef | undefined) => {
+      onChoice({ config: withServicePick(choice.config, model, modelOption?.id) })
     }
     const rows = (
       <CatalogueRows
@@ -516,17 +596,21 @@ export function DraftModelControl({
       <HarnessModelPicker
         catalog={catalog}
         harness={harness}
-        config={known?.config ?? []}
+        // Thinking and the like are offered for the Harness's own models; on a service's model it reports them once started.
+        config={service ? (known?.config.filter(option => option.category === 'model') ?? []) : (known?.config ?? [])}
         busy={null}
         disabled={disabled}
+        service={{ picked: service, onPick: pickService }}
         note={
-          known
-            ? known.thinkingUnknown
-              ? THINKING_AFTER_START(name)
-              : unreportedNote(name, true, known.config)
-            : harness.catalogueRead
-              ? null
-              : unreportedNote(name, false, [])
+          service
+            ? THINKING_AFTER_START(name)
+            : known
+              ? known.thinkingUnknown
+                ? THINKING_AFTER_START(name)
+                : unreportedNote(name, true, known.config)
+              : harness.catalogueRead
+                ? null
+                : unreportedNote(name, false, [])
         }
         onConfig={pick}
         rows={rows}
@@ -642,9 +726,12 @@ export function SessionModelControl({
   onConfig,
   onManageModels,
   locked,
+  route,
 }: AgentConfigState & {
   /** This device may read the session but not change it: why, as the picker's tooltip. */
   locked?: string | undefined
+  /** The service the session's requests go to through Latch, fixed when it started. */
+  route?: TaskSummary['modelRoute']
   catalog: HostCatalog
   harness: HarnessInfo | undefined
   model: ModelRef | undefined
@@ -736,6 +823,7 @@ export function SessionModelControl({
       onConfig={onConfig}
       manage={manage}
       locked={locked}
+      service={{ session: true, route }}
     />
   )
 }
@@ -761,6 +849,7 @@ function HarnessModelPicker({
   panel,
   reading = false,
   onOpenChange,
+  service,
 }: AgentConfigState & {
   catalog: HostCatalog
   harness: HarnessInfo | undefined
@@ -778,8 +867,14 @@ function HarnessModelPicker({
   /** A read of the Harness's lists is running. */
   reading?: boolean
   onOpenChange?: ((open: boolean) => void) | undefined
+  /** A draft: the service model it picked and picking one. A session: the service it started on, if any. */
+  service?:
+    | { picked?: ModelRef | undefined; onPick?: (model: ModelRef | undefined) => void }
+    | { session: true; route?: TaskSummary['modelRoute'] }
 }) {
-  const config = withTypedModels(given, harness?.customModels)
+  // IDs typed for the Harness's own login are no model of the service a session's route goes to.
+  const routed = service !== undefined && 'session' in service && service.route !== undefined
+  const config = withTypedModels(given, routed ? undefined : harness?.customModels)
   const state: AgentConfigState = { busy, ...(feedback ? { feedback } : {}) }
   const blocked = agentConfigBlocked(state)
   const choose = (id: string, value: string) => {
@@ -801,17 +896,35 @@ function HarnessModelPicker({
     }))
   const name = harness ? harnessName(harness) : 'Harness'
   const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
-  const text = modelChipText(reportedOr, thought ? agentConfigLabel(thought) : undefined)
+  const picked = service && 'picked' in service ? service.picked : undefined
+  const pickedProvider = findProvider(catalog, picked?.providerId)
+  // The same model can be listed by two services, so a service's model names its service.
+  const text = picked
+    ? `${picked.model} · ${pickedProvider?.name ?? picked.providerId}`
+    : modelChipText(reportedOr, thought ? agentConfigLabel(thought) : undefined)
   const note = noteOverride === null ? undefined : (noteOverride ?? unreportedNote(name, true, config))
+  const session = service && 'session' in service ? { route: service.route } : undefined
+  const groups = ownModelGroups(
+    catalog,
+    harness,
+    modelOption ? values(modelOption) : [{ value: OWN_MODEL, label: reportedOr ?? DEFAULT_MODEL }],
+    session,
+  )
+  const routeLine = session?.route
+    ? routeNote(catalog, name, session.route)
+    : groups.some(group => group.id.startsWith('~service-'))
+      ? ROUTE_NOTE(name)
+      : undefined
   return (
     <ValuePicker
       label="模型"
-      value={modelOption?.currentValue ?? OWN_MODEL}
+      value={picked ? serviceValue(picked) : (modelOption?.currentValue ?? OWN_MODEL)}
       valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' ? `${text} · 结果未知` : text)}
-      groups={ownModelGroups(catalog, name, modelOption ? values(modelOption) : [{ value: OWN_MODEL, label: reportedOr ?? DEFAULT_MODEL }])}
+      {...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={16} /> } : {})}
+      groups={groups}
       className="model-picker"
       menuChevron
-      searchable={(modelOption?.options.length ?? 0) >= 8}
+      searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
       width={340}
       pending={busy !== null || reading}
       pendingLabel={reading ? '正在读取…' : '正在切换…'}
@@ -820,6 +933,13 @@ function HarnessModelPicker({
       {...(panel ? { panel } : {})}
       {...(onOpenChange ? { onOpenChange } : {})}
       onValueChange={value => {
+        const ref = serviceRef(value)
+        if (ref || picked) {
+          // Leaving a service for one of the Harness's own models, its current one included.
+          if (service && 'onPick' in service) service.onPick?.(ref)
+          if (!ref && modelOption && value !== modelOption.currentValue) return onConfig(modelOption.id, value)
+          return undefined
+        }
         if (modelOption) return choose(modelOption.id, value)
         return undefined
       }}
@@ -858,6 +978,7 @@ function HarnessModelPicker({
             />
           ))}
           {rows}
+          {routeLine && <p className="model-note">{routeLine}</p>}
           {feedback && (
             <InlineNotice
               tone={feedback.kind === 'unknown' ? 'warn' : 'error'}

@@ -1,6 +1,7 @@
 import {
   AGENT_PRESETS,
   MODEL_EFFORT,
+  pairRoute,
   type AgentPreset,
   type AppSnapshot,
   type HarnessCatalogue,
@@ -123,6 +124,42 @@ export function startConfig(
 }
 
 export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string => harness.capabilities.display.label
+
+/**
+ * A draft's pick of a model from a saved service instead of the Harness's own, kept among its picks so that it is that
+ * Harness's alone. Never an option an agent offers: agents' option IDs do not start with `~`.
+ */
+const SERVICE_PICK = '~service'
+
+/** The models a service offers a session: its list, else its default. */
+export const serviceModels = (provider: Pick<ProviderSummary, 'models' | 'defaultModel'>): string[] =>
+  provider.models.length ? provider.models : [provider.defaultModel]
+
+/** The service model a draft picked for a Harness with its own models, while Latch can still forward that pair. */
+export function servicePick(
+  catalog: HostCatalog | undefined,
+  harness: Pick<HarnessInfo, 'capabilities'> | undefined,
+  picks: Record<string, string> | undefined,
+): ModelRef | undefined {
+  const value = picks?.[SERVICE_PICK]
+  if (!value || !harness || harness.capabilities.models.owner === 'latch') return undefined
+  const [providerId = '', model = ''] = value.split('\u0000')
+  const provider = findProvider(catalog, providerId)
+  if (!provider || pairRoute(harness.capabilities, provider).kind !== 'passthrough') return undefined
+  return serviceModels(provider).includes(model) ? { providerId, model } : undefined
+}
+
+/** The picks with `model` as the service pick, or without one; the Harness's own model pick goes with a service pick. */
+export function withServicePick(
+  picks: Record<string, string> | undefined,
+  model: ModelRef | undefined,
+  modelOptionId?: string,
+): Record<string, string> | undefined {
+  const { [SERVICE_PICK]: _service, ...rest } = picks ?? {}
+  if (model && modelOptionId) delete rest[modelOptionId]
+  const next = model ? { ...rest, [SERVICE_PICK]: `${model.providerId}\u0000${model.model}` } : rest
+  return Object.keys(next).length ? next : undefined
+}
 
 /** The Harness Latch itself enforces: it has a row of its own in settings. Only the Host can make this true of one. */
 export const builtinHarness = (catalog: HostCatalog | undefined): HarnessInfo | undefined =>
@@ -305,6 +342,7 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
   const model = harness?.capabilities.models.owner === 'latch' ? (validModel(catalog, stored?.model) ?? defaultModel(catalog)) : undefined
   // Picks belong to the Harness they were made for, and only what it still offers stays picked.
   const own = harness && (harness.id === stored?.harnessId ? stored?.config : stored?.otherPicks?.[harness.id])
+  const service = servicePick(catalog, harness, own)
   const picks = harness ? startConfig(harness, own) : []
   // A remembered Harness that cannot start now keeps its picks for when it can.
   const away = stored?.harnessId && stored.harnessId !== harness?.id && stored.config ? { [stored.harnessId]: stored.config } : {}
@@ -314,7 +352,9 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
     ...(harness ? { harnessId: harness.id } : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
-    ...(picks.length ? { config: Object.fromEntries(picks.map(pick => [pick.configId, pick.value])) } : {}),
+    ...(picks.length || service
+      ? { config: withServicePick(Object.fromEntries(picks.map(pick => [pick.configId, pick.value])), service)! }
+      : {}),
     ...(others.length ? { otherPicks: Object.fromEntries(others) } : {}),
     ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),
   }

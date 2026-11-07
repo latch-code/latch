@@ -84,6 +84,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.config.changed': { sessionId, configIdHash: hex, toHash: hex },
   'task.mode.widened': { sessionId, toHash: hex },
   'task.permission-drift': { sessionId, observedHash: hex },
+  'task.model.bypassed': { sessionId },
   'task.approval-auto-rejected': { sessionId, reason: 'persistent-only' },
   'task.tool.judged': { sessionId, callHash: hex, modeHash: hex, kind: 'execute', outcome: 'approved', source: 'agent-report' },
   'device.enroll.requested': { enrollmentId, listener: 'lan-tls', fingerprint: 'A'.repeat(20), scopes: ['view'], invitationId },

@@ -1,4 +1,5 @@
-import type { ModeTier } from '@latch/protocol'
+import type { ModeTier, ModelWire } from '@latch/protocol'
+import type { ModelRoute } from '@latch/sdk'
 import type { WireKind } from '../wires/index.ts'
 
 /**
@@ -113,6 +114,35 @@ type ProfileFolders =
     }
   | { readonly via: 'args'; readonly flag: '--include-directories'; readonly maxExtra: number }
 
+/** A process's way to the Host's gateway, as a profile hands it to the harness. Never logged. */
+interface GatewayAccess {
+  baseURL: string
+  token: string
+}
+
+/**
+ * How the harness is pointed at the Host's gateway for a session on a model service, so that it sends that service's
+ * protocol to Latch with a token instead of using its own login. `providers`: ACP `providers/set`, the token in a header,
+ * only when the agent advertises `providers` and lists this provider ID with this API type. `env`: variables that name
+ * the gateway and carry the token, applied last; the profile's `materialize` writes whatever else selects that route.
+ */
+type ProfileGateway = {
+  /** The protocols it speaks to a model service, as `HarnessCapabilities.models.wires`. */
+  readonly wires: readonly ModelWire[]
+  /** Not yet proven in real use; clients say so. */
+  readonly experimental?: true
+  /** It uses only the service's models it knows itself, as `HarnessCapabilities.models.knownOnly`. */
+  readonly knownOnly?: true
+} & (
+  | { readonly via: 'providers'; readonly providerId: string; readonly apiType: string }
+  | {
+      readonly via: 'env'
+      /** The variable names `env` sets, for the launch fingerprint and preview; values never enter either. */
+      readonly envNames: readonly string[]
+      env(access: GatewayAccess, route: ModelRoute): Record<string, string>
+    }
+)
+
 export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
   readonly presetId: string
@@ -175,6 +205,11 @@ export interface HarnessProfile {
    */
   normalizeUpdate?(update: SessionUpdate): SessionUpdate
   readonly extensions?: HarnessExtensions
-  /** Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. */
-  materialize?(input: { dataDir: string }): Promise<Record<string, string>>
+  readonly gateway?: ProfileGateway
+  /**
+   * Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. A process of
+   * a session on a gateway route also gets the route and the session's private temporary directory, rewritten before every
+   * spawn and removed with the session.
+   */
+  materialize?(input: { dataDir: string; route?: { route: ModelRoute; directory: string } }): Promise<Record<string, string>>
 }

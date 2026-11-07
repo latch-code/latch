@@ -68,8 +68,18 @@ export interface HarnessCapabilities {
     owner: 'latch' | 'harness'
     /** How the choices are known before a session starts. `none`: they are not. */
     catalogue: 'live' | 'session-check' | 'none'
-    /** Protocols the harness can reach a model service over. Empty: Latch cannot route it to one. */
+    /**
+     * Protocols over which Latch can forward this harness's requests to a model service (`pairRoute`). Empty: Latch
+     * cannot route it to one.
+     */
     wires: ModelWire[]
+    /** Forwarding works for this harness but has not been proven in real use yet; clients say so. */
+    experimental?: true
+    /**
+     * Through Latch it uses only those of a service's models it knows itself, as its own model list names them
+     * (`modelIdKey`); a client offers no others.
+     */
+    knownOnly?: true
   }
   permission: {
     /** Who decides whether a tool call runs. Only the built-in harness can be `latch`. */

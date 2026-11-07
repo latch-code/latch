@@ -1,5 +1,5 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
-import { fileMentionContext, type FileMention } from '@latch/protocol'
+import { fileMentionContext, modelIdKey, type FileMention } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
 import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
@@ -36,6 +36,8 @@ import {
   type CreateTaskInput,
   type DecideOptions,
   type LaunchPreview,
+  type ModelGatewayLease,
+  type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
@@ -86,6 +88,7 @@ import {
   launchHash,
   selectProfile,
   type LaunchFolders,
+  type LaunchRoute,
   type ProfileSelection,
 } from './permission.ts'
 import type { AcpPermissionProfile, ExtensionRequest } from './profiles/index.ts'
@@ -108,6 +111,7 @@ import {
   permissionRequest,
   planUpdate,
   promptResult,
+  providersList,
   PROTOCOL_VERSION,
   RPC,
   RpcError,
@@ -182,6 +186,8 @@ interface Live {
   lastUsed: number
   /** Methods already recorded in the transcript while no turn was running. */
   unrecognizedMethods?: Set<string>
+  /** The process's token to the Host's gateway, for a session on a route; revoked when the process ends. */
+  gateway?: ModelGatewayLease
 }
 
 interface Segment {
@@ -234,6 +240,8 @@ interface Run {
   /** Text added to this turn while it ran (`steer`), in flight or taken, and when the latest was sent. */
   steers?: number
   steeredAt?: number
+  /** Gateway requests of the process when the prompt was sent, for a session on a route. */
+  gatewayMark?: number
   done: Promise<void>
   resolveDone(): void
 }
@@ -272,6 +280,8 @@ interface Confirmed {
   definitionHash?: string
   /** The other folders the agent receives, which the launch covers. */
   folders?: LaunchFolders
+  /** The gateway route the launch covers. */
+  route?: ModelRoute
 }
 
 /** A previewed launch: its definition part, and the folders it passes (`''` for none). */
@@ -347,6 +357,43 @@ function checkedStartConfig(config: unknown): Array<{ configId: string; value: s
   })
 }
 
+const WIRES = new Set<unknown>(['chat-completions', 'responses', 'anthropic-messages', 'gemini'])
+
+/** The value of `option` that is `model`: the same ID, else the same model under the agent's spelling of it. */
+function listedModel(option: SessionConfigOption, model: string): string | undefined {
+  return (
+    option.options.find(item => item.value === model)?.value
+    ?? option.options.find(item => modelIdKey(item.value) === modelIdKey(model) || modelIdKey(item.name) === modelIdKey(model))?.value
+  )
+}
+
+/**
+ * The model choices of a session on a route: only models the gateway forwards. An agent given its model by name (`env`)
+ * takes any of the service's models, whatever it lists itself; one that narrows its own list to the gateway's
+ * (`providers`) keeps those of its options the service has, under its own values.
+ */
+function routedOptions(options: SessionConfigOption[], served: readonly string[], via: 'env' | 'providers'): SessionConfigOption[] {
+  const keys = new Set(served.map(modelIdKey))
+  return options.map(option => {
+    if (option.category !== 'model') return option
+    const kept =
+      via === 'env'
+        ? served.slice(0, 500).map(id => option.options.find(item => item.value === id) ?? { value: id, name: clip(id, 200) })
+        : option.options.filter(item => keys.has(modelIdKey(item.value)) || keys.has(modelIdKey(item.name)))
+    return { ...option, options: kept }
+  })
+}
+
+/** The Host's route as a driver keeps it: only its four fields, each bounded. */
+function checkedRoute(route: unknown): ModelRoute | undefined {
+  if (route === undefined) return undefined
+  const { providerId, model, wire, origin } = (route ?? {}) as Record<string, unknown>
+  const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max
+  if (!text(providerId, 128) || !text(model, 200) || !WIRES.has(wire) || !text(origin, 300))
+    throw new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
+  return { providerId, model, wire: wire as ModelRoute['wire'], origin }
+}
+
 /** A choice made in the session replaces what the draft chose for that option. True when there was one. */
 function forgetStartChoice(task: AcpTask, configId: string): boolean {
   const chosen = task.acp.startConfig
@@ -401,7 +448,12 @@ function storedFolders(acp: AcpRecord): LaunchFolders | undefined {
 /** The launch on record for a session, from its stored record. */
 function confirmedOf(acp: AcpRecord): Confirmed {
   const folders = storedFolders(acp)
-  return { launchHash: acp.launchHash, definitionHash: acp.definitionHash, ...(folders ? { folders } : {}) }
+  return {
+    launchHash: acp.launchHash,
+    definitionHash: acp.definitionHash,
+    ...(folders ? { folders } : {}),
+    ...(acp.route ? { route: acp.route } : {}),
+  }
 }
 
 function isActive(summary: DriverTaskSummary): boolean {
@@ -454,6 +506,8 @@ export class AgentRuntime implements Bridge {
   private readonly store: AcpStore
   private readonly workspaceRoot: string
   private readonly redact: (text: string) => string
+  /** Every gateway token a process of this runtime was given, so that none is repeated in what it says. */
+  private readonly tokens = new Set<string>()
   private readonly selection: ProfileSelection
   /** What this definition's processes say about logging in, shared with the driver that shows it. */
   private readonly auth: AuthFacts
@@ -516,7 +570,9 @@ export class AgentRuntime implements Bridge {
       notify: id => this.notify(id),
     })
     this.workspaceRoot = resolve(options.workspaceRoot)
-    this.redact = redactor(agent.env)
+    const own = redactor(agent.env)
+    // An agent's error may echo the gateway token it was given.
+    this.redact = text => [...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text))
     this.selection = selectProfile(agent)
     this.auth = authFacts(agent, true)
     this.profile = this.selection.profile?.permission
@@ -687,14 +743,19 @@ export class AgentRuntime implements Bridge {
     })
   }
 
-  async launchPreview(input: { cwd: string; workspaceId?: string; folders?: ReadonlyArray<ProjectFolder> }): Promise<LaunchPreview> {
+  async launchPreview(input: {
+    cwd: string
+    workspaceId?: string
+    folders?: ReadonlyArray<ProjectFolder>
+    modelRoute?: ModelRoute
+  }): Promise<LaunchPreview> {
     await this.ready()
     // The agent is given the registered path; configuration is looked up along it and along its real path.
     const given = await this.workspace(input.cwd)
     const cwd = await realpath(given)
     const passed = (await this.scopeOf(input, given))?.passed
     const project = await this.projectConfig(given, passed)
-    const launch = this.currentLaunch(project, passed)
+    const launch = this.currentLaunch(project, passed, input.modelRoute)
     this.previews.delete(launch.hash)
     this.previews.set(launch.hash, { definitionHash: launch.definitionHash, folders: foldersKey(passed) })
     for (const [hash] of this.previews) {
@@ -708,6 +769,7 @@ export class AgentRuntime implements Bridge {
       materializedEnv,
       definitionEnv: this.agent.env,
       sessionTmpDir: this.tmpRoot(),
+      ...(input.modelRoute ? { gatewayEnv: this.gatewayNames() } : {}),
     })
     return {
       launchHash: launch.hash,
@@ -915,8 +977,9 @@ export class AgentRuntime implements Bridge {
     this.notify()
   }
 
-  private isCustomModel(option: SessionConfigOption, value: string): boolean {
-    return option.category === 'model' && (this.state.customModels ?? []).includes(value)
+  /** A model ID typed for the harness's own login; never one for a session on a route, whose gateway would refuse it. */
+  private isCustomModel(task: AcpTask, option: SessionConfigOption, value: string): boolean {
+    return !task.acp.route && option.category === 'model' && (this.state.customModels ?? []).includes(value)
   }
 
   /** The current definition's fingerprint, looked up at most every few seconds: every catalog asks. */
@@ -947,6 +1010,7 @@ export class AgentRuntime implements Bridge {
       mode: input.mode ?? 'agent',
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
       ...(config.length ? { config } : {}),
       ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
     })
@@ -988,6 +1052,7 @@ export class AgentRuntime implements Bridge {
       mode,
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
       ...(config.length ? { config } : {}),
       ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
     })
@@ -998,7 +1063,8 @@ export class AgentRuntime implements Bridge {
       await this.flush()
       return { sessionId: receipt.taskId }
     }
-    const launch = this.currentLaunch(project, scope?.passed)
+    const route = checkedRoute(input.modelRoute)
+    const launch = this.currentLaunch(project, scope?.passed, route)
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
     const create = {
@@ -1014,6 +1080,7 @@ export class AgentRuntime implements Bridge {
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
       ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
+      ...(route ? { route } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -1026,6 +1093,7 @@ export class AgentRuntime implements Bridge {
           launchHash: launch.hash,
           definitionHash: launch.definitionHash,
           folders: passed,
+          ...(route ? { route } : {}),
         })
         if (!live.capabilities.additionalDirectories) throw this.foldersUnsupported(true)
         return await this.record(create)
@@ -1052,8 +1120,9 @@ export class AgentRuntime implements Bridge {
     scope?: Scope
     agentContext?: AgentExecutionContext
     startConfig?: StartChoice[]
+    route?: ModelRoute
   }): Promise<{ sessionId: string }> {
-    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig } = create
+    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route } = create
     this.assertOpen()
     let context: string
     try {
@@ -1082,6 +1151,7 @@ export class AgentRuntime implements Bridge {
         runId: run.id,
         ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
         ...(agentContext && !agentContext.personal && !agentContext.agent ? { agentPrivate: true as const } : {}),
+        ...(route ? { modelRoute: { providerId: route.providerId, model: route.model } } : {}),
       },
       messages: [
         {
@@ -1106,6 +1176,7 @@ export class AgentRuntime implements Bridge {
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
+        ...(route ? { route } : {}),
       },
     }
     this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
@@ -1413,7 +1484,7 @@ export class AgentRuntime implements Bridge {
     const task = this.task(sessionId)
     const option = task.config?.find(item => item.id === configId)
     if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
-    if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(option, value)))
+    if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(task, option, value)))
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
@@ -1689,7 +1760,7 @@ export class AgentRuntime implements Bridge {
    * What a new process would launch now. The resolved path is part of the fingerprint, and so is the digest of
    * `project`; without project configuration both hashes are the definition's.
    */
-  private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders): Launch {
+  private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders, route?: ModelRoute): Launch {
     const command = resolveCommand(this.agent.command)
     if (!command)
       throw new AppError(
@@ -1707,15 +1778,124 @@ export class AgentRuntime implements Bridge {
       programs: programPaths(this.profile),
     }
     const definitionHash = launchHash(definition)
+    const routed = this.launchRoute(route)
     const hash =
-      project?.digest || passed
+      project?.digest || passed || routed
         ? launchHash({
             ...definition,
             ...(project?.digest ? { projectConfig: project.digest } : {}),
             ...(passed ? { folders: passed } : {}),
+            ...(routed ? { route: routed } : {}),
           })
         : definitionHash
     return { command, hash, definitionHash }
+  }
+
+  /** A token for one process of the session `key`, kept so that nothing the process says repeats it. */
+  private openGateway(key: string, route: ModelRoute): ModelGatewayLease {
+    const gateway = this.options.modelGateway
+    if (!gateway) throw new AppError(503, 'model-gateway-unavailable', `Latch 现在不能转发模型请求，${this.agent.name} 没有启动。`)
+    const lease = gateway.open({ sessionId: key, route })
+    this.tokens.add(lease.token)
+    return lease
+  }
+
+  /** The variables of an `env` route with their values, the token among them. */
+  private gatewayEnv(lease: ModelGatewayLease, route: ModelRoute): Record<string, string> {
+    const gateway = this.selection.profile?.gateway
+    return gateway?.via === 'env' ? gateway.env({ baseURL: lease.baseURL, token: lease.token }, route) : {}
+  }
+
+  /**
+   * Points an agent that takes ACP `providers/*` at the gateway, the token in a header that goes nowhere else. One that
+   * does not advertise it, or lists no such provider, is refused rather than left on its own login.
+   */
+  private async setProvider(wire: AgentWire, advertised: boolean, lease: ModelGatewayLease): Promise<void> {
+    const gateway = this.selection.profile?.gateway
+    if (gateway?.via !== 'providers') return
+    const refuse = (why: string) => new AppError(409, 'model-route-refused', `${this.agent.name} ${why}，不能经 Latch 使用这个模型服务。`)
+    if (!advertised) throw refuse('这个版本不接受 Latch 设置模型服务')
+    const listed = providersList.safeParse(await wire.request('providers/list', {}, this.limits.requestTimeoutMs))
+    const slot = listed.success ? listed.data.providers.find(item => item.providerId === gateway.providerId) : undefined
+    if (!slot?.supported.includes(gateway.apiType)) throw refuse('没有可以设置的模型服务')
+    await wire.request(
+      'providers/set',
+      {
+        providerId: gateway.providerId,
+        apiType: gateway.apiType,
+        baseUrl: lease.baseURL,
+        headers: { authorization: `Bearer ${lease.token}` },
+      },
+      this.limits.requestTimeoutMs,
+    )
+  }
+
+  /**
+   * The model a session on a `providers` route started with, chosen on its first bind from what the agent lists once it
+   * is pointed at the gateway. A model it does not list refuses the turn: the agent offers only models it knows.
+   */
+  private routeModel(taskId: string): AppError | undefined {
+    const task = this.task(taskId)
+    const route = task.acp.route
+    if (!route || task.acp.routeModelSet || this.selection.profile?.gateway?.via !== 'providers') return undefined
+    const option = task.config?.find(item => item.category === 'model')
+    const value = option && listedModel(option, route.model)
+    if (!option || value === undefined)
+      return new AppError(
+        409,
+        'model-unavailable',
+        `${this.agent.name} 没有列出模型「${clip(route.model, 64)}」：经 Latch 时它只用自己认识的模型。这条消息没有发出。`,
+      )
+    task.acp.routeModelSet = true
+    const others = (task.acp.startConfig ?? []).filter(choice => choice.configId !== option.id)
+    task.acp.startConfig =
+      option.currentValue === value ? others : [...others, { configId: option.id, value, category: 'model', label: route.model }]
+    if (!task.acp.startConfig.length) delete task.acp.startConfig
+    this.mark()
+    return undefined
+  }
+
+  /**
+   * A turn of a session on a route that replied without one request reaching the gateway went elsewhere: the harness used
+   * its own login or configuration. It is said in the session and recorded; the session goes on.
+   */
+  private checkRoute(run: Run, live: Live, notes: string[]): void {
+    const task = this.state.tasks[run.taskId]
+    if (!task?.summary.modelRoute || !live.gateway || run.gatewayMark === undefined) return
+    if (live.gateway.requests() > run.gatewayMark) return
+    const from = task.messages.findIndex(message => message.id === run.userMessageId)
+    if (!task.messages.slice(from + 1).some(message => message.role === 'assistant' && message.text.trim())) return
+    notes.push(`这一轮没有经过 Latch：${this.agent.name} 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。`)
+    task.summary.modelRoute = { ...task.summary.modelRoute, bypassed: true }
+    this.mark()
+    void Promise.resolve(this.options.securityEvent?.({ type: 'model-route-bypassed', sessionId: run.taskId })).catch(() => {})
+  }
+
+  /** The options an agent reported, as its session offers them: on a route, only models its process's token may use. */
+  private offered(task: AcpTask, options: SessionConfigOption[], lease = this.lives.get(task.summary.id)?.gateway): SessionConfigOption[] {
+    const gateway = this.selection.profile?.gateway
+    return task.acp.route && gateway && lease ? routedOptions(options, lease.models, gateway.via) : options
+  }
+
+  /** The variables an `env` route sets, without their values, for what a launch shows. */
+  private gatewayNames(): Record<string, string> {
+    const gateway = this.selection.profile?.gateway
+    return gateway?.via === 'env' ? Object.fromEntries(gateway.envNames.map(name => [name, ''])) : {}
+  }
+
+  /** What a launch on `route` records of it, or a refusal when this harness cannot be pointed at the gateway that way. */
+  private launchRoute(route: ModelRoute | undefined): LaunchRoute | undefined {
+    if (!route) return undefined
+    const gateway = this.selection.profile?.gateway
+    if (!gateway?.wires.includes(route.wire))
+      throw new AppError(400, 'model-route-unsupported', `${this.agent.name} 不能经 Latch 使用这个模型服务`)
+    return {
+      providerId: route.providerId,
+      origin: route.origin,
+      wire: route.wire,
+      via: gateway.via,
+      names: gateway.via === 'env' ? [...gateway.envNames].sort() : [gateway.providerId, gateway.apiType],
+    }
   }
 
   private assertConfirmed(confirmed: Confirmed): asserts confirmed is Confirmed & { launchHash: string } {
@@ -1725,7 +1905,7 @@ export class AgentRuntime implements Bridge {
   /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one on record. */
   private async assertLaunch(cwd: string, confirmed: Confirmed): Promise<Launch> {
     this.assertConfirmed(confirmed)
-    const launch = this.currentLaunch(await this.projectConfig(cwd, confirmed.folders), confirmed.folders)
+    const launch = this.currentLaunch(await this.projectConfig(cwd, confirmed.folders), confirmed.folders, confirmed.route)
     if (launch.hash === confirmed.launchHash) return launch
     // A session confirmed before project configuration counted stored only the definition's fingerprint.
     throw launch.definitionHash === (confirmed.definitionHash ?? confirmed.launchHash) ? this.projectConfigChanged() : definitionChanged()
@@ -1844,7 +2024,7 @@ export class AgentRuntime implements Bridge {
   /** The agent's full option list, from a notification or a set response; its mode is checked like any report. */
   private reportConfig(task: AcpTask, items: unknown[]): void {
     const prior = this.modeOption(task)
-    task.config = configFromOptions(items)
+    task.config = this.offered(task, configFromOptions(items))
     task.acp.configSource = 'options'
     this.noteModelOptions(task, task.config)
     // ACP makes the category optional, so an option once known as the mode keeps that role under its id.
@@ -2028,6 +2208,10 @@ export class AgentRuntime implements Bridge {
         status = 'cancelled'
         return
       }
+      // A process whose gateway token stopped working, because the service's settings changed, is replaced before the
+      // next turn: its successor gets a token for the service as it is now, or the turn says why it cannot.
+      const stale = this.lives.get(run.taskId)
+      if (stale?.gateway && !stale.gateway.active() && !stale.wire.stopping) await stale.wire.stop('stop', this.limits.stopGraceMs)
       // Binding also confirms the permission mode, right before the prompt is written.
       const binding = await this.attach(run.taskId)
       if (run.cancelRequested) {
@@ -2045,6 +2229,7 @@ export class AgentRuntime implements Bridge {
         return
       }
       run.sent = true
+      if (binding.live.gateway) run.gatewayMark = binding.live.gateway.requests()
       this.phase(run, 'model')
       this.notify(run.taskId)
       const answer = binding.live.wire.request('session/prompt', {
@@ -2190,6 +2375,7 @@ export class AgentRuntime implements Bridge {
     if (task) {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
+      if (status === 'idle' && run.live) this.checkRoute(run, run.live, notes)
       const tools = this.tools.get(run.taskId)
       const unknown: UnknownResult[] = []
       if (tools?.seq === run.seq) {
@@ -2371,12 +2557,18 @@ export class AgentRuntime implements Bridge {
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
     this.assertOpen()
     const sessionTmpDir = await this.prepareTmpDir(key)
-    const materializedEnv = await this.selection.profile?.materialize?.({ dataDir: this.options.dataDir })
+    const { route } = confirmed
+    const materializedEnv = await this.selection.profile?.materialize?.({
+      dataDir: this.options.dataDir,
+      ...(route ? { route: { route, directory: sessionTmpDir } } : {}),
+    })
     this.assertOpen()
     // Checked again after the awaits: the command found on PATH or the project configuration may have changed meanwhile.
     const { command } = await this.assertLaunch(cwd, confirmed)
     this.assertOpen()
     this.makeRoom()
+    // Opened last, so that nothing before the spawn can fail while a token is out.
+    const gateway = route ? this.openGateway(key, route) : undefined
     let live!: Live
     let wire: AgentWire
     try {
@@ -2392,6 +2584,7 @@ export class AgentRuntime implements Bridge {
             materializedEnv,
             definitionEnv: this.agent.env,
             sessionTmpDir,
+            ...(gateway ? { gatewayEnv: this.gatewayEnv(gateway, route!) } : {}),
           }),
           maxLineBytes: this.limits.maxLineBytes,
           redact: this.redact,
@@ -2403,13 +2596,19 @@ export class AgentRuntime implements Bridge {
         },
       )
     } catch (error) {
+      gateway?.close()
       const detail = clip(this.redact(message(error)), 1000)
       this.health.lastError = `无法启动：${clip(detail, 300)}`
       throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}`)
     }
+    if (gateway) {
+      // A token outlives neither its process nor a change to the service it names.
+      void wire.exited.then(() => gateway.close())
+    }
     live = {
       key,
       wire,
+      ...(gateway ? { gateway } : {}),
       initialized: false,
       capabilities: {
         resume: false,
@@ -2471,6 +2670,8 @@ export class AgentRuntime implements Bridge {
         ...(method.description ? { description: clip(this.redact(method.description), 500) } : {}),
       }))
       if (reported) live.agentVersion = clip(reported, 100)
+      if (gateway && this.selection.profile?.gateway?.via === 'providers')
+        await this.setProvider(wire, capabilities?.providers !== undefined, gateway)
       live.initialized = true
       this.health.lastError = undefined
       return live
@@ -2564,7 +2765,8 @@ export class AgentRuntime implements Bridge {
         quiet = true
       }
       const binding = await this.session(taskId, live, signal)
-      const refused = await this.applyStart(taskId, binding, signal)
+      const unrouted = this.routeModel(taskId)
+      const refused = unrouted ?? (await this.applyStart(taskId, binding, signal))
       await this.verifyMode(taskId, binding, signal)
       if (refused) throw refused
       return binding
@@ -2617,11 +2819,14 @@ export class AgentRuntime implements Bridge {
     const parsed = sessionState.safeParse(result)
     const folded = parsed.success ? foldConfig(parsed.data) : undefined
     if (folded) {
-      target.config = folded.options
+      target.config = this.offered(target, folded.options, live.gateway)
       target.acp.configSource = folded.source
       this.applyModel(target)
-      if (!current) this.noteStartCatalogue(target, folded.options)
-      else this.noteModelOptions(target, folded.options)
+      // What a session on a route offers is what the gateway's service has, not the harness's own list.
+      if (!target.acp.route) {
+        if (!current) this.noteStartCatalogue(target, folded.options)
+        else this.noteModelOptions(target, folded.options)
+      }
     }
     // A restored session can come back in another mode than the previous process last reported, so the recorded
     // mode is no evidence; unless this response reports one, the mode is set and read back before the next prompt.
@@ -2665,7 +2870,7 @@ export class AgentRuntime implements Bridge {
     for (const choice of chosen.toSorted((a, b) => START_ORDER[role(a)] - START_ORDER[role(b)])) {
       const kind = role(choice)
       const option = live(choice.configId)
-      if (!option || !(option.options.some(item => item.value === choice.value) || this.isCustomModel(option, choice.value))) {
+      if (!option || !(option.options.some(item => item.value === choice.value) || this.isCustomModel(task, option, choice.value))) {
         if (kind === 'model' || kind === 'mode') await this.dropStartChoice(taskId, choice)
         if (kind === 'model')
           refused ??= new AppError(

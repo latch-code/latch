@@ -2,6 +2,7 @@
 description: Agent 上报的模型、推理级别和模型参数如何进入同一选择菜单，Latch 内置按模型声明的思考深度，以及权威选中值与未知结果的接线。
 sources:
   - apps/web/src/composer/ModelControl.tsx
+  - packages/protocol/src/model-route.ts
   - apps/web/src/composer/modelReasoning.ts
   - apps/web/src/settings/ProvidersSettings.tsx
   - apps/host/src/plugins/providers/chat-wire.ts
@@ -20,6 +21,8 @@ sources:
 输入框页脚的 `SessionModelControl` 用同一个 `@latch/ui` 模型菜单容纳这些选项，其中思考档位是一行分段控件，菜单不随之关闭。Agent 给各档写了说明时，每一段的提示框是它的说明，选中那一档的说明写在这一行下面，换档时跟着换（手机的「思考」面板里每档也带说明）；只重复档名的说明不显示。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。身份图标为 16px。没有 `thought_level` 时不伪造禁用滑块：标签写「默认思考」，菜单里一句话说明 Agent 没有报告；只有单个可用值时沿用原语的静态值展示。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
 
 新会话用 Harness 上次会话报告或不开会话读到的选项列表（见 [HARNESSES.md](HARNESSES.md#开始前的选项)），和会话里是同一个组件；还没有列表时也不虚构推理能力：`DraftModelControl` 写「默认模型 · 默认思考」，菜单里是读取的入口，不能读取时说明发第一条消息后可以换。
+
+自己带模型的 Harness 的菜单里，「<Harness> 自己的模型」之后是保存的模型服务。Latch 能把这个 Harness 的请求转给它的服务（协议相同，见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)）列出它的模型，组名写「<服务> · 经 Latch」（Codex 还写「实验性」），菜单下面一句说明「经 Latch」，并说一整轮没有经过 Latch 时会话里会告诉你；只用自己认识的模型的 Harness（Codex，`models.knownOnly`）读过自己的列表后，服务里它不认识的模型不能选，写「Codex 不认识这个模型」；其他服务列出但不能选，写明原因（协议不同、转换尚未实现，或这个 Harness 还不能经 Latch）。选中的服务模型是这个 Harness 自己的选择（换 Harness 不带过去，换回来还在），标签写「模型 · 服务」，因为同一个模型名可能在两个服务里；这时思考深度开始后才知道。手机的新会话面板列出相同的内容。会话开始后服务不能换：菜单的第一组写这个服务的名字，只列网关会转发的这个服务的模型，其他服务写「换服务要新开会话：开始时确认的是这个服务。」，菜单下面说请求经 Latch 转给哪个服务，有一轮没有经过 Latch 时改为说明这件事。
 
 ## Latch 内置的思考深度
 

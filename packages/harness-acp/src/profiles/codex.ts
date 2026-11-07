@@ -29,6 +29,9 @@ export const codexProfile: HarnessProfile = {
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
+  // codex-acp configures one provider, `openai`, whose only API type is `openai`: Codex's Responses protocol. Its models are
+  // then those the gateway lists that Codex itself knows.
+  gateway: { wires: ['responses'], experimental: true, knownOnly: true, via: 'providers', providerId: 'openai', apiType: 'openai' },
   // The same Codex the sessions run: the adapter's `cli` runs the one `CODEX_PATH` names, else its own.
   catalogueRead: { codexModels: ['cli', 'app-server'] },
   // `codex --version` prints `codex-cli <version>`. Each pair is a codex-acp release and the `@openai/codex` range its

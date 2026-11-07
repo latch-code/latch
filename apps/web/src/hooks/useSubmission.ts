@@ -19,6 +19,7 @@ import {
   pinnedChoice,
   readChoice,
   resolveChoice,
+  servicePick,
   startConfig,
   writeChoice,
   type ComposerChoice,
@@ -217,7 +218,12 @@ export function useSubmission({
     if (!retry && selectedId === null && !assistantId && !(await saveOfferedHarness())) return false
     const override =
       selectedId === null || snapshot.tasks.find(task => task.id === selectedId)?.personal ? undefined : overrides[selectedId]
-    const picks = startConfig(findHarness(catalog, choice.harnessId), choice.config)
+    const harness = findHarness(catalog, choice.harnessId)
+    // A model from a service replaces the Harness's own model pick.
+    const service = servicePick(catalog, harness, choice.config)
+    const picks = startConfig(harness, choice.config).filter(
+      pick => !service || harness?.catalogue?.options.find(option => option.id === pick.configId)?.category !== 'model',
+    )
     const submission: PendingSubmission =
       retry
       ?? (resend !== undefined && selectedId !== null
@@ -233,7 +239,7 @@ export function useSubmission({
               ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
               ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
               ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
-              ...(choice.model ? { model: choice.model } : {}),
+              ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
               ...(picks.length ? { config: picks } : {}),
             }
         : {

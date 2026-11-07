@@ -133,7 +133,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 ## 启动指纹
 
-开始会话不弹确认。启动指纹（`launchHash`）由解析出的命令路径、参数、定义的变量、预设（含 `inheritEnv` 的名字与 `programEnv` 找到的路径，见「进程与环境」）、计入的项目配置与交给 Agent 的其他文件夹算出，不含项目配置与文件夹的部分另记为 `definitionHash`。启动审计 `task.l3.start-requested` 记下 `launchHash`，`task.l3.started` 再记下 `definitionHash`；两者随会话保存在 `acp.launchHash` 与 `acp.definitionHash`。之后按「项目配置」所列的时机重新计算：定义或解析出的命令变化时返回 409 `agent-definition-changed`，只有项目配置变化时返回 409 `project-config-changed`。已有会话随之停止接受输入，换新会话继续。
+开始会话不弹确认。启动指纹（`launchHash`）由解析出的命令路径、参数、定义的变量、预设（含 `inheritEnv` 的名字与 `programEnv` 找到的路径，见「进程与环境」）、计入的项目配置、交给 Agent 的其他文件夹与经 Latch 使用的模型服务（服务 ID、源、协议、交给 Agent 的方式与变量名，不含凭据，见「经 Latch 使用模型服务」）算出，不含项目配置、文件夹与模型服务的部分另记为 `definitionHash`。启动审计 `task.l3.start-requested` 记下 `launchHash`，`task.l3.started` 再记下 `definitionHash`；两者随会话保存在 `acp.launchHash` 与 `acp.definitionHash`。之后按「项目配置」所列的时机重新计算：定义或解析出的命令变化时返回 409 `agent-definition-changed`，只有项目配置变化时返回 409 `project-config-changed`。已有会话随之停止接受输入，换新会话继续。
 
 ## 启动诊断
 
@@ -167,10 +167,29 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
   没有预设的自定义定义只继承代理、CA 与 `__MISE_DIFF`。`inheritEnv` 不能点名 `*_KEY`、`*_TOKEN` 这类秘密（`test/login.test.ts`）；读登录 shell 时只取点名的变量，其余输出丢弃，不记日志，shell 也拿不到 `LATCH_*` 与 `NODE_OPTIONS`。
 - 启动指纹只计 `inheritEnv` 的名字和 `programEnv` 找到的路径，不计任何值：`launchHash` 会发给客户端，代理地址可能带密码。代理与 CA 的名字是固定的，不进指纹；换代理不影响已有会话。诊断与预览不显示值，带账号密码的代理地址在诊断里被遮盖。
-- 模型服务的密钥、地址等需要在 Agent 自己的配置里设置，或写进 Agent 定义的环境变量。
+- 会话用 Harness 自己的登录与模型时，模型服务的密钥、地址等在 Agent 自己的配置里设置，或写进 Agent 定义的环境变量。会话用设置里保存的模型服务时，Agent 拿到的是网关凭据，不是密钥，见「经 Latch 使用模型服务」。
 - `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；声明 `session.notices` 与 `session.compaction`，见「通知与压缩」；除写了 `signIn` 的预设外声明 `auth.terminal`，见「登录」。`session/new`、`session/resume`、`session/load` 只在会话带着技能时传一个 MCP 服务器：Latch 的只读技能服务器（`skills-server.ts`，列出并读取技能，不写、不联网），其余情况传空列表；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」（预设写了 `signIn` 的用它：Claude Agent 是「在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。」），并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。这一轮的 `runEnd` 是 `login-required`，页面给出登录命令和「重试」；已有 ACP 会话时下一轮走 `session/resume`，不用新建会话。见「登录」。
 - 空闲 10 分钟且 Agent 支持恢复会话时，进程会被优雅停止，下次需要时再启动。
 - 进程崩溃时，该会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）；之后的重启从 250 ms 开始按最近的崩溃次数加倍延迟（最多 5 秒），同一定义一分钟内崩溃 3 次会暂停自动重启一分钟（503 `agent-paused`）。
+
+## 经 Latch 使用模型服务
+
+Harness 说某个模型服务的协议时，会话可以不用它自己的登录，而用「设置 › 模型」里保存的服务：Latch 在这台 Mac 上转发它的请求，用设置里的密钥。哪对能用由 `pairRoute`（`packages/protocol/src/model-route.ts`）决定：Harness 的 `capabilities.models.wires` 包含服务的协议（`openai-compatible` 是 Chat Completions，`openai-responses` 是 Responses，`anthropic` 是 Anthropic Messages，`gemini` 是 Gemini）时是 `passthrough`；协议不同是 `translate`，Latch 不翻译协议，这一对不能选；Harness 没有声明协议是 `unavailable`。Host 开会话时用自己的记录重算，只接受 `passthrough`，模型必须在服务的模型列表里，服务必须启用且可以使用（地址已确认，预设地址有密钥）；否则 400，说明哪个协议不同或尚未实现。
+
+| Harness | 协议 | 交给 Agent 的方式 |
+| --- | --- | --- |
+| Codex（实验性） | Responses | ACP `providers/set`：`providerId: "openai"`、`apiType: "openai"`、网关地址，凭据在 `authorization` 头里；只在 Agent 宣告 `agentCapabilities.providers` 且 `providers/list` 列出这个 ID 与类型时 |
+| Gemini CLI | Gemini | 环境变量 `GOOGLE_GEMINI_BASE_URL`（网关地址）与 `GEMINI_API_KEY`（网关凭据），以及会话临时目录里自己的系统设置文件：`security.auth.selectedType: "gateway"`、`model.name` |
+
+- **网关**（`apps/host/src/model-gateway.ts`）是单独的回环临时端口，只有模型路径，不是 API 的入口类别，持有凭据的进程不能当设备用。凭据形如 `lmg1.<43 字符>`，每次启动 Agent 进程签发一个，内存里只存哈希，绑定会话、服务与服务的模型列表；进程退出、Host 关闭或服务的协议、地址、密钥、启用状态或可用性变化时失效。失效后下一轮开始前换掉进程，新进程拿新凭据；服务不能用了，这一轮失败并说原因，不退回 Agent 自己的登录。
+- **请求**：只接受 `Host` 为 `127.0.0.1:<端口>` 或 `localhost:<端口>`、不带 `Origin` 的请求，不发 CORS 头。Responses 只有 `POST /v1/responses` 与 `GET /v1/models`；Gemini 只有 `POST /v1beta/models/<模型>:generateContent|streamGenerateContent|countTokens` 与 `GET /v1beta/models`。模型列表只回绑定的列表，不访问服务。请求体最多 32 MiB，`model`（Gemini 是路径里的模型）必须在绑定的列表里。入站的认证头、Cookie 与其他头一律丢掉，只转发 `accept` 与 `openai-beta`；Gemini 的查询参数只保留 `alt=sse`。
+- **上游**走内置 Harness 用的同一个出站：只发往服务地址之下、预置或已确认的地址，经出站策略，`redirect: 'error'`；密钥只在 Host 加上。错误正文去掉密钥的各种写法与 `redactSecrets` 认得的秘密后原样返回，回复只保留 `content-type`、`retry-after`、`x-request-id`。Agent 断开时中止上游请求，取消仍是真的。
+- **代理**：走网关的进程，`NO_PROXY` 与 `no_proxy` 补上 `127.0.0.1`、`localhost`、`::1`。不读 `NO_PROXY` 的 Agent（Gemini CLI 配了代理时对任何地址都走代理）会把网关请求交给代理；本机代理能转回来，远端代理连不上。
+- **每轮核对**：一轮有回复而网关没收到这个进程的请求（网关拒绝的请求也算收到，读模型列表不算），会话追加「这一轮没有经过 Latch：<Harness> 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。」，`summary.modelRoute.bypassed` 置真，写审计 `task.model.bypassed`；会话照常继续。只有整轮绕过看得出来：一轮里一部分请求走了别处（例如另一个评审模型）看不出来。
+- **Gemini CLI 的辅助调用**：网页抓取、循环检测、编辑修正、摘要与上下文压缩等辅助调用用 Gemini CLI 内置的固定模型（如 `gemini-3-flash-preview`、`gemini-3-pro-preview` 与 flash-lite 一档），和会话的模型走同一个网关。服务的模型列表里没有这些模型时网关拒绝它们（403），这些功能在会话里失败，用会话模型的回复不受影响。要用它们，在「设置 › 模型」里把这些模型也加进这个服务；凭据绑定的是签发时的模型列表，Gemini CLI 的进程下一次启动（例如新开的会话）才用上新列表。
+- **Codex 的模型**：`providers/set` 之后 codex-acp 只留下网关列出、且 Codex 自己认识的模型；所选模型在第一轮前选中，Codex 不认识它时这一轮失败并说明。所以 Codex 声明 `models.knownOnly`：草稿读过 Codex 自己的模型列表后，服务里不在这份列表上的模型（按小写、去掉厂商前缀与日期后缀比较，`modelIdKey`）不能选，写「Codex 不认识这个模型」；还没读过时都列出。这样的会话的模型列表不当作 Codex 自己的列表保存。
+- **审计**：`task.l3.start-requested` 与 `task.l3.started` 带 `providerId` 与路由的哈希 `routeHash`；凭据不进审计、日志、会话记录、启动预览或磁盘。凭据只在 Agent 进程的环境变量里（Gemini CLI，子进程会继承，`printenv` 能把它带进会话）或 ACP 的请求头里（Codex）。它不是模型密钥，但同一用户的进程拿到它就能经这台 Mac 花这个服务的额度，直到它失效；Agent 也仍然读得到 `providers.json`，因为没有操作系统沙箱。
+- 会话开始后不能换服务（模型菜单写「换服务要新开会话：开始时确认的是这个服务。」）。会话的模型选项只有网关会转发的模型（Agent 进程的凭据绑定的列表），客户端照此列出，切换也只接受其中的：Gemini CLI 不管指向哪个服务都列自己的一组固定模型，经 Latch 时换成服务的模型列表，切换走 `session/set_model`，它接受任何模型名；Codex 保留它列出的、服务里也有的模型。为 Agent 自己的登录填写的模型 ID 不在其中。
 
 ## pi 的 RPC 模式
 
@@ -368,6 +387,9 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | pi 的分叉（`fork`） | 未实现；Latch 的会话还没有分叉 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
+| Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单里写「尚未实现」 |
+| 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
+| 网关解析转发请求的用量 | 未实现；用量仍是 Agent 报告的 |
 
 ## 测试
 

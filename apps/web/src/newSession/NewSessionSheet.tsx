@@ -1,13 +1,22 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
-import type { AppSnapshot, PersonalAssistantSummary, SessionConfigOption } from '@latch/protocol'
+import { pairRoute, type AppSnapshot, type PersonalAssistantSummary, type SessionConfigOption } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
-import { draftConfig, engineEntries, type ComposerChoice } from '../composerChoice.ts'
+import {
+  draftConfig,
+  engineEntries,
+  findProvider,
+  harnessName,
+  servicePick,
+  withServicePick,
+  type ComposerChoice,
+} from '../composerChoice.ts'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { agentConfigValues, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
+import { OWN_MODEL, ownModelGroups, ROUTE_NOTE, serviceRef, serviceValue } from '../composer/ModelControl.tsx'
 import { draftPermission, draftRead } from '../composer/permission.ts'
 import { MODE_ICONS } from '../composer/PermissionList.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
@@ -97,8 +106,19 @@ export function NewSessionSheet({
   const [morePermission, setMorePermission] = useState(false)
   const permissionRows = permission?.rows?.filter(row => morePermission || !row.more)
   const hiddenPermission = permission?.rows?.some(row => row.more) === true
+  const modelOption = known?.config.find(option => option.category === 'model')
+  const thought = known?.config.find(option => option.category === 'thought_level')
+  const service = servicePick(catalog, harness, choice.config)
+  // A saved service Latch can forward this Harness's requests to: the model row lists services too.
+  const forwards =
+    catalog !== undefined
+    && harness !== undefined
+    && harness.capabilities.models.owner !== 'latch'
+    && catalog.providers.some(provider => provider.kind !== 'demo' && pairRoute(harness.capabilities, provider).kind === 'passthrough')
+  // A model of its own replaces a service pick; thinking and the rest are kept either way.
   const pick = (configId: string, value: string) => {
-    onChoice({ config: { ...choice.config, [configId]: value } })
+    const base = configId === modelOption?.id ? withServicePick(choice.config, undefined) : choice.config
+    onChoice({ config: { ...base, [configId]: value } })
   }
   const read = () => onHarnessChanged?.()
   const opened = (open: boolean) => {
@@ -118,6 +138,24 @@ export function NewSessionSheet({
         }}
       />
     )
+  const typedPanel = (configId: string | undefined) =>
+    typing && harness && configId
+      ? {
+          panel: (
+            <TypedModelsPanel
+              harness={harness}
+              onBack={() => {
+                setTyping(false)
+              }}
+              onChoose={model => {
+                pick(configId, model)
+                setTyping(false)
+              }}
+              onSaved={read}
+            />
+          ),
+        }
+      : {}
   /** One of the Harness's own options as a row; the list says where it came from. */
   const optionRow = (label: string, option: SessionConfigOption, footer?: ReactNode) => (
     <ValuePicker
@@ -133,35 +171,12 @@ export function NewSessionSheet({
         ...(item.description ? { description: escapeHiddenCharacters(item.description) } : {}),
       }))}
       {...(footer ? { footer } : {})}
-      {...(footer && option.category === 'model'
-        ? {
-            onOpenChange: opened,
-            ...(typing && harness
-              ? {
-                  panel: (
-                    <TypedModelsPanel
-                      harness={harness}
-                      onBack={() => {
-                        setTyping(false)
-                      }}
-                      onChoose={model => {
-                        pick(option.id, model)
-                        setTyping(false)
-                      }}
-                      onSaved={read}
-                    />
-                  ),
-                }
-              : {}),
-          }
-        : {})}
+      {...(footer && option.category === 'model' ? { onOpenChange: opened, ...typedPanel(option.id) } : {})}
       onValueChange={value => {
         pick(option.id, value)
       }}
     />
   )
-  const modelOption = known?.config.find(option => option.category === 'model')
-  const thought = known?.config.find(option => option.category === 'thought_level')
   return (
     <Sheet
       open={open}
@@ -224,6 +239,50 @@ export function NewSessionSheet({
                 onAdded={onProvidersChanged}
               />
               <StaticRow label="思考" value="模型默认" />
+            </>
+          ) : forwards ? (
+            <>
+              <ValuePicker
+                variant="row"
+                label="模型"
+                className="new-sheet-row"
+                value={service ? serviceValue(service) : (modelOption?.currentValue ?? OWN_MODEL)}
+                {...(service
+                  ? { valueText: `${service.model} · ${findProvider(catalog, service.providerId)?.name ?? service.providerId}` }
+                  : {})}
+                disabled={disabled}
+                pending={reading}
+                pendingLabel="正在读取…"
+                searchable={(modelOption?.options.length ?? 0) + catalog.providers.length >= 8}
+                groups={ownModelGroups(
+                  catalog,
+                  harness,
+                  modelOption
+                    ? agentConfigValues(modelOption).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))
+                    : [{ value: OWN_MODEL, label: DEFAULT_MODEL }],
+                )}
+                footer={
+                  <div className="model-footer">
+                    {rows(modelOption !== undefined)}
+                    <p className="model-note">{ROUTE_NOTE(harnessName(harness))}</p>
+                  </div>
+                }
+                onOpenChange={opened}
+                {...typedPanel(modelOption?.id)}
+                onValueChange={value => {
+                  const ref = serviceRef(value)
+                  if (ref) onChoice({ config: withServicePick(choice.config, ref, modelOption?.id) })
+                  else if (modelOption) pick(modelOption.id, value)
+                  else onChoice({ config: withServicePick(choice.config, undefined) })
+                }}
+              />
+              {service ? (
+                <StaticRow label="思考" value="开始后才知道" />
+              ) : thought ? (
+                optionRow('思考', thought)
+              ) : (
+                <StaticRow label="思考" value={known?.thinkingUnknown ? '开始后才知道' : '默认'} />
+              )}
             </>
           ) : known ? (
             <>

@@ -3,6 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
+import type { ModelRoute } from '@latch/sdk'
 import type {
   AgentBrief,
   Message,
@@ -58,6 +59,10 @@ export interface AcpRecord {
    * said when the session was created, to name a choice the agent no longer offers.
    */
   startConfig?: StartChoice[]
+  /** The gateway route the session started on, which the launch fingerprint covers. */
+  route?: ModelRoute
+  /** The route's model was chosen on the agent's session; until then the next bind chooses it. */
+  routeModelSet?: true
 }
 
 export interface StartChoice {
@@ -237,6 +242,9 @@ const stateSchema = z.object({
         runEnd: runEndSchema.optional(),
         agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
         agentPrivate: z.literal(true).optional(),
+        modelRoute: z
+          .object({ providerId: z.string().min(1).max(128), model: z.string().min(1).max(200), bypassed: z.literal(true).optional() })
+          .optional(),
       }),
       messages: z.array(message),
       plan: z
@@ -291,6 +299,15 @@ const stateSchema = z.object({
         folderVia: z.enum(['acp', 'args']).optional(),
         skills: z.literal(true).optional(),
         startConfig: z.array(startChoice).optional(),
+        route: z
+          .object({
+            providerId: z.string().min(1).max(128),
+            model: z.string().min(1).max(200),
+            wire: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
+            origin: z.string().min(1).max(300),
+          })
+          .optional(),
+        routeModelSet: z.literal(true).optional(),
       }),
     }),
   ),
