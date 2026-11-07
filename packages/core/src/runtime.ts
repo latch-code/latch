@@ -1,4 +1,5 @@
 import { RunFileTracking, recordFileOutputs } from './file-tracking.ts'
+import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
@@ -280,12 +281,19 @@ function safeCall(call: ToolCall): ToolCall {
       && (typeof call.signature?.by !== 'string'
         || typeof call.signature.value !== 'string'
         || call.signature.by.length > 512
-        || call.signature.value.length > 1024 * 1024))
+        || call.signature.value.length > 1024 * 1024
+        || (call.signature.scope !== undefined && call.signature.scope !== 'turn')))
   ) {
     throw new AppError(502, 'invalid-tool-call', '模型返回了无效的工具调用')
   }
   // Detach provider-owned arguments before displaying, approving, or executing them.
   return JSON.parse(JSON.stringify(call)) as ToolCall
+}
+/** Every commit rewrites the whole state, and a provider never sends these back once the turn that made them is over. */
+function dropTurnSignatures(history: StoredTask['history']): void {
+  for (const message of history) {
+    for (const call of message.toolCalls ?? []) if (call.signature?.scope === 'turn') delete call.signature
+  }
 }
 function tokens(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
@@ -905,6 +913,7 @@ class HarnessRuntime implements Bridge {
         // The messages stay; only what the model is sent starts over.
         if (fresh) task.history = []
         this.assertAttachments(run, [...attachments, ...task.history.flatMap(message => message.attachmentRefs ?? [])])
+        dropTurnSignatures(task.history)
         const at = isoTime(run.clock.startedAt)
         task.history.push({ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) })
         task.messages.push({
@@ -1282,7 +1291,8 @@ class HarnessRuntime implements Bridge {
     } catch (error) {
       const text = signal.aborted
         ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
-        : `TOOL_ERROR: ${error instanceof Error ? error.message : String(error)}`
+        : // A schema failure's own message is a JSON list of issues; the readable form says what was wrong first.
+          `TOOL_ERROR: ${error instanceof z.ZodError ? z.prettifyError(error) : error instanceof Error ? error.message : String(error)}`
       this.output(run)
       await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, signal.aborted))
       await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: signal.aborted ? 'cancelled' : 'failed' })
@@ -1401,7 +1411,7 @@ class HarnessRuntime implements Bridge {
         const reasoningMs = live.reasoningTimer.end()
         this.output(run)
         await this.change(run.sessionId, current => {
-          // Reasoning is shown to the user but never replayed to the model.
+          // Reasoning text is shown, never replayed; a provider's own signed copy rides on the calls.
           current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
           if (text || reasoning) {
             current.messages.push({

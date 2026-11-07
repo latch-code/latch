@@ -215,6 +215,20 @@ describe('a Harness with its own models on a saved service', () => {
     const detail = await latest()
     expect(detail.summary.modelRoute).toEqual({ providerId: openai.id, model: 'fake-model-large', name: 'OpenAI' })
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('fake-model-large')
+    // The turn carries what the gateway counted of the Responses reply: its model and its tokens.
+    expect(detail.messages.find(message => message.role === 'user')?.turn?.routed).toEqual({
+      requests: 1,
+      chosen: 'fake-model-large',
+      models: [
+        {
+          model: 'fake-model-large',
+          used: 'fake-model-large',
+          requests: 1,
+          measured: 1,
+          usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, reasoningTokens: 0 },
+        },
+      ],
+    })
     // The service received its own key; the agent's environment and messages never held it.
     expect(models.requests.map(request => [request.wire, request.model, request.key])).toEqual([['responses', 'fake-model-large', KEY]])
     expect(await readFile(log, 'utf8')).not.toContain(KEY)
@@ -337,7 +351,8 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await chip(page, '模型').click()
     await page.getByText('MyGemini · 经 Latch', { exact: true }).waitFor()
     await row(page, 'fake-model').click()
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model · MyGemini')
+    // The first time, this Harness's options are read by a process of its own; the chip says so until they are.
+    await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toContain('fake-model · MyGemini')
     await input(page).fill('model 你好')
     await sendDraft(page)
     await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).first().waitFor({ timeout: 20_000 })
@@ -360,13 +375,222 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await composer.fill('model 第二轮')
     await composer.press('Meta+Enter')
     await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).nth(1).waitFor({ timeout: 20_000 })
+    // A helper call Gemini CLI makes by alias goes to the model the session started on, not one the service lacks.
+    await composer.fill('model helper:web-fetch')
+    await composer.press('Meta+Enter')
+    await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).nth(2).waitFor({ timeout: 20_000 })
     expect(models.requests.map(request => [request.wire, request.model, request.key])).toEqual([
       ['gemini', 'fake-model', KEY],
       ['gemini', 'fake-model-large', KEY],
+      ['gemini', 'fake-model', KEY],
     ])
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks
     const detail = await owner.json<TaskDetail>(`tasks/${tasks[0]!.id}`)
     expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'MyGemini' })
     await context.close()
+  })
+})
+
+/**
+ * What a turn sent through Latch, as the gateway counted it: the service's own tokens on the turn, the requests by model,
+ * and the chosen model beside the one the service said answered when they differ. Across a reload, on a phone, in the dark.
+ */
+describe('a turn through Latch shows what the service said it used', () => {
+  let directory: string
+  let host: TestHost
+  let owner: TestDevice
+  let browser: Browser
+  let models: FakeModels
+
+  beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'latch-e2e-gateway-usage-'))
+    models = await startFakeModels({
+      replies: [
+        { text: '第一轮的回复' },
+        { text: '换了模型的回复', answeredBy: 'fake-model-preview' },
+        { error: { status: 500, message: 'upstream down' } },
+        // The service keeps the stream open after the last event; the agent ends its turn without waiting for it.
+        { text: '流还开着的回复', lingerMs: 60_000 },
+      ],
+    })
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'gemini'),
+      [
+        '#!/bin/sh',
+        `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${join(directory, 'agent.log')}'`,
+        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=legacy',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'gemini'), 0o755)
+    host = await startTestHost({
+      demo: false,
+      sessionFolders: true,
+      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
+      commandDirectories: () => [bin],
+    })
+    owner = await host.enroll({ listener: 'unix' })
+    const created = await owner.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'MyGemini',
+        kind: 'gemini',
+        baseURL: models.origin,
+        apiKey: KEY,
+        models: ['fake-model', 'fake-model-large'],
+        defaultModel: 'fake-model',
+        confirmOrigin: true,
+      },
+    })
+    expect(created.status).toBe(201)
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(OUTPUT, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    await models?.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
+    const context = await browser.newContext({
+      viewport: { width, height: 900 },
+      colorScheme: theme,
+      locale: 'zh-CN',
+      reducedMotion: 'reduce',
+    })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+    await connected(page)
+    return page
+  }
+  const turn = (page: Page, index: number) => page.locator('.transcript .turn').nth(index)
+
+  it('puts the tokens and requests on each turn, and says when the service answered with another model', async () => {
+    const page = await open(1440, 'light')
+    await chip(page, '模型').click()
+    await row(page, 'fake-model').click()
+    await input(page).fill('model 第一轮')
+    await sendDraft(page)
+    await page.locator('.transcript').getByText('model: 第一轮的回复', { exact: true }).waitFor({ timeout: 20_000 })
+    const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await composer.fill('model 第二轮')
+    await composer.press('Meta+Enter')
+    await page.locator('.transcript').getByText('model: 换了模型的回复', { exact: true }).waitFor({ timeout: 20_000 })
+    await composer.fill('model 第三轮')
+    await composer.press('Meta+Enter')
+    await page
+      .locator('.transcript')
+      .getByText(/^model error 500/u)
+      .waitFor({ timeout: 20_000 })
+
+    // The first turn: the service's tokens and one request, no second model named.
+    await turn(page, 0).hover()
+    const first = turn(page, 0).locator('.turn-footer')
+    await expect.poll(() => first.innerText()).toContain('输入 10 tokens')
+    expect(await first.innerText()).toContain('输出 5 tokens')
+    expect(await turn(page, 0).locator('.assistant-meta-chosen').count()).toBe(0)
+    // The second: the service said another model answered, so the author line says both.
+    const second = turn(page, 1)
+    await second.locator('.assistant-meta-chosen').getByText('选的是 fake-model', { exact: true }).waitFor()
+    expect(await second.locator('.assistant-meta-model').innerText()).toBe('fake-model-preview')
+    await second.hover()
+    await second.locator('.turn-fact', { hasText: '输出 5 tokens' }).hover()
+    const tip = page.locator('.ui-tooltip:popover-open')
+    await tip.getByText('由模型服务在回复里报告，Latch 转发时读取', { exact: true }).waitFor()
+    await tip.getByText('fake-model：1 次，服务说用的是 fake-model-preview · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
+    await shot(page, 'usage-1440-light')
+    // The third: the service failed, so there are no tokens to show and the request did not complete.
+    const third = turn(page, 2)
+    await third.hover()
+    await third.locator('.turn-fact', { hasText: '经 Latch 1 次请求' }).hover()
+    await tip.getByText('fake-model：1 次，1 次没有完成', { exact: true }).waitFor()
+    await shot(page, 'usage-failed-1440-light')
+    expect(await third.locator('.turn-footer').innerText()).not.toContain('输入')
+    // The fourth: the turn ended on the reply's last event while the service still held the stream open.
+    await composer.fill('model 第四轮')
+    await composer.press('Meta+Enter')
+    await page.locator('.transcript').getByText('model: 流还开着的回复', { exact: true }).waitFor({ timeout: 20_000 })
+    const fourth = turn(page, 3)
+    await fourth.hover()
+    await expect.poll(() => fourth.locator('.turn-footer').innerText(), { timeout: 10_000 }).toContain('输入 10 tokens')
+    await fourth.locator('.turn-fact', { hasText: '输出 5 tokens' }).hover()
+    await tip.getByText('fake-model：1 次 · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
+    expect(await tip.innerText()).not.toContain('没有')
+    // The session does not wait for the stream the service still holds.
+    await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks[0]?.status, { timeout: 10_000 }).toBe('idle')
+    // The list shows a status for at least a second, so after a turn this short it says so a moment later.
+    await expect.poll(() => page.getByText('运行中', { exact: true }).count(), { timeout: 10_000 }).toBe(0)
+    await shot(page, 'usage-lingering-1440-light')
+
+    // The record is the Host's: the same after a reload, and it holds no text of the turns.
+    await page.reload()
+    await connected(page)
+    await turn(page, 1).locator('.assistant-meta-chosen').getByText('选的是 fake-model', { exact: true }).waitFor()
+    const [task] = (await owner.json<AppSnapshot>('snapshot')).tasks
+    const detail = await owner.json<TaskDetail>(`tasks/${task!.id}`)
+    const routed = detail.messages.filter(message => message.role === 'user').map(message => message.turn?.routed)
+    expect(routed).toEqual([
+      {
+        requests: 1,
+        chosen: 'fake-model',
+        models: [
+          {
+            model: 'fake-model',
+            used: 'fake-model',
+            requests: 1,
+            measured: 1,
+            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+          },
+        ],
+      },
+      {
+        requests: 1,
+        chosen: 'fake-model',
+        models: [
+          {
+            model: 'fake-model',
+            used: 'fake-model-preview',
+            requests: 1,
+            measured: 1,
+            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+          },
+        ],
+      },
+      { requests: 1, chosen: 'fake-model', models: [{ model: 'fake-model', requests: 1, failed: 1 }] },
+      {
+        requests: 1,
+        chosen: 'fake-model',
+        models: [
+          {
+            model: 'fake-model',
+            used: 'fake-model',
+            requests: 1,
+            measured: 1,
+            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+          },
+        ],
+      },
+    ])
+    expect(JSON.stringify(routed)).not.toMatch(/第.轮|回复|lmg1\./u)
+    await page.context().close()
+
+    for (const [width, theme] of [
+      [1440, 'dark'],
+      [390, 'light'],
+      [390, 'dark'],
+    ] as const) {
+      const view = await open(width, theme)
+      await view.getByText(task!.title, { exact: true }).first().click()
+      await turn(view, 1).locator('.assistant-meta-chosen').waitFor()
+      await turn(view, 1).click({ position: { x: 4, y: 4 } })
+      await noHorizontalOverflow(view)
+      await shot(view, `usage-${width}-${theme}`)
+      await view.context().close()
+    }
   })
 })

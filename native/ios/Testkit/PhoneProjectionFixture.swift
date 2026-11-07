@@ -65,6 +65,7 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "status": ["text": status.text, "clock": status.clock ?? "", "tone": "\(status.tone)", "actions": status.actions.map { "\($0)" }],
         "subtitle": subtitle.parts, "neverAsks": subtitle.neverAsks,
         "judged": PhoneConversation.rendered(detail).compactMap { PhoneConversation.judgement($0).map { "\($0.review):\($0.words)" } },
+        "blocked": PhoneConversation.rendered(detail).compactMap { PhoneConversation.blocked($0).map { "\($0.model):\($0.line)" } },
         "input": value["inputs"].array.map { PhoneConversation.inputGate(summary: $0["summary"], permission: $0["permission"], canRun: $0["canRun"].bool, connected: $0["connected"].bool) ?? "" },
         "approvals": value["approvals"].array.map { approval -> [String: Any] in
             let gate = PhoneConversation.approvalGate(approval, canApproveStandard: value["canApprove"].bool, canApproveElevated: value["canApproveElevated"].bool, canRun: value["canRun"].bool)

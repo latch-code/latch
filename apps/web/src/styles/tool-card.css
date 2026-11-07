@@ -64,6 +64,15 @@
 .tool-failure .ui-button {
   flex-shrink: 0;
 }
+/* Who stopped a call the harness refused itself, and why in its own words: a record, not a failure. */
+.tool-block-line {
+  margin: 0;
+  padding-left: 24px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  overflow-wrap: anywhere;
+}
 
 /* What opens under a row: indented past its icon, at most 320 tall. */
 .tool-card-body {

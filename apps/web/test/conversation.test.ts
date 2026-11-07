@@ -315,6 +315,44 @@ describe("a turn's blocks and its fold", () => {
         ]),
       ),
     ).toBe('已工作 · 模型拦下 3 次')
+    // A call the Harness refused itself before it ran is no failed step either; its model's and its rules' are named.
+    const blocked = (id: string, source: 'model' | 'rule', judged?: 'denied') =>
+      tool(id, {
+        state: 'failed',
+        text: 'x',
+        tool: {
+          kind: 'execute',
+          blocked: { by: 'Claude Agent', source },
+          ...(judged ? { judged: { by: 'Claude Agent', outcome: judged } } : {}),
+        },
+      })
+    expect(
+      foldWords(
+        firstTurn([
+          user('u'),
+          blocked('b1', 'model', 'denied'),
+          blocked('b2', 'model'),
+          blocked('b3', 'rule'),
+          subagent('inner', [blocked('s1', 'rule')]),
+        ]),
+      ),
+    ).toBe('已工作 · 模型拦下 2 次 · 规则拦下 2 次')
+  })
+
+  it('takes a call the Harness refused before it ran as one that changed nothing and took no time', () => {
+    const refused = tool('b', {
+      state: 'failed',
+      text: 'x',
+      createdAt: '2026-11-07T10:00:00.000Z',
+      completedAt: '2026-11-07T10:00:03.000Z',
+      tool: { kind: 'edit', blocked: { by: 'Claude Agent', source: 'rule' }, diffs: [{ path: 'a.ts', newText: 'y\n' }] },
+    })
+    expect(shownToolState(refused)).toBe('blocked')
+    expect(appliedDiffs(refused)).toEqual([])
+    expect(toolDuration(refused, Date.parse('2026-11-07T10:00:05.000Z'))).toBeUndefined()
+    expect(sideEffects(firstTurn([user('u'), refused]))).toEqual({ edits: 0, commands: 0, others: 0, unknown: 0 })
+    // A row that only says it failed is still a failure.
+    expect(shownToolState(tool('f', { state: 'failed', text: 'x', tool: { kind: 'edit' } }))).toBe('failed')
   })
 
   it("joins a settled turn's finished reads into one row, and a live turn's never", () => {
@@ -698,6 +736,97 @@ describe('a settled turn', () => {
     const nothing = settledTranscript([user('u'), tool('t', { state: 'cancelled' })], 'cancelled')
     expect(nothing).toContain('已停止')
     expect(nothing).not.toContain('保留了部分')
+  })
+
+  it('shows what a turn sent through Latch: the model that answered, its tokens, and the chosen model when another answered', () => {
+    const routed = (routed: NonNullable<NonNullable<Message['turn']>['routed']>) => [
+      user('u', { turn: { endedAt: iso(14, 32, 37), routed } }),
+      reply('a', '好', { model: 'Fake Model' }),
+    ]
+    const same = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail(
+          routed({
+            requests: 3,
+            chosen: 'gpt-x',
+            models: [
+              {
+                model: 'gpt-x',
+                used: 'gpt-x-2026-01-01',
+                requests: 2,
+                measured: 2,
+                usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 800 },
+              },
+              { model: 'gpt-mini', requests: 1, failed: 1 },
+            ],
+          }),
+        ),
+        approvals: [],
+        harnessName: 'Codex',
+      }),
+    )
+    // A dated version of the chosen model is the same model: the author line keeps the Harness's own name for it.
+    expect(same).toContain('<span class="assistant-meta-model">Fake Model</span>')
+    expect(same).not.toContain('选的是')
+    const footer = same.slice(same.indexOf('class="turn-footer'))
+    expect(footer).toContain('输入 1.2k')
+    expect(footer).toContain('输出 300')
+    expect(footer).toContain('输入 1,200 tokens（缓存读取 800）')
+    expect(footer).toContain('由模型服务在回复里报告，Latch 转发时读取')
+    // Its requests by model are in the tokens' tooltips, not a fact of their own beside them.
+    expect(footer).toContain('这一轮经 Latch 3 次请求')
+    expect(footer).not.toMatch(/class="turn-fact"[^>]*>经 Latch/u)
+    expect(footer).toContain('gpt-x：2 次 · 输入 1.2k tokens · 输出 300 tokens')
+    expect(footer).toContain('gpt-mini：1 次，1 次没有完成')
+
+    const other = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail(
+          routed({
+            requests: 2,
+            chosen: 'gpt-x',
+            models: [{ model: 'gpt-x', used: 'gpt-y', requests: 2, measured: 1, usage: { inputTokens: 10, outputTokens: 5 } }],
+          }),
+        ),
+        approvals: [],
+        harnessName: 'Codex',
+      }),
+    )
+    expect(other).toContain('<span class="assistant-meta-model">gpt-y</span>')
+    expect(other).toContain('选的是 gpt-x')
+    expect(other).toContain('选的是 gpt-x，模型服务说这一轮用的是 gpt-y')
+    expect(other).toContain('另有 1 次回复没有报告用量，没有计入')
+    expect(other).toContain('gpt-x：2 次，服务说用的是 gpt-y')
+    // A request still under way when the turn ended is not a reply that reported no tokens.
+    const open = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail(
+          routed({
+            requests: 2,
+            chosen: 'gpt-x',
+            models: [{ model: 'gpt-x', requests: 2, measured: 1, open: 1, usage: { inputTokens: 10, outputTokens: 5 } }],
+          }),
+        ),
+        approvals: [],
+        harnessName: 'Codex',
+      }),
+    )
+    expect(open).toContain('另有 1 次请求在这一轮结束时还在进行，没有计入')
+    expect(open).not.toContain('没有报告用量')
+    expect(open).toContain('gpt-x：2 次，1 次在这一轮结束时还在进行')
+    // With no tokens to show, the requests are a fact of their own.
+    const failed = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail(routed({ requests: 1, chosen: 'gpt-x', models: [{ model: 'gpt-x', requests: 1, failed: 1 }] })),
+        approvals: [],
+        harnessName: 'Codex',
+      }),
+    )
+    expect(failed).toMatch(/class="turn-fact"[^>]*>经 Latch 1 次请求/u)
+    expect(failed).toContain('gpt-x：1 次，1 次没有完成')
+    expect(failed).not.toContain('输入')
+    // A turn with no record from Latch shows none of it.
+    expect(settledTranscript([user('u'), reply('a', '好', { model: 'Fake Model' })], 'idle')).not.toContain('经 Latch')
   })
 
   it('names the model of a running turn from the run before its first step records one', () => {

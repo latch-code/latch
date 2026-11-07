@@ -1,9 +1,21 @@
 /** Pure conversions from ACP payloads to Latch's browser-safe types. */
-import type { FileDiff, Message, PlanEntry, SessionConfigOption, ToolDecision, ToolDetail, ToolJudgement, ToolKind } from '@latch/protocol'
+import type {
+  FileDiff,
+  Message,
+  PlanEntry,
+  SessionConfigOption,
+  ToolBlock,
+  ToolDecision,
+  ToolDetail,
+  ToolJudgement,
+  ToolKind,
+} from '@latch/protocol'
 import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
 
 export const TEXT_LIMIT = 2_000_000
 export const TOOL_TEXT_LIMIT = 64 * 1024
+/** A harness's reason for refusing a call is one line of its own words, not output. */
+const BLOCK_REASON_LIMIT = 1000
 /** Per side, so one diff stays within 256 KiB. */
 const DIFF_SIDE_LIMIT = 128 * 1024
 const TRUNCATED = '\n…（内容过长，已截断）'
@@ -67,6 +79,8 @@ export interface ToolState {
   decision?: ToolDecision
   /** Decided without asking the person; `recorded` once its audit row was written. */
   judged?: ToolJudgement & { recorded?: true }
+  /** The harness refused the call itself before it ran; kept once reported, since later reports leave it out. */
+  blocked?: ToolBlock
   /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
   createdAt?: string
   startedAt?: string
@@ -166,6 +180,15 @@ export function toolDetail(state: ToolState): ToolDetail {
     ...(diffs.length ? { diffs } : {}),
     ...(state.decision ? { decision: state.decision } : {}),
     ...(state.judged ? { judged: { by: state.judged.by, outcome: state.judged.outcome } } : {}),
+    ...(state.blocked
+      ? {
+          blocked: {
+            by: state.blocked.by,
+            source: state.blocked.source,
+            ...(state.blocked.reason ? { reason: clip(state.blocked.reason, BLOCK_REASON_LIMIT) } : {}),
+          },
+        }
+      : {}),
   }
 }
 

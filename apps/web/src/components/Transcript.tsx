@@ -12,6 +12,7 @@ import {
 import {
   deliveryWords,
   foldWords,
+  isBlocked,
   isLive,
   liveMessageId,
   outcomeWords,
@@ -25,6 +26,7 @@ import {
   turnBlocks,
   settingSwitches,
   turnModel,
+  turnRoute,
   turnOutcome,
   turnsOf,
   turnTimes,
@@ -148,6 +150,8 @@ interface TurnViewProps {
   /** The model that answered, or that the run uses before its first step records one, and its service's name. */
   model?: string
   provider?: string
+  /** The model the session had chosen, when the service said another one answered: the author line says both. */
+  chosen?: string
   trailingLive: boolean
   latest: boolean
   outcome?: TurnOutcome
@@ -243,6 +247,7 @@ const TurnView = memo(function TurnView({
   harness,
   model,
   provider,
+  chosen,
   trailingLive,
   latest,
   outcome,
@@ -289,12 +294,12 @@ const TurnView = memo(function TurnView({
     else retry?.onResend()
   })
   const onRetry = retry ? pressRetry : undefined
-  // One 重试 in the turn's reading order: on what failed last.
-  const lastFailed = turn.replies.findLast(
-    message => (message.role === 'tool' || message.role === 'system') && message.state === 'failed',
-  )?.id
+  // One 重试 in the turn's reading order: on what failed last. A call the harness refused itself did not fail.
+  const failedHere = (message: Message) =>
+    (message.role === 'tool' || message.role === 'system') && message.state === 'failed' && !isBlocked(message)
+  const lastFailed = turn.replies.findLast(failedHere)?.id
   // A failure says itself once: a failed note or row already has the words, and the run's end note has its own.
-  const speaksFailure = turn.replies.some(message => (message.role === 'system' || message.role === 'tool') && message.state === 'failed')
+  const speaksFailure = turn.replies.some(failedHere)
   const showOutcome = outcome !== undefined && outcome !== 'completed' && !runEnd && !(outcome === 'failed' && speaksFailure)
   return (
     <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
@@ -322,7 +327,7 @@ const TurnView = memo(function TurnView({
                 }
               : undefined
           }>
-          <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} />
+          <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} chosen={chosen} />
           {!trailingLive && hasWork && (
             <button
               type="button"
@@ -632,6 +637,7 @@ export function Transcript({
               : NONE
             const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
             const stamped = turnModel(turn)
+            const route = trailingLive ? undefined : turnRoute(turn)
             const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
             const delivery = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
             const record = records.get(turn.key)
@@ -652,8 +658,9 @@ export function Transcript({
                 harnessName={harnessName}
                 login={login}
                 harness={harness}
-                model={stamped?.model ?? (trailingLive ? detail.summary.model : undefined)}
+                model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
                 provider={providerId ? providerName?.(providerId) : undefined}
+                {...(route?.differs ? { chosen: route.chosen } : {})}
                 latest={latest}
                 trailingLive={trailingLive}
                 outcome={outcome}

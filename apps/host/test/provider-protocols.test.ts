@@ -174,6 +174,113 @@ describe('OpenAI Responses provider', () => {
     expect(JSON.stringify(service.seen[1]?.body)).not.toContain('fc_1')
   })
 
+  it('asks for encrypted reasoning and sends the reasoning items back within the tool loop, next to the items they came with', async () => {
+    const reasoning = {
+      type: 'reasoning',
+      id: 'rs_1',
+      summary: [{ type: 'summary_text', text: '先看' }],
+      encrypted_content: 'enc-1',
+      status: 'completed',
+    }
+    const said = {
+      type: 'message',
+      id: 'msg_1',
+      role: 'assistant',
+      status: 'completed',
+      phase: 'commentary',
+      content: [{ type: 'output_text', text: '读一下', annotations: [], logprobs: [] }],
+    }
+    const step = (items: { reasoning: Record<string, unknown>; completedOutput?: unknown[] }) => [
+      { type: 'response.reasoning_summary_text.delta', delta: '先看', item_id: 'rs_1', output_index: 0, summary_index: 0 },
+      { type: 'response.output_item.done', output_index: 0, item: items.reasoning },
+      { type: 'response.output_text.delta', delta: '读一下', item_id: 'msg_1', output_index: 1, content_index: 0 },
+      { type: 'response.output_item.done', output_index: 1, item: said },
+      {
+        type: 'response.output_item.done',
+        output_index: 2,
+        item: {
+          type: 'function_call',
+          id: 'fc_1',
+          call_id: 'call_1',
+          name: 'read_file',
+          arguments: '{"path":"a.ts"}',
+          status: 'completed',
+        },
+      },
+      {
+        type: 'response.completed',
+        response: { status: 'completed', ...(items.completedOutput ? { output: items.completedOutput } : {}) },
+      },
+    ]
+    const { encrypted_content: _left, ...unencrypted } = reasoning
+    const scripts = [
+      step({ reasoning }),
+      [{ type: 'response.output_text.delta', delta: '好了' }, completed()],
+      [{ type: 'response.output_text.delta', delta: '好了' }, completed()],
+      [{ type: 'response.output_text.delta', delta: '好了' }, completed()],
+      step({ reasoning: unencrypted, completedOutput: [reasoning] }),
+      step({ reasoning: unencrypted }),
+    ]
+    const service = await serve((_seen, index, response) => sse(response, scripts[index]!))
+    const provider = await mount(
+      createResponsesPlugin(config(`${service.origin}/v1`, { modelCapabilities: { 'model-a': { thinking: ['low', 'high'] } } })),
+    )
+    const first = await collect(provider.stream({ messages: [user], tools: [tool], signal: signal(), effort: 'high' }))
+    expect(service.seen[0]?.body).toMatchObject({ store: false, reasoning: { effort: 'high' }, include: ['reasoning.encrypted_content'] })
+    const calls = first.flatMap(delta => (delta.type === 'tool-call' ? [delta.call] : []))
+    expect(calls).toEqual([
+      {
+        id: 'call_1',
+        name: 'read_file',
+        arguments: { path: 'a.ts' },
+        signature: {
+          by: 'openai-responses\nsvc\nmodel-a',
+          value: JSON.stringify([reasoning, said, { type: 'function_call', id: 'fc_1', call_id: 'call_1' }]),
+          scope: 'turn',
+        },
+      },
+    ])
+    expect(first.find(delta => delta.type === 'usage')).toBeUndefined()
+    const loop: ModelMessage[] = [
+      user,
+      { role: 'assistant', content: '读一下', toolCalls: calls },
+      { role: 'tool', content: 'A', toolCallId: 'call_1' },
+    ]
+    await collect(provider.stream({ messages: loop, tools: [tool], signal: signal(), effort: 'high' }))
+    expect(service.seen[1]?.body?.input).toEqual([
+      { role: 'user', content: '你好' },
+      reasoning,
+      said,
+      { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'A' },
+    ])
+    const plain = [
+      { role: 'assistant', content: '读一下' },
+      { type: 'function_call', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' },
+    ]
+    // The next turn sends the earlier one without its reasoning, and so does a model that did not make it.
+    await collect(provider.stream({ messages: [...loop, { role: 'user', content: '再来' }], tools: [tool], signal: signal() }))
+    expect(service.seen[2]?.body?.input).toEqual([
+      { role: 'user', content: '你好' },
+      ...plain,
+      expect.anything(),
+      { role: 'user', content: '再来' },
+    ])
+    await collect(provider.stream({ messages: loop, tools: [tool], signal: signal(), model: 'model-b' }))
+    expect(service.seen[3]!.body!.input).toEqual([{ role: 'user', content: '你好' }, ...plain, expect.anything()])
+    // Encrypted reasoning that only the finished response carried is kept; without any, nothing goes back.
+    const backfilled = (await collect(provider.stream({ messages: [user], tools: [tool], signal: signal() }))).find(
+      delta => delta.type === 'tool-call',
+    )
+    expect(JSON.parse(backfilled?.call.signature?.value ?? 'null')).toEqual(JSON.parse(calls[0]!.signature!.value))
+    const unsigned = await collect(provider.stream({ messages: [user], tools: [tool], signal: signal() }))
+    expect(unsigned.find(delta => delta.type === 'tool-call')).toEqual({
+      type: 'tool-call',
+      call: { id: 'call_1', name: 'read_file', arguments: { path: 'a.ts' } },
+    })
+    expect(service.seen[4]?.body).not.toHaveProperty('include')
+  })
+
   it('sends a declared thinking level as reasoning.effort, nothing without one, and refuses an undeclared one before sending', async () => {
     const service = await serve((_seen, _index, response) => sse(response, [completed()]))
     const provider = await mount(
@@ -304,7 +411,7 @@ describe('Gemini provider', () => {
         id: 'g1',
         name: 'read_file',
         arguments: { path: 'a.ts' },
-        signature: { by: 'svc\ngemini-3-flash', value: 'sig-a' },
+        signature: { by: 'gemini\nsvc\ngemini-3-flash', value: 'sig-a' },
       })
       // The service left the second call's ID out; one is made so its result can name it.
       expect(calls[1]).toMatchObject({ id: expect.stringMatching(/^call_/u), name: 'read_file', arguments: { path: 'b.ts' } })
@@ -325,11 +432,11 @@ describe('Gemini provider', () => {
     const service = await serve((_seen, _index, response) => sse(response, [chunk([{ text: 'ok' }], { finishReason: 'STOP' })]))
     const provider = await mount(createGeminiPlugin(config(service.origin, { model: 'gemini-3-flash' })))
     const own: ToolCall[] = [
-      { id: 'g1', name: 'read_file', arguments: { path: 'a.ts' }, signature: { by: 'svc\ngemini-3-flash', value: 'sig-a' } },
+      { id: 'g1', name: 'read_file', arguments: { path: 'a.ts' }, signature: { by: 'gemini\nsvc\ngemini-3-flash', value: 'sig-a' } },
       { id: 'g2', name: 'read_file', arguments: { path: 'b.ts' } },
     ]
     const foreign: ToolCall[] = [
-      { id: 'c3', name: 'read_file', arguments: { path: 'c.ts' }, signature: { by: 'svc\ngemini-2', value: 'old' } },
+      { id: 'c3', name: 'read_file', arguments: { path: 'c.ts' }, signature: { by: 'gemini\nsvc\ngemini-2', value: 'old' } },
     ]
     await collect(
       provider.stream({

@@ -166,24 +166,38 @@ public enum PhoneConversation {
     public static func judgement(_ message: NativeJSON) -> (review: Bool, by: String, words: String)? {
         let judged = message["tool"]["judged"]
         guard let by = judged["by"].string, let outcome = judged["outcome"].string, let words = judgedWords[outcome] else { return nil }
-        return (outcome != "unasked", by, words)
+        // A call the Harness refused itself is that call, not a review of its own.
+        return (outcome != "unasked" && message["tool"]["blocked"] == .null, by, words)
+    }
+    /**
+     * A call the Harness refused itself before it ran, as the web says it: its model (`model`) or its own rules stopped it,
+     * with the Harness's own words for why on one line. It reports failed, but nothing ran and nothing broke.
+     */
+    public static func blocked(_ message: NativeJSON) -> (model: Bool, line: String)? {
+        let block = message["tool"]["blocked"]
+        guard message["state"].string == "failed", let by = block["by"].string, let source = block["source"].string, source == "model" || source == "rule" else { return nil }
+        var reason = (block["reason"].string ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
+        if reason.count > 120 { reason = String(reason.prefix(120)) + "…" }
+        if source == "model" { return (true, by + " 的模型审阅" + (reason.isEmpty ? "拦下了这次调用" : "：" + reason)) }
+        return (false, "被 " + by + " 自己的规则拦下" + (reason.isEmpty ? "" : "：" + reason))
     }
     /** 已工作 2 分 13 秒, with what the fold must not hide. */
     public static func foldWords(_ turn: PhoneTurn) -> String {
         let spent = PhoneTime.duration(seconds: Double(turn.user?["turn"]["activeMs"].integer ?? 0) / 1000)
         let tools = turn.replies.filter { $0["role"].string == "tool" }
         let rejected = tools.filter { unrun($0) == "rejected" }.count
-        // A review that came to 拦下 reports itself failed; it is a verdict, not a failed step.
-        let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil && judgement($0)?.review != true }.count
-        // What the Harness's own model stopped happened without the person, its subagents' too.
-        func deniedCount(_ messages: [NativeJSON]) -> Int {
+        // A review that came to 拦下 reports itself failed, as does a call the Harness refused itself; neither is a failed step.
+        let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil && judgement($0)?.review != true && blocked($0) == nil }.count
+        // What the Harness's own model or rules stopped happened without the person, its subagents' too.
+        func count(_ messages: [NativeJSON], _ matches: (NativeJSON) -> Bool) -> Int {
             messages.filter { $0["role"].string == "tool" }.reduce(0) { sum, message in
-                sum + (message["tool"]["judged"]["outcome"].string == "denied" ? 1 : 0) + deniedCount(message["subagent"]["steps"].array)
+                sum + (matches(message["tool"]) ? 1 : 0) + count(message["subagent"]["steps"].array, matches)
             }
         }
-        let denied = deniedCount(turn.replies)
+        let denied = count(turn.replies) { $0["judged"]["outcome"].string == "denied" || $0["blocked"]["source"].string == "model" }
+        let ruled = count(turn.replies) { $0["blocked"]["source"].string == "rule" }
         return (["已工作" + (spent.map { " " + $0 } ?? "")] + (failed > 0 ? ["\(failed) 步失败"] : []) + (rejected > 0 ? ["\(rejected) 步被拒绝"] : [])
-            + (denied > 0 ? ["模型拦下 \(denied) 次"] : [])).joined(separator: " · ")
+            + (denied > 0 ? ["模型拦下 \(denied) 次"] : []) + (ruled > 0 ? ["规则拦下 \(ruled) 次"] : [])).joined(separator: " · ")
     }
     /** One line for a failed row: the first line it reported, without the runtime's code, and cut. */
     public static func failureReason(_ message: NativeJSON) -> String {
@@ -308,7 +322,7 @@ public enum PhoneConversation {
     }
     private static func applied(_ message: NativeJSON) -> [NativeJSON] {
         let state = message["state"].string
-        if state == "awaiting-approval" || state == "queued" || unrun(message) != nil { return [] }
+        if state == "awaiting-approval" || state == "queued" || unrun(message) != nil || blocked(message) != nil { return [] }
         return message["tool"]["diffs"].array
     }
     /** Whether a session has any file to list, without counting a single line of its diffs. */

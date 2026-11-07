@@ -1,6 +1,15 @@
 import type { Bridge, ModelRoute, ProjectFolder } from './bridge.ts'
 import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
-import type { AttachmentRef, FileChange, HarnessCapabilities, HarnessInfo, ModelRef, RiskLevel, ToolKind } from '@latch/protocol/types'
+import type {
+  AttachmentRef,
+  FileChange,
+  HarnessCapabilities,
+  HarnessInfo,
+  ModelRef,
+  RiskLevel,
+  RoutedTurn,
+  ToolKind,
+} from '@latch/protocol/types'
 
 export interface ToolRiskInput {
   toolName: string
@@ -66,6 +75,11 @@ export interface ModelGatewayLease {
   token: string
   /** Requests that reached the gateway with this token so far, forwarded or refused; reading the model list aside. */
   requests(): number
+  /**
+   * What this token's requests did since the last call, by model, then counts afresh: a request is counted when it
+   * arrives, its reply when it ends. Never the content of either.
+   */
+  takeTurn(): RoutedTurn
   /** The service's models this token may use: the gateway refuses any other. */
   models: readonly string[]
   /** False once the token stops working: closed, or the service's settings changed since it was issued. */

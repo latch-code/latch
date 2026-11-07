@@ -9,7 +9,16 @@ import { piProfile } from './pi.ts'
 import { qwenProfile } from './qwen.ts'
 import type { HarnessProfile } from './types.ts'
 
-export type { AcpPermissionProfile, ExtensionRequest, HarnessProfile, LoginCheck, LoginStatus, ProjectConfigManaged } from './types.ts'
+export type {
+  AcpPermissionProfile,
+  ExtensionRequest,
+  HarnessProfile,
+  LoginCheck,
+  LoginStatus,
+  ProjectConfigManaged,
+  RetryReport,
+  ToolDenial,
+} from './types.ts'
 
 export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
   [codexProfile, claudeAgentProfile, qwenProfile, gooseProfile, geminiProfile, dshProfile, opencodeProfile, piProfile, cursorProfile].map(

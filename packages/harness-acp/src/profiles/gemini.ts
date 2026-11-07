@@ -1,19 +1,58 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import type { HarnessProfile } from './types.ts'
+import type { HarnessProfile, RetryReport, SessionUpdate } from './types.ts'
 
 /** Turns off the "always allow" choices Gemini CLI would otherwise store. The key path has not been checked against a release yet. */
 const SYSTEM_SETTINGS = { security: { disableAlwaysAllow: true, enablePermanentToolApproval: false } }
 const FILE = 'gemini-system-settings.json'
 
 /**
+ * The aliases Gemini CLI asks for on its own helper calls (web fetch and search, loop and next-speaker checks, edit
+ * fixes, summaries, compression), each naming a fixed model. An alias it does not define matches nothing.
+ */
+const HELPER_ALIASES = [
+  'classifier',
+  'prompt-completion',
+  'fast-ack-helper',
+  'edit-corrector',
+  'summarizer-default',
+  'summarizer-shell',
+  'web-search',
+  'web-fetch',
+  'web-fetch-fallback',
+  'loop-detection',
+  'loop-detection-double-check',
+  'llm-edit-fixer',
+  'next-speaker-checker',
+  'context-snapshotter',
+  'chat-compression-3-pro',
+  'chat-compression-3-flash',
+  'chat-compression-3.1-flash-lite',
+  'chat-compression-2.5-pro',
+  'chat-compression-2.5-flash',
+  'chat-compression-2.5-flash-lite',
+  'chat-compression-default',
+  'agent-history-provider-summarizer',
+] as const
+
+/** Gemini CLI's own subagents that pick a fixed model rather than the session's. */
+const SUBAGENTS = ['codebase_investigator', 'cli_help', 'browser_agent'] as const
+
+/**
  * Through the gateway: Gemini CLI's `gateway` login, which reads its address and key from the environment. The person's
  * own `security.auth.selectedType` would win over the environment, and system settings win over theirs.
+ *
+ * The gateway refuses a model outside the service's list, so each helper alias and subagent is pointed at the
+ * session's model and keeps its own generation settings. `customOverrides` apply after `overrides` that match as
+ * closely, so a person's own `overrides` for an alias do not win; system settings replace the person's
+ * `customOverrides` array whole, while `agents.overrides` merge key by key with theirs.
  */
 const routed = (model: string) => ({
   security: { ...SYSTEM_SETTINGS.security, auth: { selectedType: 'gateway' } },
   model: { name: model },
+  modelConfigs: { customOverrides: HELPER_ALIASES.map(alias => ({ match: { model: alias }, modelConfig: { model } })) },
+  agents: { overrides: Object.fromEntries(SUBAGENTS.map(name => [name, { modelConfig: { model } }])) },
 })
 
 async function writeSettings(directory: string, settings: unknown): Promise<string> {
@@ -23,9 +62,26 @@ async function writeSettings(directory: string, settings: unknown): Promise<stri
   return path
 }
 
+/**
+ * Gemini CLI writes a retry as thinking. A model's thought never matches: Gemini CLI sends each as `**subject**` and a
+ * description.
+ */
+const RETRY_ATTEMPT = /^\[Retry (\d+)\/(\d+)\] ([\s\S]*)\. Retrying in \d+s\.\.\.$/u
+
+function readRetry(update: SessionUpdate): RetryReport | undefined {
+  const meta = update._meta !== null && typeof update._meta === 'object' ? (update._meta as Record<string, unknown>) : undefined
+  // Only the first text after a retry carries this; the text before it belongs to the reply that broke off.
+  if (update.sessionUpdate === 'agent_message_chunk') return meta?.retry === true && meta.reset === true ? { kind: 'restart' } : undefined
+  if (update.sessionUpdate !== 'agent_thought_chunk') return undefined
+  if (meta?.retry === true) return { kind: 'interrupted' }
+  const content = update.content as { type?: unknown; text?: unknown } | undefined
+  const match = content?.type === 'text' && typeof content.text === 'string' ? RETRY_ATTEMPT.exec(content.text) : null
+  return match ? { kind: 'attempt', attempt: Number(match[1]), of: Number(match[2]), reason: match[3]! } : undefined
+}
+
 export const geminiProfile: HarnessProfile = {
   presetId: 'gemini',
-  version: 1,
+  version: 2,
   permission: {
     approvals: 'prompts',
     defaultEnv: {},
@@ -47,6 +103,7 @@ export const geminiProfile: HarnessProfile = {
   folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
   // Workspace settings, commands and extensions; `.gemini/.env` is looked up from the session directory upwards.
   projectConfigPaths: ['.gemini'],
+  readRetry,
   gateway: {
     wires: ['gemini'],
     via: 'env',

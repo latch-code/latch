@@ -697,6 +697,12 @@ export const JUDGED_COPY = {
   reviewNote: (agent: string) => `这是 ${agent} 自己的模型代你做的判断，不是你的批准；它拦下的在这里不能改为允许。`,
   unasked: '没有问你',
   unaskedNote: (agent: string) => `${agent} 当时由它的模型代你决定，没有问你就运行了；Latch 不知道是它的规则还是模型放行的。`,
+  /** The line under a call the Harness refused itself before it ran, with its own words for why. */
+  blockedByModel: (agent: string, reason?: string) => `${agent} 的模型审阅${reason ? `：${reason}` : '拦下了这次调用'}`,
+  blockedByRule: (agent: string, reason?: string) => `被 ${agent} 自己的规则拦下${reason ? `：${reason}` : ''}`,
+  ruleNote: (agent: string) => `${agent} 按它自己的权限规则拦下了这次调用，没有运行；要放行，改 ${agent} 自己的权限设置。`,
+  /** In a folded turn's words. */
+  ruleBlockedCount: (count: number) => `规则拦下 ${count} 次`,
 } as const
 
 /** The drawer's one line when a session cannot go on as it is, and what it offers. */

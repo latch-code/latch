@@ -295,7 +295,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 
 内置文件工具（`workspace-files` 1.2.0）用文件夹标识选择文件夹：`list_files`、`read_file`、`write_file` 带可选参数 `folder`（缺省为主文件夹），路径相对于该文件夹；`list_folders` 只返回每个文件夹的标识、文件夹名与是否为主文件夹，不返回绝对路径。会话有多个文件夹时，写入的预览与结果写明文件夹名。创建请求的回执只在有多个文件夹时包含它们，所以单个文件夹的会话与之前的回执一致。
 
-**用量与思考。** Provider 报告的用量累计到对应助手消息与会话总数，失败或取消的部分步骤也计入；缓存读取、缓存写入与推理的 tokens 只在服务报告时记录，合计时某一部分只有每一步都报告了才保留。思考内容以 `liveReasoning` 流式显示，结束后保存在消息的 `reasoning` 中，不进入发给模型的历史。
+**用量与思考。** Provider 报告的用量累计到对应助手消息与会话总数，失败或取消的部分步骤也计入；缓存读取、缓存写入与推理的 tokens 只在服务报告时记录，合计时某一部分只有每一步都报告了才保留。思考内容以 `liveReasoning` 流式显示，结束后保存在消息的 `reasoning` 中，这段文字不进入发给模型的历史；Anthropic 与 Responses 签过名或加密的推理另存在历史里的工具调用上，只在同一轮的工具循环里原样带回，下一条用户输入开始新的一轮时从历史里删除（见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#latch-内置的思考深度)）。
 
 **时间。** 运行时用 Host 的时钟（`clock`）记录消息、工具与一轮的时间、思考用时与回答的模型，等待审批的时间不计入一轮的用时；快照与 SSE 带 `hostTime`，客户端据此按 Host 时钟显示活的计时。字段与含义见 [STREAMING.md](./STREAMING.md)「时间与用量」。
 
@@ -309,7 +309,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 
 **决定记录与拒绝说明。** Host 把决定连同 `via`（`host.sock` 上的桌面端为 `this-mac`，其余入口为 `other-device`）交给 Driver；内置 Harness 与 ACP Driver 把结果写在那次工具调用上，`ToolDetail.decision = { outcome, at, via? }`，并写进各自存储的 zod schema。`outcome` 为 `allowed`、`rejected`（人的选择，带 `via`），或 `expired`、`cancelled`（没有人回答：会话停止、取消、进程结束、Host 重启时还开着的审批，以及权限漂移时 Latch 自己拒绝的询问），后两者不带 `via`，从不记作某人的拒绝。Agent 自己撤回的询问不留记录。设备名与设备 ID 不进这条记录，只在审计里。记录写的是人的决定，不是调用有没有执行：内置 Harness 在允许之前不执行调用，被拒绝时给模型的工具结果是「用户拒绝了本次工具调用，未执行该操作。」，没有内部代码；ACP Agent 是可信本机代码，它的询问只是提示，Agent 之后报告的状态与差异照常记下，界面只把没有开始就结束的调用读作被拒绝（见 [DESIGN.md](./DESIGN.md)「审批」）。Agent 为同一调用询问多次时，记录保留已经给出的允许，之后的拒绝或取消不覆盖它。拒绝可以附一句说明 `note`（「告诉 Harness 改做什么」）：去掉首尾空白、换行统一为 `\n` 后最多 500 个字符，每一行都不能含 `escapeSecurityText` 会标出的字符（`rejectionNote`，[decision.ts](../packages/protocol/src/decision.ts)），否则在审计之前返回 400 `invalid-note`；允许时带说明同样返回 400。Host 只把说明交给 `capabilities.permission.rejectionNote` 为真的 Harness（内置 Harness 声明它，ACP Driver 不声明：ACP 的权限回复不能带文字）；给其他 Harness 的说明经过同样的检查后被丢弃，拒绝照常生效。说明是给模型的输入，所以交给 Harness 时像在会话里输入一样另需 `run` 权限（403 `scope-required`）；只有查看权限的设备仍可以拒绝，但不能附说明。内置 Harness 把它接在拒绝后面交给模型（「…未执行该操作。用户的说明：…」）。页面读取会话所用 Harness 的这项事实，只在为真时才让拒绝等说明。说明是交给模型的输入，不写进审计。
 
-在 Harness 自己的模型代人决定的模式里，没有问人的调用带 `ToolDetail.judged = { by, outcome }`：`approved`、`denied`、`none` 是那个模型对一次请求的审阅与结论，`unasked` 是没有问人就运行了；它不是决定记录，也不是人的批准，每一条另写 `task.tool.judged` 审计（见 [HARNESSES.md](./HARNESSES.md)「权限菜单」）。
+在 Harness 自己的模型代人决定的模式里，没有问人的调用带 `ToolDetail.judged = { by, outcome }`：`approved`、`denied`、`none` 是那个模型对一次请求的审阅与结论，`unasked` 是没有问人就运行了；它不是决定记录，也不是人的批准，每一条另写 `task.tool.judged` 审计（见 [HARNESSES.md](./HARNESSES.md)「权限菜单」）。Harness 在调用运行之前自己拦下它、没有问人时，那次调用带 `ToolDetail.blocked = { by, source, reason? }`：`model` 是它的模型审阅后拦下（在这类模式里同时带 `judged` 的 `denied`），`rule` 是它自己的规则或模式；`reason` 是 Harness 自己的文字，Host 限长；界面读作「拦下」，不算失败，也不算改动。
 
 审批已被处理或已失效时返回 409 `approval-settled`，`decidedBy` 说明由谁处理：`{ kind: 'device', self, deviceName, decision, optionKind, at }`（`optionKind` 如 `allow_once`、`allow_always`、`reject_once`；`deviceName` 为该设备当前的名称，Host 已不认识该设备时为空），或 `{ kind: 'system' }`（会话结束或取消使其失效）；执行端已不再等待时记录 `approval.stale`。同一设备用同一 `requestId` 重发时返回原回执（`replay: true`），不会再次决定或审计。
 

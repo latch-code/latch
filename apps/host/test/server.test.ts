@@ -2413,6 +2413,74 @@ describe('providers', () => {
     expect((await desktop.request(`providers/${provider.id}`, { method: 'PUT', body: { kind: 'grpc' } })).status).toBe(400)
   })
 
+  it.each([
+    ['anthropic', '', 'fake-signature-'],
+    ['openai-responses', '/v1', 'fake-encrypted-'],
+  ] as const)('carries %s reasoning back through one tool loop, never into the next turn or what clients see', async (kind, path, mark) => {
+    const models = await startFakeModels({
+      replies: [
+        { reasoning: 'Look first.', tool: { name: /^read/u, input: { path: 'a.txt' } } },
+        { reasoning: 'Once more.', tool: { name: /^read/u, input: { path: 'a.txt' } } },
+        { text: 'Done.' },
+      ],
+    })
+    cleanups.push(() => models.close())
+    const logs: string[] = []
+    const t = await testHost({ demo: false, log: text => logs.push(text) })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const created = await desktop.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'Fake',
+        kind,
+        baseURL: `${models.origin}${path}`,
+        apiKey: 'secret-reasoning',
+        models: ['fake-model'],
+        defaultModel: 'fake-model',
+        confirmOrigin: true,
+        modelCapabilities: { 'fake-model': { thinking: ['high'] } },
+      },
+    })
+    expect(created.status).toBe(201)
+    const { provider } = await body<{ provider: ProviderSettings }>(created)
+    const model = { providerId: provider.id, model: 'fake-model', effort: 'high' }
+    const sessionId = await startTask(desktop, 'read it', { harnessId: 'standard', model })
+    const idle = async () => {
+      await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).not.toBe('running'), {
+        timeout: 8_000,
+      })
+      const detail = await desktop.json<TaskDetail>(`tasks/${sessionId}`)
+      expect(detail.summary, JSON.stringify(detail.messages.at(-1))).toMatchObject({ status: 'idle' })
+      return detail
+    }
+    const detail = await idle()
+    expect(detail.messages.at(-1)).toMatchObject({ role: 'assistant', text: 'Done.' })
+    expect(detail.messages.filter(item => item.role === 'tool')).toHaveLength(2)
+    const sent = models.requests.map(request => JSON.stringify(request.body))
+    expect(sent).toHaveLength(3)
+    // Each step of the loop carries the reasoning of every step before it, and nothing it has not seen.
+    expect(sent[0]).not.toContain(mark)
+    expect(sent[1]).toContain(`${mark}1`)
+    expect(sent[1]).not.toContain(`${mark}2`)
+    expect(sent[2]).toContain(`${mark}1`)
+    expect(sent[2]).toContain(`${mark}2`)
+    if (kind === 'openai-responses') expect(models.requests[0]?.body).toMatchObject({ include: ['reasoning.encrypted_content'] })
+    // Clients see the reasoning text, never the signed copy.
+    expect(detail.messages.map(item => item.reasoning).filter(Boolean)).toEqual(['Look first.', 'Once more.'])
+    expect(JSON.stringify(detail)).not.toContain(mark)
+    expect(JSON.stringify(await desktop.json('snapshot'))).not.toContain(mark)
+    expect(JSON.stringify(await auditRecords(t))).not.toContain(mark)
+    const stored = () => readFile(join(t.dataDir, 'sessions', 'runtime.json'), 'utf8')
+    expect(await stored()).toContain(`${mark}2`)
+    await desktop.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID(), model } })
+    await idle()
+    expect(models.requests).toHaveLength(4)
+    expect(JSON.stringify(models.requests[3]?.body)).not.toContain(mark)
+    // Nothing sends it back after its turn, so the session's saved history no longer holds it.
+    expect(await stored()).not.toContain(mark)
+    expect(logs.filter(line => line.includes(mark) || line.includes('Look first.'))).toEqual([])
+  })
+
   it('never uses a service at an unconfirmed address until it is confirmed, and stops at once when it is removed', async () => {
     const model = await localModel()
     const t = await testHost({ demo: false })

@@ -57,7 +57,7 @@ const callSchema = z.object({
   id: z.string(),
   name: z.string(),
   arguments: z.record(z.string(), z.unknown()),
-  signature: z.object({ by: z.string().max(512), value: z.string().max(1024 * 1024) }).optional(),
+  signature: z.object({ by: z.string().max(512), value: z.string().max(1024 * 1024), scope: z.literal('turn').optional() }).optional(),
 })
 const usageSchema = z.object({
   inputTokens: z.number().nonnegative(),

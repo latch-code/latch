@@ -110,6 +110,7 @@ export function AuthorLine({
   harness,
   model,
   provider,
+  chosen,
 }: {
   name: string
   /** The engine's name, when it is not already the word. */
@@ -118,6 +119,8 @@ export function AuthorLine({
   model?: string
   /** The model service's name, for the model's tooltip. */
   provider?: string
+  /** The model the session had chosen, when the service said `model` answered instead. */
+  chosen?: string
 }) {
   const detail = [engine, model].filter(Boolean).join(' · ')
   return (
@@ -128,6 +131,13 @@ export function AuthorLine({
       {detail && (
         <Tooltip content={provider}>
           <span className="assistant-meta-model">{detail}</span>
+        </Tooltip>
+      )}
+      {chosen && model && (
+        <Tooltip content={`选的是 ${chosen}，模型服务说这一轮用的是 ${model}`}>
+          <span className="assistant-meta-chosen" tabIndex={0}>
+            选的是 {chosen}
+          </span>
         </Tooltip>
       )}
     </div>

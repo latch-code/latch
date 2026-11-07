@@ -52,7 +52,7 @@ export interface WireRequest {
   tools: ToolDefinition[]
   /** One of the model's declared thinking levels, already checked. */
   effort?: string
-  /** The service and model sending, as tool call signatures name them: only the signatures they made go back. */
+  /** The protocol, service and model sending, as tool call signatures name them: only the signatures they made go back. */
   signer: string
 }
 
@@ -103,6 +103,40 @@ export async function openEventStream(
 const MAX_EVENT_CHARS = 1024 * 1024
 export const MAX_TOOL_ARGUMENT_CHARS = 1024 * 1024
 export const MAX_TOOL_CALLS = 128
+/** The Host stores at most this much of a call's signature. */
+export const MAX_SIGNATURE_CHARS = 1024 * 1024
+
+/**
+ * Where the turn in progress starts: after the last user message. Reasoning goes back only inside it, the tool loop
+ * the vendors require it for, so a system text or tool list that changed since an earlier turn never invalidates it.
+ */
+export function turnStart(messages: readonly ModelMessage[]): number {
+  return messages.findLastIndex(message => message.role === 'user') + 1
+}
+
+/**
+ * The response layout a protocol kept on an assistant message's first call, when this protocol, service and model made it inside
+ * the turn in progress; `parse` checks its shape and returns undefined for anything else, which goes back without it.
+ */
+export function replayLayout<T>(
+  message: ModelMessage,
+  index: number,
+  start: number,
+  signer: string,
+  parse: (value: unknown) => T | undefined,
+): T | undefined {
+  const signature = message.toolCalls?.[0]?.signature
+  if (index < start || signature?.by !== signer) return undefined
+  try {
+    return parse(JSON.parse(signature.value))
+  } catch {
+    return undefined
+  }
+}
+
+/** The same IDs in the same order. */
+export const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((id, index) => id === right[index])
 
 /** Validates a user-supplied API base URL. Credentials belong in the API key, never in the URL. */
 export function parseBaseURL(value: string): URL {

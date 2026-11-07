@@ -66,7 +66,8 @@ export function createServicePlugin(config: ServiceConfig, wire: ModelWire, info
         && config.modelCapabilities?.[model]?.vision !== true
       )
         throw new ProviderError('当前模型不能看图片。', 'model-vision-unsupported')
-      const signer = `${id}\n${model}`
+      // A saved service can change protocol, and one protocol's signature means nothing to another.
+      const signer = `${info.id}\n${id}\n${model}`
       const call = wire.request(config.baseURL, apiKey, { model, messages, tools, signer, ...(effort ? { effort } : {}) })
       const body = await openEventStream(
         fetcher,

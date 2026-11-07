@@ -40,6 +40,36 @@ export interface TurnStats {
   activeMs?: number
   /** Time during the turn when at least one approval waited for a person. */
   waitMs?: number
+  /** A session on a model route: what the turn sent through Latch, as the gateway counted it. */
+  routed?: RoutedTurn
+}
+
+/**
+ * A turn's model requests through Latch, counted by the gateway itself rather than reported by the harness. Absent when
+ * none reached it.
+ */
+export interface RoutedTurn {
+  /** Model requests that reached the gateway during the turn, refused ones included, reading the model list aside. */
+  requests: number
+  /** The model the session had chosen for the turn, as the service names it. */
+  chosen?: string
+  /** By the model the requests named, in the order they first came; at most 16. */
+  models: RoutedModel[]
+}
+
+export interface RoutedModel {
+  /** The model the requests named. */
+  model: string
+  /** The model the service's latest reply said answered them, when it named one. */
+  used?: string
+  requests: number
+  /** Of `requests`, those with no complete reply: Latch refused it, the service failed, or the harness gave up waiting. */
+  failed?: number
+  /** Of `requests`, those whose reply reported tokens; `usage` sums those. */
+  measured?: number
+  /** Of `requests`, those still under way when the turn ended: their results are not counted. */
+  open?: number
+  usage?: TokenUsage
 }
 
 /** What an agent reported about its context window and cost; never estimated by Latch. */
@@ -282,11 +312,26 @@ export interface ToolDetail {
   decision?: ToolDecision
   /** Decided without asking the person, in a mode where the harness's own model decides. */
   judged?: ToolJudgement
+  /** The harness refused the call itself before it ran, without asking the person. */
+  blocked?: ToolBlock
+}
+
+/**
+ * A call the harness stopped on its own before it ran: its model reviewed the call (`model`; in a mode where that model
+ * decides, `judged` says `denied` too) or its own rules and modes refused it (`rule`). `reason` is the harness's own
+ * untrusted text, cut by the Host. Never a person's decision.
+ */
+export interface ToolBlock {
+  /** The harness, as its definition names it. */
+  by: string
+  source: 'model' | 'rule'
+  reason?: string
 }
 
 /**
  * A call no person was asked about, in a mode where the harness's own model decides. `approved`, `denied` and `none`:
- * this row is that model reviewing a request, with its verdict (`none`: it reached none, it timed out or stopped).
+ * this row is that model reviewing a request, with its verdict (`none`: it reached none, it timed out or stopped), or,
+ * with `ToolDetail.blocked`, the call it denied.
  * `unasked`: the call ran without an ask, and the harness does not say whether a rule or its model let it through.
  * Never a person's approval, and never a decision record.
  */

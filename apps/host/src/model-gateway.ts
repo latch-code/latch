@@ -5,10 +5,11 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { PROVIDER_WIRES, type ModelWire, type ProviderKind } from '@latch/protocol'
+import { PROVIDER_WIRES, type ModelWire, type ProviderKind, type RoutedModel, type RoutedTurn, type TokenUsage } from '@latch/protocol'
 import { AppError, type ModelGateway, type ModelGatewayLease, type ModelRoute } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { originOf } from './config.ts'
+import { replyReader, type ReplyFacts, type ReplyReader } from './model-reply.ts'
 import { chatEndpoint, chatHeaders } from './plugins/providers/chat-wire.ts'
 import { geminiEndpoint, geminiHeaders } from './plugins/providers/gemini-wire.ts'
 import type { FetchLike } from './plugins/providers/http.ts'
@@ -38,8 +39,30 @@ interface Binding {
   models: Set<string>
   fingerprint: string
   count: number
+  /** What the requests since the last `takeTurn` did. */
+  turn: Tally
   closed: boolean
 }
+
+interface Tally {
+  requests: number
+  models: Map<string, RoutedModel>
+  /** Forwarded requests whose result is not counted yet. */
+  open: Set<OpenRequest>
+}
+
+/** A forwarded request until its result is counted: its reply, once the service answers, is read as it passes. */
+interface OpenRequest {
+  tally: Tally
+  entry: RoutedModel
+  apiKey: string
+  reply?: ReplyReader
+}
+
+/** How many models one turn lists; requests naming yet another are counted in the turn's total only. */
+const MAX_TURN_MODELS = 16
+const MAX_MODEL_CHARS = 200
+const PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
 
 /** Codex sends whole conversations, images included, on every request. */
 const MAX_BODY_BYTES = 32 * 1024 * 1024
@@ -53,6 +76,57 @@ const GEMINI_METHODS = new Set(['generateContent', 'streamGenerateContent', 'cou
 
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
 const bareModel = (model: string) => model.replace(/^models\//u, '')
+const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set() })
+
+/** Adds a reply's tokens; a part stays only while every reply added reported it, so it never claims tokens it does not cover. */
+function addUsage(total: TokenUsage | undefined, usage: TokenUsage): TokenUsage {
+  const sum: TokenUsage = {
+    inputTokens: (total?.inputTokens ?? 0) + usage.inputTokens,
+    outputTokens: (total?.outputTokens ?? 0) + usage.outputTokens,
+  }
+  for (const part of PARTS) {
+    const value = usage[part]
+    if (value !== undefined && (total === undefined || total[part] !== undefined)) sum[part] = (total?.[part] ?? 0) + value
+  }
+  return sum
+}
+
+/** The turn's entry for `model`, counting one more request; undefined once the turn lists as many models as it may. */
+function counted(tally: Tally, model: string): RoutedModel | undefined {
+  const name = redactSecrets(model).slice(0, MAX_MODEL_CHARS)
+  let entry = tally.models.get(name)
+  if (!entry) {
+    if (tally.models.size >= MAX_TURN_MODELS) return undefined
+    entry = { model: name, requests: 0 }
+    tally.models.set(name, entry)
+  }
+  entry.requests++
+  return entry
+}
+
+const failed = (entry: RoutedModel | undefined) => {
+  if (entry) entry.failed = (entry.failed ?? 0) + 1
+}
+
+/** The model a reply names, as the turn keeps it: without the key or other secrets, cut to length. */
+const usedModel = (model: string, apiKey: string) => withoutKey(model, apiKey).slice(0, MAX_MODEL_CHARS)
+
+/** Counts a reply that is over: the model it names and the tokens it reports, never its content. */
+function settle(entry: RoutedModel, facts: ReplyFacts, apiKey: string): void {
+  if (facts.failed) failed(entry)
+  if (facts.model) entry.used = usedModel(facts.model, apiKey)
+  if (facts.usage) {
+    entry.usage = addUsage(entry.usage, facts.usage)
+    entry.measured = (entry.measured ?? 0) + 1
+  }
+}
+
+/** Counts a forwarded request's result once: what its reply said when given, else that it did not complete. */
+function finish(request: OpenRequest | undefined, facts?: ReplyFacts): void {
+  if (!request?.tally.open.delete(request)) return
+  if (facts) settle(request.entry, facts, request.apiKey)
+  else failed(request.entry)
+}
 
 /** The token a harness sent, in whichever header its protocol puts a key. */
 function tokenOf(req: IncomingMessage): string | undefined {
@@ -214,6 +288,7 @@ export class ModelGatewayServer implements ModelGateway {
       models,
       fingerprint: service.fingerprint,
       count: 0,
+      turn: newTally(),
       closed: false,
     }
     this.bindings.set(hash, binding)
@@ -225,6 +300,27 @@ export class ModelGatewayServer implements ModelGateway {
       baseURL: baseFor(route.wire, this.port),
       token,
       requests: () => binding.count,
+      takeTurn: (): RoutedTurn => {
+        const { requests, models, open } = binding.turn
+        binding.turn = newTally()
+        // Copies: a reply still under way settles into the counts just taken, which nobody reads again, never into what
+        // the caller keeps.
+        const copies = new Map(
+          [...models.values()].map(entry => [entry, { ...entry, ...(entry.usage ? { usage: { ...entry.usage } } : {}) }]),
+        )
+        // A harness may end its turn on a reply's last event while the service has yet to close the stream: a reply that
+        // said it is over counts as it will settle. Any other is still under way.
+        for (const request of open) {
+          const copy = copies.get(request.entry)!
+          const facts = request.reply?.facts()
+          if (facts?.ended) settle(copy, facts, request.apiKey)
+          else {
+            copy.open = (copy.open ?? 0) + 1
+            if (facts?.model) copy.used = usedModel(facts.model, request.apiKey)
+          }
+        }
+        return { requests, models: [...copies.values()] }
+      },
       models: [...models],
       active: () => this.current(hash, binding) !== undefined,
       close,
@@ -254,7 +350,12 @@ export class ModelGatewayServer implements ModelGateway {
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.port}`)
     const target = targetOf(binding.wire, req.method ?? 'GET', url)
     // A request refused below still came here, not to another service; only the model list carries nothing of a turn.
-    if (!target?.list) binding.count++
+    // How its reply ends counts in the turn it arrived in, and no longer once that turn has been taken.
+    const tally = binding.turn
+    if (!target?.list) {
+      binding.count++
+      tally.requests++
+    }
     const service = this.current(hash, binding)
     if (!service) return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。')
     if (!target) return refuse(res, 404, 'gateway-path', 'Latch 只转发模型请求')
@@ -280,12 +381,28 @@ export class ModelGatewayServer implements ModelGateway {
       const named = typeof parsed === 'object' && parsed !== null ? (parsed as { model?: unknown }).model : undefined
       model = typeof named === 'string' ? bareModel(named) : undefined
     }
-    if (!model || !binding.models.has(model))
+    const entry = model ? counted(tally, model) : undefined
+    if (!model || !binding.models.has(model)) {
+      failed(entry)
       return refuse(res, 403, 'gateway-model', `模型「${(model ?? '').slice(0, 64)}」不在这个会话的模型服务里，Latch 没有转发`)
-    await this.forward(req, res, service, target.upstream(service.baseURL), body)
+    }
+    const request: OpenRequest | undefined = entry ? { tally, entry, apiKey: service.apiKey } : undefined
+    if (request) tally.open.add(request)
+    try {
+      await this.forward(req, res, service, target.upstream(service.baseURL), body, request)
+    } finally {
+      finish(request)
+    }
   }
 
-  private async forward(req: IncomingMessage, res: ServerResponse, service: GatewayService, upstream: string, body: Buffer): Promise<void> {
+  private async forward(
+    req: IncomingMessage,
+    res: ServerResponse,
+    service: GatewayService,
+    upstream: string,
+    body: Buffer,
+    request: OpenRequest | undefined,
+  ): Promise<void> {
     const wire = PROVIDER_WIRES[service.kind]
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     for (const name of FORWARDED_HEADERS) {
@@ -308,6 +425,7 @@ export class ModelGatewayServer implements ModelGateway {
         signal: controller.signal,
       })
     } catch (error) {
+      finish(request)
       if (controller.signal.aborted) return
       const detail = error instanceof Error ? error.message : String(error)
       return refuse(res, 502, 'gateway-upstream', `连不上模型服务：${withoutKey(detail, service.apiKey).slice(0, 300)}`)
@@ -318,27 +436,40 @@ export class ModelGatewayServer implements ModelGateway {
       if (value) returned[name] = value
     }
     if (!response.ok) {
+      finish(request)
       const text = response.body ? await errorText(response.body) : ''
       res.writeHead(response.status, returned)
       res.end(withoutKey(text, service.apiKey))
       return
     }
     res.writeHead(response.status, returned)
+    const reply = replyReader(wire, response.headers.get('content-type'))
+    if (request) request.reply = reply
     if (!response.body) {
+      finish(request, reply.end())
       res.end()
       return
     }
     const reader = response.body.getReader()
+    let complete = false
     try {
       for (;;) {
         const next = await reader.read()
-        if (next.done) break
+        if (next.done) {
+          complete = true
+          break
+        }
+        reply.feed(next.value)
         if (!res.write(next.value)) await new Promise<void>(resolve => res.once('drain', resolve).once('close', resolve))
         if (res.destroyed) break
       }
     } catch {
       // The service or the harness went away mid-stream; neither can be told more.
     } finally {
+      // Read before the reply ends, so the turn that waits on it finds it counted. A reply that said it is over counts
+      // as such though the stream broke after: the harness may stop reading once it has the last event.
+      const facts = reply.end()
+      finish(request, complete || facts.ended ? facts : undefined)
       await reader.cancel().catch(() => {})
       res.end()
     }

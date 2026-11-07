@@ -1,9 +1,12 @@
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
+import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -604,4 +607,127 @@ describe('streamed messages in the real workspace', () => {
       await context.close()
     }
   })
+})
+
+/** Gemini CLI as the fake agent, retrying a reply that broke off the way Gemini CLI marks it. */
+describe('a Gemini CLI reply that broke off and was generated again', () => {
+  let directory: string
+  let marks: string
+  let testHost: TestHost
+  let owner: TestDevice
+  let browser: Browser
+  const shot = (page: Page, name: string) => page.screenshot({ path: `test-results/streaming/${name}.png`, animations: 'disabled' })
+
+  beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'latch-e2e-retry-'))
+    const bin = join(directory, 'bin')
+    marks = join(directory, 'marks')
+    await mkdir(bin)
+    await mkdir(marks)
+    // Every program a preset names leaves a mark if anything runs it; only `gemini` is an agent, the fake one.
+    for (const name of new Set(AGENT_PRESETS.flatMap(preset => [preset.command, preset.agentCommand, preset.login?.command]))) {
+      if (!name) continue
+      await writeFile(join(bin, name), `#!/bin/sh\necho "$0 $*" > "${marks}/${name}-$$"\nexit 3\n`)
+      await chmod(join(bin, name), 0o755)
+    }
+    await writeFile(
+      join(bin, 'gemini'),
+      [
+        '#!/bin/sh',
+        `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${join(directory, 'agent.log')}'`,
+        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=legacy',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+    )
+    testHost = await startTestHost({
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      demo: false,
+      sessionFolders: true,
+      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
+      commandDirectories: () => [bin],
+    })
+    owner = await testHost.enroll({ listener: 'unix' })
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir('test-results/streaming', { recursive: true })
+  })
+
+  afterAll(async () => {
+    await browser?.close()
+    await testHost?.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  for (const [width, height, theme] of [
+    [1440, 900, 'light'],
+    [390, 844, 'dark'],
+  ] as const) {
+    it(`replaces the partial text in the same row and says it retried, the same after a reload, ${width} ${theme}`, async () => {
+      const mobile = width < 680
+      const context = await browser.newContext({
+        viewport: { width, height },
+        isMobile: mobile,
+        hasTouch: mobile,
+        colorScheme: theme,
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+      })
+      try {
+        const page = await context.newPage()
+        page.setDefaultTimeout(15_000)
+        await enrollBrowser(page, testHost, { name: `重试 ${width}`, scopes: ['view', 'run', 'admin'] })
+        await connected(page)
+        await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+        const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
+        await draft.fill('retry 1500')
+        await draft.press('Meta+Enter')
+        const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
+        if (
+          await elsewhere.waitFor({ timeout: 3_000 }).then(
+            () => true,
+            () => false,
+          )
+        ) {
+          await elsewhere.click()
+          await draft.press('Meta+Enter')
+        }
+        const transcript = page.locator('.transcript')
+        const partial = transcript.locator('[data-message-id]').filter({ hasText: 'The answer is fo' })
+        await partial.first().waitFor()
+        const id = await partial.first().getAttribute('data-message-id')
+        const line = transcript.getByText(/重试：回复中途中断（SERVER_ERROR），从头重新生成/u)
+        await line.waitFor()
+        // What the reply said before it broke off is gone while it is generated again.
+        await expect.poll(() => transcript.getByText('The answer is fo', { exact: true }).count()).toBe(0)
+        await shot(page, `retry-${width}-${theme}-retrying`)
+        const reply = transcript.locator(`[data-message-id="${id}"]`).filter({ hasText: 'The answer is four.' })
+        await reply.waitFor({ timeout: 10_000 })
+        await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'detached' })
+        const check = async () => {
+          expect(await transcript.getByText('The answer is four.').count()).toBe(1)
+          expect(await transcript.getByText('The answer is fo', { exact: true }).count()).toBe(0)
+          expect(await line.count()).toBe(1)
+          expect(await transcript.getByText('[Retry 1/4]').count()).toBe(0)
+          expect(await transcript.getByText('Stream interrupted').count()).toBe(0)
+        }
+        await check()
+        await shot(page, `retry-${width}-${theme}-done`)
+        await page.reload()
+        await connected(page)
+        await transcript.locator(`[data-message-id="${id}"]`).filter({ hasText: 'The answer is four.' }).waitFor()
+        await check()
+
+        const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks
+        const detail = await owner.json<TaskDetail>(`tasks/${tasks.find(task => task.title === 'retry 1500')!.id}`)
+        const replies = detail.messages.filter(message => message.role === 'assistant')
+        expect(replies).toEqual([
+          expect.objectContaining({ id, text: 'The answer is four.', reasoning: '**Planning**\n\nA short answer.' }),
+        ])
+        // The fake agent answered, and nothing else a preset names ran.
+        expect(await readFile(join(directory, 'agent.log'), 'utf8')).toContain('"retry 1500"')
+        expect(await readdir(marks)).toEqual([])
+      } finally {
+        await context.close()
+      }
+    })
+  }
 })

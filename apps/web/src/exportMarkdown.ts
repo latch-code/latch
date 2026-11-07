@@ -1,6 +1,7 @@
 import type { FileDiff, Message, TaskDetail } from '@latch/protocol'
 import {
   appliedDiffs,
+  blockedLine,
   decisionLine,
   ranDespite,
   shownToolOutput,
@@ -21,6 +22,7 @@ const toolStates: Record<ShownToolState, string> = {
   cancelled: '已停止',
   rejected: '已拒绝',
   expired: '已过期',
+  blocked: '拦下',
 }
 
 /** A fence longer than any backtick run inside, so content can never close it early. */
@@ -126,6 +128,7 @@ function toolBlock(message: Message): string[] {
     const record = decisionLine(decision, Date.now()).full
     out.push(`审批：${escapeHtml(ranDespite(message) ? `${record} · ${DECISION_COPY.ranDespite}` : record)}`, '')
   }
+  if (message.tool?.blocked) out.push(escapeHtml(blockedLine(message.tool.blocked)), '')
   if (message.tool?.input) out.push('参数：', '', fence(message.tool.input, 'json'), '')
   // The diff of a call its approval kept from running changed nothing; one that started keeps its changes.
   for (const diff of appliedDiffs(message)) out.push(`改动：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')

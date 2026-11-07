@@ -1,6 +1,7 @@
 import { useContext, type ReactNode } from 'react'
 import { Copy, Ellipsis, GitCompare, GitFork, RotateCcw } from 'lucide-react'
-import { turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome } from '../conversation.ts'
+import { modelIdKey, type RoutedModel } from '@latch/protocol'
+import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { exactTokens, formatDuration, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
@@ -19,16 +20,50 @@ function Fact({ tip, className, children }: { tip?: ReactNode; className?: strin
   )
 }
 
+/** Lines of a tooltip, one under another. */
+const Lines = ({ lines }: { lines: string[] }) => (
+  <span className="turn-tip-lines">
+    {lines.map((line, index) => (
+      <span key={index}>{line}</span>
+    ))}
+  </span>
+)
+
+/** 「fake-model：3 次，1 次没有完成，服务说用的是 fake-model-2 · 输入 30 · 输出 15」 */
+function modelLine(entry: RoutedModel): string {
+  const parts = [`${entry.model}：${entry.requests} 次`]
+  if (entry.failed) parts.push(`${entry.failed} 次没有完成`)
+  if (entry.open) parts.push(`${entry.open} 次在这一轮结束时还在进行`)
+  if (entry.used && modelIdKey(entry.used) !== modelIdKey(entry.model)) parts.push(`服务说用的是 ${entry.used}`)
+  return parts.join('，') + (entry.usage ? ` · ${tokenParts(entry.usage).join(' · ')}` : '')
+}
+
+/** Where the tokens of a turn through Latch come from, and what they leave out. */
+function routedSource(route: TurnRoute): string[] {
+  return [
+    '由模型服务在回复里报告，Latch 转发时读取',
+    ...(route.unmeasured ? [`另有 ${route.unmeasured} 次回复没有报告用量，没有计入`] : []),
+    ...(route.open ? [`另有 ${route.open} 次请求在这一轮结束时还在进行，没有计入`] : []),
+  ]
+}
+
 /**
  * The settled turn's facts: when the reply was sent (its tooltip says when the turn began and ended), how long it worked
- * and its tokens. How it ended, when it did not simply finish, has its own line that stays. Each is a segment of its own, so the dots between them are
- * spaced alike.
+ * and its tokens. A turn through Latch has the tokens the service's replies reported, with its requests by model in their
+ * tooltips; with no tokens to show, the requests are a fact of their own. How it ended, when it did not simply finish,
+ * has its own line that stays. Each is a segment of its own, so the dots between them are spaced alike.
  */
 function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOutcome; context?: number }) {
   const times = turnTimes(turn)
-  const usage = turnUsage(turn)
+  const route = turnRoute(turn)
+  // Steps the harness reported come first; a turn through Latch without them has the tokens its replies reported.
+  const stepUsage = turnUsage(turn)
+  const usage = stepUsage ?? route?.usage
+  const routedUsage = !stepUsage && route?.usage ? route : undefined
+  const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
   const [inputLine, outputLine] = usage ? tokenLines(usage) : []
   const [input, output] = usage ? tokenParts(usage) : []
+  const tip = (line: string) => (routedUsage ? <Lines lines={[line, ...routedSource(routedUsage), ...requests]} /> : line)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
   return (
     <>
@@ -38,8 +73,9 @@ function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOut
         </span>
       )}
       {spent && <span className="turn-fact">{spent}</span>}
-      {usage && <Fact tip={inputLine}>{input}</Fact>}
-      {usage && <Fact tip={outputLine}>{output}</Fact>}
+      {usage && <Fact tip={tip(inputLine!)}>{input}</Fact>}
+      {usage && <Fact tip={tip(outputLine!)}>{output}</Fact>}
+      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
       {!usage && context !== undefined && (
         <Fact tip={`由 Harness 报告：${exactTokens(context)} tokens`}>上下文 {tokenAmount(context)}</Fact>
       )}

@@ -12,9 +12,15 @@
 .turn + .turn {
   margin-top: var(--sp-32);
 }
+/* Skipping far turns contains their paint, which would clip the footer that overlays the gap under them: the gap is
+ * the turn's own padding instead, the same 32 in all. */
 .turn[data-settled] {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 400px;
+  padding-bottom: var(--sp-32);
+}
+.turn[data-settled] + .turn {
+  margin-top: 0;
 }
 .turn[data-settled][data-drawn] {
   content-visibility: visible;
@@ -59,6 +65,14 @@
 .message-meta time,
 .turn-fact {
   border-radius: var(--r-4);
+}
+.turn-tip-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  /* The footer's facts do not wrap, and the tooltip inherits from them. */
+  white-space: normal;
 }
 
 /* The person's message: a neutral bubble on the right; its time and actions overlay the gap below, so revealing them
@@ -203,6 +217,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.assistant-meta-chosen {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--r-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-meta-chosen::before {
+  content: '·';
+  margin-right: var(--sp-8);
 }
 .message-assistant {
   display: flex;
@@ -469,44 +495,44 @@
 }
 /* Rows of one kind in a row show the icon once, except right after an opened row, where the gap would read as a mistake,
  * and never on a row whose icon says more than its kind. */
-.tool-card[data-kind='read']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='read']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='read']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='read']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='edit']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='edit']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='edit']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='edit']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='new']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='new']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='new']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='new']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='search']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='search']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='search']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='search']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='execute']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='execute']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='execute']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='execute']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='fetch']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='fetch']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='fetch']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='fetch']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
   > *,
-.tool-card[data-kind='other']:not([data-open], .tool-failed, .tool-running)
-  + .tool-card[data-kind='other']:not(.tool-failed, .tool-running)
+.tool-card[data-kind='other']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
+  + .tool-card[data-kind='other']:not(.tool-failed, .tool-blocked, .tool-running)
   > .tool-tray
   > .tool-card-header
   > .process-slot
@@ -889,7 +915,7 @@ button.summary-file:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.turn-facts > :not(.sr-only) ~ :not(.sr-only)::before {
+.turn-facts > :not(.sr-only) ~ :not(.sr-only, .ui-tooltip)::before {
   content: '·';
   margin-right: var(--sp-6);
   color: var(--muted);

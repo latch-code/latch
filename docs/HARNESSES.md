@@ -62,6 +62,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 - `version`：计入启动指纹。改变配置的行为时应递增它，已有会话因此停止接受输入，换新会话继续。
 - `projectConfigPaths`、`projectConfigManaged`：见「项目配置」。
 - `materialize`：启动前在 Host 上准备 Agent 需要的文件，返回要加入的环境变量（目前只有 Gemini CLI 使用）。
+- `normalizeUpdate`、`readRetry`：见「通知与压缩」。
 
 选择规则：按定义的 `presetId`，否则按命令的文件名匹配预设的命令。只要选中了预设，它的环境变量和模式规则就生效；只有 `presetId` 与参数都与预设完全一致、命令就是预设的命令，并且定义没有设置会改变该 Agent 读取配置位置的变量（`configEnv`）时，定义才算「已验证的预设」，否则显示为「未验证的定义」。「就是预设的命令」指只写命令名（由 Host 自己查找），或写 Host 按这个命令名查找到的那个文件（按真实路径比较，指向它的链接也算）；其他目录里同名的文件（例如项目 `node_modules/.bin` 里的 `codex-acp`）不算，每次启动时重新判断。没有匹配任何预设的定义不设置模式，但会话中 Agent 自行改变模式一律按漂移处理。
 
@@ -180,14 +181,15 @@ Harness 说某个模型服务的协议时，会话可以不用它自己的登录
 | Harness | 协议 | 交给 Agent 的方式 |
 | --- | --- | --- |
 | Codex（实验性） | Responses | ACP `providers/set`：`providerId: "openai"`、`apiType: "openai"`、网关地址，凭据在 `authorization` 头里；只在 Agent 宣告 `agentCapabilities.providers` 且 `providers/list` 列出这个 ID 与类型时 |
-| Gemini CLI | Gemini | 环境变量 `GOOGLE_GEMINI_BASE_URL`（网关地址）与 `GEMINI_API_KEY`（网关凭据），以及会话临时目录里自己的系统设置文件：`security.auth.selectedType: "gateway"`、`model.name` |
+| Gemini CLI | Gemini | 环境变量 `GOOGLE_GEMINI_BASE_URL`（网关地址）与 `GEMINI_API_KEY`（网关凭据），以及会话临时目录里自己的系统设置文件：`security.auth.selectedType: "gateway"`、`model.name`，辅助调用与子 Agent 的模型（见下） |
 
 - **网关**（`apps/host/src/model-gateway.ts`）是单独的回环临时端口，只有模型路径，不是 API 的入口类别，持有凭据的进程不能当设备用。凭据形如 `lmg1.<43 字符>`，每次启动 Agent 进程签发一个，内存里只存哈希，绑定会话、服务与服务的模型列表；进程退出、Host 关闭或服务的协议、地址、密钥、启用状态或可用性变化时失效。失效后下一轮开始前换掉进程，新进程拿新凭据；服务不能用了，这一轮失败并说原因，不退回 Agent 自己的登录。
 - **请求**：只接受 `Host` 为 `127.0.0.1:<端口>` 或 `localhost:<端口>`、不带 `Origin` 的请求，不发 CORS 头。Responses 只有 `POST /v1/responses` 与 `GET /v1/models`；Gemini 只有 `POST /<版本>/models/<模型>:generateContent|streamGenerateContent|countTokens` 与 `GET /<版本>/models`，`<版本>` 是 `v1`、`v1beta` 或 `v1alpha`；转给上游时用服务地址里的版本，地址没写时用 `v1beta`。模型列表只回绑定的列表，不访问服务。请求体最多 32 MiB，`model`（Gemini 是路径里的模型）必须在绑定的列表里。入站的认证头、Cookie 与其他头一律丢掉，只转发 `accept` 与 `openai-beta`；Gemini 的查询参数只保留 `alt=sse`。
 - **上游**走内置 Harness 用的同一个出站：只发往服务地址之下、预置或已确认的地址，经出站策略，`redirect: 'error'`；密钥只在 Host 加上。错误正文去掉密钥的各种写法与 `redactSecrets` 认得的秘密后原样返回，回复只保留 `content-type`、`retry-after`、`x-request-id`。Agent 断开时中止上游请求，取消仍是真的。
 - **代理**：走网关的进程，`NO_PROXY` 与 `no_proxy` 补上 `127.0.0.1`、`localhost`、`::1`。不读 `NO_PROXY` 的 Agent（Gemini CLI 配了代理时对任何地址都走代理）会把网关请求交给代理；本机代理能转回来，远端代理连不上。
 - **每轮核对**：一轮有回复而网关没收到这个进程的请求（网关拒绝的请求也算收到，读模型列表不算），会话追加「这一轮没有经过 Latch：<Harness> 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。」，`summary.modelRoute.bypassed` 置真，写审计 `task.model.bypassed`；会话照常继续。只有整轮绕过看得出来：一轮里一部分请求走了别处（例如另一个评审模型）看不出来。
-- **Gemini CLI 的辅助调用**：网页抓取、循环检测、编辑修正、摘要与上下文压缩等辅助调用用 Gemini CLI 内置的固定模型（如 `gemini-3-flash-preview`、`gemini-3-pro-preview` 与 flash-lite 一档），和会话的模型走同一个网关。服务的模型列表里没有这些模型时网关拒绝它们（403），这些功能在会话里失败，用会话模型的回复不受影响。要用它们，在「设置 › 模型」里把这些模型也加进这个服务；凭据绑定的是签发时的模型列表，Gemini CLI 的进程下一次启动（例如新开的会话）才用上新列表。
+- **每轮的模型与用量**：网关按凭据记下每个请求点名的模型（Responses 是请求体的 `model`，Gemini 是路径里的模型），以及服务在回复里说的模型与令牌：Responses 读 `response.created`、`response.completed`、`response.incomplete`、`response.failed` 里的 `response.model` 与 `response.usage`，不是流式时读整个回复；Gemini 读每段的 `modelVersion` 与 `usageMetadata`，以最后一段为准（`thoughtsTokenCount` 算输出，`cachedContentTokenCount` 算缓存读取）。流式回复边转发边逐行读，只留下可能带这些字段的那一个事件，Responses 其他有名字的事件一行也不留；一个事件或一个非流式回复超过 4 MiB 就不读它，照常转发。只留模型名与令牌数，不留请求或回复的内容；服务给的模型名先去掉密钥与 `redactSecrets` 认得的秘密，最多 200 字。一轮结束时这些计数记在开启这一轮的消息上（`turn.routed`：请求数、这一轮选的模型、按模型最多 16 项的请求数、没有完成的次数、还在进行的次数、报告了令牌的次数与令牌合计），这一轮发出之前和两轮之间的请求不计。请求到达时计入当时的这一轮。回复说它结束了（Responses 的 `response.completed`、`response.incomplete`、`response.failed` 或 `error` 事件，Gemini 的 `error` 或某个候选的 `finishReason`）就按它说的计：服务还没关闭连接、Agent 读到这里就不再读，都不算没有完成。一轮结束时还没有说结束的请求记为还在进行（`open`），之后的结果不再计入这一轮。没有完成指 Latch 没有转发（例如模型不在服务里）、服务回了错误，或者回复说结束之前服务断开或 Agent 不再等待，或回复本身说失败。界面上，这一轮的输入与输出令牌来自这些计数，提示里写「由模型服务在回复里报告，Latch 转发时读取」、没有计入的回复或还在进行的请求，和每个模型的请求；没有令牌可显示时写「经 Latch N 次请求」。服务说回答的模型与这一轮选的不同（按 `modelIdKey` 比较，只差日期后缀算同一个）时，作者行写服务说的模型，旁边写「选的是 <模型>」。Agent 自己报告的用量（`session/prompt` 的 `usage`、`usage_update`）照旧另算，不被替换。iPhone 还不显示这些计数。
+- **Gemini CLI 的辅助调用**：网页抓取与搜索、循环检测、下一位发言判断、编辑修正、摘要与上下文压缩等辅助调用按别名取模型，每个别名指向 Gemini CLI 内置的固定模型（如 `gemini-3-flash-preview`、`gemini-3-pro-preview` 与 flash-lite 一档）；自带的子 Agent `codebase_investigator`、`cli_help`、`browser_agent` 也各用固定模型。它们和会话的模型走同一个网关，服务的模型列表里没有这些模型时网关会拒绝（403）。所以会话自己的系统设置文件把它们都指到会话开始时的模型：`modelConfigs.customOverrides` 为每个辅助别名写一条 `{"match":{"model":"<别名>"},"modelConfig":{"model":"<会话模型>"}}`，`agents.overrides.<子 Agent>.modelConfig.model` 写会话模型。只改模型，别名与子 Agent 自己的生成参数（温度、思考预算、`web-search` 的搜索工具等）不变。会话中途换了模型，辅助调用仍用开始时的模型，它也在服务的列表里。限制：系统设置最后合并、数组整个替换，所以你自己设置的 `modelConfigs.customOverrides` 在这样的会话里不生效（`agents.overrides` 按键合并，你的其他设置照常）；`web-search` 要用 Gemini 自己的搜索工具，服务不支持时仍会失败；Gemini CLI 以后新增的别名或子 Agent 不在这份列表里，在 Latch 补上之前仍会被拒绝；你自己定义的子 Agent 指定了别的模型时同样被拒绝。
 - **Codex 的模型**：`providers/set` 之后 codex-acp 只留下网关列出、且 Codex 自己认识的模型；所选模型在第一轮前选中，Codex 不认识它时这一轮失败并说明。所以 Codex 声明 `models.knownOnly`：草稿读过 Codex 自己的模型列表后，服务里不在这份列表上的模型（按小写、去掉厂商前缀与日期后缀比较，`modelIdKey`）不能选，写「Codex 不认识这个模型」；还没读过时都列出。这样的会话的模型列表不当作 Codex 自己的列表保存。
 - **审计**：`task.l3.start-requested` 与 `task.l3.started` 带 `providerId` 与路由的哈希 `routeHash`；凭据不进审计、日志、会话记录、启动预览或磁盘。凭据只在 Agent 进程的环境变量里（Gemini CLI，子进程会继承，`printenv` 能把它带进会话）或 ACP 的请求头里（Codex）。它不是模型密钥，但同一用户的进程拿到它就能经这台 Mac 花这个服务的额度，直到它失效；Agent 也仍然读得到 `providers.json`，因为没有操作系统沙箱。
 - 会话开始后不能换服务（模型菜单写「换服务要新开会话：开始时确认的是这个服务。」）。服务停用、删除或缺了密钥与地址确认后，网关拒绝这个会话的下一轮，模型菜单在发送前就按服务名说明；重新打开后下一轮换新的网关凭据继续。会话的模型选项只有网关会转发的模型（Agent 进程的凭据绑定的列表），客户端照此列出，切换也只接受其中的：Gemini CLI 不管指向哪个服务都列自己的一组固定模型，经 Latch 时换成服务的模型列表，切换走 `session/set_model`，它接受任何模型名；Codex 保留它列出的、服务里也有的模型。为 Agent 自己的登录填写的模型 ID 不在其中。
@@ -209,6 +211,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 
 - **通知（`notice`）。** Agent 不属于对话历史的提示，例如 Codex 的配置警告。每条在时间线上一行系统消息：「Codex 警告：……」，`severity` 为 `error` 时写「报告错误」，其他写「提示」，`description` 另起一行。它不改变本轮状态，也不让本轮失败。
 - **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 找到同一行并就地更新：「正在压缩上下文……」「已压缩上下文」「压缩上下文失败：原因」「已取消压缩上下文」；Agent 给出的摘要接在后面。行的位置是第一次报告到达时，在它之前的回复先结束。压缩失败不让本轮失败。
+- **重试（Gemini CLI）。** Gemini CLI 把重试写成思考：重新请求模型服务前一条 `[Retry n/m] <原因>. Retrying in Ns...`；回复中途断开、要从头重新生成时一条带 `_meta.retry` 的思考；重新生成的第一段文字带 `_meta.retry` 与 `_meta.reset`。只有它的 profile 的 `readRetry` 读这些，其他 Agent 的 `_meta` 不解释。重试成为一行系统消息「Gemini CLI 重试：<原因>」，第二行「第 n 次重试，最多 m 次」，不进思考；这一行是记录，回合结束后不改写：Gemini CLI 不说重试是否成功，它自己的辅助请求重试时也发同样的 `[Retry n/m]`，后面的输出证明不了什么；结果看这一轮停止、失败还是完成。回复中途断开时写「回复中途中断（<原因>），从头重新生成」，这条回复已经收到的文字丢掉，重新生成的文字接在同一条消息里（消息 ID 不变），已经收到的思考保留。Gemini CLI 先发 `[Retry n/m]`、等待之后才标明从头重新生成；这一行总在被它打断的文字之后：等待时那段文字照常显示、还没有这一行，标明重新生成时文字丢掉、这一行出现；等待中停止或失败时那段回复按停止或失败留下，这一行在它后面。紧接着的几次重试在同一行就地更新，中间出现新的文字或别的行后，下一次重试另起一行。原因可能是模型服务的报错，先遮蔽像密钥的部分，最多 300 字。
 - **各家说法不同的地方。** profile 的 `normalizeUpdate` 把 Agent 自己的说法换成 ACP 的，只换不添：Qwen Code 只在 `_meta.toolName` 里给出工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，会把一条回复拆成两条，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用它的标题命名（DeepSeek Harness 的 `bash`）。
 - **用量。** `session/prompt` 的 `usage` 只取 `inputTokens` 与 `outputTokens`。缓存与思考的令牌数各家含义不同：Codex 的输入含缓存读取，OpenCode 的不含，所以不映射。
 
@@ -244,8 +247,8 @@ Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有�
 - **三行。** 模式超过三个时，菜单只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余（只看不改、另一个中间档）收在「更多」里；当前的模式总是列出。「不再询问」的标题、说明与触发器是琥珀色，「由模型判断」不是。
 - **谁能选。** 任何有 `run` 的设备都能选任何一档，不弹确认，放宽写 `task.mode.widened`。
 - **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在；分叉用目标 Harness 自己记住的选项。
-- **模型的判断。** Codex 报告自己的模型审阅一次请求：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`、Claude Agent `auto`）在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
-- **记录。** 每个审阅结论、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
+- **模型的判断。** Codex 报告自己的模型审阅一次请求：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。Claude Agent 只报告它拦下的调用：适配器把这次调用报为 `failed` 的 `tool_call_update`，内容是「Permission denied: <理由>」，`_meta.claudeCode.toolResponse` 带 `decisionReasonType` 与理由（`decisionReason`，没有时是 `message`）。来源是 `classifier`（它的自动模式询问的模型）时，这一行仍是那次调用本身，写「拦下」，下面一行「Claude Agent 的模型审阅：<理由>」；会话在「由模型判断」档时它带 `ToolDetail.judged`（`denied`）并记录。来源是 `rule` 或 `mode` 时写「拦下」与「被 Claude Agent 自己的规则拦下：<理由>」，在任何档都这样，不算模型的判断，不记录。两种都放在 `ToolDetail.blocked`（`by`、`source`、`reason`），不显示成失败；理由是 Agent 的不可信文字，Host 限 1000 字，页面只显示第一行的前 120 字。折叠的一轮写「模型拦下 N 次」「规则拦下 N 次」，不算失败的步骤。其他来源（钩子、安全检查等 Latch 叫不出名字的）照旧是一行失败；问过人的调用、已经开始运行的调用不算 Claude 自己拦下的。`classifier` 这个取值来自适配器注释对来源的称呼，没有在它的测试里出现，要用真实的自动模式核对；取值不同时这些调用照旧是失败，不会被说成模型的判断。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`）与不报告放行的 Claude Agent `auto`，在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
+- **记录。** 每个审阅结论、每个被模型拦下的调用（来源 `agent-report`）、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
 
 ## 权限模式
 
@@ -322,7 +325,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent 草案）。Agent 在一个会话上发 `subagent_update` 宣告它启动的子 Agent 后，Latch 在宣告到达的位置放一行 `Message.subagent`：名字、说明、它自己最后报告的状态（`running`、`requires_action`、`idle` 及停止原因、`unknown`），以及它的回复与工具调用（不含思考，最多 200 步，每段文字最多 64 KiB）。子 Agent 自己的子 Agent 放在它的步骤里，最多 4 层；同一进程同时最多 64 行，报告已停止的子 Agent 在一轮结束后不再计入。超出行数、层数或 200 步的部分不显示，会话里写一条说明，但它们请求的审批照常出现，不会被替人取消。子 Agent 不是 Latch 会话，不能发消息、不进侧栏。
 
 - 子 Agent 在自己的会话上请求权限时，审批出现在启动它的会话里，`Approval.subagent` 写明是谁；它的调用只在子 Agent 的步骤里，不在会话自己的记录中。规则与会话自己的审批相同（可选项过滤、任何有 `run` 的设备都能允许）。
-- 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
+- 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`；Claude Agent 在子 Agent 里拦下的调用同样写「拦下」，只有它的模型拦下的写这条记录。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
 - 停止会话时，子 Agent 挂起的请求与会话自己的一起答复为 `cancelled`。
 - 一轮结束时仍说自己在运行或等批准的子 Agent 记为「状态未知」，不当作还在运行；它未完成的调用与会话自己的一样结算：在跑的记为结果未知，还没开始或在等批准的记为未执行，之后它再报告完成或失败时以报告为准。
 - 没有宣告的会话 ID 的更新照旧丢弃，不猜归属；不支持的 Agent 仍把子 Agent 的工作当作普通工具调用报告。
@@ -398,11 +401,10 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单里写「尚未实现」 |
 | 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
 | 在 iPhone 上选清空上下文 | 未实现；手机只显示「清空了上下文」的线与 Host 已经清空时的提示，要在网页或桌面端选 |
-| 网关解析转发请求的用量 | 未实现；用量仍是 Agent 报告的 |
 
 ## 测试
 
-`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。测试从不启动真实 Agent。
+`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。测试从不启动真实 Agent。
 
 ### 会话命令
 

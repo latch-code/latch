@@ -9,13 +9,21 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 
 export interface FakeReply {
-  /** Thinking, sent before the text where the protocol has a place for it. */
+  /**
+   * Thinking, sent before the text where the protocol has a place for it. Anthropic signs it, and Responses encrypts it
+   * when the request includes `reasoning.encrypted_content`, with `fake-signature-<n>` and `fake-encrypted-<n>` for the
+   * n-th request, so a test can see which response's reasoning a later request carried back.
+   */
   reasoning?: string
   text?: string
   /** One tool call; the reply ends asking for it. A pattern names the first tool the request offers that matches it. */
   tool?: { name: string | RegExp; input: Record<string, unknown> }
   /** Refuse the request with this HTTP status and message, in the protocol's error shape. */
   error?: { status: number; message: string }
+  /** The model the reply says answered, where the protocol names one; otherwise the model the request named. */
+  answeredBy?: string
+  /** A streamed reply's stream stays open this long after its last event, as behind a proxy or with keep-alive. */
+  lingerMs?: number
 }
 
 export interface FakeModelRequest {
@@ -53,13 +61,14 @@ function readBody(request: IncomingMessage): Promise<string> {
   })
 }
 
-function sse(response: ServerResponse, events: Array<{ event?: string; data: unknown }>): void {
+function sse(response: ServerResponse, events: Array<{ event?: string; data: unknown }>, lingerMs = 0): void {
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
   for (const item of events)
     response.write(
       `${item.event ? `event: ${item.event}\n` : ''}data: ${typeof item.data === 'string' ? item.data : JSON.stringify(item.data)}\n\n`,
     )
-  response.end()
+  if (lingerMs > 0) setTimeout(() => response.end(), lingerMs).unref()
+  else response.end()
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -87,11 +96,11 @@ function named(reply: FakeReply, body: Record<string, unknown>): FakeReply {
     : { ...reply, tool: undefined, text: reply.text ?? `no offered tool matches ${pattern}` }
 }
 
-function chat(reply: FakeReply, model: string, stream: boolean): { events?: Array<{ data: unknown }>; body?: unknown } {
+function chat(reply: FakeReply, model: string, stream: boolean, served: number): { events?: Array<{ data: unknown }>; body?: unknown } {
   const id = 'chatcmpl-fake'
   const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
   const call = reply.tool && {
-    id: 'call_fake_1',
+    id: `call_fake_${served}`,
     type: 'function',
     function: { name: String(reply.tool.name), arguments: JSON.stringify(reply.tool.input) },
   }
@@ -135,11 +144,17 @@ function chat(reply: FakeReply, model: string, stream: boolean): { events?: Arra
   }
 }
 
-function anthropic(reply: FakeReply, model: string, stream: boolean): { events?: Array<{ event: string; data: unknown }>; body?: unknown } {
+function anthropic(
+  reply: FakeReply,
+  model: string,
+  stream: boolean,
+  served: number,
+): { events?: Array<{ event: string; data: unknown }>; body?: unknown } {
+  const signature = `fake-signature-${served}`
   const content: Array<Record<string, unknown>> = [
-    ...(reply.reasoning ? [{ type: 'thinking', thinking: reply.reasoning, signature: 'fake-signature' }] : []),
+    ...(reply.reasoning ? [{ type: 'thinking', thinking: reply.reasoning, signature }] : []),
     ...(reply.text ? [{ type: 'text', text: reply.text }] : []),
-    ...(reply.tool ? [{ type: 'tool_use', id: 'toolu_fake_1', name: String(reply.tool.name), input: reply.tool.input }] : []),
+    ...(reply.tool ? [{ type: 'tool_use', id: `toolu_fake_${served}`, name: String(reply.tool.name), input: reply.tool.input }] : []),
   ]
   const stop = reply.tool ? 'tool_use' : 'end_turn'
   const message = {
@@ -171,7 +186,7 @@ function anthropic(reply: FakeReply, model: string, stream: boolean): { events?:
         })
       events.push({
         event: 'content_block_delta',
-        data: { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: 'fake-signature' } },
+        data: { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature } },
       })
     } else if (block.type === 'text') {
       for (const piece of pieces(block.text as string))
@@ -196,7 +211,13 @@ function anthropic(reply: FakeReply, model: string, stream: boolean): { events?:
   return { events }
 }
 
-function responses(reply: FakeReply, model: string, stream: boolean): { events?: Array<{ event: string; data: unknown }>; body?: unknown } {
+function responses(
+  reply: FakeReply,
+  model: string,
+  stream: boolean,
+  served: number,
+  encrypted: boolean,
+): { events?: Array<{ event: string; data: unknown }>; body?: unknown } {
   const usage = {
     input_tokens: 10,
     input_tokens_details: { cached_tokens: 0 },
@@ -206,20 +227,21 @@ function responses(reply: FakeReply, model: string, stream: boolean): { events?:
   }
   const reasoning = reply.reasoning && {
     type: 'reasoning',
-    id: 'rs_fake',
+    id: `rs_fake_${served}`,
     summary: [{ type: 'summary_text', text: reply.reasoning }],
+    ...(encrypted ? { encrypted_content: `fake-encrypted-${served}` } : {}),
   }
   const message = reply.text && {
     type: 'message',
-    id: 'msg_fake',
+    id: `msg_fake_${served}`,
     role: 'assistant',
     status: 'completed',
     content: [{ type: 'output_text', text: reply.text, annotations: [] }],
   }
   const call = reply.tool && {
     type: 'function_call',
-    id: 'fc_fake_1',
-    call_id: 'call_fake_1',
+    id: `fc_fake_${served}`,
+    call_id: `call_fake_${served}`,
     name: String(reply.tool.name),
     arguments: JSON.stringify(reply.tool.input),
     status: 'completed',
@@ -258,16 +280,16 @@ function responses(reply: FakeReply, model: string, stream: boolean): { events?:
   return { events }
 }
 
-function gemini(reply: FakeReply, stream: boolean): { events?: Array<{ data: unknown }>; body?: unknown } {
+function gemini(reply: FakeReply, model: string, stream: boolean, served: number): { events?: Array<{ data: unknown }>; body?: unknown } {
   const usageMetadata = { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: reply.reasoning ? 2 : 0, totalTokenCount: 17 }
   const call = reply.tool && {
-    functionCall: { id: 'call_fake_1', name: String(reply.tool.name), args: reply.tool.input },
+    functionCall: { id: `call_fake_${served}`, name: String(reply.tool.name), args: reply.tool.input },
     thoughtSignature: 'fake-signature',
   }
   const chunk = (parts: unknown[], last = false) => ({
     candidates: [{ index: 0, content: { role: 'model', parts }, ...(last ? { finishReason: 'STOP' } : {}) }],
     ...(last ? { usageMetadata } : {}),
-    modelVersion: 'fake-model',
+    modelVersion: model,
   })
   if (!stream)
     return {
@@ -355,13 +377,19 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
       if (reply.error) return json(response, reply.error.status, failure(wire, reply.error))
       const made =
         wire === 'chat-completions'
-          ? chat(reply, model, stream)
+          ? chat(reply, model, stream, requests.length)
           : wire === 'responses'
-            ? responses(reply, model, stream)
+            ? responses(
+                reply,
+                reply.answeredBy ?? model,
+                stream,
+                requests.length,
+                Array.isArray(body.include) && body.include.includes('reasoning.encrypted_content'),
+              )
             : wire === 'gemini'
-              ? gemini(reply, stream)
-              : anthropic(reply, model, stream)
-      if (made.events) sse(response, made.events)
+              ? gemini(reply, reply.answeredBy ?? model, stream, requests.length)
+              : anthropic(reply, model, stream, requests.length)
+      if (made.events) sse(response, made.events, reply.lingerMs)
       else json(response, 200, made.body)
     })().catch(() => {
       if (!response.headersSent) json(response, 500, { error: { message: 'fake model failed' } })

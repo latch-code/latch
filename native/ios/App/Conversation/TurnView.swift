@@ -129,8 +129,9 @@ private struct WorkRow: View {
         let object = label.mono ? Text(label.object).font(PhoneTheme.mono) : Text(label.object)
         let output = (message["tool"]["output"].string ?? message["text"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let diffs = message["tool"]["diffs"].array
-        let judged = PhoneConversation.judgement(message)
+        let judged = PhoneConversation.judgement(message), blocked = PhoneConversation.blocked(message)
         let tail: (String, Color)? = {
+            if blocked != nil { return ("拦下", PhoneTheme.muted) }
             if let judged, judged.review, state == "completed" || state == "failed" { return (judged.words, PhoneTheme.muted) }
             if let unrun { return (unrun == "rejected" ? "已拒绝" : unrun == "expired" ? "已过期" : "已取消", PhoneTheme.muted) }
             if state == "failed" { return (PhoneConversation.failureReason(message), PhoneTheme.red) }
@@ -138,11 +139,14 @@ private struct WorkRow: View {
             if let judged, state == "completed" { return (judged.words, PhoneTheme.muted) }
             return nil
         }()
-        row(icon: icon(message), words: verb + object, detail: diffs.isEmpty ? (output.isEmpty ? nil : output) : nil, stat: PhoneConversation.diffStat(message["tool"]), tail: tail,
-            running: state == "running" && !frozen, diff: diffs, open: diffs.count == 1 ? diffs.first?["path"].string : nil, places: diffs.isEmpty ? message["tool"]["locations"].array.compactMap(\.string) : [])
+        // A refused call says who stopped it and why above what it reported.
+        let detail = [blocked?.line, diffs.isEmpty && !output.isEmpty ? output : nil].compactMap { $0 }.joined(separator: "\n\n")
+        row(icon: icon(message), words: verb + object, detail: detail.isEmpty ? nil : detail, stat: blocked == nil ? PhoneConversation.diffStat(message["tool"]) : nil, tail: tail,
+            running: state == "running" && !frozen, diff: blocked == nil ? diffs : [], open: blocked == nil && diffs.count == 1 ? diffs.first?["path"].string : nil, places: diffs.isEmpty ? message["tool"]["locations"].array.compactMap(\.string) : [])
     }
     private func icon(_ message: NativeJSON) -> String {
         if PhoneConversation.judgement(message)?.review == true { return "scale.3d" }
+        if PhoneConversation.blocked(message) != nil { return "nosign" }
         return switch PhoneConversation.toolKind(message) {
         case "read": "doc.text"; case "edit": "square.and.pencil"; case "delete": "trash"; case "move": "arrow.right.doc.on.clipboard"
         case "search": "magnifyingglass"; case "execute": "terminal"; case "fetch": "globe"; default: "wrench"

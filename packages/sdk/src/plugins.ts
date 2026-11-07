@@ -11,10 +11,12 @@ export interface ToolCall {
   name: string
   arguments: Record<string, unknown>
   /**
-   * Opaque text the service attached to the call, such as Gemini's thought signature, and `by`, the service and model
-   * that made it. The session's history keeps it; a provider sends it back only where `by` names itself.
+   * Opaque text the provider keeps with the call, such as Gemini's thought signature or the signed reasoning of the
+   * response that made it, and `by`, who made it: protocol, service and model. The session's history keeps it, at most
+   * 1 MiB, out of what clients see; a provider sends it back only where `by` names itself. `scope: 'turn'` says the
+   * provider sends it back only within the turn that made it, so the history drops it once the next user message comes.
    */
-  signature?: { by: string; value: string }
+  signature?: { by: string; value: string; scope?: 'turn' }
 }
 export type AttachmentContent =
   | { type: 'image'; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }
@@ -29,7 +31,7 @@ export interface ModelMessage {
 }
 export type ModelDelta =
   | { type: 'text'; text: string }
-  /** Reasoning the model reported. It is shown to the user and never sent back as history. */
+  /** Reasoning the model reported, shown to the user. This text is never sent back; a signed copy may be, in `ToolCall.signature`. */
   | { type: 'reasoning'; text: string }
   | { type: 'tool-call'; call: ToolCall }
   /**

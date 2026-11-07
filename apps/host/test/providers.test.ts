@@ -474,7 +474,24 @@ describe('Anthropic Messages streaming provider', () => {
       { type: 'text', text: '始' },
       // Input counts the cached tokens too; the parts say how many were cache reads and writes.
       { type: 'usage', inputTokens: 28, outputTokens: 42, cacheReadTokens: 5, cacheWriteTokens: 3 },
-      { type: 'tool-call', call: { id: 'toolu_a', name: 'write_report', arguments: { content: '你好' } } },
+      {
+        type: 'tool-call',
+        call: {
+          id: 'toolu_a',
+          name: 'write_report',
+          arguments: { content: '你好' },
+          signature: {
+            by: 'anthropic\nclaude\nclaude-other',
+            value: JSON.stringify([
+              { type: 'thinking', thinking: '先读文件', signature: 'sig' },
+              { type: 'text', text: '开始' },
+              { type: 'tool_use', id: 'toolu_a' },
+              { type: 'tool_use', id: 'toolu_b' },
+            ]),
+            scope: 'turn',
+          },
+        },
+      },
       { type: 'tool-call', call: { id: 'toolu_b', name: 'long_task', arguments: {} } },
       { type: 'finish', reason: 'tool-calls' },
     ])
@@ -534,7 +551,100 @@ describe('Anthropic Messages streaming provider', () => {
         ],
       },
     ])
+    // The second request uses the default model, which did not think this: its thinking stays out.
     expect(JSON.stringify(requests[1]?.body)).not.toContain('先读文件')
+  })
+
+  it('sends thinking back unchanged and in place within the tool loop, and leaves it out once the turn is over', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const endpoint = await listen((_request, response, body) => {
+      requests.push(JSON.parse(body))
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      if (requests.length > 1) return void response.end(messageStart() + textBlock(0, '好了') + messageEnd('end_turn'))
+      response.end(
+        messageStart()
+          + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
+          + anthropicEvent('content_block_delta', { index: 0, delta: { type: 'thinking_delta', thinking: '先看' } })
+          + anthropicEvent('content_block_delta', { index: 0, delta: { type: 'signature_delta', signature: 'sig-1' } })
+          + anthropicEvent('content_block_stop', { index: 0 })
+          + textBlock(1, '我读', '一下')
+          // A progress note: an empty thinking block right before the call it introduces.
+          + anthropicEvent('content_block_start', { index: 2, content_block: { type: 'thinking', thinking: '' } })
+          + anthropicEvent('content_block_delta', { index: 2, delta: { type: 'thinking_delta', thinking: '' } })
+          + anthropicEvent('content_block_delta', { index: 2, delta: { type: 'signature_delta', signature: 'sig-2' } })
+          + anthropicEvent('content_block_stop', { index: 2 })
+          + toolBlock(3, 'toolu_a', 'write_report', '{"content":"a"}')
+          + anthropicEvent('content_block_start', { index: 4, content_block: { type: 'redacted_thinking', data: 'opaque' } })
+          + anthropicEvent('content_block_stop', { index: 4 })
+          + toolBlock(5, 'toolu_b', 'long_task')
+          + messageEnd('tool_use'),
+      )
+    })
+    const provider = await anthropicAt(endpoint)
+    const { tools } = await mount(createToolsPlugin())
+    const deltas = await collect(provider.stream({ messages: [message], tools, signal: freshSignal() }))
+    expect(deltas.filter(delta => delta.type !== 'tool-call')).toEqual([
+      { type: 'reasoning', text: '先看' },
+      { type: 'text', text: '我读' },
+      { type: 'text', text: '一下' },
+      { type: 'usage', inputTokens: 12, outputTokens: 7 },
+      { type: 'finish', reason: 'tool-calls' },
+    ])
+    const calls = deltas.flatMap(delta => (delta.type === 'tool-call' ? [delta.call] : []))
+    expect(calls[0]?.signature?.by).toBe('anthropic\nclaude\nclaude-test')
+    expect(calls[1]).not.toHaveProperty('signature')
+    const loop: ModelMessage[] = [
+      message,
+      { role: 'assistant', content: '我读一下', toolCalls: calls },
+      { role: 'tool', content: '写好了', toolCallId: 'toolu_a' },
+      { role: 'tool', content: '完成', toolCallId: 'toolu_b' },
+    ]
+    const returned = [
+      { type: 'thinking', thinking: '先看', signature: 'sig-1' },
+      { type: 'text', text: '我读一下' },
+      { type: 'thinking', thinking: '', signature: 'sig-2' },
+      { type: 'tool_use', id: 'toolu_a', name: 'write_report', input: { content: 'a' } },
+      { type: 'redacted_thinking', data: 'opaque' },
+      { type: 'tool_use', id: 'toolu_b', name: 'long_task', input: {} },
+    ]
+    const plain = [
+      { type: 'text', text: '我读一下' },
+      { type: 'tool_use', id: 'toolu_a', name: 'write_report', input: { content: 'a' } },
+      { type: 'tool_use', id: 'toolu_b', name: 'long_task', input: {} },
+    ]
+    const sent = async (messages: ModelMessage[], model?: string) => {
+      await collect(provider.stream({ messages, tools, signal: freshSignal(), ...(model ? { model } : {}) }))
+      return (requests.at(-1)!.messages as Array<{ role: string; content: unknown }>)[1]?.content
+    }
+    expect(await sent(loop)).toEqual(returned)
+    // A new turn, another model, or a history that no longer matches what the model sent: none of it goes back.
+    expect(await sent([...loop, { role: 'assistant', content: '好了' }, { role: 'user', content: '再来' }])).toEqual(plain)
+    expect(await sent(loop, 'claude-other')).toEqual(plain)
+    expect(await sent([message, { role: 'assistant', content: '我读', toolCalls: calls }, ...loop.slice(2)])).toEqual([
+      { type: 'text', text: '我读' },
+      ...plain.slice(1),
+    ])
+    const tampered = calls.map((call, index) => (index === 0 ? { ...call, signature: { ...call.signature!, value: '{' } } : call))
+    expect(await sent([message, { role: 'assistant', content: '我读一下', toolCalls: tampered }, ...loop.slice(2)])).toEqual(plain)
+  })
+
+  it('keeps nothing to send back when a thinking block arrives without its signature', async () => {
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(
+        messageStart()
+          + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '想' } })
+          + anthropicEvent('content_block_stop', { index: 0 })
+          + toolBlock(1, 'toolu_a', 'long_task')
+          + messageEnd('tool_use'),
+      )
+    })
+    const { tools } = await mount(createToolsPlugin())
+    const deltas = await collect((await anthropicAt(endpoint)).stream({ messages: [message], tools, signal: freshSignal() }))
+    expect(deltas.find(delta => delta.type === 'tool-call')).toEqual({
+      type: 'tool-call',
+      call: { id: 'toolu_a', name: 'long_task', arguments: {} },
+    })
   })
 
   it.each([['end_turn'], ['stop_sequence']])('maps stop reason %s to stop', async reason => {

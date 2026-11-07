@@ -16,6 +16,7 @@ import type {
   SessionConfigOption,
   RunEnd,
   RunLive,
+  RoutedTurn,
   SessionPermission,
   DriverTaskDetail,
   TaskStatus,
@@ -92,7 +93,7 @@ import {
   type LaunchRoute,
   type ProfileSelection,
 } from './permission.ts'
-import type { AcpPermissionProfile, ExtensionRequest } from './profiles/index.ts'
+import type { AcpPermissionProfile, ExtensionRequest, RetryReport, ToolDenial } from './profiles/index.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   AUTH_STATUS_METHOD,
@@ -243,6 +244,11 @@ interface Run {
   steeredAt?: number
   /** Gateway requests of the process when the prompt was sent, for a session on a route. */
   gatewayMark?: number
+  /**
+   * The row that reports the agent retrying a model call, and what it says. `pending` while the reply it cut off is still
+   * live: the row goes after that reply, once the agent drops it to generate it again or it settles.
+   */
+  retry?: { id: string; interrupted: boolean; pending?: boolean; reason?: string; attempt?: { attempt: number; of: number } }
   done: Promise<void>
   resolveDone(): void
 }
@@ -1926,6 +1932,23 @@ export class AgentRuntime implements Bridge {
     void Promise.resolve(this.options.securityEvent?.({ type: 'model-route-bypassed', sessionId: run.taskId })).catch(() => {})
   }
 
+  /**
+   * What a turn on a route sent through Latch, as the gateway counted it, with the model the session had chosen named
+   * the way the service names it: the option's value or name matched to the token's models, else the route's model.
+   */
+  private routedTurn(run: Run, task: AcpTask): RoutedTurn | undefined {
+    const lease = run.live?.gateway
+    if (!lease || run.gatewayMark === undefined || !task.acp.route) return undefined
+    const turn = lease.takeTurn()
+    if (!turn.requests) return undefined
+    const option = task.config?.find(item => item.category === 'model')
+    const current = option?.options.find(item => item.value === option.currentValue)
+    const keys = [option?.currentValue, current?.name].flatMap(value => (value ? [modelIdKey(value)] : []))
+    const chosen = lease.models.find(model => keys.includes(modelIdKey(model))) ?? option?.currentValue ?? task.acp.route.model
+    // Cut, not clipped with a note: the store reads back at most 200 characters.
+    return { ...turn, chosen: chosen.slice(0, 200) }
+  }
+
   /** The options an agent reported, as its session offers them: on a route, only models its process's token may use. */
   private offered(task: AcpTask, options: SessionConfigOption[], lease = this.lives.get(task.summary.id)?.gateway): SessionConfigOption[] {
     const gateway = this.selection.profile?.gateway
@@ -2284,7 +2307,11 @@ export class AgentRuntime implements Bridge {
         return
       }
       run.sent = true
-      if (binding.live.gateway) run.gatewayMark = binding.live.gateway.requests()
+      if (binding.live.gateway) {
+        run.gatewayMark = binding.live.gateway.requests()
+        // Requests between turns belong to none; this turn counts from here.
+        binding.live.gateway.takeTurn()
+      }
       this.phase(run, 'model')
       this.notify(run.taskId)
       const answer = binding.live.wire.request('session/prompt', {
@@ -2478,7 +2505,10 @@ export class AgentRuntime implements Bridge {
         })
       }
       const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
-      if (prompt) prompt.turn = run.clock.turn()
+      if (prompt) {
+        const routed = this.routedTurn(run, task)
+        prompt.turn = { ...run.clock.turn(), ...(routed ? { routed } : {}) }
+      }
       const result = this.fileTracking.capture(run.id)
       if (result) {
         const turn = task.messages.slice(
@@ -3322,10 +3352,19 @@ export class AgentRuntime implements Bridge {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk': {
+        const retry = this.selection.profile?.readRetry?.(update)
+        if (retry && retry.kind !== 'restart') {
+          this.showRetry(task, run, retry)
+          break
+        }
         if (run && update.content && typeof update.content === 'object' && Reflect.get(update.content, 'type') === 'image')
           run.sensitiveOutput = true
         const parsed = chunkUpdate.safeParse(update)
         if (!parsed.success) return
+        if (retry && run?.segment?.text) {
+          run.segment.text = ''
+          this.notify(taskId)
+        }
         if (parsed.data.content.type === 'image' && update.sessionUpdate === 'agent_message_chunk') {
           if (!run || !this.options.saveAttachment) return
           const data = parsed.data.content.data,
@@ -3369,7 +3408,8 @@ export class AgentRuntime implements Bridge {
       case 'tool_call':
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
-        if (parsed.success) this.applyTool(task, run, parsed.data, update.sessionUpdate === 'tool_call')
+        if (parsed.success)
+          this.applyTool(task, run, parsed.data, update.sessionUpdate === 'tool_call', this.selection.profile?.readDenial?.(update))
         return
       }
       case 'plan': {
@@ -3466,6 +3506,42 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
+   * One row for a run of retries, patched in place while nothing follows it. A reply that broke off loses the text that
+   * arrived of it, since it is generated again from the start under the same ID; its thinking stays, as it happened.
+   */
+  private showRetry(task: AcpTask, run: Run | undefined, report: Exclude<RetryReport, { kind: 'restart' }>): void {
+    const last = task.messages.at(-1)
+    const state: NonNullable<Run['retry']> =
+      run?.retry && (run.retry.pending || last?.id === run.retry.id)
+        ? run.retry
+        : { id: randomUUID(), interrupted: false, ...(run?.segment?.text ? { pending: true } : {}) }
+    if (report.kind === 'interrupted') {
+      state.interrupted = true
+      state.pending = false
+      if (run?.segment) run.segment.text = ''
+    } else {
+      state.interrupted = false
+      // The service's error can echo part of a key.
+      state.reason = clip(this.redact(report.reason).replace(/\s+/gu, ' ').trim(), 300) || undefined
+      state.attempt = { attempt: report.attempt, of: report.of }
+    }
+    if (run) run.retry = state
+    if (state.pending) return
+    const text = this.retryText(state)
+    if (last?.id === state.id) last.text = text
+    else task.messages.push({ id: state.id, role: 'system', text, createdAt: this.now() })
+  }
+
+  private retryText(state: NonNullable<Run['retry']>): string {
+    const title = state.interrupted
+      ? `回复中途中断${state.reason ? `（${state.reason}）` : ''}，从头重新生成`
+      : (state.reason ?? '请求失败')
+    // A record that stays true after the turn: the agent never says whether a retry worked, and output that follows may
+    // come after a retry of one of its own helper calls.
+    return `${this.agent.name} 重试：${title}${state.attempt ? `\n第 ${state.attempt.attempt} 次重试，最多 ${state.attempt.of} 次` : ''}`
+  }
+
+  /**
    * One row per compaction, placed where its first report arrived and patched in place by later ones: its state, and the
    * summary the agent keeps, sent whole or in pieces. Not a failure of the turn when it fails.
    */
@@ -3521,7 +3597,8 @@ export class AgentRuntime implements Bridge {
 
   private appendLive(run: Run, task: AcpTask, kind: 'text' | 'reasoning', piece: string, acpMessageId: string | undefined): void {
     let segment = run.segment
-    if (segment && acpMessageId && segment.acpMessageId && segment.acpMessageId !== acpMessageId) {
+    // A new message, or output after a retry that left the reply before it standing: that reply settles, the retry after it.
+    if (segment && (run.retry?.pending || (acpMessageId && segment.acpMessageId && segment.acpMessageId !== acpMessageId))) {
       this.settleSegment(run, task, 'completed')
       segment = undefined
     }
@@ -3536,6 +3613,8 @@ export class AgentRuntime implements Bridge {
       }
     else if (acpMessageId && !segment.acpMessageId) segment.acpMessageId = acpMessageId
     if (kind === 'text') {
+      // A retry after this text is another one, with its own row.
+      run.retry = undefined
       segment.text = append(segment.text, piece)
       segment.reasoningTimer.text()
     } else {
@@ -3550,22 +3629,27 @@ export class AgentRuntime implements Bridge {
   private settleSegment(run: Run, task: AcpTask, state: NonNullable<Message['state']>): void {
     const segment = run.segment
     run.segment = undefined
-    if (!segment || (!segment.text && !segment.reasoning)) return
-    const reasoningMs = segment.reasoningTimer.end()
-    const model = modelName(task.config)
-    const thinking = thinkingName(task.config)
-    task.messages.push({
-      id: segment.id,
-      role: 'assistant',
-      text: segment.text,
-      state,
-      ...(segment.reasoning ? { reasoning: segment.reasoning } : {}),
-      createdAt: isoTime(segment.createdAt),
-      completedAt: this.now(),
-      ...(reasoningMs !== undefined ? { reasoningMs } : {}),
-      ...(model ? { model: clip(model, 200) } : {}),
-      ...(thinking ? { thinking: clip(thinking, 200) } : {}),
-    })
+    if (segment && (segment.text || segment.reasoning)) {
+      const reasoningMs = segment.reasoningTimer.end()
+      const model = modelName(task.config)
+      const thinking = thinkingName(task.config)
+      task.messages.push({
+        id: segment.id,
+        role: 'assistant',
+        text: segment.text,
+        state,
+        ...(segment.reasoning ? { reasoning: segment.reasoning } : {}),
+        createdAt: isoTime(segment.createdAt),
+        completedAt: this.now(),
+        ...(reasoningMs !== undefined ? { reasoningMs } : {}),
+        ...(model ? { model: clip(model, 200) } : {}),
+        ...(thinking ? { thinking: clip(thinking, 200) } : {}),
+      })
+    } else if (!run.retry?.pending) return
+    if (run.retry?.pending) {
+      run.retry.pending = false
+      task.messages.push({ id: run.retry.id, role: 'system', text: this.retryText(run.retry), createdAt: this.now() })
+    }
     this.touch(task)
     this.mark()
   }
@@ -3611,11 +3695,11 @@ export class AgentRuntime implements Bridge {
     else task.messages.push(item)
   }
 
-  private applyTool(task: AcpTask, run: Run | undefined, fields: ToolFields, created: boolean): void {
+  private applyTool(task: AcpTask, run: Run | undefined, fields: ToolFields, created: boolean, denial?: ToolDenial): void {
     if (created && run?.segment) this.settleSegment(run, task, 'completed')
     const state = this.toolState(task, fields.toolCallId)
     mergeTool(state, fields, this.now())
-    this.judge(task, state, fields.toolCallId)
+    this.judge(task, state, fields.toolCallId, denial)
     this.upsert(task, toolMessage(state))
     if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
@@ -3631,14 +3715,19 @@ export class AgentRuntime implements Bridge {
 
   /**
    * Marks and records a call no person was asked about while the session's mode leaves decisions to the harness's own
-   * model: each review the harness reports, with its verdict, or, for a harness that reports none, each call that ran in
-   * such a mode with no ask. One audit row per call, once it settled.
+   * model: each review the harness reports, with its verdict, each call its model denied, or, for a harness that reports
+   * no verdicts, each call that ran in such a mode with no ask. One audit row per call, once it settled. A call the
+   * harness says it refused itself is marked so in any mode; only its model's refusals in such a mode are recorded.
    */
-  private judge(task: AcpTask, state: ToolState, toolCallId: string): void {
+  private judge(task: AcpTask, state: ToolState, toolCallId: string, denial?: ToolDenial): void {
+    const by = this.agent.name
+    // A call a person was asked about is theirs, and one that started ran: what the harness says after either is no
+    // refusal of its own.
+    if (denial && !state.blocked && state.awaiting === 0 && !state.decision && state.startedAt === undefined)
+      state.blocked = { by, ...denial }
     if (state.judged?.recorded) return
     const prefix = this.profile?.reviewCallPrefix
     const settled = state.status === 'completed' || state.status === 'failed'
-    const by = this.agent.name
     if (prefix !== undefined && toolCallId.startsWith(prefix)) {
       const verdict = reviewVerdict(state)
       state.judged = { by, outcome: verdict === 'approved' || verdict === 'denied' ? verdict : 'none' }
@@ -3646,6 +3735,12 @@ export class AgentRuntime implements Bridge {
       return
     }
     if (prefix !== undefined || state.judged || state.awaiting > 0 || state.decision) return
+    if (state.blocked) {
+      if (state.blocked.source !== 'model' || this.modeTier(task)?.tier !== 'model') return
+      state.judged = { by, outcome: 'denied' }
+      this.recordJudgement(task, state, 'denied', 'agent-report')
+      return
+    }
     const ran = state.status === 'completed' || (state.status === 'failed' && state.startedAt !== undefined)
     if (!ran || this.modeTier(task)?.tier !== 'model') return
     state.judged = { by, outcome: 'unasked' }
@@ -3795,7 +3890,7 @@ export class AgentRuntime implements Bridge {
         if (!parsed.success) return
         const state = childCall(child, row, parsed.data, this.now())
         // Latch knows no mode of a subagent's own, so its calls are judged by the mode of the session that started it.
-        this.judge(task, state, parsed.data.toolCallId)
+        this.judge(task, state, parsed.data.toolCallId, this.selection.profile?.readDenial?.(update))
         if (!row || !upsertStep(row, toolMessage(state))) return
         break
       }

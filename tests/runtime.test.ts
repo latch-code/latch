@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import type { ModelRef, RiskLevel } from '@latch/protocol'
 import {
   AppError,
@@ -210,6 +211,49 @@ describe('independent harness runtime', () => {
     expect((await reopened.detail(sessionId)).messages.at(-1)?.text).toContain('无效的工具调用')
   })
 
+  it('drops a signature kept only for its turn once the next turn starts, also after a restart, and keeps the others', async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream({ messages }) {
+        seen.push(structuredClone(messages))
+        const n = seen.length
+        if (messages.at(-1)?.role === 'user') {
+          const layout = { by: 'fixture\nfixture-model', value: `layout-${n}`, scope: 'turn' }
+          yield { type: 'tool-call', call: { id: `call-${n}a`, name: 'write_note', arguments: {}, signature: layout } as ToolCall }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else if (messages.at(-2)?.toolCalls?.[0]?.id.endsWith('a')) {
+          const kept = { by: 'fixture\nfixture-model', value: `thought-${n}` }
+          yield { type: 'tool-call', call: { id: `call-${n}b`, name: 'write_note', arguments: {}, signature: kept } }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else {
+          yield { type: 'text', text: '完成' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+    }
+    const backend = registry(provider, [tool(async () => ({ text: 'ok' }), false)])
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'turn-1' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const signatures = (messages: ModelMessage[] | undefined) =>
+      messages?.flatMap(message => message.toolCalls?.map(call => call.signature?.value ?? null) ?? [])
+    expect(signatures(seen[2])).toEqual(['layout-1', 'thought-2'])
+    expect(await readFile(join(dataDir, 'runtime.json'), 'utf8')).toContain('layout-1')
+    await bridge.close()
+    const reopened = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    await reopened.prompt(sessionId, 'again', 'turn-2')
+    await waitStatus(reopened, sessionId, 'idle')
+    expect(signatures(seen[3])).toEqual([null, 'thought-2'])
+    expect(signatures(seen[4])).toEqual([null, 'thought-2', 'layout-4'])
+    const stored = await readFile(join(dataDir, 'runtime.json'), 'utf8')
+    expect(stored).not.toContain('layout-1')
+    expect(stored).toContain('layout-4')
+  })
+
   it('persists explicit completion, queue time and input identity through restart', async () => {
     const dataDir = await directory(),
       provider = textProvider(),
@@ -253,6 +297,25 @@ describe('independent harness runtime', () => {
     expect(listener).toHaveBeenCalled()
     expect(backend.release).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+
+  it('reports a tool that refuses its arguments in readable words, not a JSON list of issues', async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    const strict = tool(async args => ({ text: z.object({ path: z.string() }).parse(args).path }), false)
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [strict]),
+        providerId: 'fixture',
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'invalid-arguments' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const reported = seen[1]!.at(-1)!.content
+    expect(reported).toMatch(/^TOOL_ERROR: ✖ Invalid input: expected string, received undefined\n {2}→ at path$/u)
+    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')?.text).toBe(reported)
   })
 
   it('sends a denied tool result back to the provider and never executes the denied tool', async () => {

@@ -3,6 +3,7 @@ import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, File
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
+  blockedLine,
   decisionLine,
   diffStat,
   failureReason,
@@ -36,13 +37,14 @@ import { VisibleText } from './VisibleText.tsx'
 type ToolState = NonNullable<Message['state']>
 /**
  * Words for the states a row names; a running or finished tool says it through its icon and duration instead. A call its
- * approval kept from running is not a failure: it reads by its record (「已拒绝 · 14:32」), never red. A failed row says
- * why on the line under it.
+ * approval kept from running is not a failure: it reads by its record (「已拒绝 · 14:32」), never red, and so does one the
+ * harness refused itself (拦下, who and why on the line under it). A failed row says why on the line under it.
  */
 const stateWords: Partial<Record<ShownToolState, string>> = {
   cancelled: '已取消',
   rejected: '已拒绝',
   expired: '已过期',
+  blocked: JUDGED_COPY.denied,
 }
 
 const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
@@ -69,7 +71,10 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && sameDiffs(a.diffs, b.diffs)
     && sameDecision(a.decision, b.decision)
     && a.judged?.outcome === b.judged?.outcome
-    && a.judged?.by === b.judged?.by)
+    && a.judged?.by === b.judged?.by
+    && a.blocked?.by === b.blocked?.by
+    && a.blocked?.source === b.blocked?.source
+    && a.blocked?.reason === b.blocked?.reason)
 
 /** How long the tool ran, ticking every second while it runs and frozen once it settles; nothing under a second. */
 function ToolTime({ message, frozen }: { message: Message; frozen: boolean }) {
@@ -172,8 +177,8 @@ export const ToolCard = memo(
     const language = state === 'completed' && message ? readOutputLanguage(message) : undefined
     const running = state === 'running' && !frozen
     const [choice, setChoice] = useState<boolean | null>(null)
-    // The diff of a call its approval kept from running is no evidence of a change.
-    const applied = !approval && message !== null && hasDiffs(message) && unrun === undefined
+    // The diff of a call its approval kept from running, or the harness refused, is no evidence of a change.
+    const applied = !approval && message !== null && hasDiffs(message) && unrun === undefined && shown !== 'blocked'
     const newFile = applied && diffs.length === 1 && previousState(diffs[0]!) === 'none'
     // A new file says its length in its words; its added lines would only repeat that.
     const stat = useMemo(() => (applied && !newFile ? diffStat(tool) : undefined), [applied, newFile, tool])
@@ -188,6 +193,7 @@ export const ToolCard = memo(
     const rootId = folder && /^[A-Za-z0-9_-]{1,32}$/u.test(folder) ? folder : undefined
     const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
     const failed = shown === 'failed'
+    const block = shown === 'blocked' ? tool?.blocked : undefined
     const judged = tool?.judged
     const review = isReview(tool)
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
@@ -198,7 +204,7 @@ export const ToolCard = memo(
     const KindIcon = newFile ? FilePlus : review ? Scale : toolKindIcons[kind]
     const glyph = failed ? (
       <X className="process-failed" size={12} strokeWidth={ICON_STROKE[12]} />
-    ) : shown === 'cancelled' || shown === 'rejected' ? (
+    ) : shown === 'cancelled' || shown === 'rejected' || shown === 'blocked' ? (
       <CircleSlash size={16} strokeWidth={ICON_STROKE[16]} />
     ) : shown === 'expired' ? (
       <TimerOff size={16} strokeWidth={ICON_STROKE[16]} />
@@ -215,7 +221,15 @@ export const ToolCard = memo(
       title !== label.object ? title : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
-      judged ? (review ? JUDGED_COPY.reviewNote(judged.by) : JUDGED_COPY.unaskedNote(judged.by)) : undefined,
+      block
+        ? block.source === 'model'
+          ? JUDGED_COPY.reviewNote(block.by)
+          : JUDGED_COPY.ruleNote(block.by)
+        : judged
+          ? review
+            ? JUDGED_COPY.reviewNote(judged.by)
+            : JUDGED_COPY.unaskedNote(judged.by)
+          : undefined,
     ]
       .filter(Boolean)
       .join('\n')
@@ -276,6 +290,11 @@ export const ToolCard = memo(
                 {message && <ToolTime message={message} frozen={frozen} />}
               </span>
             </button>
+            {block && (
+              <p className="tool-block-line">
+                <VisibleText text={blockedLine(block)} />
+              </p>
+            )}
             {failed && (
               <p className="tool-failure">
                 <VisibleText text={failureReason(message ?? { text: '' })} />

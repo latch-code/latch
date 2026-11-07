@@ -3,14 +3,18 @@
 import { z } from 'zod'
 import type { ModelDelta, ModelMessage, ToolCall } from '@latch/sdk'
 import {
+  MAX_SIGNATURE_CHARS,
   MAX_TOOL_ARGUMENT_CHARS,
   MAX_TOOL_CALLS,
   ProviderError,
   errorMessage,
   invalidListing,
   parseBaseURL,
+  replayLayout,
+  sameIds,
   sseData,
   toolArguments,
+  turnStart,
   type ModelPage,
   type ModelWire,
   type WireRequest,
@@ -36,6 +40,8 @@ function anthropicHeaders(apiKey: string): Record<string, string> {
 type WireBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | { type: 'thinking'; thinking: string; signature: string }
+  | { type: 'redacted_thinking'; data: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content?: string; is_error?: true }
 interface WireMessage {
@@ -43,17 +49,57 @@ interface WireMessage {
   content: WireBlock[]
 }
 
+/**
+ * A response that asked for tools, block by block as it arrived: thinking blocks whole, text whole, calls by ID. It
+ * rides on the first call's signature, because thinking must go back unchanged and in its place within the tool loop,
+ * and a thinking block can sit between text and calls.
+ */
+const layoutSchema = z.array(
+  z.discriminatedUnion('type', [
+    z.object({ type: z.literal('thinking'), thinking: z.string(), signature: z.string().min(1) }).strict(),
+    z.object({ type: z.literal('redacted_thinking'), data: z.string().min(1) }).strict(),
+    z.object({ type: z.literal('text'), text: z.string() }).strict(),
+    z.object({ type: z.literal('tool_use'), id: z.string() }).strict(),
+  ]),
+)
+type Layout = z.infer<typeof layoutSchema>
+
+/** The assistant blocks exactly as the model sent them, or undefined when the history no longer matches the layout. */
+function replayed(message: ModelMessage, layout: Layout): WireBlock[] | undefined {
+  const calls = message.toolCalls ?? []
+  const text = layout.flatMap(block => (block.type === 'text' ? [block.text] : [])).join('')
+  const ids = layout.flatMap(block => (block.type === 'tool_use' ? [block.id] : []))
+  if (
+    text !== message.content
+    || !sameIds(
+      ids,
+      calls.map(call => call.id),
+    )
+  )
+    return undefined
+  return layout.flatMap((block): WireBlock[] => {
+    if (block.type === 'tool_use') {
+      const call = calls.find(item => item.id === block.id)!
+      return [{ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }]
+    }
+    // The service refuses a text block with nothing to read, as the plain history below never sends one.
+    if (block.type === 'text' && !block.text.trim()) return []
+    return [block]
+  })
+}
+
 /** Messages API history: system text is top-level and tool results travel inside one user turn. */
-function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: WireMessage[] } {
+function messagesOnWire(messages: ModelMessage[], signer: string): { system?: string; messages: WireMessage[] } {
   const system: string[] = []
   const wire: WireMessage[] = []
+  const start = turnStart(messages)
   const append = (role: WireMessage['role'], blocks: WireBlock[]) => {
     if (!blocks.length) return
     const last = wire.at(-1)
     if (last?.role === role) last.content.push(...blocks)
     else wire.push({ role, content: blocks })
   }
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'system') {
       if (message.content.trim()) system.push(message.content)
     } else if (message.role === 'user') {
@@ -66,10 +112,14 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
         ),
       ])
     } else if (message.role === 'assistant') {
-      append('assistant', [
-        ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : []),
-        ...(message.toolCalls ?? []).map(call => ({ type: 'tool_use' as const, id: call.id, name: call.name, input: call.arguments })),
-      ])
+      const layout = replayLayout(message, index, start, signer, value => layoutSchema.safeParse(value).data)
+      append(
+        'assistant',
+        (layout && replayed(message, layout)) ?? [
+          ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : []),
+          ...(message.toolCalls ?? []).map(call => ({ type: 'tool_use' as const, id: call.id, name: call.name, input: call.arguments })),
+        ],
+      )
     } else {
       if (!message.toolCallId) throw new ProviderError('工具结果缺少 toolCallId。', 'invalid-history')
       append('user', [
@@ -85,7 +135,7 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
   return { ...(system.length ? { system: system.join('\n\n') } : {}), messages: wire }
 }
 
-function encodeAnthropicRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
+function encodeAnthropicRequest({ model, messages, tools, effort, signer }: WireRequest): Record<string, unknown> {
   return {
     model,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -93,7 +143,7 @@ function encodeAnthropicRequest({ model, messages, tools, effort }: WireRequest)
     // A thinking level is adaptive thinking at that effort. It is named: Opus 4.6 to 4.8 and Sonnet 4.6 run without
     // thinking when `thinking` is left out, the Claude 5 models take it as their default, and none takes a token budget.
     ...(effort ? { thinking: { type: 'adaptive' }, output_config: { effort } } : {}),
-    ...messagesOnWire(messages),
+    ...messagesOnWire(messages, signer),
     ...(tools.length
       ? { tools: tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) }
       : {}),
@@ -114,8 +164,8 @@ const eventSchemas = {
     index,
     content_block: z.discriminatedUnion('type', [
       z.object({ type: z.literal('text'), text: z.string() }),
-      z.object({ type: z.literal('thinking'), thinking: z.string() }),
-      z.object({ type: z.literal('redacted_thinking') }),
+      z.object({ type: z.literal('thinking'), thinking: z.string(), signature: z.string().optional() }),
+      z.object({ type: z.literal('redacted_thinking'), data: z.string() }),
       z.object({ type: z.literal('tool_use'), id: z.string(), name: z.string(), input: z.unknown().optional() }),
     ]),
   }),
@@ -124,7 +174,7 @@ const eventSchemas = {
     delta: z.discriminatedUnion('type', [
       z.object({ type: z.literal('text_delta'), text: z.string() }),
       z.object({ type: z.literal('thinking_delta'), thinking: z.string() }),
-      z.object({ type: z.literal('signature_delta') }),
+      z.object({ type: z.literal('signature_delta'), signature: z.string() }),
       z.object({ type: z.literal('input_json_delta'), partial_json: z.string() }),
     ]),
   }),
@@ -141,7 +191,28 @@ const BLOCK_DELTA = { text: 'text_delta', thinking: 'thinking_delta', redacted_t
 interface Block {
   type: keyof typeof BLOCK_DELTA
   open: boolean
+  /** Text, thinking or redacted data as it arrived, kept for the tool loop's next request. */
+  text: string
+  signature: string
   call?: { id: string; name: string; json: string; input: unknown }
+}
+
+/** The layout of a response that asked for tools and thought, or undefined when nothing needs to go back with it. */
+function layoutOf(blocks: Block[], kept: boolean): string | undefined {
+  if (!kept || !blocks.some(block => block.type === 'thinking' || block.type === 'redacted_thinking')) return undefined
+  // Without its signature a thinking block is refused, and dropping one would change the order the service checks.
+  if (blocks.some(block => block.type === 'thinking' && !block.signature)) return undefined
+  const layout: Layout = blocks.map(block =>
+    block.type === 'thinking'
+      ? { type: 'thinking', thinking: block.text, signature: block.signature }
+      : block.type === 'redacted_thinking'
+        ? { type: 'redacted_thinking', data: block.text }
+        : block.type === 'text'
+          ? { type: 'text', text: block.text }
+          : { type: 'tool_use', id: block.call!.id },
+  )
+  const value = JSON.stringify(layout)
+  return value.length <= MAX_SIGNATURE_CHARS ? value : undefined
 }
 
 function terminal(reason: string): 'stop' | 'tool-calls' {
@@ -190,8 +261,15 @@ async function* decodeAnthropicStream(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   safeError: (text: string) => string,
+  signer: string,
 ): AsyncIterable<ModelDelta> {
   const blocks = new Map<number, Block>()
+  // What is kept for the layout stays within what a signature may hold; past that, nothing goes back.
+  let keptChars = 0
+  const keep = (text: string) => {
+    keptChars += text.length
+    return keptChars <= MAX_SIGNATURE_CHARS ? text : ''
+  }
   const usage = new AnthropicUsage()
   const openBlock = (at: number) => {
     const block = blocks.get(at)
@@ -254,9 +332,20 @@ async function* decodeAnthropicStream(
       if (block.type === 'tool_use') {
         if (++toolBlocks > MAX_TOOL_CALLS) throw new ProviderError('模型一次请求了过多工具。', 'stream-limit')
         if (block.name.length > 256 || block.id.length > 512) throw new ProviderError('工具调用超出大小限制。', 'stream-limit')
-        blocks.set(at, { type: 'tool_use', open: true, call: { id: block.id, name: block.name, json: '', input: block.input } })
+        blocks.set(at, {
+          type: 'tool_use',
+          open: true,
+          text: '',
+          signature: '',
+          call: { id: block.id, name: block.name, json: '', input: block.input },
+        })
       } else {
-        blocks.set(at, { type: block.type, open: true })
+        blocks.set(at, {
+          type: block.type,
+          open: true,
+          text: keep(block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : block.data),
+          signature: block.type === 'thinking' ? (block.signature ?? '') : '',
+        })
         if (block.type === 'text' && block.text) yield { type: 'text', text: block.text }
         if (block.type === 'thinking' && block.thinking) yield { type: 'reasoning', text: block.thinking }
       }
@@ -275,6 +364,10 @@ async function* decodeAnthropicStream(
     if (delta.type === 'signature_delta' ? block.type !== 'thinking' : BLOCK_DELTA[block.type] !== delta.type) {
       throw new ProviderError('内容块与增量类型不一致。', 'invalid-chunk')
     }
+    if (delta.type === 'signature_delta') block.signature += delta.signature
+    else if (delta.type === 'text_delta') block.text += keep(delta.text)
+    else if (delta.type === 'thinking_delta') block.text += keep(delta.thinking)
+    if (block.signature.length > MAX_SIGNATURE_CHARS) throw new ProviderError('模型返回的思考签名超出大小限制。', 'stream-limit')
     if (delta.type === 'text_delta' && delta.text) yield { type: 'text', text: delta.text }
     else if (delta.type === 'thinking_delta' && delta.thinking) yield { type: 'reasoning', text: delta.thinking }
     else if (delta.type === 'input_json_delta' && block.call) {
@@ -285,7 +378,8 @@ async function* decodeAnthropicStream(
   signal.throwIfAborted()
   if (!stopped || !finish) throw new ProviderError('模型流未给出结束状态，不能确认调用完成。', 'stream-incomplete')
   if ([...blocks.values()].some(block => block.open)) throw new ProviderError('模型流在内容块结束前停止。', 'stream-incomplete')
-  const pending = [...blocks].sort(([left], [right]) => left - right).flatMap(([, block]) => (block.call ? [block.call] : []))
+  const ordered = [...blocks].sort(([left], [right]) => left - right).map(([, block]) => block)
+  const pending = ordered.flatMap(block => (block.call ? [block.call] : []))
   if ((finish === 'tool-calls') !== pending.length > 0) throw new ProviderError('工具调用与模型结束状态不一致。', 'invalid-tool-call')
   const completed: ToolCall[] = []
   const ids = new Set<string>()
@@ -302,6 +396,8 @@ async function* decodeAnthropicStream(
     }
     completed.push({ id: call.id, name: call.name, arguments: args })
   }
+  const layout = completed.length ? layoutOf(ordered, keptChars <= MAX_SIGNATURE_CHARS) : undefined
+  if (layout) completed[0]!.signature = { by: signer, value: layout, scope: 'turn' }
   const reported = usage.delta()
   if (reported) yield reported
   for (const call of completed) yield { type: 'tool-call', call }
@@ -335,6 +431,6 @@ export const anthropicWire: ModelWire = {
     headers: anthropicHeaders(apiKey),
     body: encodeAnthropicRequest(request),
   }),
-  decode: (body, signal, safeError) => decodeAnthropicStream(body, signal, safeError),
+  decode: decodeAnthropicStream,
   listModels: listAnthropicModels,
 }

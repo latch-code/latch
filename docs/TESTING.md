@@ -138,7 +138,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 多 Harness 路由、审批路由、权限级别、会话元数据 | `hub.test.ts`、`harness-host.test.ts` |
 | 会话生命周期事件：运行开始先于第一条提示到达模型或 Agent，带会话的项目与文件夹；运行结束每次一个，只在真实结算之后（请求取消不算）；归档与删除各一次，带项目；停止时先于关闭 Driver 与监听入口，未结束的运行不再有运行结束事件；等待中的运行可被取消，Host 停止时不会再发出提示；没有监听器时不读 Driver，读取有合并，迟到的读取不影响新一轮；监听器抛错、拒绝或超时不影响运行与停止；订阅者拿到的对象只能监听 | `session-lifecycle.test.ts` |
 | ACP：环境白名单与私有临时目录、启动指纹、项目配置、权限模式读回与漂移、映射、审批与选项过滤、取消、崩溃与恢复、进程上限 | `acp.test.ts`（另见 [HARNESSES.md](HARNESSES.md) 的「测试」） |
-| 经 Latch 使用模型服务：网关只认回环 `Host`、不带 `Origin`、认得的凭据与绑定的模型，入站认证头不转发，错误去掉密钥，不跟随重定向，Agent 断开即中止上游，进程结束或服务设置变化即失效；Host 重算一对能否转发、审计路由；Codex 的 `providers/set` 与 Gemini CLI 的变量、凭据换新进程、路由会话只列服务的模型、被拒绝的请求不算绕过、绕过的提示 | `apps/host/test/model-gateway.test.ts`、`acp.test.ts` 的 `sessions on a model service through the gateway`；页面与真实 Host 见 `e2e/model-gateway.e2e.ts`（Codex 草稿、会话与 Gemini CLI 会话的模型菜单） |
+| Harness 中途重试（Gemini CLI）：断开前的文字丢掉、回复沿用同一个 ID、重试是一行系统消息而不进思考、这一行在被它打断的文字之后（等待中停止时也是）、刷新后只有一份，其他 Agent 的 `_meta` 不解释 | `acp.test.ts`、`replay.test.ts` 的 `gemini/retry`；页面见 `e2e/streaming-ui.e2e.ts` |
+| 经 Latch 使用模型服务：网关只认回环 `Host`、不带 `Origin`、认得的凭据与绑定的模型，入站认证头不转发，错误去掉密钥，不跟随重定向，Agent 断开即中止上游，进程结束或服务设置变化即失效；Host 重算一对能否转发、审计路由；Codex 的 `providers/set` 与 Gemini CLI 的变量、凭据换新进程、路由会话只列服务的模型、Gemini CLI 的辅助调用与子 Agent 指到会话的模型、被拒绝的请求不算绕过、绕过的提示 | `apps/host/test/model-gateway.test.ts`、`acp.test.ts` 的 `sessions on a model service through the gateway`；页面与真实 Host 见 `e2e/model-gateway.e2e.ts`（Codex 草稿、会话与 Gemini CLI 会话的模型菜单） |
 | 工作区工具（含 `folder` 参数与 `list_folders`）、受保护路径、写入预览与路径检查 | `workspace.test.ts` |
 | 改动：每轮快照（克隆、跨卷只存小文件、像密钥的文件不读）、四种范围与「由命令修改」的归因、撤销与恢复本轮、撤销文件与全部改动、补丁、保留上限、git 只跑只读底层命令、写入前先审计 | `changes-snapshots.test.ts`、`changes-diff.test.ts`、`changes-git.test.ts`、`changes-engine.test.ts`；路由、权限、下一条消息的说明与确认：`changes-routes.test.ts`、`e2e/changes.e2e.ts` |
 | 终端：帧格式、环境白名单与 Latch 标记、回放与输出上限、「加入对话」的文本与脱敏、观看名额与数据范围、只有 `host.sock` 上数据范围为 `all` 的设备能打开输入关闭、流随设备与凭据结束、归档时不结束这台电脑的 shell、配对码不显示在 Latch 终端里、真实组件的进程清理 | `terminal-frames.test.ts`、`terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-service.test.ts`、`terminal-helper.test.ts`、`terminal-cli.test.ts`、`terminal-routes.test.ts`（路由、审计、入口、能力标记、归档与删除的检查） |
@@ -271,6 +272,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_CONFIG` | `legacy`（旧式 models 与 modes）或 `options`（configOptions） |
 | `FAKE_ACP_MODES`、`FAKE_ACP_INITIAL_MODE` | 模式列表与初始模式 |
 | `FAKE_ACP_MODELS`、`FAKE_ACP_MODELS_FILE` | `options` 下提供的模型（逗号分隔，默认 `small,large`）；文件每个会话读一次，用来让后来的会话不再提供某个模型 |
+| `FAKE_ACP_START_MODEL` | 新会话的模型，列表里有没有都用它，像自己记着所选模型的 Agent；不设时取系统设置里的 `model.name`，再不然取列表第一个 |
 | `FAKE_ACP_EFFORT_BY_MODEL` | `1`：`large` 模型多一档 `max` 思考，像思考档位随模型变的 Agent |
 | `FAKE_ACP_EFFORT_ID` | 思考选项的 ID，默认 `effort`；codex-acp 叫 `reasoning_effort` |
 | `FAKE_ACP_EFFORT_DESCRIPTIONS=1` | 每档思考带一句英文说明，像 DeepSeek Harness 与 Codex 发来的那样 |
@@ -300,7 +302,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `probe` | 调用 `fs/read_text_file`，检查 Latch 不提供客户端文件系统 |
 | `skills` | 调用会话第一个 MCP 服务的 `list_skills`，回复它返回的内容 |
 | `refuse` | 以 `refusal` 结束 |
-| `model [as:<模型>]` | 向客户端指给它的模型服务发一次请求并回复拿到的文字：`providers/set` 设过的走 Responses，有 `GOOGLE_GEMINI_BASE_URL` 时走 Gemini（模型取系统设置里的 `model.name`）；都没有时不访问任何服务就回复，用来检查绕过的提示 |
+| `model [as:<模型>\|helper:<别名>]` | 向客户端指给它的模型服务发一次请求并回复拿到的文字：`providers/set` 设过的走 Responses，有 `GOOGLE_GEMINI_BASE_URL` 时走 Gemini（模型取系统设置里的 `model.name`）；都没有时不访问任何服务就回复，用来检查绕过的提示。流式回复读到最后一个事件（Responses 的 `response.completed`、Gemini 带 `finishReason` 的一段）就不再读，服务还没关闭连接也一样。`helper:<别名>` 像 Gemini CLI 的辅助调用那样取模型：系统设置 `modelConfigs.customOverrides` 里最后一条匹配这个别名的模型，没有时用 `gemini-3-flash-preview` |
 
 ### 回放与录制
 
@@ -308,7 +310,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 `fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、拒绝早于 0.84.4 的 pi、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败；`replay.test.ts` 还把 Codex 的对话改出带密钥形状文字的提示、压缩失败与 `session/prompt` 错误，检查进入会话前已脱敏。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。
 
-`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误，并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥。
+`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误（`answeredBy` 让回复说另一个模型回答了它：Responses 的 `model`、Gemini 的 `modelVersion`；不写时是请求点名的模型。`lingerMs` 让流式回复在最后一个事件之后再保持连接这么久，像经过代理或保持连接时那样），并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。第 n 个请求的工具调用 ID 带上 n，所以一轮可以连续调用工具；Anthropic 的思考签名是 `fake-signature-<n>`，Responses 在请求了 `reasoning.encrypted_content` 时给推理项 `fake-encrypted-<n>`，测试据此看出后来的请求带回了哪一次回复的推理（`server.test.ts` 的 `carries … reasoning back through one tool loop`）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥，以及每轮记下的模型与令牌（回复的读法另见 `model-reply.test.ts`）。
 
 `pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
 

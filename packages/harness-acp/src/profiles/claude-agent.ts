@@ -1,4 +1,4 @@
-import type { HarnessProfile, LoginCheck } from './types.ts'
+import type { HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './types.ts'
 
 const DAY_MS = 24 * 60 * 60_000
 
@@ -33,6 +33,27 @@ export function readClaudeStatus(output: string): LoginCheck {
   return { status: loggedIn || elsewhere ? 'authenticated' : 'unauthenticated', ...(expiresAt ? { expiresAt } : {}) }
 }
 
+const record = (value: unknown) =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+
+/**
+ * The adapter reports a call it refused before it ran as a failed update whose `_meta.claudeCode.toolResponse` names why:
+ * `decisionReasonType`, with `decisionReason` or `message` as the reason it shows. `rule` and `mode` are Claude's own
+ * permission rules and modes; `classifier` is the model its auto mode asks. Any other source says nothing Latch can name,
+ * so the call stays an ordinary failure.
+ */
+export function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
+  if (update.sessionUpdate !== 'tool_call_update' || update.status !== 'failed') return undefined
+  const response = record(record(record(update._meta)?.claudeCode)?.toolResponse)
+  const type = response?.decisionReasonType
+  const source = type === 'classifier' ? 'model' : type === 'rule' || type === 'mode' ? 'rule' : undefined
+  if (!source) return undefined
+  const reason = [response!.decisionReason, response!.message].find(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  )
+  return { source, ...(reason ? { reason } : {}) }
+}
+
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
   version: 1,
@@ -43,7 +64,8 @@ export const claudeAgentProfile: HarnessProfile = {
     expectedMode: 'default',
     // Planning sits below Manual: it edits nothing, though its commands may go to Claude's own classifier (notes).
     modeLadder: ['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'],
-    // Claude reports no verdict of its classifier, so a call that ran in `auto` is recorded as run unasked.
+    // Claude reports what its classifier denied (`readDenial`), not what it let run: a call that ran in `auto` is
+    // recorded as run unasked.
     modeTiers: {
       plan: { tier: 'plan', line: '只看和规划，不改文件；命令可能由分类器决定' },
       default: { tier: 'ask', line: '改文件或运行命令前问你；读取不问' },
@@ -83,4 +105,5 @@ export const claudeAgentProfile: HarnessProfile = {
     args: ['--cli', 'auth', 'status', '--json'],
     read: ({ output }) => readClaudeStatus(output),
   },
+  readDenial: readClaudeDenial,
 }

@@ -261,14 +261,15 @@ describe('what the agent pushes about its login', () => {
     await t.turn('echo hi')
     await vi.waitFor(() => expect(harnessLogin(t.record)?.reported).toEqual({ status: 'authenticated', label: 'ChatGPT Plus' }))
     expect(JSON.stringify(harnessLogin(t.record))).not.toContain(EMAIL)
-    // Nothing the bridge keeps on disk holds the account either.
+    await t.bridge.close()
+    expect(harnessLogin(t.record)?.reported).toBeUndefined()
+    // Nothing the bridge kept on disk holds the account either. Read once it is closed: while it runs, a write's
+    // temporary file can be renamed away between listing the folder and reading it.
     const files = await readdir(t.dataDir, { recursive: true })
     for (const name of files) {
       const path = join(t.dataDir, String(name))
       if ((await stat(path)).isFile()) expect(await readFile(path, 'utf8')).not.toContain(EMAIL)
     }
-    await t.bridge.close()
-    expect(harnessLogin(t.record)?.reported).toBeUndefined()
   })
 
   it('takes a push in a launch test instead of running the status command', async () => {

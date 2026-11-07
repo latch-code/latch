@@ -2235,7 +2235,7 @@ describe('ACP permission mode', () => {
         args: [FAKE_ACP_AGENT],
         definitionEnv: fixture.record.env,
         presetId: 'gemini',
-        profileVersion: 1,
+        profileVersion: 2,
         ...launchExtras('gemini'),
       }),
     )
@@ -2276,6 +2276,80 @@ describe('ACP turn mapping', () => {
     expect([...live]).toEqual([replies[0].id])
     expect(detail.liveText).toBe('')
     expect(detail.activity).toBeUndefined()
+  })
+
+  it("drops what Gemini CLI's reply said before it broke off, keeps its ID, and shows the retry as a line", async () => {
+    const fixture = await preset('gemini', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
+      FAKE_ACP_INITIAL_MODE: 'default',
+    })
+    const bridge = await fixture.open()
+    const live: Array<{ id: string; text: string }> = []
+    let sessionId = ''
+    const unsubscribe = bridge.subscribe(id => {
+      if (!sessionId || id !== sessionId) return
+      void bridge.detail(sessionId).then(
+        detail => {
+          if (detail.liveMessageId) live.push({ id: detail.liveMessageId, text: detail.liveText })
+        },
+        () => {},
+      )
+    })
+    cleanups.push(unsubscribe)
+    ;({ sessionId } = await bridge.createTask({ prompt: 'retry 300', requestId: rid() }))
+    const broken = await until(bridge, sessionId, detail => detail.messages.some(message => message.text.includes('中断')))
+    expect(broken.liveText).toBe('')
+    const detail = await settled(bridge, sessionId)
+    expect(detail.messages.map(({ role, text }) => `${role}:${text}`)).toEqual([
+      'user:retry 300',
+      'system:Fake 重试：回复中途中断（SERVER_ERROR），从头重新生成\n第 1 次重试，最多 4 次',
+      'assistant:The answer is four.',
+    ])
+    const [reply] = assistants(detail)
+    expect(reply).toMatchObject({ state: 'completed', reasoning: '**Planning**\n\nA short answer.' })
+    expect(live.some(item => item.text === 'The answer is fo')).toBe(true)
+    expect(new Set(live.map(item => item.id))).toEqual(new Set([reply!.id]))
+
+    // Another harness's `_meta` means nothing to Latch: its chunks read as it sent them.
+    const other = await (await setup()).open()
+    const plain = await other.createTask({ prompt: 'retry', requestId: rid() })
+    const [as] = assistants(await settled(other, plain.sessionId))
+    expect(as).toMatchObject({ text: 'The answer is foThe answer is four.' })
+    expect(as!.reasoning).toContain('[Retry 1/4] SERVER_ERROR.')
+  })
+
+  it('keeps a Gemini CLI retry after the text it cut off, while it waits and when stopped before it asks again', async () => {
+    const fixture = await preset('gemini', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
+      FAKE_ACP_INITIAL_MODE: 'default',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'retry 10000', requestId: rid() })
+    // The retry line came right after this text; Gemini CLI now waits before it asks again.
+    await until(bridge, sessionId, detail => detail.liveText === 'The answer is fo')
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const waiting = await bridge.detail(sessionId)
+    expect(waiting.liveText).toBe('The answer is fo')
+    expect(waiting.messages.map(({ role }) => role)).toEqual(['user'])
+    await bridge.cancel(sessionId)
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('cancelled')
+    expect(detail.messages.map(({ role, text, state }) => `${role}:${text}${state ? `:${state}` : ''}`)).toEqual([
+      'user:retry 10000',
+      'assistant:The answer is fo:cancelled',
+      'system:Fake 重试：SERVER_ERROR\n第 1 次重试，最多 4 次',
+    ])
+
+    // Text after the wait that was not marked as generated again: the reply before it stands, then the retry.
+    const resumed = await bridge.createTask({ prompt: 'retry 0 on', requestId: rid() })
+    expect((await settled(bridge, resumed.sessionId)).messages.map(({ role, text }) => `${role}:${text}`)).toEqual([
+      'user:retry 0 on',
+      'assistant:The answer is fo',
+      'system:Fake 重试：SERVER_ERROR\n第 1 次重试，最多 4 次',
+      'assistant:ur.',
+    ])
   })
 
   it('splits assistant messages on messageId changes and keeps reasoning apart from text', async () => {
@@ -4352,6 +4426,118 @@ describe('Claude Agent and Cursor presets', () => {
     ])
   })
 
+  it('marks what Claude Agent refused before it ran, and records only what its model refused in auto mode', async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'denied', requestId: rid() })
+    const rows = (detail: DriverTaskDetail) =>
+      detail.messages
+        .filter(message => message.role === 'tool')
+        .map(message => [message.id.split(':').at(-1), message.state, message.tool?.blocked, message.tool?.judged])
+    // In Manual nothing is the model's decision: the blocks are marked, nothing is recorded.
+    let detail = await settled(bridge, sessionId)
+    const blocked = {
+      rule: { by: 'Fake', source: 'rule', reason: 'Denied by rule Bash(rm:*)' },
+      mode: { by: 'Fake', source: 'rule', reason: 'dontAsk mode denies tools that require approval' },
+      model: { by: 'Fake', source: 'model', reason: '<b>Downloads and runs a remote script</b>' },
+    }
+    expect(rows(detail)).toEqual([
+      ['call_rule', 'failed', blocked.rule, undefined],
+      ['call_mode', 'failed', blocked.mode, undefined],
+      ['call_model', 'failed', blocked.model, undefined],
+      // A source Latch cannot name stays an ordinary failure.
+      ['call_other', 'failed', undefined, undefined],
+      ['call_ran', 'completed', undefined, undefined],
+    ])
+    expect(fixture.events.filter(event => event.type === 'tool-judged')).toEqual([])
+
+    await bridge.setConfig!(sessionId, 'mode', 'auto')
+    await bridge.prompt(sessionId, 'denied', rid())
+    detail = await settled(bridge, sessionId)
+    const latest = rows(detail).slice(-5)
+    expect(latest).toEqual([
+      ['call_rule', 'failed', blocked.rule, undefined],
+      ['call_mode', 'failed', blocked.mode, undefined],
+      // The result the SDK sends after the refusal does not undo it.
+      ['call_model', 'failed', blocked.model, { by: 'Fake', outcome: 'denied' }],
+      ['call_other', 'failed', undefined, undefined],
+      ['call_ran', 'completed', undefined, { by: 'Fake', outcome: 'unasked' }],
+    ])
+    const ids = detail.messages
+      .filter(message => message.role === 'tool')
+      .slice(-5)
+      .map(message => message.id)
+    const recorded = fixture.events.filter(event => event.type === 'tool-judged')
+    expect(recorded).toEqual([
+      {
+        type: 'tool-judged',
+        sessionId,
+        callHash: sha256Hex(ids[2]!),
+        modeHash: sha256Hex('auto'),
+        kind: 'execute',
+        outcome: 'denied',
+        source: 'agent-report',
+      },
+      expect.objectContaining({ callHash: sha256Hex(ids[4]!), outcome: 'ran-unasked', source: 'no-ask-seen' }),
+    ])
+    // The reason is the agent's text: it stays out of the record.
+    expect(JSON.stringify(recorded)).not.toContain('remote script')
+    // A refusal reported for a call that had started is no refusal: the call ran unasked.
+    await bridge.prompt(sessionId, 'denied late', rid())
+    detail = await settled(bridge, sessionId)
+    expect(rows(detail).at(-1)).toEqual(['call_late', 'failed', undefined, { by: 'Fake', outcome: 'unasked' }])
+    expect(fixture.events.filter(event => event.type === 'tool-judged').at(-1)).toMatchObject({ outcome: 'ran-unasked' })
+    // Marks and verdicts are still there after the Host restarts.
+    await bridge.close()
+    const reopened = await fixture.open()
+    expect(rows(await reopened.detail(sessionId)).slice(-11, -6)).toEqual(latest)
+  })
+
+  it('reads a refusal only from a failed update that names its source', () => {
+    const read = profileFor('claude-agent')!.readDenial!
+    const meta = (toolResponse: unknown) => ({ _meta: { claudeCode: { toolName: 'Bash', toolResponse } } })
+    const update = (fields: Record<string, unknown>) => ({ sessionUpdate: 'tool_call_update', toolCallId: 'c', ...fields })
+    expect(read(update({ status: 'failed', ...meta({ decisionReasonType: 'classifier', decisionReason: 'why' }) }))).toEqual({
+      source: 'model',
+      reason: 'why',
+    })
+    // The adapter shows the SDK's message when the decision gives no reason.
+    expect(read(update({ status: 'failed', ...meta({ decisionReasonType: 'rule', message: 'denied' }) }))).toEqual({
+      source: 'rule',
+      reason: 'denied',
+    })
+    expect(read(update({ status: 'failed', ...meta({ decisionReasonType: 'mode' }) }))).toEqual({ source: 'rule' })
+    // A hook's whole tool response and a progress beat use the same field, never on a failed update.
+    expect(read(update({ ...meta({ decisionReasonType: 'classifier' }) }))).toBeUndefined()
+    expect(read(update({ status: 'in_progress', ...meta({ decisionReasonType: 'classifier' }) }))).toBeUndefined()
+    expect(read({ sessionUpdate: 'tool_call', toolCallId: 'c', status: 'failed', ...meta({ decisionReasonType: 'rule' }) })).toBeUndefined()
+    for (const toolResponse of [{ decisionReasonType: 'hook' }, { decisionReasonType: 3 }, {}, 'classifier', null])
+      expect(read(update({ status: 'failed', ...meta(toolResponse) }))).toBeUndefined()
+    expect(read(update({ status: 'failed' }))).toBeUndefined()
+    // No other preset reads Claude's words.
+    for (const profile of HARNESS_PROFILES.values()) if (profile.presetId !== 'claude-agent') expect(profile.readDenial).toBeUndefined()
+  })
+
+  it("marks a Claude subagent's refused calls, and records its model's in auto mode", async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'auto')
+    await bridge.prompt(sessionId, 'delegate denied', rid())
+    const detail = await settled(bridge, sessionId)
+    const steps = detail.messages.find(message => message.subagent)!.subagent!.steps.filter(step => step.role === 'tool')
+    expect(steps.map(step => [step.id.split(':').at(-1), step.tool?.blocked?.source, step.tool?.judged?.outcome])).toEqual([
+      ['call_1', undefined, 'unasked'],
+      ['call_rule', 'rule', undefined],
+      ['call_mode', 'rule', undefined],
+      ['call_model', 'model', 'denied'],
+    ])
+    expect(fixture.events.filter(event => event.type === 'tool-judged' && event.outcome === 'denied')).toEqual([
+      expect.objectContaining({ callHash: sha256Hex(steps[3]!.id), source: 'agent-report' }),
+    ])
+  })
+
   it('refuses a Claude Agent adapter older than the one its modes were read from', async () => {
     const bridge = await (await preset('claude-agent', { ...CLAUDE, FAKE_ACP_VERSION: '0.50.0' })).open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid() })
@@ -4486,14 +4672,28 @@ describe('sessions on a model service through the gateway', () => {
   function gateway(models: FakeModels) {
     const leases: Array<{ sessionId: string; token: string; closed: boolean }> = []
     let usable = true
+    /** Requests of the next turn taken still under way, as the gateway counts them when a turn ends before its replies. */
+    let open = 0
     const access: ModelGateway = {
       open({ sessionId, route }) {
         const lease = { sessionId, token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`, closed: false }
         leases.push(lease)
+        const mine = () => models.requests.filter(request => request.key === lease.token)
+        let taken = 0
         return {
           baseURL: route.wire === 'responses' ? `${models.origin}/v1` : models.origin,
           token: lease.token,
-          requests: () => models.requests.filter(request => request.key === lease.token).length,
+          requests: () => mine().length,
+          // By the model each request named, as the gateway counts them; what the replies said is the gateway's own test.
+          takeTurn: () => {
+            const fresh = mine().slice(taken)
+            taken += fresh.length
+            const counts = new Map<string, number>()
+            for (const request of fresh) counts.set(request.model ?? '', (counts.get(request.model ?? '') ?? 0) + 1)
+            const models = [...counts].map(([model, requests], index) => ({ model, requests, ...(index === 0 && open ? { open } : {}) }))
+            if (fresh.length) open = 0
+            return { requests: fresh.length, models }
+          },
           models: ['fake-model', 'fake-model-large'],
           active: () => usable && !lease.closed,
           close: () => {
@@ -4507,6 +4707,9 @@ describe('sessions on a model service through the gateway', () => {
       leases,
       revoke() {
         usable = false
+      },
+      leaveOpen(count: number) {
+        open = count
       },
     }
   }
@@ -4571,6 +4774,101 @@ describe('sessions on a model service through the gateway', () => {
 
     await bridge.close()
     expect(lease!.closed).toBe(true)
+  })
+
+  it("points Gemini CLI's helper calls and subagents at the session's model on a gateway route, changing nothing else", async () => {
+    const { fixture, models, stub, route } = await routed('gemini', GEMINI, {
+      providerId: 'gemini-svc',
+      model: 'fake-model',
+      wire: 'gemini',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model helper:web-fetch', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(assistants(detail).at(-1)!.text).toBe('model: from the service')
+    expect(models.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model', key: stub.leases[0]!.token }])
+
+    const [agentEnv] = envOf(await fixture.log())
+    const path = agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!
+    expect((await stat(path)).mode & 0o777).toBe(0o600)
+    const settings = JSON.parse(await readFile(path, 'utf8')) as {
+      modelConfigs: { customOverrides: unknown[] }
+      agents: { overrides: Record<string, unknown> }
+    }
+    const aliases = ['web-fetch', 'web-search', 'loop-detection', 'next-speaker-checker', 'edit-corrector', 'summarizer-default']
+    const compression = ['3-pro', '3-flash', '3.1-flash-lite', '2.5-pro', '2.5-flash', '2.5-flash-lite', 'default']
+    for (const alias of [...aliases, ...compression.map(name => `chat-compression-${name}`)])
+      expect(settings.modelConfigs.customOverrides).toContainEqual({ match: { model: alias }, modelConfig: { model: 'fake-model' } })
+    // Only the model changes: each alias keeps its own generation settings.
+    for (const override of settings.modelConfigs.customOverrides)
+      expect(override).toEqual({ match: expect.anything(), modelConfig: { model: 'fake-model' } })
+    // Its own subagents that pick a fixed model: only the model, too.
+    expect(settings).toMatchObject({
+      agents: {
+        overrides: {
+          codebase_investigator: { modelConfig: { model: 'fake-model' } },
+          cli_help: { modelConfig: { model: 'fake-model' } },
+          browser_agent: { modelConfig: { model: 'fake-model' } },
+        },
+      },
+    })
+    for (const override of Object.values(settings.agents.overrides)) expect(override).toEqual({ modelConfig: { model: 'fake-model' } })
+    expect(Object.keys(settings)).toEqual(['security', 'model', 'modelConfigs', 'agents'])
+  })
+
+  it('records on each turn what went through the gateway, with the chosen model as the service names it, and keeps it', async () => {
+    const { fixture, stub, route } = await routed('gemini', GEMINI, { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
+    const first = await settled(bridge, sessionId)
+    const prompts = () => first.messages.filter(message => message.role === 'user')
+    expect(prompts()[0]!.turn?.routed).toEqual({ requests: 1, chosen: 'fake-model', models: [{ model: 'fake-model', requests: 1 }] })
+    // A turn that sent nothing through Latch has no record of it.
+    await bridge.prompt(sessionId, 'echo two', rid())
+    const second = await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
+    const [, echo] = second.messages.filter(message => message.role === 'user')
+    expect(echo!.turn?.endedAt).toBeDefined()
+    expect(echo!.turn?.routed).toBeUndefined()
+    // A turn that asked for another model of the service counts it under that model.
+    await bridge.prompt(sessionId, 'model as:fake-model-large', rid())
+    const third = await until(bridge, sessionId, item => assistants(item).length === 3 && item.summary.status === 'idle')
+    expect(third.messages.filter(message => message.role === 'user')[2]!.turn?.routed).toEqual({
+      requests: 1,
+      chosen: 'fake-model',
+      models: [{ model: 'fake-model-large', requests: 1 }],
+    })
+    // A request still under way when the turn ended is kept as such.
+    stub.leaveOpen(1)
+    await bridge.prompt(sessionId, 'model four', rid())
+    const fourth = await until(bridge, sessionId, item => assistants(item).length === 4 && item.summary.status === 'idle')
+    const unsettled = fourth.messages.filter(message => message.role === 'user')[3]!.turn?.routed
+    expect(unsettled).toEqual({ requests: 1, chosen: 'fake-model', models: [{ model: 'fake-model', requests: 1, open: 1 }] })
+    await bridge.close()
+    const reopened = await fixture.open()
+    const stored = await reopened.detail(sessionId)
+    const storedPrompts = stored.messages.filter(message => message.role === 'user')
+    expect(storedPrompts[0]!.turn?.routed).toEqual(prompts()[0]!.turn?.routed)
+    expect(storedPrompts[3]!.turn?.routed).toEqual(unsettled)
+    await reopened.close()
+  })
+
+  it("keeps a turn's chosen model within what the store reads back when the agent reports a long model of its own", async () => {
+    const own = 'x'.repeat(250)
+    const { fixture, route } = await routed(
+      'gemini',
+      { ...GEMINI, FAKE_ACP_START_MODEL: own },
+      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model as:fake-model', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    const routedTurn = detail.messages.find(message => message.role === 'user')!.turn?.routed
+    expect(routedTurn).toEqual({ requests: 1, chosen: own.slice(0, 200), models: [{ model: 'fake-model', requests: 1 }] })
+    await bridge.close()
+    const reopened = await fixture.open()
+    const stored = await reopened.detail(sessionId)
+    expect(stored.messages.find(message => message.role === 'user')!.turn?.routed).toEqual(routedTurn)
+    await reopened.close()
   })
 
   it('says a turn that replied without the gateway did not go through Latch, records it, and takes the next turn', async () => {

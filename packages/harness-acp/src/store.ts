@@ -130,6 +130,24 @@ const usage = z.object({
   cacheWriteTokens: z.number().optional(),
   reasoningTokens: z.number().optional(),
 })
+const count = z.number().int().nonnegative()
+const routedTurn = z.object({
+  requests: count,
+  chosen: z.string().max(200).optional(),
+  models: z
+    .array(
+      z.object({
+        model: z.string().max(200),
+        used: z.string().max(200).optional(),
+        requests: count,
+        failed: count.optional(),
+        measured: count.optional(),
+        open: count.optional(),
+        usage: usage.optional(),
+      }),
+    )
+    .max(16),
+})
 const toolDetail = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),
   title: z.string().optional(),
@@ -154,6 +172,7 @@ const toolDetail = z.object({
     })
     .optional(),
   judged: z.object({ by: z.string(), outcome: z.enum(['approved', 'denied', 'none', 'unasked']) }).optional(),
+  blocked: z.object({ by: z.string(), source: z.enum(['model', 'rule']), reason: z.string().optional() }).optional(),
 })
 const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user']), text: z.string() })) })
 // Its steps are messages, and may hold its own subagents.
@@ -194,7 +213,12 @@ const message = z.object({
   providerId: z.string().optional(),
   thinking: z.string().max(200).optional(),
   turn: z
-    .object({ endedAt: z.string().optional(), activeMs: z.number().nonnegative().optional(), waitMs: z.number().nonnegative().optional() })
+    .object({
+      endedAt: z.string().optional(),
+      activeMs: z.number().nonnegative().optional(),
+      waitMs: z.number().nonnegative().optional(),
+      routed: routedTurn.optional(),
+    })
     .optional(),
   turnId: z.string().max(128).optional(),
   subagent: subagent.optional(),

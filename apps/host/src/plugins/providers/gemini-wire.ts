@@ -2,8 +2,10 @@
 // requests go out through the caller's fetch, so the built-in plugin and the Host's service checks share one copy.
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import type { TokenUsage } from '@latch/protocol'
 import type { ModelDelta, ModelMessage, ToolCall } from '@latch/sdk'
 import {
+  MAX_SIGNATURE_CHARS,
   MAX_TOOL_ARGUMENT_CHARS,
   MAX_TOOL_CALLS,
   ProviderError,
@@ -17,7 +19,6 @@ import {
 } from './http.ts'
 
 const MAX_LIST_PAGES = 10
-const MAX_SIGNATURE_CHARS = 1024 * 1024
 /**
  * Google's documented value for a call the model did not make with this history, such as one made by another service.
  * Gemini 3 refuses a model turn whose first call has no signature.
@@ -133,6 +134,23 @@ const usageSchema = z.object({
   candidatesTokenCount: count,
   thoughtsTokenCount: count,
 })
+
+/** A `usageMetadata` as Latch counts tokens: the service counts thoughts apart from the candidates, Latch as output. */
+function tokensOf(usage: z.infer<typeof usageSchema>): TokenUsage {
+  const thoughts = usage.thoughtsTokenCount
+  return {
+    inputTokens: usage.promptTokenCount ?? 0,
+    outputTokens: (usage.candidatesTokenCount ?? 0) + (thoughts ?? 0),
+    ...(usage.cachedContentTokenCount != null ? { cacheReadTokens: usage.cachedContentTokenCount } : {}),
+    ...(thoughts != null ? { reasoningTokens: thoughts } : {}),
+  }
+}
+
+/** The tokens a Gemini `usageMetadata` field reports, or undefined when it is missing or in another shape. */
+export function geminiUsage(value: unknown): TokenUsage | undefined {
+  const usage = usageSchema.safeParse(value)
+  return usage.success ? tokensOf(usage.data) : undefined
+}
 const partSchema = z.object({
   text: z.string().optional(),
   thought: z.boolean().optional(),
@@ -225,17 +243,7 @@ async function* decodeGeminiStream(
     if (!call.name || ids.has(call.id)) throw new ProviderError('工具调用缺少唯一 ID 或名称。', 'invalid-tool-call')
     ids.add(call.id)
   }
-  if (usage) {
-    const thoughts = usage.thoughtsTokenCount
-    yield {
-      type: 'usage',
-      inputTokens: usage.promptTokenCount ?? 0,
-      // Thoughts are output too; the service counts them apart from the candidates.
-      outputTokens: (usage.candidatesTokenCount ?? 0) + (thoughts ?? 0),
-      ...(usage.cachedContentTokenCount != null ? { cacheReadTokens: usage.cachedContentTokenCount } : {}),
-      ...(thoughts != null ? { reasoningTokens: thoughts } : {}),
-    }
-  }
+  if (usage) yield { type: 'usage', ...tokensOf(usage) }
   for (const call of calls) yield { type: 'tool-call', call }
   yield { type: 'finish', reason: calls.length ? 'tool-calls' : 'stop' }
 }

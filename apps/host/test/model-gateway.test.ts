@@ -217,6 +217,78 @@ describe('model gateway', () => {
     expect(await redirected.text()).not.toContain(KEY)
   })
 
+  it('counts per turn the models asked for, what the service said answered and the tokens it reported, never the text', async () => {
+    const fake = await models({
+      replies: [{ text: 'first', reasoning: 'think' }, { text: 'second', answeredBy: 'fake-model-2' }, { text: 'third' }],
+    })
+    const { server } = await gateway({ svc: responses(fake, { models: ['fake-model', 'fake-model-large'] }) })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    expect(lease.takeTurn()).toEqual({ requests: 0, models: [] })
+    expect(await (await ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hi', stream: true })).text()).toContain('first')
+    expect(await (await ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hi', stream: true })).text()).toContain('second')
+    // Not streamed: the whole reply is one document.
+    expect(await (await ask(lease.baseURL, lease.token, { model: 'fake-model-large', input: 'hi' })).json()).toMatchObject({
+      model: 'fake-model-large',
+    })
+    expect((await ask(lease.baseURL, lease.token, { model: 'not-served', input: 'hi' })).status).toBe(403)
+    await fetch(`${lease.baseURL}/models`, { headers: { authorization: `Bearer ${lease.token}` } })
+    const turn = lease.takeTurn()
+    expect(turn).toEqual({
+      requests: 4,
+      models: [
+        {
+          model: 'fake-model',
+          used: 'fake-model-2',
+          requests: 2,
+          measured: 2,
+          usage: { inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, reasoningTokens: 2 },
+        },
+        {
+          model: 'fake-model-large',
+          used: 'fake-model-large',
+          requests: 1,
+          measured: 1,
+          usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, reasoningTokens: 0 },
+        },
+        { model: 'not-served', requests: 1, failed: 1 },
+      ],
+    })
+    expect(JSON.stringify(turn)).not.toMatch(/first|second|think|hi/u)
+    // The next turn counts afresh; the total does not.
+    expect(lease.takeTurn()).toEqual({ requests: 0, models: [] })
+    expect(lease.requests()).toBe(4)
+  })
+
+  it('counts Gemini replies, streamed and not, with thoughts as output, and a failed reply as failed', async () => {
+    const fake = await models({
+      replies: [{ text: 'gemini says', reasoning: 'hmm' }, { text: 'once' }, { error: { status: 429, message: 'slow down' } }],
+    })
+    const { server } = await gateway({ svc: { ...responses(fake), kind: 'gemini', baseURL: fake.origin } })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake, 'gemini') })
+    const call = (method: string) =>
+      fetch(`${lease.baseURL}/v1beta/models/fake-model:${method}`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': lease.token, 'content-type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }),
+      })
+    expect((await (await call('streamGenerateContent?alt=sse')).text()).length).toBeGreaterThan(0)
+    expect(await (await call('generateContent')).json()).toMatchObject({ modelVersion: 'fake-model' })
+    expect((await call('generateContent')).status).toBe(429)
+    expect(lease.takeTurn()).toEqual({
+      requests: 3,
+      models: [
+        {
+          model: 'fake-model',
+          used: 'fake-model',
+          requests: 3,
+          failed: 1,
+          measured: 2,
+          usage: { inputTokens: 20, outputTokens: 12, reasoningTokens: 2 },
+        },
+      ],
+    })
+  })
+
   it('stops the request to the service when the harness gives up on it', async () => {
     let aborted!: () => void
     const gone = new Promise<void>(resolve => (aborted = resolve))
@@ -247,6 +319,94 @@ describe('model gateway', () => {
     await reader.read()
     controller.abort()
     await gone
+    // A reply cut short tells nothing of its tokens: it counts as not completed. Taking the turn before it settles would
+    // leave the settling to a turn already taken, so this waits for the gateway to see the end.
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(lease.takeTurn().models).toEqual([{ model: 'fake-model', requests: 1, failed: 1 }])
+  })
+
+  /**
+   * A Responses service that sends a reply's events and then holds the stream open, as a proxy or keep-alive may after
+   * the reply is complete; `completed: false` holds it before the reply completes.
+   */
+  async function lingering(options: { completed: boolean }) {
+    let closed!: () => void
+    const gone = new Promise<void>(resolve => (closed = resolve))
+    const service = createServer((request, response) => {
+      const event = (type: string, data: Record<string, unknown>) =>
+        response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`)
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      event('response.created', { response: { model: 'fake-model-2', status: 'in_progress', usage: null } })
+      event('response.output_text.delta', { delta: 'secret text' })
+      if (options.completed)
+        event('response.completed', {
+          response: { model: 'fake-model-2', status: 'completed', usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 } },
+        })
+      request.on('close', () => closed())
+    })
+    await new Promise<void>(resolve => service.listen(0, '127.0.0.1', resolve))
+    cleanups.push(
+      () =>
+        new Promise(resolve => {
+          service.closeAllConnections()
+          service.close(() => resolve())
+        }),
+    )
+    const fake = { origin: `http://127.0.0.1:${(service.address() as AddressInfo).port}` } as FakeModels
+    const { server } = await gateway({ svc: responses(fake) })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    const controller = new AbortController()
+    const response = await fetch(`${lease.baseURL}/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'fake-model', input: 'hi', stream: true }),
+      signal: controller.signal,
+    })
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    /** Reads the reply as a harness does, until `text` has arrived. */
+    const readUntil = async (text: string) => {
+      let seen = ''
+      while (!seen.includes(text)) {
+        const next = await reader.read()
+        if (next.done) throw new Error(`the reply ended before ${text}`)
+        seen += decoder.decode(next.value, { stream: true })
+      }
+    }
+    return { lease, readUntil, stop: () => controller.abort(), gone }
+  }
+
+  it("counts a reply's model and tokens as soon as the service says it completed, before the stream ends", async () => {
+    const { lease, readUntil, stop } = await lingering({ completed: true })
+    // A harness ends its turn on the completed event, while the service has not closed the stream yet.
+    await readUntil('response.completed')
+    const turn = lease.takeTurn()
+    expect(turn).toEqual({
+      requests: 1,
+      models: [{ model: 'fake-model', used: 'fake-model-2', requests: 1, measured: 1, usage: { inputTokens: 7, outputTokens: 3 } }],
+    })
+    expect(JSON.stringify(turn)).not.toContain('secret')
+    stop()
+    // Counted once: the next turn starts empty.
+    expect(lease.takeTurn()).toEqual({ requests: 0, models: [] })
+  })
+
+  it('does not count a reply as unfinished when the harness stops reading once the service said it completed', async () => {
+    const { lease, readUntil, stop, gone } = await lingering({ completed: true })
+    await readUntil('response.completed')
+    stop()
+    await gone
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(lease.takeTurn().models).toEqual([
+      { model: 'fake-model', used: 'fake-model-2', requests: 1, measured: 1, usage: { inputTokens: 7, outputTokens: 3 } },
+    ])
+  })
+
+  it('counts a request still under way when its turn is taken as open, not as a reply without tokens', async () => {
+    const { lease, readUntil, stop } = await lingering({ completed: false })
+    await readUntil('secret text')
+    expect(lease.takeTurn().models).toEqual([{ model: 'fake-model', used: 'fake-model-2', requests: 1, open: 1 }])
+    stop()
   })
 })
 
@@ -355,6 +515,23 @@ describe('sessions of a harness with its own models on a saved service', () => {
     expect(refused.messages.filter(message => message.role === 'system').map(message => message.text)).toEqual([])
     expect(refused.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'Gemini' })
     expect((await audit(t.dataDir)).filter(record => record.action === 'task.model.bypassed')).toEqual([])
+
+    // Gemini CLI's own helper calls ask for a fixed model by alias; the session's settings point them at its model.
+    await phone.request(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'model helper:web-fetch', requestId: randomUUID() },
+    })
+    await vi.waitFor(
+      async () => {
+        const turn = await phone.json<TaskDetail>(`tasks/${sessionId}`)
+        expect(turn.messages.filter(message => message.role === 'assistant')).toHaveLength(3)
+        expect(turn.summary.status).toBe('idle')
+      },
+      { timeout: 10_000 },
+    )
+    const helped = await phone.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(helped.messages.findLast(message => message.role === 'assistant')?.text).toBe('model: via the gateway')
+    expect(fake.requests.at(-1)).toMatchObject({ wire: 'gemini', model: 'fake-model', key: KEY })
 
     // A turn that answers without the service is said and recorded; the session goes on.
     await phone.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'echo plain', requestId: randomUUID() } })

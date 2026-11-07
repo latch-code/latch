@@ -85,6 +85,22 @@ interface HarnessExtensions {
   readonly notifications?: Readonly<Record<string, (params: unknown, sessionKey: string) => SessionUpdate | undefined>>
 }
 
+/**
+ * A chunk in which the harness reports retrying a model call, rather than the model writing. `attempt`: it waits and
+ * asks the service again. `interrupted`: the reply broke off and is being generated again. `restart`: the first text of
+ * the reply generated again.
+ */
+export type RetryReport = { kind: 'attempt'; attempt: number; of: number; reason: string } | { kind: 'interrupted' } | { kind: 'restart' }
+
+/**
+ * A call the harness says it refused itself before it ran, without asking: its model reviewed it (`model`) or its own rules
+ * or modes did (`rule`). `reason`: the harness's own words for why, untrusted.
+ */
+export interface ToolDenial {
+  source: 'model' | 'rule'
+  reason?: string
+}
+
 export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
 /** A status command's verdict. `expiresAt`: when a stored login ends, as an ISO date, where the program says. */
@@ -204,6 +220,10 @@ export interface HarnessProfile {
    * way. Returns the update to read; it never adds what the harness did not send.
    */
   normalizeUpdate?(update: SessionUpdate): SessionUpdate
+  /** Reads a chunk that reports a retry. Absent, or undefined for a chunk: it is the model's text or thinking. */
+  readRetry?(update: SessionUpdate): RetryReport | undefined
+  /** Reads a tool call update that reports the harness refusing the call itself. Absent, or undefined: it says no such thing. */
+  readDenial?(update: SessionUpdate): ToolDenial | undefined
   readonly extensions?: HarnessExtensions
   readonly gateway?: ProfileGateway
   /**

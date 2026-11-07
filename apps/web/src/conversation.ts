@@ -1,4 +1,14 @@
-import type { Approval, Message, TaskDetail, TaskStatus, TokenUsage, ToolDecision, ToolKind } from '@latch/protocol'
+import {
+  modelIdKey,
+  type Approval,
+  type Message,
+  type RoutedModel,
+  type TaskDetail,
+  type TaskStatus,
+  type TokenUsage,
+  type ToolDecision,
+  type ToolKind,
+} from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
 import { DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
@@ -118,6 +128,47 @@ export const turnText = (turn: Turn): string =>
 /** Usage the turn's steps reported, summed; undefined when none did (an agent that reports usage per session). */
 export function turnUsage(turn: Turn): TokenUsage | undefined {
   return sumUsage(turn.replies.flatMap(message => (message.role === 'assistant' && message.usage ? [message.usage] : [])))
+}
+
+/** What a turn on a model service sent through Latch, as the gateway counted it, read for the author line and footer. */
+export interface TurnRoute {
+  requests: number
+  models: RoutedModel[]
+  /** The model the session had chosen for the turn. */
+  chosen?: string
+  /** The model that answered most of the turn's requests for the chosen model, as the service named it. */
+  answered?: string
+  /** `answered` is another model than the chosen one, not just a dated version of it. */
+  differs: boolean
+  /** Tokens the replies reported, summed; a part stays only when every model's sum has it. */
+  usage?: TokenUsage
+  /** Replies that arrived whole without reporting tokens, so `usage` leaves them out. */
+  unmeasured: number
+  /** Requests still under way when the turn ended, so `usage` leaves them out too. */
+  open: number
+}
+
+export function turnRoute(turn: Turn): TurnRoute | undefined {
+  const routed = turn.user?.turn?.routed
+  if (!routed?.requests) return undefined
+  const { chosen, models } = routed
+  // The chosen model's own entry, else the one asked for most: a turn that never asked for the chosen model used another.
+  const main =
+    (chosen ? models.find(entry => modelIdKey(entry.model) === modelIdKey(chosen)) : undefined)
+    ?? models.toSorted((a, b) => b.requests - a.requests)[0]
+  const answered = main ? (main.used ?? main.model) : undefined
+  const usages = models.flatMap(entry => (entry.usage ? [entry.usage] : []))
+  const total = (count: (entry: RoutedModel) => number) => models.reduce((sum, entry) => sum + count(entry), 0)
+  return {
+    requests: routed.requests,
+    models,
+    ...(chosen ? { chosen } : {}),
+    ...(answered ? { answered } : {}),
+    differs: !!chosen && !!answered && modelIdKey(chosen) !== modelIdKey(answered),
+    ...(usages.length ? { usage: sumUsage(usages) } : {}),
+    unmeasured: total(entry => Math.max(0, entry.requests - (entry.failed ?? 0) - (entry.measured ?? 0) - (entry.open ?? 0))),
+    open: total(entry => entry.open ?? 0),
+  }
 }
 
 /** The model the turn's first step used, for the source row. */
@@ -291,7 +342,21 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
 }
 
 /** The row is the harness's own model reviewing a request, not a call of its own. */
-export const isReview = (tool: Message['tool']) => tool?.judged !== undefined && tool.judged.outcome !== 'unasked'
+export const isReview = (tool: Message['tool']) =>
+  tool?.judged !== undefined && tool.judged.outcome !== 'unasked' && tool.blocked === undefined
+
+/** A call the harness refused itself before it ran: it reports the call failed, but nothing ran and nothing broke. */
+export const isBlocked = (message: Pick<Message, 'state' | 'tool'>) => message.state === 'failed' && message.tool?.blocked !== undefined
+
+/** The line under a blocked call: who stopped it and, in the harness's own words, why. */
+export function blockedLine(block: NonNullable<NonNullable<Message['tool']>['blocked']>): string {
+  const reason = block.reason
+    ?.split('\n')
+    .map(part => part.trim())
+    .find(Boolean)
+  const cut = reason && reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
+  return block.source === 'model' ? JUDGED_COPY.blockedByModel(block.by, cut) : JUDGED_COPY.blockedByRule(block.by, cut)
+}
 
 /**
  * The words an approval card and an export name a call by: a titled tool's title and object (「写入文件 notes/plan.md」),
@@ -359,17 +424,21 @@ export function ranDespite(message: Pick<Message, 'state' | 'tool' | 'text' | 's
 
 /** The diffs a call applied as far as the reports go: none while it waits or when its approval kept it from running. */
 export function appliedDiffs(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>) {
-  if (message.state === 'awaiting-approval' || message.state === 'queued' || unrunOutcome(message)) return []
+  if (message.state === 'awaiting-approval' || message.state === 'queued' || unrunOutcome(message) || isBlocked(message)) return []
   return message.tool?.diffs ?? []
 }
 
-/** A tool row's state as shown: a call its approval kept from running reads by how the approval ended. */
-export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expired'
+/**
+ * A tool row's state as shown: a call its approval kept from running reads by how the approval ended, and one the harness
+ * refused itself reads 拦下.
+ */
+export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expired' | 'blocked'
 
 export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>): ShownToolState {
   const state = message.state ?? 'completed'
   // A review that came to 拦下 or to no verdict reports itself failed; it is a verdict, not a failure.
   if (isReview(message.tool) && state === 'failed') return 'completed'
+  if (isBlocked(message)) return 'blocked'
   return unrunOutcome(message) ?? state
 }
 
@@ -408,7 +477,8 @@ export function decisionLine(decision: ToolDecision, now: number): { text: strin
  */
 export function toolDuration(message: Message, now: number): { ms: number; live: boolean } | undefined {
   if (message.state === 'awaiting-approval' || message.state === 'queued') return undefined
-  if (message.startedAt === undefined && (message.tool?.decision !== undefined || unrunOutcome(message))) return undefined
+  if (message.startedAt === undefined && (message.tool?.decision !== undefined || unrunOutcome(message) || isBlocked(message)))
+    return undefined
   const start = parseTime(message.startedAt) ?? parseTime(message.createdAt)
   if (start === undefined) return undefined
   const end = parseTime(message.completedAt)
@@ -510,21 +580,24 @@ export function foldWords(turn: Turn): string {
   const failed = count('failed')
   const rejected = count('rejected')
   // What the Harness's own model stopped happened without the person, so the fold says it, its subagents' too.
-  const denied = deniedJudgements(turn.replies)
+  const denied = countCalls(turn.replies, tool => tool.judged?.outcome === 'denied' || tool.blocked?.source === 'model')
+  const ruled = countCalls(turn.replies, tool => tool.blocked?.source === 'rule')
   return [
     `已工作${spent ? ` ${spent}` : ''}`,
     ...(failed ? [`${failed} 步失败`] : []),
     ...(rejected ? [`${rejected} 步被拒绝`] : []),
     ...(denied ? [JUDGED_COPY.deniedCount(denied)] : []),
+    ...(ruled ? [JUDGED_COPY.ruleBlockedCount(ruled)] : []),
   ].join(' · ')
 }
 
-function deniedJudgements(messages: readonly Message[]): number {
+/** The calls, its subagents' too, that match. */
+function countCalls(messages: readonly Message[], matches: (tool: NonNullable<Message['tool']>) => boolean): number {
   return messages.reduce(
     (sum, message) =>
       message.role !== 'tool'
         ? sum
-        : sum + (message.tool?.judged?.outcome === 'denied' ? 1 : 0) + deniedJudgements(message.subagent?.steps ?? []),
+        : sum + (message.tool && matches(message.tool) ? 1 : 0) + countCalls(message.subagent?.steps ?? [], matches),
     0,
   )
 }
@@ -573,8 +646,9 @@ export function sideEffects(turn: Turn): SideEffects {
     const kind = message.tool?.kind
     if (kind !== undefined && HARMLESS.has(kind)) continue
     if (message.state === 'queued' || message.state === 'awaiting-approval' || message.state === undefined) continue
-    // A call its approval kept from running changed nothing; one that started anyway counts like any other.
-    if (unrunOutcome(message)) continue
+    // A call its approval kept from running changed nothing, nor did one the harness refused; one that started anyway
+    // counts like any other.
+    if (unrunOutcome(message) || (isBlocked(message) && message.startedAt === undefined)) continue
     const unknown = message.state === 'running' || (message.tool?.output ?? message.text).includes('TOOL_OUTCOME_UNKNOWN')
     if (unknown) effects.unknown++
     else if (message.state === 'cancelled' && (message.tool?.output ?? message.text).includes('TOOL_NOT_STARTED')) continue

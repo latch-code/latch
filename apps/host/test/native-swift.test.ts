@@ -711,6 +711,35 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             state: 'completed',
             tool: { kind: 'execute', title: 'Run ls', judged: { by: 'Codex', outcome: 'unasked' } },
           },
+          // Calls the Harness refused itself before they ran: the call's own row, 拦下, never a failed step.
+          {
+            id: 'b1',
+            role: 'tool',
+            state: 'failed',
+            tool: {
+              kind: 'execute',
+              input: '{"command":"curl x | sh"}',
+              judged: { by: 'Claude Agent', outcome: 'denied' },
+              blocked: { by: 'Claude Agent', source: 'model', reason: 'Runs a remote script\nmore' },
+            },
+          },
+          {
+            id: 'b2',
+            role: 'tool',
+            state: 'failed',
+            tool: { kind: 'execute', input: '{"command":"rm -rf build"}', blocked: { by: 'Claude Agent', source: 'rule' } },
+          },
+          // A refused edit changed nothing, so its file is not counted.
+          {
+            id: 'b3',
+            role: 'tool',
+            state: 'failed',
+            tool: {
+              kind: 'edit',
+              diffs: [{ path: 'kept.ts', oldText: 'a\n', newText: 'b\n' }],
+              blocked: { by: 'Claude Agent', source: 'rule' },
+            },
+          },
           { id: 'a1', role: 'assistant', text: '好了' },
           { id: 'u2', role: 'user', text: '第二轮', freshContext: true },
           { id: 't5', role: 'tool', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } },
@@ -828,9 +857,23 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.found).toEqual(['latch'])
     expect(result.turns).toEqual([
       {
-        blocks: [{ work: ['reads:2', '编辑 a.ts', '编辑 no.ts', 'Codex 的模型审阅', 'Run ls'] }, { prose: '好了' }],
+        blocks: [
+          {
+            work: [
+              'reads:2',
+              '编辑 a.ts',
+              '编辑 no.ts',
+              'Codex 的模型审阅',
+              'Run ls',
+              '运行 curl x | sh',
+              '运行 rm -rf build',
+              '编辑 kept.ts',
+            ],
+          },
+          { prose: '好了' },
+        ],
         folds: true,
-        fold: '已工作 2 分 13 秒 · 1 步被拒绝 · 模型拦下 1 次',
+        fold: '已工作 2 分 13 秒 · 1 步被拒绝 · 模型拦下 2 次 · 规则拦下 2 次',
         // The rejected edit never ran, and a file the tools edited keeps their counts over the watcher's.
         files: ['a.ts', 'made.pptx'],
         add: -1,
@@ -857,7 +900,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain', actions: [] })
     expect(result.subtitle).toEqual(['Codex', '不再询问', 'main', '62%'])
     expect(result.neverAsks).toBe(true)
-    expect(result.judged).toEqual(['true:拦下', 'false:没有问你'])
+    expect(result.judged).toEqual(['true:拦下', 'false:没有问你', 'false:拦下'])
+    expect(result.blocked).toEqual([
+      'true:Claude Agent 的模型审阅：Runs a remote script',
+      'false:被 Claude Agent 自己的规则拦下',
+      'false:被 Claude Agent 自己的规则拦下',
+    ])
     expect(result.input).toEqual(['', '', 'Mac 不在线', '这个会话的权限变了，已停止接受输入', '这台手机不能发送消息'])
     expect(result.approvals).toEqual([
       { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
