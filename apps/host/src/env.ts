@@ -3,6 +3,7 @@ export const HOST_ENV_NAMES = [
   'DATA_DIR',
   'WORKSPACE',
   'AGENTS_DIR',
+  'WORKTREES_DIR',
   'PORT',
   'BASE_URL',
   'MODEL',

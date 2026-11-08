@@ -101,6 +101,13 @@ export interface ToolDenial {
   reason?: string
 }
 
+/** A subagent as a harness marks the work it sends on another session. `parentSessionId`: the session that started it. */
+export interface ProjectedChild {
+  sessionId: string
+  parentSessionId: string
+  title?: string
+}
+
 export type LoginStatus = 'authenticated' | 'unauthenticated' | 'unknown'
 
 /** A status command's verdict. `expiresAt`: when a stored login ends, as an ISO date, where the program says. */
@@ -224,6 +231,17 @@ export interface HarnessProfile {
   readRetry?(update: SessionUpdate): RetryReport | undefined
   /** Reads a tool call update that reports the harness refusing the call itself. Absent, or undefined: it says no such thing. */
   readDenial?(update: SessionUpdate): ToolDenial | undefined
+  /**
+   * For a harness that sends a subagent's updates and requests on the session that started it, each marked as the
+   * subagent's, instead of on the subagent's own session: the subagent, and the update or asked call as it would arrive
+   * on the subagent's own session. Absent, or undefined: it is the session's own.
+   */
+  readProjectedChild?(value: Record<string, unknown>): { child: ProjectedChild; value: Record<string, unknown> } | undefined
+  /**
+   * Reads an update of a session's own call that says how a subagent the call started ended, for a harness that reports
+   * no state of its subagents otherwise. Undefined: it says no such thing, or the subagent goes on.
+   */
+  readChildEnd?(update: SessionUpdate): { sessionId: string; outcome: 'done' | 'failed' } | undefined
   readonly extensions?: HarnessExtensions
   readonly gateway?: ProfileGateway
   /**

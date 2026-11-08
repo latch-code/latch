@@ -1,5 +1,5 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Folder, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Ellipsis, Folder, FolderGit2, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
 import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -80,6 +80,7 @@ function ProjectCrumb({
   after?: ReactNode
 }) {
   const context = contextWords(usage)
+  const worktree = summary.worktree && (summary.branch ?? summary.worktree.branch)
   return (
     <span className="topbar-crumb">
       <Popover
@@ -93,11 +94,20 @@ function ProjectCrumb({
             type="button"
             className="topbar-crumb-button"
             title={project ?? '会话的文件夹'}
-            aria-label={project ? `项目：${project}` : '会话的文件夹'}>
-            <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，工作树 · ${escapeSecurityText(worktree)}` : ''}`}>
+            {worktree ? (
+              <FolderGit2 size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            ) : (
+              <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            )}
             {project && (
               <span className="topbar-crumb-text">
                 <VisibleText text={project} />
+              </span>
+            )}
+            {worktree && (
+              <span className="topbar-crumb-worktree">
+                工作树 · <VisibleText text={worktree} />
               </span>
             )}
           </button>
@@ -154,7 +164,7 @@ function PhoneTopBar({
   const title = summary ? summary.title || '未命名会话' : '新会话'
   const state = summary && sessionPill(summary, cancelling)
   const where = summary && source
-  const branch = summary?.branch
+  const branch = summary?.worktree ? `工作树 · ${summary.branch ?? summary.worktree.branch}` : summary?.branch
   return (
     <header className="topbar" data-phone="">
       {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeft} onClick={onBack} />}

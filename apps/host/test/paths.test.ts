@@ -98,6 +98,13 @@ describe('resolveLatchPaths', () => {
     expect(resolveLatchPaths({ ...base, env: { LATCH_AGENTS_DIR: '/agents' } }).agentsDir).toBe('/agents')
   })
 
+  it('puts worktrees beside the start directory unless LATCH_WORKTREES_DIR names a place', () => {
+    const base = { cwd: '/w', home: '/home/me', platform: 'linux' as const, exists: none }
+    expect(resolveLatchPaths({ ...base, env: {} }).worktreesDir).toBe('/home/me/Latch/worktrees')
+    expect(resolveLatchPaths({ ...base, env: {}, workspace: '/tmp/run/start' }).worktreesDir).toBe('/tmp/run/worktrees')
+    expect(resolveLatchPaths({ ...base, env: { LATCH_WORKTREES_DIR: 'trees' } }).worktreesDir).toBe('/w/trees')
+  })
+
   it("never picks a start directory inside Latch's code: a legacy workspace there gives way to ~/Latch/workspace", () => {
     const base = { home: '/home/me', platform: 'linux' as const, codeRoot: '/src/harness-link' }
     const inRepo = (path: string) => path.startsWith('/src/harness-link/.runtime')

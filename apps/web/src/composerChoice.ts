@@ -373,6 +373,16 @@ export function needsProject(catalog: HostCatalog | undefined, choice: ComposerC
 }
 
 /**
+ * The project a new session could start in a new worktree of: a saved project with one folder whose Git branch the Host
+ * read, for a session that reads and writes files and is not a fork (a fork starts where its source left off).
+ */
+export function worktreeProject(catalog: HostCatalog | undefined, choice: ComposerChoice, forking: boolean): WorkspaceInfo | undefined {
+  if (!catalog || forking || choice.mode !== 'agent' || choice.workspaceId === undefined || choice.workspaceId === 'default') return
+  const project = catalog.workspaces.find(item => item.id === choice.workspaceId)
+  return project && !project.unavailable && project.branch !== undefined && (project.folders?.length ?? 1) === 1 ? project : undefined
+}
+
+/**
  * Nothing on this computer can run a session yet, so the page says what to install. Only where a definition can be saved
  * and a service added; a service that is saved but held back has its own way out.
  */

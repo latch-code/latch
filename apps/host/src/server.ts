@@ -174,6 +174,7 @@ import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleList
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
+import { Worktrees, type Worktree } from './worktrees.ts'
 import { writeProjectContext } from './project-context.ts'
 import { AgentProbes } from './agent-probes.ts'
 import type { HostInfo } from './host-state.ts'
@@ -282,6 +283,8 @@ const createTaskSchema = promptSchema.extend({
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
+  /** Start in a new Git worktree of the project's folder, on a branch of its own. */
+  worktree: z.literal(true).optional(),
   customAgentId: z
     .string()
     .regex(/^agt_[a-f0-9-]{36}$/u)
@@ -495,6 +498,8 @@ export interface ServerOptions {
   /** Tests; default per-user runtime dir. */
   runtimeParent?: string
   agentsDir?: string
+  /** Where sessions' Git worktrees go; default beside the start directory (`LATCH_WORKTREES_DIR` replaces it). */
+  worktreesDir?: string
   /** Dependency injection; default `createPresenceBackend(...)`. */
   presence?: PresenceBackend
   /** Process-local extra 'host:port' entries. */
@@ -972,6 +977,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
   const agentsDir = resolve(
     options.agentsDir ?? resolveLatchPaths({ dataDir, workspace: workspaceRoot, env: process.env, cwd: process.cwd() }).agentsDir,
   )
+  // Beside the real start directory by default: a worktree's location may not pass through a symlink.
+  const worktreesDir = resolve(
+    options.worktreesDir ?? resolveLatchPaths({ dataDir, workspace: realWorkspace, env: process.env, cwd: process.cwd() }).worktreesDir,
+  )
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0
   const authDir = join(dataDir, 'auth')
 
@@ -1130,6 +1139,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     await ownFolders.start()
     const makeOwnFolders = options.sessionFolders === true
+    const worktrees = new Worktrees({ root: worktreesDir, dataDir: realDataDir, avoid: [codeRoot, runtime.runtimeDir, agentsDir], log })
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
@@ -3058,7 +3068,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /**
      * Directories a session may start or continue in: the drivers' own second check against the Host's list. Sessions'
      * own folders lie directly inside the start directory, so listing them grants nothing the start directory does not;
-     * they come last, so a project made from one starts its sessions under the project's spelling of the path.
+     * they come last, so a project made from one starts its sessions under the project's spelling of the path. A
+     * worktree the Host made for a session is listed while its project is usable, and while its start is under way.
      */
     function usablePrimaries(): string[] {
       return [
@@ -3068,6 +3079,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .workspaces.filter(record => lastSeenUsable(record))
           .flatMap(record => record.folders.map(folder => folder.path)),
         ...ownFolders.paths(hub?.sessionFolders() ?? []),
+        ...(hub?.worktrees() ?? []).filter(entry => lastSeenUsable(savedProject(entry.workspaceId))).map(entry => entry.path),
+        ...worktrees.starting(),
       ]
     }
 
@@ -3131,6 +3144,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function assertSessionWorkspace(sessionId: string): Promise<void> {
       const task = await sessionTask(sessionId)
       if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
+      // A worktree session needs its project, and the worktree still Latch's and this session's, where it started.
+      const worktree = task && hub!.worktreeOf(task.id)
+      if (task && worktree) {
+        const record = savedProject(task.workspaceId)
+        if (!record || task.cwd !== worktree.path || (await worktrees.sessionOf(worktree.path)) !== task.id) throw workspaceChanged()
+        const state = await projectState(record)
+        if (state.failure) throw workspaceDisabled(record, state)
+        return
+      }
       if (!task || task.workspaceId === 'default') return
       if (task.workspaceId !== undefined) {
         const record = savedProject(task.workspaceId)
@@ -3879,6 +3901,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           { action: 'task.cancelled', actor: actorOf(caller), target: sessionId, detail: { sessionId, ...(runId ? { runId } : {}) } },
           res,
         )
+        // Before the cancel, which can settle the session and let the queue send its next item.
+        await promptQueues.stopped(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
         const cancelled = await hub!.cancel(sessionId, runId === undefined ? undefined : { runId })
         const stopped = cancelled === true || (cancelled === undefined && (!before || ACTIVE_STATUSES.has(before.status)))
         outcome = stopped ? 'stopped' : 'ended'
@@ -4315,6 +4339,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       let input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
+      const folderRequest = `${caller.device.id}:${input.requestId}`
+      let made: Worktree | undefined
+      let startedIn = false
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
         const customAgentId = input.customAgentId
@@ -4402,8 +4430,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           !chosen && fork?.source.workspaceId === 'default' && fork.source.sessionFolder && mode === 'agent' ? fork.source.cwd : undefined
         if (forkFolder && !(await ownFolders.verify(forkFolder))) throw workspaceChanged()
         const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder
-        // A request's folder is its device's: another device naming the same request ID gets one of its own.
-        const folderRequest = `${caller.device.id}:${input.requestId}`
+        if (input.worktree) {
+          if (!chosen) throw new AppError(400, 'worktree-project', '新工作树要从一个项目开始，请先选项目。')
+          if (fork) throw new AppError(400, 'worktree-fork', '分叉的会话在原来的项目文件夹里开始，不能新建工作树。')
+          if (mode !== 'agent') throw new AppError(400, 'worktree-mode', '只对话的会话不读写文件，不需要工作树。')
+          if (chosen.folders.length !== 1)
+            throw new AppError(409, 'worktree-project-folders', '这个项目有多个文件夹，新工作树只用于只有一个文件夹的项目。')
+        }
         // The session starts in the project's primary folder. Only what the client chose reaches the driver as `cwd`;
         // without a choice the start directory stays the driver's default.
         if (input.fileRefs?.length && (!harness.capabilities.tools.fileMentions || mode === 'chat' || ownFolder))
@@ -4454,6 +4487,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
           throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        let startRefs = fileRefs
+        if (input.worktree && chosen) {
+          made = await worktrees.create({ source: chosen.folders[0].path, requestId: folderRequest })
+          // The session reads them in the worktree, which has the committed files and none of the uncommitted ones.
+          if (fileRefs.length)
+            startRefs = await checkedFileMentions(
+              fileRefs.map(ref => ({ root: 'default', path: ref.path })),
+              [{ id: 'default', path: made.path }],
+              guardedPaths,
+              home,
+            )
+          recheck(caller, 'run')
+        }
         const task: HubCreateInput = {
           prompt,
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
@@ -4462,7 +4508,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(fork && harness.capabilities.fork === 'native' && fork.source.harnessId === harnessId
             ? { fork: { taskId: fork.context.taskId, upToMessageId: fork.context.upToMessageId, prefixLength: fork.context.prefixLength } }
             : {}),
-          ...(fileRefs.length ? { fileRefs } : {}),
+          ...(startRefs.length ? { fileRefs: startRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
           requestId: input.requestId,
           ...(agentContext ? { agentContext } : {}),
@@ -4472,13 +4518,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.model ? { model: input.model } : {}),
           ...(modelRoute ? { modelRoute } : {}),
           ...(input.config?.length ? { config: input.config } : {}),
-          ...(chosen
-            ? { cwd: chosen.folders[0].path }
-            : forkFolder
-              ? { cwd: forkFolder, sessionFolder: basename(forkFolder) }
-              : input.workspaceId === 'default'
-                ? { cwd: workspaceRoot }
-                : {}),
+          ...(made
+            ? {
+                cwd: made.path,
+                worktree: { path: made.path, branch: made.branch, ...(made.unfiltered ? { unfiltered: made.unfiltered } : {}) },
+              }
+            : chosen
+              ? { cwd: chosen.folders[0].path }
+              : forkFolder
+                ? { cwd: forkFolder, sessionFolder: basename(forkFolder) }
+                : input.workspaceId === 'default'
+                  ? { cwd: workspaceRoot }
+                  : {}),
         }
         const checkStart = () => {
           recheck(caller, 'run')
@@ -4494,6 +4545,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             privateAccess(caller, fork.source)
           }
         }
+        /** The session created in the worktree made for this start owns it from now on. */
+        const createInWorktree = async (operation: () => Promise<{ sessionId: string }>) => {
+          const created = await operation()
+          startedIn = true
+          if (made)
+            await worktrees
+              .bind(made.path, folderRequest, created.sessionId)
+              .catch(error =>
+                log(`会话 ${created.sessionId} 的工作树标记写入失败：${error instanceof Error ? error.message : String(error)}`),
+              )
+          return created
+        }
         if (hub!.levelOf(harnessId) === 'L1') {
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
@@ -4503,10 +4566,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             return
           }
           const folders =
-            task.cwd === undefined || forkFolder ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
+            task.cwd === undefined || forkFolder || made ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
           checkStart()
           await respondCreated(
-            await acceptCreate(() => hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task)),
+            await acceptCreate(() =>
+              createInWorktree(() => hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task)),
+            ),
           )
           return
         }
@@ -4515,10 +4580,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (workspaceId === 'default' && defaultFlags.codeRoot)
           throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
         const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
-        const cwd = await realpath(own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
+        // A worktree's project configuration is read there, now that it exists: it is what the session will run with.
+        const cwd = await realpath(made?.path ?? own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
         // As for L1; the audit below counts the ones the driver says it passes to the agent.
         const folders =
-          task.cwd === undefined || own || forkFolder
+          task.cwd === undefined || own || forkFolder || made
             ? undefined
             : chosen
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
@@ -4593,12 +4659,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                   folderRequest,
                   checkStart,
                 )
-              : hub!.createTask({
-                  ...task,
-                  ...(folders ? { folders } : {}),
-                  expectedLaunchHash: launchHash,
-                  ...(firstStart ? { firstStart } : {}),
-                }),
+              : createInWorktree(() =>
+                  hub!.createTask({
+                    ...task,
+                    ...(folders ? { folders } : {}),
+                    expectedLaunchHash: launchHash,
+                    ...(firstStart ? { firstStart } : {}),
+                  }),
+                ),
           )
         } catch (error) {
           auditFailed(intent, caller)
@@ -4625,6 +4693,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
         await noteAgentStarted(caller, harnessId)
         await respondCreated(created)
+      }).catch(async (error: unknown) => {
+        // A start that definitively did not happen leaves no worktree behind, unless something was already done in it.
+        if (made && !startedIn && error instanceof AppError && error.status >= 400 && error.status < 500 && error.status !== 408)
+          await worktrees.discard(made, folderRequest).catch(() => false)
+        throw error
       })
     }
 
@@ -5908,6 +5981,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (path === '/link/api/workspaces' && method === 'GET') {
         requireScope(caller, 'view')
         json(res, { workspaces: await projectInfos() })
+        return
+      }
+      const worktreeMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)\/worktree$/)
+      if (worktreeMatch && method === 'GET') {
+        requireScope(caller, 'run')
+        const record = requireProject(safeDecode(worktreeMatch[1]!))
+        if (record.folders.length !== 1)
+          throw new AppError(409, 'worktree-project-folders', '这个项目有多个文件夹，新工作树只用于只有一个文件夹的项目。')
+        json(res, await worktrees.base(record.folders[0].path))
         return
       }
       if (path === '/link/api/policy') {

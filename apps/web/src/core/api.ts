@@ -309,6 +309,8 @@ export interface PendingSubmission {
   attachmentIds?: string[]
   /** A new session's picks from the Harness's own options. */
   config?: Array<{ configId: string; value: string }>
+  /** A new session starts in a new worktree of its project. */
+  worktree?: true
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -338,6 +340,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.queue !== undefined && item.queue !== true) return null
     if (item.steer !== undefined && item.steer !== true) return null
     if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
+    if (item.worktree !== undefined && (item.worktree !== true || item.sessionId !== undefined)) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     if (
@@ -374,6 +377,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
       ...(item.freshContext === true ? { freshContext: true as const } : {}),
+      ...(item.worktree === true ? { worktree: true as const } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
@@ -424,6 +428,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
       ...(submission.config?.length ? { config: submission.config } : {}),
+      ...(submission.worktree ? { worktree: true } : {}),
     },
   }
 }

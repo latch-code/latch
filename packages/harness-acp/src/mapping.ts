@@ -120,6 +120,17 @@ export function settleTool(state: ToolState, at: string): boolean {
   return true
 }
 
+/**
+ * Marks a call asked about after its turn ended once the request is answered, as `settleTool` marks the calls a turn
+ * left: allowed, it may run with no turn to report how it went, so its result is unknown; otherwise it never starts. A
+ * report the agent sends later still wins.
+ */
+export function settleAskedTool(state: ToolState, allowed: boolean): boolean {
+  if (state.final || state.status === 'completed' || state.status === 'failed') return false
+  state.final = allowed ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
+  return true
+}
+
 const TOOL_KINDS = new Set<string>(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other'])
 export function toolKind(kind: string | undefined): ToolKind | undefined {
   if (!kind) return undefined

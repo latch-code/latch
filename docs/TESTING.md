@@ -121,6 +121,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 路径与项目目录：数据目录解析顺序、运行目录、项目登记规则、受保护目录、macOS 路径别名、私有文件检查；从每个 workspace 项目内都得到仓库根作为程序目录，在每个项目目录中启动的进程里 `latchCodeRoot()` 也返回仓库根 | `paths.test.ts` |
 | 项目生命周期：旧会话与只接收主文件夹的 Driver 换序后继续、无预览插件的全部目录确认、手工不一致状态的保留、移除或替换与新会话的竞争、策略收紧不等待慢启动、自有目录跨重启幂等；默认项目名称长度与离线实际启动上下文 | `project-regressions.test.ts`、`projects.test.ts`、`cli.test.ts`；旧桌面端文件夹协议门禁见 `shell-folders.test.ts` |
 | 会话自己的文件夹：名称、0700、从不沿用已存在的条目、同一请求得到同一个文件夹、没建成会话时删除空文件夹、只认启动目录中的真实目录 | `session-folders.test.ts`；在真实 Host 中的新建、只对话与所有者指定的启动目录、重启后继续、链接替换、远程策略、L3 确认中的工作目录与「存为项目」见 `server.test.ts` 的 `sessions in folders of their own` |
+| 新建工作树：钩子、fsmonitor、filter（仓库、include 与全局配置，含全局 `includeIf "onbranch:latch/**"` 只在新分支上带进的驱动）与 LFS 从不运行，继承的 `GIT_*` 变量不起作用，每种拒绝都不留下分支或工作树，任一步失败都回滚，`.worktreeinclude` 的复制规则，只认带标记的工作树（换分支或分离 HEAD 后仍认），重启后的重试找回同一个，没开始的会话只在 Git 判断没有改动时移除，不在 Latch 自己的目录周围新建；会话在工作树里开始：启动指纹取工作树里的配置，引用文件在工作树里核对，确定失败不留下工作树与分支，标记不再属于会话时之后的轮次被拒绝 | `worktrees.test.ts`、`worktree-sessions.test.ts`；会话记录见 `hub.test.ts` 的 `keeps the worktree a session was started in`；共用的 Git 运行器见 `changes-git.test.ts`；页面见 `e2e/worktrees.e2e.ts` |
 | Standard 工具的风险分级（R0/R1/R2，按所选项目文件夹判断） | `risk.test.ts`；运行时按分级询问见 `runtime.test.ts` 的 `Host risk classification` |
 | 日志脱敏，以及文本是否含密钥（`containsSecret`） | `redact.test.ts` |
 | 会话文件：引用解析、文件夹边界、文件分类与句柄、本机动作、预览范围与审计；桌面端原生动作与内容代理；回复里的路径标记 | `files.test.ts`、`file-content.test.ts`、`desktop-files.test.ts`、`desktop-proxy.test.ts`、`file-reference.test.ts`、`file-references.test.ts`、`message-content.test.ts`；浏览器 `file-chips.e2e.ts`，Electron `desktop-files.e2e.ts` |
@@ -137,7 +138,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `latch/plugin-sdk` 与 `harness-sdk`（再导出 `@latch/sdk` 的类型子路径）在外部 TypeScript 项目中通过检查（不开启 `allowImportingTsExtensions`），以改名前的包名安装时也通过 | `plugin-sdk.test.ts` |
 | 多 Harness 路由、审批路由、权限级别、会话元数据 | `hub.test.ts`、`harness-host.test.ts` |
 | 会话生命周期事件：运行开始先于第一条提示到达模型或 Agent，带会话的项目与文件夹；运行结束每次一个，只在真实结算之后（请求取消不算）；归档与删除各一次，带项目；停止时先于关闭 Driver 与监听入口，未结束的运行不再有运行结束事件；等待中的运行可被取消，Host 停止时不会再发出提示；没有监听器时不读 Driver，读取有合并，迟到的读取不影响新一轮；监听器抛错、拒绝或超时不影响运行与停止；订阅者拿到的对象只能监听 | `session-lifecycle.test.ts` |
-| ACP：环境白名单与私有临时目录、启动指纹、项目配置、权限模式读回与漂移、映射、审批与选项过滤、取消、崩溃与恢复、进程上限 | `acp.test.ts`（另见 [HARNESSES.md](HARNESSES.md) 的「测试」） |
+| ACP：环境白名单与私有临时目录、启动指纹、项目配置、权限模式读回与漂移、映射、审批与选项过滤、取消、崩溃与恢复、进程上限；子 Agent 的审批（含一轮结束后才到或仍在等的请求、OpenCode 2.x 发在启动它的会话上的更新与请求） | `acp.test.ts`、`subagents.test.ts`、`replay.test.ts`（`opencode/2.x/subagent_*`）（另见 [HARNESSES.md](HARNESSES.md) 的「测试」） |
 | Harness 中途重试（Gemini CLI）：断开前的文字丢掉、回复沿用同一个 ID、重试是一行系统消息而不进思考、这一行在被它打断的文字之后（等待中停止时也是）、刷新后只有一份，其他 Agent 的 `_meta` 不解释 | `acp.test.ts`、`replay.test.ts` 的 `gemini/retry`；页面见 `e2e/streaming-ui.e2e.ts` |
 | 经 Latch 使用模型服务：网关只认回环 `Host`、不带 `Origin`、认得的凭据与绑定的模型，入站认证头不转发，错误去掉密钥，不跟随重定向，Agent 断开即中止上游，进程结束或服务设置变化即失效；Host 重算一对能否转发、审计路由；Codex 的 `providers/set` 与 Gemini CLI 的变量、凭据换新进程、路由会话只列服务的模型、Gemini CLI 的辅助调用与子 Agent 指到会话的模型、被拒绝的请求不算绕过、绕过的提示 | `apps/host/test/model-gateway.test.ts`、`acp.test.ts` 的 `sessions on a model service through the gateway`；页面与真实 Host 见 `e2e/model-gateway.e2e.ts`（Codex 草稿、会话与 Gemini CLI 会话的模型菜单） |
 | 工作区工具（含 `folder` 参数与 `list_folders`）、受保护路径、写入预览与路径检查 | `workspace.test.ts` |
@@ -502,7 +503,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 `e2e/file-preview.e2e.ts` 另通过真实 Host 在三种宽度验证 Markdown 预览/源码切换、相对链接、已授权项目图片、秘密图片拒绝、公式、图表和共享代码高亮，以及更新文本后的行位置保留。测试图片必须先在会话中有引用；浏览器默认的 `work` 范围不能借 Markdown 枚举其他文件。
 
-排队：apps/host/test/prompt-queues.test.ts 覆盖 FIFO、容量、回执、编辑、未知结果、重启、审计与权限失败；prompt-queue-api.test.ts 经 HTTP 覆盖手机 L1、Stop、撤回权限、手机禁止给 L3 输入而仍可移除，以及审计失败仍移除。native.test.ts 验证队列不改绑新的手机窗口。两种 Driver 的重启用例核对 queuedAt/requestId/runOutcome。apps/web/test/prompt-queue.test.ts 检查旧 Host 降级、双槽与只读托盘；e2e/prompt-queue.e2e.ts 在三宽度与浅深模式验证编辑、FIFO、暂停、手动继续、移除和失去权限的实际渲染。
+排队：apps/host/test/prompt-queues.test.ts 覆盖 FIFO、容量、回执、编辑、未知结果、重启、审计与权限失败；prompt-queue-api.test.ts 经 HTTP 覆盖手机 L1、Stop（含只答复上一轮之后子 Agent 请求的 Stop 也暂停）、撤回权限、手机禁止给 L3 输入而仍可移除，以及审计失败仍移除。native.test.ts 验证队列不改绑新的手机窗口。两种 Driver 的重启用例核对 queuedAt/requestId/runOutcome。apps/web/test/prompt-queue.test.ts 检查旧 Host 降级、双槽与只读托盘；e2e/prompt-queue.e2e.ts 在三宽度与浅深模式验证编辑、FIFO、暂停、手动继续、移除和失去权限的实际渲染。
 
 问答：`apps/host/test/questions.test.ts` 覆盖题包与答案校验、首答竞争、请求绑定、审计失败、晚到撤权、取消与重启时的精确工具输出恢复；`questions-api.test.ts` 经真实 HTTP 验证远程 L1 回答、只读拒绝与模型继续。`tests/runtime.test.ts` 验证等待暂停计时及持久化结果先于确认和下一次模型调用。`e2e/questions.e2e.ts` 在桌面、平板、手机深色模式验证多题、其他答案、设备草稿重载与回答后的继续执行。
 

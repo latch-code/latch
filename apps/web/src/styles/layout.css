@@ -326,6 +326,18 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The worktree a session runs in, after its project: muted, and the first to give way. */
+.topbar-crumb:has(.topbar-crumb-worktree) {
+  max-width: 440px;
+}
+.topbar-crumb-worktree {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 4;
+}
 .crumb-body {
   display: grid;
   gap: var(--sp-8);

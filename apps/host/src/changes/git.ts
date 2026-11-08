@@ -1,7 +1,8 @@
 // Read-only Git for the 未提交 and 与 main 比较 scopes. Git only resolves commits, lists a commit's tree and the index,
 // and returns blobs: it never compares the work tree itself, because that runs the clean filter a repository's
 // .git/config may name for any file (`git diff` does even with --no-ext-diff --no-textconv). The Host hashes the work
-// tree's files the way Git does and compares them with the tree.
+// tree's files the way Git does and compares them with the tree. The same runner, with more options, makes worktrees
+// (`../worktrees.ts`).
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { accessSync, constants, statSync } from 'node:fs'
@@ -81,6 +82,8 @@ export interface IndexListing {
 export interface GitReaderOptions {
   binary: string
   timeoutMs?: number
+  /** Whose global Git configuration applies; the Host user's home by default. */
+  home?: string
 }
 
 /** Runs fixed Git commands in a work tree whose metadata `readGitLayout` checked, with a scrubbed environment. */
@@ -90,19 +93,34 @@ export class GitReader {
     this.timeoutMs = options.timeoutMs ?? 10_000
   }
 
-  run(layout: GitLayout, args: readonly string[], options: { input?: string; maxBytes: number }): Promise<Buffer> {
+  /**
+   * `env` adds variables to the fixed environment, never the Host's own; `exitCodes` lists the statuses that count as
+   * success (0 alone by default).
+   */
+  run(
+    layout: GitLayout,
+    args: readonly string[],
+    options: {
+      input?: string
+      maxBytes: number
+      env?: Readonly<Record<string, string>>
+      exitCodes?: readonly number[]
+      timeoutMs?: number
+    },
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.options.binary, [...HARDENED, ...args], {
         cwd: layout.root,
         env: {
           PATH: SAFE_PATH,
-          HOME: homedir(),
-          // The checked metadata, so neither discovery nor core.worktree can point Git elsewhere.
-          GIT_DIR: layout.gitdir,
-          GIT_WORK_TREE: layout.root,
+          HOME: this.options.home ?? homedir(),
           GIT_OPTIONAL_LOCKS: '0',
           GIT_NO_LAZY_FETCH: '1',
           GIT_TERMINAL_PROMPT: '0',
+          ...options.env,
+          // The checked metadata, so neither discovery nor core.worktree can point Git elsewhere.
+          GIT_DIR: layout.gitdir,
+          GIT_WORK_TREE: layout.root,
         },
         stdio: ['pipe', 'pipe', 'ignore'],
         // Its own process group, so a stop also ends any process Git started.
@@ -127,14 +145,14 @@ export class GitReader {
         }
         child.stdout.destroy()
       }
-      const timer = setTimeout(() => stop(new GitError('timeout')), this.timeoutMs)
+      const timer = setTimeout(() => stop(new GitError('timeout')), options.timeoutMs ?? this.timeoutMs)
       child.stdout.on('data', (chunk: Buffer) => {
         bytes += chunk.length
         if (bytes > options.maxBytes) stop(new GitError('output-limit'))
         else chunks.push(chunk)
       })
       child.on('error', () => settle(new GitError('failed')))
-      child.on('close', code => settle(code === 0 ? undefined : new GitError('failed')))
+      child.on('close', code => settle(code !== null && (options.exitCodes ?? [0]).includes(code) ? undefined : new GitError('failed')))
       child.stdin.on('error', () => {})
       child.stdin.end(options.input ?? '')
     })

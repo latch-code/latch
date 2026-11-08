@@ -1,7 +1,7 @@
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronLeft, Ellipsis, FolderPlus, Pin, Plus, Search, Settings, Smartphone, SquarePen, X } from 'lucide-react'
-import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
+import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Pin, Plus, Search, Settings, Smartphone, SquarePen, X } from 'lucide-react'
+import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
 import { currentShell } from '../core/shell.ts'
@@ -119,6 +119,7 @@ const SessionItem = memo(function SessionItem({
   const sections = menu(task)
   const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
   const said = statusLabel(status, task.live)
+  const worktree = task.worktree ? `工作树 · ${escapeSecurityText(task.branch ?? task.worktree.branch)}` : undefined
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <div
@@ -129,12 +130,13 @@ const SessionItem = memo(function SessionItem({
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
-          title={oneLine ? [engine, task.branch, time].filter(Boolean).join(' · ') : undefined}
+          title={oneLine ? [engine, worktree ?? task.branch, time].filter(Boolean).join(' · ') : worktree}
           onClick={() => {
             onSelect(task.id)
           }}>
           <span className="session-line">
             {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
+            {worktree && <FolderGit2 className="session-worktree" size={12} strokeWidth={ICON_STROKE[12]} aria-label={worktree} />}
             <span className="session-title">{title}</span>
             <SessionStatus
               className="session-status"

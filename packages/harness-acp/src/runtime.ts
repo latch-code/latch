@@ -74,6 +74,7 @@ import {
   thinkingName,
   planEntries,
   pretty,
+  settleAskedTool,
   settleTool,
   settleToolMessage,
   TOOL_TEXT_LIMIT,
@@ -94,7 +95,7 @@ import {
   type LaunchRoute,
   type ProfileSelection,
 } from './permission.ts'
-import type { AcpPermissionProfile, ExtensionRequest, RetryReport, ToolDenial } from './profiles/index.ts'
+import type { AcpPermissionProfile, ExtensionRequest, ProjectedChild, RetryReport, ToolDenial } from './profiles/index.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   AUTH_STATUS_METHOD,
@@ -263,6 +264,8 @@ interface Permission {
   tool: ToolState
   /** Asked by this subagent: its call is a step of the subagent's row. */
   child?: Child
+  /** Asked after its turn ended: the session's status once nothing waits. */
+  statusAfter?: TaskStatus
   /** Everything the agent offered; only `visible` options can be chosen. */
   options: PermissionOption[]
   visible: PermissionOption[]
@@ -1378,10 +1381,19 @@ export class AgentRuntime implements Bridge {
 
   async cancel(sessionId: string, options: CancelOptions = {}): Promise<boolean> {
     await this.ready()
-    this.task(sessionId)
+    const task = this.task(sessionId)
     const run = this.runs.get(sessionId)
+    if (!run) {
+      // Subagents that went on after the turn: their open requests are what stopping can still answer.
+      const asked = [...this.permissions.values()].filter(permission => permission.taskId === sessionId && permission.statusAfter)
+      if (!asked.length || (options.runId !== undefined && task.summary.runId !== options.runId)) return false
+      for (const permission of asked) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
+      await this.flush().catch(() => {})
+      if (this.storageFailure) throw new AppError(503, 'storage-unavailable', '执行已停止，但取消状态未能持久化')
+      return true
+    }
     // Checked before anything awaits, so a turn that starts after this point is never the one cancelled.
-    if (!run || (options.runId !== undefined && run.id !== options.runId)) return false
+    if (options.runId !== undefined && run.id !== options.runId) return false
     this.requestCancel(run, true)
     // Acknowledged only once the agent settled the turn, or its process was stopped.
     await run.done
@@ -2488,8 +2500,14 @@ export class AgentRuntime implements Bridge {
 
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
     clearTimeout(run.graceTimer)
+    // A subagent that outlives a turn that ended by itself still waits on its answer; any other end answers everything.
+    const kept: Permission[] = []
     for (const permission of [...this.permissions.values()]) {
-      if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
+      if (permission.taskId !== run.taskId) continue
+      if (status === 'idle' && permission.child && permission.live === run.live && this.lives.get(run.taskId) === permission.live) {
+        run.clock.closeWait(permission.approval.id)
+        kept.push(permission)
+      } else this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
     }
     const task = this.state.tasks[run.taskId]
     let outputMessageId: string | undefined
@@ -2510,7 +2528,8 @@ export class AgentRuntime implements Bridge {
         if (child.taskId !== run.taskId) continue
         const row = this.childRow(task, child)
         if (!row) continue
-        for (const state of child.tools.values()) if (settleTool(state, at)) upsertStep(row, toolMessage(state))
+        for (const state of child.tools.values())
+          if (!kept.some(permission => permission.tool === state) && settleTool(state, at)) upsertStep(row, toolMessage(state))
       }
       for (const item of task.messages) settleSubagent(item, at)
       // The limit on rows counts only subagents that may still report, so a long session keeps showing new ones.
@@ -2524,6 +2543,8 @@ export class AgentRuntime implements Bridge {
       if (status !== 'idle' && run.steers && (run.lastOutputAt ?? 0) <= run.steeredAt!)
         notes.push(`本轮在结束前收到了追加的内容；${this.agent.name} 可能没有读到，需要的话请重新发送。`)
       task.summary.status = status
+      for (const permission of kept) permission.statusAfter = status
+      if (kept.length) task.summary.status = 'waiting-approval'
       // What ran when the process died took effect or not, nobody can say: automations treat it as unknown, not as a failure to retry.
       task.summary.runOutcome =
         status === 'idle'
@@ -3224,7 +3245,11 @@ export class AgentRuntime implements Bridge {
   }
 
   private busy(key: string): boolean {
-    return this.runs.has(key) || this.attaching.has(key) || this.forgetting.has(key) || this.spawning.has(key) || this.holds.has(key)
+    if (this.runs.has(key) || this.attaching.has(key) || this.forgetting.has(key) || this.spawning.has(key) || this.holds.has(key))
+      return true
+    // A request that came after its turn waits on the person, and stopping the process would answer it.
+    for (const permission of this.permissions.values()) if (permission.taskId === key) return true
+    return false
   }
 
   /**
@@ -3459,6 +3484,13 @@ export class AgentRuntime implements Bridge {
       if (child) this.onChildUpdate(live, child, envelope.data.update)
       return
     }
+    const projected = this.selection.profile?.readProjectedChild?.(envelope.data.update)
+    if (projected && !live.sessions.has(projected.child.sessionId)) {
+      const child = this.projectedChild(live, task, envelope.data.sessionId, projected.child)
+      if (child && typeof projected.value.sessionUpdate === 'string')
+        this.onChildUpdate(live, child, projected.value as { sessionUpdate: string })
+      return
+    }
     const update = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
@@ -3524,6 +3556,8 @@ export class AgentRuntime implements Bridge {
         const parsed = toolFields.safeParse(update)
         if (parsed.success)
           this.applyTool(task, run, parsed.data, update.sessionUpdate === 'tool_call', this.selection.profile?.readDenial?.(update))
+        const ended = this.selection.profile?.readChildEnd?.(update)
+        if (ended) this.endChild(live, task, run, ended)
         return
       }
       case 'plan': {
@@ -3976,6 +4010,50 @@ export class AgentRuntime implements Bridge {
     if (run) run.lastOutputAt = this.clock()
   }
 
+  /**
+   * A subagent whose work arrives on the session's own session, marked as its (`readProjectedChild`): announced when first
+   * seen, as working when that is during a turn, since it sends work. One whose parent never reported is shown where the
+   * session's own subagents are.
+   */
+  private projectedChild(live: Live, task: AcpTask, acpSessionId: string, ref: ProjectedChild): Child | undefined {
+    const candidate = this.runs.get(task.summary.id)
+    const run = candidate?.sent && candidate.live === live ? candidate : undefined
+    const known = live.children.get(ref.sessionId)
+    if (known) {
+      if (known.taskId !== task.summary.id) return undefined
+      if (ref.title !== undefined && subagentTitle(ref.title, this.redact) !== known.title)
+        this.announceChild(live, task, run, known.parent, { sessionId: ref.sessionId, title: ref.title })
+      return known
+    }
+    const parent = ref.parentSessionId === acpSessionId ? undefined : live.children.get(ref.parentSessionId)
+    if (parent && parent.taskId !== task.summary.id) return undefined
+    this.announceChild(live, task, run, parent, {
+      sessionId: ref.sessionId,
+      ...(ref.title !== undefined ? { title: ref.title } : {}),
+      ...(run ? { state: { state: 'running' } } : {}),
+    })
+    return live.children.get(ref.sessionId)
+  }
+
+  /**
+   * How a subagent the session started ended, as the session's own call reports it. A call that failed while the person
+   * stopped the turn failed because of the stop.
+   */
+  private endChild(live: Live, task: AcpTask, run: Run | undefined, ended: { sessionId: string; outcome: 'done' | 'failed' }): void {
+    const child = live.children.get(ended.sessionId)
+    if (!child || child.parent || child.taskId !== task.summary.id) return
+    const cancelled = ended.outcome === 'failed' && this.runs.get(task.summary.id)?.cancelRequested === true
+    this.announceChild(live, task, run, undefined, {
+      sessionId: ended.sessionId,
+      state:
+        ended.outcome === 'done'
+          ? { state: 'idle', stopReason: 'end_turn' }
+          : cancelled
+            ? { state: 'idle', stopReason: 'cancelled' }
+            : { state: 'idle', error: 'failed' },
+    })
+  }
+
   /** The row of a subagent, found through the subagents that started it. */
   private childRow(task: AcpTask, child: Child): Message | undefined {
     if (!child.messageId) return undefined
@@ -4033,21 +4111,37 @@ export class AgentRuntime implements Bridge {
       this.noteUnrecognized(live, 'session/request_permission', params)
       return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
     }
-    // A subagent asks on its own session; the session that started it is where a person answers.
-    const child = live.sessions.has(parsed.data.sessionId) ? undefined : live.children.get(parsed.data.sessionId)
+    // A subagent asks on its own session, or on the session that started it marked as its; that session is where a
+    // person answers.
+    let child = live.sessions.has(parsed.data.sessionId) ? undefined : live.children.get(parsed.data.sessionId)
     const taskId = child?.taskId ?? live.sessions.get(parsed.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
+    let toolCall = parsed.data.toolCall
+    if (!child && task) {
+      const asked: unknown = Reflect.get(params as object, 'toolCall')
+      const projected = isObject(asked) ? this.selection.profile?.readProjectedChild?.(asked as Record<string, unknown>) : undefined
+      const own = projected && !live.sessions.has(projected.child.sessionId) ? toolFields.safeParse(projected.value) : undefined
+      if (projected && own?.success) {
+        child = this.projectedChild(live, task, parsed.data.sessionId, projected.child)
+        if (child) toolCall = own.data
+      }
+    }
     const run = taskId ? this.runs.get(taskId) : undefined
     const row = child && task ? this.childRow(task, child) : undefined
     const filtered = filterPermissionOptions(this.profile, parsed.data.options)
     if (task?.acp.drift) return Promise.resolve(this.rejection(filtered.visible))
-    if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed) return Promise.resolve(CANCELLED_OUTCOME)
-    run.lastEventAt = this.clock()
-    if (run.segment) this.settleSegment(run, task, 'completed')
+    // A subagent that goes on after its turn ended still asks: the person answers it as during a turn.
+    const afterTurn = !!child && !run && this.lives.get(child.taskId) === live && !live.wire.stopping
+    if (!taskId || !task || this.closed || (!afterTurn && (!run?.sent || run.live !== live || run.cancelRequested)))
+      return Promise.resolve(CANCELLED_OUTCOME)
+    if (run) {
+      run.lastEventAt = this.clock()
+      if (run.segment) this.settleSegment(run, task, 'completed')
+    }
     const now = this.now()
     // Past the limits a subagent's call has no step, but the request needs none.
-    const state = child ? childCall(child, row, parsed.data.toolCall, now) : this.toolState(task, parsed.data.toolCall.toolCallId)
-    if (!child) mergeTool(state, parsed.data.toolCall, now)
+    const state = child ? childCall(child, row, toolCall, now) : this.toolState(task, toolCall.toolCallId)
+    if (!child) mergeTool(state, toolCall, now)
     const record = (item: Message) => {
       if (!child) this.upsert(task, item)
       else if (row) upsertStep(row, item)
@@ -4088,6 +4182,7 @@ export class AgentRuntime implements Bridge {
       advisory: true,
     }
     return new Promise((resolve, reject) => {
+      const statusAfter = run ? undefined : this.statusAfterTurn(task)
       this.permissions.set(approval.id, {
         approval,
         live,
@@ -4100,12 +4195,15 @@ export class AgentRuntime implements Bridge {
         answer: resolve,
         fail: reject,
         ...(child ? { child } : {}),
+        ...(statusAfter ? { statusAfter } : {}),
       })
       record(toolMessage(state))
       task.summary.status = 'waiting-approval'
-      run.clock.openWait(approval.id)
-      run.lastOutputAt = this.clock()
-      this.phase(run, 'approval', approval.toolName, run.clock.live().runWaitingSince)
+      if (run) {
+        run.clock.openWait(approval.id)
+        run.lastOutputAt = this.clock()
+        this.phase(run, 'approval', approval.toolName, run.clock.live().runWaitingSince)
+      } else this.holdIdle(live)
       this.touch(task)
       this.mark()
       this.notify(taskId)
@@ -4122,6 +4220,7 @@ export class AgentRuntime implements Bridge {
     permission.claimed = true
     permission.tool.awaiting = Math.max(0, permission.tool.awaiting - 1)
     if (decision && permission.tool.decision?.outcome !== 'allowed') permission.tool.decision = decision
+    if (permission.statusAfter && !this.runs.has(permission.taskId)) settleAskedTool(permission.tool, decision?.outcome === 'allowed')
     if (result instanceof Error) permission.fail(result)
     else permission.answer(result)
     const task = this.state.tasks[permission.taskId]
@@ -4132,13 +4231,22 @@ export class AgentRuntime implements Bridge {
       else if (!permission.child) this.upsert(task, toolMessage(permission.tool))
       const run = this.runs.get(permission.taskId)
       if (!this.openApprovals(permission.taskId).length) {
-        if (task.summary.status === 'waiting-approval') task.summary.status = 'running'
+        if (task.summary.status === 'waiting-approval') task.summary.status = run ? 'running' : (permission.statusAfter ?? 'idle')
         if (run && !run.cancelRequested) this.working(run)
+        if (!run) this.scheduleIdle(permission.taskId)
       }
       this.touch(task)
       this.mark()
     }
     this.notify(permission.taskId)
+  }
+
+  /** What a session that is waiting only on requests that came after its turn returns to once they are answered. */
+  private statusAfterTurn(task: AcpTask): TaskStatus {
+    if (task.summary.status !== 'waiting-approval') return task.summary.status
+    for (const permission of this.permissions.values())
+      if (permission.taskId === task.summary.id && permission.statusAfter) return permission.statusAfter
+    return 'idle'
   }
 
   /** What a new session of this definition offered, for drafts; the definition it ran is the one it is kept under. */

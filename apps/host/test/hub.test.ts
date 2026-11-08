@@ -423,6 +423,41 @@ describe('harness hub routing', () => {
     expect(second.bridge.decide).toHaveBeenCalledOnce()
   })
 
+  it('keeps the worktree a session was started in, shows its branch, and never takes one from the driver or passes it on', async () => {
+    const dataDir = await directory()
+    const { hub: value } = await hub(dataDir)
+    const claimed = { ...summary('ext-claims'), worktree: { branch: 'latch/20260101-0000' } }
+    const outside = external([summary('ext-1'), claimed])
+    await value.attach(driver('ext'), mount(outside.bridge))
+    outside.bridge.createTask.mockResolvedValueOnce({ sessionId: 'ext-1' })
+    const worktree = { path: '/w/worktrees/api-0123abcd/20261108-0a9f', branch: 'latch/20261108-0a9f' }
+    const input = { prompt: 'x', requestId: randomUUID(), cwd: worktree.path }
+    await value.createTask({ ...input, harnessId: 'ext', workspaceId: 'api', worktree })
+    expect(outside.bridge.createTask).toHaveBeenCalledExactlyOnceWith(input)
+    const listed = async (hub: HarnessHub) => Object.fromEntries((await hub.listTasks()).map(task => [task.id, task.worktree ?? null]))
+    expect(await listed(value)).toEqual({ 'ext-1': { branch: 'latch/20261108-0a9f' }, 'ext-claims': null })
+    const stored = JSON.parse(await readFile(join(dataDir, 'sessions-meta.json'), 'utf8'))
+    expect(stored.sessions).toContainEqual({ id: 'ext-1', workspaceId: 'api', worktree })
+    await value.close()
+    const { hub: reopened } = await hub(dataDir)
+    await reopened.attach(driver('ext'), mount(external([summary('ext-1')]).bridge))
+    expect(await listed(reopened)).toEqual({ 'ext-1': { branch: 'latch/20261108-0a9f' } })
+    expect(reopened.worktreeOf('ext-1')).toEqual(worktree)
+    expect(reopened.worktrees()).toEqual([{ sessionId: 'ext-1', path: worktree.path, workspaceId: 'api' }])
+  })
+
+  it('says how many files a worktree left unfiltered', async () => {
+    const dataDir = await directory()
+    const { hub: value } = await hub(dataDir)
+    const outside = external([summary('ext-1')])
+    await value.attach(driver('ext'), mount(outside.bridge))
+    outside.bridge.createTask.mockResolvedValueOnce({ sessionId: 'ext-1' })
+    const worktree = { path: '/w/worktrees/api-0123abcd/20261108-0a9f', branch: 'latch/20261108-0a9f', unfiltered: 3 }
+    await value.createTask({ prompt: 'x', requestId: randomUUID(), cwd: worktree.path, harnessId: 'ext', workspaceId: 'api', worktree })
+    expect((await value.listTasks()).find(task => task.id === 'ext-1')?.worktree).toEqual({ branch: worktree.branch, unfiltered: 3 })
+    await value.close()
+  })
+
   it('keeps the first claim on a session ID collision and logs it once', async () => {
     const first = external([summary('same')])
     const second = external([summary('same'), summary('only-second')])

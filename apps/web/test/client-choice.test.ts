@@ -18,6 +18,7 @@ import {
   engineEntries,
   noProjectLine,
   needsProject,
+  worktreeProject,
   nothingInstalled,
   presetsToAdd,
   projectFor,
@@ -164,6 +165,20 @@ describe('composer choice', () => {
     // 不选项目 is remembered; anything else leaves the question open.
     expect(resolveChoice(hostChosen, { workspaceId: 'default', projectSkipped: true }).projectSkipped).toBe(true)
     expect(resolveChoice(hostChosen, { workspaceId: 'default' }).projectSkipped).toBeUndefined()
+  })
+
+  it('offers a new worktree only for a Git project with one folder, for a session that works on files and is no fork', () => {
+    const git = { id: 'api', name: 'api', path: '/work/api', branch: 'main', folders: [{ id: 'f1', path: '/work/api' }] }
+    const hosted = catalog({ workspaces: [...catalog().workspaces, git] })
+    const choice = resolveChoice(hosted, { harnessId: 'codex', workspaceId: 'api' })
+    expect(worktreeProject(hosted, choice, false)?.id).toBe('api')
+    expect(worktreeProject(hosted, choice, true)).toBeUndefined()
+    expect(worktreeProject(hosted, { ...choice, mode: 'chat' }, false)).toBeUndefined()
+    expect(worktreeProject(hosted, { ...choice, workspaceId: 'docs' }, false)).toBeUndefined()
+    const without = (patch: Partial<typeof git>) => catalog({ workspaces: [{ ...git, ...patch }] })
+    expect(worktreeProject(without({ branch: undefined }), choice, false)).toBeUndefined()
+    expect(worktreeProject(without({ unavailable: '找不到这个文件夹' } as Partial<typeof git>), choice, false)).toBeUndefined()
+    expect(worktreeProject(without({ folders: [git.folders[0]!, { id: 'f2', path: '/work/shared' }] }), choice, false)).toBeUndefined()
   })
 
   it('takes a saved project when nothing was chosen and the Host would otherwise make a folder', () => {
@@ -415,10 +430,20 @@ describe('pending submissions', () => {
       model: { providerId: 'x', model: 'y' },
       attachmentIds: ['abcdefghijklmnopqrstuv'],
       fileRefs: [{ root: 'api', path: 'main.ts' }],
+      worktree: true,
     }
-    expect(submissionRequest(submission).body).toMatchObject({ attachmentIds: submission.attachmentIds, fileRefs: submission.fileRefs })
+    expect(submissionRequest(submission).body).toMatchObject({
+      attachmentIds: submission.attachmentIds,
+      fileRefs: submission.fileRefs,
+      worktree: true,
+    })
     writePending('k', submission)
     expect(readPending('k')).toEqual(submission)
+    // A worktree belongs to a new session only.
+    store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', sessionId: 's', worktree: true }))
+    expect(readPending('k')).toBeNull()
+    store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', worktree: 'yes' }))
+    expect(readPending('k')).toBeNull()
     store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', model: { providerId: 1 } }))
     expect(readPending('k')).toBeNull()
     store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', harnessId: 3 }))

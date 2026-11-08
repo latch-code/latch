@@ -45,7 +45,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
-| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
+| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
 | 进程发现 | `host.json`、数据目录锁、经 `host.sock` 核对 Host | `apps/host/src/host-state.ts` |
@@ -193,6 +193,7 @@ Standard 工具调用的风险等级（R0、R1、R2）见 [PLUGIN-DEVELOPMENT.md
 | --- | --- |
 | 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 当前目录下已存在的 `.runtime`（打印迁移提示）→ macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
 | 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示；与 Latch 程序目录重叠时跳过并提示）→ `~/Latch/workspace` |
+| 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`；用到时以 0700 创建，见 [BRANCHES.md](BRANCHES.md#新建工作树)） |
 | Agent 安装目录 | `LATCH_AGENTS_DIR` → macOS `~/Library/Application Support/Latch/Agents`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/agents`，Windows `%APPDATA%\Latch\Agents`（目前只用于重叠检查，不会创建） |
 
 数据目录必须是当前用户拥有的目录（不是符号链接），否则拒绝启动（500 `data-dir-insecure`）；权限会收紧到 0700。启动目录不存在时以 0700 创建。Host 从不自己选一个位于 Latch 程序目录内的启动目录：旧布局的 `<数据目录>/workspace` 与程序目录重叠时（例如数据目录是仓库里的 `.runtime/`），改用 `~/Latch/workspace`，原目录中的文件不移动；`--workspace` 与 `LATCH_WORKSPACE` 是所有者自己的选择，照样使用（见下文「启动目录」）。启动目录由 Host 选定时（后两种来源），不在项目中的 Agent 会话各自使用其中新建的文件夹（见「会话自己的文件夹」）。
@@ -226,7 +227,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 会话与项目
 
-`POST /tasks` 仍只带 `workspaceId`。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出返回 409 `harness-folder-limit`），会话在主文件夹中启动；Host 把项目标识记在会话元数据（`sessions-meta.json` 的 `workspaceId`，摘要中的 `workspaceId`），写入失败只影响分组。L3 会话在写启动审计之前算出启动指纹（含交给 Harness 的其他文件夹）；ACP Driver 启动 Agent 时，如果交给它的文件夹已与那时不同，返回 409 `workspace-changed`。
+`POST /tasks` 仍只带 `workspaceId`；带 `worktree: true` 时会话在 Host 为它新建的工作树里开始，见 [BRANCHES.md](BRANCHES.md#在工作树里开始会话)。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出返回 409 `harness-folder-limit`），会话在主文件夹中启动；Host 把项目标识记在会话元数据（`sessions-meta.json` 的 `workspaceId`，摘要中的 `workspaceId`），写入失败只影响分组。L3 会话在写启动审计之前算出启动指纹（含交给 Harness 的其他文件夹）；ACP Driver 启动 Agent 时，如果交给它的文件夹已与那时不同，返回 409 `workspace-changed`。
 
 Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` 的 Driver（内置 Standard，以及预设为 Codex、Gemini CLI、Qwen Code 的 ACP Driver），同时给它 `projects()` 供它自己再核对一次；其他 Driver 只收到主文件夹作为 `cwd`，摘要的 `folderAccess` 由 Host 设为 `primary`。`HarnessInfo.projectFolders` 告诉客户端每个 Harness 怎样对待其他文件夹：Standard 与 Codex 为 `{ access: 'all' }`，Gemini CLI 与 Qwen Code 为 `{ access: 'all', max: 5 }`，OpenCode 为 `primary-asks`，DeepSeek Harness 为 `primary`，pi 与 goose 为 `primary-unbounded`；没有这一项的 Harness 只使用主文件夹，只有声明 `projectFolders: 'all'` 的 Driver 才显示为 `all`。L3 的启动审计记下包含 Host 交给 Driver 的其他文件夹与 `launchPreview` 声明的其他文件夹的启动指纹；有这样的文件夹时还记下文件夹总数 `folderCount`（含工作目录）。没有预览方法的插件，这些文件夹计入通用启动指纹。各 ACP Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)。会话的文件夹在创建时固定（由 Driver 记在摘要的 `folders` 中；没有时就是 `cwd`）。之后加入项目的文件夹只用于新会话；会话记下的文件夹被移出项目、被替换或找不到时，继续该会话返回 409 `workspace-changed`，项目因其他原因不可用时返回 409 `workspace-disabled`。
 
@@ -328,7 +329,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `policy.json` | 本机安全策略 |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
-| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名，以及审批决定与取消回执 |
+| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及审批决定与取消回执 |
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
@@ -379,6 +380,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
 | `GET /workspaces` | `view` | 项目列表：启动目录与已保存的项目，含文件夹与各自的不可用原因 |
+| `GET /workspaces/:id/worktree` | `run` | 新工作树会从哪里开始：`{ branch?, commit }`，或 Host 不能在这个项目里新建工作树的 409 与原因；不写任何东西 |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
 | `POST /tasks` | `run` | L3 写两条启动审计，不弹确认 |
@@ -499,7 +501,7 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 
 `catalog.features.queue` 表示 `POST /tasks/:id/prompt` 接受 `queue: true`。运行中返回 202 `{ queued: { id } }`，空闲且没有队列时立即发送。每会话最多 5 项，Host 最多 1000 项可见内容；会话存续期间保留设备绑定回执，最多每设备 10000 项、Host 共 100000 项，已发送或移除的回执不保留正文，达到上限拒绝新增。`PATCH /tasks/:id/queue/:itemId {text}` 修改内容并更换实际派发 requestId，原提交回执不变；DELETE 移除，`POST .../:itemId/send` 显式继续首项。附件与文件引用暂不支持排队，非空 attachmentIds/fileRefs 明确拒绝。
 
-`queues.json` 是 0600 的 strict zod 文件，保留原设备、入口、数据范围、模型与两种请求标识。只有 Driver 明确报告 runOutcome=completed、runId 匹配且没有审批才继续；旧 Driver 只有 idle 不算完成。失败、停止、未知结束或 Host 重启/关闭都暂停。发送复查原设备仍有效、有 run、数据范围未变化，以及会话、项目、Harness 指纹与模型；手动继续还复查当前设备。权限变化使该项 dropped 并暂停后续项。任何仍有 run 的设备都可移除，审计失败也放行。
+`queues.json` 是 0600 的 strict zod 文件，保留原设备、入口、数据范围、模型与两种请求标识。只有 Driver 明确报告 runOutcome=completed、runId 匹配且没有审批才继续；旧 Driver 只有 idle 不算完成。失败、停止、未知结束或 Host 重启/关闭都暂停；停止在交给 Driver 之前就暂停队列（原因「已停止」），所以只回答了上一轮遗留请求（如之后才提问的子 Agent）、没有结束任何一轮的停止，也不会让排队的消息接着发出。发送复查原设备仍有效、有 run、数据范围未变化，以及会话、项目、Harness 指纹与模型；手动继续还复查当前设备。权限变化使该项 dropped 并暂停后续项。任何仍有 run 的设备都可移除，审计失败也放行。
 
 排队和派发先审计，派发前再次检查门禁，审计只写会话与队列 ID。自动检查在状态刷新批次进行，避免 Driver 尚未释放上一运行时抢先输入。派发前落盘 sending；结果未知保留派发标识，公开为 parked，暂不能编辑。重启时 sending 同样按未知处理，人工重试由 Driver 持久回执去重。已发送或移除的原请求重试不会重新入队；删除会话清除其队列与回执，原 session ID 已不可调用。
 

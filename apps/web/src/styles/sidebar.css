@@ -323,7 +323,8 @@
   min-width: 0;
   height: 18px;
 }
-.session-pin {
+.session-pin,
+.session-worktree {
   flex-shrink: 0;
   margin-right: calc(-1 * var(--sp-2));
   color: var(--muted);

@@ -1290,8 +1290,9 @@ const scenarios = {
   // Starts a subagent on its own session, as the ACP subagents draft describes, only for a client that takes them. `ask`:
   // the subagent asks for permission on its own session; `crowd` and `long` ask too, after 64 other subagents have finished
   // or after 200 steps of its own; `hang`: it works until the turn is cancelled, `silent` too but without saying it
-  // stopped; `nest`: it starts one of its own; `review`: its requests are reviewed as `review` reports them; `denied`: it
-  // reports calls refused before they ran as `denied` does.
+  // stopped; `late`: it asks after the turn ended, `outlive` before the turn ends without the answer; `nest`: it starts
+  // one of its own; `review`: its requests are reviewed as `review` reports them; `denied`: it reports calls refused
+  // before they ran as `denied` does.
   delegate: async ({ sessionId, argument, say }) => {
     if (!clientCapabilities.subagents) {
       say('worked alone')
@@ -1354,6 +1355,22 @@ const scenarios = {
         update(child, { sessionUpdate: 'tool_call', toolCallId, title: command, kind: 'execute', status: 'pending', rawInput: { command } })
         update(child, { sessionUpdate: 'tool_call_update', toolCallId, ...denial(type, reason) })
       }
+    if (argument === 'late' || argument === 'outlive') {
+      // Goes on after the turn ends, asking then (`late`) or with its request still open when the turn ends (`outlive`).
+      const ask = async () => {
+        const edit = { toolCallId: 'call_3', title: 'Edit b.txt', kind: 'edit', status: 'pending', rawInput: { path: 'b.txt' } }
+        update(child, { sessionUpdate: 'tool_call', ...edit })
+        const { result } = await request('session/request_permission', { sessionId: child, toolCall: edit, options: ALLOW_OPTIONS })
+        log('child-permission-answer', { outcome: result?.outcome ?? null })
+      }
+      if (argument === 'late') setTimeout(ask, 10)
+      else {
+        void ask()
+        await delay(20)
+      }
+      say('the subagent goes on in the background')
+      return END
+    }
     if (argument === 'hang' || argument === 'silent') {
       await waitCancel(sessionId)
       if (argument === 'hang') report('idle', 'cancelled')

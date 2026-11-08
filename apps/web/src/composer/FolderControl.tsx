@@ -1,0 +1,139 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Folder, FolderGit2, GitBranch, Info } from 'lucide-react'
+import type { WorkspaceInfo, WorktreeBase } from '@latch/protocol'
+import { ICON_STROKE, MenuFooterNote, Tooltip, ValuePicker } from '@latch/ui'
+import { api, errorMessage } from '../core/api.ts'
+import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+
+type Where = 'folder' | 'worktree'
+
+/** Where a new worktree would start, as the Host last said, or why it cannot make one. */
+type BaseState = { state: 'reading' } | { state: 'ready'; base: WorktreeBase } | { state: 'refused'; message: string }
+
+const WORKTREE_COPY = {
+  folder: '当前文件夹',
+  worktree: '新工作树',
+  folderLine: '直接在项目文件夹里改',
+  uncommitted: '未提交的改动不会带过去。',
+  /** A worktree separates files only: ports, processes and this computer's permissions stay shared. */
+  shared: '工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。',
+} as const
+
+/** 从 main 的 3f2a1c9; a detached HEAD has no branch to name. */
+function baseWords(base: WorktreeBase): string {
+  const commit = base.commit.slice(0, 7)
+  return base.branch ? `从 ${base.branch} 的 ${commit}` : `从 ${commit}`
+}
+
+/** Reads the base each time it is asked for, so the menu shows HEAD as it is now; a reply for another project is dropped. */
+function useWorktreeBase(projectId: string) {
+  const [held, setHeld] = useState<{ projectId: string; base: BaseState }>()
+  const asked = useRef(0)
+  const base = held?.projectId === projectId ? held.base : undefined
+  const read = useCallback(() => {
+    const ask = ++asked.current
+    const settle = (next: BaseState) => {
+      if (asked.current === ask) setHeld({ projectId, base: next })
+    }
+    setHeld(previous =>
+      previous?.projectId === projectId && previous.base.state === 'ready' ? previous : { projectId, base: { state: 'reading' } },
+    )
+    void api<WorktreeBase>(`workspaces/${encodeURIComponent(projectId)}/worktree`).then(
+      reply => {
+        settle({ state: 'ready', base: reply })
+      },
+      (cause: unknown) => {
+        settle({ state: 'refused', message: errorMessage(cause) })
+      },
+    )
+  }, [projectId])
+  return { base, read }
+}
+
+/** Where it starts and what stays behind; a refusal says only why, as the item's reason. */
+function worktreeLine(base: BaseState | undefined): string | undefined {
+  if (base?.state === 'refused') return undefined
+  if (base?.state === 'ready') return `${baseWords(base.base)}。${WORKTREE_COPY.uncommitted}`
+  return `正在读取分支…${WORKTREE_COPY.uncommitted}`
+}
+
+/**
+ * 当前文件夹 / 新工作树, for a new session in a Git project. The second says where it starts and that uncommitted
+ * changes stay behind; a project where the Host cannot make one has it disabled with the Host's reason.
+ */
+export function FolderControl({
+  project,
+  worktree,
+  onWorktree,
+  disabled,
+  variant = 'inline',
+}: {
+  project: WorkspaceInfo
+  worktree: boolean
+  onWorktree: (worktree: boolean) => void
+  disabled: boolean
+  variant?: 'inline' | 'row'
+}) {
+  const { base, read } = useWorktreeBase(project.id)
+  // Picked earlier: the base is shown beside it, so it is read without opening the menu.
+  useEffect(() => {
+    if (worktree) read()
+  }, [worktree, read])
+  const value: Where = worktree ? 'worktree' : 'folder'
+  const picker = (
+    <ValuePicker<Where>
+      label="文件夹"
+      variant={variant}
+      {...(variant === 'row' ? { className: 'new-sheet-row' } : { size: 'xs' as const })}
+      leading={worktree ? FolderGit2 : Folder}
+      value={value}
+      disabled={disabled}
+      width={360}
+      align="start"
+      onOpenChange={open => {
+        if (open) read()
+      }}
+      options={[
+        { value: 'folder', label: WORKTREE_COPY.folder, description: WORKTREE_COPY.folderLine },
+        {
+          value: 'worktree',
+          label: WORKTREE_COPY.worktree,
+          ...(worktreeLine(base) ? { description: escapeHiddenCharacters(worktreeLine(base)!) } : {}),
+          ...(base?.state === 'refused' ? { disabledReason: base.message } : {}),
+        },
+      ]}
+      footer={<MenuFooterNote icon={Info}>{WORKTREE_COPY.shared}</MenuFooterNote>}
+      onValueChange={next => {
+        onWorktree(next === 'worktree')
+      }}
+    />
+  )
+  if (variant === 'row' || !worktree || base?.state !== 'ready') return picker
+  // Beside the choice under the input, where the branch alone was: where the new worktree starts.
+  return (
+    <>
+      {picker}
+      <span className="composer-branch">
+        <GitBranch size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <span className="composer-branch-name">
+          <VisibleText text={baseWords(base.base)} />
+        </span>
+      </span>
+    </>
+  )
+}
+
+/** A session in a worktree, once started: 工作树 · its branch, where the branch alone was. */
+export function WorktreeLabel({ branch }: { branch: string }) {
+  const name = escapeHiddenCharacters(branch)
+  return (
+    <Tooltip content={`工作树 · ${name}。${WORKTREE_COPY.shared}`}>
+      <span className="composer-branch" tabIndex={0}>
+        <FolderGit2 size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <span className="composer-branch-name" data-worktree="">
+          工作树 · <VisibleText text={branch} />
+        </span>
+      </span>
+    </Tooltip>
+  )
+}

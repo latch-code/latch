@@ -211,6 +211,7 @@ pnpm desktop -- --tailnet \
 | --- | --- | --- |
 | `--data-dir <目录>` | `LATCH_DATA_DIR` | 见下节 |
 | `--workspace <目录>` | `LATCH_WORKSPACE` | `~/Latch/workspace` |
+| — | `LATCH_WORKTREES_DIR` | 启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`） |
 | `--port <端口>` | `LATCH_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
 | `--tls-cert`、`--tls-key`、`--public-origin` | `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN` | 不启用 HTTPS |
 | `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `LATCH_TLS_HOST`、`LATCH_TLS_PORT` | 端口 `4318` |
@@ -240,6 +241,8 @@ pnpm desktop -- --tailnet \
 **启动目录**：`--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard；位于 Latch 程序目录内时不再使用）→ `~/Latch/workspace`（需要时创建）。启动目录只包含这一个文件夹；其他项目在 Latch 桌面端「设置 → 项目」新建，或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。
 
 **会话自己的文件夹**：没有指定 `--workspace` 或 `LATCH_WORKSPACE` 时，每个不在项目中的新 Agent 会话在启动目录中得到一个新文件夹（如 `~/Latch/workspace/20261025-a1b2`，权限 0700），在其中工作，会话之间的文件不再互相覆盖；Latch 内置不选项目时不读写文件，也没有文件夹。指定了启动目录时照旧在其中工作。删除会话不删除它的文件夹。把会话的文件夹「存为项目」由 Latch 桌面端完成，只能在 Host 所在的电脑上进行，之后的新会话就能在这个项目中开始；页面中的入口尚未实现（客户端界面正在改版）。
+
+**新工作树**：在只有一个文件夹的 Git 项目里开始新会话时，输入框下面的「文件夹」可以从「当前文件夹」换成「新工作树」：Latch 从项目文件夹当前的提交新建一个 Git 工作树和分支 `latch/<日期>-<4 位十六进制>`，会话在里面工作，项目文件夹不受影响。未提交的改动不会带过去；项目顶层的 `.worktreeinclude`（gitignore 语法）列出的被忽略文件（如 `.env`）会复制过去。建工作树时不运行仓库里的钩子与 filter，Git LFS 文件留为指针，需要时在终端运行 `git lfs pull`；Latch 不运行任何安装脚本。工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。工作树放在 `LATCH_WORKTREES_DIR`，默认在启动目录旁边。删除会话时一并删除工作树尚未实现：工作树与分支会保留，用 `git worktree remove` 自己删。
 
 以下位置既不能作为启动目录（Host 拒绝启动），也不能加入项目：
 

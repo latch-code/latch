@@ -1,6 +1,11 @@
-import type { HarnessProfile } from './types.ts'
+import { z } from 'zod'
+import type { HarnessProfile, ProjectedChild } from './types.ts'
 
-/** Every tool asks except reading, which skips `.env` files; subagents are off because their asks are not routed. */
+/**
+ * Every tool asks except reading, which skips `.env` files. Subagents: 1.x's ACP drops a subagent's requests unanswered,
+ * so `task` stays off there; 2.x reads `task` as `subagent` and then the later `subagent` rule, so starting one asks,
+ * and its requests reach the session that started it. 1.x has no `subagent` permission, so it ignores that key.
+ */
 const ASK_FIRST = {
   '*': 'ask',
   read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny' },
@@ -9,16 +14,68 @@ const ASK_FIRST = {
   list: 'allow',
   external_directory: 'ask',
   task: 'deny',
+  subagent: 'ask',
 }
 
 /**
  * Repeated per agent because an agent's own `permission` block would otherwise replace the global one. OpenCode applies
- * the last matching rule, so `plan` refuses edits (its write and patch tools included) and commands after `'*': 'ask'`.
+ * the last matching rule, so `plan` refuses edits (its write and patch tools included) and commands after `'*': 'ask'`,
+ * and starts no subagent: a subagent works under its own agent's rules and these global ones, not under `plan`'s.
  */
 const CONFIG = JSON.stringify({
   permission: ASK_FIRST,
-  agent: { build: { permission: ASK_FIRST }, plan: { permission: { ...ASK_FIRST, edit: 'deny', bash: 'deny' } } },
+  agent: {
+    build: { permission: ASK_FIRST },
+    plan: { permission: { ...ASK_FIRST, edit: 'deny', bash: 'deny', subagent: 'deny' } },
+  },
 })
+
+/** What 2.x adds to a subagent's update or request it sends on the session that started the subagent. */
+const CHILD_SESSION = 'opencode/child-session'
+const childSession = z.object({
+  id: z.string().min(1).max(512),
+  parentID: z.string().min(1).max(512),
+  title: z.string().max(2000).optional().catch(undefined),
+})
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 2.x prefixes the subagent's call IDs with its session ID and its call titles with its title; these come off. */
+function projectedChild(value: Record<string, unknown>): { child: ProjectedChild; value: Record<string, unknown> } | undefined {
+  const meta = value._meta
+  if (!isRecord(meta) || !Object.hasOwn(meta, CHILD_SESSION)) return undefined
+  const parsed = childSession.safeParse(meta[CHILD_SESSION])
+  if (!parsed.success) return undefined
+  const { id, parentID, title } = parsed.data
+  const own: Record<string, unknown> = { ...value }
+  const { [CHILD_SESSION]: _child, ...rest } = meta
+  if (Object.keys(rest).length) own._meta = rest
+  else delete own._meta
+  if (typeof own.toolCallId === 'string' && own.toolCallId.startsWith(`${id}:`)) own.toolCallId = own.toolCallId.slice(id.length + 1)
+  if (title && typeof own.title === 'string') {
+    // A request with no title of its own carries the subagent's title alone.
+    if (own.title === title) delete own.title
+    else if (own.title.startsWith(`${title}: `)) own.title = own.title.slice(title.length + 2)
+  }
+  return { child: { sessionId: id, parentSessionId: parentID, ...(title ? { title } : {}) }, value: own }
+}
+
+/**
+ * The `subagent` call ends with the subagent's session in its metadata: `status` `completed` when it finished, `running`
+ * when it goes on in the background. A failed call carries the session from the call's progress.
+ */
+function childEnd(update: Record<string, unknown>): { sessionId: string; outcome: 'done' | 'failed' } | undefined {
+  if (update.sessionUpdate !== 'tool_call_update') return undefined
+  const output = update.rawOutput
+  const metadata = isRecord(output) ? output.metadata : undefined
+  const sessionId = isRecord(metadata) ? metadata.sessionID : undefined
+  if (typeof sessionId !== 'string' || !sessionId) return undefined
+  if (update.status === 'failed') return { sessionId, outcome: 'failed' }
+  if (update.status === 'completed' && isRecord(metadata) && metadata.status === 'completed') return { sessionId, outcome: 'done' }
+  return undefined
+}
 
 const OWN_PLUGIN = '@opencode-ai/plugin'
 
@@ -44,7 +101,7 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 2,
+  version: 3,
   permission: {
     approvals: 'prompts',
     defaultEnv: { OPENCODE_CONFIG_CONTENT: CONFIG },
@@ -67,6 +124,7 @@ export const opencodeProfile: HarnessProfile = {
     notes: [
       '项目或用户的 OpenCode 配置（opencode.json、.opencode 目录中的配置与 Agent 定义）可以覆盖 Latch 设置的询问规则，此时 OpenCode 可能不经询问就执行命令或修改文件',
       'OpenCode 启动时会加载项目 .opencode 目录中的插件；在不信任的项目中使用会运行其中的代码',
+      'OpenCode 2.x 的子 Agent 可以在后台运行，本轮结束或停止后仍可能继续；Latch 不能单独停止它，它之后的请求照常出现在这个会话里。在后来的一轮里被继续的子 Agent 例外：OpenCode 不转发它的请求，它要批准时这一轮会一直运行，只能停止',
     ],
   },
   // Latch passes no other folders (1.x takes none over ACP); `external_directory: 'ask'` above asks before it leaves the
@@ -88,4 +146,6 @@ export const opencodeProfile: HarnessProfile = {
     const { messageId: _part, ...rest } = update
     return rest as typeof update
   },
+  readProjectedChild: projectedChild,
+  readChildEnd: childEnd,
 }

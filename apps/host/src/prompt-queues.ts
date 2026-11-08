@@ -289,6 +289,13 @@ export class PromptQueues {
     })
   }
 
+  /** A stop pauses the session's queue whatever it ends: a stop that only answers requests left after a turn ends no run. */
+  stopped(sessionId: string): Promise<void> {
+    return this.lock(async () => {
+      if (this.items(sessionId).some(item => item.state === 'waiting')) await this.park(sessionId, '已停止')
+    })
+  }
+
   forgetSession(sessionId: string): Promise<void> {
     return this.lock(async () => {
       const next = new Map(this.entries)

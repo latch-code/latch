@@ -141,6 +141,12 @@ export interface DriverTaskSummary {
    * Agent session outside a saved project. The desktop can save it as a project's primary folder.
    */
   sessionFolder?: true
+  /**
+   * The Host made `cwd` for this session as a Git worktree of the project's folder, on a branch of its own. Files are
+   * separate from the project folder's; ports, processes and local permissions are not. `unfiltered`: tracked files left
+   * as Git stores them because their filter (Git LFS, for one) was not run.
+   */
+  worktree?: { branch: string; unfiltered?: number }
   /** The first start of this launch in this project, the one the system sheet asks about: the timeline says what it can do. */
   firstStart?: true
   /**

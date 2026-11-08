@@ -13,6 +13,8 @@ export interface LatchPaths {
   workspaceRoot: string
   workspaceSource: 'flag' | 'env' | 'legacy-data' | 'default'
   agentsDir: string
+  /** Where the Host makes Git worktrees for sessions: beside the start directory, as `~/Latch/worktrees` by default. */
+  worktreesDir: string
   /** Chinese, printed by the start script; never contain secrets. */
   warnings: string[]
 }
@@ -48,7 +50,8 @@ function codeRootOrUndefined(): string | undefined {
 }
 
 /**
- * Data, workspace and agent-install directories, from flags, environment, a legacy `./.runtime`, or platform defaults.
+ * Data, workspace, agent-install and worktree directories, from flags, environment, a legacy `./.runtime`, or platform
+ * defaults.
  * The Host never picks a start directory inside Latch's own code: a legacy `<data>/workspace` there gives way to
  * `~/Latch/workspace`. A directory named by `--workspace` or `LATCH_WORKSPACE` is the owner's choice and kept. A
  * variable is read only when no flag replaces it.
@@ -120,7 +123,9 @@ export function resolveLatchPaths(input: {
 
   const agentsDirEnv = latchEnv(input.env, 'AGENTS_DIR')
   const agentsDir = agentsDirEnv ? path.resolve(input.cwd, agentsDirEnv) : platformData(platform, home, input.env, 'Agents')
-  return { dataDir, dataDirSource, workspaceRoot, workspaceSource, agentsDir, warnings }
+  const worktreesDirEnv = latchEnv(input.env, 'WORKTREES_DIR')
+  const worktreesDir = worktreesDirEnv ? path.resolve(input.cwd, worktreesDirEnv) : path.join(path.dirname(workspaceRoot), 'worktrees')
+  return { dataDir, dataDirSource, workspaceRoot, workspaceSource, agentsDir, worktreesDir, warnings }
 }
 
 function insecureRuntime(path: string): AppError {

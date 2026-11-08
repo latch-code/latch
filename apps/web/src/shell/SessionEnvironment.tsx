@@ -66,7 +66,7 @@ export function SessionFolders({
   if (summary.mode === 'chat' || folders.length === 0) return null
   return (
     <>
-      <CrumbRow label={folders.length > 1 ? `文件夹 · ${folders.length}` : '文件夹'}>
+      <CrumbRow label={summary.worktree ? '工作树' : folders.length > 1 ? `文件夹 · ${folders.length}` : '文件夹'}>
         {folders.map((folder, index) => {
           const known = project ? projectFolders(project).find(item => item.id === folder.id && item.path === folder.path) : undefined
           const removed = project !== undefined && summary.folders !== undefined && known === undefined

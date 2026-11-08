@@ -2060,9 +2060,12 @@ describe('ACP permission mode', () => {
     }
     // As OpenCode reads these rules: in the order written, the last one matching the tool and its argument wins.
     const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/gu, '\\$&').replaceAll('*', '.*')}$`, 'u')
-    const decide = (agent: 'build' | 'plan', tool: string, argument: string) => {
+    // 2.x reads a 1.x key under its new name (`task` as `subagent`).
+    const renamed: Record<string, string> = { task: 'subagent', bash: 'shell' }
+    const decide = (agent: 'build' | 'plan', tool: string, argument: string, v2 = false) => {
       let action = 'ask'
-      for (const [key, rule] of Object.entries(config.agent[agent].permission)) {
+      for (const [written, rule] of Object.entries(config.agent[agent].permission)) {
+        const key = v2 ? (renamed[written] ?? written) : written
         if (!glob(key).test(tool)) continue
         if (typeof rule === 'string') action = rule
         else for (const [pattern, value] of Object.entries(rule)) if (glob(pattern).test(argument)) action = value
@@ -2077,14 +2080,19 @@ describe('ACP permission mode', () => {
       'ask',
     ])
     expect([decide('build', 'edit', 'a.txt'), decide('build', 'bash', 'ls')]).toEqual(['ask', 'ask'])
+    // Subagents: off in 1.x, whose ACP leaves their requests unanswered; in 2.x starting one asks in build, and plan
+    // starts none, since a subagent works under its own agent's rules rather than plan's.
+    expect([decide('build', 'task', 'general'), decide('plan', 'task', 'general')]).toEqual(['deny', 'deny'])
+    expect([decide('build', 'subagent', 'general', true), decide('plan', 'subagent', 'general', true)]).toEqual(['ask', 'deny'])
+    expect([decide('plan', 'shell', 'ls', true), decide('plan', 'edit', 'a.txt', true)]).toEqual(['deny', 'deny'])
   })
 
   it("fingerprints a preset's launch with its profile's version", async () => {
     const fixture = await preset('opencode', { FAKE_ACP_VERSION: '1.4.2', FAKE_ACP_CONFIG: 'legacy' })
     const preview = await (await fixture.open()).launchPreview!({ cwd: fixture.workspace })
     const definition = { resolvedCommand: process.execPath, args: [FAKE_ACP_AGENT], definitionEnv: fixture.record.env }
-    expect(profileFor('opencode')!.version).toBe(2)
-    expect(preview.definitionHash).toBe(launchHash({ ...definition, presetId: 'opencode', profileVersion: 2, ...launchExtras('opencode') }))
+    expect(profileFor('opencode')!.version).toBe(3)
+    expect(preview.definitionHash).toBe(launchHash({ ...definition, presetId: 'opencode', profileVersion: 3, ...launchExtras('opencode') }))
     // A check of the definition starts only the process a session would.
     const probed = await agentProbePreview(fixture.record, { dataDir: fixture.dataDir, cwd: fixture.workspace })
     expect(probed.launchHash).toBe(preview.launchHash)
@@ -4416,6 +4424,72 @@ describe('ACP subagents', () => {
     const again = await fixture.open()
     expect(stepStates(subagents(await again.detail(sessionId))[0]!)).toEqual(settledSteps)
     expect(stepStates(subagents(await again.detail(second))[0]!)).toEqual([['Run pnpm test', 'failed']])
+  })
+
+  it('asks for a subagent that goes on after its turn, keeps its process for the answer, and lets a stop answer it', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { idleMs: 150 })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate late', requestId: rid() })
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    // The turn is over; only the subagent's request is open, and the session waits on the person for it.
+    expect(waiting.messages.find(message => message.role === 'user')?.turn).toBeDefined()
+    expect(waiting.summary.status).toBe('waiting-approval')
+    expect(waiting.activity).toBeUndefined()
+    expect(waiting.approvals[0]).toMatchObject({ sessionId, subagent: 'Test runner', reason: 'Edit b.txt' })
+    expect(subagents(waiting)[0]!.subagent!.status).toBe('unknown')
+    // The idle process is not stopped while the person has a request to answer.
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(false)
+    expect(await bridge.decide(waiting.approvals[0]!.id, 'allow')).toBe(true)
+    const answered = await bridge.detail(sessionId)
+    expect(answered.summary.status).toBe('idle')
+    expect(subagents(answered)[0]!.subagent!.steps.find(step => step.tool?.title === 'Edit b.txt')).toMatchObject({
+      tool: { decision: { outcome: 'allowed' } },
+    })
+    await vi.waitFor(
+      async () =>
+        expect((await fixture.log()).filter(entry => entry.event === 'child-permission-answer').map(entry => entry.outcome)).toEqual([
+          { outcome: 'selected', optionId: 'allow' },
+        ]),
+      { timeout: 5_000, interval: 20 },
+    )
+    // Idle again, the process stops as any idle one does.
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(true), {
+      timeout: 5_000,
+      interval: 20,
+    })
+
+    // Stopping the session answers such a request as cancelled, though no turn runs; a stop naming another run does not.
+    const { sessionId: second } = await bridge.createTask({ prompt: 'delegate late', requestId: rid() })
+    const open = await until(bridge, second, detail => detail.approvals.length === 1)
+    expect(await bridge.cancel(second, { runId: 'another-run' })).toBe(false)
+    expect(await bridge.cancel(second, { runId: open.summary.runId! })).toBe(true)
+    const stopped = await bridge.detail(second)
+    expect(stopped.approvals).toEqual([])
+    expect(stopped.summary.status).toBe('idle')
+    expect(subagents(stopped)[0]!.subagent!.steps.find(step => step.tool?.title === 'Edit b.txt')?.state).toBe('cancelled')
+    await vi.waitFor(
+      async () =>
+        expect((await fixture.log()).filter(entry => entry.event === 'child-permission-answer').at(-1)?.outcome).toEqual({
+          outcome: 'cancelled',
+        }),
+      { timeout: 5_000, interval: 20 },
+    )
+    expect(await bridge.cancel(second)).toBe(false)
+
+    // A request still open when the turn ends by itself stays open; it is answered after the turn as one that came then.
+    const { sessionId: third } = await bridge.createTask({ prompt: 'delegate outlive', requestId: rid() })
+    const outlived = await until(bridge, third, detail => detail.summary.status === 'waiting-approval' && !!detail.messages[0]?.turn)
+    expect(outlived.approvals).toHaveLength(1)
+    const step = () => subagents(outlived)[0]!.subagent!.steps.find(item => item.tool?.title === 'Edit b.txt')
+    expect(step()?.state).toBe('awaiting-approval')
+    expect(await bridge.decide(outlived.approvals[0]!.id, 'reject')).toBe(true)
+    const rejected = await bridge.detail(third)
+    expect(rejected.summary.status).toBe('idle')
+    expect(subagents(rejected)[0]!.subagent!.steps.find(item => item.tool?.title === 'Edit b.txt')).toMatchObject({
+      state: 'cancelled',
+      tool: { decision: { outcome: 'rejected' } },
+    })
   })
 })
 

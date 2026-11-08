@@ -241,6 +241,49 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
         .some(message => message.tool?.decision),
     ).toBe(false)
   },
+  // OpenCode 2.x sends the subagent's work on the session that started it, marked as the subagent's.
+  subagent_projected_ask(detail) {
+    expect(detail.summary.status).toBe('idle')
+    const row = tools(detail).find(message => message.subagent)
+    expect(row).toMatchObject({ state: 'completed', subagent: { title: 'Run the tests', status: 'done' } })
+    const steps = row!.subagent!.steps
+    expect(steps.find(step => step.tool?.decision)).toMatchObject({
+      toolName: 'shell',
+      state: 'completed',
+      tool: { title: 'npm test', decision: { outcome: 'allowed' } },
+    })
+    expect(steps.at(-1)).toMatchObject({ role: 'assistant', text: 'All 12 tests pass.' })
+    // Starting it was the session's own call, asked about there; the subagent's call is only among its steps.
+    const own = tools(detail).filter(message => !message.subagent)
+    expect(own.map(message => message.toolName)).toEqual(['subagent'])
+    expect(own[0]).toMatchObject({ state: 'completed', tool: { decision: { outcome: 'allowed' } } })
+    expect(assistants(detail).map(message => message.text)).toEqual(['The subagent ran the tests: all 12 pass.'])
+  },
+  // A subagent in the background asks after the turn ended; the person answers it there, and the session is idle again.
+  subagent_ask_after_turn(detail) {
+    expect(detail.summary.status).toBe('idle')
+    const ended = detail.messages.find(message => message.role === 'user')!.turn!.endedAt
+    const row = tools(detail).find(message => message.subagent)
+    // It said it went on; nobody can say how it is now.
+    expect(row!.subagent).toMatchObject({ title: 'Check the build', status: 'unknown' })
+    const asked = row!.subagent!.steps.find(step => step.tool?.decision)
+    expect(asked).toMatchObject({ toolName: 'shell', tool: { title: 'npm run build', decision: { outcome: 'allowed' } } })
+    expect(Date.parse(asked!.tool!.decision!.at)).toBeGreaterThanOrEqual(Date.parse(ended!))
+    expect(
+      tools(detail)
+        .filter(message => !message.subagent)
+        .map(message => message.state),
+    ).toEqual(['completed'])
+  },
+  // Stopping answers the subagent's open request as cancelled; its call failed because of the stop.
+  subagent_stop(detail) {
+    expect(detail.summary.status).toBe('cancelled')
+    const row = tools(detail).find(message => message.subagent)
+    expect(row).toMatchObject({ state: 'cancelled', subagent: { title: 'Run the tests', status: 'cancelled' } })
+    expect(row!.subagent!.steps.every(step => step.state !== 'running' && step.state !== 'queued')).toBe(true)
+    expect(row!.subagent!.steps.find(step => step.toolName === 'shell')).toMatchObject({ state: 'failed' })
+    expect(tools(detail).every(message => message.state !== 'running' && message.state !== 'queued')).toBe(true)
+  },
 }
 
 describe('replaying each harness', () => {

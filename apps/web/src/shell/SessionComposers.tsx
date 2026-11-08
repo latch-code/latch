@@ -2,7 +2,7 @@ import { Eraser, Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { draftConfig, harnessName, nothingInstalled, sameModel } from '../composerChoice.ts'
+import { draftConfig, harnessName, nothingInstalled, sameModel, worktreeProject } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
@@ -10,6 +10,7 @@ import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
+import { FolderControl, WorktreeLabel } from '../composer/FolderControl.tsx'
 import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
@@ -182,6 +183,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       ? catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')?.branch
       : summary?.branch
   const showControls = selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped')
+  const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
   const drawers = (
     <>
       {current && workspaceChanged.has(current.summary.id) && (
@@ -346,9 +348,21 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       stepBack={approvals.length > 0 || answersQuestion}
       below={
         <>
-          {branch && (
+          {(worktreeOffer || branch || (selectedId !== null && summary?.worktree)) && (
             <div className="composer-context">
-              <BranchLabel branch={branch} />
+              {worktreeOffer && (
+                <FolderControl
+                  project={worktreeOffer}
+                  worktree={submission.worktree}
+                  onWorktree={submission.setWorktree}
+                  disabled={newChoicesLocked}
+                />
+              )}
+              {summary?.worktree && selectedId !== null ? (
+                <WorktreeLabel branch={summary.branch ?? summary.worktree.branch} />
+              ) : (
+                branch && !(worktreeOffer && submission.worktree) && <BranchLabel branch={branch} />
+              )}
             </div>
           )}
           {selectedId === null && catalog && (

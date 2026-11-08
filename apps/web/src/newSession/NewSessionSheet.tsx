@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
-import { pairRoute, type AppSnapshot, type SessionConfigOption } from '@latch/protocol'
+import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
 import {
   draftConfig,
@@ -18,6 +18,7 @@ import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.ts
 import { agentConfigValues, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
 import { OWN_MODEL, ownModelGroups, ROUTE_NOTE, serviceRef, serviceValue } from '../composer/ModelControl.tsx'
 import { draftPermission, draftRead } from '../composer/permission.ts'
+import { FolderControl } from '../composer/FolderControl.tsx'
 import { MODE_ICONS } from '../composer/PermissionList.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import {
@@ -61,6 +62,7 @@ export function NewSessionSheet({
   projectAsk,
   onBrowseFiles,
   focusComposer,
+  worktree,
 }: {
   open: boolean
   onClose: () => void
@@ -84,6 +86,8 @@ export function NewSessionSheet({
   projectAsk?: { request: number; notice?: string | undefined; clearNotice: () => void }
   onBrowseFiles?(): void
   focusComposer?: RefObject<HTMLTextAreaElement | null>
+  /** A Git project's draft: 当前文件夹 or 新工作树. */
+  worktree?: { project: WorkspaceInfo; picked: boolean; onPick: (worktree: boolean) => void } | undefined
 }) {
   const { present } = usePresence(open, MOTION.sheet)
   const [typing, setTyping] = useState(false)
@@ -207,6 +211,15 @@ export function NewSessionSheet({
             notice={projectAsk?.notice}
             onClosed={projectAsk?.clearNotice}
           />
+          {worktree && (
+            <FolderControl
+              variant="row"
+              project={worktree.project}
+              worktree={worktree.picked}
+              onWorktree={worktree.onPick}
+              disabled={disabled}
+            />
+          )}
           <ValuePicker
             variant="row"
             label="Harness"

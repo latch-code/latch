@@ -6,6 +6,7 @@ import type { TaskSummary } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
+import { WORKTREE_BRANCH } from './worktrees.ts'
 
 export const SESSION_META_FILE = 'sessions-meta.json'
 /** A receipt answers retries for this long, and never longer than its session exists. */
@@ -79,6 +80,13 @@ const metaSchema = z.object({
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
           .optional(),
         sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+        worktree: z
+          .strictObject({
+            path: z.string().min(2).max(4096).startsWith('/'),
+            branch: z.string().regex(WORKTREE_BRANCH),
+            unfiltered: z.number().int().min(1).max(10_000_000).optional(),
+          })
+          .optional(),
         firstStart: z.literal(true).optional(),
         forkOf: z
           .object({
@@ -111,6 +119,11 @@ export interface StoredMeta {
   archived?: true
   workspaceId?: string
   sessionFolder?: string
+  /**
+   * The worktree the Host made for the session (its `cwd`), the branch it made with it, and how many tracked files were
+   * left as Git stores them because their filter did not run.
+   */
+  worktree?: { path: string; branch: string; unfiltered?: number }
   firstStart?: true
   forkOf?: TaskSummary['forkOf']
 }
@@ -230,6 +243,13 @@ export class SessionMetaStore implements SessionReceipts {
   /** Folder names owned by sessions in the Host metadata. */
   sessionFolders(): string[] {
     return [...this.meta.values()].flatMap(meta => (meta.sessionFolder ? [meta.sessionFolder] : []))
+  }
+
+  /** The worktrees the Host made for sessions, with the project each session started in. */
+  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string }> {
+    return [...this.meta.entries()].flatMap(([sessionId, meta]) =>
+      meta.worktree ? [{ sessionId, path: meta.worktree.path, ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}) }] : [],
+    )
   }
 
   /** Whether the session has metadata or receipts to remove. */

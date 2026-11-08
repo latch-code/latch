@@ -5,6 +5,7 @@ import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
 import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
+import { worktreeProject } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -415,6 +416,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
                 onCreateProject={createProject}
                 projectAsk={projectAsk}
+                worktree={(() => {
+                  const project = worktreeProject(snapshot.catalog, choice, submission.fork !== null)
+                  return project && { project, picked: submission.worktree, onPick: submission.setWorktree }
+                })()}
                 composer={
                   <>
                     <SendingBubble shell={shell} />

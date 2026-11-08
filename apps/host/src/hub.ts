@@ -42,6 +42,8 @@ export interface HubCreateInput extends CreateTaskInput {
   workspaceId?: string
   /** The name of the folder the Host made for this session alone in its start directory (`cwd`); never sent to the driver. */
   sessionFolder?: string
+  /** The worktree the Host made for this session (`cwd`), its branch and its unfiltered count; never sent to the driver. */
+  worktree?: { path: string; branch: string; unfiltered?: number }
   /** Kept in the Host's session metadata; never sent to the driver. */
   firstStart?: true
   forkOf?: TaskSummary['forkOf']
@@ -502,7 +504,7 @@ export class HarnessHub implements Bridge {
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, workspaceId, folders, sessionFolder, firstStart, forkOf, initialTitle, automationId, ...rest } = input
+    const { harnessId, workspaceId, folders, sessionFolder, worktree, firstStart, forkOf, initialTitle, automationId, ...rest } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
@@ -520,12 +522,21 @@ export class HarnessHub implements Bridge {
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
     // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
-    if (workspaceId)
+    if (workspaceId || worktree)
       await this.meta
         .update(result.sessionId, current => ({
           ...current,
-          workspaceId,
+          ...(workspaceId ? { workspaceId } : {}),
           ...(sessionFolder ? { sessionFolder } : {}),
+          ...(worktree
+            ? {
+                worktree: {
+                  path: worktree.path,
+                  branch: worktree.branch,
+                  ...(worktree.unfiltered ? { unfiltered: worktree.unfiltered } : {}),
+                },
+              }
+            : {}),
           ...(firstStart ? { firstStart } : {}),
         }))
         .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
@@ -590,6 +601,17 @@ export class HarnessHub implements Bridge {
     this.rememberAgent(sessionId, owner)
     if (this.meta.get(sessionId)?.agent?.customAgentId === owner.customAgentId) return
     await this.meta.update(sessionId, current => ({ ...current, agent: structuredClone(owner) }))
+  }
+
+  /** The worktrees the Host made for sessions, from the session metadata. */
+  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string }> {
+    return this.meta.worktrees()
+  }
+
+  /** The worktree the Host made for this session, from its own records; never from the driver. */
+  worktreeOf(sessionId: string): { path: string; branch: string } | undefined {
+    const worktree = this.meta.get(sessionId)?.worktree
+    return worktree && { path: worktree.path, branch: worktree.branch }
   }
 
   /** The names of the folders the Host made for sessions, from the session metadata. */
@@ -891,12 +913,13 @@ export class HarnessHub implements Bridge {
     if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
     if (summary.agent) this.rememberAgent(summary.id, summary.agent)
     if (summary.agentPrivate) this.briefSessions.add(summary.id)
-    // Only the Host makes a session's own folder: a driver's claim is dropped.
+    // Only the Host makes a session's own folder or worktree: a driver's claim is dropped.
     const {
       pinned: _pinned,
       archived: _archived,
       level: _level,
       sessionFolder: _sessionFolder,
+      worktree: _worktree,
       firstStart: _firstStart,
       forkOf: _forkOf,
       automationId: _automationId,
@@ -927,6 +950,9 @@ export class HarnessHub implements Bridge {
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
+      ...(meta?.worktree
+        ? { worktree: { branch: meta.worktree.branch, ...(meta.worktree.unfiltered ? { unfiltered: meta.worktree.unfiltered } : {}) } }
+        : {}),
       ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })
   }

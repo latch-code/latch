@@ -21,6 +21,7 @@ import {
   servicePick,
   startConfig,
   writeChoice,
+  worktreeProject,
   type ComposerChoice,
   type DraftPick,
 } from '../composerChoice.ts'
@@ -115,6 +116,13 @@ export function useSubmission({
   const choice = forked?.choice ?? remembered
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
+  /**
+   * The draft starts in a new worktree: a choice for this draft only, so it never carries over to the next session
+   * unseen, and it counts only while the draft's project can have one.
+   */
+  const [worktreePicked, setWorktreePicked] = useState(false)
+  const worktreeOffered = worktreeProject(catalog, choice, fork !== null) !== undefined
+  const worktree = worktreePicked && worktreeOffered
   /** Sessions whose next prompt starts a new context, as chosen on this device; nothing is sent until that prompt. */
   const [clearing, setClearing] = useState<ReadonlySet<string>>(() => new Set())
 
@@ -166,6 +174,7 @@ export function useSubmission({
     if (owner) {
       setDraft(stored.prompt)
       setFork(stored.forkOf ? { ...stored.forkOf, choice: restoredChoice(stored) } : null)
+      setWorktreePicked(stored.worktree === true)
     }
     if (stored.sessionId === undefined) {
       if (!stored.forkOf) {
@@ -271,6 +280,7 @@ export function useSubmission({
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
             ...(picks.length ? { config: picks } : {}),
+            ...(worktree ? { worktree: true as const } : {}),
           }
         : {
             requestId: newRequestId(),
@@ -329,6 +339,7 @@ export function useSubmission({
       // A resent prompt never came from the composer, so whatever is being drafted stays.
       if (origin.consumedDraft && foreground) setDraft('')
       if (submission.sessionId === undefined && foreground) setFork(null)
+      if (submission.sessionId === undefined) setWorktreePicked(false)
       // The pick went with this session, unless another was made while a slow start was waiting.
       if (submission.sessionId === undefined) setDraftPick(current => (current === draftPick ? null : current))
       if (submission.sessionId !== undefined)
@@ -374,6 +385,9 @@ export function useSubmission({
     error,
     setError,
     choice,
+    /** The draft starts in a new worktree of its project. */
+    worktree,
+    setWorktree: setWorktreePicked,
     /** What a fork's draft could not take from its source as it was. */
     forkMissed: forked?.missed ?? [],
     updateChoice,

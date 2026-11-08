@@ -104,6 +104,41 @@ describe('queue HTTP boundaries', () => {
     release.at(-1)!()
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
   })
+  it('parks after a stop that only answers a subagent request left from an ended turn', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    // This Host looks up no command by name, so no agent installed on this computer can be found or started.
+    const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
+    expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
+    await owner.json('agents', {
+      method: 'POST',
+      body: { id: 'late-agent', name: 'Late fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'late-agent', prompt: 'delegate late', requestId: randomUUID() },
+    })
+    const path = `tasks/${sessionId}`
+    const detail = () => owner.json<TaskDetail>(path)
+    await expect.poll(async () => (await detail()).approvals.length, { timeout: 10_000 }).toBe(1)
+    const waiting = await detail()
+    expect(waiting.summary).toMatchObject({ status: 'waiting-approval', runOutcome: 'completed' })
+    await owner.json(`${path}/prompt`, { method: 'POST', body: { queue: true, prompt: 'echo after stop', requestId: randomUUID() } })
+    expect((await detail()).queue?.map(item => item.state)).toEqual(['waiting'])
+    const { receipt } = await owner.json<{ receipt: { outcome: string } }>(`${path}/cancel`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), runId: waiting.summary.runId },
+    })
+    expect(receipt.outcome).toBe('stopped')
+    await expect.poll(async () => (await detail()).queue?.map(item => item.state)).toEqual(['parked'])
+    await new Promise(resolve => setTimeout(resolve, 300))
+    const after = await detail()
+    expect(after.summary.status).toBe('idle')
+    expect(after.approvals).toEqual([])
+    expect(after.queue?.map(item => [item.state, item.reason])).toEqual([['parked', '已停止']])
+    expect(after.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['delegate late'])
+  })
   it('lets another device queue on a Harness session, edit and remove, even with the audit unavailable for a removal', async () => {
     const host = await startTestHost()
     hosts.push(host)

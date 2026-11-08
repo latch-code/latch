@@ -16,6 +16,7 @@ export type {
   LoginCheck,
   LoginStatus,
   ProjectConfigManaged,
+  ProjectedChild,
   RetryReport,
   ToolDenial,
 } from './types.ts'

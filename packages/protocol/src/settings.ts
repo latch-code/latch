@@ -83,6 +83,14 @@ export interface WorkspaceInfo {
   codeRoot?: true
 }
 
+/** `GET workspaces/:id/worktree`: where a new worktree of the project's folder would start. */
+export interface WorktreeBase {
+  /** The folder's branch, as the Host shows branches; absent when HEAD is detached. */
+  branch?: string
+  /** The commit HEAD names. */
+  commit: string
+}
+
 export interface SessionDefaults {
   harnessId: string
   mode: TaskMode

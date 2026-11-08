@@ -82,7 +82,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 - DeepSeek Harness：Latch 总是设置 `DSH_TELEMETRY_DISABLED=1`（它把任何非空值当作关闭遥测），定义里同名的变量会被这个值覆盖。会话仍是完全访问（L3），Latch 读不回它的权限模式，也不确认它自己的限制是否生效。
 - Gemini CLI：每次启动进程前，Host 把 `{"security":{"disableAlwaysAllow":true,"enablePermanentToolApproval":false}}` 写入 `<数据目录>/harnesses/<agent-id>/gemini-system-settings.json`，路径通过 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传给 Gemini CLI。这些键名尚未在 Gemini CLI 的正式版本上核对。
-- OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`，禁用子 Agent（`task`）；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置，`plan` 在这些规则之后再拒绝 `edit`（也管写入与补丁工具）和 `bash`，所以计划模式不改文件也不运行命令，它自己的计划文件也不写。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
+- OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置，`plan` 在这些规则之后再拒绝 `edit`（也管写入与补丁工具）和 `bash`，所以计划模式不改文件也不运行命令，它自己的计划文件也不写。子 Agent：规则先写 `task: 'deny'`，再写 `subagent: 'ask'`。1.x 只认 `task`，子 Agent 保持禁用，因为 1.x 的 ACP 不回答子会话的权限请求，子 Agent 会一直等下去；2.x 把 `task` 读作 `subagent`，后写的 `subagent: 'ask'` 生效，`build` 中启动子 Agent 先问你，子 Agent 的请求出现在启动它的会话里；在后来的一轮里被继续的子 Agent 例外，OpenCode 不转发它的请求（见「子 Agent」）。`plan` 另写 `subagent: 'deny'`，因为子 Agent 按它自己的 Agent（`general`、`explore`）加上这些全局规则工作，不受 `plan` 的拒绝约束。2.x 自带的 `explore` 本来放行命令与工作目录以外的路径，全局规则排在它自己的规则之后，所以它同样先问。2.x 默认不允许子 Agent 再启动子 Agent（`experimental.subagent_depth` 为 1）。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点，以及 2.x 的子 Agent 可以在一轮结束或停止后继续（见「子 Agent」）。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待，2.x 也可以把它作为子 Agent 启动（启动前先问你，请求里写着它的名字）。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
 - Claude Agent：五档按「权限菜单」的档位给出，Bypass 是不再询问，不预选任何更宽的一档。自动模式由 Claude 的分类器决定是否执行；计划模式在自动模式可用时，命令也可能由分类器决定（适配器默认开启 `useAutoModeDuringPlan`）。会话权限说明还写明：Claude 不需要批准的调用（工作目录内读取、只读命令）不出现在审批里，Claude Code 设置里的允许规则与 hooks 先于 Latch 生效，项目 `.mcp.json` 的服务器直接连接。版本规则要求 0.99 或之后的 0.x 适配器。
 - 人选的换档（`modeAnswers`）：Agent 用一次询问来换模式时，人的「仅此一次」回答就是选了那一档。Claude 的 ExitPlanMode 只留 `exit-plan-default`（回到 Manual，其余是会持久保存的选项），EnterPlanMode 是 `switch_mode` 调用上的 `allow-once`（进入 `plan`）。Latch 在把回答交给 Agent 之前把这一档记为预期模式，所以随后的换档不算漂移；没有人回答的换档仍按漂移处理。
 - 所有预设一律隐藏 `allow_always` 与 `reject_always` 类型的选项，这一点不可配置。
@@ -115,7 +115,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 ## 项目的多个文件夹
 
-一个项目可以由几个文件夹组成（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话与项目)）。ACP 会话的工作目录（ACP 的 `cwd`，也是进程的工作目录）始终是主文件夹；其他文件夹能否交给 Agent，取决于 Agent 自己：
+一个项目可以由几个文件夹组成（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话与项目)）。ACP 会话的工作目录（ACP 的 `cwd`，也是进程的工作目录）始终是主文件夹，在新工作树里开始的会话除外：它的工作目录是工作树，启动指纹按工作树里的项目配置计算，不交给 Agent 其他文件夹（见 [BRANCHES.md](./BRANCHES.md#在工作树里开始会话)）；其他文件夹能否交给 Agent，取决于 Agent 自己：
 
 | 预设 | 其他文件夹怎样交给它 | `HarnessInfo.projectFolders` | 说明 |
 | --- | --- | --- | --- |
@@ -330,7 +330,9 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 - 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`；Claude Agent 在子 Agent 里拦下的调用同样写「拦下」，只有它的模型拦下的写这条记录。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
 - 停止会话时，子 Agent 挂起的请求与会话自己的一起答复为 `cancelled`。
 - 一轮结束时仍说自己在运行或等批准的子 Agent 记为「状态未知」，不当作还在运行；它未完成的调用与会话自己的一样结算：在跑的记为结果未知，还没开始或在等批准的记为未执行，之后它再报告完成或失败时以报告为准。
+- 一轮自己结束（不是停止或失败）时仍在等你批准的子 Agent 请求不取消，一轮结束后才到的子 Agent 请求也照常给你：会话显示「等你批准」直到你答复，期间空闲进程不结束。答复后会话回到这一轮结束时的状态，那次调用记为结果未知（允许）或未执行（拒绝），之后它再报告时以报告为准。这时停止会话把这些请求答复为 `cancelled`，排队的消息和其他停止一样暂停，不会接着发出。
 - 没有宣告的会话 ID 的更新照旧丢弃，不猜归属；不支持的 Agent 仍把子 Agent 的工作当作普通工具调用报告。
+- **OpenCode 2.x** 不发 `subagent_update`。Latch 不声明它的私有能力 `opencode/child-session-updates`，于是子会话的更新与权限请求都发在启动它的会话上，带 `_meta["opencode/child-session"]`（`id`、`parentID`、`depth`、`title`），调用 ID 前加 `<子会话>:`，调用标题前加子会话的标题。profile 的 `readProjectedChild` 读这个键、去掉两个前缀，把它当作那个子 Agent 在自己会话上的报告：第一次出现时放一行，名字取它的标题，在一轮中出现记为运行中；`parentID` 是另一个子 Agent 时放进那个子 Agent 的步骤，父级没出现过的放在会话这一层。子会话结束时没有报告，所以按会话自己的 `subagent` 调用读（`readChildEnd`）：调用完成且 `rawOutput.metadata.status` 为 `completed` 记为完成；为 `running` 表示它在后台继续，状态不变；调用失败记为失败，在你停止这一轮时失败的记为已取消（OpenCode 会中断它在等的子 Agent）。一轮结束后 OpenCode 不再发子 Agent 的更新，只发它的请求，所以后台子 Agent 在一轮之后是「状态未知」。OpenCode 的 ACP 每一轮只跟踪这一轮里新建的子会话：模型在后来的一轮里用 `subagent` 调用的 `sessionID` 继续一个已有的子 Agent 时，OpenCode 不新建子会话，这个子 Agent 的更新与权限请求都不发给 Latch。它要批准时请求不会出现，在前台等它的 `subagent` 调用不结束，这一轮一直显示运行中，只能停止；继续它的那次 `subagent` 调用是会话自己的调用，和启动子 Agent 一样按规则先问你，参数里有 `sessionID`。这一点按 OpenCode 2.x 的源码确认，尚未在真实运行中核对。启动子 Agent 是会话自己的一次 `subagent` 调用，和子 Agent 那一行同时显示。
 
 ## Agent 自己的请求
 
@@ -390,8 +392,10 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | 操作系统沙箱、Agent 出站代理 | 未实现；因此 ACP 会话固定为完全访问（L3），Agent 自己的文件与网络访问不受 Latch 约束 |
 | 中和项目配置（例如在启动前屏蔽 `.opencode` 插件） | 未实现；Latch 只把项目配置计入启动指纹，变化时停止会话 |
 | 托管安装 Agent | 未实现；预设只使用本机已安装的命令 |
-| OpenCode 2.x 的子会话通道（`opencode/session/child_update`） | 未实现；Latch 不声明 `opencode/child-session-updates`，子 Agent 仍按上面的规则禁用 |
-| 单独停止某个子 Agent | 未实现；停止只作用于整个会话 |
+| OpenCode 2.x 的子会话通道（`opencode/session/child_update`） | 未实现；Latch 不声明 `opencode/child-session-updates`，改读子会话发在启动它的会话上的更新与请求（见「子 Agent」） |
+| OpenCode 1.x 的子 Agent | 未实现；1.x 的 ACP 不回答子会话的权限请求，`task` 保持禁用 |
+| OpenCode 2.x 在后来的一轮里继续的子 Agent 的请求 | 未实现；OpenCode 的 ACP 不转发它们，Latch 收不到，这一轮会一直等到你停止（见「子 Agent」） |
+| 单独停止某个子 Agent | 未实现；停止只作用于整个会话。OpenCode 2.x 在后台运行的子 Agent 在一轮结束或停止后仍可能继续，停止会话只答复它已经发来的请求；会话空闲到进程被结束时，它随进程结束 |
 | goose 的运行中追加 | 未实现；它的私有方法要 goose 自己的运行标识，也没有声明字段，要等真实录制核对 |
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
 | Cursor 的选择题（`cursor/ask_question`）放进提问卡片 | 未实现；提问卡片还没有接到 ACP 驱动上，现在回答 `skipped` 并把问题写进会话 |

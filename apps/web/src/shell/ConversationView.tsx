@@ -138,6 +138,12 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                           : MODE_COPY.firstStart(harnessInfo.capabilities.display.label)}
                       </p>
                     )}
+                    {current.summary.worktree?.unfiltered !== undefined && (
+                      <p className="session-start-note" role="note">
+                        新工作树里有 {current.summary.worktree.unfiltered} 个文件的 filter（例如 Git LFS）没有运行，留成了 Git
+                        里存的样子；要用 Git LFS 文件时，在终端里运行 git lfs pull。
+                      </p>
+                    )}
                     <Transcript
                       detail={current}
                       onSource={choose}

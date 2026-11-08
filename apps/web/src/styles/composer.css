@@ -226,6 +226,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 工作树 · latch/20261108-a1b2 is read whole. */
+.composer-branch-name[data-worktree] {
+  max-width: 280px;
+}
 .composer-usage-track,
 .composer-usage-value {
   fill: none;

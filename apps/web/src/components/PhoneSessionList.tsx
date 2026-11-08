@@ -1,7 +1,7 @@
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { Archive, ChevronLeft, Laptop, Pin, Plus, RefreshCw, SquarePen } from 'lucide-react'
-import type { AppSnapshot, TaskSummary } from '@latch/protocol'
+import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, RefreshCw, SquarePen } from 'lucide-react'
+import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
@@ -131,6 +131,14 @@ const PhoneRow = memo(function PhoneRow({
         }}>
         <span className="phone-row-line">
           {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
+          {task.worktree && (
+            <FolderGit2
+              className="session-worktree"
+              size={12}
+              strokeWidth={ICON_STROKE[12]}
+              aria-label={`工作树 · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
+            />
+          )}
           <span className="phone-row-title">{title}</span>
           <SessionStatus
             className="phone-row-status"
