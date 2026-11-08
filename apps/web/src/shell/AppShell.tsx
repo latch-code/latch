@@ -13,9 +13,8 @@ import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
-import { SettingsPage, settingsSections } from '../settings/SettingsPage.tsx'
+import { SettingsPage } from '../settings/SettingsPage.tsx'
 import { waitingCount } from '../sessions.ts'
-import { sidebarPages } from './routes.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { RightPanel } from './RightPanel.tsx'
@@ -41,7 +40,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     choose,
     access,
     refresh,
-    personalDraft,
     summary,
     stopping,
     now,
@@ -218,10 +216,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   onNew={startNew}
                   onNewIn={startIn}
                   onCreateProject={createProjectAndStart}
-                  pages={sidebarPages(snapshot, settingsSections(snapshot, access))}
                   entries={entries}
                   onEntry={goEntry}
-                  onPage={openSettings}
                   hostProblem={hostProblem}
                   onEditProject={owner ? openProjectSettings : undefined}
                   onProjectsChanged={() => {
@@ -395,7 +391,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {phone && <PhoneTabBar shell={shell} />}
             {phone && (
               <NewSessionSheet
-                personal={personalDraft ?? undefined}
                 focusComposer={submission.fork ? sheetComposerRef : undefined}
                 open={newSheet && selectedId === null}
                 onBrowseFiles={canBrowseFiles ? browseFiles : undefined}

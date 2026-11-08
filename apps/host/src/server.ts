@@ -1,21 +1,10 @@
 import { ConfigRequests } from './config-requests.ts'
-import { PersonalStore } from './personal-store.ts'
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary } from './automations.ts'
 import { AgentPlans } from './agent-plans.ts'
-import { createPersonalRoutes } from './personal-routes.ts'
-import { PersonalRoutines, type RoutinePlan } from './personal-routines.ts'
-import { PersonalGroups } from './personal-groups.ts'
-import type { PersonalGroup, PersonalGroupMessage } from '@latch/protocol'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import type {
-  AgentExecutionContext,
-  AutomationConfig,
-  PersonalAgentContext,
-  PersonalAssistant,
-  PersonalAssistantSummary,
-} from '@latch/protocol'
+import type { AgentExecutionContext, AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
@@ -293,10 +282,6 @@ const createTaskSchema = promptSchema.extend({
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
-  assistantId: z
-    .string()
-    .regex(/^asst_[a-f0-9-]{36}$/u)
-    .optional(),
   customAgentId: z
     .string()
     .regex(/^agt_[a-f0-9-]{36}$/u)
@@ -1320,8 +1305,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       { managed: 'core', revision: executionBuildRevision('standard-harness') },
     )
     await registry.enable('standard-harness')
-    const personalStore = await PersonalStore.open(dataDir, { audit, now })
-    startupCleanup.push(() => personalStore.close())
     const customAgents = await CustomAgents.open({ dataDir, audit, now })
     startupCleanup.push(() => customAgents.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
@@ -1469,7 +1452,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!caller.device || devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
           throw new AppError(403, 'file-scope', '这台设备的数据范围已变化，请重新打开文件')
       },
-      sessionAccess: (caller, id) => checkPersonalSession(caller as Caller, id),
+      sessionAccess: (caller, id) => checkPrivateSession(caller as Caller, id),
       sessionDetail: id => harnessHub.detail(id),
       referencePaths: async (id, roots) => fileReferences.references(id, await harnessHub.detail(id), roots, home),
       actorOf: caller => actorOf(caller as Caller),
@@ -1486,6 +1469,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       let selected = selection
       if (sessionId) {
         await assertSessionAccess(caller, sessionId)
+        assertWritable(sessionId)
         const detail = await hub!.detail(sessionId)
         await assertSessionWorkspace(sessionId)
         selected = {
@@ -1581,16 +1565,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       recheck: (caller, scope) => {
         recheck(caller, scope)
         if (caller.device && devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
-          throw new AppError(403, 'personal-scope-required', '设备的数据范围已改变，请重新同步。')
+          throw new AppError(403, 'agent-scope-required', '设备的数据范围已改变，请重新同步。')
       },
       checkRemove: assertSessionAccess,
       checkEnd: (caller, id) => {
         requireDevice(caller)
         terminalRoutes.checkSessionEnd(caller, id)
       },
-      visible: personalVisible,
+      visible: privateVisible,
       checkRead: async (caller, id, write) => {
-        checkPersonalSession(caller, id, write)
+        checkPrivateSession(caller, id, write)
       },
     })
     startupCleanup.push(() => harnessHub.close())
@@ -1636,8 +1620,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       check: checkQueuedPrompt,
       async prepare(actor, sessionId, model) {
         await checkQueuedPrompt(actor, sessionId, model, undefined, true)
-        const plan = await queuedPersonalPlan(sessionId)
-        if (plan) return { binding: plan.basis, model: plan.model }
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
         return turn?.binding && turn.model ? { binding: turn.binding, model: turn.model } : undefined
       },
@@ -1658,10 +1640,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           })
         await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
         await input.authorize?.()
-        const plan = await queuedPersonalPlan(sessionId)
-        const turn = plan ? undefined : await queuedAgentTurn(sessionId, actor.dataScope)
-        if ((plan?.basis ?? turn?.binding) !== input.binding) throw queueContextChanged()
-        const agentContext = plan?.personal ?? turn?.agentContext
+        const turn = await queuedAgentTurn(sessionId, actor.dataScope)
+        if (turn?.binding !== input.binding) throw queueContextChanged()
+        const agentContext = turn?.agentContext
         await harnessHub.prompt(sessionId, input.text, input.requestId, {
           ...(agentContext ? { agentContext } : {}),
           ...(input.model ? { model: input.model } : {}),
@@ -1698,6 +1679,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       async assertSessionInput(caller, sessionId) {
         recheck(caller, 'run')
         await assertSessionAccess(caller, sessionId)
+        assertWritable(sessionId)
         await assertSessionWorkspace(sessionId)
         recheck(caller, 'run')
       },
@@ -1840,76 +1822,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (scope && !current.scopes.includes(scope)) throw scopeRequired(scope)
     }
 
-    function personalAccess(caller: Caller, write = false) {
-      requireScope(caller, write ? 'run' : 'view')
-      const authorize = () => {
-        recheck(caller, write ? 'run' : 'view')
-        if (devices.get(caller.device!.id)?.dataScope !== 'all')
-          throw new AppError(403, 'personal-scope-required', '个人助手含有私有记忆，请先在电脑上允许这台设备使用个人助手。')
-      }
-      authorize()
-      return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
-    }
-    function personalUnavailable(assistant: PersonalAssistant): string | undefined {
-      const harness = hub!.info(assistant.harnessId)
-      const driver = registry.harnesses().find(entry => entry.id === assistant.harnessId)
-      const enabled = new Set(
-        registry
-          .list()
-          .filter(plugin => plugin.enabled)
-          .map(plugin => plugin.id),
-      )
-      const selection = assistant.model ?? defaultModelRef()
-      return !harness || harness.status !== 'ready'
-        ? '这个 Harness 暂时不可用，请检查电脑上的配置。'
-        : driver?.agentContext !== 'private'
-          ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
-          : assistant.pluginIds.some(id => !enabled.has(id))
-            ? '选择的插件已停用或移除，请更新个人助手。'
-            : harness.capabilities.models.owner === 'latch' && (!selection || !modelAvailable(selection))
-              ? '选择的模型服务暂不可用，请在电脑上检查模型配置。'
-              : harness.capabilities.models.owner !== 'latch' && assistant.model
-                ? '这个执行方式自行管理模型，请移除指定的模型服务。'
-                : undefined
-    }
-    function personalSummary(assistant: PersonalAssistant, tasks: TaskSummary[]): PersonalAssistantSummary {
-      const unavailableReason = personalUnavailable(assistant)
-      return {
-        ...assistant,
-        available: unavailableReason === undefined,
-        ...(unavailableReason ? { unavailableReason } : {}),
-        memoryCount: personalStore.memories(assistant.id).length,
-        sessionCount: tasks.filter(task => task.personal?.assistantId === assistant.id && !task.personal.groupId).length,
-        canSchedule: unavailableReason === undefined && assistant.harnessId === 'standard',
-      }
-    }
-    function personalContext(id: string): PersonalAgentContext {
-      const assistant = personalStore.assistant(id)
-      const summary = personalSummary(assistant, [])
-      if (!summary.available) throw new AppError(409, 'personal-unavailable', summary.unavailableReason!)
-      const memories = personalStore.memories(id)
-      return {
-        personal: { assistantId: id },
-        pluginIds: [...assistant.pluginIds],
-        revision: personalStore.definitionHash(id),
-        instructions: [
-          assistant.role,
-          ...(memories.length ? ['用户明确维护的本助手私有记忆：', ...memories.map(item => item.content)] : []),
-        ]
-          .filter(Boolean)
-          .join('\n\n'),
-      }
-    }
-    function personalVisible(caller: Caller, summary: TaskSummary): boolean {
+    function privateVisible(caller: Caller, summary: TaskSummary): boolean {
       return !privateSession(summary) || (!!caller.device && devices.get(caller.device.id)?.dataScope === 'all')
     }
-    /** A session of an assistant or of one of 我的 Agent shows that agent's private instructions and memories. */
+    /** An agent's session shows that agent's private instructions and memories; an assistant's session is kept as private. */
     function privateSession(summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): boolean {
       return !!summary?.personal || !!summary?.agent || !!summary?.agentPrivate
     }
     function privateAccess(caller: Caller, summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): void {
-      if (summary?.personal) personalAccess(caller)
-      else if (privateSession(summary)) agentAccess(caller)
+      if (privateSession(summary)) agentAccess(caller)
     }
     function enabledPluginInfo() {
       return registry
@@ -1955,177 +1876,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(projectId ? { folders: savedProject(projectId)?.folders.map(folder => folder.path) ?? [] } : {}),
       }),
     })
-    function routinePlan(id: string, selection?: ModelRef): RoutinePlan {
-      const assistant = personalStore.assistant(id),
-        personal = personalContext(id)
-      if (assistant.harnessId !== 'standard') throw new AppError(409, 'personal-routine-harness', '定时任务目前需要内置执行方式。')
-      const model = selection ?? assistant.model ?? defaultModelRef()
-      if (!model) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
-      const provider = registry.providerOwner(model.providerId)
-      if (!provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
-      const snapshot = registry.revisionSnapshot([...new Set(['standard-harness', provider, ...assistant.pluginIds])]),
-        assets = pluginAssets.list(),
-        revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
-          const asset = assets.find(record => record.id === id)
-          return [id, asset?.appliedBundle ? agentPluginRevision(asset.appliedBundle) : revision]
-        })
-      return {
-        basis: sha256Hex(
-          canonicalJson({
-            instructions: personal.instructions,
-            mode: assistant.mode,
-            model,
-            harnessId: assistant.harnessId,
-            pluginIds: assistant.pluginIds,
-            revisions,
-            policy: policy.hash(),
-            workspace: canonicalWorkspace,
-          }),
-        ),
-        persistent: snapshot.persistent,
-        mode: assistant.mode,
-        model,
-        personal: { ...personal, expectedRevisions: snapshot.revisions },
-      }
-    }
     function providerExecutionRevision(record: ProviderRecord): string | undefined {
       const { name: _, ...execution } = record
       return executionBuildRevision(execution)
     }
-    function authorizeRoutine(deviceId: string): void {
-      const device = devices.get(deviceId)
-      if (
-        !device
-        || !devices.isActive(deviceId)
-        || device.listener !== 'unix'
-        || device.dataScope !== 'all'
-        || !device.scopes.includes('run')
-        || !levelAtMost('L1', policy.get().unattended.maxLevel)
-        || now() - Date.parse(device.lastSeenAt) > policy.get().unattended.pauseAfterIdleDays * 86400000
-      )
-        throw new AppError(403, 'personal-routine-owner', '定时任务的电脑授权已变化，请在电脑上重新开启。')
-    }
-    const personalRoutines = await PersonalRoutines.open({
-      dataDir,
-      audit,
-      now,
-      plan: routinePlan,
-      authorize: authorizeRoutine,
-      changed: () => refresh(),
-      detail: id => hub!.detail(id),
-      cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
-      approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
-      async start({ requestId, prompt, plan, authorize }) {
-        authorize()
-        const task: HubCreateInput = {
-          requestId,
-          prompt,
-          harnessId: 'standard',
-          workspaceId: 'default',
-          mode: plan.mode,
-          model: plan.model,
-          agentContext: plan.personal,
-        }
-        return projectOperationForRoutine(async () => {
-          authorize()
-          if (makeOwnFolders && plan.mode === 'agent') {
-            const folder = await ownFolders.allocate(requestId)
-            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
-          }
-          authorize()
-          return hub!.createTask(task)
-        })
-      },
-    })
-    startupCleanup.push(() => personalRoutines.close())
-    function groupPlan(group: PersonalGroup, id: string, history: PersonalGroupMessage[]): RoutinePlan {
-      const assistant = personalStore.assistant(id),
-        unavailable = personalUnavailable(assistant)
-      if (unavailable !== undefined || assistant.harnessId !== 'standard')
-        throw new AppError(409, 'personal-group-member-unavailable', '这位助手的执行方式暂不可用于群聊，请检查配置。')
-      const model = assistant.model ?? defaultModelRef()
-      if (!model) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
-      const provider = registry.providerOwner(model.providerId)
-      if (!provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
-      const snapshot = registry.revisionSnapshot([...new Set(['standard-harness', provider, ...assistant.pluginIds])]),
-        assets = pluginAssets.list(),
-        revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
-          const asset = assets.find(record => record.id === id)
-          return [id, asset?.appliedBundle ? agentPluginRevision(asset.appliedBundle) : revision]
-        }),
-        basis = sha256Hex(
-          canonicalJson({
-            group: {
-              id: group.id,
-              memberIds: group.memberIds,
-              defaultAssistantId: group.defaultAssistantId,
-              instructions: group.instructions,
-              maxRelays: group.maxRelays,
-            },
-            assistant: {
-              id,
-              role: assistant.role,
-              mode: assistant.mode,
-              harnessId: assistant.harnessId,
-              pluginIds: assistant.pluginIds,
-              model,
-            },
-            revisions,
-            policy: policy.hash(),
-            workspace: canonicalWorkspace,
-          }),
-        ),
-        sharedMessages = history
-          .slice(-64)
-          .filter(message => message.role === 'user' || message.role === 'assistant')
-          .map(message => ({ role: message.role as 'user' | 'assistant', text: message.text }))
-      return {
-        basis,
-        persistent: snapshot.persistent,
-        mode: assistant.mode,
-        model,
-        personal: {
-          personal: { assistantId: id, groupId: group.id },
-          pluginIds: [...assistant.pluginIds],
-          expectedRevisions: snapshot.revisions,
-          revision: basis,
-          instructions: [assistant.role, group.instructions].filter(Boolean).join('\n\n'),
-          sharedMessages,
-        },
-      }
-    }
-    const personalGroups = await PersonalGroups.open({
-      dataDir,
-      audit,
-      now,
-      plan: groupPlan,
-      changed: () => refresh(),
-      detail: id => hub!.detail(id),
-      sessions: async () => (await hub!.listTasks()).map(questionSummary),
-      cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
-      async start({ requestId, prompt, plan, authorize }) {
-        return projectOperationForRoutine(async () => {
-          authorize()
-          const task: HubCreateInput = {
-            requestId,
-            prompt,
-            harnessId: 'standard',
-            workspaceId: 'default',
-            mode: plan.mode,
-            model: plan.model,
-            agentContext: plan.personal,
-          }
-          if (makeOwnFolders && plan.mode === 'agent') {
-            const folder = await ownFolders.allocate(requestId)
-            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
-          }
-          authorize()
-          return hub!.createTask(task)
-        })
-      },
-    })
-    startupCleanup.push(() => personalGroups.close())
-    function projectOperationForRoutine<T>(operation: () => Promise<T>): Promise<T> {
+    function unattendedProjectOperation<T>(operation: () => Promise<T>): Promise<T> {
       const result = projectChanges.then(operation)
       projectChanges = result.then(
         () => {},
@@ -2133,10 +1888,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
       return result
     }
-    function checkPersonalSession(caller: Caller, id: string, write = false): void {
+    function checkPrivateSession(caller: Caller, id: string, write = false): void {
       recheck(caller)
-      if (hub!.personalOf(id)) personalAccess(caller, write)
       if (hub!.agentPrivate(id)) agentAccess(caller, write)
+    }
+    /** An assistant's or a group's session only opens to be read: nothing runs its private context any more. */
+    function assertWritable(id: string): void {
+      if (hub!.personalOf(id)) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
     }
     /** Whether this device's authority can still stand behind a run that starts while nobody is looking. */
     function authorizeAutomation(deviceId: string, definition: AutomationConfig): void {
@@ -2164,7 +1922,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
       async start({ requestId, automationId, title, prompt, projectId, plan, authorize }) {
         authorize()
-        return projectOperationForRoutine(async () => {
+        return unattendedProjectOperation(async () => {
           authorize()
           const chosen = projectId ? savedProject(projectId) : undefined
           if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
@@ -2225,34 +1983,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => automations.close())
-    const personalRoutes = createPersonalRoutes<Caller>({
-      store: personalStore,
-      routines: personalRoutines,
-      groups: personalGroups,
-      turnActor(caller) {
-        const actor = personalAccess(caller, true),
-          native = isNativeListener(caller.connection.listener),
-          windowHash = caller.nativeOpening?.windowHash
-        return {
-          ...actor,
-          authorize() {
-            actor.authorize()
-            if (native && (!windowHash || windowHash !== caller.nativeOpening?.windowHash))
-              throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，接力已停止。')
-          },
-        }
-      },
-      cancelActor(caller) {
-        requireScope(caller, 'view')
-        return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize: () => recheck(caller, 'view') }
-      },
-      authorize: personalAccess,
-      summary: personalSummary,
-      plugins: enabledPluginInfo,
-      sessions: () => hub!.listTasks(),
-      changed: () => refresh(),
-    })
-
     let projectChanges = Promise.resolve()
     /** A start cannot enter a project between a removal's in-use check and its committed settings write. */
     function projectOperation<T>(caller: Caller, scope: DeviceScope, operation: () => Promise<T>): Promise<T> {
@@ -3370,7 +3100,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function terminalFolder(sessionId: string): Promise<{ path: string } | 'removed' | undefined> {
       const task = await sessionTask(sessionId)
       if (!task) return undefined
-      if (task.personal) throw new AppError(409, 'terminal-personal-session', '助手会话没有项目文件夹，不能打开终端')
+      if (task.personal) throw new AppError(409, 'terminal-personal-session', '这个会话来自已移除的 Agent，没有项目文件夹，不能打开终端')
       if (task.archived) throw new AppError(409, 'terminal-session-archived', '这个会话已归档，不能打开终端')
       try {
         await assertSessionWorkspace(sessionId)
@@ -3819,10 +3549,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           fileSearch: true,
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
-          personal: true,
-          personalRoutines: true,
-          personalGroups: true,
-          personalQueue: true,
           configReceipts: true,
           runLiveness: true,
           pinnedDefaults: true,
@@ -3877,13 +3603,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const level = hub!.levelOf(detail.summary.harnessId)
       return {
         ...detail,
-        messages: detail.summary.personal
-          ? detail.messages.map(message => {
-              const requestId =
-                message.role === 'user' && message.requestId ? personalStore.clientRequestIdFor(message.requestId) : undefined
-              return requestId ? { ...message, requestId } : message
-            })
-          : detail.messages,
         summary: questionSummary(detail.summary),
         queue: promptQueues.view(sessionId),
         questions: questions.view(sessionId),
@@ -4002,6 +3721,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const level = hub!.levelOf(found.harnessId)
       const session = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)
       if (input.decision === 'allow' || input.note !== undefined) privateAccess(caller, session)
+      if (input.decision === 'allow') assertWritable(found.approval.sessionId)
       const approval = await decorate(found.approval, level, session)
       const option = input.optionId ? approval.options?.find(item => item.id === input.optionId) : undefined
       if (input.optionId && !option) {
@@ -4563,7 +4283,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<void> {
       if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
-      await checkPersonalSession(caller, sessionId, true)
+      await checkPrivateSession(caller, sessionId, true)
       await hub!.harnessOf(sessionId)
       if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
@@ -4588,17 +4308,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
-      let input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+      const body = await jsonBody(req, TASK_BODY_LIMIT)
+      // An earlier build's phone may still hold a message for an assistant; without the field it would start an ordinary session.
+      if (typeof body === 'object' && body !== null && 'assistantId' in body)
+        throw new AppError(409, 'assistant-removed', '这条消息是发给已移除的 Agent 的，没有发出。')
+      let input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
-        let personal: PersonalAgentContext | undefined
-        let personalRevision: string | undefined
         const customAgentId = input.customAgentId
         let selected: ReturnType<typeof customAgents.get> | undefined
         if (customAgentId) {
-          if (input.assistantId) throw new AppError(400, 'invalid-input', '一个会话只能属于一个 Agent。')
           const actor = agentAccess(caller, true)
           const saved = customAgents.get(customAgentId)
           const { harnessId, workspaceId, mode, model } = input
@@ -4632,47 +4353,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
           }
         }
-        if (input.assistantId) {
-          const actor = personalAccess(caller, true)
-          if (
-            input.forkOf
-            || input.workspaceId !== undefined
-            || input.harnessId !== undefined
-            || input.mode !== undefined
-            || input.model !== undefined
-            || input.config !== undefined
-          )
-            throw new AppError(400, 'personal-selection-fixed', '个人助手使用已保存的 Harness、模型和插件，请在助手设置中修改。')
-          const binding = (
-            await personalStore.beginSession(
-              input.assistantId,
-              input.requestId,
-              { prompt: input.prompt, attachmentIds: input.attachmentIds ?? [], fileRefs: input.fileRefs ?? [] },
-              actor,
-            )
-          ).value
-          // A stored reservation keeps the original driver even if the profile is edited while the result is unknown.
-          const known = (await hub!.listTasks()).filter(task => task.personal?.assistantId === input.assistantId)
-          for (const task of known) {
-            const detail = await hub!.detail(task.id)
-            actor.authorize()
-            if (detail.messages.some(message => message.role === 'user' && message.requestId === binding.requestId)) {
-              await hub!.recordPersonal(task.id, task.personal!)
-              actor.authorize()
-              json(res, { sessionId: task.id }, 201)
-              return
-            }
-          }
-          personal = personalContext(binding.assistantId)
-          if (personal.revision !== binding.definitionHash)
-            throw new AppError(409, 'personal-definition-changed', '助手设置或记忆已改变，原请求尚未确认。请先同步已有会话。')
-          personalRevision = binding.definitionHash
-          input = { ...input, harnessId: binding.harnessId, mode: binding.mode, ...(binding.model ? { model: binding.model } : {}) }
-        }
         const fork = input.forkOf
           ? await (async () => {
               requireScope(caller, 'view')
-              await checkPersonalSession(caller, input.forkOf!.taskId)
+              checkPrivateSession(caller, input.forkOf!.taskId)
               const detail = await hub!.detail(input.forkOf!.taskId)
               recheck(caller, 'view')
               privateAccess(caller, detail.summary)
@@ -4682,8 +4366,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const harnessId = input.harnessId ?? defaultHarnessId()
         const agentContext: AgentExecutionContext | undefined =
-          personal
-          ?? (customAgentId
+          (customAgentId
             ? agentPlans.agentContext(customAgentId, harnessId)
             : generalContextFor(devices.get(caller.device.id)?.dataScope, harnessId))
           ?? (fork && privateSession(fork.source)
@@ -4781,7 +4464,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : {}),
           ...(fileRefs.length ? { fileRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
-          requestId: personal ? sha256Hex(canonicalJson(['personal-session', caller.device.id, input.requestId])) : input.requestId,
+          requestId: input.requestId,
           ...(agentContext ? { agentContext } : {}),
           harnessId,
           workspaceId,
@@ -4799,16 +4482,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const checkStart = () => {
           recheck(caller, 'run')
-          if (personal) {
-            personalAccess(caller, true)
-            if (personalStore.definitionHash(personal.personal.assistantId) !== personalRevision)
-              throw new AppError(409, 'personal-definition-changed', '助手设置或记忆已改变，请重新开始。')
-          }
           if (customAgentId) {
             agentAccess(caller, true)
             if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
               throw new AppError(409, 'agent-changed', '这个 Agent 的设置或记忆已改变，请重新开始。')
-          } else if (agentContext && !personal) agentAccess(caller, true)
+          } else if (agentContext) agentAccess(caller, true)
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (fork) {
@@ -4963,26 +4641,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function queueContextChanged(): AppError {
-      return new AppError(409, 'queue-context-changed', '助手的执行配置已改变，请移除此项后重新加入队列。')
-    }
-    async function queuedPersonalPlan(sessionId: string): Promise<RoutinePlan | undefined> {
-      const owner = hub!.personalOf(sessionId)
-      if (!owner) return undefined
-      if (owner.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
-      try {
-        const session = await hub!.summary(sessionId),
-          assistant = personalStore.assistant(owner.assistantId)
-        if (assistant.harnessId !== session.harnessId || assistant.mode !== session.mode || assistant.harnessId !== 'standard')
-          throw queueContextChanged()
-        const model =
-          assistant.model ?? (session.providerId && session.model ? { providerId: session.providerId, model: session.model } : undefined)
-        if (!model) throw queueContextChanged()
-        const plan = routinePlan(owner.assistantId, model)
-        return { ...plan, basis: sha256Hex(canonicalJson({ basis: plan.basis, configuredModel: assistant.model ?? null })) }
-      } catch (error) {
-        if (error instanceof AppError && error.status >= 400 && error.status < 500) throw queueContextChanged()
-        throw error
-      }
+      return new AppError(409, 'queue-context-changed', 'Agent 的设置已改变，请移除此项后重新加入队列。')
     }
     /** 通用's instructions and memories go only to a device that could read them, or its model's reply would carry them there. */
     function generalContextFor(dataScope: 'work' | 'all' | undefined, harnessId: string): AgentExecutionContext | undefined {
@@ -5052,6 +4711,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         requireScope(caller, 'run')
         await assertSessionAccess(caller, sessionId)
+        assertWritable(sessionId)
         await assertSessionWorkspace(sessionId)
         const detail = await harnessHub.detail(sessionId)
         if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
@@ -5060,15 +4720,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(400, 'model-unsupported', '该会话不能指定模型服务')
           assertModel(model)
         }
-        const plan = await queuedPersonalPlan(sessionId)
-        const turn = plan ? undefined : await queuedAgentTurn(sessionId, actor.dataScope)
-        if (!preparing && ((plan?.basis ?? turn?.binding) !== binding || (plan && canonicalJson(model) !== canonicalJson(plan.model))))
-          throw queueContextChanged()
+        const turn = await queuedAgentTurn(sessionId, actor.dataScope)
+        if (!preparing && turn?.binding !== binding) throw queueContextChanged()
         recheck(caller, 'run')
       } catch (error) {
         if (native && codeOf(error) === 'native-verification-required') throw paused()
         throw error
       }
+    }
+
+    /** A command the Harness runs only between turns, such as pi's /compact, is never queued or added to a running turn. */
+    async function assertQueueable(sessionId: string, text: string): Promise<void> {
+      const named = /^\/(\S+)/u.exec(text)?.[1]
+      if (named && (await hub!.detail(sessionId)).commands?.some(command => command.idleOnly && command.name === named))
+        throw new AppError(409, 'command-queued', `/${named} 不能排队或追加，请等本轮结束后发送。`)
     }
 
     async function handleQueue(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
@@ -5088,6 +4753,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await authorize()
       if (method === 'PATCH' && !match[3]) {
         const input = z.strictObject({ text: z.string().trim().min(1).max(16_000) }).parse(await jsonBody(req, TASK_BODY_LIMIT))
+        await assertQueueable(sessionId, input.text)
         await audited({ action: 'task.prompt.edited', actor: actorOf(caller), detail: { sessionId, itemId } })
         await promptQueues.edit(sessionId, itemId, input.text, queueActor(caller), authorize)
         json(res, { edited: true })
@@ -5118,6 +4784,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'run')
         if (devices.get(caller.device.id)?.dataScope !== caller.device.dataScope) throw scopeRequired('run')
         await assertSessionAccess(caller, sessionId)
+        assertWritable(sessionId)
         await assertSessionWorkspace(sessionId)
         const detail = await harnessHub.detail(sessionId)
         if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
@@ -5195,16 +4862,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
         recheck(caller, 'run')
-        checkPersonalSession(caller, id, true)
-        const personalOwner = hub!.personalOf(id)
-        if (personalOwner?.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
-        if (personalOwner && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
-        if (input.freshContext && (personalOwner || !(await hub!.detail(id)).clearContext))
+        checkPrivateSession(caller, id, true)
+        assertWritable(id)
+        if (input.freshContext && !(await hub!.detail(id)).clearContext)
           throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
-        const named = (input.queue || input.steer) && /^\/(\S+)/u.exec(input.prompt)?.[1]
-        if (named && (await hub!.detail(id)).commands?.some(command => command.idleOnly && command.name === named))
-          throw new AppError(409, 'command-queued', `/${named} 不能排队或追加，请等本轮结束后发送。`)
-        if (input.steer && !input.model && !personalOwner && input.prompt) {
+        if (input.queue || input.steer) await assertQueueable(id, input.prompt)
+        if (input.steer && !input.model && input.prompt) {
           recheck(caller, 'run')
           if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') {
             json(res, { steered: true })
@@ -5216,17 +4879,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           json(res, result, 'queued' in result ? 202 : 200)
           return true
         }
-        const session = personalOwner ? await hub!.summary(id) : undefined
-        const personal = personalOwner ? personalContext(personalOwner.assistantId) : undefined
-        if (
-          personal
-          && (personalStore.assistant(personal.personal.assistantId).harnessId !== session?.harnessId
-            || personalStore.assistant(personal.personal.assistantId).mode !== session?.mode)
-        )
-          throw new AppError(409, 'personal-harness-changed', '这个助手的 Harness 或模式已改变，请创建新会话。')
-        if (personal && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
         const harnessId = await hub!.harnessOf(id),
-          agentTurn = personal ? undefined : turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
+          agentTurn = turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
           attachments = await promptAttachments(
             caller,
             input.attachmentIds,
@@ -5256,23 +4910,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           recheck(caller, 'run')
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
-          if (personal) {
-            personalAccess(caller, true)
-            if (personalStore.definitionHash(personal.personal.assistantId) !== personal.revision)
-              throw new AppError(409, 'personal-definition-changed', '助手设置已改变，请重新发送。')
-          }
           if (agentTurn) agentAccess(caller, true)
           await hub!.prompt(id, input.prompt, input.requestId, {
-            ...(personal
-              ? {
-                  agentContext: personal,
-                  ...(personalStore.assistant(personal.personal.assistantId).model
-                    ? { model: personalStore.assistant(personal.personal.assistantId).model }
-                    : {}),
-                }
-              : agentTurn
-                ? { agentContext: agentTurn }
-                : {}),
+            ...(agentTurn ? { agentContext: agentTurn } : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(attachments.length ? { attachments } : {}),
@@ -5316,7 +4956,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         let level: 'L1' | 'L3' = 'L3'
         const authority = () => {
           recheck(caller, 'run')
-          checkPersonalSession(caller, id, true)
+          checkPrivateSession(caller, id, true)
+          assertWritable(id)
           if (isNativeListener(caller.connection.listener) && (!originalWindow || caller.nativeOpening?.windowHash !== originalWindow))
             throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，请查询原请求。')
         }
@@ -6046,8 +5687,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]
       if (privateTaskId && !path.endsWith('/cancel')) {
         const taskId = safeDecode(privateTaskId)
-        if (hub!.personalOf(taskId)) personalAccess(caller)
-        else if (hub!.agentPrivate(taskId)) agentAccess(caller)
+        if (hub!.agentPrivate(taskId)) agentAccess(caller)
       }
       if (await routes.route(authenticated)) return
       if (path === '/link/api/snapshot' && method === 'GET') {
@@ -6064,7 +5704,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 modelConfigurationRequired: providerId === LEGACY_PROVIDER_ID && !effectiveProvider(LEGACY_PROVIDER_ID),
               }
             : { ready: true }
-        const tasks = (await hub!.listTasks()).filter(task => personalVisible(caller, task)).map(questionSummary)
+        const tasks = (await hub!.listTasks()).filter(task => privateVisible(caller, task)).map(questionSummary)
         const snapshot: AppSnapshot = {
           instanceId,
           revision: snapshotRevision,
@@ -6087,7 +5727,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           hostTime: hostTime(),
         }
         recheck(caller, 'view')
-        snapshot.tasks = snapshot.tasks.filter(task => personalVisible(caller, task))
+        snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         traffic.response('snapshot', json(res, snapshot))
         return
@@ -6160,7 +5800,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await createTask(req, res, caller)
         return
       }
-      if (await personalRoutes.handle(req, res, caller, path, method)) return
       if (await handleQueue(req, res, caller, path, method)) return
       if (await handleQuestion(req, res, caller, path, method)) return
       if (await sessionRoutes.handle(req, res, caller, path, method)) return
@@ -6224,10 +5863,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'view')
         const id = safeDecode(configRequest[1]!)
         if (id.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长。')
-        checkPersonalSession(caller, id)
+        checkPrivateSession(caller, id)
         await hub!.harnessOf(id)
         recheck(caller, 'view')
-        checkPersonalSession(caller, id)
+        checkPrivateSession(caller, id)
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
@@ -6484,15 +6123,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const failures: unknown[] = []
           for (const dispose of [
             () => changes,
-            () => personalGroups.close(),
-            () => personalRoutines.close(),
             () => configRequests.close(),
             () => promptQueues.close(),
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => modelGateway.close(),
             () => questions.close(),
-            () => personalStore.close(),
             () => customAgents.close(),
             () => fileTracking.close(),
             () => fileRoutes.close(),

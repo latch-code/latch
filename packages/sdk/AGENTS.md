@@ -15,6 +15,4 @@
 
 - 附件在 Bridge/Message 里用元数据引用，在 Provider 输入里用经 Host 校验的 `AttachmentContent`；Harness 必须显式声明能力并在实际协商后复查，缺少 Host 读写接口时拒绝。
 
-- personalContext 只有履行私有历史与显式插件租约契约的 Driver 才声明；personal 输入只接受 Host 构造。
-
 - `setConfig` 在异步准备后、外部修改前调用 `options.authorize`；拒绝立即结束，回调和配置原值不进入持久回执。409 `task-running` 只用于还没发给 Agent 的拒绝，Host 把它记为失败。

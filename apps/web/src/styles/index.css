@@ -25,7 +25,6 @@
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
 @import './workflows.css' layer(app);
-@import './personal.css' layer(app);
 @import './documents.css' layer(app);
 @import './questions.css' layer(app);
 @import './attachments.css' layer(app);

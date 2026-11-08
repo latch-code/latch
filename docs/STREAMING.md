@@ -103,7 +103,7 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 
 设置切换的未知结果按会话保留原始请求；模型菜单和输入框的「⋯」共用同一道写入门禁，刷新只读取 Host。旧 Host 没有配置回执时，只有真实配置已经读回目标值才解除未知状态，不能把一个仍旧的值当成失败。项目目录失效的确定拒绝则由项目恢复面板承接，保留可编辑草稿；结果未知时不能转成一次新的分叉。实现见 [模型配置](./MODEL-CONFIGURATION.md) 与 [项目恢复](./WORKSPACE-RECOVERY.md)。
 
-提交捕获当前会话或新助手的选择代次。同一页面中的重试按原请求编号保留首次来源，卸载后失效。回执到达前切换过会话时，只结算原请求，不自动选回原会话、清空当前输入或修改当前分叉。普通发送消费原会话的草稿；重新发送旧消息不消费草稿。当前会话被另一设备删除时，选择清空也同时清除对应活动草稿。刷新恢复未知结果时，只有原目标匹配当前输入才恢复文字；其余只恢复原请求卡片和编号。
+提交捕获当前会话或新会话草稿的选择代次。同一页面中的重试按原请求编号保留首次来源，卸载后失效。回执到达前切换过会话时，只结算原请求，不自动选回原会话、清空当前输入或修改当前分叉。普通发送消费原会话的草稿；重新发送旧消息不消费草稿。当前会话被另一设备删除时，选择清空也同时清除对应活动草稿。刷新恢复未知结果时，只有原目标匹配当前输入才恢复文字；其余只恢复原请求卡片和编号。
 
 源码：[useHarness.ts](../apps/web/src/core/useHarness.ts)、[eventStream.ts](../apps/web/src/core/eventStream.ts)、[credentials.ts](../apps/web/src/core/credentials.ts)、[api.ts](../apps/web/src/core/api.ts)、[projection.ts](../apps/web/src/core/projection.ts)。
 
@@ -193,7 +193,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 
 界面上的每个时间与计数都来自 Host 的记录，客户端不估算；字段都是可选的，旧 Host、插件 Driver 与记录这些字段之前的历史没有它们，缺少时对应的部分不显示。时间是 Host 时钟的 ISO 字符串，由 `ServerOptions.clock`（默认 `Date.now`）给出，内置 Harness 与 ACP Driver 经 `HarnessHostOptions.clock` 用同一个时钟。
 
-- **持久的。** 会话摘要的 `createdAt`。每条消息的 `createdAt`（用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻）；工具的 `startedAt`（审批之后真正开始运行）与 `completedAt`（结算）；助手一步的 `completedAt`、`reasoningMs`（从第一段推理到第一段正文或这一步结束）与回答它的 `model`（内置 Harness 另有 `providerId`）。开启一轮的用户消息在这一轮结算时得到 `turn`：`endedAt`、`activeMs`（从提示到结束，减去等待审批的时间）与 `waitMs`（至少有一个审批在等人的时间，多个审批重叠时按并集计）。Host 重启中断的一轮没有 `turn`。这些字段都写进各自存储的 zod schema。
+- **持久的。** 会话摘要的 `createdAt`。每条消息的 `createdAt`（用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻）；工具的 `startedAt`（审批之后真正开始运行）与 `completedAt`（结算）；助手一步的 `completedAt`、`reasoningMs`（从第一段推理到第一段正文或这一步结束）与回答它的 `model`（内置 Harness 另有 `providerId`）。开启一轮的用户消息在这一轮结算时得到 `turn`：`endedAt`、`activeMs`（从提示到结束，减去等待审批的时间）与 `waitMs`（至少有一个审批在等人的时间，多个审批重叠时按并集计），会话经 Latch 转发到模型服务时还有 `routed`（网关自己数的请求、模型与令牌，见 [HARNESSES.md](./HARNESSES.md) 的「每轮的模型与用量」）。Host 重启中断的一轮没有 `turn`。这些字段都写进各自存储的 zod schema。
 - **运行中的投影。** 运行期间 detail 带 `runStartedAt`、`runWaitMs`（已结束的审批等待）与 `runWaitingSince`（有审批正在等待时），客户端据此算出不含等待的已运行时间，等待时停住；`lastOutputAt` 是可见输出最后一次变化（正文、推理、工具、计划、新消息），客户端用它说出「N 分钟没有新输出」；`liveReasoningStartedAt` 与正文开始后的 `liveReasoningMs` 给出正在流出的思考用时。
 - **Host 时钟。** 客户端从快照与每个 `task-state` 的 `hostTime` 得到 Host 时钟与本机时钟的差，变化小于一秒视为网络抖动、不更新；所有活的计时（已运行、工具用时、思考秒数）都按 Host 时钟计算，所以手机时钟不准时各设备读到的仍一样。旧 Host 不发 `hostTime` 时差为零，运行时间退回为页面看到运行开始以来的时间。走秒由页面共享的一个计时器驱动，只有显示数值的叶子组件订阅，页面隐藏时停止。
 - **用量。** 每一步的 `usage` 是 `inputTokens`（含缓存）与 `outputTokens`（含推理），模型服务报告时另有 `cacheReadTokens`、`cacheWriteTokens` 与 `reasoningTokens`；Host 与客户端合计多步时，某一部分只有每一步都报告了才保留，所以合计从不把「没报告」当成 0。ACP Agent 报告的 `usage_update`（当前上下文已用、窗口大小与费用）存为会话的 `usageReport`，只作为 Agent 的报告显示，不当作账单，也不从 tokens 推算。
@@ -324,7 +324,7 @@ Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消�
 
 ### 清空上下文
 
-`TaskDetail.clearContext` 为真时，`POST /tasks/:id/prompt` 接受 `freshContext: true`：这一轮在新的上下文里开始，Harness 看不到之前的消息，消息仍留在会话记录里。Driver 把它记在这一轮的用户消息上（`Message.freshContext`，两种消息存储的 zod schema 都保留），所以重连、切换会话与刷新都不会丢掉或移动这条边界。它不能与 `queue`、`steer` 一起用（400 `fresh-context-queued`），个人助手会话与不声明的 Driver 回答 409 `clear-context-unsupported`。重试沿用原 `requestId`，带不带它是不同的请求（`request-conflict`）。Latch 内置清空发给模型的历史；ACP 开新的 Agent 会话，见 [HARNESSES.md](./HARNESSES.md#清空上下文)。从边界之后某一轮分叉时，种子从这条边界开始。
+`TaskDetail.clearContext` 为真时，`POST /tasks/:id/prompt` 接受 `freshContext: true`：这一轮在新的上下文里开始，Harness 看不到之前的消息，消息仍留在会话记录里。Driver 把它记在这一轮的用户消息上（`Message.freshContext`，两种消息存储的 zod schema 都保留），所以重连、切换会话与刷新都不会丢掉或移动这条边界。它不能与 `queue`、`steer` 一起用（400 `fresh-context-queued`），不声明的 Driver 回答 409 `clear-context-unsupported`，早先助手跑过的会话回答 409 `session-read-only`。重试沿用原 `requestId`，带不带它是不同的请求（`request-conflict`）。Latch 内置清空发给模型的历史；ACP 开新的 Agent 会话，见 [HARNESSES.md](./HARNESSES.md#清空上下文)。从边界之后某一轮分叉时，种子从这条边界开始。
 
 发送之前它只是本设备的一个选择（网页与桌面端输入框的 `/clear` 或会话菜单的「清空上下文」；iPhone 还不能选），不写 Host；运行中不能选，一轮开始时选择撤掉。选定后点最新一轮的「重试」，重发的这一轮也带 `freshContext`。它随待发送的提交一起保存，结果未知时原样重试。Driver 在这一轮开始前已经放下旧的上下文、这一轮却被拒绝或没有开始时，详情带 `TaskDetail.contextCleared`：下一条消息不论是否要求都在新的上下文里，网页、桌面端与 iPhone 都写出这一点，不再提供撤销；带 `Message.freshContext` 的一轮在各处都画「清空了上下文」的线。
 
@@ -332,7 +332,7 @@ Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消�
 
 ### 排队状态与实际发送
 
-详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。 个人助手额外使用 Host 私有的执行摘要，只有 `personalQueue` 能力为真才支持；摘要与原手机窗口不进入公开投影，配置变化时保留文字并暂停，详见 [PERSONAL.md](PERSONAL.md#个人会话队列)。
+详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。
 
 ### 追加到运行中的一轮
 
@@ -362,9 +362,3 @@ Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Messag
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
 
 文件列按 session 与 workspace/Harness 分开保留相对引用；切换上下文取消旧解析、目录读取与搜索，迟到结果不更新新上下文。项目预览不创建会话。目录与句柄见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
-
-## 个人助手的消息身份与隐私
-
-个人会话在运行开始之前写入 `TaskSummary.personal` 和本轮 `pluginIds`。职责与显式记忆仅在运行内作为系统上下文传给 Provider，不进入持久模型历史、公开消息、分叉或导出。每轮仍有原有持久 requestId 回执；Host 在选择 Driver 前另保存设备绑定的启动预留，未知结果不会因助手设置变化改投另一个 Harness。所有正文路径与每次 SSE 发送复查个人数据范围；概览与专用记忆路由同样要求有效手机正文窗口。完整规则见 [PERSONAL.md](PERSONAL.md)。
-
-个人新建会话的 Driver 回执使用设备绑定的内部编号，Host 在经过授权的 detail 与 SSE 消息上投影回原始客户端 requestId；内部持久回执与未知结果恢复仍使用派生编号。客户端不复刻内部命名算法，重启和同请求恢复后也沿用原始消息身份。

@@ -241,6 +241,33 @@ describe('conversation forks', () => {
         .toBeDefined()
       const continued = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === asked.sessionId)!
       expect(await values(continued.id)).toMatchObject({ mode: 'default' })
+
+      // A session that only chats, forked to a Harness that always works on files: the draft starts at its default row, not
+      // at the wider one this device remembers, and says so.
+      const chat = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '只聊一聊', requestId: randomUUID(), harnessId: 'standard', mode: 'chat' },
+      })
+      await expect
+        .poll(async () => (await owner.json<TaskDetail>(`tasks/${chat.sessionId}`)).summary.status, { timeout: 30_000 })
+        .toBe('idle')
+      await page.keyboard.press('Meta+k')
+      await palette.getByRole('searchbox').fill('只聊一聊')
+      await palette.getByRole('option').filter({ hasText: '只聊一聊' }).first().click()
+      await palette.waitFor({ state: 'hidden' })
+      await page.locator('.turn-reply').first().hover()
+      await page.getByRole('button', { name: '从这里分叉', exact: true }).first().click()
+      await notice.waitFor()
+      await page
+        .getByRole('button', { name: /^Harness：/u })
+        .first()
+        .click()
+      await pick(page, 'Qwen Code').click()
+      await expect
+        .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
+        .toContain('来源会话不读写文件，Qwen Code 没有这一档，这里从它的默认模式开始。')
+      expect(await label(/^权限：/u)).toContain('先问你')
+      await page.screenshot({ path: 'test-results/fork-chat-1280.png', fullPage: true })
       await context.close()
       expect(found.toSorted()).toEqual(expect.arrayContaining(['goose', 'qwen']))
       expect(await readFile(join(directory, 'goose.log'), 'utf8')).toContain('session/prompt')

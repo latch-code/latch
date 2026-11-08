@@ -54,6 +54,14 @@ test("pi's /compact runs between turns, and is refused queued or added to a runn
     expect(await refused.json()).toEqual({ error: 'command-queued', message: '/compact 不能排队或追加，请等本轮结束后发送。' })
   }
   expect((await detail()).queue ?? []).toEqual([])
+  // Nor does a queued message become one by an edit.
+  expect((await prompt({ prompt: 'hello', queue: true })).status).toBe(202)
+  const [queued] = (await detail()).queue ?? []
+  const edited = await owner.request(`${path}/queue/${queued!.id}`, { method: 'PATCH', body: { text: '/compact' } })
+  expect(edited.status).toBe(409)
+  expect(await edited.json()).toEqual({ error: 'command-queued', message: '/compact 不能排队或追加，请等本轮结束后发送。' })
+  expect((await detail()).queue?.map(item => item.text)).toEqual(['hello'])
+  expect((await owner.request(`${path}/queue/${queued!.id}`, { method: 'DELETE' })).status).toBe(200)
   await expect.poll(async () => (await detail()).summary.status, { timeout: 10_000 }).toBe('idle')
 
   expect((await prompt({ prompt: '/compact keep the plan' })).status).toBe(200)

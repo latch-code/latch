@@ -294,6 +294,12 @@ describe('session and harness gating', () => {
       'read-only',
     )
   })
+
+  it('opens a session an assistant ran only to be read, on every device', () => {
+    const summary = { personal: { assistantId: 'asst_1' } }
+    for (const access of [deviceAccess(snapshotOf(device()), null), deviceAccess(snapshotOf(device({ scopes: ['view'] })), null)])
+      expect(composerGate({ summary, access })).toEqual({ kind: 'read-only', text: '这个会话来自已移除的 Agent，只能查看' })
+  })
 })
 
 describe('the 权限 rows', () => {

@@ -1,5 +1,4 @@
 import type { ModelRef, PluginInfo, TaskMode, TaskSummary } from './types.ts'
-import type { PersonalSessionOwner } from './personal.ts'
 
 /** Assigned by the Host when an agent is created; there is no picker. */
 export const AGENT_GLYPHS = [
@@ -149,8 +148,6 @@ export interface AgentSkillBody {
 export interface AgentExecutionContext {
   /** The session belongs to this agent. Absent on a 通用 session, which has no agent but is just as private. */
   agent?: SessionAgentRef
-  /** 个人助手 only. */
-  personal?: PersonalSessionOwner
   /** Host-frozen capability revisions for delegated or scheduled execution. */
   expectedRevisions?: Record<string, string>
   /** System context for drivers with `agentContext: 'private'`. */
@@ -159,8 +156,6 @@ export interface AgentExecutionContext {
   brief?: AgentBrief
   /** For a driver with `skills: 'server'`, which attaches a read-only skills server at session start. */
   skillBodies?: AgentSkillBody[]
-  /** Explicit group history only, with its original roles. Transient and never inherited by another session. */
-  sharedMessages?: Array<{ role: 'user' | 'assistant'; text: string }>
   /** Plugins whose tools it may call, and with no `skillIds`, whose skills it may load. Absent: every enabled plugin. */
   pluginIds?: string[]
   /** `pluginId:skillId`. Absent: the skills of `pluginIds`. */

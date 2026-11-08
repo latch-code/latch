@@ -170,7 +170,7 @@ public enum PhoneConversation {
         return (outcome != "unasked" && message["tool"]["blocked"] == .null, by, words)
     }
     /**
-     * A call the Harness refused itself before it ran, as the web says it: its model (`model`) or its own rules stopped it,
+     * A call the Harness refused itself before it ran, as the web says it: its model (`model`) or its own rules or mode stopped it,
      * with the Harness's own words for why on one line. It reports failed, but nothing ran and nothing broke.
      */
     public static func blocked(_ message: NativeJSON) -> (model: Bool, line: String)? {
@@ -179,7 +179,7 @@ public enum PhoneConversation {
         var reason = (block["reason"].string ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         if reason.count > 120 { reason = String(reason.prefix(120)) + "…" }
         if source == "model" { return (true, by + " 的模型审阅" + (reason.isEmpty ? "拦下了这次调用" : "：" + reason)) }
-        return (false, "被 " + by + " 自己的规则拦下" + (reason.isEmpty ? "" : "：" + reason))
+        return (false, "被 " + by + " 自己的规则或当前模式拦下" + (reason.isEmpty ? "" : "：" + reason))
     }
     /** 已工作 2 分 13 秒, with what the fold must not hide. */
     public static func foldWords(_ turn: PhoneTurn) -> String {
@@ -437,6 +437,8 @@ public enum PhoneConversation {
     }
     /** Whether this phone may type into the session, and the plain line in place of the field when it may not. */
     public static func inputGate(summary: NativeJSON, permission: NativeJSON, canRun: Bool, connected: Bool) -> String? {
+        // Latch no longer runs an assistant's private context, so nothing can continue its session.
+        if summary["personal"] != .null { return "这个会话来自已移除的 Agent，只能查看" }
         if !connected { return "Mac 不在线" }
         if summary["permissionDrift"].bool || permission["drift"] != .null { return "这个会话的权限变了，已停止接受输入" }
         if !canRun { return "这台手机不能发送消息" }

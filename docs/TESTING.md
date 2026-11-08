@@ -22,7 +22,7 @@ sources:
 `e2e/workflows.e2e.ts` 覆盖外观切换时保留草稿、输入聚焦与上一条消息、Host 分支投影、可操作首次引导及通知首次选择；通知 UI 使用有限壳夹具，真实主进程状态和 preload 过滤由 `apps/desktop/test/notifications.test.ts` 验证，Electron 用例核对实际公开接口。`e2e/file-tree.e2e.ts` 同时验证没有标签时的文件快捷键。
 `e2e/palette.e2e.ts` 在三种宽度与深浅色用真实 Host 走完命令面板的分组、搜索中与失败的文字、Esc 逐级退回、焦点回到输入框，查找条的位置（不挤压对话）、长回答内的定位、运行中不跳走与不丢步，迟到的结果不换回车打开的行，输入法组合键，Esc 不误停运行或误拒请求，以及只显示当前客户端按键的快捷键页；截图写入 `test-results/palette/`。
 `e2e/workbench-keyboard.e2e.ts` 在三种宽度驱动真实 Alt 按键，核对会话循环、待处理审批卡的循环与焦点高亮、文件搜索及关闭；同时检查草稿、消息与审批身份保留，且导航不增加模型调用或执行提交。
-`e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或个人会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属。内存缓存的按会话隔离、私有清理、数量与字符上限由 `apps/web/test/session-drafts.test.ts` 覆盖。
+`e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或 Agent 会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属。内存缓存的按会话隔离、私有清理、数量与字符上限由 `apps/web/test/session-drafts.test.ts` 覆盖。
 连接插件的定向回归包括 `tests/transport-registry.test.ts`、`packages/link-client/test/transport.test.ts`、`carrier-vector.test.ts` 与 Host 的 `native.test.ts`；`e2e/native-relay.e2e.ts` 另把官方 relay 通过注册 driver 真实消费。MessagePort 示例会实际加载并运行。它们是纯 Node/Go 与本机消息测试，不等同真实飞书、手机 connector、OS 通知或真机验收。
 
 系统性测试统一使用 Vitest；Playwright 只在 Vitest 内作为真实浏览器与 Electron 的驱动。测试只使用临时目录、端口 0（或临时选出的空闲端口）、本地假模型服务、假 ACP Agent 与测试用的本机确认后端：不读取用户密钥，不调用付费模型，不启动真实 Agent CLI，不使用默认数据目录、`.runtime*/` 或端口 4317，也不停止或重启用户正在运行的 Host。
@@ -502,7 +502,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 `e2e/file-preview.e2e.ts` 另通过真实 Host 在三种宽度验证 Markdown 预览/源码切换、相对链接、已授权项目图片、秘密图片拒绝、公式、图表和共享代码高亮，以及更新文本后的行位置保留。测试图片必须先在会话中有引用；浏览器默认的 `work` 范围不能借 Markdown 枚举其他文件。
 
-排队：apps/host/test/prompt-queues.test.ts 覆盖 FIFO、容量、回执、编辑、未知结果、重启、审计与权限失败；prompt-queue-api.test.ts 经 HTTP 覆盖手机 L1、Stop、撤回权限、手机禁止给 L3 输入而仍可移除，以及审计失败仍移除。personal-queues.test.ts 通过真实 Standard 验证个人助手的私有上下文、角色／记忆／模型／插件版本变化暂停、展示改名、原始输入身份与默认模型变化不迁移；native.test.ts 同时验证普通和个人队列不改绑新的手机窗口。两种 Driver 的重启用例核对 queuedAt/requestId/runOutcome。apps/web/test/prompt-queue.test.ts 检查旧 Host 降级、双槽与只读托盘；e2e/prompt-queue.e2e.ts 在三宽度与浅深模式验证编辑、FIFO、暂停、手动继续、移除和失去权限的实际渲染。
+排队：apps/host/test/prompt-queues.test.ts 覆盖 FIFO、容量、回执、编辑、未知结果、重启、审计与权限失败；prompt-queue-api.test.ts 经 HTTP 覆盖手机 L1、Stop、撤回权限、手机禁止给 L3 输入而仍可移除，以及审计失败仍移除。native.test.ts 验证队列不改绑新的手机窗口。两种 Driver 的重启用例核对 queuedAt/requestId/runOutcome。apps/web/test/prompt-queue.test.ts 检查旧 Host 降级、双槽与只读托盘；e2e/prompt-queue.e2e.ts 在三宽度与浅深模式验证编辑、FIFO、暂停、手动继续、移除和失去权限的实际渲染。
 
 问答：`apps/host/test/questions.test.ts` 覆盖题包与答案校验、首答竞争、请求绑定、审计失败、晚到撤权、取消与重启时的精确工具输出恢复；`questions-api.test.ts` 经真实 HTTP 验证远程 L1 回答、只读拒绝与模型继续。`tests/runtime.test.ts` 验证等待暂停计时及持久化结果先于确认和下一次模型调用。`e2e/questions.e2e.ts` 在桌面、平板、手机深色模式验证多题、其他答案、设备草稿重载与回答后的继续执行。
 
@@ -525,16 +525,12 @@ pnpm latch presence test --data-dir <临时目录>
 
 `desktop-plugins.e2e.ts` 在真实 Electron 与临时 Host 中创建技能草稿、应用、修改、启停与删除，并验证新的 React 模块只确认一次；应用已送达而响应丢失时，界面保留同一请求再恢复。`plugin-assets.test.ts` 检查导入边界、UTF-8 大小、路径冲突与保留未知贡献，Host 对完整资产和实际执行生命周期另有回归。
 
-`personal.e2e.ts` 在手机、平板、桌面浅深色通过真实 Host 创建助手、维护显式记忆并在未选择项目时开始对话；普通设备只获得使用权限。验证创建请求不混入项目和模型覆盖、原请求 ID 投影、单一用户气泡、真实助手署名、不向本地存储写入记忆，以及权限收紧后撤下私有内容。夹具模型、授权与截图不代表真机或真实模型验收。
-`personal-routines.test.ts` 通过相同的持久调度器检查每日时区与夏令时去重、外观修改保留授权、技能/配置变化暂停、撤权与审计故障拒绝，以及停止排队中的任务。两类 rename 后故障分别覆盖启动意图和会话回执，恢复只能发布状态，不能重新启动；审批超时等待实际取消结算。真实临时 Host 用例核对 Standard 的私有归属与执行结果；另构建生产 Host bundle，重启后保留未来授权并实际执行，证明源码摘要不是只在同进程内稳定。所有执行均用确定性演示模型，不能代替真实模型或外部消息插件验收。`agent-journal.test.ts` 检查有限私有存储、严格解析、串行写入、未知结果恢复与异步后撤权。
+`assistant-sessions.test.ts` 用早先构建留下的数据启动 Host：带 `personal.changed` 的审计照常打开，助手与群聊跑过的会话只对数据范围 `all` 的设备可读、发消息、排队、改设置、附件与撤销都回答 409 `session-read-only`（批准与回答问答要先有等待中的请求，只读的会话不再运行、造不出这样的请求，这两处没有用例），只读设备看不到也打不开它们，带 `assistantId` 的新建会话两次都回答 409 `assistant-removed` 且不新建会话（`native-swift.test.ts` 的工作台用例另核对 iPhone 不再列出这样的未确认提交，也不列出写到 `/link/api/personal/` 的群聊消息与定时任务删除）。`e2e/read-only-session.e2e.ts` 在页面上打开这样的会话（桌面浅色与手机深色），本轮改动卡、改动面板与会话菜单都不提供撤销、恢复与清空上下文。`agent-relay.test.ts` 检查一条消息在 Agent 之间接力的上限、未完成即停、设置变化即停与停止等结算。
+`agent-journal.test.ts` 检查有限私有存储、严格解析、串行写入、未知结果恢复与异步后撤权。
 
 `automations.test.ts` 用确定性时钟检查排队与错过、运行期间经过的时间、暂停原因、编辑期间的检查和单行失败不影响其他行；`automations-bundle.test.ts` 构建生产 Host bundle，启用 Harness 后重启，核对「通用」上的定时任务仍开启并实际运行。`agent-routes.test.ts` 用真实 Standard 和假模型检查范围较小的设备收不到「通用」、收到过的会话与定时任务运行私有，以及 Host 停止时不再检查。这些都不代替真实模型或真实 Agent 的验收。
 
-`personal-groups.test.ts` 用真实 Standard 和假模型检查显式成员顺序、自用职责、私有记忆不读取、原 RID、真实子会话、审批等待和取消结算；存储用例覆盖未知接纳不重放、容量满保留历史、关闭与接纳并发，以及排队/审计中的同 RID 冲突取消不得停止另一项操作。`native.test.ts` 验证同一连接重新解锁不能改绑已接纳接力，过期窗口仍能严格停止指定轮次且审计故障不阻停止；真实 Swift Personal 夹具另走群聊创建、发送、查询、严格免费取消、清理与私有控制回执。它们不代替真实模型、Face ID 或原生视觉验收。
-
-原生个人助手：native-swift.test.ts 的 Personal 用例通过实际 Swift Workspace 验证配置、私有记忆、群聊接力与严格取消、个人队列原始请求身份、定时任务 CRUD 及手机不能开启。App 的 iPhone/iPad SDK 双架构编译不代替安装后的视觉或真机身份验收。
-
-Web 个人助手：`personal.e2e.ts` 覆盖显式记忆、无项目对话和撤回访问；`personal-workflows.e2e.ts` 经真实 Host 丢弃已交付的发送与取消回执，验证原请求身份、真实停止结算和远程定时任务边界。`personal-layout.e2e.ts` 在 390、900、1440px 及浅深色生成 `test-results/personal-workflows/` 截图，检查成员记录只读、返回原群后的草稿与顺序、定时任务关闭／开启／暂停及撤权。往返不得增加群消息、任务或模型调用，浏览器本地存储不得保存私有草稿。
+原生工作台：native-swift.test.ts 的 Workspace 用例通过实际 Swift Workspace 连接临时 Host，验证正文窗口、同一请求的重试、离线列表只留行上需要的字段、继续等、手机默认的新会话选择、排队的原始请求身份，以及丢失回执后严格恢复的停止。App 的 iPhone/iPad SDK 双架构编译不代替安装后的视觉或真机身份验收。
 
 客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
 

@@ -44,12 +44,11 @@ import { base32 } from '../src/crypto.ts'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 let binary = ''
-async function invoke(input: unknown, onDiagnostic?: (text: string) => Promise<void>): Promise<Record<string, unknown>> {
+async function invoke(input: unknown): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, LANG: 'en_US.UTF-8' } })
     let output = '',
-      diagnostic = '',
-      notified = false
+      diagnostic = ''
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       reject(new Error('Swift fixture timeout'))
@@ -60,13 +59,6 @@ async function invoke(input: unknown, onDiagnostic?: (text: string) => Promise<v
     })
     child.stderr.on('data', (data: Buffer) => {
       diagnostic = (diagnostic + data.toString()).slice(0, 2000)
-      if (onDiagnostic && !notified && diagnostic.includes('Native personal waiting for desktop grant\n')) {
-        notified = true
-        void onDiagnostic(diagnostic).catch(error => {
-          child.kill('SIGKILL')
-          reject(error)
-        })
-      }
     })
     child.once('error', error => {
       clearTimeout(timer)
@@ -804,6 +796,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { summary: { level: 'L1' }, canRun: true, connected: false },
         { summary: { level: 'L1', permissionDrift: true }, canRun: true, connected: true },
         { summary: { level: 'L1' }, canRun: false, connected: true },
+        { summary: { level: 'L1', personal: { assistantId: 'asst_x' } }, canRun: true, connected: false },
       ],
       catalog: {
         harnesses: [
@@ -852,7 +845,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.shelves).toEqual([
       { label: '等你处理', ids: ['d', 'b', 'a'] },
       { label: 'latch', ids: ['c'] },
-      { label: '对话', ids: ['g', 'f', 'e'] },
+      // A session an assistant ran stays listed, to be read.
+      { label: '对话', ids: ['i', 'g', 'f', 'e'] },
     ])
     expect(result.found).toEqual(['latch'])
     expect(result.turns).toEqual([
@@ -903,10 +897,17 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.judged).toEqual(['true:拦下', 'false:没有问你', 'false:拦下'])
     expect(result.blocked).toEqual([
       'true:Claude Agent 的模型审阅：Runs a remote script',
-      'false:被 Claude Agent 自己的规则拦下',
-      'false:被 Claude Agent 自己的规则拦下',
+      'false:被 Claude Agent 自己的规则或当前模式拦下',
+      'false:被 Claude Agent 自己的规则或当前模式拦下',
     ])
-    expect(result.input).toEqual(['', '', 'Mac 不在线', '这个会话的权限变了，已停止接受输入', '这台手机不能发送消息'])
+    expect(result.input).toEqual([
+      '',
+      '',
+      'Mac 不在线',
+      '这个会话的权限变了，已停止接受输入',
+      '这台手机不能发送消息',
+      '这个会话来自已移除的 Agent，只能查看',
+    ])
     expect(result.approvals).toEqual([
       { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', refusal: '', clause: '' },
@@ -1297,31 +1298,24 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await rm(temporary, { recursive: true, force: true })
     }
   })
-  it('uses Personal APIs from the actual Swift workspace without persisting hidden memory in chats', async () => {
+  it('reads, writes and stops from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
       const owner = await host.enroll({ listener: 'unix' })
       const response = await (await host.enroll({ listener: 'unix' })).request('native/pairings', { method: 'POST', body: {} })
       const { invitation } = (await response.json()) as { invitation: { payload: string } }
-      const result = await invoke({ operation: 'nativePersonal', payload: invitation.payload, port: host.host.nativePort })
+      const result = await invoke({ operation: 'nativeWorkspace', payload: invitation.payload, port: host.host.nativePort })
       expect(result).toEqual({
-        personal: true,
-        group: true,
-        strictGroupCancel: true,
-        routine: true,
-        personalQueue: true,
-        controlRecovery: true,
         windowRequired: true,
-        privateHistory: true,
-        cachedClassification: true,
         sameRequest: true,
+        cachedList: true,
         pendingCleared: true,
+        controlRecovery: true,
+        strictControl: true,
         phoneWorkspace: true,
+        assistantWrite: true,
       })
-      expect((await owner.json<{ assistants: unknown[] }>('personal')).assistants).toEqual([])
       expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
-      const audit = await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8')
-      expect(audit).not.toContain('Swift private')
     } finally {
       await host.close()
     }

@@ -40,7 +40,7 @@ export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> =
 
 /** A change that reduced permissions applied while its record could not be written (`x-latch-audit: failed`). */
 export const AUDIT_NOT_RECORDED_TEXT = '改动已生效，但没有写入记录'
-export const LOCAL_ONLY_TEXT = '只能在 Mac 上的 Latch 里操作'
+const LOCAL_ONLY_TEXT = '只能在 Mac 上的 Latch 里操作'
 
 /** Restrictions and consequences shown while choosing or adding an agent, project or model service. */
 export const SETUP_COPY = {
@@ -690,6 +690,7 @@ export const MODE_COPY = {
       : `来源会话的权限是「${was}」，${agent} 没有这一档或更严的，这里用它最严的「${now}」。`,
   forkNoRow: (was: string, agent: string) => `来源会话的权限是「${was}」，${agent} 的模式对应不上，这里从它的默认模式开始。`,
   forkDrifted: (agent: string) => `来源会话的权限被它的 Harness 自己改过，没有沿用，这里从 ${agent} 的默认模式开始。`,
+  forkFromChat: (agent: string) => `来源会话不读写文件，${agent} 没有这一档，这里从它的默认模式开始。`,
   more: '更多',
   fewer: '收起',
 } as const
@@ -710,8 +711,9 @@ export const JUDGED_COPY = {
   unaskedNote: (agent: string) => `${agent} 当时由它的模型代你决定，没有问你就运行了；Latch 不知道是它的规则还是模型放行的。`,
   /** The line under a call the Harness refused itself before it ran, with its own words for why. */
   blockedByModel: (agent: string, reason?: string) => `${agent} 的模型审阅${reason ? `：${reason}` : '拦下了这次调用'}`,
-  blockedByRule: (agent: string, reason?: string) => `被 ${agent} 自己的规则拦下${reason ? `：${reason}` : ''}`,
-  ruleNote: (agent: string) => `${agent} 按它自己的权限规则拦下了这次调用，没有运行；要放行，改 ${agent} 自己的权限设置。`,
+  blockedByRule: (agent: string, reason?: string) => `被 ${agent} 自己的规则或当前模式拦下${reason ? `：${reason}` : ''}`,
+  ruleNote: (agent: string) =>
+    `${agent} 按它自己的权限规则或当前模式拦下了这次调用，没有运行；模式拦下的，在「权限」换一档后可以放行，规则拦下的要改 ${agent} 自己的权限设置。`,
   /** In a folded turn's words. */
   ruleBlockedCount: (count: number) => `规则拦下 ${count} 次`,
 } as const

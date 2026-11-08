@@ -29,7 +29,7 @@ describe('the shell', () => {
     await connected(page)
     return page
   }
-  /** Personal assistants and routines are for a device whose data scope is everything, which only this computer grants. */
+  /** A device whose data scope is everything, which only this computer grants. */
   async function allData(page: Page): Promise<void> {
     const desktop = await host.enroll({ listener: 'unix' })
     const id = await page.evaluate(async () => (await (await fetch('/link/api/snapshot')).json()).device.id as string)
@@ -118,18 +118,17 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('lists 定时任务 and Harness in 设置, and not in the sidebar while they hold nothing', async () => {
-    const page = await open(1440, 900, '壳层定时任务')
+  it('has no Agent or 定时任务 entry while neither has a page', async () => {
+    const page = await open(1440, 900, '壳层没有空页')
     await allData(page)
     const sidebar = page.locator('#session-navigation')
     expect(await sidebar.getByRole('button', { name: 'Agent', exact: true }).count()).toBe(0)
     expect(await sidebar.getByRole('button', { name: '定时任务', exact: true }).count()).toBe(0)
-    await openEntry(page, '定时任务')
-    await page.getByRole('region', { name: '个人助手', exact: true }).waitFor()
-    expect(await page.locator('.topbar .titlebar-page-title').textContent()).toBe('定时任务')
-    await openEntry(page, 'Agent')
-    await page.getByRole('region', { name: '个人助手', exact: true }).waitFor()
-    expect(await page.locator('.topbar .titlebar-page-title').textContent()).toBe('Agent')
+    await openEntry(page, '设置')
+    const settings = page.locator('.settings-page')
+    await settings.getByRole('tab', { name: '通用', exact: true }).waitFor()
+    expect(await settings.getByRole('tab', { name: 'Agent', exact: true }).count()).toBe(0)
+    expect(await settings.getByRole('tab', { name: '定时任务', exact: true }).count()).toBe(0)
     await page.context().close()
   })
 
@@ -139,11 +138,9 @@ describe('the shell', () => {
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
     await tabs.getByRole('button', { name: '设置', exact: true }).click()
     await page.locator('.settings-page[data-entry="settings"] .settings-layout[data-level="root"]').waitFor()
-    await page.getByRole('tab', { name: '定时任务', exact: true }).click()
-    const routines = page.getByRole('region', { name: '个人助手', exact: true })
-    await routines.waitFor()
-    await routines.getByRole('button', { name: '设置', exact: true }).click()
-    await routines.waitFor({ state: 'detached' })
+    await page.getByRole('tab', { name: '关于', exact: true }).click()
+    await page.locator('.settings-layout[data-level="section"]').waitFor()
+    await page.locator('.settings-page').getByRole('button', { name: '返回', exact: true }).click()
     await page.locator('.settings-page[data-entry="settings"] .settings-layout[data-level="root"]').waitFor()
     await page.context().close()
   })

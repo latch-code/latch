@@ -294,7 +294,6 @@ export function isUncertain(error: unknown): boolean {
 export interface PendingSubmission {
   requestId: string
   prompt: string
-  assistantId?: string
   sessionId?: string
   mode?: TaskMode
   harnessId?: string
@@ -330,13 +329,8 @@ export function readPending(key: string): PendingSubmission | null {
     if (typeof value !== 'object' || value === null) return null
     const item = value as Record<string, unknown>
     if (typeof item.requestId !== 'string' || typeof item.prompt !== 'string') return null
-    if (
-      item.assistantId !== undefined
-      && (typeof item.assistantId !== 'string'
-        || !/^asst_[a-f0-9-]{36}$/u.test(item.assistantId)
-        || ['sessionId', 'mode', 'harnessId', 'model', 'workspaceId', 'forkOf', 'config'].some(field => item[field] !== undefined))
-    )
-      return null
+    // An assistant's message cannot be sent again: sent without it, it would start an ordinary session.
+    if (item.assistantId !== undefined) return null
     for (const field of ['sessionId', 'harnessId', 'workspaceId'] as const)
       if (item[field] !== undefined && typeof item[field] !== 'string') return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
@@ -372,7 +366,6 @@ export function readPending(key: string): PendingSubmission | null {
     return {
       requestId: item.requestId,
       prompt: item.prompt,
-      ...(typeof item.assistantId === 'string' ? { assistantId: item.assistantId } : {}),
       ...(typeof item.sessionId === 'string' ? { sessionId: item.sessionId } : {}),
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
@@ -405,8 +398,6 @@ export function submissionRequest(submission: PendingSubmission): { path: string
     ...(submission.attachmentIds?.length ? { attachmentIds: submission.attachmentIds } : {}),
     ...(submission.fileRefs?.length ? { fileRefs: submission.fileRefs } : {}),
   }
-  if (submission.assistantId !== undefined)
-    return { path: 'tasks', body: { requestId, prompt, assistantId: submission.assistantId, ...attachments } }
   if (submission.sessionId !== undefined) {
     return {
       path: `tasks/${encodeURIComponent(submission.sessionId)}/prompt`,

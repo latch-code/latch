@@ -179,10 +179,9 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
   })
 
   it('applies the size, resizes, delivers input and signals the foreground program', async () => {
+    // The shell waits in its own read for the signal: a program that exits by itself just as it lands lets sh skip the trap.
     const helper = new Helper(
-      shell(
-        'trap "echo got-int; stty size; exit 7" INT; stty size; echo ready; read line; echo "line=$line"; while :; do sleep 0.05; done',
-      ),
+      shell('trap "echo got-int; stty size; exit 7" INT; stty size; echo ready; read line; echo "line=$line"; read rest'),
     )
     await helper.until(() => helper.output().includes('ready'))
     expect(helper.output()).toContain('24 80\r\n')
@@ -220,7 +219,8 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
     helper.child.kill('SIGTERM')
     expect(await helper.closed).toBe(0)
     expect(Date.now() - started).toBeLessThan(900)
-    expect(helper.messages(FROM_HELPER.exit)).toEqual([{ signal: 1 }])
+    // sh may see its foreground job die of the hangup before its own hangup, and then ends with that job's status.
+    expect([[{ signal: 1 }], [{ code: 129 }]]).toContainEqual(helper.messages(FROM_HELPER.exit))
     await gone(pids)
   })
 

@@ -71,31 +71,12 @@ function privateContext(value: AgentExecutionContext | undefined): AgentExecutio
   if (value === undefined) return undefined
   if (
     !value
-    || (value.personal !== undefined && value.agent !== undefined)
-    || (value.personal !== undefined
-      && (!/^asst_[a-f0-9-]{36}$/u.test(value.personal.assistantId ?? '')
-        || (value.personal.groupId !== undefined && !/^grp_[a-f0-9-]{36}$/u.test(value.personal.groupId))
-        || value.pluginIds === undefined))
     || (value.agent !== undefined && !/^agt_[a-f0-9-]{36}$/u.test(value.agent.customAgentId ?? ''))
     || typeof value.instructions !== 'string'
     || value.instructions.length > 600_000
     || !/^[a-f0-9]{64}$/u.test(value.revision)
     || (value.pluginIds !== undefined && !idList(value.pluginIds, 64, id => PLUGIN_ID.test(id)))
     || (value.skillIds !== undefined && !idList(value.skillIds, 256, id => id.length <= 256))
-    || (value.sharedMessages !== undefined
-      && (!value.personal?.groupId
-        || !Array.isArray(value.sharedMessages)
-        || value.sharedMessages.length > 64
-        || value.sharedMessages.some(
-          message =>
-            !message
-            || typeof message !== 'object'
-            || !['user', 'assistant'].includes(message.role)
-            || typeof message.text !== 'string'
-            || message.text.length > 64000
-            || Object.keys(message).some(key => key !== 'role' && key !== 'text'),
-        )
-        || Buffer.byteLength(JSON.stringify(value.sharedMessages)) > 256 * 1024))
     || (value.expectedRevisions !== undefined
       && (!value.expectedRevisions
         || typeof value.expectedRevisions !== 'object'
@@ -175,7 +156,6 @@ interface PendingApproval {
 }
 interface Run {
   instructions?: string
-  sharedMessages?: ModelMessage[]
   id: string
   sessionId: string
   mode: TaskMode
@@ -365,6 +345,9 @@ function foldersOf(summary: DriverTaskSummary, cwd: string): ProjectFolder[] {
     ? summary.folders.map(folder => ({ id: folder.id, path: folder.path }))
     : [{ id: SINGLE_FOLDER_ID, path: cwd }]
 }
+const schemaIssues = (error: z.ZodError) =>
+  error.issues.map(issue => (issue.path.length ? `${issue.path.join('.')}: ${issue.message}` : issue.message)).join('; ')
+
 function toolFolders(run: Run): SessionFolder[] {
   return run.folders.map((folder, index) => ({ id: folder.id, path: folder.path, primary: index === 0 }))
 }
@@ -741,7 +724,6 @@ class HarnessRuntime implements Bridge {
     // they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
-      ...(agentContext?.personal ? { personal: agentContext.personal, pluginIds: agentContext.pluginIds } : {}),
       ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(fileRefs.length ? { fileRefs } : {}),
@@ -762,8 +744,7 @@ class HarnessRuntime implements Bridge {
           }
           // Before modes existed, creation receipts hashed the text alone.
           const legacyAgentReceipt =
-            !agentContext?.personal
-            && mode === 'agent'
+            mode === 'agent'
             && !attachments.length
             && !fileRefs.length
             && !model
@@ -793,9 +774,8 @@ class HarnessRuntime implements Bridge {
         draft.tasks[sessionId] = {
           summary: {
             id: sessionId,
-            ...(agentContext?.personal ? { personal: structuredClone(agentContext.personal) } : {}),
             ...(agentContext?.agent ? { agent: structuredClone(agentContext.agent) } : {}),
-            ...(agentContext && !agentContext.personal && !agentContext.agent ? { agentPrivate: true as const } : {}),
+            ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
             ...(agentContext?.pluginIds ? { pluginIds: [...agentContext.pluginIds] } : {}),
             title: (input.prompt.trim().replace(/\s+/g, ' ') || attachments[0]?.name || '附件').slice(0, 80),
             status: 'running',
@@ -806,7 +786,7 @@ class HarnessRuntime implements Bridge {
             model: run.model,
             ...(run.effort ? { effort: run.effort } : {}),
             mode,
-            ...(selection.persist || agentContext?.personal || agentContext?.agent ? { providerId: selection.providerId } : {}),
+            ...(selection.persist || agentContext?.agent ? { providerId: selection.providerId } : {}),
             runId: run.id,
             ...(run.lease.skills?.length ? { skills: run.lease.skills.map(skill => skill.id) } : {}),
           },
@@ -873,11 +853,8 @@ class HarnessRuntime implements Bridge {
           if (receipt.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
           return
         }
-        if (
-          task.summary.personal?.assistantId !== agentContext?.personal?.assistantId
-          || task.summary.personal?.groupId !== agentContext?.personal?.groupId
-          || task.summary.agent?.customAgentId !== agentContext?.agent?.customAgentId
-        )
+        if (task.summary.personal) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
+        if (task.summary.agent?.customAgentId !== agentContext?.agent?.customAgentId)
           throw new AppError(409, 'agent-context-required', '请通过原 Agent 继续这个会话。')
         if (!allowed || recorded === undefined) throw workspaceChanged()
         if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
@@ -928,7 +905,7 @@ class HarnessRuntime implements Bridge {
           createdAt: at,
           ...(attachments.length ? { attachments } : {}),
         })
-        if (agentContext && !agentContext.personal && !agentContext.agent) task.summary.agentPrivate = true
+        if (agentContext && !agentContext.agent) task.summary.agentPrivate = true
         if (agentContext?.pluginIds) task.summary.pluginIds = [...agentContext.pluginIds]
         else delete task.summary.pluginIds
         task.summary.status = 'running'
@@ -941,7 +918,7 @@ class HarnessRuntime implements Bridge {
         task.summary.model = run.model
         if (run.effort) task.summary.effort = run.effort
         else delete task.summary.effort
-        if (selection.persist || agentContext?.personal || agentContext?.agent) task.summary.providerId = selection.providerId
+        if (selection.persist || agentContext?.agent) task.summary.providerId = selection.providerId
         task.summary.updatedAt = at
         task.revision++
         draft.receipts[key] = { taskId: sessionId, payloadHash }
@@ -1012,9 +989,6 @@ class HarnessRuntime implements Bridge {
       ...(effort ? { effort } : {}),
       userMessageId: randomUUID(),
       ...(agentContext?.instructions ? { instructions: agentContext.instructions } : {}),
-      ...(agentContext?.sharedMessages
-        ? { sharedMessages: agentContext.sharedMessages.map(message => ({ role: message.role, content: message.text })) }
-        : {}),
       clock,
       cwd,
       folders,
@@ -1291,8 +1265,8 @@ class HarnessRuntime implements Bridge {
     } catch (error) {
       const text = signal.aborted
         ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
-        : // A schema failure's own message is a JSON list of issues; the readable form says what was wrong first.
-          `TOOL_ERROR: ${error instanceof z.ZodError ? z.prettifyError(error) : error instanceof Error ? error.message : String(error)}`
+        : // A schema failure's own message is a JSON list of issues: on one line, each with the field it is about.
+          `TOOL_ERROR: ${error instanceof z.ZodError ? schemaIssues(error) : error instanceof Error ? error.message : String(error)}`
       this.output(run)
       await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, signal.aborted))
       await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: signal.aborted ? 'cancelled' : 'failed' })
@@ -1369,7 +1343,6 @@ class HarnessRuntime implements Bridge {
             return { ...message, attachments }
           }),
         )
-        if (run.sharedMessages) messages.unshift(...structuredClone(run.sharedMessages))
         if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
         if (run.instructions) messages.unshift({ role: 'system', content: run.instructions })
         messages.unshift({ role: 'system', content: BASE_PROMPT })

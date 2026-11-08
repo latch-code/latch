@@ -136,11 +136,13 @@ export type ComposerGate = { kind: 'open' } | { kind: 'read-only'; text: string 
 
 /** Whether this device may type into a session; a stopped session shows its own banner. */
 export function composerGate(input: {
-  summary?: Pick<TaskSummary, 'permissionDrift'>
+  summary?: Pick<TaskSummary, 'permissionDrift' | 'personal'>
   permission?: SessionPermission
   access: Pick<DeviceAccess, 'legacy' | 'scopes'>
   stopped?: boolean
 }): ComposerGate {
+  // Latch no longer runs an assistant's private context, so nothing can continue its session.
+  if (input.summary?.personal) return { kind: 'read-only', text: '这个会话来自已移除的 Agent，只能查看' }
   if (input.access.legacy) return { kind: 'open' }
   if (input.stopped || input.summary?.permissionDrift || input.permission?.drift) return { kind: 'stopped' }
   if (!input.access.scopes.has('run')) return { kind: 'read-only', text: '这台设备不能发送消息' }

@@ -16,7 +16,7 @@ import { Transcript } from '../src/components/Transcript.tsx'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
 import { StatusLine } from '../src/conversation/StatusLine.tsx'
 import { ChangesLinkContext, type ChangesLink } from '../src/conversation/changesLink.ts'
-import { renderedMessages } from '../src/conversation.ts'
+import { blockedReason, renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
 import { deviceLabel } from '../src/settings/devices/deviceRows.ts'
@@ -336,10 +336,17 @@ describe('tool cards', () => {
     expect(model).not.toContain('process-failed')
     const rule = row({ by: 'Claude Agent', source: 'rule', reason: 'Denied by rule Bash(rm:*)' })
     expect(words(rule)).toBe('拦下')
-    expect(line(rule)).toBe('被 Claude Agent 自己的规则拦下：Denied by rule Bash(rm:*)')
+    expect(line(rule)).toBe('被 Claude Agent 自己的规则或当前模式拦下：Denied by rule Bash(rm:*)')
     expect(rule).toContain(JUDGED_COPY.ruleNote('Claude Agent'))
     expect(line(row({ by: 'Claude Agent', source: 'model' }))).toBe('Claude Agent 的模型审阅拦下了这次调用')
-    expect(line(row({ by: 'Claude Agent', source: 'rule' }))).toBe('被 Claude Agent 自己的规则拦下')
+    expect(line(row({ by: 'Claude Agent', source: 'rule' }))).toBe('被 Claude Agent 自己的规则或当前模式拦下')
+    // A reason the line cuts or leaves lines of is whole in the details; one it shows whole is not repeated there.
+    const long = `Sends ${'a'.repeat(200)} away`
+    expect(line(row({ by: 'Claude Agent', source: 'model', reason: long }))).toBe(`Claude Agent 的模型审阅：Sends ${'a'.repeat(114)}…`)
+    expect(blockedReason({ by: 'Claude Agent', source: 'model', reason: long })).toBe(long)
+    expect(blockedReason({ by: 'Claude Agent', source: 'rule', reason: 'First\nSecond' })).toBe('First\nSecond')
+    expect(blockedReason({ by: 'Claude Agent', source: 'rule', reason: ' Denied by rule ' })).toBeUndefined()
+    expect(blockedReason({ by: 'Claude Agent', source: 'rule' })).toBeUndefined()
   })
 
   it('numbers a removed line by its old line in the single column phones keep', () => {

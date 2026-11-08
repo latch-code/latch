@@ -20,7 +20,6 @@ struct PhoneRootView: View {
                 }.tint(PhoneTheme.ink)
             }
         }
-        .onChange(of: tab) { _, next in if next == .sessions, model.area == .personal { model.openProjects() } }
         .fullScreenCover(isPresented: Binding(get: { scan || model.pairing != nil }, set: { if !$0 { scan = false } })) {
             PairingView { scan = false }
         }
@@ -55,40 +54,23 @@ struct AgentTabView: View {
     @EnvironmentObject private var model: PhoneModel
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     var body: some View {
-        if model.area == .personal {
-            if let group = model.groupId, model.sessionId == nil { PersonalGroupView(id: group) }
-            else if model.assistantId == nil && model.sessionId == nil { PersonalHomeView() }
-            else { SessionWorkspaceView() }
-        } else {
-            NavigationStack {
-                List {
-                    Section("已安装") {
-                        if PhoneStart.engines(catalog).isEmpty {
-                            Text(model.connected ? "还没有可用的 Harness" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                        }
-                        ForEach(PhoneStart.engines(catalog)) { engine in
-                            HStack(spacing: 12) {
-                                EngineTile(mark: model.engineMark(engine.id), size: 28)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(engine.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
-                                }
-                            }.padding(.vertical, 2)
-                        }
+        NavigationStack {
+            List {
+                Section("已安装") {
+                    if PhoneStart.engines(catalog).isEmpty {
+                        Text(model.connected ? "还没有可用的 Harness" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
                     }
-                    if model.supportsPersonal {
-                        Section {
-                            Button { Task { await model.openPersonalHome() } } label: {
-                                HStack {
-                                    Label("助手与群聊", systemImage: "person.2").foregroundStyle(PhoneTheme.ink)
-                                    Spacer()
-                                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(PhoneTheme.faint)
-                                }
+                    ForEach(PhoneStart.engines(catalog)) { engine in
+                        HStack(spacing: 12) {
+                            EngineTile(mark: model.engineMark(engine.id), size: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(engine.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
                             }
-                        }
+                        }.padding(.vertical, 2)
                     }
                 }
-                .navigationTitle("Agent")
             }
+            .navigationTitle("Agent")
         }
     }
 }

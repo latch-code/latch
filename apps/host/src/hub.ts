@@ -512,9 +512,8 @@ export class HarnessHub implements Bridge {
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
-    if (input.agentContext?.personal) await this.recordPersonal(result.sessionId, input.agentContext.personal)
     if (input.agentContext?.agent) await this.recordAgent(result.sessionId, input.agentContext.agent)
-    if (input.agentContext && !input.agentContext.personal && !input.agentContext.agent)
+    if (input.agentContext && !input.agentContext.agent)
       await this.recordPrivate(result.sessionId).catch(error => this.log(`会话 ${result.sessionId} 的私有标记写入失败：${message(error)}`))
     if (automationId)
       await this.meta
@@ -539,21 +538,21 @@ export class HarnessHub implements Bridge {
     return result
   }
 
-  /** Host private-body classification remains available even when the driver cannot list its tasks. */
+  /** An assistant's or a group's session; available even when the driver cannot list its tasks. */
   personalOf(sessionId: string): TaskSummary['personal'] {
     return this.personalOwners.get(sessionId) ?? this.meta.get(sessionId)?.personal
   }
 
   private rememberPersonal(sessionId: string, owner: NonNullable<TaskSummary['personal']>): void {
     if (!/^asst_[a-f0-9-]{36}$/u.test(owner.assistantId) || (owner.groupId !== undefined && !/^grp_[a-f0-9-]{36}$/u.test(owner.groupId)))
-      throw new AppError(502, 'personal-owner-invalid', '执行端返回了无效的个人助手归属。')
+      throw new AppError(502, 'personal-owner-invalid', '执行端返回了无效的会话归属。')
     const current = this.personalOf(sessionId)
     if (current && (current.assistantId !== owner.assistantId || current.groupId !== owner.groupId))
       throw new AppError(409, 'personal-owner-changed', '会话归属已改变。')
     this.personalOwners.set(sessionId, structuredClone(owner))
   }
   /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
-  async recordPersonal(sessionId: string, owner: NonNullable<TaskSummary['personal']>): Promise<void> {
+  private async recordPersonal(sessionId: string, owner: NonNullable<TaskSummary['personal']>): Promise<void> {
     this.rememberPersonal(sessionId, owner)
     const persisted = this.meta.get(sessionId)?.personal
     if (persisted && persisted.assistantId === owner.assistantId && persisted.groupId === owner.groupId) return
@@ -563,7 +562,13 @@ export class HarnessHub implements Bridge {
   /** Whether reading the session takes the agent data scope, without asking the driver. */
   agentPrivate(sessionId: string): boolean {
     const meta = this.meta.get(sessionId)
-    return this.briefSessions.has(sessionId) || !!meta?.agentPrivate || !!meta?.automationId || this.agentOf(sessionId) !== undefined
+    return (
+      this.briefSessions.has(sessionId)
+      || !!meta?.agentPrivate
+      || !!meta?.automationId
+      || this.agentOf(sessionId) !== undefined
+      || this.personalOf(sessionId) !== undefined
+    )
   }
   /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
   private async recordPrivate(sessionId: string): Promise<void> {
@@ -630,7 +635,7 @@ export class HarnessHub implements Bridge {
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
     const member = await this.route(sessionId)
     // Before the turn is accepted, so the session is never readable as ordinary while the context is on its way.
-    if (options?.agentContext && !options.agentContext.personal && !options.agentContext.agent) await this.recordPrivate(sessionId)
+    if (options?.agentContext && !options.agentContext.agent) await this.recordPrivate(sessionId)
     // Not a step of its own without a watched run: `accept` follows the route directly.
     if (this.options.lifecycle?.watchedRun(sessionId)) await this.readRunNow(member.bridge, sessionId)
     // As above: without a note to read, `accept` follows the route directly.

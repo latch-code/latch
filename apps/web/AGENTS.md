@@ -36,4 +36,4 @@ browser 环境：不用 Node 全局变量与模块。Vite 与测试在 Node 中�
 
 布局验证覆盖手机、平板、桌面及深色模式（`e2e/design.e2e.ts`）。先读 STREAMING.md 与 DESIGN.md。
 
-- 附件字节只经专用上传，未知提交保留原请求与引用（ATTACHMENTS.md）。个人页隐藏时停读、撤权即卸载（PERSONAL.md）。
+- 附件字节只经专用上传，未知提交保留原请求与引用（ATTACHMENTS.md）。

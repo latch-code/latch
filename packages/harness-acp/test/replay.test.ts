@@ -214,7 +214,7 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
       'assistant:The build runs in two steps: compile, then bundle.',
       'user:List the files',
       // The service's error, with the key it echoed masked.
-      'system:Gemini CLI 重试：{"error":{"code":429,"message":"Quota exceeded for key [redacted].","status":"RESOURCE_EXHAUSTED"}}\n第 1 次重试，最多 10 次',
+      'system:Gemini CLI 重试：429 Quota exceeded for key [redacted].\n第 1 次重试，最多 10 次',
       'system:Gemini CLI 重试：回复中途中断（ECONNRESET），从头重新生成\n第 1 次重试，最多 4 次',
       'tool:Listed 2 item(s).',
       'assistant:Two files: a.ts and b.ts.',

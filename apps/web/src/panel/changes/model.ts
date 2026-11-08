@@ -332,6 +332,8 @@ const REDO_WHY: Partial<Record<UndoBlock, string>> = {
 export interface UndoRights {
   /** `run`: a device without it reads. */
   canRun: boolean
+  /** The session opens only to be read, whatever this device may do: the Host refuses every change to it. */
+  readOnly?: boolean
   /** The connection is `host.sock`. */
   local: boolean
   /** The Host takes this session's input only from this computer (an external engine). */
@@ -356,6 +358,7 @@ export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | un
   if (rights.offline) return { kind: 'why', text: `离线时不能${word}` }
   if (list.scope === 'uncommitted') {
     if (list.conflict) return { kind: 'why', text: conflictWhy(list.conflict.operation) }
+    if (rights.readOnly) return { kind: 'why', text: '这个会话只能查看' }
     if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
     if (!rights.local) return { kind: 'why', text: '只能在 Mac 的 Latch 中撤销' }
     if (!list.files.length) return { kind: 'none' }
@@ -364,6 +367,7 @@ export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | un
   // A turn: its state first, because `ChangeList.running` is also true of one that was interrupted.
   if (rights.active || turn?.state === 'running') return { kind: 'why', text: `运行中不能${word}` }
   if (turn?.state === 'interrupted') return { kind: 'why', text: '没有结算，不能撤销' }
+  if (rights.readOnly) return { kind: 'why', text: '这个会话只能查看' }
   if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
   if (list.undone) return list.redo?.available ? { kind: 'redo' } : blockedWhy(REDO_WHY, list.redo)
   if (list.undo?.available) return { kind: 'undo' }

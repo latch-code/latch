@@ -383,15 +383,15 @@ pnpm test:e2e
 
 `PromptOptions.freshContext?: true` 要求这一轮在新的上下文里开始：Harness 看不到会话之前的消息，消息留在记录里，这一轮的用户消息带 `freshContext`。只有在详情里声明 `clearContext: true` 的 Driver 会收到它（Standard 与 ACP 已实现），它要计入请求的幂等哈希。Driver 在这一轮被接纳前就放下了旧的上下文、这一轮却被拒绝时，在详情里带 `contextCleared: true`，直到下一条用户消息记下，页面据此不再提供撤销。助手消息可以带 `thinking`（这一步的思考深度），与 `model` 一样用 Harness 的叫法。
 
-### 个人助手上下文
+### Agent 上下文
 
 `CreateTaskInput.agentContext?` / `PromptOptions.agentContext?` 是 Host 构造的 `AgentExecutionContext`，不是可由 HTTP 客户端授予的权限。`agent` 持久化为会话归属。Driver 用 `agentContext` 声明接收方式：`private` 必须保证 `instructions` 只对当前运行可见、不进入公开消息或可分叉历史，并对每轮输入校验原归属，Standard 已实现；`first-turn` 把 `brief` 随第一轮发给 Harness，并记录到那条用户消息的 `agentBrief`，ACP 已实现。未声明的 Driver 收不到 Agent 上下文。
 
-`registry.acquire(providerId, {tools, pluginIds})` 的可选 `pluginIds` 固定本轮工具和技能的归属插件。缺省保持旧行为；显式空列表不租用工具或技能；选择的插件已停用或移除时报错。Provider 独立租用，不能通过 Provider 所属关系额外提供未选中的工具。私有记忆、请求预留与数据范围规则见 [PERSONAL.md](PERSONAL.md)。
+`registry.acquire(providerId, {tools, pluginIds})` 的可选 `pluginIds` 固定本轮工具和技能的归属插件。缺省保持旧行为；显式空列表不租用工具或技能；选择的插件已停用或移除时报错。Provider 独立租用，不能通过 Provider 所属关系额外提供未选中的工具。Agent 的说明、记忆与数据范围规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)。
 
 
 ### 执行修订
 
 Host 可在 `register(plugin,{revision})` 或 `replace(plugin,beforeCommit,{revision})` 传入已实际应用的完整来源与配置 SHA-256。`revisionSnapshot(ids)` 返回各插件的摘要与 `persistent`；没有完整摘要的旧模块使用当前 activation 的随机指纹，重启、替换或重新启用后改变，不把相同 semver 当作旧授权仍然有效。替换未提供新摘要时也不继承旧摘要。
 
-已保存的执行授权可通过 `registry.acquire(providerId,{pluginIds,expectedRevisions})` 同步复核，必须包含实际 Provider 归属和每个选中的插件。变更中、已停用、缺少修订或摘要变化都拒绝新租约。旧租约仍保留原代，直到真实运行结束再清理。`PersonalExecutionContext.expectedRevisions` 仅由 Host 构造，Standard 在持久化新运行之前复核，指纹不包含私有记忆正文，也不进入公开消息。内容摘要描述已批准的来源，不构成 OS 隔离或第三方外部依赖完整性的保证。
+已保存的执行授权可通过 `registry.acquire(providerId,{pluginIds,expectedRevisions})` 同步复核，必须包含实际 Provider 归属和每个选中的插件。变更中、已停用、缺少修订或摘要变化都拒绝新租约。旧租约仍保留原代，直到真实运行结束再清理。`AgentExecutionContext.expectedRevisions` 仅由 Host 构造，Standard 在持久化新运行之前复核，指纹不包含私有记忆正文，也不进入公开消息。内容摘要描述已批准的来源，不构成 OS 隔离或第三方外部依赖完整性的保证。

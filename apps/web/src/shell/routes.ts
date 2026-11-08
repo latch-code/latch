@@ -1,16 +1,4 @@
-import type { AppSnapshot } from '@latch/protocol'
-
-export type SettingsSection =
-  | 'general'
-  | 'providers'
-  | 'engines'
-  | 'assistants'
-  | 'routines'
-  | 'workspaces'
-  | 'plugins'
-  | 'devices'
-  | 'shortcuts'
-  | 'about'
+export type SettingsSection = 'general' | 'providers' | 'engines' | 'workspaces' | 'plugins' | 'devices' | 'shortcuts' | 'about'
 
 /** Where the shell can be: the sessions, or a page that takes the panel's place and the main area. */
 export type ShellEntry = 'sessions' | 'phone' | 'settings'
@@ -32,12 +20,12 @@ export interface ShellRoute {
 /** Each page's sections on wide windows; the order is the page's own. */
 const WIDE_SECTIONS: Record<PageEntry, readonly SettingsSection[]> = {
   phone: ['devices'],
-  settings: ['general', 'providers', 'engines', 'workspaces', 'routines', 'assistants', 'plugins', 'shortcuts', 'about'],
+  settings: ['general', 'providers', 'engines', 'workspaces', 'plugins', 'shortcuts', 'about'],
 }
 
 /** A phone has two tabs, so everything but the sessions is inside 设置, and it has no keyboard to list. */
 const PHONE_SECTIONS: Partial<Record<PageEntry, readonly SettingsSection[]>> = {
-  settings: ['general', 'providers', 'engines', 'workspaces', 'routines', 'assistants', 'plugins', 'devices', 'about'],
+  settings: ['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'about'],
 }
 
 export function entrySections(entry: PageEntry, phone: boolean): readonly SettingsSection[] {
@@ -66,15 +54,4 @@ export function routeAtWidth(route: ShellRoute, phone: boolean): ShellRoute {
 export function visibleEntries(allowed: readonly SettingsSection[], phone: boolean): ShellEntry[] {
   const entries: PageEntry[] = phone ? ['settings'] : ['phone', 'settings']
   return ['sessions', ...entries.filter(entry => entrySections(entry, phone).some(section => allowed.includes(section)))]
-}
-
-/**
- * The pages the sidebar names, only once they hold something. An empty one is reached from 设置 and the palette. Private
- * lists load only while their page is open, so an Agent shows here through the sessions started from it.
- */
-export function sidebarPages(snapshot: AppSnapshot, allowed: readonly SettingsSection[]): SettingsSection[] {
-  const pages: SettingsSection[] = []
-  if ((snapshot.automations?.length ?? 0) > 0) pages.push('routines')
-  if ((snapshot.customAgents?.length ?? 0) > 0 || snapshot.tasks.some(task => task.personal !== undefined)) pages.push('assistants')
-  return pages.filter(section => allowed.includes(section))
 }

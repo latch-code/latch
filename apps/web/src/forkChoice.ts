@@ -36,6 +36,8 @@ export interface ForkSource {
   mode?: SourcePick & { tier?: PermissionTier }
   /** The Harness moved the source's mode itself and Latch held it to none, so there is no row to keep. */
   modeDrifted?: true
+  /** The source only chatted: it neither read nor wrote files, which no row of a Harness that works on files matches. */
+  chat?: true
 }
 
 function sourcePick(option: SessionConfigOption | undefined, value: string | undefined): SourcePick | undefined {
@@ -74,6 +76,7 @@ export function forkSource(detail: TaskDetail, harness: Pick<HarnessInfo, 'permi
     ...(thinking ? { thinking } : {}),
     ...(mode ? { mode: { ...mode, ...(tier ? { tier } : {}) } } : {}),
     ...(modeOption && !mode && drifted ? { modeDrifted: true as const } : {}),
+    ...(summary.mode === 'chat' ? { chat: true as const } : {}),
   }
 }
 
@@ -99,8 +102,11 @@ interface Carried {
   lost: string[]
   /** What the draft can take only once the Harness's options are read: until then nothing is known of them. */
   pending?: string[]
-  /** What the draft says when it could not keep the source's row as it was. */
-  permission?: { optionId: string; line: string }
+  /**
+   * What the draft says when it could not keep the source's row as it was. `optionId`: the option a pick in the draft
+   * replaces it with, unknown until the Harness's options are read.
+   */
+  permission?: { optionId?: string; line: string }
 }
 
 /** The source's model, thinking level and mode onto a draft that resolved to `base`. */
@@ -169,8 +175,9 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
       delete config[option.id]
       if (was !== undefined) permission = { optionId: option.id, line: MODE_COPY.forkNoRow(was, name) }
       else if (source.modeDrifted) permission = { optionId: option.id, line: MODE_COPY.forkDrifted(name) }
+      else if (source.chat) permission = { optionId: option.id, line: MODE_COPY.forkFromChat(name) }
     }
-  }
+  } else if (rows && source.chat) permission = { line: MODE_COPY.forkFromChat(harnessName(harness)) }
   return { config, lost, ...(pending.length ? { pending } : {}), ...(permission ? { permission } : {}) }
 }
 
@@ -188,8 +195,9 @@ export interface ForkedChoice {
 
 /**
  * A fork's draft: the source's Harness, project and mode while the Harness has that mode, and the source's model,
- * thinking level and permission row where the Harness offers them, the row never wider than the source's. What the
- * person picks in the draft comes last. Without a source, the Harness's own picks on this device.
+ * thinking level and permission row where the Harness offers them. The row is the widest one no wider than the source's,
+ * else the Harness's strictest, which the draft then names. What the person picks in the draft comes last. Without a
+ * source, the Harness's own picks on this device.
  */
 export function forkedChoice(
   catalog: HostCatalog | undefined,
@@ -222,6 +230,7 @@ export function forkedChoice(
   if (carried.pending && harness) missed.push(pendingLine(carried.pending, harnessName(harness)))
   const row = carried.permission
   // A row the person picked in the draft is theirs, and what the draft said about the source's no longer applies.
-  if (row && (picked === undefined || picked[row.optionId] === carried.config?.[row.optionId])) missed.push(row.line)
+  if (row && (picked === undefined || row.optionId === undefined || picked[row.optionId] === carried.config?.[row.optionId]))
+    missed.push(row.line)
   return { choice, missed }
 }

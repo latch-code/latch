@@ -9,7 +9,7 @@ struct InboxView: View {
     @State private var showConnecting = false
     private var frozen: Bool { !model.connected }
     private var selection: Binding<String?> {
-        Binding(get: { model.area == .projects ? model.sessionId : nil }, set: { id in
+        Binding(get: { model.sessionId }, set: { id in
             if let id { Task { await model.openSession(id) } } else if model.sessionId != nil { model.closeSession() }
         })
     }
@@ -56,7 +56,7 @@ struct InboxView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { ControlPendingBar() }
         } detail: {
-            if let id = model.area == .projects ? model.sessionId : nil { ConversationView(id: id) }
+            if let id = model.sessionId { ConversationView(id: id) }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
         .sheet(isPresented: $creating) { NewSessionSheet().presentationCornerRadius(28) }

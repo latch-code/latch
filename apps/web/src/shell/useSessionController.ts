@@ -5,7 +5,7 @@ import type { FileMention } from '@latch/protocol'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Approval, TaskDetail, TaskSummary, PersonalAssistantSummary } from '@latch/protocol'
+import type { Approval, TaskDetail, TaskSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, inlineError, isUncertain } from '../core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
@@ -50,7 +50,6 @@ import { useRejectionNote } from '../composer/useRejectionNote.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useRunClock } from '../hooks/useRunClock.ts'
 import { useSubmission } from '../hooks/useSubmission.ts'
-import { usePersonalName } from '../hooks/usePersonalName.ts'
 import { useSwitchFade } from '../hooks/useSwitchFade.ts'
 import { type RunState } from '../composer/Composer.tsx'
 import { type MenuSection } from '../components/overlays.tsx'
@@ -61,6 +60,9 @@ import { toolRowId } from '../conversation.ts'
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
+/** Text only a device that may read every kind of data sees: an agent's session, or one an assistant ran. */
+const privateSession = (task: TaskSummary | undefined): boolean =>
+  task !== undefined && (task.personal !== undefined || task.agent !== undefined || task.agentPrivate === true)
 
 type Harness = ReturnType<typeof useHarness>
 type ToastMessage = { text: string; tone: 'ok' | 'error' }
@@ -96,17 +98,9 @@ export function useSessionController({
   const draftSessionId = useRef(selectedId)
   const draftDevice = useRef(snapshot.device.id)
   const privateDraftId = useRef<string | null>(null)
-  const [personalDraft, setPersonalDraft] = useState<PersonalAssistantSummary | null>(null)
-  const [personalGroupId, setPersonalGroupId] = useState<string | undefined>()
-  useLayoutEffect(() => {
-    if (!privateVisible) {
-      setPersonalDraft(null)
-      setPersonalGroupId(undefined)
-    }
-  }, [privateVisible])
-  const current = detail?.summary.id === selectedId && (!detail.summary.personal || privateVisible) ? detail : null
-  const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId && (!task.personal || privateVisible))
-  if (summary?.personal && selectedId) privateDraftId.current = selectedId
+  const current = detail?.summary.id === selectedId && (!privateSession(detail.summary) || privateVisible) ? detail : null
+  const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId && (!privateSession(task) || privateVisible))
+  if (summary && privateSession(summary) && selectedId) privateDraftId.current = selectedId
   else if (privateDraftId.current !== selectedId) privateDraftId.current = null
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const [renaming, setRenaming] = useState<TaskSummary | null>(null)
@@ -144,9 +138,7 @@ export function useSessionController({
   // Ignore last-seen churn, but invalidate every access boundary used by private editors.
   const access = useMemo(() => deviceAccess(snapshot, shell), [scopesKey, shell])
   const owner = access.admin
-  const canQueue = summary?.personal
-    ? !summary.personal.groupId && catalog?.features?.personalQueue === true
-    : catalog?.features?.queue === true
+  const canQueue = catalog?.features?.queue === true
   const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device), [access])
   const approvals = useMemo(
     () => current?.approvals ?? snapshot.approvals.filter(approval => approval.sessionId === selectedId),
@@ -156,12 +148,7 @@ export function useSessionController({
   /** The running turn takes what is sent now; read from the open session, since it is agreed per run. */
   const steer = active && current?.steer === true
   const harnessInfo = sessionHarness(catalog, summary)
-  const personalName = usePersonalName(summary?.personal?.assistantId, privateVisible, harness.refreshHints + harness.resyncs)
-  const harnessName = summary?.personal
-    ? (personalName ?? '个人助手')
-    : harnessInfo
-      ? harnessLabel(harnessInfo)
-      : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
+  const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
 
   const reading = useReadingPosition({
     sessionId: selectedId,
@@ -199,14 +186,12 @@ export function useSessionController({
     snapshot,
     access,
     selectedId,
-    assistantId: personalDraft?.id,
     select,
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft }) => {
       if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? NEW_SESSION_DRAFT)
       if (!foreground || sent.queue) return
       draftSessionId.current = sessionId
-      setPersonalDraft(null)
       onForegroundSent()
       reading.show(sessionId)
     },
@@ -214,7 +199,7 @@ export function useSessionController({
   })
   /**
    * The open session can start its next prompt on a new context: the harness takes it and this device may send. Not
-   * when the Host has cleared it already, since nothing is left to keep.
+   * when the Host has cleared it already, since nothing is left to keep, nor in a session that only opens to be read.
    */
   const clearable =
     current?.clearContext === true
@@ -251,37 +236,26 @@ export function useSessionController({
       submission.setDraft('')
     } else if (!privateVisible) {
       sessionDrafts.current.clearPrivate()
-      if ((privateDraftId.current !== null && privateDraftId.current === selectedId) || personalDraft !== null) submission.setDraft('')
+      if (privateDraftId.current !== null && privateDraftId.current === selectedId) submission.setDraft('')
     }
   }, [snapshot.device.id, privateVisible, access.scopes.has('view')])
-  const choice: typeof submission.choice = personalDraft
-    ? { mode: personalDraft.mode, harnessId: personalDraft.harnessId, model: personalDraft.model }
-    : submission.choice
+  const choice = submission.choice
   const attachmentDraft = useAttachments({
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {
       // Attachments are off until the catalog arrives, and then one of these is there.
       harnessId: (selectedId === null ? choice.harnessId : summary?.harnessId) ?? catalog?.defaults.harnessId ?? '',
-      ...(selectedId === null && !personalDraft ? { workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
-      ...((selectedId === null ? choice.model : summary?.personal ? sessionModel(summary) : (submission.override ?? sessionModel(summary)))
-        ? {
-            model:
-              selectedId === null
-                ? choice.model
-                : summary?.personal
-                  ? sessionModel(summary)
-                  : (submission.override ?? sessionModel(summary)),
-          }
+      ...(selectedId === null ? { workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
+      ...((selectedId === null ? choice.model : (submission.override ?? sessionModel(summary)))
+        ? { model: selectedId === null ? choice.model : (submission.override ?? sessionModel(summary)) }
         : {}),
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
-    draftScope: personalDraft?.id,
     locked: submission.sending || submission.pending !== null,
   })
   const [fileMentions, setFileMentions] = useState<FileMention[]>([])
   const quoteSnapshots = useRef(new Map<string, { etag: string; marker: string }>())
-  const mentionScope =
-    selectedId ?? `${personalDraft?.id ?? choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
+  const mentionScope = selectedId ?? `${choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
   useLayoutEffect(() => {
     if (submission.pending === null) setFileMentions([])
   }, [mentionScope])
@@ -294,7 +268,6 @@ export function useSessionController({
     enabled:
       catalog?.features?.fileMentions === true
       && snapshot.device.dataScope === 'all'
-      && (selectedId !== null || !personalDraft)
       && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
       && mentionHarness?.capabilities.tools.fileMentions === true,
     ...(selectedId ? { sessionId: selectedId } : {}),
@@ -315,7 +288,7 @@ export function useSessionController({
     if (selectedId !== null) await configFlights.current.get(selectedId)
   }
   const sendDraft = async () => {
-    if (selectedId === null && !personalDraft && !submission.fork && needsProject(catalog, choice)) {
+    if (selectedId === null && !submission.fork && needsProject(catalog, choice)) {
       askProject()
       return
     }
@@ -408,19 +381,18 @@ export function useSessionController({
   const choose = useStableCallback((id: string | null) => {
     if (id !== selectedId || id === null) {
       if (selectedId !== null) {
-        const personal = summary === undefined || Boolean(summary.personal) || privateDraftId.current === selectedId
-        if (!privateVisible && personal) sessionDrafts.current.remove(selectedId)
-        else if (!sessionDrafts.current.save(selectedId, submission.draft, personal)) {
+        const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === selectedId
+        if (!privateVisible && hidden) sessionDrafts.current.remove(selectedId)
+        else if (!sessionDrafts.current.save(selectedId, submission.draft, hidden)) {
           setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
           return
         }
-      } else if (id !== null && !personalDraft) sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)
+      } else if (id !== null) sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
       if (selectedId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
       submission.setDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible))
       draftSessionId.current = id
     }
-    setPersonalDraft(null)
     onBeforeSelect(id)
     select(id)
     submission.setError('')
@@ -852,14 +824,12 @@ export function useSessionController({
       ? access.legacy || access.scopes.has('run')
         ? { kind: 'open' as const }
         : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
-      : summary?.personal?.groupId
-        ? { kind: 'read-only' as const, text: '这是群聊中的执行记录，请回到个人助手群聊继续。' }
-        : composerGate({
-            summary,
-            permission: current?.permission,
-            access,
-            stopped: stopCode !== undefined && stopLocksInput(stopCode),
-          })
+      : composerGate({
+          summary,
+          permission: current?.permission,
+          access,
+          stopped: stopCode !== undefined && stopLocksInput(stopCode),
+        })
   const sessionBlock =
     selectedId === null
       ? undefined
@@ -892,7 +862,7 @@ export function useSessionController({
     restoreDraft: (sessionId, text) => {
       if (draftSessionId.current === sessionId) submission.setDraft(previous => (previous.trim() ? previous : text))
       else if (!sessionDrafts.current.read(sessionId, privateVisible))
-        sessionDrafts.current.save(sessionId, text, Boolean(snapshot.tasks.find(task => task.id === sessionId)?.personal))
+        sessionDrafts.current.save(sessionId, text, privateSession(snapshot.tasks.find(task => task.id === sessionId)))
     },
     decide: (approval, optionId, note) => decide(approval, 'reject', optionId, note),
     rejectOption: approval => {
@@ -976,10 +946,6 @@ export function useSessionController({
     draftSessionId,
     draftDevice,
     privateDraftId,
-    personalDraft,
-    setPersonalDraft,
-    personalGroupId,
-    setPersonalGroupId,
     current,
     summary,
     composerRef,
@@ -1030,7 +996,6 @@ export function useSessionController({
     approvals,
     active,
     harnessInfo,
-    personalName,
     harnessName,
     reading,
     stopSession,

@@ -70,7 +70,7 @@ export const policySchema = z.strictObject({
     .refine(list => new Set(list).size === list.length, '已确认的模型服务地址不能重复')
     .optional(),
   keyBackend: z.literal('file'),
-  /** Personal Standard routines enforce this ceiling, idle limit and approval TTL; no automatic approvals. */
+  /** Scheduled runs enforce this ceiling, idle limit and approval TTL; no automatic approvals. */
   unattended: z.strictObject({
     maxLevel: level,
     allowAutoApproveRules: z.boolean(),

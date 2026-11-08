@@ -137,8 +137,13 @@ export interface TurnRoute {
   models: RoutedModel[]
   /** The model the session had chosen for the turn. */
   chosen?: string
-  /** The model that answered most of the turn's requests for the chosen model, as the service named it. */
+  /**
+   * The model that answered most of the turn's requests for the chosen model, as the service named it; else the model
+   * those requests named.
+   */
   answered?: string
+  /** `answered` is what the service said, not only what the requests named. */
+  reported: boolean
   /** `answered` is another model than the chosen one, not just a dated version of it. */
   differs: boolean
   /** Tokens the replies reported, summed; a part stays only when every model's sum has it. */
@@ -165,6 +170,7 @@ export function turnRoute(turn: Turn): TurnRoute | undefined {
     models,
     ...(chosen ? { chosen } : {}),
     ...(answered ? { answered } : {}),
+    reported: main?.used !== undefined,
     differs: !!chosen && !!answered && modelIdKey(chosen) !== modelIdKey(answered),
     ...(usages.length ? { usage: sumUsage(usages) } : {}),
     unmeasured: total(entry => Math.max(0, entry.requests - (entry.failed ?? 0) - (entry.measured ?? 0) - (entry.open ?? 0))),
@@ -349,14 +355,27 @@ export const isReview = (tool: Message['tool']) =>
 /** A call the harness refused itself before it ran: it reports the call failed, but nothing ran and nothing broke. */
 export const isBlocked = (message: Pick<Message, 'state' | 'tool'>) => message.state === 'failed' && message.tool?.blocked !== undefined
 
-/** The line under a blocked call: who stopped it and, in the harness's own words, why. */
-export function blockedLine(block: NonNullable<NonNullable<Message['tool']>['blocked']>): string {
+type Blocked = NonNullable<NonNullable<Message['tool']>['blocked']>
+
+/** The first line of a blocked call's reason, at most 120 characters. */
+function shortReason(block: Blocked): string | undefined {
   const reason = block.reason
     ?.split('\n')
     .map(part => part.trim())
     .find(Boolean)
-  const cut = reason && reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
+  return reason && reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
+}
+
+/** The line under a blocked call: who stopped it and, in the harness's own words, why. */
+export function blockedLine(block: Blocked): string {
+  const cut = shortReason(block)
   return block.source === 'model' ? JUDGED_COPY.blockedByModel(block.by, cut) : JUDGED_COPY.blockedByRule(block.by, cut)
+}
+
+/** The whole reason, for the call's details, when the line under it shows only part of it. */
+export function blockedReason(block: Blocked): string | undefined {
+  const reason = block.reason?.trim()
+  return reason && reason !== shortReason(block) ? reason : undefined
 }
 
 /**

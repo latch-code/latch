@@ -24,7 +24,6 @@ export * from './notifications.ts'
 export * from './plugin-packages.ts'
 export * from './questions.ts'
 export * from './attachments.ts'
-export * from './personal.ts'
 
 export { isFileMention, fileMentionContext, type FileMention } from './file-refs.ts'
 export { isFileChange } from './file-changes.ts'

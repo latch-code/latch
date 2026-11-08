@@ -64,7 +64,7 @@ describe('saved projects', () => {
         const settings = page.locator('.settings-page'),
           recent = settings.locator('.project-recent-sessions'),
           expected = (await owner.json<AppSnapshot>('snapshot')).tasks
-            .filter(task => task.workspaceId === project.id && task.mode !== 'chat' && !task.personal)
+            .filter(task => task.workspaceId === project.id && task.mode !== 'chat')
             .toSorted((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
             .slice(0, 3)
         await settings.getByText('5 个会话', { exact: true }).last().waitFor()

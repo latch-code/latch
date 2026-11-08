@@ -3,7 +3,7 @@ import { Copy, Ellipsis, GitCompare, GitFork, RotateCcw } from 'lucide-react'
 import { modelIdKey, type RoutedModel } from '@latch/protocol'
 import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
-import { exactTokens, formatDuration, tokenAmount, tokenLines, tokenParts } from '../format.ts'
+import { exactTokens, formatDuration, formatTokens, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
 import { IconButton, Tooltip, CopyButton } from '@latch/ui'
@@ -53,7 +53,7 @@ function routedSource(route: TurnRoute): string[] {
  * tooltips; with no tokens to show, the requests are a fact of their own. How it ended, when it did not simply finish,
  * has its own line that stays. Each is a segment of its own, so the dots between them are spaced alike.
  */
-function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOutcome; context?: number }) {
+function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome: TurnOutcome; context?: number; worked: boolean }) {
   const times = turnTimes(turn)
   const route = turnRoute(turn)
   // Steps the harness reported come first; a turn through Latch without them has the tokens its replies reported.
@@ -62,7 +62,6 @@ function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOut
   const routedUsage = !stepUsage && route?.usage ? route : undefined
   const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
   const [inputLine, outputLine] = usage ? tokenLines(usage) : []
-  const [input, output] = usage ? tokenParts(usage) : []
   const tip = (line: string) => (routedUsage ? <Lines lines={[line, ...routedSource(routedUsage), ...requests]} /> : line)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
   return (
@@ -72,9 +71,21 @@ function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOut
           <TimeLabel at={times.sentAt} tip={now => turnTimeTip(times, outcome, now)} />
         </span>
       )}
-      {spent && <span className="turn-fact">{spent}</span>}
-      {usage && <Fact tip={tip(inputLine!)}>{input}</Fact>}
-      {usage && <Fact tip={tip(outputLine!)}>{output}</Fact>}
+      {/* A phone leaves out how long it worked when the fold above says it. */}
+      {spent && <span className={worked ? 'turn-fact turn-fact-worked' : 'turn-fact'}>{spent}</span>}
+      {/* A phone drops the unit, which 输入 and 输出 already imply, so the pair fits beside the buttons. */}
+      {usage && (
+        <Fact tip={tip(inputLine!)}>
+          {`输入 ${formatTokens(usage.inputTokens)}`}
+          <span className="turn-fact-unit"> tokens</span>
+        </Fact>
+      )}
+      {usage && (
+        <Fact tip={tip(outputLine!)} className="turn-fact-last">
+          {`输出 ${formatTokens(usage.outputTokens)}`}
+          <span className="turn-fact-unit"> tokens</span>
+        </Fact>
+      )}
       {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
       {!usage && context !== undefined && (
         <Fact tip={`由 Harness 报告：${exactTokens(context)} tokens`}>上下文 {tokenAmount(context)}</Fact>
@@ -100,11 +111,14 @@ export function TurnFooter({
   outcome = 'completed',
   pinned = false,
   context,
+  worked = false,
   onRetry,
   actions,
 }: {
   turn: Turn
   outcome?: TurnOutcome
+  /** The turn shows its 「已工作 …」 fold, which says how long it worked. */
+  worked?: boolean
   /** Always visible: the newest turn on a touch screen, or one the person tapped. */
   pinned?: boolean
   /** The context an agent last reported, for the newest turn of a session without per-turn tokens. */
@@ -119,7 +133,7 @@ export function TurnFooter({
     <div className="turn-footer" data-pinned={pinned ? '' : undefined}>
       <div className="turn-footer-row">
         <span className="turn-facts">
-          <SettledFacts turn={turn} outcome={outcome} context={context} />
+          <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} />
         </span>
         {text && <CopyButton text={text} label="复制" size="xs" />}
         {onRetry && <IconButton icon={RotateCcw} size="xs" label="重试" className="turn-retry" onClick={onRetry} />}

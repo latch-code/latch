@@ -318,7 +318,7 @@ export class PromptQueues {
           state: 'parked',
           reason:
             error instanceof AppError && error.code === 'queue-context-changed'
-              ? '助手的执行配置已改变，请移除此项后重新加入队列'
+              ? 'Agent 的设置已改变，请移除此项后重新加入队列'
               : '验证窗口已变化，请检查后重新加入队列',
         })
         await this.park(item.sessionId, '原授权已变化，队列已暂停')
@@ -353,7 +353,7 @@ export class PromptQueues {
           state: 'parked',
           reason:
             error instanceof AppError && error.code === 'queue-context-changed'
-              ? '助手的执行配置已改变，请移除此项后重新加入队列'
+              ? 'Agent 的设置已改变，请移除此项后重新加入队列'
               : '验证窗口已变化，请检查后重新加入队列',
         })
         await this.park(item.sessionId, '原授权已变化，队列已暂停')

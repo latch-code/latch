@@ -401,9 +401,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         json(res, { verifiedUntil: new Date(window.expiresAt).toISOString() })
         return true
       }
-      const cancel =
-        method === 'POST'
-        && (/^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path) || /^\/link\/api\/personal\/groups\/grp_[a-f0-9-]{36}\/cancel$/u.test(path))
+      const cancel = method === 'POST' && /^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path)
       const reject = method === 'POST' && /^\/link\/api\/approvals\/[^/]+$/u.test(path)
       caller.nativeWindowExempt =
         (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/devices/current' && method === 'DELETE')

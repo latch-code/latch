@@ -110,7 +110,7 @@ async function footInReach(page: Page): Promise<void> {
 }
 
 /** Sections that are opened inside 设置, on every width. */
-const IN_SETTINGS = new Set(['插件', 'Agent', '定时任务'])
+const IN_SETTINGS = new Set(['插件'])
 
 /**
  * Opens 设置 or 手机 from the sidebar's foot, or a section of 设置 by its name; on a phone, the tab (from its session list
@@ -142,15 +142,6 @@ export async function openSessions(page: Page): Promise<void> {
       .first()
       .click()
   await page.locator('.settings-page').waitFor({ state: 'detached' })
-}
-
-/** Opens 个人助手, the Agent section of 设置. */
-export async function openPersonal(page: Page): Promise<Locator> {
-  await openEntry(page, '设置')
-  await openSection(page.locator('.settings-page'), 'Agent')
-  const personal = page.getByRole('region', { name: '个人助手', exact: true })
-  await personal.waitFor()
-  return personal
 }
 
 /**
@@ -198,13 +189,6 @@ export async function backToSection(settings: Locator): Promise<void> {
 export async function openSection(settings: Locator, name: string): Promise<void> {
   const page = settings.page()
   const tab = settings.getByRole('tab', { name, exact: true })
-  // A phone's 个人助手 page lies over the section list.
-  const personalBack = page.locator('.personal-page .personal-bar').getByRole('button').first()
-  if ((await page.locator('.phone-tabs').count()) > 0)
-    while (await personalBack.isVisible()) {
-      await personalBack.click()
-      await page.waitForTimeout(50)
-    }
   await backToSections(settings)
   if ((await tab.count()) === 0) {
     if (name === '手机与设备' && !(await isPhone(page))) {

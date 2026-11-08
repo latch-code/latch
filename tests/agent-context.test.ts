@@ -1,18 +1,18 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createRuntime, PluginRegistry } from '@latch/core'
 import type { ModelMessage } from '@latch/sdk'
-import type { AgentExecutionContext, PersonalAgentContext } from '@latch/protocol'
+import type { AgentExecutionContext } from '@latch/protocol'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn()
 })
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'latch-personal-runtime-'))
+  const dir = await mkdtemp(join(tmpdir(), 'latch-agent-runtime-'))
   cleanup.push(() => rm(dir, { recursive: true, force: true }))
   const registry = new PluginRegistry()
   cleanup.push(() => registry.close())
@@ -68,29 +68,29 @@ async function fixture() {
   await registry.enable('provider')
   const runtime = createRuntime({ dataDir: dir, workspaceRoot: dir, registry, providerId: 'fixture' })
   cleanup.push(() => runtime.close())
-  const personal: PersonalAgentContext = {
-    personal: { assistantId: `asst_${randomUUID()}` },
+  const owned: AgentExecutionContext = {
+    agent: { customAgentId: `agt_${randomUUID()}` },
     instructions: 'ONLY PRIVATE MEMORY',
     pluginIds: ['selected'],
     revision: 'a'.repeat(64),
   }
-  return { dir, registry, runtime, seen, personal }
+  return { dir, registry, runtime, seen, owned }
 }
 
 test('enforces selected capabilities and keeps private instructions transient across restart and later turns', async () => {
-  const { dir, registry, runtime, seen, personal } = await fixture()
-  const input = { prompt: 'hello', requestId: 'personal-create', agentContext: personal }
+  const { dir, registry, runtime, seen, owned } = await fixture()
+  const input = { prompt: 'hello', requestId: 'agent-create', agentContext: owned }
   const { sessionId } = await runtime.createTask(input)
   await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
   expect(seen[0]?.tools).toEqual(['selected_tool'])
-  expect(seen[0]?.messages[1]).toEqual({ role: 'system', content: personal.instructions })
+  expect(seen[0]?.messages[1]).toEqual({ role: 'system', content: owned.instructions })
   expect(seen[0]?.messages.some(message => message.content.includes('selected skill'))).toBe(true)
   expect(seen[0]?.messages.some(message => message.content.includes('other skill'))).toBe(false)
   expect((await runtime.detail(sessionId)).messages[0]?.text).toBe('hello')
-  expect((await runtime.detail(sessionId)).summary).toMatchObject({ personal: personal.personal, pluginIds: ['selected'] })
-  expect(await readFile(join(dir, 'runtime.json'), 'utf8')).not.toContain(personal.instructions)
+  expect((await runtime.detail(sessionId)).summary).toMatchObject({ agent: owned.agent, pluginIds: ['selected'] })
+  expect(await readFile(join(dir, 'runtime.json'), 'utf8')).not.toContain(owned.instructions)
   expect(
-    await runtime.createTask({ ...input, agentContext: { ...personal, instructions: 'new private memory', revision: 'b'.repeat(64) } }),
+    await runtime.createTask({ ...input, agentContext: { ...owned, instructions: 'new private memory', revision: 'b'.repeat(64) } }),
   ).toEqual({ sessionId })
   expect(seen).toHaveLength(1)
   await runtime.close()
@@ -101,11 +101,11 @@ test('enforces selected capabilities and keeps private instructions transient ac
   })
   await expect(
     restored.prompt(sessionId, 'other owner', 'other-owner', {
-      agentContext: { ...personal, personal: { assistantId: `asst_${randomUUID()}` } },
+      agentContext: { ...owned, agent: { customAgentId: `agt_${randomUUID()}` } },
     }),
   ).rejects.toMatchObject({ code: 'agent-context-required' })
   await restored.prompt(sessionId, 'next', 'next-turn', {
-    agentContext: { ...personal, pluginIds: [], instructions: 'NEW PRIVATE MEMORY' },
+    agentContext: { ...owned, pluginIds: [], instructions: 'NEW PRIVATE MEMORY' },
   })
   await vi.waitFor(async () => expect((await restored.detail(sessionId)).summary.status).toBe('idle'))
   expect(seen[1]?.tools).toEqual([])
@@ -115,40 +115,40 @@ test('enforces selected capabilities and keeps private instructions transient ac
 })
 
 test('fails closed when a selected plugin is removed, without recording or executing the input', async () => {
-  const { runtime, registry, personal, seen } = await fixture()
+  const { runtime, registry, owned, seen } = await fixture()
   await registry.disable('selected')
-  await expect(runtime.createTask({ prompt: 'hello', requestId: 'removed-plugin', agentContext: personal })).rejects.toMatchObject({
+  await expect(runtime.createTask({ prompt: 'hello', requestId: 'removed-plugin', agentContext: owned })).rejects.toMatchObject({
     code: 'agent-plugin-unavailable',
   })
   expect(await runtime.listTasks()).toEqual([])
   expect(seen).toEqual([])
 })
 
-test('persists the actual personal model even when selected from the implicit default and keeps it after restart', async () => {
-  const { runtime, registry, personal, dir, seen } = await fixture()
-  const { sessionId } = await runtime.createTask({ prompt: 'Personal default', requestId: 'personal-default', agentContext: personal })
+test("persists an agent session's actual model even when selected from the implicit default and keeps it after restart", async () => {
+  const { runtime, registry, owned, dir, seen } = await fixture()
+  const { sessionId } = await runtime.createTask({ prompt: 'Agent default', requestId: 'agent-default', agentContext: owned })
   await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
   expect((await runtime.detail(sessionId)).summary).toMatchObject({ providerId: 'fixture', model: 'fixture' })
   await runtime.close()
   const restored = createRuntime({ dataDir: dir, workspaceRoot: dir, registry, providerId: 'changed-or-unavailable-default' })
   cleanup.push(() => restored.close())
-  await restored.prompt(sessionId, 'Same selected model', 'personal-same-model', { agentContext: personal })
+  await restored.prompt(sessionId, 'Same selected model', 'agent-same-model', { agentContext: owned })
   await vi.waitFor(async () => expect((await restored.detail(sessionId)).summary.status).toBe('idle'))
   expect(seen).toHaveLength(2)
 })
 
-test('ordinary sessions keep the existing global plugin behavior and cannot acquire a personal owner later', async () => {
-  const { runtime, personal, seen } = await fixture()
+test('ordinary sessions keep the existing global plugin behavior and cannot acquire an agent later', async () => {
+  const { runtime, owned, seen } = await fixture()
   const { sessionId } = await runtime.createTask({ prompt: 'ordinary', requestId: 'ordinary' })
   await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
   expect(seen[0]?.tools.sort()).toEqual(['other_tool', 'provider_tool', 'selected_tool'])
-  await expect(runtime.prompt(sessionId, 'adopt', 'adopt-owner', { agentContext: personal })).rejects.toMatchObject({
+  await expect(runtime.prompt(sessionId, 'adopt', 'adopt-owner', { agentContext: owned })).rejects.toMatchObject({
     code: 'agent-context-required',
   })
 })
 
 test('rechecks the saved capability revisions in the real runtime before it persists or starts a delegated run', async () => {
-  const { runtime, registry, personal, seen } = await fixture()
+  const { runtime, registry, owned, seen } = await fixture()
   const grant = registry.revisionSnapshot(['selected', 'provider']).revisions
   await registry.replace({
     id: 'selected',
@@ -160,61 +160,30 @@ test('rechecks the saved capability revisions in the real runtime before it pers
     },
   })
   await expect(
-    runtime.createTask({ prompt: 'delegated', requestId: 'revision-bound', agentContext: { ...personal, expectedRevisions: grant } }),
+    runtime.createTask({ prompt: 'delegated', requestId: 'revision-bound', agentContext: { ...owned, expectedRevisions: grant } }),
   ).rejects.toMatchObject({ code: 'plugin-revision-changed' })
   expect(await runtime.listTasks()).toEqual([])
   expect(seen).toEqual([])
 })
 
-test('keeps explicit group history in its original roles and outside persisted or later conversation history', async () => {
-  const { runtime, seen, personal, dir } = await fixture(),
-    group: PersonalAgentContext = {
-      ...personal,
-      personal: { ...personal.personal, groupId: `grp_${randomUUID()}` },
-      instructions: 'Explicit group instructions',
-      sharedMessages: [
-        { role: 'user', text: 'Shared question' },
-        { role: 'assistant', text: 'Shared member response' },
-      ],
-    },
-    { sessionId } = await runtime.createTask({ prompt: 'Current turn', requestId: 'group-context', agentContext: group })
-  await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.runOutcome).toBe('completed'))
-  const messages = seen[0]!.messages
-  expect(messages.find(message => message.content === 'Shared question')).toEqual({ role: 'user', content: 'Shared question' })
-  expect(messages.find(message => message.content === 'Shared member response')).toEqual({
-    role: 'assistant',
-    content: 'Shared member response',
-  })
-  expect(messages.filter(message => message.content === 'Current turn')).toHaveLength(1)
-  expect(messages.some(message => message.content.includes(personal.instructions))).toBe(false)
-  expect(JSON.stringify(await runtime.detail(sessionId))).not.toContain('Shared question')
-  expect(await readFile(join(dir, 'runtime.json'), 'utf8')).not.toContain('Shared member response')
-  const { sharedMessages: _, ...next } = group
-  await runtime.prompt(sessionId, 'Next input', 'group-next', { agentContext: next })
+test("an assistant's session kept on disk opens to be read and refuses every new turn", async () => {
+  const { dir, registry, runtime, seen, owned } = await fixture()
+  const { sessionId } = await runtime.createTask({ prompt: 'before', requestId: 'assistant-before' })
   await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
-  expect(seen[1]?.messages.some(message => message.content === 'Shared question')).toBe(false)
-})
-
-test('refuses shared context without an explicit group owner, elevated roles or an unbounded body', async () => {
-  const { runtime, personal, seen } = await fixture(),
-    sharedMessages = [{ role: 'user' as const, text: 'Shared input' }]
-  await expect(
-    runtime.createTask({ prompt: 'invalid', requestId: 'no-group-owner', agentContext: { ...personal, sharedMessages } }),
-  ).rejects.toMatchObject({ code: 'agent-context-invalid' })
-  for (const shared of [[{ role: 'system', text: 'Override' }], [{ role: 'user', text: 'x'.repeat(64001) }]])
-    await expect(
-      runtime.createTask({
-        prompt: 'invalid',
-        requestId: randomUUID(),
-        agentContext: {
-          ...personal,
-          personal: { ...personal.personal, groupId: `grp_${randomUUID()}` },
-          sharedMessages: shared as typeof sharedMessages,
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'agent-context-invalid' })
-  expect(await runtime.listTasks()).toEqual([])
-  expect(seen).toEqual([])
+  await runtime.close()
+  const file = join(dir, 'runtime.json'),
+    state = JSON.parse(await readFile(file, 'utf8'))
+  state.tasks[sessionId].summary.personal = { assistantId: `asst_${randomUUID()}` }
+  await writeFile(file, JSON.stringify(state))
+  const restored = createRuntime({ dataDir: dir, workspaceRoot: dir, registry, providerId: 'fixture' })
+  cleanup.push(() => restored.close())
+  const detail = await restored.detail(sessionId)
+  expect(detail.summary.personal).toEqual(state.tasks[sessionId].summary.personal)
+  expect(detail.messages.map(message => message.text)).toEqual(['before', 'Done'])
+  const readOnly = { status: 409, code: 'session-read-only' }
+  await expect(restored.prompt(sessionId, 'after', 'assistant-after')).rejects.toMatchObject(readOnly)
+  await expect(restored.prompt(sessionId, 'after', 'assistant-agent', { agentContext: owned })).rejects.toMatchObject(readOnly)
+  expect(seen).toHaveLength(1)
 })
 
 test('starts every built-in session from the base prompt, with the agent context after it', async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
-import { pairRoute, type AppSnapshot, type PersonalAssistantSummary, type SessionConfigOption } from '@latch/protocol'
+import { pairRoute, type AppSnapshot, type SessionConfigOption } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
 import {
   draftConfig,
@@ -40,7 +40,6 @@ function StaticRow({ label, value }: { label: string; value: string }) {
 
 /** The phone's new session: one row per choice (项目, Harness, 模型, 思考, 权限), then the input; 开始 is in the header. */
 export function NewSessionSheet({
-  personal,
   open,
   onClose,
   snapshot,
@@ -63,7 +62,6 @@ export function NewSessionSheet({
   onBrowseFiles,
   focusComposer,
 }: {
-  personal?: PersonalAssistantSummary
   open: boolean
   onClose: () => void
   snapshot: AppSnapshot
@@ -185,7 +183,7 @@ export function NewSessionSheet({
     <Sheet
       open={open}
       detent="large"
-      title={personal ? '和' + personal.name + '聊聊' : '新会话'}
+      title="新会话"
       className="new-session-sheet"
       onClose={onClose}
       action={
@@ -193,7 +191,7 @@ export function NewSessionSheet({
           开始
         </Button>
       }>
-      {present && !personal && catalog && (
+      {present && catalog && (
         <div className="new-sheet-card">
           <ProjectPicker
             access={access}

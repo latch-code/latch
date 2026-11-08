@@ -128,10 +128,8 @@ struct ConversationView: View {
                     }.padding(.horizontal, 16).accessibilityElement(children: .combine)
                 }
             }
-            if summary["personal"]["groupId"].string == nil && model.groupId == nil {
-                // A stop needs no window, so it stays in reach while the content is closed.
-                PromptComposer(draftId: id, gate: hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
-            }
+            // A stop needs no window, so it stays in reach while the content is closed.
+            PromptComposer(draftId: id, gate: hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
     private var sessionFiles: [PhoneChangedFile] {

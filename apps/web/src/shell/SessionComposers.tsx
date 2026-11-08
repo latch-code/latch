@@ -37,8 +37,7 @@ const phoneWords = (words: string) => words.split('  ')[0]!
 
 /** The new-session page's question: the project is a picker in it, named when there is one and offered when there is not. */
 export function NewSessionTitle({ shell }: { shell: ShellState }) {
-  const { personalDraft, catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
-  if (personalDraft) return <>和{personalDraft.name}聊聊</>
+  const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
   const question = (
     <>
       要做什么<span className="new-session-mark">？</span>
@@ -79,8 +78,6 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
 /** The input of the open session, or of the new-session page. */
 export function SessionComposer({ shell }: { shell: ShellState }) {
   const {
-    openPersonal,
-    personalDraft,
     chosenHarness,
     current,
     summary,
@@ -151,14 +148,12 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   const draftReading = useReading(chosenHarness)
   const permission =
     selectedId === null
-      ? personalDraft
-        ? undefined
-        : draftPermission(
-            chosenHarness,
-            choice.mode,
-            draftConfig(chosenHarness, choice.config)?.config,
-            draftRead(chosenHarness, access, draftReading),
-          )
+      ? draftPermission(
+          chosenHarness,
+          choice.mode,
+          draftConfig(chosenHarness, choice.config)?.config,
+          draftRead(chosenHarness, access, draftReading),
+        )
       : !summary
         ? undefined
         : permissionView({
@@ -184,11 +179,9 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   const hostCleared = current?.contextCleared === true && current.summary.id === selectedId
   const branch =
     selectedId === null
-      ? personalDraft
-        ? undefined
-        : catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')?.branch
+      ? catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')?.branch
       : summary?.branch
-  const showControls = selectedId === null ? !personalDraft : !!summary && !summary.personal && gate.kind !== 'stopped'
+  const showControls = selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped')
   const drawers = (
     <>
       {current && workspaceChanged.has(current.summary.id) && (
@@ -279,7 +272,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   // A session no longer listed cannot be opened, so its retry stays here and gets the Host's definitive answer.
   const held = submission.pending
   const pendingHome =
-    held === null || held.assistantId !== undefined
+    held === null
       ? undefined
       : held.sessionId === undefined
         ? null
@@ -358,7 +351,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               <BranchLabel branch={branch} />
             </div>
           )}
-          {selectedId === null && catalog && !personalDraft && (
+          {selectedId === null && catalog && (
             <>
               {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
               <Collapse open={codeRootChoice !== undefined}>
@@ -398,11 +391,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
         ) : undefined
       }
       controls={
-        selectedId === null && personalDraft ? (
-          <Button variant="ghost" onClick={() => openPersonal?.()}>
-            {personalDraft.name}
-          </Button>
-        ) : !showControls ? null : !catalog ? (
+        !showControls ? null : !catalog ? (
           selectedId === null ? (
             <ModeSwitch
               value={choice.mode}

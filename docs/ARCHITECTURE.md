@@ -427,6 +427,12 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 
 以下名称保持不变：`/link/` 路径前缀（已配对的手机与书签使用它）、数据目录布局（含旧的 `.runtime`）、模型服务 ID `openai-compatible`。旧 Cookie `harness_link` 只用于识别需要重新确认的旧浏览器。Cordis 固定在 `4.0.0-rc.12`，升级前需回归插件生命周期。
 
+早先的构建有个人助手、助手群聊与它们的定时任务，Latch 已不再提供它们，数据不删除也不迁移：
+
+- **会话。** 它们跑过的会话在 `TaskSummary.personal` 上带着归属（`sessions-meta.json` 与内置 Harness 的记录都留着这个字段）。这些会话算作私有，只对数据范围为 `all` 的设备开放，列表里照常出现，打开只能查看：发消息、排队、改设置、回答问答、批准工具调用、添加附件与撤销改动都回答 409 `session-read-only`；分叉出的新会话同样是私有的。早先构建发给助手的消息（新建会话带 `assistantId`）回答 409 `assistant-removed`，不会当作普通会话开始；iPhone 不再提供重试这类未确认的提交，也不再提供重试早先构建写到 `/link/api/personal/` 的提交（群聊消息、定时任务与助手的改动，Host 已没有这些接口），直接从待确认的写入里删除。
+- **审计。** 审计动作表保留 `personal.changed`（`apps/host/src/audit-actions/personal.ts`），否则带这一行的审计链在启动时校验失败，Host 不能启动。
+- **数据目录。** `personal/` 仍在私有目录列表 `PRIVATE_ENTRIES` 中；`policy.json` 的 strict schema 不变。
+
 ## 尚未实现
 
 | 项目 | 原因 |
@@ -441,9 +447,9 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
 | 远程客户端的公钥固定、仅 mTLS 入口、证书自动申请与续期、可信反向代理配置 | 未实现；证书由运营者提供并续期（文件更新后 Host 自动重新加载），只检查有效期与主机名；从不读取代理请求头 |
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |
-| Standard 的 L0 / L2 级别与级别选择 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务与个人助手的例行任务不能开启或运行 |
+| Standard 的 L0 / L2 级别与级别选择 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务不能开启或运行 |
 | `write_file` 基于原内容哈希的并发检查 | 未实现 |
-| 自动批准规则、数据范围（`work` / `all`）在会话文件与终端以外的访问限制 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行（定时任务与个人助手的例行任务）检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消，不自动批准 |
+| 自动批准规则、数据范围（`work` / `all`）在会话文件与终端以外的访问限制 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行（定时任务）检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消，不自动批准 |
 | 在其他设备上查看会话文件（预览列、句柄内容、`work` 设备的引用集合、远程读取的上限与审计） | 未实现；目前只有桌面端经 `host.sock` 在访达中显示、快速查看与用默认应用打开，其他设备上路径标记的菜单只有「复制路径」，并写明在运行 Latch 的 Mac 上用桌面端打开 |
 | Windows 上用默认应用打开 | 未实现；还没有核对 Windows 的文件关联，只提供在资源管理器中显示 |
 | 阻止 `policy.json` / `settings.json` 的带外修改 | 只检测并审计，不阻止 |
@@ -514,11 +520,9 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 
 ## Agent 领域
 
-我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)。它们与下面的个人助手并存，直到客户端全部切换。内置 Harness 每轮以一段简短的基础提示开始，默认最多 50 步。
+我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)。内置 Harness 每轮以一段简短的基础提示开始，默认最多 50 步。
 
-## 个人助手领域
-
-个人助手的定义与显式记忆由 Host 私有存储维护，会话通过现有 HarnessHub 创建，`TaskSummary.personal` 独立于项目归属。Standard 私有系统上下文不进入聊天历史，工具与技能由显式插件租约约束；通用读取和 SSE 同样执行个人数据范围检查。API、持久回执与当前可用边界见 [PERSONAL.md](PERSONAL.md)。
+一条消息在多个 Agent 之间依次回答的规则在 `apps/host/src/agent-relay.ts`（`test/agent-relay.test.ts`），尚未接入任何路由：第一个回答之后最多转交 3 次，Agent 写的内容不能增加次数；一轮没有完成就不再交给下一个；任何一个 Agent 的说明、Harness、模式、模型或插件代码与收下消息时不同，下一个不开始；停止要等正在运行的那一轮真实结算后才确认。
 
 ## 会话配置修改回执
 

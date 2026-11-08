@@ -184,6 +184,20 @@ describe('a fork keeps what its source ran with', () => {
     expect(forkedChoice(catalog, null, { harnessId: 'standard', mode: 'chat' }, source).choice).toMatchObject({ mode: 'chat' })
   })
 
+  it('says so when a session that only chats goes to a Harness that always works on files', () => {
+    const source = forkSource(detail({ harnessId: 'standard', mode: 'chat', providerId: 'deepseek', model: 'deepseek-chat' }), undefined)
+    const line = '来源会话不读写文件，CODEX 没有这一档，这里从它的默认模式开始。'
+    const forked = forkedChoice(catalog, null, { harnessId: 'codex', mode: 'chat' }, source)
+    expect(forked.choice).toMatchObject({ harnessId: 'codex', mode: 'agent' })
+    expect(forked.choice.config?.mode).toBeUndefined()
+    expect(forked.missed).toContain(line)
+    // Before the Harness's options are read, the start is the same and so is the line.
+    const unread = { ...catalog, harnesses: [catalog.harnesses[0]!, { ...codex, catalogue: undefined }] }
+    expect(forkedChoice(unread, null, { harnessId: 'codex', mode: 'chat' }, source).missed).toContain(line)
+    // A row the person picks in the draft is theirs.
+    expect(forkedChoice(catalog, null, { harnessId: 'codex', mode: 'chat', config: { mode: 'ask' } }, source).missed).not.toContain(line)
+  })
+
   it('keeps the saved service Latch forwarded the source to, while it still can, and the built-in model on that service', () => {
     const speaking = {
       ...codex,

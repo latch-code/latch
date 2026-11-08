@@ -618,6 +618,7 @@ test('a queued turn runs with its agent, and parks when the agent changed after 
   gate = undefined
   release()
   await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).queue?.[0]?.state, { timeout: 8000 }).toBe('parked')
+  expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).queue?.[0]?.reason).toBe('Agent 的设置已改变，请移除此项后重新加入队列')
   expect(seen).toHaveLength(3)
 })
 

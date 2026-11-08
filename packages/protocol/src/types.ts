@@ -3,7 +3,6 @@
 export type { FileChange } from './files.ts'
 export type { FileMention } from './file-refs.ts'
 export type { AttachmentRef } from './attachments.ts'
-export type * from './personal.ts'
 
 export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
 export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'

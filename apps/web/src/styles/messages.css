@@ -230,6 +230,33 @@
   content: '·';
   margin-right: var(--sp-8);
 }
+/* A phone has no room for both names on one line: the model that answered keeps the first, 选的是 takes its own below
+ * it, under the name, and either is cut only when it alone is wider than the screen. */
+@media (max-width: 767.98px) {
+  .assistant-meta:has(.assistant-meta-chosen) {
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: 0;
+  }
+  .assistant-meta:has(.assistant-meta-chosen) .assistant-meta-model {
+    flex: 1 1 0;
+    max-width: max-content;
+  }
+  /* The break before 选的是. */
+  .assistant-meta:has(.assistant-meta-chosen)::after {
+    content: '';
+    flex-basis: 100%;
+    order: 1;
+  }
+  .assistant-meta-chosen {
+    order: 2;
+    max-width: calc(100% - 16px - var(--sp-8));
+    margin: var(--sp-2) 0 0 calc(16px + var(--sp-8));
+  }
+  .assistant-meta-chosen::before {
+    content: none;
+  }
+}
 .message-assistant {
   display: flex;
   flex-direction: column;
@@ -919,6 +946,18 @@ button.summary-file:hover {
   content: '·';
   margin-right: var(--sp-6);
   color: var(--muted);
+}
+/* Whatever still does not fit shows it is cut rather than ending under the buttons. */
+.turn-fact-last {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 767.98px) {
+  .turn-fact-unit,
+  .turn-fact-worked {
+    display: none;
+  }
 }
 .sending-message {
   margin-top: var(--sp-32);

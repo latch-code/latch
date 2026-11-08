@@ -82,8 +82,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     archivedLast,
     undoArchive,
     forgetArchive,
-    personalDraft,
-    setPersonalDraft,
     current,
     summary,
     composerRef,
@@ -200,7 +198,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const draftHarnessId = choice.harnessId ?? catalog?.defaults.harnessId
   const fileContext: FileContext | null = selectedId
     ? { kind: 'session', sessionId: selectedId }
-    : !personalDraft && choice.workspaceId && choice.workspaceId !== 'default' && draftHarnessId
+    : choice.workspaceId && choice.workspaceId !== 'default' && draftHarnessId
       ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: draftHarnessId }
       : null
   const fileAuthority = JSON.stringify([snapshot.device.dataScope, access.scopes.has('view'), catalog?.features?.filePreview])
@@ -332,7 +330,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   })
   /** A new session starts where the person is: in the open session's project, else as last chosen. */
   const startNew = () => {
-    setPersonalDraft(null)
     setRoute({ entry: 'sessions' })
     submission.setFork(null)
     const project = selectedId === null ? undefined : projectFor(catalog, summary)
@@ -389,12 +386,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     drawer.setOpen(false)
     setRoute({ entry })
   }
-  const canPersonal = settingsSections(snapshot, access).includes('assistants')
-  const openPersonal = canPersonal
-    ? () => {
-        openSettings('assistants')
-      }
-    : undefined
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
     setNewSheet(false)
@@ -968,7 +959,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     sidebarColumn,
     sidebarToggle,
     resetInspector,
-    canPersonal,
     harness,
     snapshot,
     selectedId,
@@ -1067,7 +1057,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     startNew,
     back,
     openSettings,
-    openPersonal,
     openAgentPage,
     openProjectSettings,
     openSearch,

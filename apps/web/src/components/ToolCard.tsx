@@ -4,6 +4,7 @@ import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@lat
 import { previousState } from '../diff.ts'
 import {
   blockedLine,
+  blockedReason,
   decisionLine,
   diffStat,
   failureReason,
@@ -194,6 +195,7 @@ export const ToolCard = memo(
     const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
     const failed = shown === 'failed'
     const block = shown === 'blocked' ? tool?.blocked : undefined
+    const wholeReason = block ? blockedReason(block) : undefined
     const judged = tool?.judged
     const review = isReview(tool)
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
@@ -337,6 +339,11 @@ export const ToolCard = memo(
                       {files.map(path => (
                         <FileChip key={path} path={path} />
                       ))}
+                    </p>
+                  )}
+                  {wholeReason && (
+                    <p className="tool-block-reason">
+                      <VisibleText text={wholeReason} />
                     </p>
                   )}
                   {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}

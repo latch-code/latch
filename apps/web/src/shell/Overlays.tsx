@@ -4,8 +4,6 @@ import { ShellPalette } from '../palette/ShellPalette.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { toolRowId } from '../conversation.ts'
 import { Button, Toast } from '@latch/ui'
-import { entrySection, settingsSections } from '../settings/SettingsPage.tsx'
-import { PersonalPage } from '../personal/PersonalPage.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -71,76 +69,26 @@ function ToastClearance() {
   return null
 }
 
-/** What opens over the shell: settings, personal assistants, the palette, dialogs and toasts. */
+/** What opens over the shell: the palette, dialogs and toasts. */
 export function Overlays({ shell }: { shell: ShellState }) {
   const {
-    privateVisible,
-    route,
-    setRoute,
-    canPersonal,
-    setPersonalDraft,
-    personalGroupId,
-    setPersonalGroupId,
-    composerRef,
     renaming,
     setRenaming,
     deleting,
     setDeleting,
     toast,
     setStopped,
-    access,
     reading,
-    submission,
     choose,
     approvalToast,
     setApprovalToast,
-    phone,
-    setNewSheet,
     commandOpen,
-    harness,
     snapshot,
     selectedId,
     refresh,
   } = shell
-  const section = entrySection(route, settingsSections(snapshot, access), phone)
   return (
     <>
-      {canPersonal && (
-        <PersonalPage
-          key={privateVisible ? 'private' : 'restricted'}
-          open={section === 'assistants' || section === 'routines'}
-          area={section === 'routines' ? 'routines' : 'assistants'}
-          initialGroupId={personalGroupId}
-          canStart={!submission.pending && !submission.sending}
-          snapshot={snapshot}
-          access={access}
-          refreshHint={harness.refreshHints + harness.resyncs}
-          onClose={() => {
-            setPersonalGroupId(undefined)
-            setRoute({ entry: route.entry })
-          }}
-          onChanged={() => {
-            void refresh()
-          }}
-          onSession={id => {
-            setPersonalGroupId(undefined)
-            choose(id)
-          }}
-          onGroupSession={(id, groupId) => {
-            setPersonalGroupId(groupId)
-            choose(id)
-          }}
-          onStart={assistant => {
-            if (submission.pending || submission.sending) return
-            choose(null)
-            setPersonalDraft(assistant)
-            submission.setFork(null)
-            setRoute({ entry: 'sessions' })
-            if (phone) setNewSheet(true)
-            else requestAnimationFrame(() => composerRef.current?.focus())
-          }}
-        />
-      )}
       {commandOpen && <ShellPalette shell={shell} />}
       {renaming && (
         <PromptDialog

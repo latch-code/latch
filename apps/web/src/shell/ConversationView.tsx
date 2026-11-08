@@ -18,8 +18,6 @@ import type { ShellState } from './useShellLayout.tsx'
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
   const {
-    openPersonal,
-    setPersonalGroupId,
     current,
     summary,
     composerRef,
@@ -96,22 +94,6 @@ export function ConversationView({ shell }: { shell: ShellState }) {
   return (
     <div className="workspace-body">
       <ConnectionBanners shell={shell} />
-      {summary?.personal?.groupId && (
-        <InlineNotice
-          tone="neutral"
-          action={
-            <Button
-              size="xs"
-              onClick={() => {
-                setPersonalGroupId(summary.personal!.groupId)
-                openPersonal?.()
-              }}>
-              回到群聊
-            </Button>
-          }>
-          这段记录来自个人助手群聊。
-        </InlineNotice>
-      )}
       <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
         {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
       </Banner>
@@ -185,13 +167,17 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                           : undefined
                       }
                       harness={topHarness}
-                      personal={Boolean(summary?.personal)}
                       demo={demo}
                       active={active}
                       changes={{
                         // The Host shows a session's files only to a device whose data scope covers them.
                         enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
-                        undo: !access.scopes.has('run') ? 'read-only' : !access.local && harnessInfo?.level !== 'L1' ? 'mac-only' : 'open',
+                        undo:
+                          current.summary.personal || !access.scopes.has('run')
+                            ? 'read-only'
+                            : !access.local && harnessInfo?.level !== 'L1'
+                              ? 'mac-only'
+                              : 'open',
                       }}
                       {...(run ? { onStop: run.onCancel } : {})}
                       onReveal={reading.reveal}

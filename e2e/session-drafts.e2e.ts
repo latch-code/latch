@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { chromium } from '@playwright/test'
 import { expect, it } from 'vitest'
-import type { PersonalAssistant, TaskDetail } from '@latch/protocol'
+import type { CustomAgent, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 
-it.each([false, true])('clears the active draft when another device deletes its session (personal=%s)', async personal => {
+it.each([false, true])('clears the active draft when another device deletes its session (agent=%s)', async owned => {
   let modelCalls = 0
   const plugin: HarnessPlugin = {
     id: 'draft-fixture',
@@ -31,17 +31,18 @@ it.each([false, true])('clears the active draft when another device deletes its 
   try {
     const owner = await host.enroll({ listener: 'unix' })
     const model = { providerId: 'draft-fixture', model: 'fixture' }
-    const assistant = personal
-      ? await owner.json<PersonalAssistant>('personal/assistants', {
+    const agent = owned
+      ? await owner.json<CustomAgent>('custom-agents', {
           method: 'POST',
           body: {
             requestId: randomUUID(),
-            name: '私有草稿助手',
-            role: 'Private fixture role',
+            name: '私有草稿 Agent',
+            description: '',
+            instructions: 'Private fixture instructions',
             mode: 'chat',
             harnessId: 'standard',
-            pluginIds: [],
             model,
+            skills: [],
           },
         })
       : undefined
@@ -49,13 +50,13 @@ it.each([false, true])('clears the active draft when another device deletes its 
       method: 'POST',
       body: {
         requestId: randomUUID(),
-        prompt: personal ? '私有草稿会话' : '普通草稿会话',
-        ...(assistant ? { assistantId: assistant.id } : { mode: 'chat', model }),
+        prompt: owned ? '私有草稿会话' : '普通草稿会话',
+        ...(agent ? { customAgentId: agent.id } : { mode: 'chat', model }),
       },
     })
     await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status, { timeout: 10_000 }).toBe('idle')
     const detail = await owner.json<TaskDetail>('tasks/' + sessionId)
-    const context = await browser.newContext({ viewport: { width: personal ? 390 : 1440, height: 900 }, reducedMotion: 'reduce' })
+    const context = await browser.newContext({ viewport: { width: owned ? 390 : 1440, height: 900 }, reducedMotion: 'reduce' })
     try {
       const page = await context.newPage()
       await enrollBrowser(page, host, { name: 'Draft isolation', scopes: ['view', 'run'] })
@@ -68,7 +69,7 @@ it.each([false, true])('clears the active draft when another device deletes its 
       await palette.getByRole('searchbox').fill(detail.summary.title)
       await palette.getByRole('option', { name: detail.summary.title, exact: true }).click()
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-      const text = personal ? 'Private unsent text must never enter a new task' : 'Text belongs only to the deleted session'
+      const text = owned ? 'Private unsent text must never enter a new task' : 'Text belongs only to the deleted session'
       await input.fill(text)
       const callsBefore = modelCalls
       const submissions: string[] = []

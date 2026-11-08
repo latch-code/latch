@@ -14,7 +14,7 @@ afterEach(async () => {
 const schema = z.strictObject({ version: z.literal(1), records: z.array(z.strictObject({ id: z.uuid(), value: z.string() })).max(20) })
 const initial: z.infer<typeof schema> = { version: 1, records: [] }
 async function root() {
-  const dir = await mkdtemp(join(tmpdir(), 'latch-personal-journal-'))
+  const dir = await mkdtemp(join(tmpdir(), 'latch-agent-journal-'))
   roots.push(dir)
   return dir
 }

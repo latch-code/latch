@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { hex64, opaqueId } from './fields.ts'
 
-/** 个人助手: assistants, memories, groups and routines. */
+/** Assistants, memories, groups and routines, which Latch no longer has; an audit file holding these lines still opens. */
 export const PERSONAL_ACTIONS = {
   'personal.changed': z.strictObject({
     kind: z.enum(['assistant', 'memory', 'group', 'routine']),

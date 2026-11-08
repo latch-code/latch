@@ -373,32 +373,14 @@ describe('pending submissions', () => {
     })
   })
 
-  it('starts a personal conversation using its profile without leaking ordinary composer overrides', () => {
-    const assistantId = 'asst_11111111-1111-4111-8111-111111111111'
-    expect(
-      submissionRequest({
-        requestId: 'r1',
-        prompt: '你好',
-        assistantId,
-        mode: 'agent',
-        workspaceId: 'other',
-        harnessId: 'other',
-        model: { providerId: 'other', model: 'other' },
-      }),
-    ).toEqual({
-      path: 'tasks',
-      body: { requestId: 'r1', prompt: '你好', assistantId },
-    })
+  it('never sends again a stored message that an assistant was to answer', () => {
     const store = new Map<string, string>()
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => store.set(key, value),
     })
-    const submission = { requestId: 'r1', prompt: '你好', assistantId }
-    writePending('personal', submission)
-    expect(readPending('personal')).toEqual(submission)
-    writePending('personal', { ...submission, workspaceId: 'other' })
-    expect(readPending('personal')).toBeNull()
+    store.set('pending', JSON.stringify({ requestId: 'r1', prompt: '你好', assistantId: 'asst_11111111-1111-4111-8111-111111111111' }))
+    expect(readPending('pending')).toBeNull()
   })
 
   it('sends a model switch only with the prompt that asked for it', () => {

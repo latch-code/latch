@@ -69,9 +69,9 @@ do {
     let input = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     var result: [String: Any] = [:]
     switch input["operation"] as? String {
-    case "nativePersonal":
-        stage = "personal"
-        result = try await runNativePersonal(input)
+    case "nativeWorkspace":
+        stage = "workspace"
+        result = try await runNativeWorkspace(input)
     case "phoneProjection": result = try phoneProjectionFixture(input)
     case "directoryResolver": result = try await directoryResolverFixture(input)
     case "directoryHTTP": result = try directoryHTTPFixture(input)

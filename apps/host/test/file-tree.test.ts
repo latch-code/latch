@@ -222,7 +222,7 @@ describe.skipIf(process.platform !== 'darwin')('authorized lazy directory listin
         return [{ id: 'root', path: root }]
       },
       sessionAccess: () => {
-        if (!privateAccess) throw new AppError(403, 'personal-scope-required', 'private')
+        if (!privateAccess) throw new AppError(403, 'agent-scope-required', 'private')
       },
       contextRevision: () => revision,
       recheck: () => {

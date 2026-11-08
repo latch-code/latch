@@ -154,6 +154,7 @@ describe("choosing a Harness's own options before the first message", () => {
       .waitFor()
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
+    expect(await agent()).toEqual([])
     // Opening the menu of a Harness nothing is known of reads its list: Codex's own model list, with no session.
     await chip(page, '模型').click()
     await page.getByText(/^读取于 /u).waitFor()

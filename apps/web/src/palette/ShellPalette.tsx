@@ -37,8 +37,6 @@ const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string
   { section: 'providers', keywords: '模型 密钥' },
   { section: 'engines', keywords: 'agent' },
   { section: 'workspaces', keywords: '文件夹' },
-  { section: 'routines', keywords: 'cron automation' },
-  { section: 'assistants' },
   { section: 'plugins' },
   { section: 'shortcuts', keywords: '键盘' },
   { section: 'devices', keywords: '手机 配对' },

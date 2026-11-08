@@ -73,7 +73,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 - 真实 Provider 失败必须报错，不得回退到演示模型；演示模式必须显式启用并在界面标注。
 - 会话与审批 ID 全局唯一；新增的持久化字段必须加入对应 zod schema：多数 schema 会丢弃未知字段，`policy.json`、设备与登记文件、审计 detail 的 schema 是 strict，会拒绝未知字段。
 - 插件与 ACP Agent 是可信本机代码；应用层审批、路径检查与出站策略不是 OS 沙箱，文档与界面不得暗示隔离。
-- [兼容标识](docs/ARCHITECTURE.md#兼容标识)改名须附带迁移：旧包名 `harness-link` 与浏览器旧键仍可用；`/link/`、旧 `.runtime`、`openai-compatible` 不改；Cookie `harness_link` 只识别需重新确认的浏览器。
+- [兼容标识](docs/ARCHITECTURE.md#兼容标识)改名须附带迁移：旧包名 `harness-link` 与浏览器旧键仍可用；`/link/`、旧 `.runtime`、`openai-compatible` 不改；Cookie `harness_link` 只识别需重新确认的浏览器；旧助手会话只读，数据与审计保留。
 
 **安全**
 
@@ -89,11 +89,11 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 
 - 不停止、重启或向已运行的 Host 发信号，不读取、修改或删除 `.runtime*/`。
 - 每个命令都显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时会落到用户的数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/Library/Application Support/Latch/Host`）、`~/Latch/workspace` 与端口 4317。
-- 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍然停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
+- 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户的数据，后者还会把它们写进对象库。
 - 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`（如 `git -c core.hooksPath=/dev/null worktree add <临时目录> <提交>`），因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
 - 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调用付费模型，不对真实 Agent CLI 发送提示。不运行 `pnpm desktop`（它使用系统钥匙串与默认桌面端数据目录），桌面端用 Electron e2e 验证。
-- `pnpm build` 会更新 `dist/web`，运行中的旧 Host 会直接提供新页面。上线前不为旧 Host 写降级：Host 字段变化后要重启 Host，完成时告知用户。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，使用这份代码的已运行 Host 的本机确认随之不可用，需要用户停止 Host 后运行 `pnpm latch presence repin`，完成时告知用户。
+- `pnpm build` 会更新 `dist/web`，运行中的旧 Host 会直接提供新页面。上线前不为旧 Host 写降级：Host 字段变化后要重启 Host 并告知用户。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，已运行 Host 的本机确认随之失效，需用户停止 Host 后运行 `pnpm latch presence repin`，并告知用户。
 
 ## 改动前先读
 

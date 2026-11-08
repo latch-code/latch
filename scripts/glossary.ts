@@ -138,15 +138,10 @@ export function scanGlossary(path: string, source: string, allowances: readonly 
 }
 
 const COPY_FILE = 'apps/web/src/core/securityCopy.ts'
-const PERSONAL_COPY = 'The shell still names the personal pages; these go when those pages are removed.'
-const PERSONAL_WORDS = ['助手', '群聊'] as const
 const CHAT_MODE = 'The chat-only mode keeps its name until it is removed.'
 
-/** The directories the scan covers: every page, except the personal pages. */
-export const GLOSSARY_SCOPE = {
-  directories: ['apps/web/src'],
-  skip: ['apps/web/src/personal/'],
-} as const
+/** The directories the scan covers: every page. */
+export const GLOSSARY_SCOPE = { directories: ['apps/web/src'] } as const
 
 export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
   {
@@ -181,16 +176,6 @@ export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
       ['apps/web/src/components/Pickers.tsx', 'ModeSwitch.title', '只对话'],
     ] as const
   ).map(([file, key, word]) => ({ file, key, words: [word], why: CHAT_MODE })),
-  ...(
-    [
-      ['apps/web/src/settings/SettingsPage.tsx', 'sections.label'],
-      ['apps/web/src/shell/ConversationView.tsx', 'ConversationView'],
-      ['apps/web/src/shell/Overlays.tsx', 'Overlays.label'],
-      ['apps/web/src/shell/Overlays.tsx', 'Overlays.label.'],
-      ['apps/web/src/shell/useSessionController.ts', 'useSessionController.gate.text'],
-      ['apps/web/src/shell/useSessionController.ts', 'useSessionController.harnessName'],
-    ] as const
-  ).map(([file, key]) => ({ file, key, words: PERSONAL_WORDS, why: PERSONAL_COPY })),
 ]
 
 async function sourcesUnder(root: string, directory: string): Promise<string[]> {
@@ -209,7 +194,7 @@ async function sourcesUnder(root: string, directory: string): Promise<string[]> 
 /** Every banned word in the scope, as the test reports them. */
 export async function scanRepository(root: string): Promise<GlossaryFinding[]> {
   const directories = await Promise.all(GLOSSARY_SCOPE.directories.map(directory => sourcesUnder(root, directory)))
-  const paths = directories.flat().filter(path => !GLOSSARY_SCOPE.skip.some(prefix => path.startsWith(prefix)))
+  const paths = directories.flat()
   const scanned = await Promise.all(
     paths.map(async path => scanGlossary(path, await readFile(join(root, path), 'utf8'), GLOSSARY_ALLOWANCES)),
   )

@@ -18,13 +18,11 @@ export function useAttachments({
   enabled,
   selection,
   sessionId,
-  draftScope,
   locked,
 }: {
   enabled: boolean
   selection: AttachmentSelection
   sessionId?: string
-  draftScope?: string
   locked: boolean
 }) {
   const [items, setItems] = useState<DraftAttachment[]>([])
@@ -68,7 +66,7 @@ export function useAttachments({
         })
     return () => controller.abort()
   }, [enabled, context])
-  const scope = sessionId ?? draftScope ?? 'new'
+  const scope = sessionId ?? 'new'
   const previousContext = useRef(scope)
   useLayoutEffect(() => {
     if (scope !== previousContext.current && !locked) {

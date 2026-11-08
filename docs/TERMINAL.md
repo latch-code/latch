@@ -59,7 +59,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 
 - **只在这台电脑上。** 只有 `host.sock`（`isLocalListener`）能列出、打开、观看、输入、调整大小、发信号、关闭和「加入对话」；这些方法都接收发起者并自己检查，其他入口一律 403 `local-only`，不只依赖路由。
 - **远程。** 远程观看与输入尚未实现，输出不离开这台电脑。
-- **文件夹。** 服务经 Host 注入的 `sessionFolder` 从会话记录取主文件夹，调用方从不传路径。没有这个会话时 404，文件夹已不可用或不存在时 409 `terminal-folder-unavailable`（判断与继续这个会话时相同），已归档的会话 409 `terminal-session-archived`，个人助手的会话没有项目文件夹，409 `terminal-personal-session`。
+- **文件夹。** 服务经 Host 注入的 `sessionFolder` 从会话记录取主文件夹，调用方从不传路径。没有这个会话时 404，文件夹已不可用或不存在时 409 `terminal-folder-unavailable`（判断与继续这个会话时相同），已归档的会话 409 `terminal-session-archived`，早先助手跑过的会话没有项目文件夹，409 `terminal-personal-session`。
 - **环境。** 登录 shell：账户数据库中的 shell，`argv[0]` 以 `-` 开头；不可用时用 `/bin/zsh`。`TERM_PROGRAM=Latch` 与 `LC_TERMINAL=Latch` 标记 Latch 终端；没有区域设置时设 `LANG=en_US.UTF-8`，否则中文输入输出会被当作单字节。模型密钥、设备凭据与 Host 设置不进入 shell。之后 shell 照常读取你自己的 profile。
 - **上限。** 每个会话最多 8 个终端，全部最多 32 个（每个 512 KiB 回滚缓冲，合计 16 MiB）。名额在等待任何操作之前计入，同时打开也不会超出；组件真实退出后才释放。一次输入最多 64 KiB；组件尚未读取的输入超过 1 MiB 时拒绝新的输入（429）。每个终端最多 8 个观看流（429 `terminal-streams`）。
 - **回滚缓冲。** 只在内存中，每个终端 512 KiB，先丢弃最旧的输出；Host 停止后不保留。

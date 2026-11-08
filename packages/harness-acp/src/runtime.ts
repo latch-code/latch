@@ -1224,7 +1224,7 @@ export class AgentRuntime implements Bridge {
           : {}),
         runId: run.id,
         ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
-        ...(agentContext && !agentContext.personal && !agentContext.agent ? { agentPrivate: true as const } : {}),
+        ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
         ...(route ? { modelRoute: { providerId: route.providerId, model: route.model } } : {}),
       },
       messages: [
@@ -1443,32 +1443,41 @@ export class AgentRuntime implements Bridge {
       return 'prompt-required'
     }
     let outcome: string
+    let added = false
+    // The agent may stream its reply to the text right behind its answer, in the same read: the turn splits before it.
+    const add = (result: unknown): void => {
+      if (added || steerResult.safeParse(result).data?.outcome !== 'injected') return
+      added = true
+      const task = this.state.tasks[run.taskId]
+      if (!task) return
+      if (this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'completed')
+      task.messages.push({ id: randomUUID(), role: 'user', text: prompt, requestId, steered: true, createdAt: this.now() })
+      this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'injected' }
+      this.touch(task)
+      this.mark()
+    }
     try {
-      const answer = steerResult.safeParse(
-        await live.wire.request(
-          STEER_METHOD,
-          {
-            sessionId: run.acpSessionId,
-            prompt: [{ type: 'text', text: prompt }],
-            _meta: { steering: { idleBehavior: 'promptRequired' } },
-          },
-          Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
-        ),
+      const result = await live.wire.request(
+        STEER_METHOD,
+        {
+          sessionId: run.acpSessionId,
+          prompt: [{ type: 'text', text: prompt }],
+          _meta: { steering: { idleBehavior: 'promptRequired' } },
+        },
+        Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
+        undefined,
+        add,
       )
+      const answer = steerResult.safeParse(result)
       outcome = answer.success ? answer.data.outcome : 'invalid'
+      if (outcome === 'injected') add(result)
     } catch (error) {
       // No answer, or the process went away: the agent may have taken it. The receipt stays `sending`.
       if (error instanceof RequestTimeout || error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw steerUnknown()
       outcome = 'failed'
       this.limits.log(`${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`)
     }
-    const task = this.state.tasks[run.taskId]
-    if (outcome === 'injected' && task) {
-      if (this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'completed')
-      task.messages.push({ id: randomUUID(), role: 'user', text: prompt, requestId, steered: true, createdAt: this.now() })
-      this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'injected' }
-      this.touch(task)
-    } else {
+    if (outcome !== 'injected') {
       run.steers--
       if (outcome === 'promptRequired')
         this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'prompt-required' }
@@ -3830,7 +3839,8 @@ export class AgentRuntime implements Bridge {
     // A call a person was asked about is theirs, and one that started ran: what the harness says after either is no
     // refusal of its own.
     if (denial && !state.blocked && state.awaiting === 0 && !state.decision && state.startedAt === undefined)
-      state.blocked = { by, ...denial }
+      // Its reason may quote the command it refused, with a key expanded into it.
+      state.blocked = { by, source: denial.source, ...(denial.reason ? { reason: clip(this.redact(denial.reason), 1000) } : {}) }
     if (state.judged?.recorded) return
     const prefix = this.profile?.reviewCallPrefix
     const settled = state.status === 'completed' || state.status === 'failed'

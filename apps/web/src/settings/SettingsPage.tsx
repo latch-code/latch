@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  AlarmClock,
   ArrowLeft,
-  Bot,
   Box,
   ChevronLeft,
   ChevronRight,
@@ -56,7 +54,6 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   providers: '服务 密钥 key 添加服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
   workspaces: '文件夹 添加项目 新建项目 快照',
-  routines: 'cron 每天 自动',
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',
   devices: '手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
@@ -78,7 +75,6 @@ const ENTRY_LABELS: Record<PageEntry, string> = {
 /**
  * `admin`: needs the device's 管理此 Host scope. `catalog`: needs the Host APIs that come with a snapshot catalog.
  * `secured`: needs a Host with device confirmation (its policy and device APIs); older Hosts lack them.
- * `feature`: needs a feature the Host reports, on a device that may read personal data.
  */
 const sections: Array<{
   id: SettingsSection
@@ -87,14 +83,11 @@ const sections: Array<{
   admin: boolean
   catalog?: boolean
   secured?: boolean
-  feature?: 'personal' | 'personalRoutines'
 }> = [
   { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
   { id: 'providers', label: '模型', icon: Box, admin: true, catalog: true },
   { id: 'engines', label: 'Harness', icon: Cpu, admin: true, catalog: true },
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
-  { id: 'routines', label: '定时任务', icon: AlarmClock, admin: false, feature: 'personalRoutines' },
-  { id: 'assistants', label: 'Agent', icon: Bot, admin: false, feature: 'personal' },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'devices', label: '手机与设备', icon: MonitorSmartphone, admin: false, secured: true },
@@ -111,14 +104,7 @@ export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAcces
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {
   return sections
-    .filter(
-      section =>
-        (access.admin || !section.admin)
-        && (snapshot.catalog || !section.catalog)
-        && (!access.legacy || !section.secured)
-        && (!section.feature
-          || (snapshot.catalog?.features?.[section.feature] === true && snapshot.device.dataScope === 'all' && access.scopes.has('view'))),
-    )
+    .filter(section => (access.admin || !section.admin) && (snapshot.catalog || !section.catalog) && (!access.legacy || !section.secured))
     .map(section => section.id)
 }
 
@@ -135,13 +121,6 @@ export function settingsPanel(
   const active = chosen && ids.includes(chosen) ? chosen : phone ? null : (ids[0] ?? null)
   const panel = active ?? (shown && ids.includes(shown) ? shown : null)
   return { active, panel }
-}
-
-/** The section a page shows now, for what stands over the page (Agent and 定时任务 draw there). */
-export function entrySection(route: ShellRoute, allowed: readonly SettingsSection[], phone: boolean): SettingsSection | null {
-  if (route.entry === 'sessions') return null
-  const ids = entrySections(route.entry, phone).filter(id => allowed.includes(id))
-  return settingsPanel(ids, route.section ?? null, phone, null).active
 }
 
 /**

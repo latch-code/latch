@@ -54,8 +54,8 @@ const without = (set: ReadonlySet<string>, id: string): ReadonlySet<string> => {
   return next
 }
 
-const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null, assistantId: string | undefined): boolean =>
-  pending.sessionId === undefined ? selectedId === null && assistantId === pending.assistantId : selectedId === pending.sessionId
+const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null): boolean =>
+  pending.sessionId === undefined ? selectedId === null : selectedId === pending.sessionId
 
 /**
  * Draft, composer choice and the at-most-one unconfirmed submission of this
@@ -66,7 +66,6 @@ export function useSubmission({
   snapshot,
   access,
   selectedId,
-  assistantId,
   select,
   refresh,
   onSent,
@@ -75,7 +74,6 @@ export function useSubmission({
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   selectedId: string | null
-  assistantId?: string
   select: (id: string | null) => void
   refresh: () => Promise<void>
   onSent: (sessionId: string, submission: PendingSubmission, result: { foreground: boolean; consumedDraft: boolean }) => void
@@ -92,9 +90,8 @@ export function useSubmission({
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
   const sendingRef = useRef(false)
   const mounted = useRef(true)
-  const destination = useRef({ selectedId, assistantId, epoch: 0 })
-  if (destination.current.selectedId !== selectedId || destination.current.assistantId !== assistantId)
-    destination.current = { selectedId, assistantId, epoch: destination.current.epoch + 1 }
+  const destination = useRef({ selectedId, epoch: 0 })
+  if (destination.current.selectedId !== selectedId) destination.current = { selectedId, epoch: destination.current.epoch + 1 }
   const requestOrigins = useRef(new Map<string, { epoch: number; consumedDraft: boolean }>())
   useLayoutEffect(() => {
     mounted.current = true
@@ -158,7 +155,7 @@ export function useSubmission({
 
   useEffect(() => {
     const stored = readPending(pendingKey)
-    const owner = stored && storedOwnsInput(stored, selectedId, assistantId)
+    const owner = stored && storedOwnsInput(stored, selectedId)
     setPending(stored)
     setSendingMessage(
       stored && !stored.queue && !stored.steer
@@ -245,9 +242,8 @@ export function useSubmission({
   ): Promise<boolean> => {
     if (sendingRef.current || (!retry && resend === undefined && !draft.trim() && !attachmentIds?.length)) return false
     if (resend !== undefined && (selectedId === null || !resend.trim())) return false
-    if (!retry && selectedId === null && !assistantId && !(await saveOfferedHarness())) return false
-    const override =
-      selectedId === null || snapshot.tasks.find(task => task.id === selectedId)?.personal ? undefined : overrides[selectedId]
+    if (!retry && selectedId === null && !(await saveOfferedHarness())) return false
+    const override = selectedId === null ? undefined : overrides[selectedId]
     const harness = findHarness(catalog, choice.harnessId)
     // A model from a service replaces the Harness's own model pick.
     const service = servicePick(catalog, harness, choice.config)
@@ -266,18 +262,16 @@ export function useSubmission({
           }
         : undefined)
       ?? (selectedId === null
-        ? assistantId
-          ? { requestId: newRequestId(), prompt: draft.trim(), assistantId }
-          : {
-              requestId: newRequestId(),
-              prompt: draft.trim(),
-              mode: choice.mode,
-              ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
-              ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
-              ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
-              ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
-              ...(picks.length ? { config: picks } : {}),
-            }
+        ? {
+            requestId: newRequestId(),
+            prompt: draft.trim(),
+            mode: choice.mode,
+            ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
+            ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
+            ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
+            ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
+            ...(picks.length ? { config: picks } : {}),
+          }
         : {
             requestId: newRequestId(),
             prompt: draft.trim(),
@@ -300,8 +294,7 @@ export function useSubmission({
       epoch: destination.current.epoch,
       consumedDraft: earlier?.consumedDraft ?? resend === undefined,
     }
-    if (earlier && !storedOwnsInput(submission, destination.current.selectedId, destination.current.assistantId))
-      origin.epoch = earlier.epoch
+    if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
     requestOrigins.current.set(submission.requestId, origin)
     try {
@@ -327,11 +320,7 @@ export function useSubmission({
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
       const foreground =
-        mounted.current
-        && destination.current.epoch === origin.epoch
-        && (submission.sessionId === undefined
-          ? destination.current.selectedId === null && destination.current.assistantId === submission.assistantId
-          : destination.current.selectedId === submission.sessionId)
+        mounted.current && destination.current.epoch === origin.epoch && destination.current.selectedId === (submission.sessionId ?? null)
       if (foreground) select(sessionId)
       if (mounted.current) onSent(sessionId, submission, { foreground, consumedDraft: origin.consumedDraft })
       requestOrigins.current.delete(submission.requestId)

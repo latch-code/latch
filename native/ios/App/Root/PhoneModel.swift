@@ -4,8 +4,6 @@ import Network
 import SwiftUI
 import UIKit
 
-enum PhoneArea: String { case personal, projects }
-
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
@@ -15,19 +13,8 @@ enum PhoneArea: String { case personal, projects }
     @Published var detailCached = false
     /** The session whose content could not be read, with the Mac still in reach. */
     @Published var detailFailed: String?
-    @Published var area = PhoneArea.projects
-    @Published var personalOverview = NativeJSON.null
-    @Published var assistantDetail = NativeJSON.null
-    @Published var assistantId: String?
-    @Published var groupId: String?
-    @Published var groupDetail = NativeJSON.null
-    @Published var groupControl: PhoneGroupControl?
-    @Published var personalLoading = false
-    @Published var personalPlugins: [NativeJSON] = []
-    @Published var personalPluginsLoaded = false
     @Published var previewProgress: PhonePreviewProgress?
     var previewJob: UUID?
-    var personalLoadId: UUID?
     @Published var sessionId: String?
     @Published var pending: [NativePendingWrite] = []
     @Published var controlPending = NativeJSON.null
@@ -118,7 +105,7 @@ enum PhoneArea: String { case personal, projects }
         if let host = hosts.first(where: { $0.id == lastHostId }) ?? hosts.first { await connect(host) }
     }
     func lock() async {
-        if area == .projects, let sessionId { resumeSession = sessionId }
+        if let sessionId { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
         generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); pairingTask?.cancel()
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
@@ -127,8 +114,7 @@ enum PhoneArea: String { case personal, projects }
         discovery.stop(); freshPairings.removeAll()
         let previous = workspace, link = pairingConnection, previousStore = store
         store = nil; workspace = nil; pairingConnection = nil
-        cancelPreview(); personalLoadId = nil; personalLoading = false; personalPlugins = []; personalPluginsLoaded = false
-        personalOverview = .null; assistantDetail = .null; assistantId = nil; groupId = nil; groupDetail = .null; groupControl = nil
+        cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
@@ -141,7 +127,7 @@ enum PhoneArea: String { case personal, projects }
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; groupId = nil; groupControl = nil; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
+        clearPrivateContent(); snapshot = .null; sessionId = nil; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
@@ -236,10 +222,9 @@ enum PhoneArea: String { case personal, projects }
         guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
         if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
         lastReopen = .now
-        if area == .projects, let sessionId { await openSession(sessionId) }
-        else if area == .personal { await refreshPersonal() }
+        if let sessionId { await openSession(sessionId) }
     }
-    @discardableResult func refresh(personal: Bool = true) async -> Bool {
+    @discardableResult func refresh() async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId
         do {
@@ -260,7 +245,6 @@ enum PhoneArea: String { case personal, projects }
                 let value = try await workspace.detail(selected)
                 guard current == generation, sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }; detail = value
             }
-            if personal, area == .personal, lease?.valid == true { await refreshPersonal() }
             return true
         } catch {
             guard current == generation else { return false }
@@ -330,7 +314,7 @@ enum PhoneArea: String { case personal, projects }
                     pendingEvent = nil
                     let value = event.data.isEmpty ? NativeJSON.null : try NativeJSON.decode(event.data)
                     if value["resumeRequired"].bool { try await workspace.forgetCursor(sessionId: selected) }
-                    guard await refresh(personal: event.type == "refresh" || value["resumeRequired"].bool), current == generation, streamGeneration == streamId else { return }
+                    guard await refresh(), current == generation, streamGeneration == streamId else { return }
                     let applied = selected == nil ? snapshot["revision"].integer : detail["sync"]["revision"].integer
                     guard let applied else { return }
                     try await workspace.acknowledge(event, from: source, sessionId: selected, appliedRevision: applied)
@@ -471,7 +455,7 @@ enum PhoneArea: String { case personal, projects }
         let currentStore = retiredStore ?? store, isCurrent = selectedHost?.id == host.id
         if isCurrent {
             generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
-            clearPrivateContent(); groupId = nil; groupControl = nil; controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
+            clearPrivateContent(); controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
             PreviewFiles.clear(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
             let old = workspace; workspace = nil
             await paths.close(); await old?.closeOpening()
@@ -501,7 +485,7 @@ enum PhoneArea: String { case personal, projects }
     }
     private func clearPrivateContent() {
         cancelPreview()
-        detail = .null; detailFailed = nil; personalOverview = .null; assistantDetail = .null; groupDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
     }
     private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,

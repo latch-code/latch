@@ -136,7 +136,7 @@ export function projectOf(task: TaskSummary, workspaces: readonly WorkspaceInfo[
   return saved.filter(project => within(task.cwd!, project.path)).toSorted((a, b) => trimPath(b.path).length - trimPath(a.path).length)[0]
 }
 
-/** The caller's snapshot is the only source; Personal sessions never become project navigation. */
+/** The caller's snapshot is the only source; a session an assistant ran never becomes project navigation. */
 export function recentProjectSessions(
   projectId: string,
   tasks: readonly TaskSummary[],

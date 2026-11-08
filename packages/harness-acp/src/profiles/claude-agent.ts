@@ -42,7 +42,7 @@ const record = (value: unknown) =>
  * permission rules and modes; `classifier` is the model its auto mode asks. Any other source says nothing Latch can name,
  * so the call stays an ordinary failure.
  */
-export function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
+function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
   if (update.sessionUpdate !== 'tool_call_update' || update.status !== 'failed') return undefined
   const response = record(record(record(update._meta)?.claudeCode)?.toolResponse)
   const type = response?.decisionReasonType

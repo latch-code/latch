@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToReadableStream, renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { deferredComponent } from '../src/components/DeferredContent.tsx'
-import { entrySection, searchSections, settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
+import { searchSections, settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
 import { pairingQr } from '../src/settings/pairingQr.ts'
 
 describe('optional settings loading', () => {
@@ -40,18 +40,6 @@ describe('optional settings loading', () => {
     expect(bytes.readUInt32BE(20)).toBe(160)
     await expect(pairingQr('', options)).rejects.toThrow()
     expect(await pairingQr('Latch fixture one', options)).toBe(first)
-  })
-
-  it('names the section a page shows, for what stands over the page', () => {
-    const all: SettingsSection[] = ['general', 'engines', 'assistants', 'routines']
-    expect(entrySection({ entry: 'settings', section: 'routines' }, all, false)).toBe('routines')
-    expect(entrySection({ entry: 'settings', section: 'assistants' }, all, false)).toBe('assistants')
-    expect(entrySection({ entry: 'settings', section: 'engines' }, all, false)).toBe('engines')
-    // A device without 管理此 Host has no Harness, so the page falls back to its first section.
-    expect(entrySection({ entry: 'settings', section: 'engines' }, ['general', 'assistants'], false)).toBe('general')
-    expect(entrySection({ entry: 'settings', section: 'routines' }, all, true)).toBe('routines')
-    expect(entrySection({ entry: 'settings' }, all, true)).toBeNull()
-    expect(entrySection({ entry: 'sessions' }, all, false)).toBeNull()
   })
 
   it('finds a section by its name or by the words on its rows', () => {

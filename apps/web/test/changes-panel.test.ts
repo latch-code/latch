@@ -91,6 +91,14 @@ describe('the scope row', () => {
     expect(scopeAction(list({ ...undone, redo: blocked('running') }), settled, rights)).toEqual({ kind: 'why', text: '运行中不能恢复' })
   })
 
+  it('offers nothing in a session that only opens to be read, and says it is the session', () => {
+    const readOnly = { ...rights, readOnly: true }
+    const why = { kind: 'why', text: '这个会话只能查看' }
+    expect(scopeAction(list(), settled, readOnly)).toEqual(why)
+    expect(scopeAction(list({ undone: true, undo: blocked('undone'), redo: { available: true } }), settled, readOnly)).toEqual(why)
+    expect(scopeAction(list({ scope: 'uncommitted' }), undefined, readOnly)).toEqual(why)
+  })
+
   it('leaves the session and base scopes read-only', () => {
     expect(scopeAction(list({ scope: 'session' }), undefined, rights)).toEqual({ kind: 'why', text: '只读' })
     expect(scopeAction(list({ scope: 'base' }), undefined, rights)).toEqual({ kind: 'why', text: '只读' })

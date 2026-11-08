@@ -3,7 +3,6 @@ import type { FileMention } from './file-refs.ts'
 import type { AttachmentRef } from './attachments.ts'
 import type { PromptQueueItem } from './features.ts'
 import type { AgentQuestion } from './questions.ts'
-import type { PersonalSessionOwner } from './personal.ts'
 import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 
 export interface SessionCommand {
@@ -88,10 +87,10 @@ export interface UsageReport {
 
 /** A session as a driver reports it; the Host adds which harness owns it (`TaskSummary`). */
 export interface DriverTaskSummary {
-  /** Enabled capability owners selected by this personal assistant. */
+  /** Plugins whose tools the session's agent may use. */
   pluginIds?: string[]
-  /** Host-owned personal context, independent of a saved project. Absent for ordinary project sessions. */
-  personal?: PersonalSessionOwner
+  /** A session of an assistant or of a group chat, which Latch no longer runs: private, and it only opens to be read. */
+  personal?: { assistantId: string; groupId?: string }
   /** One of 我的 Agent; absent: 通用. The session's agent is fixed once it starts. */
   agent?: SessionAgentRef
   /** It received private context with no agent named, such as 通用, an automation's run or a fork of a private session: reading it takes the same scope as an agent. */

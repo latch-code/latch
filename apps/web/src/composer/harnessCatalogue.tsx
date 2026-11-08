@@ -8,7 +8,10 @@ import { harnessName } from '../composerChoice.ts'
 import { dateTime } from '../format.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
-/** Harnesses this page already asked to read by selection: the Host refuses a second one anyway. */
+/**
+ * Harnesses this page is asking to read by selection. Once the read ends, the Host's last read says whether another is
+ * due: none for the same definition, one for a changed definition, as opening 权限 then says.
+ */
 const selected = new Set<string>()
 /** Reads this page started and is waiting on, so every control says so before the Host's next catalog does. */
 const waiting = new Set<string>()
@@ -82,7 +85,10 @@ export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise
   selected.add(harness.id)
   void readHarnessCatalogue(harness, true)
     .catch(() => {})
-    .finally(() => void onDone?.())
+    .finally(() => {
+      selected.delete(harness.id)
+      void onDone?.()
+    })
 }
 
 /**

@@ -119,8 +119,8 @@ export function AuthorLine({
   model?: string
   /** The model service's name, for the model's tooltip. */
   provider?: string
-  /** The model the session had chosen, when the service said `model` answered instead. */
-  chosen?: string
+  /** The model the session had chosen, when `model` answered instead; `reported` when the service said so. */
+  chosen?: { model: string; reported: boolean }
 }) {
   const detail = [engine, model].filter(Boolean).join(' · ')
   return (
@@ -134,9 +134,14 @@ export function AuthorLine({
         </Tooltip>
       )}
       {chosen && model && (
-        <Tooltip content={`选的是 ${chosen}，模型服务说这一轮用的是 ${model}`}>
+        <Tooltip
+          content={
+            chosen.reported
+              ? `选的是 ${chosen.model}，模型服务说这一轮用的是 ${model}`
+              : `选的是 ${chosen.model}，这一轮 Harness 请求的是 ${model}，模型服务没有说用的是哪个`
+          }>
           <span className="assistant-meta-chosen" tabIndex={0}>
-            选的是 {chosen}
+            选的是 {chosen.model}
           </span>
         </Tooltip>
       )}

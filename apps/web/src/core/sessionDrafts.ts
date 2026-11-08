@@ -9,7 +9,7 @@ const MAX_CHARACTERS = 256_000
 export class SessionDrafts {
   private readonly drafts = new Map<string, Draft>()
   private characters = 0
-  save(id: string, text: string, personal: boolean): boolean {
+  save(id: string, text: string, isPrivate: boolean): boolean {
     if (text.length > MAX_CHARACTERS) return false
     this.remove(id)
     if (!text) return true
@@ -18,7 +18,7 @@ export class SessionDrafts {
       if (oldest === undefined) break
       this.remove(oldest)
     }
-    this.drafts.set(id, { text, private: personal })
+    this.drafts.set(id, { text, private: isPrivate })
     this.characters += text.length
     return true
   }

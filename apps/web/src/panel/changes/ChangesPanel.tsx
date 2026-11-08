@@ -578,7 +578,7 @@ function ReadableChanges({
   const shownTurnId = list?.turnId
   const turn: TurnChanges | undefined =
     choice.kind === 'latest' ? turns.at(-1) : choice.kind === 'turn' ? turns.find(item => item.turnId === choice.turnId) : undefined
-  const rights = { canRun, local, active: running, offline }
+  const rights = { canRun, local, active: running, offline, readOnly: summary.personal !== undefined }
   const action = scopeAction(list, turn, rights)
   const label = scopeLabel(choice, numbers, base)
   const rootNames = useMemo(() => {

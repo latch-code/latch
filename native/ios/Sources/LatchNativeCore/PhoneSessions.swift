@@ -169,12 +169,12 @@ public enum PhoneSessions {
     }
     /**
      * 等你处理 while something waits, then saved projects by their latest session, then conversations outside a project.
-     * Archived and personal sessions stay out; a search keeps every row in its own place.
+     * Archived sessions stay out; a search keeps every row in its own place.
      */
     public static func shelves(tasks: [NativeJSON], workspaces: [NativeJSON], query: String = "") -> [PhoneShelf] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let listed = tasks.filter { task in
-            !task["archived"].bool && task["personal"] == .null
+            !task["archived"].bool
                 && (needle.isEmpty || (task["title"].string ?? "").lowercased().contains(needle))
         }.map { (task: $0, at: PhoneTime.parse($0["updatedAt"]) ?? .distantPast) }.sorted { $0.at > $1.at }.map(\.task)
         let waiting = needle.isEmpty ? listed.filter(waitsOnYou) : []

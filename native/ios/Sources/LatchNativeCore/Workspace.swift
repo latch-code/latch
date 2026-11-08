@@ -505,6 +505,11 @@ public actor NativeWorkspace {
             guard let body = try await vault.body(name: "pending-" + id, lease: lease) else { throw NativeFailure.storageUnavailable }
             let pending = try JSONDecoder().decode(NativePendingWrite.self, from: body)
             guard pending.requestId == id, pending.body.count <= 1_048_576 else { throw NativeFailure.storageUnavailable }
+            // An earlier build's write for an assistant, group or routine: the Host refuses it now, and a retry's refusal stays unknown for good.
+            if pending.path.hasPrefix("/link/api/personal/")
+                || pending.path == "/link/api/tasks" && ((try? NativeJSON.decode(pending.body))?["assistantId"] ?? .null) != .null {
+                try await removePending(id); continue
+            }
             result.append(pending)
         }
         return result
@@ -524,12 +529,9 @@ public actor NativeWorkspace {
     /** Free cancel/reject/pause do not require a body window. No arbitrary note or allow field is accepted. */
     public func freeAction(path: String, fields: [String: NativeJSON]) async throws -> NativeJSON {
         let cancel = LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/cancel")
-        let groupCancel = LinkBytes.matches(path, "/link/api/personal/groups/grp_[a-f0-9-]{36}/cancel")
         let reject = LinkBytes.matches(path, "/link/api/approvals/[A-Za-z0-9_-]{1,160}") && fields["decision"] == .string("reject")
-        guard cancel || groupCancel || reject,
-              Set(fields.keys).isSubset(of: groupCancel ? ["requestId", "turnId"] : cancel ? ["requestId", "runId"] : reject ? ["requestId", "decision"] : []) else { throw NativeFailure.invalidRecord }
-        if groupCancel { guard let turn = fields["turnId"]?.string, UUID(uuidString: turn) != nil,
-            LinkBytes.matches(turn, "[A-Fa-f0-9-]{36}") else { throw NativeFailure.invalidRecord } }
+        guard cancel || reject,
+              Set(fields.keys).isSubset(of: cancel ? ["requestId", "runId"] : ["requestId", "decision"]) else { throw NativeFailure.invalidRecord }
         guard let id = fields["requestId"]?.string, LinkBytes.matches(id, "[A-Fa-f0-9-]{36}"), !controlBusy else { throw NativeFailure.invalidRecord }
         if let run = fields["runId"]?.string { guard LinkBytes.matches(run, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
         controlBusy = true
@@ -578,13 +580,8 @@ public actor NativeWorkspace {
         guard let data = try await vault.metadata(name: "control-pending") else { return nil }
         let value = try NativeJSON.decode(data)
         guard Set(value.object.keys) == Set(["path", "fields"]), let path = value["path"].string,
-              LinkBytes.matches(path, "/link/api/(tasks/[A-Za-z0-9_-]{1,160}/cancel|approvals/[A-Za-z0-9_-]{1,160}|personal/groups/grp_[a-f0-9-]{36}/cancel)"),
-              Set(value["fields"].object.keys).isSubset(of: path.hasPrefix("/link/api/personal/groups/") ? ["requestId", "turnId"] : ["requestId", "runId", "decision"]) else { throw NativeFailure.storageUnavailable }
-        if path.hasPrefix("/link/api/personal/groups/") {
-            guard Set(value["fields"].object.keys) == Set(["requestId", "turnId"]),
-                  let turn = value["fields"]["turnId"].string, UUID(uuidString: turn) != nil,
-                  LinkBytes.matches(turn, "[A-Fa-f0-9-]{36}") else { throw NativeFailure.storageUnavailable }
-        }
+              LinkBytes.matches(path, "/link/api/(tasks/[A-Za-z0-9_-]{1,160}/cancel|approvals/[A-Za-z0-9_-]{1,160})"),
+              Set(value["fields"].object.keys).isSubset(of: ["requestId", "runId", "decision"]) else { throw NativeFailure.storageUnavailable }
         return value
     }
     public func events(sessionId: String? = nil) async throws -> NativeWorkspaceEvents {

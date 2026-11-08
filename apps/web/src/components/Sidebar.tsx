@@ -1,20 +1,6 @@
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import {
-  AlarmClock,
-  Archive,
-  Bot,
-  ChevronLeft,
-  Ellipsis,
-  FolderPlus,
-  Pin,
-  Plus,
-  Search,
-  Settings,
-  Smartphone,
-  SquarePen,
-  X,
-} from 'lucide-react'
+import { Archive, ChevronLeft, Ellipsis, FolderPlus, Pin, Plus, Search, Settings, Smartphone, SquarePen, X } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
@@ -40,8 +26,8 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, IconButton, type LucideIcon } from '@latch/ui'
-import type { SettingsSection, ShellEntry } from '../shell/routes.ts'
+import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
+import type { ShellEntry } from '../shell/routes.ts'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -87,11 +73,6 @@ function connectionTrouble(
 }
 
 /** What a page the sidebar names is called and drawn with. */
-const SIDEBAR_PAGES: Partial<Record<SettingsSection, { label: string; icon: LucideIcon }>> = {
-  routines: { label: '定时任务', icon: AlarmClock },
-  assistants: { label: 'Agent', icon: Bot },
-}
-
 const SessionItem = memo(function SessionItem({
   task,
   harness,
@@ -321,7 +302,7 @@ function useFoldedShelves(key: string) {
 }
 
 /**
- * The whole navigation of a wide window: 新会话, 搜索 (the palette searches) and the pages that hold something; the shelves
+ * The whole navigation of a wide window: 新会话 and 搜索 (the palette searches); the shelves
  * 等你处理, each project, 无项目 and a quiet 已归档 row; at the foot 添加项目, 手机 and 设置. A shelf folds with its chevron;
  * what ended up there stays one click away.
  */
@@ -342,10 +323,8 @@ export function Sidebar({
   onCreateProject,
   onEditProject,
   onProjectsChanged,
-  pages,
   entries,
   onEntry,
-  onPage,
   hostProblem,
   newActive = false,
   drawer,
@@ -382,11 +361,8 @@ export function Sidebar({
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
   onCreateProject?: () => void
-  /** The pages named under 搜索. */
-  pages: readonly SettingsSection[]
   entries: readonly ShellEntry[]
   onEntry: (entry: ShellEntry) => void
-  onPage: (section: SettingsSection) => void
   hostProblem: { text: string } | null
 }) {
   const list = useRef<HTMLElement>(null)
@@ -426,22 +402,6 @@ export function Sidebar({
           <span>搜索</span>
           {!drawer && <span className="sidebar-shortcut">{/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</span>}
         </button>
-        {pages.map(section => {
-          const page = SIDEBAR_PAGES[section]
-          if (!page) return null
-          return (
-            <button
-              key={section}
-              type="button"
-              className="sidebar-nav-row"
-              onClick={() => {
-                onPage(section)
-              }}>
-              <page.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-              <span>{page.label}</span>
-            </button>
-          )
-        })}
       </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>

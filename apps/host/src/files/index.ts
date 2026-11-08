@@ -101,7 +101,7 @@ export interface FileRoutesOptions {
    * longer the start directory or a registered, enabled project.
    */
   sessionRoots(sessionId: string): Promise<FileRoot[] | 'removed' | undefined>
-  /** Additional session privacy gates (for example personal memory); applies also to an already issued handle. */
+  /** Additional session privacy gates (for example an agent's memory); applies also to an already issued handle. */
   sessionAccess?(caller: FileCaller, sessionId: string): void | Promise<void>
   workspaceRoots?(workspaceId: string, harnessId: string): Promise<FileRoot[] | 'removed' | undefined>
   /** Synchronous configuration generation, checked again after every awaited operation. */

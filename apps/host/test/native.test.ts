@@ -25,7 +25,7 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
-import type { TaskDetail, PersonalAssistant, PersonalGroup, PersonalGroupDetail } from '@latch/protocol'
+import type { TaskDetail } from '@latch/protocol'
 import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -158,21 +158,9 @@ describe('native Host entry with existing authorization', () => {
       scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
     })
     expect(snapshot.catalog.features.pairingV3).toBe(true)
-    expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(200)
-    const assistant = body<PersonalAssistant>(
-      await registered.client.request('POST', '/link/api/personal/assistants', {
-        requestId: randomUUID(),
-        name: 'My assistant',
-        role: 'Help with my day',
-        mode: 'chat',
-        harnessId: 'standard',
-        pluginIds: [],
-      }),
-      201,
-    )
     const task = body<{ sessionId: string }>(
       await registered.client.request('POST', '/link/api/tasks', {
-        assistantId: assistant.id,
+        mode: 'chat',
         prompt: 'Plan the day',
         requestId: randomUUID(),
       }),
@@ -401,129 +389,6 @@ describe('native Host entry with existing authorization', () => {
     await vi.waitFor(() => expect(registered.client.isClosed()).toBe(true))
     await Promise.all(managed.map(connection => connection.closed))
   })
-  it('binds group hops to the accepted app window and permits only body-free exact-turn cancellation after expiry', async () => {
-    let time = Date.now(),
-      release!: () => void
-    const seen: string[] = [],
-      provider: HarnessPlugin = {
-        id: 'native-group-model',
-        name: 'fixture',
-        version: '1',
-        description: '',
-        activate(ctx) {
-          ctx.registerProvider({
-            id: 'native-group-model',
-            name: 'fixture',
-            model: 'a',
-            models: ['a', 'b'],
-            async *stream({ model, signal }) {
-              seen.push(model!)
-              if (model === 'a')
-                await new Promise<void>((resolve, reject) => {
-                  const abort = () => reject(new Error('cancelled'))
-                  signal.addEventListener('abort', abort, { once: true })
-                  release = () => {
-                    signal.removeEventListener('abort', abort)
-                    resolve()
-                  }
-                  if (signal.aborted) abort()
-                })
-              yield { type: 'text', text: 'Settled member answer' }
-              yield { type: 'finish', reason: 'stop' }
-            },
-          })
-        },
-      },
-      host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time, plugins: [provider] })
-    cleanup.push(() => host.close())
-    const owner = await host.enroll({ listener: 'unix' }),
-      registered = await pair(host),
-      members: PersonalAssistant[] = []
-    expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
-    for (const model of ['a', 'b'])
-      members.push(
-        await owner.json<PersonalAssistant>('personal/assistants', {
-          method: 'POST',
-          body: {
-            requestId: randomUUID(),
-            name: `Member ${model}`,
-            role: 'PRIVATE ROLE NEVER SHARED',
-            harnessId: 'standard',
-            mode: 'chat',
-            pluginIds: [],
-            model: { providerId: 'native-group-model', model },
-          },
-        }),
-      )
-    const group = await owner.json<PersonalGroup>('personal/groups', {
-        method: 'POST',
-        body: {
-          requestId: randomUUID(),
-          name: 'Private group',
-          instructions: 'GROUP BODY',
-          memberIds: members.map(member => member.id),
-          defaultAssistantId: members[0]!.id,
-          maxRelays: 1,
-        },
-      }),
-      path = `/link/api/personal/groups/${group.id}`
-    expect((await registered.client.request('POST', `${path}/messages`, { requestId: randomUUID(), prompt: 'Locked input' })).status).toBe(
-      403,
-    )
-    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    body(
-      await registered.client.request('POST', `${path}/messages`, {
-        requestId: randomUUID(),
-        prompt: 'Bound to original opening',
-        assistantIds: members.map(member => member.id),
-      }),
-      202,
-    )
-    await vi.waitFor(() => expect(seen).toEqual(['a']))
-    // A fresh verification on the same connection changes its mutable opening; it cannot rebind an accepted turn.
-    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    release()
-    await vi.waitFor(async () =>
-      expect((await owner.json<PersonalGroupDetail>(`personal/groups/${group.id}`)).turn?.state).toBe('interrupted'),
-    )
-    expect(seen).toEqual(['a'])
-    const next = body<{ turnId: string }>(
-      await registered.client.request('POST', `${path}/messages`, { requestId: randomUUID(), prompt: 'Next explicit turn' }),
-      202,
-    )
-    await vi.waitFor(() => expect(seen).toEqual(['a', 'a']))
-    time += 11 * 60000
-    expect((await registered.client.request('GET', path)).status).toBe(403)
-    expect(
-      (
-        await registered.client.request('POST', `${path}/cancel`, {
-          requestId: randomUUID(),
-          turnId: next.turnId,
-          prompt: 'not free input',
-        })
-      ).status,
-    ).toBe(400)
-    const append = host.host.security.audit.append.bind(host.host.security.audit)
-    vi.spyOn(host.host.security.audit, 'append').mockImplementation(event =>
-      event.action === 'personal.changed'
-      && 'kind' in event.detail
-      && 'operation' in event.detail
-      && event.detail.kind === 'group'
-      && event.detail.operation === 'update'
-        ? Promise.reject(new Error('audit fixture unavailable'))
-        : append(event),
-    )
-    const request = { requestId: randomUUID(), turnId: next.turnId },
-      response = await registered.client.request('POST', `${path}/cancel`, request),
-      cancelled = body(response)
-    expect(response.headers['x-latch-audit']).toBe('failed')
-    expect(cancelled).toEqual({ accepted: true, turnId: next.turnId, state: 'cancelled' })
-    expect(await registered.client.request('POST', `${path}/cancel`, request)).toMatchObject({ status: 200, body: cancelled })
-    const done = await owner.json<PersonalGroupDetail>(`personal/groups/${group.id}`)
-    expect(done.turn?.state).toBe('cancelled')
-    expect(done.turn?.sessionIds).toHaveLength(1)
-    expect((await owner.json<TaskDetail>(`tasks/${done.turn!.sessionIds[0]}`)).summary.runOutcome).toBe('cancelled')
-  })
   it('consumes empty GET request streams and closes a GET payload without deleting the enrolled identity', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
@@ -652,7 +517,7 @@ describe('native Host entry with existing authorization', () => {
     })
     await expect.poll(() => continued).toBe(1)
   })
-  it.each([false, true])('parks original App window queues and hides bodies from unverified snapshots (personal=%s)', async personal => {
+  it('parks original App window queues and hides bodies from unverified snapshots', async () => {
     let time = Date.now(),
       calls = 0
     let release: (() => void) | undefined
@@ -693,30 +558,12 @@ describe('native Host entry with existing authorization', () => {
     cleanup.push(() => host.close())
     const owner = await host.enroll({ listener: 'unix' })
     const registered = await pair(host)
-    let assistantId: string | undefined
-    if (personal) {
-      expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
-      assistantId = (
-        await owner.json<PersonalAssistant>('personal/assistants', {
-          method: 'POST',
-          body: {
-            requestId: randomUUID(),
-            name: 'Native queued assistant',
-            role: 'PRIVATE NATIVE ROLE',
-            harnessId: 'standard',
-            mode: 'chat',
-            pluginIds: [],
-            model: { providerId: 'native-queue', model: 'fake' },
-          },
-        })
-      ).id
-    }
     const receipt = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
     const { sessionId } = body<{ sessionId: string }>(
       await registered.client.request('POST', '/link/api/tasks', {
         prompt: 'First',
         requestId: randomUUID(),
-        ...(assistantId ? { assistantId } : { model: { providerId: 'native-queue', model: 'fake' } }),
+        model: { providerId: 'native-queue', model: 'fake' },
       }),
       201,
     )

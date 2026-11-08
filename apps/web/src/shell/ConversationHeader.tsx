@@ -208,7 +208,6 @@ function Toggle({ toggle }: { toggle: HeaderToggle }) {
  * Phones draw their own header in the conversation's page (above).
  */
 export function SessionHeader({
-  identity,
   summary,
   harness,
   project,
@@ -232,7 +231,6 @@ export function SessionHeader({
 }: {
   /** What the breadcrumb's popover says of this session, beyond its branch. */
   crumb?: { folders?: ReactNode; after?: ReactNode }
-  identity?: string
   summary?: TaskSummary
   harness?: Pick<HarnessInfo, 'capabilities' | 'status'> | undefined
   /** The basename of the session's working directory. */
@@ -265,7 +263,7 @@ export function SessionHeader({
     return (
       <PhoneTopBar
         summary={summary}
-        source={identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined)}
+        source={harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined}
         cancelling={cancelling}
         demo={demo}
         onBack={onBack}
@@ -293,12 +291,6 @@ export function SessionHeader({
           </h1>
         )}
         {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={Pencil} size="xs" onClick={onRename} />}
-        {summary && harness && identity && (
-          <span className="topbar-source" title={identity}>
-            <HarnessTile harness={harness} size={16} />
-            <span className="topbar-source-text">{identity}</span>
-          </span>
-        )}
         {summary && sessionPill(summary, cancelling)}
       </div>
       <div className="topbar-actions">
@@ -340,7 +332,6 @@ export function SessionHeader({
 export function ConversationHeader({ shell }: { shell: ShellState }) {
   const {
     summary,
-    harnessName: identityName,
     panelToggle,
     canBrowseFiles,
     browseFiles,
@@ -387,7 +378,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       .some(message => message.outputs?.length)
   return (
     <SessionHeader
-      identity={summary?.personal ? identityName : undefined}
       panelRef={panelToggle}
       onFiles={canBrowseFiles ? browseFiles : undefined}
       filesOpen={filesVisible}

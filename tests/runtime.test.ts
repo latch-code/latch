@@ -314,7 +314,7 @@ describe('independent harness runtime', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'invalid-arguments' })
     await waitStatus(bridge, sessionId, 'idle')
     const reported = seen[1]!.at(-1)!.content
-    expect(reported).toMatch(/^TOOL_ERROR: ✖ Invalid input: expected string, received undefined\n {2}→ at path$/u)
+    expect(reported).toBe('TOOL_ERROR: path: Invalid input: expected string, received undefined')
     expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')?.text).toBe(reported)
   })
 

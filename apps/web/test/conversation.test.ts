@@ -730,6 +730,15 @@ describe('a settled turn', () => {
     expect(footer).not.toMatch(/class="turn-fact"[^>]*>用时/)
   })
 
+  it('marks its working time for a phone to leave out when the fold above says it', () => {
+    const at = { createdAt: iso(14, 31, 5), turn: { endedAt: iso(14, 32, 37), activeMs: 72_000 } }
+    const worked = settledTranscript([user('u', at), tool('t'), reply('a', '好')], 'idle')
+    expect(worked).toContain('已工作 1 分 12 秒')
+    expect(worked).toContain('<span class="turn-fact turn-fact-worked">1 分 12 秒</span>')
+    const plain = settledTranscript([user('u', at), reply('a', '好')], 'idle')
+    expect(plain).toContain('<span class="turn-fact">1 分 12 秒</span>')
+  })
+
   it('writes the outcome from what the turn kept', () => {
     const kept = settledTranscript([user('u'), reply('a', '部分', { state: 'cancelled' })], 'cancelled')
     expect(kept).toMatch(/class="turn-record outcome-stopped"><span>已停止 · .*保留了部分回复<\/span>/u)
@@ -795,6 +804,17 @@ describe('a settled turn', () => {
     expect(other).toContain('<span class="assistant-meta-model">gpt-y</span>')
     expect(other).toContain('选的是 gpt-x')
     expect(other).toContain('选的是 gpt-x，模型服务说这一轮用的是 gpt-y')
+    // A turn that never asked for the chosen model, from a service that named none: only what the Harness asked for.
+    const asked = renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: detail(routed({ requests: 1, chosen: 'gpt-x', models: [{ model: 'gpt-mini', requests: 1 }] })),
+        approvals: [],
+        harnessName: 'Codex',
+      }),
+    )
+    expect(asked).toContain('<span class="assistant-meta-model">gpt-mini</span>')
+    expect(asked).toContain('选的是 gpt-x，这一轮 Harness 请求的是 gpt-mini，模型服务没有说用的是哪个')
+    expect(asked).not.toContain('模型服务说这一轮用的是')
     expect(other).toContain('另有 1 次回复没有报告用量，没有计入')
     expect(other).toContain('gpt-x：2 次，服务说用的是 gpt-y')
     // A request still under way when the turn ended is not a reply that reported no tokens.

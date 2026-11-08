@@ -20,8 +20,12 @@ export interface AgentWire {
   readonly closed: boolean
   /** Exited, being stopped, or no longer accepting input: hand no new work to it. */
   readonly stopping: boolean
-  /** A timeout or an aborted `signal` withdraws the request; a late reply is dropped. */
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown>
+  /**
+   * A timeout or an aborted `signal` withdraws the request; a late reply is dropped. A wire that calls `onResult` does
+   * so before it handles anything the agent wrote after the result, which awaiting the promise does not ensure; one that
+   * holds those records until the caller has acted on the result may leave it out.
+   */
+  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal, onResult?: (result: unknown) => void): Promise<unknown>
   notify(method: string, params: unknown): void
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo>

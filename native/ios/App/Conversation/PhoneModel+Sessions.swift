@@ -2,18 +2,8 @@ import Foundation
 import LatchNativeCore
 
 extension PhoneModel {
-    var canQueueCurrent: Bool { currentSummary["personal"]["groupId"].string == nil && (currentSummary["personal"] == .null ? snapshot["catalog"]["features"]["queue"].bool : snapshot["catalog"]["features"]["personalQueue"].bool) }
-    var workspaceTasks: [NativeJSON] {
-        snapshot["tasks"].array.filter { task in
-            area == .personal ? task["personal"]["assistantId"].string == assistantId && task["personal"]["groupId"].string == nil
-                : task["personal"]["assistantId"].string == nil
-        }
-    }
+    var canQueueCurrent: Bool { snapshot["catalog"]["features"]["queue"].bool }
     var currentSummary: NativeJSON { snapshot["tasks"].array.first { $0["id"].string == sessionId } ?? detail["summary"] }
-    func openProjects() {
-        area = .projects; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
-        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
-    }
     /** Whether the open session is stopping: this phone asked and has no answer yet, or the Host says so, whoever asked. */
     var stoppingCurrent: Bool {
         guard let sessionId else { return false }
@@ -95,12 +85,11 @@ extension PhoneModel {
     }
     /** Back to the list; the window stays open for the next conversation. */
     func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
-    func backToPersonalList() { closeSession() }
     func start(_ choice: PhoneStartChoice, prompt: String) async -> Bool {
         let current = generation
         do {
             guard canRun, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
-            area = .projects; assistantId = nil; groupId = nil; sessionId = nil; detail = .null; contentGeneration = UUID()
+            sessionId = nil; detail = .null; contentGeneration = UUID()
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
@@ -121,12 +110,7 @@ extension PhoneModel {
             var fields: [String: NativeJSON] = ["prompt": .string(text)]
             if let nextModel, sessionId != nil { fields["model"] = .object(["providerId": .string(nextModel.providerId), "model": .string(nextModel.model)]) }
             if queue { fields["queue"] = .bool(true) }
-            else if sessionId == nil {
-                if area == .personal {
-                    guard let assistantId else { throw NativeFailure.invalidRecord }
-                    fields["assistantId"] = .string(assistantId)
-                } else { fields["mode"] = .string("agent") }
-            }
+            else if sessionId == nil { fields["mode"] = .string("agent") }
             return await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
         } catch { report(error); return false }
     }
@@ -135,7 +119,7 @@ extension PhoneModel {
         let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
         guard current == generation, initialReading == contentGeneration else { return false }
-        let selected = sessionId, reading = contentGeneration, owner = assistantId, surface = area
+        let selected = sessionId, reading = contentGeneration
         busy = true; defer { if generation == current { busy = false } }
         do {
             if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
@@ -143,7 +127,7 @@ extension PhoneModel {
             guard generation == current else { return false }
             pending.removeAll { $0.requestId == request.requestId }
             guard contentGeneration == reading else { return false }
-            if sessionId == selected, contentGeneration == reading, assistantId == owner, area == surface, let id = value["sessionId"].string { sessionId = id }
+            if sessionId == selected, contentGeneration == reading, let id = value["sessionId"].string { sessionId = id }
             await refresh()
             return true
         } catch {

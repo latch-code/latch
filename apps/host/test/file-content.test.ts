@@ -72,8 +72,7 @@ async function fixture() {
     audit,
     limiter: { take: () => {} },
     sessionAccess: caller => {
-      if (privateSession && caller.device?.dataScope !== 'all')
-        throw new AppError(403, 'personal-scope-required', '私有会话只供 all 范围查看')
+      if (privateSession && caller.device?.dataScope !== 'all') throw new AppError(403, 'agent-scope-required', '私有会话只供 all 范围查看')
     },
     sessionRoots: async id =>
       id !== 'session'
@@ -218,7 +217,7 @@ describe('opaque bulk file authorization', () => {
     f.makePrivate()
     await expect(f.routes.authorizeBulk(caller, large.handle, 'unused')).rejects.toMatchObject({
       status: 403,
-      code: 'personal-scope-required',
+      code: 'agent-scope-required',
     })
   })
 })
@@ -393,7 +392,7 @@ describe('adjudicated file content', () => {
     for (const path of [`files/${handle}`, `files/${handle}/meta`]) {
       const response = await f.request('work', path)
       expect(response.status).toBe(403)
-      expect(await response.json()).toEqual({ error: 'personal-scope-required' })
+      expect(await response.json()).toEqual({ error: 'agent-scope-required' })
     }
     expect((await f.request('work', 'tasks/session/files/resolve', { paths: ['report.md'] })).status).toBe(403)
     const allowed = (await f.resolve('all', ['report.md'])).files[0]!.file!.handle

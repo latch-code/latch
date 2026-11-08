@@ -33,16 +33,13 @@ const chip = (page: Page, name: string): Locator => page.getByRole('button', { n
 const row = (page: Page, name: RegExp | string) =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
 
-/** Sends the draft, starting in a new empty folder when the page asks where. */
+/** Sends the draft, starting in a new empty folder when the page asks where, however late it asks. */
 async function sendDraft(page: Page): Promise<void> {
   await input(page).press('Meta+Enter')
   const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
-  if (
-    await elsewhere.waitFor({ timeout: 3_000 }).then(
-      () => true,
-      () => false,
-    )
-  ) {
+  const sent = page.getByRole('textbox', { name: '继续对话', exact: true })
+  await elsewhere.or(sent).first().waitFor({ timeout: 20_000 })
+  if (await elsewhere.isVisible()) {
     await elsewhere.click()
     await input(page).press('Meta+Enter')
   }

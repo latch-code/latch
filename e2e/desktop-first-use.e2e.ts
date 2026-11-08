@@ -418,7 +418,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await list.getByRole('group', { name: 'Harness 命令', exact: true }).waitFor()
           expect(await list.getByRole('group', { name: '提示模板', exact: true }).getByRole('option').count()).toBe(4)
           expect(await list.getByRole('group', { name: 'Harness 命令', exact: true }).getByRole('option').count()).toBe(1)
+          // The session's own action comes first: the fake agent can start a turn on a new context.
+          expect(
+            await list.getByRole('group', { name: '这个会话', exact: true }).getByRole('option').locator('strong').allTextContents(),
+          ).toEqual(['/clear'])
           expect(await list.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
+            '这个会话',
             '提示模板',
             'Harness 命令',
           ])

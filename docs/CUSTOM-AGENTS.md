@@ -54,7 +54,7 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 
 `POST /tasks` 接受 `customAgentId`。请求里同时给的 `harnessId`、`mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
 
-会话开始后 Agent 与 Harness 不再变，归属记录在 `TaskSummary.agent`。Agent 的会话内容与个人助手一样只对完整数据范围的设备开放。
+会话开始后 Agent 与 Harness 不再变，归属记录在 `TaskSummary.agent`。Agent 的会话内容只对完整数据范围的设备开放。
 
 ## 各 Harness 如何收到
 

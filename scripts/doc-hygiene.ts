@@ -22,7 +22,6 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'HARNESSES',
     'MODEL-CONFIGURATION',
     'NOTIFICATIONS',
-    'PERSONAL',
     'PLUGIN-DEVELOPMENT',
     'PREVIEW-BROWSER',
     'STREAMING',

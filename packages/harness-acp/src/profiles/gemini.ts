@@ -9,7 +9,8 @@ const FILE = 'gemini-system-settings.json'
 
 /**
  * The aliases Gemini CLI asks for on its own helper calls (web fetch and search, loop and next-speaker checks, edit
- * fixes, summaries, compression), each naming a fixed model. An alias it does not define matches nothing.
+ * fixes, summaries, compression, and its experimental context management's token count and distillation), each
+ * naming a fixed model. One it does not define (`context-calibrator`) is sent as a model name unless pointed elsewhere.
  */
 const HELPER_ALIASES = [
   'classifier',
@@ -34,6 +35,8 @@ const HELPER_ALIASES = [
   'chat-compression-2.5-flash-lite',
   'chat-compression-default',
   'agent-history-provider-summarizer',
+  'context-calibrator',
+  'gemini-3-flash-base',
 ] as const
 
 /** Gemini CLI's own subagents that pick a fixed model rather than the session's. */
@@ -45,8 +48,9 @@ const SUBAGENTS = ['codebase_investigator', 'cli_help', 'browser_agent'] as cons
  *
  * The gateway refuses a model outside the service's list, so each helper alias and subagent is pointed at the
  * session's model and keeps its own generation settings. `customOverrides` apply after `overrides` that match as
- * closely, so a person's own `overrides` for an alias do not win; system settings replace the person's
- * `customOverrides` array whole, while `agents.overrides` merge key by key with theirs.
+ * closely, so a person's own `overrides` for an alias win only where they match more than the alias (`isRetry`, say);
+ * system settings replace the person's `customOverrides` array whole, while `agents.overrides` merge key by key with
+ * theirs.
  */
 const routed = (model: string) => ({
   security: { ...SYSTEM_SETTINGS.security, auth: { selectedType: 'gateway' } },
@@ -68,6 +72,28 @@ async function writeSettings(directory: string, settings: unknown): Promise<stri
  */
 const RETRY_ATTEMPT = /^\[Retry (\d+)\/(\d+)\] ([\s\S]*)\. Retrying in \d+s\.\.\.$/u
 
+/**
+ * A retry before the reply started names the service's error as it came, often its whole JSON body; its `error.message`
+ * (itself JSON at times) is what the service said, as Gemini CLI's own error lines read it.
+ */
+function serviceReason(text: string): string {
+  let reason = text
+  for (let depth = 0; depth < 2; depth++) {
+    const start = reason.indexOf('{')
+    if (start < 0) break
+    let error: unknown
+    try {
+      error = (JSON.parse(reason.slice(start)) as { error?: unknown } | null)?.error
+    } catch {
+      break
+    }
+    const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown }
+    if (typeof message !== 'string' || !message.trim()) break
+    reason = typeof code === 'number' && depth === 0 ? `${code} ${message.trim()}` : message.trim()
+  }
+  return reason
+}
+
 function readRetry(update: SessionUpdate): RetryReport | undefined {
   const meta = update._meta !== null && typeof update._meta === 'object' ? (update._meta as Record<string, unknown>) : undefined
   // Only the first text after a retry carries this; the text before it belongs to the reply that broke off.
@@ -76,7 +102,7 @@ function readRetry(update: SessionUpdate): RetryReport | undefined {
   if (meta?.retry === true) return { kind: 'interrupted' }
   const content = update.content as { type?: unknown; text?: unknown } | undefined
   const match = content?.type === 'text' && typeof content.text === 'string' ? RETRY_ATTEMPT.exec(content.text) : null
-  return match ? { kind: 'attempt', attempt: Number(match[1]), of: Number(match[2]), reason: match[3]! } : undefined
+  return match ? { kind: 'attempt', attempt: Number(match[1]), of: Number(match[2]), reason: serviceReason(match[3]!) } : undefined
 }
 
 export const geminiProfile: HarnessProfile = {

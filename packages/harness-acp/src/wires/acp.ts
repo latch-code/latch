@@ -3,6 +3,7 @@ import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTi
 import type { AgentWire, WireHandlers } from './types.ts'
 
 interface Pending {
+  onResult?: (result: unknown) => void
   resolve(value: unknown): void
   reject(error: Error): void
   cleanup(): void
@@ -45,7 +46,13 @@ export class AcpWire implements AgentWire {
   }
 
   /** A timeout or an aborted `signal` withdraws the request with `$/cancel_request`; a late reply is dropped. */
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onResult?: (result: unknown) => void,
+  ): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
     // Once stdin ends the line would be dropped silently and the caller would wait for the exit instead.
@@ -70,7 +77,7 @@ export class AcpWire implements AgentWire {
         timer.unref()
       }
       signal?.addEventListener('abort', onAbort, { once: true })
-      this.pending.set(id, { resolve, reject, cleanup })
+      this.pending.set(id, { resolve, reject, cleanup, ...(onResult ? { onResult } : {}) })
       this.process.write({ jsonrpc: '2.0', id, method, params })
     })
   }
@@ -128,7 +135,14 @@ export class AcpWire implements AgentWire {
       const code = typeof message.error.code === 'number' ? message.error.code : RPC.internal
       const text = typeof message.error.message === 'string' ? message.error.message : 'Agent error'
       entry.reject(new RpcError(code, text.slice(0, 4000), message.error.data))
-    } else entry.resolve(message.result)
+    } else {
+      try {
+        entry.onResult?.(message.result)
+      } catch {
+        this.process.noise++
+      }
+      entry.resolve(message.result)
+    }
   }
 
   private onClosed(info: ExitInfo): void {
