@@ -26,7 +26,7 @@ sources:
 
 # 新建工作树
 
-`apps/host/src/worktrees.ts` 是 Host 唯一写 Git 的地方：为一次开始请求从项目文件夹当前 `HEAD` 的提交新建一个 Git 工作树（worktree）和分支 `latch/<yyyymmdd>-<4 位十六进制>`，位置是 `<根>/<仓库名>-<源路径哈希前 8 位>/<yyyymmdd>-<4 位十六进制>`。根是启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`，`LATCH_WORKTREES_DIR` 可以换），不能在仓库、Host 数据目录或 Latch 自己的目录（程序目录、运行目录、Agent 安装目录）里或包含它们；测试传入自己的临时目录。未提交与未跟踪的改动不会带过去。工作树只分开文件：端口、进程与本机权限仍与这台电脑上的其他会话共用，它不是隔离。会话元数据记下它（`sessions-meta.json` 的 `worktree: { path, branch, unfiltered? }`，摘要只给 `worktree: { branch, unfiltered? }`，Driver 自报的值被丢弃，也不会交给 Driver）。
+`apps/host/src/worktrees.ts` 是 Host 唯一写 Git 的地方：为一次开始请求从项目文件夹当前 `HEAD` 的提交新建一个 Git 工作树（worktree）和分支 `latch/<yyyymmdd>-<4 位十六进制>`，位置是 `<根>/<仓库名>-<源路径哈希前 8 位>/<yyyymmdd>-<4 位十六进制>`。根是启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`，`LATCH_WORKTREES_DIR` 可以换），不能在仓库、Host 数据目录或 Latch 自己的目录（程序目录、运行目录、Agent 安装目录）里或包含它们；测试传入自己的临时目录。未提交与未跟踪的改动不会带过去。工作树只分开文件：它与项目文件夹共用同一个仓库的 Git 配置、钩子与分支，端口、进程与本机权限仍与这台电脑上的其他会话共用，它不是隔离。会话元数据记下它（`sessions-meta.json` 的 `worktree: { path, branch, unfiltered? }`，摘要只给 `worktree: { branch, unfiltered? }`，Driver 自报的值被丢弃，也不会交给 Driver）。
 
 **不运行仓库里的程序。** 每个 Git 进程都用重建的环境（不继承 Host 的任何 `GIT_*` 变量），带上只读 Git 的固定选项（钩子目录 `/dev/null`、`core.fsmonitor=`、`protocol.allow=never` 等），再加 `core.attributesFile=`、`attr.tree=`、`safe.bareRepository=explicit`、`submodule.recurse=false`、关掉自动 gc，以及 `GIT_LFS_SKIP_SMUDGE=1`、`GIT_NO_REPLACE_OBJECTS=1`。步骤：
 
