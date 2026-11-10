@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch test kit, for tests only: an in-process Host fixture, the test presence backend, the shared security vectors, a fake ACP agent, replay transcripts, fake model services, a recorder and a test TLS certificate",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "exports": {
     ".": "./src/index.ts"
   },

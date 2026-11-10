@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch desktop shell: the Electron main process and preload, which find the Host through host.json and host.sock, show its page and keep the device key and credential",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "devDependencies": {
     "@latch/host": "workspace:*",
     "@latch/testkit": "workspace:*",

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch design system for the browser client: design tokens, the cascade layers and the primitive components with their styles",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "sideEffects": [
     "*.css"
   ],

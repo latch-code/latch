@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch end-to-end tests: Vitest with Playwright as the driver, against a Host started in the test process, through a real browser and the Electron shell",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "devDependencies": {
     "@latch/host": "workspace:*",
     "@latch/relay": "workspace:*",

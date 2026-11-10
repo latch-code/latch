@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch ACP harness driver: runs open-source agents over the Agent Client Protocol, with each agent's permission profile, the launch fingerprint and session storage",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"

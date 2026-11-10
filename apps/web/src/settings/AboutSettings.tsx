@@ -15,7 +15,7 @@ function Licences() {
     <>
       <SectionHeading title="许可与条款" />
       <SettingsGroup>
-        <SettingsRow record title="Latch" trailing={<span className="settings-row-value">Apache License 2.0</span>} />
+        <SettingsRow record title="Latch" trailing={<span className="settings-row-value">MIT License</span>} />
       </SettingsGroup>
       <SettingsGroup title="Harness">
         {engines.map(preset => (

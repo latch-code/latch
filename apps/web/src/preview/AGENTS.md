@@ -16,6 +16,6 @@ The UI in this directory is browser code. `office-frame.ts` is a separate IIFE e
 - File history uses recorded tool diffs and frozen root IDs. Keep both sides' line numbers and unknown previous-content warnings; split review expands the desktop pane, while phones stay unified.
 - Markdown keeps the message URL/depth rules. Math DOM must pass the namespace/tag/attribute allowlist; diagram SVG is checked by the bounded lexer and displayed only as an image. Never use an HTML string sink or a default Trusted Types policy.
 - HTML DOMParser stays in `html-frame.ts`. Static mode strips document scripts; `html-script` is only offered by a desktop shell that declares network restrictions. Never pass a secret, session state or another file to either variant. `html-canvas.ts`: frame-only.
-- Dependency versions live in the catalog. Preserve distributed licenses and corresponding-source links in `NOTICE` and the public license directories.
+- Dependency versions live in the catalog. Preserve distributed licenses and corresponding-source links in `public/licenses/` and its `README.txt`.
 
 Focused coverage: `apps/web/test/preview-data.test.ts` and `e2e/preview-renderers.e2e.ts`. The latter uses only a temporary-port Vite fixture, generated documents and the real browser; it does not connect a real Host.

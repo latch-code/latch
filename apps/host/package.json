@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch Host: the composition root that serves HTTP and SSE, keeps devices, keys, policy and the audit log, mounts the built-in plugins and harnesses, and the start, stop and latch commands",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "exports": {
     ".": "./src/server.ts",
     "./auth": "./src/auth.ts",

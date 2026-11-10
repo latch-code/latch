@@ -25,7 +25,7 @@ XLSX 由第一方读取器处理工作表、共享/内联字符串、缓存公�
 
 `SheetGrid` 在页面上做行列虚拟化，提供范围选择、方向键、TSV 复制与列宽调整，使用 `role=grid`。复制限制为一万个单元格与一百万字符，超出时要求缩小选区。PDF 使用核心 API 的 canvas 与纯文本层，不执行 PDF 动作。PDF 字符选择的几何行框使用文档单位，不继承界面字号。
 
-`NOTICE` 与公开许可证目录保留实际依赖和内嵌 MPL 代码的对应源码位置。供应链金丝雀检查依赖年龄和脚本策略；格式 e2e 使用生成的样例与真实 worker，覆盖缓存公式、字面文本、PPT 窗口化、PDF 范围读取及查找。
+公开许可证目录（`apps/web/public/licenses/`，说明在其中的 `README.txt`）保留实际依赖的许可证和内嵌 MPL 代码的对应源码位置。供应链金丝雀检查依赖年龄和脚本策略；格式 e2e 使用生成的样例与真实 worker，覆盖缓存公式、字面文本、PPT 窗口化、PDF 范围读取及查找。
 
 ## 工作台与文件服务
 
@@ -61,7 +61,7 @@ Host 声明 `catalog.features.filePreview` 时，回复中的文件标记单击�
 
 Mermaid 在独立框内加载，渲染结果作为图片显示。可以切换图与源码、放大后滚动；触摸设备与 WebKit 由点击开始渲染。缺少 frame 宿主时保留代码块，卸载回收 frame 和 Blob URL。
 
-新增依赖均固定在 catalog，发布至少七天；`micromark-extension-math>katex` override 收紧到 0.19.0。公开目录 `licenses/rich` 保留依赖许可证；EPL-2.0 的 elkjs 源码位置见 `NOTICE`。
+新增依赖均固定在 catalog，发布至少七天；`micromark-extension-math>katex` override 收紧到 0.19.0。公开目录 `licenses/rich` 保留依赖许可证；EPL-2.0 的 elkjs 源码位置见 `licenses/README.txt`。
 
 消息附件使用同一个文件列，但通过 `attachmentId` 换取独立内容句柄，标签保存其有限 ID。私有附件没有项目路径、原生文件动作或文件引用到输入框；草稿尚无会话时只在输入框预览。详细契约见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 

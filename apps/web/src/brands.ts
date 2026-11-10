@@ -24,7 +24,7 @@ import zhipu from './assets/brands/zhipu.svg?no-inline'
 
 /**
  * How a harness or a model service is drawn on its tile: its brand's own icon (the files under assets/brands, copied
- * unmodified; sources and licences in NOTICE), the app's own icon for the built-in harness, or a neutral glyph for
+ * unmodified; sources and licences in public/licenses/brands), the app's own icon for the built-in harness, or a neutral glyph for
  * something that has no icon of its own. Never a letter.
  */
 export type BrandArt = { kind: 'mark'; mark: TileMark } | { kind: 'app' } | { kind: 'glyph'; icon: LucideIcon }

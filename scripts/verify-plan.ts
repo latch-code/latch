@@ -89,8 +89,7 @@ const LINT_CONFIG = new Set(['.oxlintrc.json', '.oxfmtrc.json', 'knip.json', 'le
 function needsOf(path: string, projects: readonly TestProject[]): Need[] | undefined {
   const name = posix.basename(path)
   if (name === 'package.json' || DEPENDENCY_FILES.has(path)) return ['everything']
-  if (path.endsWith('.md') || path === 'LICENSE' || path === 'NOTICE' || path.startsWith('.agents/') || path.startsWith('.claude/'))
-    return []
+  if (path.endsWith('.md') || path === 'LICENSE' || path.startsWith('.agents/') || path.startsWith('.claude/')) return []
   if (path.startsWith('.github/')) return ['workflows']
   if (LINT_CONFIG.has(path) || path === 'build/icon.png') return ['knip']
   if (/^tsconfig(?:\.[\w-]+)?\.json$/u.test(path) || path === 'vitest.config.ts') return ['knip', 'test']

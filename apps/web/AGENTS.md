@@ -24,7 +24,7 @@ browser 环境：不用 Node 全局变量与模块。Vite 与测试在 Node 中�
 - 回复里的文件引用渲染成路径标记，从不生成 `<a href>`；只有 http(s) 与 mailto 是链接（`test/message-content.test.ts`）。
 - 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。会话草稿仅在内存按 ID 隔离；删除或撤权即清。失效项目保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 样式表都进入层叠层，只读 `@latch/ui` 定义的令牌，规则见 `packages/ui/AGENTS.md`（`test/styles.test.ts`）。按钮、菜单、模态外壳、异步确认与输入框、开关、分段控件、状态词与徽标、计数、提示、加载、Toast 等用 `@latch/ui` 的原语，不另画一份；页面只在 app 层按位置调整。
-- Harness 与模型服务的图标只用 `src/assets/brands/` 中原样复制的文件（来源与许可证见根 `NOTICE`），以 `?no-inline` 导入，只经 `<img>` 或 CSS 遮罩使用；每个预设都有图标，缺图标的用中性图形，不用字母（`test/brands.test.ts`）。
+- Harness 与模型服务的图标只用 `src/assets/brands/` 中原样复制的文件（来源与许可证见 `public/licenses/brands/`），以 `?no-inline` 导入，只经 `<img>` 或 CSS 遮罩使用；每个预设都有图标，缺图标的用中性图形，不用字母（`test/brands.test.ts`）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
 - 分支只用 Host 摘要，可见时每 30 秒同步快照，页面不运行 Git。

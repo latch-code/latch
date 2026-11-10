@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch: a cross-device agent workspace that composes harnesses and model providers through Cordis plugins",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "engines": {
     "node": ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1"
   },

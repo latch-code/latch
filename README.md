@@ -334,4 +334,4 @@ Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一
 
 ## 许可证
 
-源代码以 [Apache License 2.0](LICENSE) 授权。"Latch" 名称与图标不在该许可范围内（见许可证第 6 条）。
+源代码以 [MIT License](LICENSE) 授权。"Latch" 名称与图标不在该许可范围内。随产品分发的第三方组件与品牌图标保留各自的许可证，说明见 [apps/web/public/licenses/README.txt](apps/web/public/licenses/README.txt)。

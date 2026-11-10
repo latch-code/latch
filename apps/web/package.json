@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Latch web client: the React page the Host serves at /link/, which the desktop shell shows as well; built into the repository root's dist/web",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "dependencies": {
     "@aiden0z/pptx-renderer": "catalog:",
     "@latch/protocol": "workspace:*",
