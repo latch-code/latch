@@ -182,7 +182,7 @@ async function locate(path: string): Promise<{ real: string; exists: boolean }> 
 }
 
 /** The session's folders that still exist, by their real paths, in order. */
-async function realRoots(roots: readonly FileRoot[]): Promise<FileRoot[]> {
+export async function realRoots(roots: readonly FileRoot[]): Promise<FileRoot[]> {
   const found: FileRoot[] = []
   for (const root of roots) {
     const real = await realpath(root.path).catch(() => undefined)

@@ -1,3 +1,4 @@
+import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Laptop, Pin, Plus, Search, Settings, SquarePen, X } from 'lucide-react'
@@ -93,7 +94,10 @@ const SessionItem = memo(function SessionItem({
   now,
   onSelect,
   menu,
+  handoffWaits = false,
 }: {
+  /** A handoff here waits for its result to be handed back. */
+  handoffWaits?: boolean
   task: TaskSummary
   harness: TaskHarness
   /** Named on the second line in 等你处理, where the shelf no longer says where the session belongs. */
@@ -172,9 +176,10 @@ const SessionItem = memo(function SessionItem({
             {named && <span className="session-harness">{engine}</span>}
             {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
             {note && <span className="session-meta-rest">{`· ${note}`}</span>}
+            {handoffWaits && <span className="session-handoff">待交回</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
-          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
+          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
         </button>
         <span className="session-actions">
           {archive && (
@@ -246,6 +251,7 @@ function SessionGroupView({
   menu: (task: TaskSummary) => MenuSection[]
 }) {
   const rows = usePresence(group.tasks, task => task.id, context, settled)
+  const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
   const workspaces = snapshot.catalog?.workspaces
@@ -281,6 +287,7 @@ function SessionGroupView({
             const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
             return (
               <SessionItem
+                handoffWaits={awaiting.has(task.id)}
                 key={task.id}
                 task={task}
                 harness={taskHarness(snapshot, task)}

@@ -1,7 +1,7 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, GitFork, Info, RotateCcw, Undo2, X } from 'lucide-react'
+import { ChevronRight, CornerDownLeft, GitFork, Info, RotateCcw, Undo2, X } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
@@ -156,6 +156,7 @@ function UserMessage({
   delivery,
   harness,
   onEdit,
+  onHandoff,
 }: {
   message: Message
   coarse: boolean
@@ -163,6 +164,7 @@ function UserMessage({
   delivery?: string
   harness?: string
   onEdit?: (message: Message) => void
+  onHandoff?: (messageIds: string[]) => void
 }) {
   const at = parseTime(message.createdAt)
   const queuedAt = parseTime(message.queuedAt)
@@ -263,6 +265,16 @@ function UserMessage({
               }}
             />
           )}
+          {onHandoff && text && (
+            <IconButton
+              icon={CornerDownLeft}
+              size="xs"
+              label="交给代码任务…"
+              onClick={() => {
+                onHandoff([message.id])
+              }}
+            />
+          )}
         </div>
       )}
     </article>
@@ -306,6 +318,7 @@ export const MessageRow = memo(
     harness,
     onEdit,
     onRetry,
+    onHandoff,
   }: {
     message: Message
     streaming?: boolean
@@ -323,9 +336,21 @@ export const MessageRow = memo(
     onEdit?: (message: Message) => void
     /** Resends the turn, from a failed note. */
     onRetry?: () => void
+    /** 交给代码任务… with this message chosen. */
+    onHandoff?: (messageIds: string[]) => void
   }) {
     if (message.role === 'user')
-      return <UserMessage message={message} coarse={coarse} arrived={arrived} delivery={delivery} harness={harness} onEdit={onEdit} />
+      return (
+        <UserMessage
+          message={message}
+          coarse={coarse}
+          arrived={arrived}
+          delivery={delivery}
+          harness={harness}
+          onEdit={onEdit}
+          {...(onHandoff ? { onHandoff } : {})}
+        />
+      )
     if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} />
     return (
       <article
@@ -350,6 +375,7 @@ export const MessageRow = memo(
     && a.harness === b.harness
     && a.onEdit === b.onEdit
     && a.onRetry === b.onRetry
+    && a.onHandoff === b.onHandoff
     && a.message.id === b.message.id
     && a.message.text === b.message.text
     && a.message.forkContext === b.message.forkContext

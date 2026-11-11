@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, open as openFile, readFile, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, open as openFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CustomAgentList, Handoff, HandoffList, TaskDetail, TaskSummary } from '@latch/protocol'
+import type { CustomAgentList, Handoff, HandoffList, TaskDetail, TaskSummary, WorkspaceInfo } from '@latch/protocol'
+import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
-import { handoffPrompt, Handoffs, type HandoffOptions } from '../src/handoffs.ts'
+import { handoffPrompt, handoffTitle, Handoffs, type HandoffOptions } from '../src/handoffs.ts'
 import type { DeviceCaller } from '../src/routes/registry.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -216,6 +217,30 @@ describe('handoff store', () => {
     // A fence the material cannot close.
     expect(zh).toContain('````\nhas ``` inside\n````')
     expect(zh).toContain('`default:src/a.ts` — 已作为文件引用附上。')
+  })
+
+  it('titles a new target after the first line of the requirements, else the first material, in at most 60 characters', () => {
+    expect(handoffTitle('## 接入每日汇率\n细节', [])).toBe('接入每日汇率')
+    expect(handoffTitle('  ', [{ kind: 'file', file: { root: 'default', path: 'docs/rates.md' } }])).toBe('rates.md')
+    expect(handoffTitle('', [{ kind: 'message', role: 'assistant', text: '\n建议：用 ECB' }])).toBe('建议：用 ECB')
+    expect([...handoffTitle('长'.repeat(80), [])!]).toHaveLength(60)
+    expect(handoffTitle('', [])).toBeUndefined()
+    // Emoji count as one code point or more and are never split: a family sequence (7 code points) stays whole or goes.
+    const family = '👨‍👩‍👧‍👦'
+    for (const line of ['🎉'.repeat(80), `${'汇'.repeat(55)}${family}${'率'.repeat(10)}`]) {
+      const title = handoffTitle(line, [])!
+      expect([...title].length).toBeLessThanOrEqual(60)
+      expect(title.endsWith('…')).toBe(true)
+      expect(title).not.toContain('\u200d…')
+      expect(title.includes('👨') ? title.includes(family) : true).toBe(true)
+    }
+    expect(handoffTitle(`${'汇'.repeat(55)}${family}${'率'.repeat(10)}`, [])).toBe(`${'汇'.repeat(55)}…`)
+  })
+
+  it('starts a target whose requirements begin with emoji, with the title stored whole', async () => {
+    const handoffs = await (await fake()).open()
+    const created = await handoffs.create(callerOf('phone'), body({ requirements: `${'🎉'.repeat(70)}\n细节` }), res)
+    expect(created.value.status).toBe('started')
   })
 
   it('answers a retry of the same request with the same handoff and starts one target', async () => {
@@ -723,6 +748,88 @@ describe('handoff routes', () => {
     const refused = await work.request('handoffs', { method: 'POST', body: routeBody(secret) })
     expect(refused.status).toBe(403)
     expect(await refused.json()).toMatchObject({ error: 'agent-scope-required' })
+  })
+
+  it('hands a file between the built-in Harness and an ACP Agent under each one’s own name for the folder', async () => {
+    const { host, owner } = await hostFixture()
+    await owner.json('agents', {
+      method: 'POST',
+      body: {
+        id: 'fake-agent',
+        name: 'Fake Agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_LOG: join(host.root, 'acp.log') },
+      },
+    })
+    const folder = join(host.root, 'ledger'),
+      elsewhere = join(host.root, 'other')
+    await mkdir(join(folder, 'notes'), { recursive: true })
+    await mkdir(elsewhere)
+    const text = '# rates\n'
+    await writeFile(join(folder, 'notes', 'rates.md'), text)
+    expect((await owner.addFolders({ paths: [folder], name: 'ledger' })).status).toBeLessThan(300)
+    expect((await owner.addFolders({ paths: [elsewhere], name: 'other' })).status).toBeLessThan(300)
+    const projects = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces
+    const ledger = projects.find(item => item.name === 'ledger')!,
+      other = projects.find(item => item.name === 'other')!
+    const folderRoot = ledger.folders![0]!.id
+    expect(folderRoot).not.toBe('default')
+    const session = async (harnessId: string, root: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          prompt: 'Plan it',
+          requestId: randomUUID(),
+          mode: 'agent',
+          harnessId,
+          workspaceId: ledger.id,
+          fileRefs: [{ root, path: 'notes/rates.md' }],
+          ...(harnessId === 'standard' ? { model } : {}),
+        },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      return sessionId
+    }
+    const handOff = (sourceSessionId: string, root: string, target: Record<string, unknown>) =>
+      owner.request('handoffs', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          sourceSessionId,
+          target: { kind: 'new-session', mode: 'agent', ...target },
+          materials: [{ kind: 'file', file: { root, path: 'notes/rates.md' }, hash: sha(text) }],
+          requirements: 'Use it',
+          decisions: [],
+          returnScope: 'summary',
+        },
+      })
+    const firstOf = async (handoff: Handoff) =>
+      (await owner.json<TaskDetail>(`tasks/${handoff.targetSessionId}`)).messages.find(message => message.role === 'user')!
+
+    // Built-in source (the folder's own ID) to an ACP target (`default`).
+    const builtIn = await session('standard', folderRoot)
+    const toAcp = await handOff(builtIn, folderRoot, { projectId: ledger.id, harnessId: 'fake-agent' })
+    expect(toAcp.status).toBe(201)
+    const acpHandoff = (await toAcp.json()) as Handoff
+    const acpFirst = await firstOf(acpHandoff)
+    expect(acpFirst.fileRefs).toEqual([{ root: 'default', path: 'notes/rates.md' }])
+    expect(acpFirst.text).toContain('`default:notes/rates.md`')
+    // The target is titled after the requirements, not the template's opening.
+    expect((await owner.json<{ tasks: TaskSummary[] }>('snapshot')).tasks.find(task => task.id === acpHandoff.targetSessionId)?.title).toBe(
+      'Use it',
+    )
+
+    // And the reverse: an ACP source to a built-in target.
+    const acp = await session('fake-agent', 'default')
+    const toBuiltIn = await handOff(acp, 'default', { projectId: ledger.id, harnessId: 'standard', model })
+    expect(toBuiltIn.status).toBe(201)
+    expect((await firstOf((await toBuiltIn.json()) as Handoff)).fileRefs).toEqual([{ root: folderRoot, path: 'notes/rates.md' }])
+
+    // A target whose folders do not hold the file is still refused, naming the material.
+    const outside = await handOff(builtIn, folderRoot, { projectId: other.id, harnessId: 'fake-agent' })
+    expect(outside.status).toBe(409)
+    expect(await outside.json()).toMatchObject({ error: 'handoff-file-elsewhere', materials: [0] })
   })
 
   it('withholds a returned summary and evidence from a reader of the source who may not read the target', async () => {

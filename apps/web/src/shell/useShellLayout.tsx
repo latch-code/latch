@@ -32,6 +32,11 @@ import {
 } from './panelLayout.ts'
 import { visibleEntries, type AgentPageTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
+import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
+import { writeFailure } from '../handoffs/model.ts'
+import { api, newRequestId } from '../core/api.ts'
+import type { Handoff } from '@latch/protocol'
+import { CornerDownLeft } from 'lucide-react'
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
@@ -838,7 +843,49 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   )
   // The title, its ⋯ and the sidebar row draw the one session menu; 同步最新状态 lives in the connection's notice.
   const titleMenu = summary ? sessionMenu(summary) : []
-  const topMenu = titleMenu
+  const handoffs = useSessionHandoffs({
+    sessionId: selectedId,
+    summaries: snapshot.handoffs,
+    enabled: catalog?.features?.handoffs === true,
+  })
+  /** 结束交接: the target of a started handoff closes it; a close without an answer is retried with the same request. */
+  const closing = useRef(new Map<string, string>())
+  const incoming = handoffs.handoffs.find(item => item.targetSessionId === selectedId && item.status === 'started')
+  const closeHandoff = async (handoff: Handoff) => {
+    const requestId = closing.current.get(handoff.id) ?? newRequestId()
+    closing.current.set(handoff.id, requestId)
+    try {
+      handoffs.merge(await api<Handoff>(`handoffs/${encodeURIComponent(handoff.id)}/withdraw`, { method: 'POST', body: { requestId } }))
+      closing.current.delete(handoff.id)
+      setToast({ text: '交接已结束', tone: 'ok' })
+    } catch (error) {
+      const outcome = writeFailure(error)
+      if (outcome.kind !== 'unknown') closing.current.delete(handoff.id)
+      setToast({
+        text: outcome.kind === 'unknown' ? '结束交接的结果未知，再点一次会重试同一请求' : outcome.message,
+        tone: 'error',
+      })
+    }
+  }
+  const topMenu =
+    incoming && access.scopes.has('run')
+      ? [
+          ...titleMenu,
+          {
+            id: 'handoff',
+            items: [
+              {
+                id: 'close-handoff',
+                label: '结束交接',
+                leading: <CornerDownLeft size={14} />,
+                onSelect: () => {
+                  void closeHandoff(incoming)
+                },
+              },
+            ],
+          },
+        ]
+      : titleMenu
   const canStart = catalog !== undefined && (access.legacy || access.scopes.has('run'))
   const startIn = canStart
     ? (workspaceId: string) => {
@@ -1130,6 +1177,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     demo,
     titleMenu,
     topMenu,
+    handoffs,
     canStart,
     startIn,
     connectionProblem,

@@ -1,5 +1,17 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
-import { Bot, ChevronDown, ChevronLeft, Ellipsis, Folder, FolderGit2, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
+import {
+  Bot,
+  ChevronDown,
+  ChevronLeft,
+  CornerDownLeft,
+  Ellipsis,
+  Folder,
+  FolderGit2,
+  GitCompare,
+  PanelRight,
+  Pencil,
+  RefreshCw,
+} from 'lucide-react'
 import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -17,6 +29,7 @@ import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { sessionAgent } from '../agents/model.ts'
+import { sourceCrumb } from '../handoffs/model.ts'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
 function sessionPill(summary: TaskSummary, cancelling: boolean) {
@@ -221,6 +234,30 @@ function AgentLink({ agent }: { agent: HeaderAgent }) {
   )
 }
 
+/** Where a handed-off session came from: 「来自 <来源会话>」, a link when this device lists the source. */
+export interface HeaderSource {
+  title?: string | undefined
+  onOpen?: (() => void) | undefined
+}
+function SourceLink({ source }: { source: HeaderSource }) {
+  const glyph = <CornerDownLeft size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+  if (!source.title || !source.onOpen)
+    return (
+      <span className="topbar-agent topbar-handoff">
+        {glyph}
+        <span>来自另一个会话</span>
+      </span>
+    )
+  return (
+    <button type="button" className="topbar-agent topbar-handoff" title={`打开 ${source.title}`} onClick={source.onOpen}>
+      {glyph}
+      <span>
+        来自 <VisibleText text={source.title} />
+      </span>
+    </button>
+  )
+}
+
 /**
  * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
  * opens the session's menu, 同步最新状态 included) over where it runs, its branch and its states that are not the default,
@@ -241,9 +278,11 @@ function PhoneTopBar({
   onRefresh,
   changes,
   agent,
+  from,
 }: {
   changes?: HeaderToggle | undefined
   agent?: HeaderAgent | undefined
+  from?: HeaderSource | undefined
   summary?: TaskSummary
   source?: string
   cancelling: boolean
@@ -267,9 +306,10 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || agent || connectionProblem(connection)) && (
+        {(where || state || branch || demo || agent || from || connectionProblem(connection)) && (
           <div className="topbar-subline">
             {agent && <AgentLink agent={agent} />}
+            {from && <SourceLink source={from} />}
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
             {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
@@ -337,9 +377,12 @@ export function SessionHeader({
   crumb,
   changesTotals,
   agent,
+  from,
 }: {
   /** The session belongs to one of 我的 Agent. */
   agent?: HeaderAgent | undefined
+  /** The session received a handoff. */
+  from?: HeaderSource | undefined
   /** The session's change totals, once the page has read them. */
   changesTotals?: ChangeTotals | undefined
   /** What the breadcrumb's popover says of this session, beyond its branch. */
@@ -388,6 +431,7 @@ export function SessionHeader({
         onRefresh={onRefresh}
         changes={slots.changes}
         agent={agent}
+        from={from}
       />
     )
   const desktop = currentShell() !== null
@@ -402,6 +446,14 @@ export function SessionHeader({
         {summary && agent && (
           <span className="topbar-crumb">
             <AgentLink agent={agent} />
+            <span className="topbar-crumb-separator" aria-hidden="true">
+              /
+            </span>
+          </span>
+        )}
+        {summary && from && (
+          <span className="topbar-crumb">
+            <SourceLink source={from} />
             <span className="topbar-crumb-separator" aria-hidden="true">
               /
             </span>
@@ -487,6 +539,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   } = shell
   const desktop = currentShell() !== null
   const delegated = sessionAgent(snapshot, summary)
+  const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
   // A dot while the newest turn changed files nobody has opened here yet.
   const seen = useRef<Map<string, string>>(new Map())
   const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
@@ -531,6 +584,18 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
               onOpen: () => {
                 openMyAgent({ id: delegated.id, tab: 'delegate' })
               },
+            },
+          }
+        : {})}
+      {...(handedFrom
+        ? {
+            from: {
+              title: handedFrom.title,
+              onOpen: handedFrom.title
+                ? () => {
+                    shell.choose(handedFrom.sourceId)
+                  }
+                : undefined,
             },
           }
         : {})}

@@ -1,0 +1,350 @@
+/*
+ * 交接: the card above the composer that hands chosen material to a code session (and, in the target, the one that hands
+ * the result back), the state line of a handoff on its way, and 交回的结果 in the source's timeline. Raised like the
+ * composer, at its width; amber only where something waits for the person.
+ */
+
+.handoff-card,
+.handoff-status {
+  max-width: var(--content-width);
+  margin: 0 auto var(--sp-12);
+}
+.handoff-card {
+  display: grid;
+  gap: var(--sp-12);
+  max-height: min(62dvh, 640px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--sp-12) var(--sp-16) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+  box-shadow: var(--sh-1);
+}
+.handoff-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  color: var(--ink);
+}
+.handoff-card-head > svg {
+  flex-shrink: 0;
+}
+.handoff-card-head > h3 {
+  margin: 0;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.handoff-spacer {
+  flex: 1;
+}
+
+.handoff-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+  margin: 0;
+}
+.handoff-fields > dt,
+.handoff-label {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.handoff-fields > dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  margin: 0;
+}
+.handoff-fields > dd > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.handoff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 var(--sp-2) 0 var(--sp-6);
+  border-radius: var(--r-6);
+  background: var(--tag);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.handoff-chip > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.handoff-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.is-mono {
+  font-family: var(--mono);
+}
+.handoff-chip[data-state='pinning'] {
+  color: var(--muted);
+}
+.handoff-chip[data-state='failed'],
+.handoff-chip[data-state='changed'] {
+  box-shadow: inset 0 0 0 1px var(--red-line);
+}
+.handoff-chip-note {
+  flex-shrink: 0;
+  color: var(--red);
+  font-weight: 500;
+}
+
+.handoff-muted {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.handoff-offline {
+  margin: 0;
+  color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.handoff-decisions {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-6);
+}
+.handoff-decision {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+}
+.handoff-decision-n {
+  min-width: var(--sp-12);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.handoff-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.handoff-scope > .ui-hint {
+  min-width: 0;
+}
+
+.handoff-evidence {
+  display: grid;
+  gap: var(--sp-6);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.handoff-evidence .ui-check-label {
+  overflow-wrap: anywhere;
+}
+
+.handoff-card-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-4) 0 var(--sp-16);
+  background: var(--raised);
+}
+
+/* A handoff on its way: one line, with its actions; the note under it says why when it did not simply start. */
+.handoff-status {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--raised);
+}
+.handoff-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.handoff-status-line > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.handoff-status-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+.handoff-status-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.handoff-status-note.is-failed {
+  color: var(--red);
+}
+.handoff-quiet {
+  max-width: var(--content-width);
+  margin: 0 auto var(--sp-8);
+  padding: 0 var(--sp-4);
+}
+
+/* 交回的结果: a record in the timeline, not a message; it sits where the result arrived. */
+.handoff-result {
+  display: grid;
+  gap: var(--sp-6);
+  margin: var(--sp-32) 0 var(--sp-24);
+}
+.handoff-result-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.handoff-result-head > strong {
+  flex-shrink: 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.handoff-result-head > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.handoff-result-head > .handoff-muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.handoff-result-body {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.handoff-evidence-list {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.handoff-evidence-list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.handoff-evidence-list > li > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.handoff-link {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  font: inherit;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.handoff-link:hover {
+  text-decoration: underline;
+}
+.handoff-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-2);
+}
+.handoff-withheld {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.handoff-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+.handoff-result-actions:empty {
+  display: none;
+}
+
+/* The session list: a return that waits for the person. */
+.session-handoff {
+  flex-shrink: 0;
+  color: var(--amber);
+  font-weight: 500;
+}
+
+/* 来自 <来源会话> without a source this device lists is words, not a way. */
+span.topbar-handoff:hover {
+  background: transparent;
+  color: var(--muted);
+}
+
+@media (max-width: 767.98px) {
+  .handoff-card {
+    padding: var(--sp-12) var(--sp-12) 0;
+  }
+  .handoff-card-foot {
+    padding-bottom: var(--sp-12);
+  }
+  /* 新会话 / 已有会话 takes its own line under the title, so ✕ stays in reach. */
+  .handoff-card-head {
+    flex-wrap: wrap;
+  }
+  .handoff-card-head > .ui-segmented {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .handoff-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-4);
+  }
+  .handoff-fields > dd + dt {
+    margin-top: var(--sp-6);
+  }
+}

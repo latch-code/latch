@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { ShieldAlert } from 'lucide-react'
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
@@ -17,6 +18,10 @@ import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { NewSessionTitle, SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { SourceHandoffDock, type HandoffRequest } from '../handoffs/SourceHandoff.tsx'
+import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
+import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
+import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -65,7 +70,92 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     selectedId,
     refresh,
     connection,
+    handoffs,
   } = shell
+  const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
+  const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
+  const handoffNonce = useRef(0)
+  // The text last selected in the conversation and the messages it lies in: a message action takes it along.
+  const selected = useRef<{ text: string; ids: string[]; at: number } | null>(null)
+  useEffect(() => {
+    if (!handing) return
+    const read = () => {
+      const selection = document.getSelection()
+      const text = selection?.toString().trim()
+      if (!selection || !text || selection.rangeCount === 0) return
+      const within = (node: Node | null) => (node instanceof Element ? node : node?.parentElement)?.closest('.transcript [data-message-id]')
+      const ids = [within(selection.anchorNode), within(selection.focusNode)].flatMap(row =>
+        row ? [row.getAttribute('data-message-id')!] : [],
+      )
+      if (ids.length) selected.current = { text, ids, at: Date.now() }
+    }
+    document.addEventListener('selectionchange', read)
+    return () => document.removeEventListener('selectionchange', read)
+  }, [handing])
+  const handOff = (messageIds: string[]) => {
+    const last = selected.current
+    const text = last && Date.now() - last.at < 60_000 && last.ids.every(id => messageIds.includes(id)) ? last.text : undefined
+    selected.current = null
+    handoffNonce.current += 1
+    setHandoffRequest({ nonce: handoffNonce.current, sessionId: current!.summary.id, messageIds, ...(text ? { text } : {}) })
+  }
+  const returned = handing
+    ? handoffs.handoffs.filter(
+        item => item.sourceSessionId === current.summary.id && (item.result || (item.contentRemoved && item.status === 'returned')),
+      )
+    : []
+  const placeReturned = (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => {
+    const placed = placeByTime(
+      turns,
+      returned.map(item => ({ at: item.result?.at ?? item.updatedAt, item })),
+    )
+    return new Map(
+      [...placed].map(([key, items]) => [
+        key,
+        items.map(({ item }) => {
+          const target = snapshot.tasks.find(task => task.id === item.targetSessionId)
+          const targetId = item.targetSessionId
+          return (
+            <ReturnedResult
+              key={item.id}
+              handoff={item}
+              targetTitle={target ? target.title || '未命名会话' : undefined}
+              {...(target ? { onOpenTarget: () => choose(target.id) } : {})}
+              {...(targetId && catalog?.features?.filePreview
+                ? {
+                    onOpenFile: (file: { root: string; path: string }) =>
+                      shell.openFile({ sessionId: targetId, reference: file.path, rootId: file.root }),
+                  }
+                : {})}
+              {...(target
+                ? {
+                    onOpenMessage: (messageId: string) => {
+                      shell.selectSearchHit({
+                        sessionId: target.id,
+                        messageId,
+                        title: target.title,
+                        snippet: '',
+                        match: { start: 0, end: 0 },
+                        updatedAt: target.updatedAt,
+                        archived: target.archived === true,
+                      })
+                    },
+                  }
+                : {})}
+              {...(access.scopes.has('run')
+                ? {
+                    onQuote: (text: string) => {
+                      submission.setDraft(previous => quotedSummary(previous, text))
+                      requestAnimationFrame(() => composerRef.current?.focus())
+                    },
+                  }
+                : {})}
+            />
+          )
+        }),
+      ]),
+    )
+  }
   const forkChoice = () => ({
     harnessId: current?.summary.harnessId,
     workspaceId: projectFor(catalog, current?.summary),
@@ -214,6 +304,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                             },
                           })}
                       onReveal={reading.reveal}
+                      {...(handing ? { onHandoff: handOff } : {})}
+                      {...(returned.length ? { placed: placeReturned } : {})}
                       {...(frozenAt !== undefined ? { frozenAt } : {})}
                       cancelling={cancelState === 'cancelling'}
                       coarse={coarse}
@@ -252,6 +344,18 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   {RECOVERY_COPY.continueInNew}
                 </Button>
               </p>
+            )}
+            {handing && (
+              <>
+                <SourceHandoffDock
+                  key={current.summary.id}
+                  shell={shell}
+                  request={handoffRequest}
+                  onTaken={() => setHandoffRequest(null)}
+                  handoffs={handoffs}
+                />
+                <TargetHandoffDock key={`target:${current.summary.id}`} shell={shell} handoffs={handoffs} />
+              </>
             )}
             <SessionComposer shell={shell} />
           </div>

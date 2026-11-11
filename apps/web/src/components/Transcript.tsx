@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Eraser, RotateCcw, X } from 'lucide-react'
 import {
   splitChangeNote,
@@ -171,6 +171,8 @@ interface TurnViewProps {
   onCopyUpTo?: (messageId: string) => void
   /** Forks before this turn with the prompt in the composer. */
   onEdit?: (message: Message) => void
+  /** 交给代码任务… with the chosen messages. */
+  onHandoff?: (messageIds: string[]) => void
   onContinue?: () => void
   changes?: TurnChanges
   /** A turn of this session runs, so no turn's undo can. */
@@ -263,6 +265,7 @@ const TurnView = memo(function TurnView({
   onForkFrom,
   onCopyUpTo,
   onEdit,
+  onHandoff,
   onContinue,
   changes,
   sessionActive,
@@ -313,6 +316,7 @@ const TurnView = memo(function TurnView({
           harness={harnessName}
           {...(delivery ? { delivery } : {})}
           {...(onEdit ? { onEdit } : {})}
+          {...(onHandoff ? { onHandoff } : {})}
         />
       )}
       {hasReply && (
@@ -459,6 +463,17 @@ const TurnView = memo(function TurnView({
                       onCopy: () => {
                         onCopyUpTo(end.id)
                       },
+                      ...(onHandoff && turn.replies.some(message => message.role === 'assistant' && message.text.trim())
+                        ? {
+                            onHandoff: () => {
+                              onHandoff(
+                                turn.replies
+                                  .filter(message => message.role === 'assistant' && message.text.trim())
+                                  .map(message => message.id),
+                              )
+                            },
+                          }
+                        : {}),
                     }
                   : undefined
               }
@@ -496,6 +511,8 @@ export function Transcript({
   onStopSubagent,
   onReveal,
   changes,
+  onHandoff,
+  placed,
 }: {
   detail: TaskDetail
   approvals: Approval[]
@@ -532,6 +549,13 @@ export function Transcript({
   onReveal?: (messageId: string) => void
   /** The Host's per-turn records and what this device may do with them. */
   changes?: Pick<TurnSummaryOptionsValue, 'undo' | 'offline'> & { enabled: boolean }
+  /** 交给代码任务… from a message or a turn's reply. */
+  onHandoff?: (messageIds: string[]) => void
+  /**
+   * Records that sit in the timeline by when they arrived (a handoff's returned result): each after the last turn that
+   * began before it, '' before every turn. Given the turns' keys and start times, it answers what goes where.
+   */
+  placed?: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => ReadonlyMap<string, ReactNode>
 }) {
   const messages = renderedMessages(detail)
   // Kept from the previous render even if React discards it: a turn only ever stands in for one with the same data.
@@ -559,6 +583,8 @@ export function Transcript({
     if (last) onFork?.(last.id, '请接着这个会话继续。')
   })
   const changesError = useStableCallback((error: unknown) => onCopyError?.(error))
+  const handoff = useStableCallback((messageIds: string[]) => onHandoff?.(messageIds))
+  const inserts = placed?.(turns.map(turn => ({ key: turn.key, at: turnTimes(turn).startedAt })))
   // Stable, so the subagent rows under it do not draw again with every render of the page.
   const stopSubagent = useStableCallback((subagentId: string) => onStopSubagent!(subagentId))
   const lastKey = turns.at(-1)?.key ?? ''
@@ -623,6 +649,7 @@ export function Transcript({
                 」第 {detail.summary.forkOf.turn} 轮分叉
               </p>
             )}
+            {inserts?.get('')}
             {turns.map((turn, index) => {
               const latest = index === turns.length - 1
               const trailingLive = latest && active
@@ -648,46 +675,50 @@ export function Transcript({
               const delivery = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
               const record = records.get(turn.key)
               return (
-                <TurnView
-                  key={turn.key}
-                  turn={turn}
-                  context={{
-                    sessionId,
-                    approvals: ownApprovals,
-                    questions: ownQuestions,
-                    ...(streaming ? { streamingId: liveId } : {}),
-                    ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
-                    coarse,
-                    frozen: frozen && trailingLive,
-                  }}
-                  {...(engine ? { engine } : {})}
-                  harnessName={harnessName}
-                  login={login}
-                  harness={harness}
-                  model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
-                  provider={providerId ? providerName?.(providerId) : undefined}
-                  {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
-                  latest={latest}
-                  trailingLive={trailingLive}
-                  outcome={outcome}
-                  arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-                  {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
-                  {...(trailingLive ? { status: statusProps } : {})}
-                  {...(delivery ? { delivery } : {})}
-                  {...(latest ? { summary: detail.summary } : {})}
-                  {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
-                  retry={resend}
-                  reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
-                  onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
-                  onCopyUpTo={!trailingLive ? copyUpTo : undefined}
-                  {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
-                  {...(onFork ? { onContinue: continueRun } : {})}
-                  {...(record ? { changes: record } : {})}
-                  sessionActive={active}
-                  changesRevision={changesRevision}
-                  changesEnabled={changes?.enabled === true}
-                  onChangesError={changesError}
-                />
+                <Fragment key={turn.key}>
+                  <TurnView
+                    key={turn.key}
+                    turn={turn}
+                    context={{
+                      sessionId,
+                      approvals: ownApprovals,
+                      questions: ownQuestions,
+                      ...(streaming ? { streamingId: liveId } : {}),
+                      ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
+                      coarse,
+                      frozen: frozen && trailingLive,
+                    }}
+                    {...(engine ? { engine } : {})}
+                    harnessName={harnessName}
+                    login={login}
+                    harness={harness}
+                    model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
+                    provider={providerId ? providerName?.(providerId) : undefined}
+                    {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
+                    latest={latest}
+                    trailingLive={trailingLive}
+                    outcome={outcome}
+                    arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+                    {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
+                    {...(trailingLive ? { status: statusProps } : {})}
+                    {...(delivery ? { delivery } : {})}
+                    {...(latest ? { summary: detail.summary } : {})}
+                    {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
+                    retry={resend}
+                    reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
+                    onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
+                    onCopyUpTo={!trailingLive ? copyUpTo : undefined}
+                    {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
+                    {...(onFork ? { onContinue: continueRun } : {})}
+                    {...(record ? { changes: record } : {})}
+                    sessionActive={active}
+                    changesRevision={changesRevision}
+                    changesEnabled={changes?.enabled === true}
+                    onChangesError={changesError}
+                    {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
+                  />
+                  {inserts?.get(turn.key)}
+                </Fragment>
               )
             })}
           </FileReferences>

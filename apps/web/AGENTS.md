@@ -7,6 +7,7 @@ Host 在 `/link/` 提供的 React 页面，桌面端共用；构建到 `dist/web
 | `src/core/` | 无布局的客户端核心：API、事件流、同步、阅读位置、凭据、设备登记、权限、确认与桌面桥接 |
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
 | `src/agents/` | 我的 Agent（docs/CUSTOM-AGENTS.md） |
+| `src/handoffs/` | 交接（docs/HANDOFFS.md） |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；组件、设置与样式；品牌见 `brands.ts` |
 | `index.html`、`public/`、`vite.config.ts` | 页面入口；图标与 manifest；Vite 配置与 `pnpm dev:web` 的开发代理 |
 | `test/` | `pnpm test --project @latch/web` |
@@ -30,8 +31,6 @@ browser 环境：不用 Node 全局变量与模块。Vite 与测试在 Node 中�
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
 - 分支只用 Host 摘要，可见时每 30 秒同步快照，页面不运行 Git。
 - 桌面文件夹操作需 `folders.protocolVersion === 1`；旧壳同名接口不证明支持签名请求（`test/shell-folders.test.ts`）。
-
-切换入口不卸载会话：页面盖在会话各栏上，滚动、草稿与面板不变。
 
 会话切换只淡入消息内容层：遮罩滚动容器做透明度动画会丢失命中。
 

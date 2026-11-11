@@ -2034,7 +2034,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ? chosen.folders.map(({ id, path }) => ({ id, path }))
           : [{ id: 'default', path: chosen.folders[0].path }]
       },
-      start: (caller, { requestId, prompt, fileRefs, target, privateFrom }, res) =>
+      start: (caller, { requestId, prompt, fileRefs, target, privateFrom, title }, res) =>
         startSession(
           caller,
           {
@@ -2047,6 +2047,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(target.model ? { model: target.model } : {}),
             ...(target.worktree ? { worktree: true as const } : {}),
             ...(privateFrom ? { privateFrom } : {}),
+            ...(title ? { title } : {}),
           },
           res,
         ),
@@ -4427,10 +4428,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function startSession(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string },
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string },
       res: ServerResponse,
     ): Promise<{ sessionId: string }> {
-      const { privateFrom, ...requested } = start
+      const { privateFrom, title, ...requested } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -4600,6 +4601,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const task: HubCreateInput = {
           prompt,
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
+          // A Host-written start (a handoff) names itself; the driver would title it after the first message.
+          ...(!fork && title ? { initialTitle: title } : {}),
           // A harness that forks its own record does so only for its own sessions; the text record stays in the prompt
           // for when it cannot.
           ...(fork && harness.capabilities.fork === 'native' && fork.source.harnessId === harnessId

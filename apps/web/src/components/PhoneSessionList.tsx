@@ -1,3 +1,4 @@
+import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
@@ -85,7 +86,10 @@ const PhoneRow = memo(function PhoneRow({
   now,
   onSelect,
   onHold,
+  handoffWaits = false,
 }: {
+  /** A handoff here waits for its result to be handed back. */
+  handoffWaits?: boolean
   task: TaskSummary
   harness: TaskHarness
   project: string | undefined
@@ -157,9 +161,10 @@ const PhoneRow = memo(function PhoneRow({
             <MarkTile mark={harness.mark} size={16} />
           </span>
           <span className="phone-row-meta-text">{meta ? `${engine} · ${meta}` : engine}</span>
+          {handoffWaits && <span className="session-handoff">待交回</span>}
           {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
         </span>
-        <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${time ? `，${time}` : ''}`}</span>
+        <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${handoffWaits ? '，待交回' : ''}${time ? `，${time}` : ''}`}</span>
       </button>
     </li>
   )
@@ -197,6 +202,7 @@ function PhoneGroup({
   onHold: (task: TaskSummary) => void
 }) {
   const rows = usePresence(group.tasks, task => task.id, context, settled)
+  const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
   const workspaces = snapshot.catalog?.workspaces
@@ -233,6 +239,7 @@ function PhoneGroup({
           const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
           return (
             <PhoneRow
+              handoffWaits={awaiting.has(task.id)}
               key={task.id}
               task={task}
               harness={taskHarness(snapshot, task)}

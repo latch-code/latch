@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Copy, Ellipsis, GitFork, RotateCcw } from 'lucide-react'
+import { Copy, CornerDownLeft, Ellipsis, GitFork, RotateCcw } from 'lucide-react'
 import { modelIdKey, type RoutedModel } from '@latch/protocol'
 import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
 import { exactTokens, formatDuration, formatTokens, tokenAmount, tokenLines, tokenParts } from '../format.ts'
@@ -123,7 +123,7 @@ export function TurnFooter({
   /** The context an agent last reported, for the newest turn of a session without per-turn tokens. */
   context?: number
   onRetry?: () => void
-  actions?: { onFork?: () => void; onCopy: () => void }
+  actions?: { onFork?: () => void; onCopy: () => void; onHandoff?: () => void }
 }) {
   const text = turnText(turn)
   return (
@@ -142,7 +142,12 @@ export function TurnFooter({
             sections={[
               {
                 id: 'turn-actions',
-                items: [{ id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy }],
+                items: [
+                  ...(actions.onHandoff
+                    ? [{ id: 'handoff', label: '交给代码任务…', leading: <CornerDownLeft size={14} />, onSelect: actions.onHandoff }]
+                    : []),
+                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
+                ],
               },
             ]}
             trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}

@@ -521,6 +521,10 @@ export class HarnessHub implements Bridge {
       await this.meta
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
+    if (initialTitle && !automationId && !forkOf)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, title: initialTitle.slice(0, 120) }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的标题写入失败：${message(error)}`))
     // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
     if (workspaceId || worktree)
       await this.meta

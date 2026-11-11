@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
+import { relative, sep } from 'node:path'
 import type { ServerResponse } from 'node:http'
 import { z } from 'zod'
 import {
@@ -23,10 +24,13 @@ import { AgentJournal } from './agent-journal.ts'
 import { projectIdOf } from './session-lifecycle.ts'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { checkedFileMentions } from './file-mentions.ts'
-import { ProtectedPaths, resolveRecorded, type FileRoot } from './files/resolve.ts'
+import { ProtectedPaths, realRoots, resolveRecorded, type FileRoot } from './files/resolve.ts'
+import { isInsidePath } from './paths.ts'
 import type { DeviceCaller } from './routes/registry.ts'
 
 const MAX_HANDOFFS = 256
+/** A new target's title, cut from the requirements or the first material: at most this many code points. */
+export const HANDOFF_TITLE_CHARS = 60
 /** Settled handoffs are pruned, oldest first, once the file passes this; the journal itself stops at 32 MB. */
 const PRUNE_BYTES = 8 * 1024 * 1024
 const MAX_VOID_STARTS = 4096
@@ -154,6 +158,12 @@ const record = z.strictObject({
       prompt: z.string().min(1).max(1_000_000),
       fileRefs: z.array(mention).max(HANDOFF_LIMITS.materials),
       privateFrom: sessionId.optional(),
+      /** A new target's title: a short line, not the template's opening. */
+      title: z
+        .string()
+        .min(1)
+        .refine(value => [...value].length <= HANDOFF_TITLE_CHARS)
+        .optional(),
     })
     .optional(),
   createdAt: at,
@@ -273,6 +283,32 @@ export function handoffPrompt(
   return parts.join('\n')
 }
 
+/** A new target's title: the first line of the requirements, else of the first material, else the file's name. */
+export function handoffTitle(requirements: string, materials: readonly ComposedMaterial[]): string | undefined {
+  const firstLine = (text: string) =>
+    text
+      .split('\n')
+      .map(line => line.replace(/^[#>*\-\s]+/u, '').trim())
+      .find(Boolean)
+  const first = materials[0]
+  const line =
+    firstLine(requirements)
+    ?? (first === undefined ? undefined : first.kind === 'file' ? first.file.path.split('/').at(-1) : firstLine(first.text))
+  if (!line) return undefined
+  if ([...line].length <= HANDOFF_TITLE_CHARS) return line
+  // Cut between whole characters as seen (an emoji sequence stays whole), with room for the ellipsis, counting code points.
+  let cut = '',
+    points = 0
+  for (const { segment } of TITLE_GRAPHEMES.segment(line)) {
+    const size = [...segment].length
+    if (points + size > HANDOFF_TITLE_CHARS - 1) break
+    cut += segment
+    points += size
+  }
+  return `${cut}…`
+}
+const TITLE_GRAPHEMES = new Intl.Segmenter('und', { granularity: 'grapheme' })
+
 /** SHA-256 of a file's bytes, opened without following a link; undefined when it is not a readable regular file. */
 export async function hashFile(path: string): Promise<string | undefined> {
   let handle
@@ -338,6 +374,7 @@ export interface HandoffOptions {
       fileRefs: FileMention[]
       target: Extract<Target, { kind: 'new-session' }>
       privateFrom?: string
+      title?: string
     },
     res: ServerResponse,
   ): Promise<{ sessionId: string }>
@@ -485,7 +522,9 @@ export class Handoffs {
     const composed = await this.materials(input.materials, source, input.sourceSessionId, input.target)
     const language = input.locale ?? 'zh-CN'
     const prompt = handoffPrompt(language, { requirements: input.requirements, decisions: input.decisions, materials: composed })
-    const fileRefs = files.map(item => item.file)
+    // Under the names the target's Harness uses for its folders.
+    const fileRefs = composed.flatMap(item => (item.kind === 'file' ? [item.file] : []))
+    const title = input.target.kind === 'new-session' ? handoffTitle(input.requirements, composed) : undefined
     const targetPrivate = input.target.kind === 'session' ? this.options.isPrivate(input.target.sessionId) : privateSource
     this.options.recheck(caller, 'run')
     const id = `hof_${randomUUID()}`,
@@ -541,7 +580,12 @@ export class Handoffs {
           returnScope: input.returnScope,
           locale: language,
           status: 'starting',
-          pending: { prompt, fileRefs, ...(privateSource ? { privateFrom: input.sourceSessionId } : {}) },
+          pending: {
+            prompt,
+            fileRefs,
+            ...(privateSource ? { privateFrom: input.sourceSessionId } : {}),
+            ...(title ? { title } : {}),
+          },
           createdAt: stamp,
           updatedAt: stamp,
         })
@@ -791,13 +835,21 @@ export class Handoffs {
         sourceRoots ??= await this.roots(sourceId)
         targetRoots ??=
           targetChoice.kind === 'session' ? await this.roots(targetChoice.sessionId) : this.options.newTargetRoots(targetChoice)
-        // The target reads the file by the same reference: it must be the same version there.
-        if ((await this.fileHash(sourceRoots, item.file)) !== item.hash) changed.push(index)
-        else if ((await this.fileHash(targetRoots, item.file, true)) !== item.hash)
-          throw new AppError(409, 'handoff-file-elsewhere', '目标会话按同一路径读到的不是这个文件，请改交给来源会话所在的项目。', {
+        const chosen = await this.fileVersion(sourceRoots, item.file)
+        if (chosen?.hash !== item.hash) {
+          changed.push(index)
+          composed.push({ kind: 'file', file: item.file })
+          continue
+        }
+        // Harnesses name the same folder differently: the file is found in the target's folders by its real path, then
+        // read there again under the target's own name through every check, and must be this very file and version.
+        const named = await this.inFolders(targetRoots, chosen.realPath)
+        const there = named && (await this.fileVersion(targetRoots, named, true))
+        if (!named || there?.realPath !== chosen.realPath || there.hash !== item.hash)
+          throw new AppError(409, 'handoff-file-elsewhere', '这个文件不在目标会话的文件夹里，请改交给来源会话所在的项目。', {
             materials: [index],
           })
-        composed.push({ kind: 'file', file: item.file })
+        composed.push({ kind: 'file', file: named })
       }
     }
     if (changed.length) throw new AppError(409, 'handoff-material-changed', '有材料在选定之后变化了，请重新选择。', { materials: changed })
@@ -813,8 +865,16 @@ export class Handoffs {
     return roots
   }
 
-  /** Through the `@` reference checks first: a file they refuse is never read. */
   private async fileHash(roots: readonly FileRoot[], ref: FileMention, quiet = false): Promise<string | undefined> {
+    return (await this.fileVersion(roots, ref, quiet))?.hash
+  }
+
+  /** Through the `@` reference checks first: a file they refuse is never read. Its real path and the hash of its bytes. */
+  private async fileVersion(
+    roots: readonly FileRoot[],
+    ref: FileMention,
+    quiet = false,
+  ): Promise<{ realPath: string; hash: string | undefined } | undefined> {
     let checked: FileMention
     try {
       ;[checked] = (await checkedFileMentions([ref], roots, this.options.guardedPaths, this.options.home)) as [FileMention]
@@ -828,7 +888,17 @@ export class Handoffs {
       home: this.options.home,
     })
     if (resolved.status !== 'ok' || resolved.file.secret) return undefined
-    return hashFile(resolved.file.realPath)
+    return { realPath: resolved.file.realPath, hash: await hashFile(resolved.file.realPath) }
+  }
+
+  /** The reference that names a real path inside one of these folders, under the folder's own name; nothing outside them. */
+  private async inFolders(roots: readonly FileRoot[], realPath: string): Promise<FileMention | undefined> {
+    for (const root of await realRoots(roots)) {
+      if (realPath === root.path || !isInsidePath(realPath, root.path)) continue
+      const named = { root: root.id, path: relative(root.path, realPath).split(sep).join('/') }
+      if (isFileMention(named)) return named
+    }
+    return undefined
   }
 
   /**
@@ -846,13 +916,20 @@ export class Handoffs {
   private async startOnce(caller: DeviceCaller, id: string, res: ServerResponse, first: boolean): Promise<void> {
     const item = this.find(this.journal.read(), id)
     if ((item.status !== 'starting' && item.status !== 'start-unknown') || !item.pending) return
-    const { prompt, fileRefs, privateFrom } = item.pending
+    const { prompt, fileRefs, privateFrom, title } = item.pending
     let outcome: Outcome
     try {
       if (item.target.kind === 'new-session') {
         const created = await this.options.start(
           caller,
-          { requestId: item.startRequestId, prompt, fileRefs, target: item.target, ...(privateFrom ? { privateFrom } : {}) },
+          {
+            requestId: item.startRequestId,
+            prompt,
+            fileRefs,
+            target: item.target,
+            ...(privateFrom ? { privateFrom } : {}),
+            ...(title ? { title } : {}),
+          },
           res,
         )
         outcome = { status: 'started', targetSessionId: created.sessionId }
