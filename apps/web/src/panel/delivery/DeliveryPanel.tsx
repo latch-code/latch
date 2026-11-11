@@ -210,7 +210,7 @@ function UnknownLine({
     <Line
       tone="muted"
       icon={CircleHelp}
-      detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，Host 先核对结果，不会${what}两次。`}
+      detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，电脑会先核对结果，不会${what}两次。`}
       action={
         <Button size="xs" variant="outline" loading={busy} loadingLabel="核对中…" disabled={disabled} onClick={onRetry}>
           重试同一请求
@@ -604,7 +604,7 @@ function FootNote({ state, step }: { state: GitDeliveryState; step: DeliveryStep
   if (step === 'commit') {
     const left = changedCount(state)
     return left ? (
-      <Hint lead={false} label="只提交已暂存的">{`未暂存的 ${left} 个文件留在工作区。`}</Hint>
+      <Hint lead={false} label="只提交已暂存的">{`未暂存的 ${left} 个文件不提交。`}</Hint>
     ) : (
       <span className="delivery-foot-note">{state.staged.length} 个文件已暂存</span>
     )

@@ -250,7 +250,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       await waitForState(page, 'up-to-date')
       await about.getByText('已是最新版本', { exact: true }).waitFor()
       await about.getByText('Latch 应用', { exact: true }).waitFor()
-      await about.getByText('这台 Mac 上的 Host', { exact: true }).waitFor()
+      await about.getByText('这台 Mac', { exact: true }).waitFor()
       await shots('up-to-date')
 
       // A file whose hash does not match the signed one is refused and removed.

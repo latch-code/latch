@@ -191,7 +191,7 @@ export function AgentForm({
         label="名称"
         value={draft.name}
         maxLength={80}
-        placeholder="例如：资料助手"
+        placeholder="例如：资料整理"
         disabled={locked}
         onChange={event => {
           update({ name: event.target.value })

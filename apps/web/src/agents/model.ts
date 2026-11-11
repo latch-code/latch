@@ -66,7 +66,7 @@ export function modelName(catalog: HostCatalog | undefined, model: ModelRef): st
 
 /** Where a new session of the Agent works: its project, or each session's own folder. */
 export function worksIn(catalog: HostCatalog | undefined, projectId: string | undefined): string {
-  if (!projectId || projectId === 'default') return catalog?.sessionFolders ? '各自的文件夹' : '启动目录'
+  if (!projectId || projectId === 'default') return catalog?.sessionFolders ? '各自的文件夹' : '默认文件夹'
   const project = catalog?.workspaces.find(item => item.id === projectId)
   return project ? projectName(project) : '项目已移除'
 }

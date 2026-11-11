@@ -96,7 +96,7 @@ describe('我的 Agent model', () => {
     expect(runsWith(catalog(), { harnessId: 'codex', model: { providerId: 'deepseek', model: 'x' } })).toBe('Codex')
     expect(runsWith(catalog(), { harnessId: 'gone' })).toBe('gone · 默认模型')
     expect(worksIn(catalog(), 'notes')).toBe('notes')
-    expect(worksIn(catalog(), undefined)).toBe('启动目录')
+    expect(worksIn(catalog(), undefined)).toBe('默认文件夹')
     expect(worksIn(catalog({ sessionFolders: true }), 'default')).toBe('各自的文件夹')
     expect(worksIn(catalog(), 'removed')).toBe('项目已移除')
   })

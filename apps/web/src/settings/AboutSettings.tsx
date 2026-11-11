@@ -15,8 +15,8 @@ import { SettingsPages } from './navigation.tsx'
 const UPDATE_COPY = {
   versions: '版本',
   app: 'Latch 应用',
-  hostHere: '这台 Mac 上的 Host',
-  hostOn: (name: string) => `${name} 上的 Host`,
+  hostHere: '这台 Mac',
+  hostOn: (name: string) => name,
   updates: '更新',
   check: '检查更新',
   checking: '正在检查…',
