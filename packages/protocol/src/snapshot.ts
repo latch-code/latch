@@ -4,6 +4,7 @@ import type { CustomAgentSummary } from './custom-agents.ts'
 import type { AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
 import type { AppSummary } from './apps.ts'
+import type { ReviewNoteCounts } from './review-notes.ts'
 import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
@@ -67,6 +68,8 @@ export interface AppSnapshot {
   handoffs?: HandoffSummary[]
   /** Applied plugin pages; absent on older Hosts. */
   apps?: AppSummary[]
+  /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
+  reviewNotes?: ReviewNoteCounts[]
   version?: string
   /** The Host's clock when it answered. */
   hostTime?: string

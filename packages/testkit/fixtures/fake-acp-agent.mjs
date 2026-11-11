@@ -1,6 +1,6 @@
 // Deterministic ACP v1 agent for tests. No model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
 // FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
-// turn, which writes two files in the session's working directory. Its only network use is the `model` turn, which calls
+// turn, which writes two files in the session's working directory, and the edits a test queues in FAKE_ACP_EDIT_QUEUE. Its only network use is the `model` turn, which calls
 // the model service a client pointed it at, as Codex (`providers/set`) and Gemini CLI (its gateway variables) would.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
@@ -667,6 +667,7 @@ async function prompt({ sessionId, prompt: blocks }) {
   const tool = (value, kind = 'tool_call') => update(sessionId, { sessionUpdate: kind, ...value })
   const permission = (toolCall, options = ALLOW_OPTIONS) => request('session/request_permission', { sessionId, toolCall, options })
   const scenario = scenarios[keyword] ?? scenarios.echo
+  queuedEdit(session, tool)
   const steers = []
   running.set(sessionId, steers)
   const result = await Promise.resolve()
@@ -675,6 +676,29 @@ async function prompt({ sessionId, prompt: blocks }) {
   session.history.push({ role: 'agent', text: reply.join('') })
   save()
   return result
+}
+
+/**
+ * FAKE_ACP_EDIT_QUEUE names a JSON file of `{ path, content }` edits: each prompt takes the first, writes it in the
+ * session's folder through the agent's own edit (reported with its diff) and leaves the rest, so a test decides what the
+ * agent changes on its next turn.
+ */
+function queuedEdit(session, tool) {
+  if (!env.FAKE_ACP_EDIT_QUEUE || !existsSync(env.FAKE_ACP_EDIT_QUEUE)) return
+  const [edit, ...rest] = JSON.parse(readFileSync(env.FAKE_ACP_EDIT_QUEUE, 'utf8'))
+  if (!edit) return
+  writeFileSync(env.FAKE_ACP_EDIT_QUEUE, JSON.stringify(rest))
+  const target = join(session.cwd, edit.path)
+  const before = existsSync(target) ? readFileSync(target, 'utf8') : null
+  writeFileSync(target, edit.content)
+  tool({
+    toolCallId: `edit_${randomUUID()}`,
+    title: `Edit ${edit.path}`,
+    kind: 'edit',
+    status: 'completed',
+    locations: [{ path: target }],
+    content: [{ type: 'diff', path: target, oldText: before, newText: edit.content }],
+  })
 }
 
 /**

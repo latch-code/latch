@@ -150,6 +150,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 工作区工具（含 `folder` 参数与 `list_folders`）、受保护路径、写入预览与路径检查 | `workspace.test.ts` |
 | 改动：每轮快照（克隆、跨卷只存小文件、像密钥的文件不读）、四种范围与「由命令修改」的归因、撤销与恢复本轮、撤销文件与全部改动、补丁、保留上限、git 只跑只读底层命令、写入前先审计 | `changes-snapshots.test.ts`、`changes-diff.test.ts`、`changes-git.test.ts`、`changes-engine.test.ts`；路由、权限、下一条消息的说明与确认：`changes-routes.test.ts`、`e2e/changes.e2e.ts` |
 | 文件编辑：`baseHash` 冲突、改名写入与权限位、换行与 BOM、先审计、回执、运行中拒绝、链接与受保护路径、`run` 与数据范围、「你的修改」与下一轮的说明 | `apps/host/test/file-edits.test.ts`、`apps/web/test/file-editor.test.ts`；保存、冲突后确认覆盖、下一轮读到说明与手机 390/320 整屏编辑：`e2e/file-edits.e2e.ts` |
+| 行级反馈：重新定位（原位、随行移动、两处同样近或原文太单薄时过期）、消息文字、回执与 strict schema、权限与快照计数、发送的重试与拒绝后回到待发 | `review-notes.test.ts`；选择与放置：`apps/web/test/review-notes.test.ts`；真实仓库与假 ACP Agent：`e2e/review-notes.e2e.ts` |
 | 终端：帧格式、环境白名单与 Latch 标记、回放与输出上限、「加入对话」的文本与脱敏、观看名额与数据范围、只有 `host.sock` 上数据范围为 `all` 的设备能打开输入关闭、流随设备与凭据结束、归档时不结束这台电脑的 shell、配对码不显示在 Latch 终端里、真实组件的进程清理 | `terminal-frames.test.ts`、`terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-service.test.ts`、`terminal-helper.test.ts`、`terminal-cli.test.ts`、`terminal-routes.test.ts`（路由、审计、入口、能力标记、归档与删除的检查） |
 | SSE 合并、会话隔离、刷新回退、事件与快照带的 Host 时间 | `streaming.test.ts` |
 | Host 记录的时间与用量：审批等待按并集计、不计入用时，思考用时，工具的开始与结束，回合的 `turn`，用量的缓存与推理部分只在每一步都报告时保留，ACP 的 `starting` 阶段与 `usage_update` | `timing.test.ts`、`runtime.test.ts` 的 `times and usage the runtime records`、`acp.test.ts` 的 `ACP times and usage reports`、`providers.test.ts` |
@@ -537,6 +538,8 @@ pnpm latch presence test --data-dir <临时目录>
 `pr-checks.e2e.ts` 用假 `gh`（远端名为 GitHub、推送到本地裸仓库）走完 PR 一节：创建 PR、另一个会话按同一分支绑定而不新建、失败检查的日志与「加入对话」只进草稿、审阅与行级评论进草稿、「旧提交」、gh 未登录与没有 gh，以及 390 与 320 宽（截图在 `test-results/pr-checks/`，含 768 与深色）；假 `gh` 没有记下任何 token 违规。
 
 `changes-panel.e2e.ts` 用真实工具与真实 Git 仓库走完改动页签的范围、撤销与恢复、合并中的拒绝和数据范围不足的说明，再按 Host 的答复在三种宽度、浅深色下画出每个状态（截图在 `test-results/changes-panel/`），并量过两万个文件的列表。
+
+`review-notes.e2e.ts` 用真实 Git 仓库与假 ACP Agent（`FAKE_ACP_EDIT_QUEUE` 排好它每轮改的文件）：桌面宽度按行号与 Shift 选中 42–45 行、用键盘在空反馈框里 Shift ↑ / ↓ 选第 18 行，加入两条待发；390 宽的第二个浏览器看到同样两条；「发给 Agent」后两条成为已发送并带同一条消息的 ID，Agent 那一轮在文件顶部加两行并改掉第 18 行，第一条随行移到 44–47 行，第二条标「位置可能过期」并带原文；标记「Agent 称已修」与「已复核」后手机不重载就看到。截图写入 `test-results/review-notes/`。
 
 `file-history.e2e.ts` 用真实工具写入生成两文件、三次差异，检查最新优先、旧记录展开、手机行内、宽屏左右对照与展开宽度、删除重载后的历史保留；同时核对差异最后一行没有额外空白。`diff-layout.test.ts` 检查不等长变更块、空行和两侧行序号守恒。
 

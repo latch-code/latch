@@ -602,11 +602,6 @@
   left: 0;
   width: 100cqw;
 }
-.changes-file-body .diff-gutter {
-  z-index: 1;
-  left: var(--sp-2);
-  top: 0;
-}
 .changes-panel[data-wrap] .diff-lines {
   overflow-x: hidden;
 }
@@ -686,4 +681,182 @@
 .changes-receipt > .ui-hint {
   width: fit-content;
   max-width: 100%;
+}
+
+/*
+ * Line feedback: picked lines carry a blue edge (selection), lines a kept note covers a quiet one; a note sits under its
+ * last line as a small card; the tab's foot holds the pending set and its one primary action.
+ */
+.changes-file-body :is(.diff-line, .diff-side-row)[data-mark='selected'] {
+  background: var(--accent-soft);
+}
+.changes-file-body :is(.diff-line, .diff-side-row)[data-mark='selected'] > .diff-ln {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--canvas);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.changes-file-body :is(.diff-line, .diff-side-row)[data-mark='noted'] > .diff-ln {
+  box-shadow: inset 3px 0 0 var(--line-strong);
+}
+/* The line's number is the target: a press there picks the line, Shift a stretch; the + shows on hover and focus. */
+.changes-file-body .diff-gutter {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 44px;
+}
+.changes-file-body .changes-comment-add {
+  --icon-button-size: 20px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  justify-content: flex-start;
+  padding-inline-start: var(--sp-2);
+  border-radius: 0;
+  background: transparent;
+}
+.changes-file-body .changes-comment-add::before {
+  left: var(--sp-2);
+}
+/* Rows are one line of code high: a 44px touch area would reach the next rows and pick the wrong line. */
+.changes-file-body .changes-comment-add::after {
+  content: none;
+}
+.changes-file-body .changes-comment-add:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (hover: none) {
+  .changes-file-body .changes-comment-add > svg {
+    opacity: 0;
+  }
+}
+.review-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.review-note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 24px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.review-note-head > .ui-hint {
+  margin-inline-start: auto;
+}
+.review-note-lines {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-note-file {
+  color: var(--ink-2);
+  font-family: var(--mono);
+}
+.review-note-space {
+  flex: 1;
+}
+.review-note-stale {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--amber);
+}
+.review-note-state {
+  flex: none;
+}
+.review-note-text {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.review-note-snippet {
+  margin: 0;
+  max-height: calc(var(--lh-code) * 12);
+  overflow: auto;
+  padding: var(--sp-4) var(--sp-8);
+  border-radius: var(--r-6);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.changes-file-body > .review-note {
+  position: static;
+  width: auto;
+  margin: var(--sp-6) var(--sp-12);
+}
+.review-note-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.changes-note-warn > svg {
+  vertical-align: -2px;
+}
+.review-notes-apart {
+  padding: var(--sp-8) 0;
+}
+.review-notes-apart > .review-note {
+  position: static;
+  width: auto;
+  margin: var(--sp-6) var(--sp-12);
+}
+.review-notes-apart-title {
+  margin: 0;
+  padding: 0 var(--sp-12);
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.review-notes-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6) var(--sp-8);
+  min-height: 48px;
+  padding: var(--sp-8) var(--sp-12);
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.review-notes-count,
+.review-notes-foot-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.review-notes-count {
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--tag);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.review-notes-foot[data-tone='amber'] .review-notes-foot-text {
+  color: var(--amber);
+}
+.review-notes-foot-space {
+  flex: 1;
+}
+.review-notes-foot-note {
+  flex-basis: 100%;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.review-notes-foot-note[data-tone='amber'] {
+  color: var(--amber);
 }

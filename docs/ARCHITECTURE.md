@@ -331,6 +331,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
+| `review-notes/<会话 ID 的 SHA-256>.json` | 会话的行级反馈、未定的发送与回执（0600，目录 0700，见 [CHANGES.md](CHANGES.md#行级反馈)） |
 | `plugin-data/<pluginId>/gen-<n>/data.json`、`plugin-data/<pluginId>/diagnostics.json` | 插件页面的文档与回执（每个数据版本一代，保留最近 3 代）、页面诊断（0600，目录 0700，见 [APP-PAGES.md](APP-PAGES.md)） |
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
@@ -390,6 +391,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /app-modules/:pluginId/:appId/:bundleHash.js` | `view`；页面的修订、启用与批准照常核对 | 页面的模块字节（`no-store`，旧哈希 404 `app-module-not-found`），只由父页面取来交给页面框，见 [APP-PAGES.md](APP-PAGES.md#页面框) |
 | `GET /apps/:pluginId/data…`、`PUT/DELETE /apps/:pluginId/data/:scope/:key`、`POST /apps/:pluginId/data/migrate[/lease]`、`GET/POST /apps/:pluginId/diagnostics`、`GET /apps/:pluginId/pages/:appId/lookup/:requestId`、`GET /apps/:pluginId/pages/:appId/sessions/:id/last-reply` | 读与诊断：`view`；写与迁移：`run`；都先核对页面的修订与能力，会话与私有会话的数据照常要求能读 | 插件页面的数据、迁移、诊断与它开始的会话，见 [APP-PAGES.md](APP-PAGES.md) |
 | `GET /handoffs?sessionId=`、`GET /handoffs/:id`；`POST /handoffs`、`POST /handoffs/:id/return`、`POST /handoffs/:id/withdraw` | 读：`view`；新建、交回、撤回：`run`；都要能读相关的会话 | 交接，先写审计再新建或交回，见 [HANDOFFS.md](HANDOFFS.md) |
+| `GET /tasks/:id/review-notes`；`POST /tasks/:id/review-notes`、`…/:noteId/edit`、`status`、`delete`、`…/send` | 读：`view`；写与发送：`run`；都要数据范围 `all`，写与发送另过会话输入的检查 | 行级反馈；发送走 `POST /tasks/:id/prompt` 的同一条路径，见 [CHANGES.md](CHANGES.md#行级反馈) |
 | `POST /tasks/:id/prompt` | `run`；带 `via` 时只限这个页面开始的会话 | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
 | `POST /tasks/:id/config` | `run` | 放宽权限模式写 `task.mode.widened`；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |

@@ -116,13 +116,15 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await panel.locator('.diff-add', { hasText: 'changed' }).waitFor()
     expect(await panel.locator('.changes-stat-total').innerText()).toMatch(/\+1\s*−1/u)
 
-    // A line comment lands in the composer, naming the file and the line.
+    // A line's feedback goes into the pending set on the Host, not into the composer (e2e/review-notes.e2e.ts goes on).
     await panel.locator('.diff-add', { hasText: 'changed' }).hover()
-    await panel.locator('.diff-add').getByRole('button', { name: '评论第 3 行', exact: true }).click()
-    await panel.getByPlaceholder('告诉 Harness…').fill('这里写得不对')
-    await panel.getByRole('button', { name: '发送到对话', exact: true }).click()
-    await expect.poll(() => page.locator('.composer textarea').inputValue()).toContain('第 3 行：这里写得不对')
-    await page.locator('.composer textarea').fill('')
+    await panel.locator('.diff-add').getByRole('button', { name: '反馈第 3 行', exact: true }).click()
+    await panel.getByRole('textbox', { name: '反馈' }).fill('这里写得不对')
+    await panel.getByRole('button', { name: '加入待发', exact: true }).click()
+    await panel.getByText('待发反馈 1 条').waitFor()
+    expect(await page.locator('.composer textarea').inputValue()).toBe('')
+    await panel.getByRole('button', { name: '删除反馈', exact: true }).click()
+    await expect.poll(() => panel.getByText('待发反馈 1 条').count()).toBe(0)
 
     // Undo: nothing to warn about, so it runs at once and the receipt says what it did.
     await panel.getByRole('button', { name: '撤销本轮', exact: true }).click()

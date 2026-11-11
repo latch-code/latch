@@ -50,6 +50,8 @@ interface LineSlots {
   gutter?: (line: DiffLine, diff: DiffViewFile) => ReactNode
   /** Under a line, for a comment on it. */
   annotation?: (line: DiffLine, diff: DiffViewFile) => ReactNode
+  /** Marks on a line's row (`selected`: picked for a comment; `noted`: a kept comment covers it). */
+  lineMark?: (line: DiffLine) => 'selected' | 'noted' | undefined
 }
 
 function tokensOf(tokens: SyntaxLines[number] | undefined, start: number, end: number): SyntaxLines[number] | undefined {
@@ -123,6 +125,7 @@ function SplitSides({ rows, tools, titled }: { rows: SplitRows; tools: RowTools;
             return (
               <div
                 className={`diff-side-row ${line ? `diff-${line.kind}` : 'diff-absent'}`}
+                data-mark={line ? tools.lineMark?.(line) : undefined}
                 key={index}
                 style={tools.indent ? indentOf(line?.text ?? '') : undefined}>
                 <span className="diff-ln" aria-hidden="true">
@@ -180,7 +183,10 @@ function UnifiedRows({ lines, tools }: { lines: DiffLine[]; tools: RowTools }) {
   const { marks, gutter, annotation, diff } = tools
   return lines.map((line, row) => (
     <Fragment key={row}>
-      <div className={`diff-line diff-${line.kind}`} style={tools.indent ? indentOf(line.text) : undefined}>
+      <div
+        className={`diff-line diff-${line.kind}`}
+        data-mark={tools.lineMark?.(line)}
+        style={tools.indent ? indentOf(line.text) : undefined}>
         <span className="diff-ln diff-ln-old" aria-hidden="true">
           {line.oldLine ?? ''}
         </span>
@@ -497,6 +503,7 @@ export function DiffLines({
   layout: wanted = 'unified',
   gutter,
   annotation,
+  lineMark,
 }: LineSlots & { diff: DiffViewFile; view: LineDiff; layout?: 'unified' | 'split' }) {
   const whole = wholeFile(diff, previousState(diff))
   const layout = whole ? 'unified' : wanted
@@ -505,7 +512,7 @@ export function DiffLines({
   const after = useHighlightedTokens(diff.newText, language, true)
   const marks = useMemo(() => (whole ? undefined : wordHighlights(view.hunks.flatMap(hunk => hunk.lines))), [whole, view])
   const [all, setAll] = useState(false)
-  const tools: RowTools = { diff, marks, before, after, gutter, annotation, indent: true }
+  const tools: RowTools = { diff, marks, before, after, gutter, annotation, lineMark, indent: true }
   const lineCount = view.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0)
   let budget = all ? Infinity : VISIBLE_LINES
   const trailing = view.gaps.find(gap => gap.before === view.hunks.length)

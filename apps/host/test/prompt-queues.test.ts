@@ -43,6 +43,19 @@ const completed = (detail: TaskDetail) => {
 }
 
 describe('persistent Host prompt queues', () => {
+  it('refuses an item it could not read back, before anything is written, so the Host still starts', async () => {
+    const { queue, dataDir, detail, options } = await fixture()
+    await queue.submit(actor, 'task', input('Kept'))
+    const before = await readFile(join(dataDir, 'queues.json'), 'utf8')
+    await expect(queue.submit(actor, 'task', input('x'.repeat(16_001)))).rejects.toMatchObject({ status: 400, code: 'queue-item-invalid' })
+    // The same on a session at rest, where the item would be sent at once.
+    detail.summary.status = 'idle'
+    const other = await PromptQueues.open({ ...options, dataDir: await mkdtemp(join(tmpdir(), 'latch-queue-')) })
+    await expect(other.submit(actor, 'task', input('x'.repeat(16_001)))).rejects.toMatchObject({ code: 'queue-item-invalid' })
+    expect(options.beforeEnqueue).toHaveBeenCalledTimes(1)
+    expect(await readFile(join(dataDir, 'queues.json'), 'utf8')).toBe(before)
+    expect((await PromptQueues.open(options)).view('task').map(item => item.text)).toEqual(['Kept'])
+  })
   it('admits at most five, deduplicates exact submissions, refuses changed retries and keeps authority private', async () => {
     const { queue, dataDir } = await fixture()
     const body = input()

@@ -23,6 +23,8 @@ export interface HostFeatures {
   agentProbe?: true
   usage?: true
   changes?: true
+  /** `/tasks/:id/review-notes`: line feedback kept on the Host (docs/CHANGES.md). */
+  reviewNotes?: true
   gitWrites?: true
   /** `/tasks/:id/git` and its stage, unstage, commit and push routes (docs/GIT-DELIVERY.md). */
   gitDelivery?: true

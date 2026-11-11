@@ -8,6 +8,7 @@ import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
+import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
 import { createTerminalRoutes, type TerminalRoutes } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -19,6 +20,7 @@ export interface RouteDeps {
   agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
   handoffs: HandoffRouteDeps
+  reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
   apps: AppRouteDeps
 }
@@ -53,6 +55,7 @@ export function createRoutes(
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
       changes,
+      createReviewNoteRoutes(context, deps.reviewNotes),
       createGitRoutes(context, deps.git),
       terminal,
       createAgentRoutes(context, deps.agents),

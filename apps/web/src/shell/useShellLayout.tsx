@@ -981,15 +981,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
-  const commentOnLine = (mention: FileMention, line: number, text: string) => {
-    const name = mention.path.split('/').at(-1)!
-    const named = mentionChoice.enabled && fileMentions.length < 32
-    const head = named ? mentionMarker(mention) : name
-    submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? '\n\n' : ''}${head} 第 ${line} 行：${text}\n`)
-    if (named) setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
-    if (pageMode) setInfoPage(false)
-    composerRef.current?.focus()
-  }
   const browseFiles = () => {
     if (!canBrowseFiles) return
     setChangesWanted(false)
@@ -1201,7 +1192,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     changesTarget,
     changesTotals,
     setChangesTotals,
-    commentOnLine,
     canBrowseFiles,
     filesVisible,
     contextKey,

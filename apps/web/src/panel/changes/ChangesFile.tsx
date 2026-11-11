@@ -1,12 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronRight, Copy, FileText, Plus, Undo2 } from 'lucide-react'
-import type { ChangedFile, FileChangeDetail, FileMention } from '@latch/protocol'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { ChevronRight, CircleAlert, Copy, FileText, MessageSquare, Plus, Undo2 } from 'lucide-react'
+import { noteLinesLabel, type ChangedFile, type ChangeScope, type FileChangeDetail, type ReviewNote } from '@latch/protocol'
 import { Button, Collapse, ICON_STROKE, IconButton, useCopy } from '@latch/ui'
 import { DiffLines, type DiffViewFile } from '../../components/DiffView.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage } from '../../core/api.ts'
 import type { DiffLine } from '../../diff.ts'
 import { contentHidden, fileNote, fitPath, reviewOf } from './model.ts'
+import {
+  inSelection,
+  noted,
+  notesUnder,
+  numberOn,
+  placeNotes,
+  selectLine,
+  sideOf,
+  snippetOf,
+  stepSelection,
+  textLines,
+  type LineSelection,
+} from './notes.ts'
+import { NoteCard, NoteEditor, type NoteWriting } from './ReviewNotes.tsx'
+
+/** A file's line feedback: the notes kept on it, and whether this device may add more. */
+interface FileNotes {
+  notes: ReviewNote[]
+  /** The diff new notes are anchored to; absent, no new notes from here. */
+  anchor?: { scope: ChangeScope; turnId?: string }
+  writing?: NoteWriting
+}
 
 export interface FileRowProps {
   file: ChangedFile
@@ -21,7 +43,7 @@ export interface FileRowProps {
   onUndo?: () => void
   onToggle: () => void
   onOpenFile: () => void
-  onComment?: (mention: FileMention, line: number, text: string) => void
+  notes?: FileNotes
   read: (file: Pick<ChangedFile, 'root' | 'path'>, signal: AbortSignal) => Promise<FileChangeDetail>
   /** The phone's rows: the name over its folder, with the note. */
   twoLines: boolean
@@ -135,11 +157,17 @@ const whyEmpty = (file: ChangedFile) =>
         ? '内容没有变化，只改了执行位'
         : '内容没有变化'
 
-function FileBody({ file, layout, revision, read, onComment }: Pick<FileRowProps, 'file' | 'layout' | 'revision' | 'read' | 'onComment'>) {
+function FileBody({
+  file,
+  layout,
+  revision,
+  read,
+  notes,
+  onStale,
+}: Pick<FileRowProps, 'file' | 'layout' | 'revision' | 'read' | 'notes'> & { onStale: (count: number) => void }) {
   const [detail, setDetail] = useState<FileChangeDetail>()
   const [error, setError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
-  const [commenting, setCommenting] = useState<DiffLine>()
   useEffect(() => {
     const controller = new AbortController()
     setError(undefined)
@@ -170,87 +198,153 @@ function FileBody({ file, layout, revision, read, onComment }: Pick<FileRowProps
       </p>
     )
   if (!detail) return <p className="changes-body-note">正在读取…</p>
-  if (!detail.hunks?.length) return <p className="changes-body-note">{whyEmpty(detail.file)}</p>
-  const { view, oldText, newText } = reviewOf(detail.hunks)
+  if (!detail.hunks?.length)
+    return (
+      <>
+        {notes?.notes.map(note => (
+          <NoteCard key={note.id} note={note} quote {...(notes.writing ? { writing: notes.writing } : {})} />
+        ))}
+        <p className="changes-body-note">{whyEmpty(detail.file)}</p>
+      </>
+    )
+  return <FileReview file={file} detail={detail} layout={layout} notes={notes} onStale={onStale} />
+}
+
+const HOVERLESS_NOW = () => typeof matchMedia === 'function' && matchMedia('(hover: none)').matches
+
+/** One file's diff with its notes: picked lines, the box for a new note under them, and each kept note in its place. */
+function FileReview({
+  file,
+  detail,
+  layout,
+  notes,
+  onStale,
+}: {
+  file: ChangedFile
+  detail: FileChangeDetail
+  layout: 'unified' | 'split'
+  notes: FileNotes | undefined
+  onStale: (count: number) => void
+}) {
+  const [selection, setSelection] = useState<LineSelection>()
+  const kept = notes?.notes ?? []
+  const texts = useMemo(() => reviewOf(detail.hunks!), [detail])
+  const placed = useMemo(() => placeNotes(kept, texts.oldText, texts.newText), [kept, texts])
+  const { view, oldText, newText } = useMemo(
+    () => (kept.length || selection ? reviewOf(detail.hunks!, line => noted(placed, kept, line) || inSelection(selection, line)) : texts),
+    [detail, texts, kept, placed, selection],
+  )
+  useEffect(() => {
+    onStale(placed.stale.length)
+  }, [placed.stale.length, onStale])
+  const sides = useMemo(() => ({ old: textLines(oldText), new: textLines(newText) }), [oldText, newText])
   const diff: DiffViewFile = {
     path: file.path,
     newText,
     ...(file.status === 'A' ? { previous: 'none', oldText: '' } : { oldText }),
     ...(file.status === 'D' ? { deleted: true } : {}),
   }
+  const anchor = notes?.anchor
+  const writing = notes?.writing
+  const press = (line: DiffLine) => (event: MouseEvent) => {
+    setSelection(current => selectLine(current, line, event.shiftKey || (HOVERLESS_NOW() && current !== undefined)))
+  }
+  const step = (event: KeyboardEvent) => {
+    if (!event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || !selection) return
+    event.preventDefault()
+    setSelection(stepSelection(selection, event.key === 'ArrowDown' ? 1 : -1, sides[selection.side].length))
+  }
   return (
-    <DiffLines
-      diff={diff}
-      view={view}
-      layout={layout}
-      {...(onComment
-        ? {
-            gutter: line => (
-              <IconButton
-                size="xs"
-                icon={Plus}
-                label={`评论第 ${line.newLine ?? line.oldLine} 行`}
-                className="changes-comment-add"
-                onClick={() => {
-                  setCommenting(line)
-                }}
-              />
-            ),
-            annotation: line =>
-              commenting === line ? (
-                <CommentBox
-                  key={line.newLine ?? line.oldLine}
+    <>
+      {placed.stale.map(note => (
+        <NoteCard key={note.id} note={note} stale {...(writing ? { writing } : {})} />
+      ))}
+      <DiffLines
+        diff={diff}
+        view={view}
+        layout={layout}
+        lineMark={line => (inSelection(selection, line) ? 'selected' : noted(placed, kept, line) ? 'noted' : undefined)}
+        {...(anchor && writing
+          ? {
+              gutter: (line: DiffLine) => {
+                const side = sideOf(line),
+                  number = numberOn(line, side)
+                return number === undefined ? null : (
+                  <IconButton
+                    size="xs"
+                    icon={Plus}
+                    label={side === 'old' ? `反馈修改前第 ${number} 行` : `反馈第 ${number} 行`}
+                    className="changes-comment-add"
+                    pressed={inSelection(selection, line)}
+                    onClick={press(line)}
+                    onKeyDown={step}
+                  />
+                )
+              },
+            }
+          : {})}
+        annotation={line => {
+          const under = notesUnder(placed, line)
+          const editing = anchor && writing && selection && numberOn(line, selection.side) === selection.end
+          if (!under.length && !editing) return undefined
+          return (
+            <>
+              {under.map(note => {
+                const at = placed.located.get(note.id)
+                return <NoteCard key={note.id} note={note} {...(at ? { at } : {})} {...(writing ? { writing } : {})} />
+              })}
+              {editing && (
+                <NoteEditor
+                  key={`${selection.side}:${selection.start}`}
+                  label={noteLinesLabel(selection)}
+                  submitLabel="加入待发"
+                  busy={writing.busy}
                   onCancel={() => {
-                    setCommenting(undefined)
+                    setSelection(undefined)
                   }}
-                  onSend={text => {
-                    setCommenting(undefined)
-                    onComment({ root: file.root, path: file.path }, line.newLine ?? line.oldLine ?? 1, text)
+                  onStep={by => {
+                    setSelection(stepSelection(selection, by, sides[selection.side].length))
+                  }}
+                  onSubmit={async text => {
+                    const done = await writing.actions.create({
+                      root: file.root,
+                      path: file.path,
+                      range: { start: selection.start, end: selection.end },
+                      side: selection.side,
+                      scope: anchor.scope,
+                      ...(anchor.turnId ? { turnId: anchor.turnId } : {}),
+                      lines: snippetOf(sides[selection.side], selection),
+                      text,
+                    })
+                    if (done) setSelection(undefined)
+                    return done
                   }}
                 />
-              ) : undefined,
-          }
-        : {})}
-    />
+              )}
+            </>
+          )
+        }}
+      />
+    </>
   )
 }
 
-function CommentBox({ onCancel, onSend }: { onCancel: () => void; onSend: (text: string) => void }) {
-  const [text, setText] = useState('')
-  const send = () => {
-    if (text.trim()) onSend(text.trim())
-  }
+/** The head's word on the file's notes: how many, and whether any lost their place. */
+function NoteFacts({ count, stale }: { count: number; stale: number }) {
+  if (!count) return null
   return (
-    <div
-      className="changes-comment"
-      onKeyDown={event => {
-        if (event.key === 'Escape') {
-          event.stopPropagation()
-          onCancel()
-        } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-          event.preventDefault()
-          send()
-        }
-      }}>
-      <textarea
-        aria-label="告诉 Harness"
-        autoFocus
-        rows={2}
-        placeholder="告诉 Harness…"
-        value={text}
-        onChange={event => {
-          setText(event.target.value)
-        }}
-      />
-      <div className="changes-comment-actions">
-        <Button size="xs" variant="ghost" onClick={onCancel}>
-          取消
-        </Button>
-        <Button size="xs" variant="primary" disabled={!text.trim()} onClick={send}>
-          发送到对话
-        </Button>
-      </div>
-    </div>
+    <>
+      <span className="changes-note review-note-count" title={`${count} 条反馈`}>
+        <MessageSquare size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        {count}
+      </span>
+      {stale > 0 && (
+        <span className="changes-note changes-note-warn">
+          <CircleAlert size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          位置可能过期
+        </span>
+      )}
+    </>
   )
 }
 
@@ -265,10 +359,11 @@ export function ChangesFile({
   onUndo,
   onToggle,
   onOpenFile,
-  onComment,
+  notes,
   read,
   twoLines,
 }: FileRowProps) {
+  const [stale, setStale] = useState(0)
   const shown = escapeHiddenCharacters(file.oldPath ? `${file.oldPath} → ${file.path}` : file.path)
   const { state: copyState, copy } = useCopy()
   const hidden = file.secret || file.notRetained || file.large
@@ -308,6 +403,7 @@ export function ChangesFile({
                 )}
                 <HeadFacts file={file} only="note" />
                 {undone && <span className="changes-note">已撤销</span>}
+                <NoteFacts count={notes?.notes.length ?? 0} stale={stale} />
               </span>
             </span>
           ) : (
@@ -315,6 +411,7 @@ export function ChangesFile({
               <FittedPath text={shown} />
               <HeadFacts file={file} />
               {undone && <span className="changes-note">已撤销</span>}
+              <NoteFacts count={notes?.notes.length ?? 0} stale={stale} />
             </>
           )}
         </button>
@@ -335,7 +432,7 @@ export function ChangesFile({
       </div>
       <Collapse open={open} lazy>
         <div className="changes-file-body">
-          {open && <FileBody file={file} layout={layout} revision={revision} read={read} onComment={onComment} />}
+          {open && <FileBody file={file} layout={layout} revision={revision} read={read} notes={notes} onStale={setStale} />}
         </div>
       </Collapse>
     </section>

@@ -51,6 +51,14 @@ const recordSchema = z.strictObject({
 })
 const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(recordSchema).max(MAX_RECEIPTS) })
 type Record = z.infer<typeof recordSchema>
+/**
+ * Every new item must read back: the file is checked whole when the Host starts, so one item it would refuse there (too
+ * long, a malformed request ID) would keep the Host from starting. Such an item is refused here and never written.
+ */
+function valid(item: Record): void {
+  if (!recordSchema.safeParse(item).success)
+    throw new AppError(400, 'queue-item-invalid', `排队内容无效：每条最多 ${text.maxLength ?? 16_000} 个字符。`)
+}
 export interface QueueActor {
   deviceId: string
   listener: ListenerClass
@@ -127,6 +135,20 @@ export class PromptQueues {
     return false
   }
 
+  /**
+   * One item of a session, by its ID or by the request ID it was first queued with (from any device), with its state and
+   * the request ID its message carries now (an edit gives it a new one).
+   */
+  lookup(
+    sessionId: string,
+    by: { id: string } | { requestId: string },
+  ): { id: string; state: Record['state']; sendRequestId: string } | undefined {
+    for (const item of this.entries.values())
+      if (item.sessionId === sessionId && ('id' in by ? item.id === by.id : item.requestId === by.requestId))
+        return { id: item.id, state: item.state, sendRequestId: item.sendRequestId }
+    return undefined
+  }
+
   /** Items that will still be sent by themselves or are being sent now. */
   pending(): number {
     let count = 0
@@ -188,6 +210,7 @@ export class PromptQueues {
           ...(model ? { model } : {}),
           ...(binding ? { binding } : {}),
         }
+        valid(immediate)
         next.set(immediate.id, immediate)
         await this.options.beforeEnqueue(actor, sessionId, immediate.id)
         await this.commit(next)
@@ -230,6 +253,7 @@ export class PromptQueues {
         ...(binding ? { binding } : {}),
       }
       if (item.state === 'parked') item.reason = '队列已暂停，请确认后发送'
+      valid(item)
       await this.options.beforeEnqueue(actor, sessionId, item.id)
       // Audit I/O can outlive revocation or a policy change.
       await this.options.check(actor, sessionId, model, binding)

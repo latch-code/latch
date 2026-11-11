@@ -31,6 +31,9 @@ export const PRIVATE_ENTRIES = [
   'snapshots',
   'automations',
   'automations.json',
+  'review-notes',
+  'queues.json',
+  'attachments',
 ]
 /**
  * Names the Host writes next to private entries for a moment: atomic-write temp files (the `prefix` their writers pass to
@@ -47,6 +50,7 @@ const TRANSIENT_PREFIXES = [
   '.session-folders.json-',
   '.desktop-launch-',
   '.automations.json-',
+  '.queues.json-',
 ]
 
 /** Folds case and Unicode compatibility forms (`Providers.json`, `providerſ.json`), as case-insensitive disks may. */

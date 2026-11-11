@@ -258,13 +258,17 @@ const CONTEXT = 3
 
 /**
  * The review from a file's whole-context hunk: changes with three lines around each, the rest in bands. The Host's own
- * line pairing is kept, so the numbers here and in its patch agree.
+ * line pairing is kept, so the numbers here and in its patch agree. `keep`: unchanged lines that stay in view like a
+ * change, such as those a comment is on.
  */
-export function reviewOf(hunks: readonly ChangeHunk[]): { view: LineDiff; oldText: string; newText: string } {
+export function reviewOf(
+  hunks: readonly ChangeHunk[],
+  keep?: (line: DiffLine) => boolean,
+): { view: LineDiff; oldText: string; newText: string } {
   const lines: DiffLine[] = hunks.flatMap(hunk => hunk.lines as DiffLine[])
   const near = lines.map(() => false)
   lines.forEach((line, at) => {
-    if (line.kind === 'context') return
+    if (line.kind === 'context' && !keep?.(line)) return
     for (let index = Math.max(0, at - CONTEXT); index <= Math.min(lines.length - 1, at + CONTEXT); index++) near[index] = true
   })
   const out: DiffHunk[] = [],

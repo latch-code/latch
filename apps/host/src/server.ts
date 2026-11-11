@@ -11,6 +11,7 @@ import {
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
+import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans } from './agent-plans.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
@@ -1898,6 +1899,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       automations: { automations: () => automations, access: agentAccess },
       handoffs: { handoffs: () => handoffs },
+      reviewNotes: {
+        notes: () => reviewNotes,
+        async send(caller, id, input) {
+          const answer = await sendPrompt(caller, id, input)
+          // A queue that was empty with the run already over sends at once: the message is then in the session.
+          return typeof answer === 'object' && 'queued' in answer.queued ? { queueId: answer.queued.queued.id } : {}
+        },
+        queueItem: (id, by) => promptQueues.lookup(id, by),
+        // `${session}:${device}:${requestId}`: any device's prompt with this request ID on its way or accepted.
+        promptHeld: (id, requestId) => turnRequests.some(key => key.startsWith(`${id}:`) && key.endsWith(`:${requestId}`)),
+      },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
       apps: {
         assets: () => pluginAssets,
@@ -2205,6 +2217,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       changed: () => refresh(),
     })
     startupCleanup.push(() => handoffs.close())
+    const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
+    startupCleanup.push(() => reviewNotes.close())
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
     /**
      * One queue per project ID (`'default'` for the start directory): a start cannot enter a project between a removal's
@@ -6570,6 +6584,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         const handoffSummaries = handoffs.summaries(new Set(snapshot.tasks.map(task => task.id)))
         if (handoffSummaries?.length) snapshot.handoffs = handoffSummaries
+        const noteCounts = reviewNotes.counts(new Set(snapshot.tasks.map(task => task.id)))
+        if (noteCounts.length) snapshot.reviewNotes = noteCounts
         const appSummaries = await appRoutes.summaries()
         if (appSummaries.length) snapshot.apps = appSummaries
         traffic.response('snapshot', json(res, snapshot))
@@ -7054,6 +7070,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
           await automations.close()
           await handoffs.close()
+          await reviewNotes.close()
           await sessionLifecycle.hostStopping()
           await nativeRoutes.close()
           clearInterval(heartbeat)

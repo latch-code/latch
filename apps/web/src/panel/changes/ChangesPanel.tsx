@@ -13,7 +13,7 @@ import {
   WrapText,
   type LucideIcon,
 } from 'lucide-react'
-import type { ChangedFile, ChangeList, FileMention, Message, NotRestoredFile, TaskSummary, TurnChanges } from '@latch/protocol'
+import type { ChangedFile, ChangeList, Message, NotRestoredFile, ReviewNote, TaskSummary, TurnChanges } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -49,6 +49,7 @@ import {
   missingTurnTitle,
   NOT_COVERED_WHY,
   offersBase,
+  queryOf,
   SCOPE_NOTE,
   scopeAction,
   scopeLabel,
@@ -67,6 +68,9 @@ import {
   type ScopeChoice,
 } from './model.ts'
 import { useChanges, type ChangesActions, type ChangesResult } from './useChanges.ts'
+import { useReviewNotes } from './useReviewNotes.ts'
+import { noteTally, sameFile } from './notes.ts'
+import { NoteCard, NotesFoot, type NoteWriting } from './ReviewNotes.tsx'
 import { PARTIAL_NOTE } from '../../conversation/turnChanges.ts'
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
@@ -95,7 +99,12 @@ export interface ChangesPanelProps {
   /** No connection to the Host: what is on screen stays, and nothing can be written. */
   offline: boolean
   target?: ChangesTarget
-  onComment?: (mention: FileMention, line: number, text: string) => void
+  /** The Host keeps line feedback (`features.reviewNotes`). */
+  reviewNotes?: boolean
+  /** The snapshot's count revision of this session's notes: another device's write reads them again. */
+  notesRevision?: number
+  /** The Host queues a message for the next turn while one runs (`features.queue`), as the composer does. */
+  canQueue?: boolean
   onOpenFile: (file: Pick<ChangedFile, 'root' | 'path'>) => void
   onOpenSession?: (sessionId: string) => void
   knownSession?: (sessionId: string) => boolean
@@ -104,6 +113,18 @@ export interface ChangesPanelProps {
   onTotals?: (totals: ChangeList['totals'] | undefined) => void
   /** Opens 交付, from 未提交. */
   onDeliver?: () => void
+}
+
+/** Notes on files this scope does not list: they stay in reach with their original lines. */
+function ApartNotes({ notes, writing }: { notes: ReviewNote[]; writing: NoteWriting | undefined }) {
+  return (
+    <section className="review-notes-apart" aria-label="不在这个范围的反馈">
+      <p className="review-notes-apart-title">不在这个范围的反馈</p>
+      {notes.map(note => (
+        <NoteCard key={note.id} note={note} quote where={`${note.path} `} {...(writing ? { writing } : {})} />
+      ))}
+    </section>
+  )
 }
 
 function Line({
@@ -533,7 +554,9 @@ function ReadableChanges({
   hostName,
   offline,
   target,
-  onComment,
+  reviewNotes = false,
+  notesRevision = 0,
+  canQueue = false,
   onOpenFile,
   onOpenSession,
   knownSession,
@@ -554,6 +577,13 @@ function ReadableChanges({
     choice,
     offline,
   )
+  const review = useReviewNotes(summary.id, {
+    enabled: reviewNotes,
+    revision: notesRevision,
+    poke: `${summary.status}:${summary.runId ?? ''}`,
+    offline,
+  })
+  const [askClear, setAskClear] = useState(false)
   const [askUndoFile, setAskUndoFile] = useState<ChangedFile>()
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set())
   const [selected, setSelected] = useState<string>()
@@ -684,7 +714,7 @@ function ReadableChanges({
     )
   }
 
-  const kept: MenuSection = {
+  const keptTurns: MenuSection = {
     id: 'turns',
     label: '保留的轮次',
     items: turns.toReversed().map(item => {
@@ -725,6 +755,13 @@ function ReadableChanges({
     ],
   }
   const dropped = droppedTurns(numbers, turns)
+  const kept = review.notes ?? []
+  const writing: NoteWriting | undefined =
+    reviewNotes && canRun && !offline && summary.personal === undefined ? { actions: review.actions, busy: review.busy } : undefined
+  const tally = noteTally(kept)
+  const anchorScope = queryOf(choice).scope
+  const anchor = list && !list.unavailable ? { scope: anchorScope, ...(list.turnId ? { turnId: list.turnId } : {}) } : undefined
+  const apart = kept.filter(note => !files.some(file => sameFile(note, file)))
   const undone = list?.undone && !(result?.kind === 'turn' && result.receipt.turnId === list.turnId)
 
   return (
@@ -740,7 +777,7 @@ function ReadableChanges({
           width={288}
           selection
           align="start"
-          sections={[...(turns.length ? [kept] : []), others]}
+          sections={[...(turns.length ? [keptTurns] : []), others]}
           footer={
             dropped > 0 ? <MenuFooterNote icon={Info}>{`还有 ${dropped} 轮 · 只保留最近 ${KEPT_TURNS} 轮`}</MenuFooterNote> : undefined
           }
@@ -933,7 +970,15 @@ function ReadableChanges({
                           },
                         }
                       : {})}
-                    {...(onComment ? { onComment } : {})}
+                    {...(reviewNotes
+                      ? {
+                          notes: {
+                            notes: kept.filter(note => sameFile(note, file)),
+                            ...(anchor ? { anchor } : {}),
+                            ...(writing ? { writing } : {}),
+                          },
+                        }
+                      : {})}
                   />
                 </div>
               )
@@ -948,8 +993,72 @@ function ReadableChanges({
                 再显示 {Math.min(LIST_PAGE, files.length - limit)} 个文件
               </button>
             )}
+            {apart.length > 0 && <ApartNotes notes={apart} writing={writing} />}
           </div>
         </div>
+      )}
+      {list && empty && apart.length > 0 && (
+        <div className="changes-list">
+          <ApartNotes notes={apart} writing={writing} />
+        </div>
+      )}
+      {reviewNotes && review.readError && !review.notes && (
+        <Line tone="muted" icon={CircleAlert}>
+          读不到反馈 · {review.readError}
+        </Line>
+      )}
+      {reviewNotes && (
+        <NotesFoot
+          notes={{
+            ready: tally.ready.length,
+            sending: tally.sending.length,
+            sent: tally.sent,
+            queued: tally.queued,
+            toReview: tally.toReview,
+          }}
+          running={running}
+          canQueue={canQueue}
+          offline={offline}
+          {...(hostName ? { hostName } : {})}
+          {...(writing
+            ? {
+                writing: {
+                  ...writing,
+                  send: () => {
+                    void review.actions.send(
+                      tally.ready.map(note => note.id),
+                      running && canQueue,
+                    )
+                  },
+                  retry: () => {
+                    void review.actions.retrySend()
+                  },
+                  abandon: () => {
+                    void review.actions.abandonSend()
+                  },
+                },
+              }
+            : {})}
+          unknown={review.unknownSend !== undefined && !review.busy}
+          {...(review.error ? { error: review.error } : {})}
+          onClear={() => {
+            setAskClear(true)
+          }}
+        />
+      )}
+      {askClear && (
+        <ConfirmDialog
+          title={`清空 ${tally.ready.length} 条待发反馈？`}
+          confirmLabel="清空"
+          danger
+          message="这些反馈还没有发出，清空后不能恢复。"
+          onConfirm={async () => {
+            for (const note of tally.ready) await review.actions.remove(note.id)
+          }}
+          onClose={() => {
+            setAskClear(false)
+          }}
+        />
       )}
       {askUndoFile && (
         <ConfirmDialog

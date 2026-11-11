@@ -131,6 +131,12 @@ export class RequestRecords {
     else this.records.delete(key)
   }
 
+  /** Whether any record's key passes `test`: a request on its way or accepted. */
+  some(test: (key: string) => boolean): boolean {
+    for (const key of this.records.keys()) if (test(key)) return true
+    return false
+  }
+
   inFlight(): number {
     let count = 0
     for (const state of this.records.values()) if (state === 'in-flight') count++

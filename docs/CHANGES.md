@@ -1,10 +1,16 @@
 ---
-description: 每轮快照、改动范围（本轮、这个会话、未提交、与 main 比较）、归属、撤销与恢复、丢弃、补丁与保留上限。
+description: 每轮快照、改动范围（本轮、这个会话、未提交、与 main 比较）、归属、撤销与恢复、丢弃、补丁与保留上限，以及行级反馈。
 sources:
   - apps/host/src/changes
   - apps/host/src/routes/changes.ts
   - apps/host/src/audit-actions/changes.ts
   - packages/protocol/src/changes.ts
+  - packages/protocol/src/review-notes.ts
+  - apps/host/src/review-notes.ts
+  - apps/host/src/routes/review-notes.ts
+  - apps/host/test/review-notes.test.ts
+  - apps/web/src/panel/changes/notes.ts
+  - e2e/review-notes.e2e.ts
   - apps/host/src/files/ignore.ts
   - apps/host/src/branch-reader.ts
   - apps/host/test/changes-diff.test.ts
@@ -80,6 +86,11 @@ Git 只读运行，不执行仓库配置的钩子与过滤器；带过滤器或�
 | `POST changes/discard`（`{ scope: 'turn', turnId, files }`） | 撤销此文件 |
 | `POST changes/discard/preview`（`{ files? }`） | 撤销未提交改动前的确认内容：要删的文件、`planHash` 与确认框的 `warning` |
 | `POST changes/discard`（`{ scope: 'uncommitted', files?, confirm }`） | 撤销未提交的改动 |
+| `GET review-notes` | 行级反馈与修订号；`openSends` 是结果未定或在排队的发送 |
+| `POST review-notes`（`{ requestId, root, path, range, side, scope, turnId?, lines, text }`） | 新建一条待发反馈 |
+| `POST review-notes/:noteId/edit`、`status`、`delete`（`{ requestId, … }`） | 改文字（只限待发）、设状态（`sent`、`agent-claimed`、`reviewed`）、删除 |
+| `POST review-notes/send`（`{ requestId, noteIds, queue? }`） | 把这些待发反馈作为一条消息发出，或排到下一轮 |
+| `POST review-notes/sends/:sendId/retry`、`abandon`（`{ requestId }`） | 重试结果未知的发送，或在确认没有送出后放弃 |
 
 读取需要 view；写入需要 run，运行中拒绝；撤销未提交的改动只在这台电脑上，不可恢复。
 
@@ -87,11 +98,38 @@ Git 只读运行，不执行仓库配置的钩子与过滤器；带过滤器或�
 
 右侧面板的「改动」页签（⌘D，浏览器里 Alt D）按范围列出文件。范围行放撤销的动作，或没有动作的原因；撤销本轮有文件不会恢复时先说明，否则立刻执行，回执列出写回的数量、没有恢复的文件和原因（`notRestored`、`notCovered`）。回执只来自这次按下的响应，重新打开或换设备时只显示 GET 能给的：已撤销、恢复、不在撤销范围内的文件。撤销此文件没有恢复，所以先确认；这一轮只因部分文件之后又改过而不能整轮撤销时，它仍在，真正改过的文件由 Host 拒绝。
 
-`partial` 不隐藏：可能还有没列出的文件，撤销也碰不到它们。列表在轮次结束、回到窗口、连接恢复和点按时刷新，运行中保留上次的列表并标明；刷新失败时也保留上次的列表并标明。切换范围后，新范围的回答到达前不显示列表和动作。会话状态先于轮次记录变化，面板按会话状态决定能否写入，并重读记录直到两者一致；运行中和离线时范围行写明不能撤销。选中的轮次超过保留上限时写明，还没有记录的轮次不算超过上限。数据范围不是 `all` 的设备读不到这些路由，面板写明原因。文件很多时先列表，单个文件点开才读（不另写一行说明）；文件树只画视口附近的行，差异列表每次 150 个文件。
+`partial` 不隐藏：可能还有没列出的文件，撤销也碰不到它们。列表在轮次结束、回到窗口、连接恢复和点按时刷新，运行中保留上次的列表并标明；刷新失败时也保留上次的列表并标明。切换范围后，新范围的回答到达前不显示列表和动作。会话状态先于轮次记录变化，面板按会话状态决定能否写入，并重读记录直到两者一致；运行中和离线时范围行写明不能撤销。选中的轮次超过保留上限时写明，还没有记录的轮次不算超过上限。数据范围不是 `all` 的设备读不到这些路由，面板写明原因。
+
+行级反馈：按行号选中一行，Shift 加按（触屏上第二次按）选到那一行；键盘在行号上按 Enter，在空的反馈框里用 Shift ↑ / ↓ 增减一行；⌘ Enter 加入待发，Esc 取消。反馈卡片在它所在的最后一行下面，写着行、状态与文字；位置过期的卡片在文件开头，带原文，文件头标「位置可能过期」；不在当前范围的文件的反馈列在列表末尾。底栏写「待发反馈 N 条」，「清空」先确认，「发给 Agent」是这一页唯一的主操作，运行中与离线时不能按；发送结果未知时写明并提供「放弃这次发送」与「重试同一请求」；发出后写「Agent 在修订」，结束后写「N 条待你复核」。已发送的卡片有「Agent 称已修」与「标为已复核」。文件很多时先列表，单个文件点开才读（不另写一行说明）；文件树只画视口附近的行，差异列表每次 150 个文件。
 
 审计动作是 `change.undo`、`change.redo` 与 `change.discard`，经 `beforeWrite` 先写，写入失败就不执行。
 
 运行开始时（`runStarted`）记录开始的快照，提示等它完成，最长等待 15 秒；Driver 在 `createTask` 返回前就开始第一轮，这时项目还没写入会话记录，所以这一轮的项目取自正在进行的创建（`creatingProject`），否则它的记录会落到默认项目，新会话第一轮的 `changes/turns` 为空。运行结算时（`runSettled`）从打开这一轮的用户消息之后的工具消息取得 `ToolDetail.diffs`，交给 `settleTurn`。同一会话的下一轮等上一轮记录完。会话删除时一并删除它的记录。
+
+## 行级反馈
+
+在差异里选中一行或几行写给 Agent 的反馈。反馈存在 Host 上，按会话保存（`review-notes.ts`，数据目录 `review-notes/<会话 ID 的 SHA-256>.json`，0600，整文件原子写入，schema 是 strict）；会话删除时一并删除。每条记录文件夹与路径、行范围（1 起、含两端，最多 100 行）、所在一侧（`new`：新增与未改动的行；`old`：删除的行）、锚点（做反馈时的范围与轮次、选中的原文与原文的 SHA-256）、文字、状态、创建它的设备与时间。每个会话最多 200 条。
+
+状态有四个，后三个只由人设定，Host 不推断「修好了」：
+
+| 状态 | 含义 |
+| --- | --- |
+| `pending` 待发 | 在待发集合里；只有它能改文字 |
+| `sent` 已发送 | 随 `messageId` 那条用户消息发出 |
+| `agent-claimed` Agent 称已修 | 人看了 Agent 的回复后标记的 |
+| `reviewed` 你已复核 | 人看过改动后勾选的 |
+
+只有发出过的反馈能设后两种状态。
+
+**发送。** 「发给 Agent」把所选的待发反馈拼成一条消息（`reviewNotesMessage`：每条的路径与行、用围栏引用的原文、文字，按给出的顺序），经 Host 的普通输入路径（`sendPrompt`，与 `POST /tasks/:id/prompt` 同样的检查与 Driver 回执）发给这个会话。消息最多 16,000 个字符，与输入路由和队列相同；更长时报 413 `review-note-too-long`（「反馈太长，分两次发」），什么也不记。设备的 `requestId` 只是这次写入的回执键（UUID）；Host 为每次发送另生成消息的请求 ID（`promptRequestId`，记在发送记录里），只用它发送、只凭它在会话里认出这条消息，所以别的请求的消息不会让反馈成为已发送。发出之前先记下发送（拼好的文字原样保留，反馈锁定为发送中，仍算待发），会话里出现带这个 ID 的用户消息后，反馈才成为 `sent` 并带上消息 ID。
+
+会话运行中、Host 支持排队（`features.queue`，与输入框相同）时，按钮写「排到下一轮」，发送带 `queue`，走输入框的排队路径：反馈保持待发并锁定，卡片写「已排队」，跟着排队项走——编辑排队项会换掉它的请求 ID，以排队项当前的 `sendRequestId` 找消息；消息随下一轮发出后成为 `sent`；排队项被移除或丢弃时回到待发。同一 `requestId` 换了排不排队报 409。Host 不支持排队时运行中按钮写「本轮结束后发」且不能按。
+
+Host 明确拒绝（4xx，例如这一轮还在运行）时反馈回到待发。结果未知（5xx、超时、连接断开）时发送保持打开，列表的 `openSends` 列出它：能写这个会话的任何设备都可以 `POST review-notes/sends/:id/retry` 用 Host 的同一请求 ID 重发同一段文字（Driver 的回执去重，会话里已有这条消息就直接结算），或 `abandon`「放弃这次发送」——Host 确认会话里没有这条消息、它不在队列里、也没有带这个 ID 的输入正在发送或已被接收后，反馈回到待发。设备被移除后，它打开的发送若没有任何部分在路上，读取列表时回到待发。只有带消息 ID 的反馈能设 `agent-claimed` 与 `reviewed`。
+
+**重新定位。** 页面按当前显示的差异重新定位每条反馈（`locateNote`）：原位置的行与原文完全相同是原位；否则在上下 200 行内找完全相同的原文，最近的一处为新位置；两处一样近、原文太单薄（去掉空白不足 8 个字符；只有一行时不足 20 个，如单独的 `}` 或 `return x`）或找不到时标为「位置可能过期」，单独显示原文，从不挪到别的代码上。有反馈或正在选中的未改动行不折进「N 行未改动」。
+
+**权限。** 反馈引用代码，所以读取与写入都要求数据范围 `all`（`file-scope`）；读取要 view，新建、改字、删除、设状态与发送要 run，并经过会话输入的检查（私有会话、只读会话、文件夹）。快照的 `reviewNotes` 只给每个会话的计数与修订号，凡能读这个会话的设备都收到；文字与原文只经列表路由。每次写入都刷新快照，其他设备按修订号重读列表。每个写入带 `requestId`：同一设备重试得到原回执，同一 ID 换了内容报 409 `request-reused`。
 
 ## 补丁
 
@@ -99,4 +137,4 @@ Git 只读运行，不执行仓库配置的钩子与过滤器；带过滤器或�
 
 ## 验证
 
-`changes-diff.test.ts` 用 `git apply` 往返校验补丁；`changes-snapshots.test.ts` 覆盖遍历、复制与克隆、密钥、上限与记录文件；`changes-git.test.ts` 用真实仓库核对各种状态、与 main 比较、Git 进程的参数与环境、超时与输出上限；`changes-engine.test.ts` 覆盖归属、撤销与恢复、审计失败、符号链接、会话范围、保留与恢复，并让假 ACP Agent 的 `shell-edit` 一轮分别做自己的编辑与 shell 命令的编辑。`changes-routes.test.ts` 经真实 Host 与假 ACP Agent 核对入口权限、审计先写、说明的文字与重试、确认过期和停止后的恢复；`e2e/changes.e2e.ts` 走完一轮 shell 编辑：归属、撤销与恢复、下一条消息的说明、确认后的丢弃。`e2e/changes-panel.e2e.ts` 走完面板的范围、状态、撤销与回执。这些用例只用临时目录，不代替真实 Agent 验收。
+`changes-diff.test.ts` 用 `git apply` 往返校验补丁；`changes-snapshots.test.ts` 覆盖遍历、复制与克隆、密钥、上限与记录文件；`changes-git.test.ts` 用真实仓库核对各种状态、与 main 比较、Git 进程的参数与环境、超时与输出上限；`changes-engine.test.ts` 覆盖归属、撤销与恢复、审计失败、符号链接、会话范围、保留与恢复，并让假 ACP Agent 的 `shell-edit` 一轮分别做自己的编辑与 shell 命令的编辑。`changes-routes.test.ts` 经真实 Host 与假 ACP Agent 核对入口权限、审计先写、说明的文字与重试、确认过期和停止后的恢复；`e2e/changes.e2e.ts` 走完一轮 shell 编辑：归属、撤销与恢复、下一条消息的说明、确认后的丢弃。`e2e/changes-panel.e2e.ts` 走完面板的范围、状态、撤销与回执。`review-notes.test.ts` 覆盖重新定位、消息文字、存储的回执与 strict schema、路由的权限与计数、发送与重试、拒绝后回到待发；`e2e/review-notes.e2e.ts` 用真实仓库与假 ACP Agent（`FAKE_ACP_EDIT_QUEUE` 决定它下一轮改什么）走完选中范围、两条反馈、发送、Agent 修改后一条随行移动一条过期、标记状态，以及 390 宽的第二个浏览器实时看到同样的反馈。这些用例只用临时目录，不代替真实 Agent 验收。

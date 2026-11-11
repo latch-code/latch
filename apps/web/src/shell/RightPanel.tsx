@@ -57,7 +57,6 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     changesTarget,
     changesTotals,
     setChangesTotals,
-    commentOnLine,
     openFile,
     level,
     phone,
@@ -94,7 +93,9 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 phone={phone}
                 offline={offline}
                 {...(changesTarget ? { target: changesTarget } : {})}
-                {...(canCompose && !phone ? { onComment: commentOnLine } : {})}
+                reviewNotes={catalog?.features?.reviewNotes === true}
+                canQueue={catalog?.features?.queue === true}
+                notesRevision={snapshot.reviewNotes?.find(counts => counts.sessionId === summary.id)?.revision ?? 0}
                 onOpenFile={file => {
                   openFile({ sessionId: summary.id, reference: file.path, rootId: file.root })
                 }}
