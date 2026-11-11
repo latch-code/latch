@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { FileDiff, Folder, GitCommitHorizontal, Puzzle, type LucideIcon } from 'lucide-react'
+import { FileDiff, Folder, GitCommitHorizontal, Puzzle, SquareTerminal, type LucideIcon } from 'lucide-react'
 import { Icon, Kbd } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
@@ -10,12 +10,16 @@ type Row = { id: string; label: string; icon: LucideIcon; letter?: string; surfa
 export function launcherRows(input: {
   changes?: boolean
   files?: boolean
+  terminal?: boolean
   delivery?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): Row[] {
   return [
     ...(input.changes ? [{ id: 'changes', label: '改动', icon: FileDiff, letter: 'D', surface: { kind: 'changes' as const } }] : []),
     ...(input.files ? [{ id: 'files', label: '文件', icon: Folder, letter: 'F', surface: { kind: 'files' as const } }] : []),
+    ...(input.terminal
+      ? [{ id: 'terminal', label: '终端', icon: SquareTerminal, letter: 'T', surface: { kind: 'terminal' as const } }]
+      : []),
     ...(input.delivery ? [{ id: 'delivery', label: '交付', icon: GitCommitHorizontal, surface: { kind: 'delivery' as const } }] : []),
     ...(input.plugins ?? []).map(plugin => ({
       id: `plugin:${plugin.id}`,
@@ -29,6 +33,7 @@ export function launcherRows(input: {
 export function PanelLauncher({
   changes,
   files,
+  terminal,
   delivery,
   plugins,
   takesFocus,
@@ -39,6 +44,7 @@ export function PanelLauncher({
   takesFocus?: () => boolean
   changes?: boolean
   files?: boolean
+  terminal?: boolean
   delivery?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
   onOpen(surface: PanelSurface): void
@@ -47,6 +53,7 @@ export function PanelLauncher({
   const rows = launcherRows({
     ...(changes ? { changes } : {}),
     ...(files ? { files } : {}),
+    ...(terminal ? { terminal } : {}),
     ...(delivery ? { delivery } : {}),
     ...(plugins ? { plugins } : {}),
   })

@@ -112,8 +112,8 @@ describe('the right panel', () => {
         await launcher.waitFor()
         await settleShell(page)
         await shot(page, 'launcher', width, theme)
-        // Only what is real: neither a browser nor a terminal row until those exist.
-        expect(await launcher.locator('.panel-launcher-row').allTextContents()).toEqual(['改动D', '文件F'])
+        // Only what is real: no browser row until it exists, and no terminal row in a browser, which the Host offers none.
+        expect(await launcher.locator('.panel-launcher-row').allTextContents()).toEqual(['改动D', '文件F', '交付'])
         if (width >= 768) {
           await expect.poll(() => page.evaluate(() => document.activeElement?.className)).toBe('panel-launcher')
           await page.keyboard.press('f')

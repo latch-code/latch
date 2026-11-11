@@ -1,1 +1,114 @@
-/* The terminal dock. */
+/*
+ * The 终端 tab: a strip of 终端 1, 2… with the local services, 「加入对话」 and +, the screen on the canvas, and a 28 foot
+ * with the shell and folder (or how it ended and 「重新打开」) and the 「你的账户，不是沙箱」 hint. Blue only for 重新打开.
+ */
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--canvas);
+  color: var(--ink);
+}
+.terminal-tabs {
+  flex: none;
+  padding: var(--sp-6) var(--sp-8) 0;
+}
+.terminal-service {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 24px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-6);
+  color: var(--accent-ink);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.terminal-service:hover {
+  background: var(--hover);
+}
+.terminal-service:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.terminal-notice {
+  flex: none;
+  margin: var(--sp-6) var(--sp-12) 0;
+}
+.terminal-screens {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.terminal-screen {
+  position: absolute;
+  inset: 0;
+  padding: var(--sp-8) var(--sp-12);
+}
+.terminal-screen[hidden] {
+  display: none;
+}
+.terminal-screen .xterm {
+  height: 100%;
+}
+.terminal-screen .xterm:focus-within {
+  outline: none;
+}
+.terminal-screens:has(.xterm-helper-textarea:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+.terminal-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--sp-16);
+}
+.terminal-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 28px;
+  padding: var(--sp-2) var(--sp-12);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.terminal-facts {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sp-8);
+  overflow: hidden;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.terminal-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--ink-2);
+}
+.terminal-reconnecting {
+  color: var(--amber);
+  font-family: var(--font);
+}
+.terminal-ended {
+  color: var(--ink-2);
+  font-family: var(--mono);
+}
+.terminal-space {
+  flex: 1;
+}
+.terminal-hint {
+  flex: none;
+}

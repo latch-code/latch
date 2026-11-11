@@ -1,5 +1,5 @@
 ---
-description: 终端：latch-pty 组件与帧协议，Host 终端服务的输入规则、会话文件夹、环境、上限、回滚缓冲、尺寸归属、输出背压、本地服务与「加入对话」，以及限制。
+description: 终端：latch-pty 组件与帧协议，Host 终端服务的输入规则、会话文件夹、环境、上限、回滚缓冲、尺寸归属、输出背压、本地服务与「加入对话」，会话面板的「终端」页签，以及限制。
 sources:
   - native/macos/LatchTerminal.swift
   - apps/host/scripts/build-terminal.ts
@@ -14,14 +14,17 @@ sources:
   - apps/host/test/terminal-frames.test.ts
   - apps/host/test/terminal-cli.test.ts
   - apps/host/scripts/latch.ts
+  - apps/web/src/panel/terminal
+  - apps/web/test/terminal-model.test.ts
+  - e2e/desktop-terminal.e2e.ts
 ---
 # 终端
 
 终端是这台电脑上以你的账户运行的登录 shell，和「终端」App 里打开的 shell 权限相同。Latch 的审批、路径检查与出站策略都不适用于在其中运行的命令；它不是沙箱，也不隔离任何东西。
 
-macOS 组件 `latch-pty`、终端服务（`apps/host/src/terminal/`）与 HTTP 路由（`apps/host/src/routes/terminal.ts`）已实现，只有这台电脑（`host.sock`）能用。界面尚未实现，所以页面上还打不开终端。其他系统上终端尚未实现：组件只有 macOS 版本，服务返回 501 `terminal-unsupported`。
+macOS 组件 `latch-pty`、终端服务（`apps/host/src/terminal/`）与 HTTP 路由（`apps/host/src/routes/terminal.ts`）已实现，只有这台电脑（`host.sock`）能用，页面在会话面板的「终端」页签里打开它（见[界面](#界面)）。其他系统上终端尚未实现：组件只有 macOS 版本，服务返回 501 `terminal-unsupported`。
 
-Harness 的登录命令不走这里：页面还没有终端界面，所以「在终端里登录」用这台电脑默认的终端打开（见 [HARNESSES.md](HARNESSES.md)）。
+Harness 的登录命令不走这里：「在终端里登录」仍用这台电脑默认的终端打开（见 [HARNESSES.md](HARNESSES.md)），因为它在没有会话时也要能用。
 
 ## latch-pty 组件
 
@@ -74,6 +77,23 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - **配对码。** 配对码不在 Latch 终端里显示，用 `--code-file`。
 - **审计。** 打开请求通过检查后、shell 启动之前，服务调用 `beforeOpen`，Host 在其中写 `terminal.open`（会话与终端的 ID），写入失败时返回 503 `audit-unavailable`，不启动 shell。写入之后、启动 shell 之前再次检查设备授权，等待期间被撤销或失去权限的设备得不到 shell。输入的内容从不记录。
 
+## 界面
+
+`apps/web/src/panel/terminal/`：会话面板的「终端」页签，排在「文件」之后、「交付」之前；启动面板里也有一行「终端」（字母键 T），标题行有「终端」开关（桌面端 ⌘J，浏览器 Alt J）。它们只在快照带 `catalog.features.terminal`、会话没有归档、也不是早先助手的会话时出现；手机、远程浏览器与其他设备上没有任何入口，只在 设置 › 关于 里用一行提示说一次「终端只在运行 Latch 的 Mac 上」。
+
+- **页签与名称。** 页签里是这个会话的终端：「终端 1」「终端 2」…，用 `PanelTabs`。一个终端保持它第一次出现时的编号，新开的取最小的空号，按 Host 打开的先后；重新载入后从 1 重新编号。第一次打开没有终端的会话时自动开一个，之后关掉最后一个时显示「打开终端」。行尾依次是本地服务、「加入对话」与「+」（满 8 个时停用并说明）。文件夹由 Host 按会话决定，页面从不传路径。
+- **关闭。** × 或 Delete 先不带 `force` 关闭；Host 回答 409 `terminal-busy` 时弹出确认「关闭终端 N？」（「「sleep」还在运行，关闭会结束它。」，红色「关闭终端」），确认后带 `force` 再关。
+- **渲染。** xterm.js（`@xterm/xterm` 与 `@xterm/addon-fit`）在第一次显示终端时才加载。字体、字号取 `--mono` 与 `--fs-term`，底色与文字取 `--canvas` 与 `--ink`，光标是墨色，选区是 `--accent-soft`；十六色取红、绿、琥珀、蓝与语法色，深色主题里黑白对调。主题切换时重新读取令牌。
+- **尺寸。** 打开时按面板量出的列与行请求；之后只有打开它的设备（`sizeOwner`）按面板大小调整（停稳 120 ms 后发 `resize`），其他设备按 Host 的大小显示，从不调整。
+- **流与重连。** 每个终端一条流，页签隐藏时也保持。第一次连接不带 `from`，收到回滚缓冲的重放；断开后带最后的偏移重连（退避 0.5 到 8 秒），`reset` 时清屏后接着显示；`closed`、404 或 403 时页签移除。页面重新载入后从 Host 的列表与重放恢复。
+- **背压。** 输出交给 xterm 后等它解析；尚未解析的超过 256 KiB 时停止读取响应，Host 的写入随之返回 false 并停下，终端中的程序随之等待，页面内存不随输出增长。
+- **输入。** xterm 交出的内容（按键或一次完整粘贴，程序开启括号粘贴模式时带括号）按 64 KiB 切开，一次一个按顺序发送；429 `terminal-input-busy` 时稍后重发同一段；其他失败丢弃之后排队的输入并在页签里说「输入可能没有送达终端」，不会乱序或重复。复制粘贴用系统的 ⌘C、⌘V。
+- **按键。** 终端有焦点时，按键都交给终端（Ctrl、⌥、Esc、Tab），工作台的快捷键收不到；只有 ⌘ 组合键仍是 Latch 与系统的，例如 ⌘K 搜索、⌘L 回到输入框、⌘J 关上终端。
+- **结束。** shell 退出后输出保留、不再接受输入，底部一行写「已退出 · 代码 N」（信号时「已结束 · SIGHUP」，组件失败时「终端意外结束」）和蓝色「重新打开」：关闭旧终端，用同一编号开一个新的。
+- **本地服务。** 输出里出现的本地服务显示为行尾的小链接（`localhost:5173`），在系统浏览器中打开整个源。页面还没有预览浏览器的界面，所以不在面板里打开。
+- **加入对话。** 有选区时发送选区，否则取最后 40 行，经 `attach` 拿到 Host 去掉转义序列并脱敏后的文本，以「终端 N」加 `text` 代码块放进输入框草稿，不发送；截断时标题后写「（较早的输出未包含）」，`mayContainSecret` 时提示「加入的内容可能含密钥，发送前检查草稿」。
+- **底部一行。** 运行时写 shell 与文件夹名、前台程序（带转圈）与「正在重新连接…」（琥珀）；右侧是盾形的「你的账户，不是沙箱」，ⓘ 后说明它以你的账户运行、审批与路径检查不适用。
+
 ## 路由
 
 都在 `/link/api/tasks/:id/terminals` 之下，类型在 `packages/protocol/src/terminal.ts`。每条路由都只接受 `host.sock`，需要 `run` 与数据范围 `all`：其他入口在读取请求正文之前就得到 403 `local-only`，数据范围为 `work` 的设备得到 403 `terminal-scope`，因为 shell 能读到这个账户能读的一切，包括 Host 的数据目录。
@@ -112,5 +132,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - `terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-frames.test.ts`：环境、登录 shell、回滚缓冲、本地服务识别、文本提取、脱敏、`mayContainSecret`、光标移动留下的空隙与帧编解码。
 - `terminal-routes.test.ts`：真实 Host 配假组件，检查每条路由、审计先于启动、审计失败不启动、每个入口类别都被拒绝、能力标记、流的重连、撤销与 Host 停止时结束、归档与删除的检查（包括被拒绝的删除不结束 shell）；并用真实组件运行一次完整流程。`route-guards.test.ts`：已验证的手机经原生入口也被拒绝。
 - `terminal-cli.test.ts`：Latch 终端里不显示配对链接和离线连接码。
+- `apps/web/test/terminal-model.test.ts`：页签编号与保持选中、结束文案、长粘贴的切分、按键归属、草稿格式，以及流的重放、按偏移重连、`reset`、不再存在的终端、背压与输入的顺序和重试。
+- `e2e/desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS）：桌面端经 `host.sock` 连接配假组件的测试 Host，打开、输入、Ctrl-B 不到工作台、本地服务链接、长粘贴完整且带括号、调整大小与其他设备不能调整、「加入对话」（最后几行与选区）只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、768 宽，以及 ⌘J 仍归 Latch；截图在 `test-results/desktop-terminal/`。
 
 桌面端安装更换 Host 的更新前，正在运行命令的终端算作忙碌，安装等它结束；终端里报告的本地服务只在等待界面列出，随终端一起结束（[UPDATES.md](./UPDATES.md#安装门禁与-host-安装窗口)）。

@@ -13,6 +13,8 @@
     "@shikijs/engine-javascript": "catalog:",
     "@shikijs/langs": "catalog:",
     "@tanstack/react-virtual": "catalog:",
+    "@xterm/addon-fit": "catalog:",
+    "@xterm/xterm": "catalog:",
     "docx-preview": "catalog:",
     "fflate": "catalog:",
     "katex": "catalog:",

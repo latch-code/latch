@@ -135,7 +135,9 @@ describe('workbench key routing', () => {
       expect(shortcutKeys(id as keyof typeof before, true), id).toBe(desktop)
       expect(shortcutKeys(id as keyof typeof before, false, false), id).toBe(browser)
     }
-    expect(shortcutRows(true, true).map(row => row.id)).toHaveLength(23)
+    expect(shortcutRows(true, true).map(row => row.id)).toHaveLength(24)
+    expect(shortcutKeys('terminal', true)).toBe('⌘J')
+    expect(shortcutKeys('terminal', false, false)).toBe('Alt J')
   })
   it('gives a button the keys that press it, in the names its caps take', () => {
     expect(shortcutButtonKeys('new', true)).toEqual(['mod', 'N'])
@@ -170,7 +172,7 @@ describe('workbench key routing', () => {
   })
   it('lists a row for every action a key can trigger', () => {
     const ids = new Set<string>(shortcutRows(true, true).map(row => row.id))
-    for (const code of ['KeyN', 'KeyB', 'KeyD', 'Slash', 'KeyP', 'KeyW', 'KeyL', 'Comma']) {
+    for (const code of ['KeyN', 'KeyB', 'KeyD', 'KeyJ', 'Slash', 'KeyP', 'KeyW', 'KeyL', 'Comma']) {
       const action = workbenchShortcut(key(code, { metaKey: true }), true)!
       expect(typeof action === 'string' && ids.has(action), code).toBe(true)
     }

@@ -3,6 +3,7 @@ import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
+import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
 import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
@@ -46,6 +47,8 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     changesOpen,
     canDeliver,
     deliveryOpen,
+    canTerminal,
+    terminalOpen,
     openChangesTab,
     showSurface,
     launcherTakesFocus,
@@ -130,6 +133,19 @@ export function RightPanel({ shell }: { shell: ShellState }) {
           }
         : {})}
       deliveryOpen={deliveryOpen}
+      {...(summary && canTerminal
+        ? {
+            terminal: (
+              <TerminalPanel
+                key={summary.id}
+                sessionId={summary.id}
+                shown={terminalOpen && !fileTabs.active}
+                onCompose={canCompose ? compose : undefined}
+              />
+            ),
+          }
+        : {})}
+      terminalOpen={terminalOpen}
       {...(summary && (phone || noCrumb)
         ? {
             launcherNote: (

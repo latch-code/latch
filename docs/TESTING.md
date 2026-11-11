@@ -528,6 +528,8 @@ pnpm latch presence test --data-dir <临时目录>
 
 `delivery.e2e.ts` 用真实临时仓库、本地裸远端与假 ACP Agent 走完交付页签：逐个暂存与取消暂存、通过与失败的提交钩子（「加入对话」只进草稿不发送）、跳过钩子、推送并设上游、远端 `pre-receive` 拒绝的行、没有远端、推送结果未知后用同一请求重试、回合等审批时停用写入，以及 390 与 320 宽和数据范围不足的设备仍能提交与推送（截图在 `test-results/delivery/`，含 768 与深色）。
 
+`desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`）让桌面端经 `host.sock` 连接配假终端组件的测试 Host（不启动真实 shell）：打开、输入与回显、Ctrl-B 留在终端、本地服务链接、15 万字节的括号粘贴完整送达、按窗口调整大小与其他设备不能调整、「加入对话」只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、⌘J 仍归 Latch（截图在 `test-results/desktop-terminal/`，含 768 与深色）。
+
 `changes-panel.e2e.ts` 用真实工具与真实 Git 仓库走完改动页签的范围、撤销与恢复、合并中的拒绝和数据范围不足的说明，再按 Host 的答复在三种宽度、浅深色下画出每个状态（截图在 `test-results/changes-panel/`），并量过两万个文件的列表。
 
 `file-history.e2e.ts` 用真实工具写入生成两文件、三次差异，检查最新优先、旧记录展开、手机行内、宽屏左右对照与展开宽度、删除重载后的历史保留；同时核对差异最后一行没有额外空白。`diff-layout.test.ts` 检查不等长变更块、空行和两侧行序号守恒。

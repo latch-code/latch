@@ -6,6 +6,7 @@ export type WorkbenchAction =
   | 'shortcuts'
   | 'files'
   | 'changes'
+  | 'terminal'
   | 'file-search'
   | 'close-file'
   | 'compose'
@@ -60,6 +61,7 @@ const SHORTCUTS = [
   { id: 'sidebar', label: '收起或展开侧栏', desktop: '⌘B', browser: 'Alt B' },
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
+  { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
   { id: 'find', label: '在会话中查找', desktop: '⌘F', browser: 'Mod F' },
   { id: 'find-step', label: '下一个、上一个匹配', desktop: '⏎ · ⇧⏎', browser: 'Enter · Shift Enter' },
   { id: 'file-search', label: '搜索文件', desktop: '⌘P', browser: 'Alt P' },
@@ -150,6 +152,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
     KeyN: 'new',
     KeyB: 'sidebar',
     KeyD: 'changes',
+    KeyJ: 'terminal',
     Slash: 'shortcuts',
     KeyP: 'file-search',
     KeyW: 'close-file',

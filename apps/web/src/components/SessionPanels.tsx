@@ -16,7 +16,7 @@ import {
   type UiPanelDocument,
   type UiPanelInfo,
 } from '@latch/protocol'
-import { FileDiff, Folder, GitCommitHorizontal, Maximize2, Minimize2, Puzzle, X } from 'lucide-react'
+import { FileDiff, Folder, GitCommitHorizontal, Maximize2, Minimize2, Puzzle, SquareTerminal, X } from 'lucide-react'
 import { Button, IconButton, InlineNotice, Loading, PanelTabs, type PanelTab } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
@@ -32,12 +32,13 @@ export type PanelSurface =
   | { kind: 'launcher' }
   | { kind: 'changes' }
   | { kind: 'delivery' }
+  | { kind: 'terminal' }
   | { kind: 'files' }
   | { kind: 'file'; id: string }
   | { kind: 'plugin'; id: string }
 
 function surfaceOf(value: string): PanelSurface {
-  if (value === 'changes' || value === 'files' || value === 'delivery') return { kind: value }
+  if (value === 'changes' || value === 'files' || value === 'delivery' || value === 'terminal') return { kind: value }
   if (value.startsWith('file:')) return { kind: 'file', id: value.slice(5) }
   return { kind: 'plugin', id: value.slice(7) }
 }
@@ -78,6 +79,8 @@ export function SessionPanels({
   changesTotals,
   delivery,
   deliveryOpen = false,
+  terminal,
+  terminalOpen = false,
   launcherNote,
   launcherTakesFocus,
 }: {
@@ -90,6 +93,9 @@ export function SessionPanels({
   /** The 交付 tab's content, when the Host delivers and the session has a folder. */
   delivery?: ReactNode
   deliveryOpen?: boolean
+  /** The 终端 tab's content, only where the Host offers a terminal (this Mac). */
+  terminal?: ReactNode
+  terminalOpen?: boolean
   /** The number on the tab, only while another tab is showing. */
   changesTotals?: { add: number; del: number; files: number }
   files?: FileTab[]
@@ -154,12 +160,19 @@ export function SessionPanels({
   useEffect(() => {
     if (deliveryOpen) setDeliveryStarted(true)
   }, [deliveryOpen])
+  const [terminalStarted, setTerminalStarted] = useState(terminalOpen)
+  useEffect(() => {
+    if (terminalOpen) setTerminalStarted(true)
+  }, [terminalOpen])
   const showingChanges = changesOpen && !activeFile
   const showingDelivery = deliveryOpen && !activeFile && !showingChanges
-  const showingFiles = showFiles && !activeFile && !showingChanges && !showingDelivery
+  const showingTerminal = terminalOpen && !activeFile && !showingChanges && !showingDelivery
+  const showingFiles = showFiles && !activeFile && !showingChanges && !showingDelivery && !showingTerminal
   const active =
-    !activeFile && !showingChanges && !showingDelivery && !showingFiles ? offered.find(panel => panel.id === plugin) : undefined
-  const launcher = !activeFile && !showingChanges && !showingDelivery && !showingFiles && !active
+    !activeFile && !showingChanges && !showingDelivery && !showingTerminal && !showingFiles
+      ? offered.find(panel => panel.id === plugin)
+      : undefined
+  const launcher = !activeFile && !showingChanges && !showingDelivery && !showingTerminal && !showingFiles && !active
   const tabs: Array<PanelTab<string>> = [
     ...(changes
       ? [
@@ -173,6 +186,7 @@ export function SessionPanels({
         ]
       : []),
     ...(fileContext ? [{ value: 'files', label: '文件', icon: Folder, controls: id }] : []),
+    ...(terminal ? [{ value: 'terminal', label: '终端', icon: SquareTerminal, controls: id }] : []),
     ...(delivery ? [{ value: 'delivery', label: '交付', icon: GitCommitHorizontal, controls: id }] : []),
     ...files.map(tab => {
       const name = escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference)
@@ -193,11 +207,13 @@ export function SessionPanels({
       ? 'changes'
       : showingDelivery
         ? 'delivery'
-        : showingFiles
-          ? 'files'
-          : active
-            ? `plugin:${active.id}`
-            : ''
+        : showingTerminal
+          ? 'terminal'
+          : showingFiles
+            ? 'files'
+            : active
+              ? `plugin:${active.id}`
+              : ''
   return (
     <div className="session-panels">
       <PanelTabs
@@ -228,6 +244,11 @@ export function SessionPanels({
           {delivery}
         </div>
       )}
+      {terminal && terminalStarted && (
+        <div className="session-panel-changes" hidden={!showingTerminal}>
+          {terminal}
+        </div>
+      )}
       {fileContext && treeStarted && (
         <div className="session-file-tree" hidden={!showingFiles}>
           <FileTree
@@ -248,7 +269,7 @@ export function SessionPanels({
       )}
       <div
         className="session-panel-body"
-        hidden={showingChanges || showingDelivery || showingFiles}
+        hidden={showingChanges || showingDelivery || showingTerminal || showingFiles}
         role={launcher ? undefined : 'tabpanel'}
         id={id}
         aria-label={launcher ? undefined : (activeFile?.file?.name ?? active?.title)}>
@@ -294,6 +315,7 @@ export function SessionPanels({
           <PanelLauncher
             {...(changes ? { changes: true } : {})}
             files={!!fileContext}
+            {...(terminal ? { terminal: true } : {})}
             {...(delivery ? { delivery: true } : {})}
             plugins={offered.map(panel => ({ id: panel.id, title: panel.title }))}
             {...(launcherTakesFocus ? { takesFocus: launcherTakesFocus } : {})}

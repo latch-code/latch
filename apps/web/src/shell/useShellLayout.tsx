@@ -246,6 +246,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const canDeliver = catalog?.features?.gitDelivery === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
   const [deliveryWanted, setDeliveryWanted] = useState(false)
   const deliveryOpen = deliveryWanted && canDeliver
+  // Only where the Host offers one (this Mac, a device with run and the full data scope); nowhere else is there a tab.
+  const canTerminal = catalog?.features?.terminal === true && !!summary && !summary.archived && !summary.personal
+  const [terminalWanted, setTerminalWanted] = useState(false)
+  const terminalOpen = terminalWanted && canTerminal
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   useLayoutEffect(() => {
@@ -257,6 +261,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded(false)
     setChangesWanted(false)
     setDeliveryWanted(false)
+    setTerminalWanted(false)
     setChangesTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
@@ -278,14 +283,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const placement =
     !summary && !filesVisible
       ? null
-      : (filesVisible || changesOpen || deliveryOpen || pluginPanel !== undefined) && fileExpanded
+      : (filesVisible || changesOpen || deliveryOpen || terminalOpen || pluginPanel !== undefined) && fileExpanded
         ? { kind: 'page' as const }
         : placed
   const pageMode = placement?.kind === 'page'
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
-    && (filesVisible || changesOpen || deliveryOpen || (!!summary && preferences.rightPanel.open))
+    && (filesVisible || changesOpen || deliveryOpen || terminalOpen || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
@@ -588,6 +593,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     launcherAsked.current = surface.kind === 'launcher'
     setChangesWanted(surface.kind === 'changes')
     setDeliveryWanted(surface.kind === 'delivery')
+    setTerminalWanted(surface.kind === 'terminal')
     setFilesOpen(surface.kind === 'files')
     setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
     fileTabs.select(surface.kind === 'file' ? surface.id : undefined)
@@ -608,15 +614,18 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         ? { kind: 'changes' }
         : deliveryOpen
           ? { kind: 'delivery' }
-          : filesOpen
-            ? { kind: 'files' }
-            : pluginPanel !== undefined
-              ? { kind: 'plugin', id: pluginPanel }
-              : { kind: 'launcher' }
+          : terminalOpen
+            ? { kind: 'terminal' }
+            : filesOpen
+              ? { kind: 'files' }
+              : pluginPanel !== undefined
+                ? { kind: 'plugin', id: pluginPanel }
+                : { kind: 'launcher' }
   const closePanel = () => {
     lastSurface.current = shownSurface()
     setChangesWanted(false)
     setDeliveryWanted(false)
+    setTerminalWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setFileExpanded(false)
@@ -628,10 +637,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (!canViewChanges) return
     setChangesWanted(true)
     setDeliveryWanted(false)
+    setTerminalWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setInfoPage(true)
     if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
+  }
+  const toggleTerminal = () => {
+    if (terminalOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
+    else if (canTerminal) showSurface({ kind: 'terminal' })
   }
   const toggleChanges = () => {
     if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
@@ -730,6 +744,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     if (action === 'changes') {
       if (canViewChanges) toggleChanges()
+      return
+    }
+    if (action === 'terminal') {
+      if (canTerminal) toggleTerminal()
       return
     }
     if (action === 'settings') {
@@ -939,6 +957,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (!canBrowseFiles) return
     setChangesWanted(false)
     setDeliveryWanted(false)
+    setTerminalWanted(false)
     if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
       setInfoPage(false)
@@ -1132,6 +1151,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     changesOpen,
     canDeliver,
     deliveryOpen,
+    canTerminal,
+    terminalOpen,
+    toggleTerminal,
     showSurface,
     launcherTakesFocus,
     closePanel,

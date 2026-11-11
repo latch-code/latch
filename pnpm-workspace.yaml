@@ -50,6 +50,8 @@ catalog:
   mermaid: 12.2.0
   '@aiden0z/pptx-renderer': 1.4.0
   '@tanstack/react-virtual': 3.14.21
+  '@xterm/xterm': 6.0.0
+  '@xterm/addon-fit': 0.11.0
   docx-preview: 0.4.1
   fflate: 0.8.3
   numfmt: 4.0.1

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AGENT_PRESETS, type AppSnapshot, type TaskSummary } from '@latch/protocol'
-import { Shield, TriangleAlert } from 'lucide-react'
+import { Shield, SquareTerminal, TriangleAlert } from 'lucide-react'
 import { Button, ButtonLink, DevMark, Hint, Icon, InlineNotice, Meter, StatusWord, SwitchRow } from '@latch/ui'
 import type { UpdateView } from '../core/shell.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
@@ -325,6 +325,12 @@ function Licences() {
   )
 }
 
+/** Said once, where a device has no 终端 tab: there is no dead entry to explain it. */
+const TERMINAL_ELSEWHERE = {
+  label: '终端只在运行 Latch 的 Mac 上',
+  detail: '终端以你在那台 Mac 上的账户运行，只在那台 Mac 的 Latch 桌面端打开；其他设备上没有终端，也看不到它的输出。',
+}
+
 export function AboutSettings({
   snapshot,
   access,
@@ -396,6 +402,11 @@ export function AboutSettings({
           }
         />
       </SettingsGroup>
+      {!snapshot.catalog?.features?.terminal && (
+        <SettingsGroup bare note={<NoteLine icon={SquareTerminal} brief={TERMINAL_ELSEWHERE} />}>
+          {null}
+        </SettingsGroup>
+      )}
     </>
   )
   return (

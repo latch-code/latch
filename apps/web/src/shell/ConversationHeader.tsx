@@ -8,6 +8,7 @@ import {
   Folder,
   FolderGit2,
   GitCompare,
+  SquareTerminal,
   PanelRight,
   Pencil,
   RefreshCw,
@@ -530,6 +531,9 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     canViewChanges,
     changesOpen,
     toggleChanges,
+    canTerminal,
+    terminalOpen,
+    toggleTerminal,
     fileTabs,
     current,
     snapshot,
@@ -628,8 +632,19 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
             },
           }
         : {})}
-      slots={
-        canViewChanges
+      slots={{
+        ...(canTerminal && !phone
+          ? {
+              terminal: {
+                label: '终端',
+                icon: SquareTerminal,
+                shortcut: desktop ? '⌘J' : 'Alt J',
+                pressed: terminalOpen && !fileTabs.active,
+                onToggle: toggleTerminal,
+              },
+            }
+          : {}),
+        ...(canViewChanges
           ? {
               changes: {
                 label: '改动',
@@ -640,8 +655,8 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
                 onToggle: toggleChanges,
               },
             }
-          : {}
-      }
+          : {}),
+      }}
     />
   )
 }
