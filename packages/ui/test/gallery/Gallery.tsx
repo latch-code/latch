@@ -50,6 +50,7 @@ import {
   Icon,
   IconButton,
   ICON_STROKE,
+  Hint,
   InlineNotice,
   Kbd,
   Meter,
@@ -1369,6 +1370,10 @@ function Layers() {
 function Notices() {
   return (
     <Section title="横幅与内联提示">
+      <Hint label="OpenCode 自己的设置" defaultOpen>
+        Latch 只核对它选的是哪一项，不核对它实际怎么做，也不隔离它。
+      </Hint>
+      <Hint label="发第一条消息后可以换" />
       <InlineNotice tone="warn" title="连接已中断，正在重连…" action={<Button size="xs">重试</Button>}>
         已显示的内容都在，重连后会补齐这一轮的输出。
       </InlineNotice>

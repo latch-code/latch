@@ -165,3 +165,41 @@
     transition: none;
   }
 }
+
+/*
+ * Hint: a fact in a few words. A 14px lead (a brand mark or a muted glyph), the label in muted caption type, and an ⓘ
+ * that unfolds the detail under the label in place; the detail starts on the label's column.
+ */
+.ui-hint {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--sp-8);
+  align-items: center;
+  min-height: 28px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-hint-lead {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+}
+.ui-hint-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-hint > .ui-icon-button {
+  color: var(--muted);
+}
+.ui-hint[data-open] > .ui-icon-button {
+  color: var(--ink);
+}
+.ui-hint-detail {
+  grid-column: 2 / -1;
+  padding-bottom: var(--sp-4);
+  color: var(--ink-2);
+  line-height: var(--lh-caption-para);
+}

@@ -42,6 +42,14 @@ export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> =
 export const AUDIT_NOT_RECORDED_TEXT = '改动已生效，但没有写入记录'
 const LOCAL_ONLY_TEXT = '只能在 Mac 上的 Latch 里操作'
 
+/** A fact as the UI shows it: a short label always, and the fine print one press away (`Hint`), if any. */
+export interface Brief {
+  label: string
+  detail?: string
+  /** A Harness's mark to lead the label, where the fact is about that Harness. */
+  mark?: string
+}
+
 /**
  * The computer a go-there sentence sends a person on another device to: its own name (`snapshot.hostName`), or 「Mac」
  * where the page does not know it (the connection page, an older Host) or the name would need escaping. The Latch app on
@@ -731,13 +739,19 @@ export const MODE_COPY = {
   reading: '正在读取…',
   readingLine: (agent: string) => `正在读取 ${agent} 的权限…`,
   /** Under the current row before start: the rows Latch can set are the ones the agent's session offers. */
-  changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 开始会话时才给出其他几项。`,
+  changeAfterStart: (agent: string): Brief => ({ label: '发第一条消息后可以换', detail: `${agent} 开始会话时才给出其他几项。` }),
   /** The same, for a Harness whose read reports them before any session. */
-  changeAfterRead: (agent: string) => `读取 ${agent} 的权限后可以换。`,
-  modesReading: (agent: string) => `正在读取 ${agent} 的权限…`,
-  modesUnread: (agent: string) => `没有读到 ${agent} 的权限。发第一条消息后可以换。`,
-  /** Under the rows of a running agent. */
-  agentOwnSetting: (agent: string) => `这是 ${agent} 自己的设置。Latch 只核对它选的是哪一项，不核对它实际怎么做，也不隔离它。`,
+  changeAfterRead: (agent: string): Brief => ({ label: `读取 ${agent} 的权限后可以换` }),
+  modesReading: (agent: string): Brief => ({ label: `正在读取 ${agent} 的权限…` }),
+  modesUnread: (agent: string): Brief => ({ label: `没有读到 ${agent} 的权限`, detail: '发第一条消息后可以换。' }),
+  /**
+   * Under the rows of a running agent: whose setting it is, with the mark; that Latch checks only which row it picked
+   * and does not isolate it stays one press away (no isolation may be implied).
+   */
+  agentOwnSetting: (agent: string): Brief => ({
+    label: `${agent} 自己的设置`,
+    detail: 'Latch 只核对它选的是哪一项，不核对它实际怎么做，也不隔离它。',
+  }),
   /** Latch's word for each tier of a harness's modes; the line under it is the harness's own. */
   tierTitles: { plan: '只看不改', ask: '先问你', rule: '按规则放行', model: '由模型判断', never: '不再询问' },
   /** A fork onto a Harness without the source's row: the row it takes instead, never a wider one unless there is none. */

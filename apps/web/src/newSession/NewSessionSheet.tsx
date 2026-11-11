@@ -398,7 +398,7 @@ export function NewSessionSheet({
                       {morePermission ? MODE_COPY.fewer : MODE_COPY.more}
                     </Button>
                   )}
-                  <MenuFooterNote>{permission.note ?? permission.line}</MenuFooterNote>
+                  <MenuFooterNote>{permission.note?.label ?? permission.line}</MenuFooterNote>
                 </>
               }
               onValueChange={value => {

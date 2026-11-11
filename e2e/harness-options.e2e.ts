@@ -157,10 +157,11 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(await agent()).toEqual([])
     // Codex's own model list says nothing of its modes, so 权限 reads nothing and says they come with the session.
     await chip(page, '权限').click()
-    await page
-      .locator('.permission-list-note')
-      .getByText('发第一条消息后可以换：Codex 开始会话时才给出其他几项。', { exact: true })
-      .waitFor()
+    // A short label; why stays behind its ⓘ.
+    const later = page.locator('.permission-list-note')
+    await later.getByText('发第一条消息后可以换', { exact: true }).waitFor()
+    await later.getByRole('button', { name: '说明', exact: true }).click()
+    await later.getByText('Codex 开始会话时才给出其他几项。', { exact: true }).waitFor()
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
     expect(await agent()).toEqual([])

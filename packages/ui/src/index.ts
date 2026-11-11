@@ -32,7 +32,7 @@ export {
 } from './menu.tsx'
 export { CopyButton, useCopy } from './copy.tsx'
 export { Group, Row } from './group.tsx'
-export { InlineNotice, Toast, type NoticeTone, type ToastTone } from './notice.tsx'
+export { Hint, InlineNotice, Toast, type NoticeTone, type ToastTone } from './notice.tsx'
 export { Badge, Count, Kbd, StatusDot, StatusPill, keyGlyphs, type CountTone, type Tone } from './pill.tsx'
 export { ResizeHandle, type ResizePhase } from './resize.tsx'
 export { SegmentedControl, type SegmentOption } from './segmented.tsx'

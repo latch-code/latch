@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { CircleX, Info, TriangleAlert, X } from 'lucide-react'
 import { IconButton } from './button.tsx'
 import { Icon } from './icon.tsx'
@@ -50,6 +50,58 @@ export function InlineNotice({
       </div>
       {action && <div className="ui-notice-action">{action}</div>}
       {onClose && <IconButton label={closeLabel} icon={X} size="xs" onClick={onClose} />}
+    </div>
+  )
+}
+
+/**
+ * A fact in a few words, with the rest one press away: a glyph or mark, a short label, and an ⓘ that unfolds the detail
+ * under it in place (so it works by touch and keyboard, and inside a menu). Use it where a surface would otherwise
+ * carry a sentence of explanation: the label says what the thing is, the detail says the fine print for whoever asks.
+ */
+export function Hint({
+  label,
+  lead,
+  children,
+  moreLabel = '说明',
+  defaultOpen = false,
+  className,
+}: {
+  label: ReactNode
+  /** A mark or glyph before the label; the info glyph by default. */
+  lead?: ReactNode
+  /** The detail. Without it the hint is the label alone. */
+  children?: ReactNode
+  moreLabel?: string
+  /** Starts unfolded, as a static sheet of the design system shows it. */
+  defaultOpen?: boolean
+  className?: string
+}) {
+  const id = useId()
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={cx('ui-hint', className)} data-open={open ? '' : undefined}>
+      <span className="ui-hint-lead" aria-hidden="true">
+        {lead ?? <Icon icon={Info} size={12} />}
+      </span>
+      <span className="ui-hint-label">{label}</span>
+      {children && (
+        <IconButton
+          label={moreLabel}
+          icon={Info}
+          size="xs"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => {
+            setOpen(!open)
+          }}
+        />
+      )}
+      {children && open && (
+        <p id={id} className="ui-hint-detail">
+          {children}
+        </p>
+      )}
     </div>
   )
 }

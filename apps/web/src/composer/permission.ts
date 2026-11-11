@@ -1,6 +1,6 @@
 import type { HarnessInfo, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
-import { MODE_COPY } from '../core/securityCopy.ts'
+import { MODE_COPY, type Brief } from '../core/securityCopy.ts'
 import { contextTotals } from './sessionTotals.ts'
 
 export type ModeIcon = 'eye' | 'shield' | 'list-checks' | 'scale' | 'shield-alert'
@@ -76,8 +76,8 @@ export interface PermissionView {
   amber: boolean
   /** Nothing can ask, so the menu has no question to put at its head. */
   asksNothing?: boolean
-  /** The one honest limit, under the rows. */
-  note?: string
+  /** The one honest limit, under the rows: a short label, the fine print behind its ⓘ. */
+  note?: Brief
   option?: SessionConfigOption
   rows?: PermissionRow[]
 }
@@ -108,7 +108,7 @@ export function draftRead(
  * Under a draft's one declared row: when the other modes can be chosen. A read reports them where it opens a session;
  * Codex's own model list does not, so its modes come with the first session.
  */
-function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { note?: string } {
+function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { note?: Brief } {
   const name = harness.capabilities.display.label
   const readsModes = harness.catalogueRead?.modes === true
   // What a session or such a read reported had no modes: there is nothing to change to.
@@ -193,7 +193,10 @@ export function permissionView(input: {
     line: current?.line ?? '',
     icon: current?.icon ?? 'shield',
     amber: current?.neverAsks === true,
-    note: MODE_COPY.agentOwnSetting(harness.capabilities.display.label),
+    note: {
+      ...MODE_COPY.agentOwnSetting(harness.capabilities.display.label),
+      ...(harness.capabilities.display.mark ? { mark: harness.capabilities.display.mark } : {}),
+    },
     option,
     rows,
   }
