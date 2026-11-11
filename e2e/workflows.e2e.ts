@@ -37,8 +37,12 @@ describe('session search and workbench navigation', () => {
         await result.waitFor()
         await result.click()
         await page.locator('.transcript [data-search-target]').first().waitFor()
-        // The branch, under the input at every width.
-        await page.locator('.composer-branch').filter({ hasText: 'feature/quiet-ui' }).first().waitFor()
+        // The branch: under the input where the status line has room, in the title's second line on a phone.
+        await page
+          .locator(width < 768 ? '.topbar-branch' : '.composer-branch')
+          .filter({ hasText: 'feature/quiet-ui' })
+          .first()
+          .waitFor()
         await page.keyboard.press('Meta+f')
         const find = page.getByRole('search', { name: '会话内查找' })
         await find.getByRole('searchbox', { name: '查找消息内容' }).fill('hello')
@@ -66,15 +70,19 @@ describe('session search and workbench navigation', () => {
           expect((await owner.json<TaskDetail>('tasks/' + created.sessionId)).summary.status).not.toBe('cancelled')
           await input.press('Escape')
           await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + created.sessionId)).summary.status).toBe('cancelled')
+          // The shortcuts lie over the session; Esc puts them away.
           await page.keyboard.press('Alt+/')
           await page.getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
-          await openSessions(page)
+          await page.keyboard.press('Escape')
+          await page.locator('.shortcuts-overlay').waitFor({ state: 'hidden' })
           await page.keyboard.press('Alt+b')
           await page.getByRole('button', { name: '展开侧栏', exact: true }).waitFor()
           await page.keyboard.press('Alt+b')
           await page.getByRole('button', { name: '收起侧栏', exact: true }).waitFor()
           await page.keyboard.press('Alt+n')
           await page.locator('.new-session-title').waitFor()
+          // In a field a Mac browser's ⌥, types ≤; the keys are the app's once focus has left it.
+          await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
           await page.keyboard.press('Alt+,')
           await page.locator('.settings-page').waitFor()
           await openSessions(page)

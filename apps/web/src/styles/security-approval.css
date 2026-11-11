@@ -459,3 +459,8 @@
   flex-shrink: 0;
   margin-top: var(--sp-2);
 }
+
+/* A key cap whose key does not work from where focus is keeps its room but is not drawn, so the buttons never move. */
+[data-secure] .ui-button[data-keys-idle] > .ui-button-keys {
+  visibility: hidden !important;
+}

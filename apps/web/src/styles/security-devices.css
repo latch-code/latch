@@ -100,6 +100,10 @@
 [data-secure] .ui-switch[aria-checked='true']::before {
   background-color: var(--accent) !important;
 }
+/* Secure surfaces reset translate so added styles cannot move their parts; an on switch's thumb still sits on the right. */
+[data-secure] .ui-switch[aria-checked='true'] > .ui-switch-thumb {
+  translate: calc(var(--track-width) - var(--thumb-size) - 4px) 0 !important;
+}
 [data-secure] .ui-switch[aria-disabled='true'] {
   opacity: 0.45 !important;
 }

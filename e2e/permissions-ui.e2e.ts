@@ -164,12 +164,20 @@ describe('permission states in a browser', () => {
     expect(await composer.inputValue()).toBe('')
   })
 
-  /** The key caps a card's button draws, as their glyphs ('' when it draws none). */
+  /**
+   * The key caps a card's button draws, as their glyphs ('' when it draws none). A cap whose key does not work from where
+   * focus is keeps its room hidden, so the buttons do not move under a press; hidden caps are not drawn.
+   */
   const caps = (card: Locator, name: string) =>
     card
       .getByRole('button', { name, exact: true })
       .locator('.ui-button-keys')
-      .evaluateAll(spans => spans.map(span => span.textContent ?? '').join(''))
+      .evaluateAll(spans =>
+        spans
+          .filter(span => getComputedStyle(span).visibility !== 'hidden')
+          .map(span => span.textContent ?? '')
+          .join(''),
+      )
 
   it('draws a key cap only where the key does it now, and ⌘⏎ in the input rejects with what was written', async () => {
     const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {

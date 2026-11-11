@@ -310,6 +310,16 @@ function ApprovalPanel({
     if (reject) choose(reject)
   })
   const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectLabel })
+  // The caps this card can show at all keep their room while focus is elsewhere (hidden, not removed): a cap appearing as
+  // a press moves focus into the card would widen 允许 and slide 更多 out from under the pointer before it is released.
+  const room = approvalKeyCaps({
+    phone,
+    shortcut: shortcut && armed && !running,
+    escapes,
+    inCard: true,
+    escapeRefuses: true,
+    rejectLabel,
+  })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     if (running || !armed || event.defaultPrevented) return
     if (!takesKeysAt(event.target)) return
@@ -346,7 +356,13 @@ function ApprovalPanel({
     menuItems.length > 0 ? (
       <Menu label={APPROVAL_COPY.moreChoices} align="end" side="top" sections={[{ id: 'more', items: menuItems }]} trigger={moreTrigger} />
     ) : null
-  const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string, keys: string[] | undefined): ReactNode => {
+  const button = (
+    option: ApprovalOption,
+    variant: 'primary' | 'outline',
+    label: string,
+    keys: string[] | undefined,
+    live: boolean,
+  ): ReactNode => {
     const pressed = busy === option.id
     return (
       <Button
@@ -354,6 +370,7 @@ function ApprovalPanel({
         variant={variant}
         size={phone ? 'lg' : 'md'}
         keys={keys}
+        data-keys-idle={keys && !live ? '' : undefined}
         tooltip={label === option.label ? undefined : option.label}
         loading={pressed}
         disabled={!armed || (running && !pressed)}
@@ -439,8 +456,8 @@ function ApprovalPanel({
         </div>
         <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
           {moreMenu}
-          {reject && button(reject, 'outline', rejectLabel ?? optionLabel(reject, gate), caps.reject)}
-          {allow && button(allow, primary ? 'primary' : 'outline', optionLabel(allow, gate), caps.allow)}
+          {reject && button(reject, 'outline', rejectLabel ?? optionLabel(reject, gate), room.reject, caps.reject !== undefined)}
+          {allow && button(allow, primary ? 'primary' : 'outline', optionLabel(allow, gate), room.allow, caps.allow !== undefined)}
         </div>
       </div>
       {(risky || gate.note || hidden || previousNotes.length > 0 || gate.hint) && (

@@ -159,7 +159,12 @@ it.each([
           .toBe(true)
         expect(await page.locator('.transcript [data-approval-target]').count()).toBe(1)
         await reachable(card)
-        await noHorizontalOverflow(page, card)
+        // A row's light reaches 8 past its words by design (the rail), so the card is measured against the column it sits
+        // in: it ends inside the transcript, and the transcript does not scroll sideways.
+        const transcript = page.locator('.transcript').first()
+        const [cardBox, columnBox] = await Promise.all([card.boundingBox(), transcript.boundingBox()])
+        expect(cardBox!.x + cardBox!.width).toBeLessThanOrEqual(columnBox!.x + columnBox!.width)
+        await noHorizontalOverflow(page, transcript)
       }
       await mkdir('test-results/workbench-keyboard', { recursive: true })
       await page.screenshot({ path: `test-results/workbench-keyboard/approval-${width}-${theme}.png`, animations: 'disabled' })

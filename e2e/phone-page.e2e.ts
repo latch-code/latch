@@ -424,6 +424,16 @@ describe('设置 › 设备', () => {
       await files.click()
       await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'all' })
       await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
+      // Inside a secure group the thumb still slides: on means it sits in the track's right half.
+      await expect
+        .poll(() =>
+          files.evaluate(track => {
+            const thumb = track.querySelector('.ui-switch-thumb')!.getBoundingClientRect()
+            const box = track.getBoundingClientRect()
+            return thumb.left + thumb.width / 2 > box.left + box.width / 2
+          }),
+        )
+        .toBe(true)
       await files.click()
       await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'work' })
       await backToSection(page.locator('.settings-page'))

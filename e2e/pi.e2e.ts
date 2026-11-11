@@ -370,8 +370,12 @@ describe('pi over its own RPC mode', () => {
         await sheet.waitFor()
         await sheet.getByRole('button', { name: /^模型/u }).click()
       } else await chip(page, '模型').click()
-      await page.getByText('pi 自己的模型', { exact: true }).waitFor()
-      await page.getByText(reason, { exact: true }).waitFor()
+      // The menu's group, not the status line under the input, which names the same thing.
+      const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
+      await inMenu('pi 自己的模型').waitFor()
+      // The services pi cannot use fold into one row; opening it says why.
+      await inMenu('另有 1 个模型服务，这个 Harness 用不了').click()
+      await inMenu(reason).waitFor()
       // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.
       expect(await page.getByText(/「经 Latch」/u).count()).toBe(0)
       await noHorizontalOverflow(page)
