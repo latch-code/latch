@@ -36,7 +36,7 @@ export function CodeRootNotice({
         ) : undefined
       }>
       {CODE_ROOT_COPY.notice}
-      {start && CODE_ROOT_COPY.startDir}
+      {start && ` · ${CODE_ROOT_COPY.startDir}`}
     </InlineNotice>
   )
 }

@@ -1,6 +1,7 @@
 import { BookOpen, Code, Database, FlaskConical, Folder, Folders, Globe, PenTool, Server, Smartphone, Wrench } from 'lucide-react'
 import type { HarnessInfo, ProjectGlyph, TaskSummary, WorkspaceFolder, WorkspaceInfo } from '@latch/protocol'
 import { Icon, type LucideIcon } from '@latch/ui'
+import type { Brief } from './core/securityCopy.ts'
 import { basename } from './format.ts'
 
 export const PROJECT_ICONS: Record<ProjectGlyph, { label: string; icon: LucideIcon }> = {
@@ -50,14 +51,18 @@ export function projectSessionCount(project: WorkspaceInfo, tasks: readonly Task
   ).length
 }
 
-/** Explain the selected driver's actual multi-folder support before a session starts. */
-export function projectScopeCaption(project: WorkspaceInfo | undefined, harness: HarnessInfo | undefined): string | undefined {
+/**
+ * The selected driver's actual multi-folder support before a session starts: the folder it gets, and behind ⓘ what it
+ * does past it (a Harness that does not limit itself must not read as limited).
+ */
+export function projectScopeCaption(project: WorkspaceInfo | undefined, harness: HarnessInfo | undefined): Brief | undefined {
   if (!project || !harness || projectFolders(project).length < 2 || harness.projectFolders?.access === 'all') return undefined
   const primary = basename(project.path)
+  const name = harness.capabilities.display.label
   const access = harness.projectFolders?.access
   return access === 'primary-asks'
-    ? `${harness.capabilities.display.label} 只使用主文件夹「${primary}」，访问其他文件夹前会询问你`
+    ? { label: `只用主文件夹「${primary}」`, detail: `${name} 访问其他文件夹前会询问你。` }
     : access === 'primary-unbounded'
-      ? `${harness.capabilities.display.label} 只收到主文件夹「${primary}」；它不限制可以访问的目录`
-      : `${harness.capabilities.display.label} 只能使用主文件夹「${primary}」`
+      ? { label: `只收到主文件夹「${primary}」`, detail: `${name} 不限制可以访问的目录。` }
+      : { label: `只能用主文件夹「${primary}」`, detail: `${name} 用不了这个项目的其他文件夹。` }
 }

@@ -262,7 +262,7 @@ export function QuestionDrawer({
         </button>
       </div>
       {!canAnswer && <InlineNotice>{disabledReason ?? '此设备没有回答权限。'}</InlineNotice>}
-      {question.state === 'answering' && !draft.pending && <InlineNotice>已接收另一份回答，正在继续执行。</InlineNotice>}
+      {question.state === 'answering' && !draft.pending && <InlineNotice>已在别处回答</InlineNotice>}
       {state.error && <InlineNotice tone="error">{state.error}</InlineNotice>}
       {(current.multiple || draft.step > 0 || draft.pending) && (
         <div className="question-actions">

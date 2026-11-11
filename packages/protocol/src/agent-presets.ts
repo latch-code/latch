@@ -56,8 +56,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'Apache-2.0 适配器；Claude Code 专有',
     homepage: 'https://github.com/agentclientprotocol/claude-agent-acp',
-    description:
-      '通过适配器运行 Claude Code，使用你在 Claude Code 中已有的登录；Latch 不提供登录，也不读取凭据，只显示它报告的登录状态与到期日。',
+    description: '用你在 Claude Code 中已有的登录；Latch 不读取凭据。',
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',
     installNote: '还要在 Claude Code 中登录',
     signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
@@ -71,7 +70,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'MIT',
     homepage: 'https://github.com/earendil-works/pi',
-    description: '模型与登录由 pi 管理。pi 执行工具前不请求审批，只有 pi 扩展要求确认时 Latch 才会问你。',
+    description: '模型与登录由 pi 管理；执行工具前不询问。',
     install: 'npm i -g @earendil-works/pi-coding-agent',
     installNote: '0.84.4 或更高版本',
     login: { command: 'pi', args: [], note: '进入 pi 后输入 /login，按提示登录。' },

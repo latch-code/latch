@@ -741,7 +741,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   color: var(--muted);
 }
 /* How a fork carries its source, and what it could not take from it: each on its own line under the fork's sentence. */
-.fork-own,
 .fork-missed {
   display: block;
   margin-top: var(--sp-4);

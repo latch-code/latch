@@ -65,16 +65,14 @@ describe('the services a Harness cannot use, folded into one row', () => {
 
   it('says of a Harness Latch does not forward yet that it is not done, since a step builds it', () => {
     const info = opencode()
-    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(
-      Array(3).fill('让 Latch 把 OpenCode 的请求转给它，尚未实现'),
-    )
+    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('转发 OpenCode 的请求尚未实现'))
     expect(ownModelGroups(catalogOf(info), info, []).map(group => group.id)).toEqual(['~own'])
   })
 
   it('says of a Harness that uses only its own models that it does not, never that it is unfinished', () => {
     const info = testHarness('claude-agent', { label: 'Claude Agent' })
     info.capabilities.models = { ...info.capabilities.models, wires: [], ownOnly: true }
-    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('Claude Agent 不经 Latch 用模型服务'))
+    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('Claude Agent 只用自己的模型'))
   })
 
   it('keeps the rule that a session stays on the service it started with, with its reason', () => {
@@ -85,7 +83,7 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const groups = ownModelGroups(catalog, info, [{ value: 'openai-model', label: 'openai-model' }], { route })
     expect(groups.at(-1)).toMatchObject({
       label: '模型服务',
-      options: [{ label: 'Relay', disabledReason: '换服务要新开会话：开始时确认的是这个服务。' }],
+      options: [{ label: 'Relay', disabledReason: '开始后不能换服务' }],
     })
     // The session's own service is never among the ones it cannot use.
     expect(unusableServices(catalog, info, undefined, { route }).map(item => item.name)).toEqual(['DeepSeek'])
@@ -108,7 +106,7 @@ describe('the services a Harness cannot use, folded into one row', () => {
 
   it('draws one folded row with the count, and no service until it is opened', () => {
     const html = renderToStaticMarkup(createElement(UnusableServices, { services: unusableServices(catalogOf(codex()), codex()) }))
-    expect(html).toContain('另有 2 个模型服务，这个 Harness 用不了')
+    expect(html).toContain('2 个服务用不了')
     expect(html).not.toContain('DeepSeek')
     expect(renderToStaticMarkup(createElement(UnusableServices, { services: [] }))).toBe('')
   })
@@ -125,8 +123,10 @@ describe('the services a Harness cannot use, folded into one row', () => {
       }),
     )
     expect(html).toContain('OpenAI · 实验性 · 经 Latch')
-    expect(html).toContain('另有 2 个模型服务，这个 Harness 用不了')
-    expect(html.indexOf('另有 2 个')).toBeGreaterThan(html.indexOf('经 Latch'))
+    expect(html).toContain('2 个服务用不了')
+    expect(html.indexOf('2 个服务用不了')).toBeGreaterThan(html.indexOf('经 Latch'))
+    // What 「经 Latch」 means, and whose key it uses, stays one press away under a short label.
+    expect(html).toMatch(/<span class="ui-hint-label">经 Latch 转发<\/span><button[^>]*aria-label="说明"/u)
   })
 })
 
@@ -134,9 +134,10 @@ describe("Latch's own sentences on another computer's page", () => {
   it('names the computer where the app on that Mac says 这台 Mac', () => {
     expect(onComputer('能读写这台 Mac 上的文件并运行命令', 'studio-mini')).toBe('能读写 studio-mini 上的文件并运行命令')
     expect(onComputer('能读写这台 Mac 上的文件并运行命令', undefined)).toBe('能读写这台 Mac 上的文件并运行命令')
-    expect(ROUTE_NOTE('Codex', 'studio-mini')).toBe(
-      '「经 Latch」表示请求由 Latch 在 studio-mini 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
-    )
+    expect(ROUTE_NOTE('Codex', 'studio-mini')).toEqual({
+      label: '经 Latch 转发',
+      detail: '「经 Latch」表示请求由 Latch 在 studio-mini 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
+    })
   })
 })
 
@@ -160,15 +161,17 @@ describe('分叉 in the session Harness popover', () => {
   const render = (fork?: Parameters<typeof SessionHarnessControl>[0]['fork']) =>
     renderToStaticMarkup(createElement(SessionHarnessControl, { harness: codex(), onNewSession() {}, fork }))
 
-  it('offers a fork of the latest turn that may change Harness, and says files are not copied or rolled back', () => {
+  it('offers a fork of the latest turn that may change Harness, under the lock that keeps this one', () => {
     const html = render({ onFork() {} })
-    expect(html).toContain('从最后一轮分叉，可以换 Harness；文件不会复制或回滚。')
+    expect(html).toContain('开始后不能换 Harness')
+    // That files are not copied or rolled back is on the fork notice that follows, behind its ⓘ.
+    expect(html).toContain('从最后一轮，可以换 Harness')
     expect(html).not.toContain('aria-disabled')
   })
 
   it('stays readable but off while the latest turn runs, with the reason', () => {
     const html = render({ onFork() {}, blocked: FORK_BUSY })
-    expect(html).toMatch(/aria-disabled="true"[^>]*>.*请等这一轮结束后再从这里分叉/su)
+    expect(html).toMatch(/aria-disabled="true"[^>]*>.*这一轮结束后才能分叉/su)
   })
 
   it('has no fork row where the Host cannot fork or the device may not start a session', () => {

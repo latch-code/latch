@@ -16,7 +16,7 @@ import {
 import { Icon, IconButton, MenuFooterLink, MenuFooterNote, Popover, ValuePicker, useLayerClose, type PickerGroup } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { MODEL_MENU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
+import { MODEL_MENU_COPY, SETUP_COPY, type Brief } from '../core/securityCopy.ts'
 import {
   draftConfig,
   engineEntries,
@@ -49,6 +49,7 @@ import {
   unreportedModelNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
+import { BriefHint } from './BriefHint.tsx'
 import { ConfigFeedback } from './ThinkingControl.tsx'
 import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 
@@ -112,7 +113,6 @@ function PinChoiceRow({
   }
   return (
     <>
-      {pinned && <p className="model-note">这台 Mac 上每个新会话都从这里开始，临时换一个只影响那一次。</p>}
       {error && (
         <p className="model-note" data-tone="error">
           {error}
@@ -241,7 +241,7 @@ export function DraftHarnessControl({
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
-      header={{ title: '开始后这个会话不能换 Harness。', ...(keys ? { meta: keys } : {}) }}
+      header={{ title: '开始后不能换 Harness', ...(keys ? { meta: keys } : {}) }}
       width={adding ? 360 : 340}
       leading={harness ? <HarnessTile harness={harness} size={16} /> : Sparkles}
       className="harness-picker"
@@ -295,7 +295,7 @@ export function DraftHarnessControl({
 }
 
 /** Why 分叉 is off while the latest turn runs: the Host refuses a fork from a turn that has not ended. */
-export const FORK_BUSY = '请等这一轮结束后再从这里分叉'
+export const FORK_BUSY = '这一轮结束后才能分叉'
 
 /** 分叉 in the session's Harness popover: the latest turn into a new session, which may pick another Harness. */
 export interface SessionFork {
@@ -330,7 +330,7 @@ export function SessionHarnessControl({
         </button>
       )}>
       <div className="model-footer">
-        <p className="model-note">会话开始后不能换 Harness。要换就新开一个会话，或从某一轮分叉。</p>
+        <MenuFooterNote>开始后不能换 Harness</MenuFooterNote>
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={Plus} chevron={false} closes onClick={onNewSession}>
           新会话
@@ -359,7 +359,7 @@ function ForkRow({ fork }: { fork: SessionFork }) {
       </span>
       <span className="harness-fork-text">
         <span>分叉</span>
-        <span className="harness-fork-line">{fork.blocked ?? '从最后一轮分叉，可以换 Harness；文件不会复制或回滚。'}</span>
+        <span className="harness-fork-line">{fork.blocked ?? '从最后一轮，可以换 Harness'}</span>
       </span>
     </button>
   )
@@ -456,12 +456,14 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
-export const ROUTE_NOTE = (name: string, computer?: string) =>
-  onComputer(
+export const ROUTE_NOTE = (name: string, computer?: string): Brief & { detail: string } => ({
+  label: '经 Latch 转发',
+  detail: onComputer(
     `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
     computer,
-  )
-const ROUTE_LOCKED = '换服务要新开会话：开始时确认的是这个服务。'
+  ),
+})
+const ROUTE_LOCKED = '开始后不能换服务'
 
 /**
  * The service a session's route goes to, as its menu names it, and why its next turn cannot go through Latch when the
@@ -492,13 +494,23 @@ export function routeService(
   return { name, unusable: { words, note: `这个会话开始时用的「${name}」${words}，下一轮会失败。${fix}，或新开一个会话。` } }
 }
 
-/** What a session on a route says of it in its model menu. */
-function routeNote(catalog: HostCatalog, name: string, route: NonNullable<TaskSummary['modelRoute']>, computer?: string): string {
+/** What a session on a route says of it in its model menu: a failure in full, else a few words with the rest behind ⓘ. */
+function routeNote(
+  catalog: HostCatalog,
+  name: string,
+  route: NonNullable<TaskSummary['modelRoute']>,
+  computer?: string,
+): { failure: string } | { brief: Brief; tone?: 'warn' } {
   const service = routeService(catalog, route, computer)
-  if (service.unusable) return service.unusable.note
+  if (service.unusable) return { failure: service.unusable.note }
   return route.bypassed
-    ? `这个会话有一轮没有经过 Latch：那一轮可能用了 ${name} 自己的登录或配置。`
-    : onComputer(`这个会话经 Latch 用「${service.name}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`, computer)
+    ? { brief: { label: '有一轮没经过 Latch', detail: `那一轮可能用了 ${name} 自己的登录或配置。` }, tone: 'warn' }
+    : {
+        brief: {
+          label: `经 Latch 用「${service.name}」`,
+          detail: onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer),
+        },
+      }
 }
 
 /**
@@ -540,7 +552,7 @@ export function ownModelGroups(
         value: `~service-${provider.id}`,
         label: provider.name,
         media,
-        disabledReason: session.route ? ROUTE_LOCKED : '要经 Latch 用它，新开一个会话。',
+        disabledReason: session.route ? ROUTE_LOCKED : '新开会话才能经 Latch 用',
       })
       continue
     }
@@ -612,7 +624,7 @@ export function DraftModelControl({
         className="model-picker"
         menuChevron
         disabled
-        disabledReason="先选一个 Harness，才知道有哪些模型。"
+        disabledReason="先选 Harness"
         onValueChange={() => {}}
       />
     )
@@ -967,7 +979,7 @@ function HarnessModelPicker({
   const routeLine = session?.route
     ? routeNote(catalog, name, session.route, computer)
     : groups.some(group => group.id.startsWith('~service-'))
-      ? ROUTE_NOTE(name, computer)
+      ? { brief: ROUTE_NOTE(name, computer) }
       : undefined
   return (
     <ValuePicker
@@ -1013,7 +1025,14 @@ function HarnessModelPicker({
             />
           ))}
           {rows}
-          {routeLine && <p className="model-note">{routeLine}</p>}
+          {routeLine
+            && ('failure' in routeLine ? (
+              <p className="model-note" data-tone="error">
+                {routeLine.failure}
+              </p>
+            ) : (
+              <BriefHint brief={routeLine.brief} className="model-note" {...(routeLine.tone ? { tone: routeLine.tone } : {})} />
+            ))}
           {feedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
           {manage}
         </div>

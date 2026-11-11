@@ -47,15 +47,16 @@ export function SetupCard({
         </span>
         <div className="setup-card-text">
           <strong>{block.message}</strong>
-          <p>
-            {model
-              ? owner
-                ? (held?.hint ?? 'Latch 内置要先连一个模型服务才能开始。Latch 内置只能读写项目里的文件，不能运行命令。')
-                : SETUP_COPY.modelNeedsAdmin(computer)
-              : owner
-                ? '可在设置中检查 Harness 与插件。'
+          {/* The title and the button say what is missing; this line says only what the button cannot. */}
+          {(model || !owner) && (
+            <p>
+              {model
+                ? owner
+                  ? (held?.hint ?? 'Latch 内置只读写文件，不运行命令')
+                  : SETUP_COPY.modelNeedsAdmin(computer)
                 : SETUP_COPY.harnessNeedsAdmin(computer)}
-          </p>
+            </p>
+          )}
         </div>
         {owner && settable && !adding && (
           <Button
@@ -144,11 +145,7 @@ export function HarnessInstallCard({
       {halfway.length > 0 && (
         <ul className="harness-install-list">
           {halfway.map(preset => (
-            <InstallRow
-              key={preset.id}
-              preset={preset}
-              note={`找到了 ${foundWithoutAdapter(preset.detected)!}，还差让 Latch 连接它的适配器`}
-            />
+            <InstallRow key={preset.id} preset={preset} note={`找到 ${foundWithoutAdapter(preset.detected)!}，还缺适配器`} />
           ))}
         </ul>
       )}
@@ -181,7 +178,7 @@ export function HarnessInstallCard({
             onClick={() => {
               setAdding(true)
             }}>
-            也可以用 Latch 内置：只能读写文件，不能运行命令，要先添加模型。
+            改用 Latch 内置（只读写文件）…
           </Button>
         )}
       </div>
@@ -295,7 +292,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
           <li key={preset.id} className="harness-found-row" data-halfway="">
             <MarkTile mark={preset.id} size={16} />
             <span className="harness-found-name">{preset.name}</span>
-            <span className="harness-found-note">找到了 {program}，还差让 Latch 连接它的适配器</span>
+            <span className="harness-found-note">找到 {program}，还缺适配器</span>
             {howButton(preset)}
             {howRow(preset)}
           </li>

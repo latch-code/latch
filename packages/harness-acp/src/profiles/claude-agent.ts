@@ -68,11 +68,11 @@ export const claudeAgentProfile: HarnessProfile = {
     // Claude reports what its classifier denied (`readDenial`), not what it let run: a call that ran in `auto` is
     // recorded as run unasked.
     modeTiers: {
-      plan: { tier: 'plan', line: '只看和规划，不改文件；命令可能由分类器决定' },
-      default: { tier: 'ask', line: '改文件或运行命令前问你；读取不问' },
-      acceptEdits: { tier: 'rule', line: '直接改文件；多数命令运行前问你' },
-      auto: { tier: 'model', line: '多数操作由它的分类器模型判断，可能判错' },
-      bypassPermissions: { tier: 'never', line: '直接读写这台 Mac 上的文件并运行命令' },
+      plan: { tier: 'plan', line: '只看和规划，不改文件' },
+      default: { tier: 'ask', line: '改文件或运行命令前问你' },
+      acceptEdits: { tier: 'rule', line: '直接改文件，命令前问你' },
+      auto: { tier: 'model', line: '由它的分类器判断' },
+      bypassPermissions: { tier: 'never', line: '直接改文件和运行命令' },
     },
     modeAnswers: [
       // ExitPlanMode's one-time choice: leave the plan and ask before each edit.

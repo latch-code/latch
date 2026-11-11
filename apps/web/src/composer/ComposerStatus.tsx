@@ -9,9 +9,6 @@ import { exactTokens, formatTokens } from '../format.ts'
 import { ROUTE_NOTE, routeService } from './ModelControl.tsx'
 import { costClause, type SessionTotals } from './sessionTotals.ts'
 
-/** A worktree separates files only: the same sentence the folder menu ends with. */
-export const WORKTREE_SHARED = '工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。'
-
 /** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch」 or 「Codex 自己的模型」. */
 export interface StatusRoute {
   text: string
@@ -36,12 +33,12 @@ export function statusRoute(
     const provider = findProvider(catalog, input.route.providerId)
     return {
       text: `${service.name} · ${service.unusable?.words ?? '经 Latch'}`,
-      note: service.unusable?.note ?? ROUTE_NOTE(name),
+      note: service.unusable?.note ?? ROUTE_NOTE(name).detail,
       ...(provider ? { provider } : {}),
     }
   }
   const provider = input.picked ? findProvider(catalog, input.picked.providerId) : undefined
-  if (provider) return { text: `${provider.name} · 经 Latch`, note: ROUTE_NOTE(name), provider }
+  if (provider) return { text: `${provider.name} · 经 Latch`, note: ROUTE_NOTE(name).detail, provider }
   return { text: `${name} 自己的模型` }
 }
 
@@ -87,9 +84,7 @@ export function FolderSegment({ name, tip, worktree = false }: { name: string; t
 export function BranchSegment({ branch, worktree = false, base = false }: { branch: string; worktree?: boolean; base?: boolean }) {
   const name = breakable(escapeHiddenCharacters(branch))
   const tip = worktree ? (
-    <>
-      工作树 · {name}。{WORKTREE_SHARED}
-    </>
+    <>工作树 · {name}</>
   ) : (
     <>
       {base ? '新工作树 · ' : '分支 '}

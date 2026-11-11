@@ -376,13 +376,13 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: held }), resolveChoice(held, standard))).toEqual({
       kind: 'model-required',
       message: '还没有可用的模型服务。「Ollama\\u{202E}」的地址还没有确认。',
-      hint: '在 host 上，打开 设置 › 模型 确认地址后即可开始。',
+      hint: '在 host 的 设置 › 模型 里确认地址',
       action: '打开模型服务',
     })
     const keyless = catalog({ providers: [], unusableProviders: [{ id: 'deepseek', name: 'DeepSeek', reason: 'key-missing' }] })
     expect(startBlock(snapshot({ catalog: keyless }), resolveChoice(keyless, standard))).toMatchObject({
       message: '还没有可用的模型服务。「DeepSeek」还没有填写密钥。',
-      hint: '在 host 上，打开 设置 › 模型 填写密钥后即可开始。',
+      hint: '在 host 的 设置 › 模型 里填写密钥',
     })
     // Agent harnesses bring their own models.
     expect(
@@ -547,7 +547,7 @@ describe('harness entries', () => {
       ],
     })
     const entries = engineEntries(limited, 'wide')
-    expect(entries[0]?.disabledReason).toContain('最多使用 1 个')
+    expect(entries[0]?.disabledReason).toBe('最多 1 个文件夹，这个项目有 2 个')
     expect(
       startBlock({ catalog: limited } as AppSnapshot, { harnessId: 'standard', workspaceId: 'wide', mode: 'agent' })?.message,
     ).toContain('最多使用 1 个')

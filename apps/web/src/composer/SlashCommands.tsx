@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
+import { Kbd } from '@latch/ui'
 
 const slashQuery = (draft: string) => (/^\/[^\s]*$/u.test(draft) ? draft.slice(1).toLocaleLowerCase() : null)
 const rank = (name: string, query: string) => {
@@ -141,7 +142,9 @@ export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashComman
   if (!menu.open) return null
   return (
     <section className="slash-commands" aria-label="命令与提示模板">
-      <p>选择后可编辑，再发送 · ↑ ↓ 选择，Enter 或 Tab 插入</p>
+      <p>
+        <Kbd>↑</Kbd> <Kbd>↓</Kbd> 选择 · <Kbd>Enter</Kbd> 插入
+      </p>
       {menu.options.length === 0 && <p role="status">没有匹配的命令或提示模板</p>}
       <div ref={list} id={menu.id} role="listbox" aria-label="命令与提示模板">
         {[...new Set(menu.options.map(option => option.kind))].map(kind => {

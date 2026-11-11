@@ -217,7 +217,7 @@ export function TypedModelsPanel({
           spellCheck={false}
           maxLength={256}
           {...(error ? { error } : {})}
-          hint={`开始时原样发给 ${name}；它不接受这个 ID 时，消息不会发出。`}
+          hint={`开始时原样发给 ${name}`}
           onChange={event => {
             setValue(event.target.value)
           }}

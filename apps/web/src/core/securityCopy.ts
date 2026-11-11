@@ -67,17 +67,17 @@ export const computerLabel = (local: boolean, hostName?: string): string => (loc
  * line is read on another device and names the computer (`computerName`).
  */
 export const SETUP_COPY = {
-  modelNeedsAdmin: (computer = 'Mac') => `这台设备不能添加模型。在 ${computer} 上的 Latch 里添加：设置 › 模型。`,
+  modelNeedsAdmin: (computer = 'Mac') => `在 ${computer} 的 设置 › 模型 里添加`,
   /** A device whose data scope leaves out the session's folders: where its 「可以看项目文件」 is turned on. */
   filesNeedScope: (computer = 'Mac') => `在 ${computer} 上开启：设置 › 设备`,
-  harnessNeedsAdmin: (computer = 'Mac') => `这台设备不能管理 Harness。在 ${computer} 上的 Latch 里查看：设置 › Harness。`,
-  addAgentElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › Harness`,
-  addProviderElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › 模型`,
-  keyElsewhere: (computer = 'Mac') => `密钥只能在 ${computer} 上的 Latch 里填写：设置 › 模型。`,
+  harnessNeedsAdmin: (computer = 'Mac') => `在 ${computer} 的 设置 › Harness 里查看`,
+  addAgentElsewhere: (computer = 'Mac') => `在 ${computer} 的 设置 › Harness 里添加`,
+  addProviderElsewhere: (computer = 'Mac') => `在 ${computer} 的 设置 › 模型 里添加`,
+  keyElsewhere: (computer = 'Mac') => `密钥在 ${computer} 的 设置 › 模型 里填写`,
   addProjectElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加项目`,
-  confirmAddressElsewhere: (computer = 'Mac') => `这个地址要先在 ${computer} 上确认一次，才能在这里使用：设置 › 模型。`,
-  saveAgent: '保存后就能用它开始会话；每次启动都留有记录。',
-  agentFullAccess: '它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。',
+  confirmAddressElsewhere: (computer = 'Mac') => `先在 ${computer} 的 设置 › 模型 里确认这个地址`,
+  /** The add-Harness panel: that Latch does not isolate it stays in sight, what it can reach one press away. */
+  agentFullAccess: { label: 'Latch 不隔离它', detail: '它可以读写这台 Mac 上的文件并运行命令。' } satisfies Brief,
   /** 设置 › Harness, a definition's page: what a session started with it is. */
   externalNote: { label: '外部 Harness，Latch 不隔离', detail: '用它开始的会话由它自己决定执行范围。' } satisfies Brief,
   /** 设置 › 项目, a project's folders for each Harness. */
@@ -122,7 +122,7 @@ export const APPROVAL_COPY = {
   stopTurn: '停止这一轮',
   hidePreview: '收起',
   viewDetail: '查看详情',
-  rejectPlaceholder: '输入内容会拒绝并告诉 Harness 改做什么',
+  rejectPlaceholder: '拒绝并说明改做什么…',
   viewChange: '查看改动',
   /** The one name of the action that opens the changes panel, on a turn's card, on ⌘K and on an approval that opens it. */
   openChanges: '打开改动',
@@ -499,8 +499,8 @@ export const NATIVE_LINK_COPY = {
  */
 export const CODE_ROOT_COPY = {
   badge: '程序目录内',
-  notice: '这个文件夹在 Latch 的程序目录里，每次写入都要你允许',
-  startDir: '这是 Latch 启动时的文件夹。要在别的文件夹里工作，可以新建一个项目。',
+  notice: '在程序目录里，每次写入都问你',
+  startDir: 'Latch 启动时的文件夹',
   newProject: '添加项目…',
 } as const
 
@@ -754,9 +754,9 @@ export const HOVER_REASONS = {
 export const MODE_COPY = {
   menuTitle: '什么时候问你？',
   noFiles: '不读写文件',
-  noFilesLine: '只回复文字，不读写文件，也不运行命令。要读写文件，选一个项目开始新会话。',
+  noFilesLine: '只回复文字',
   askFirst: '先问你',
-  askFirstLine: (agent: string) => `${agent} 改文件或运行命令前问你`,
+  askFirstLine: '改文件或运行命令前问你',
   /** The built-in engine has no way to run a command, so its mode cannot speak of one. */
   askBeforeWritesLine: '读项目不问；写文件每次问你',
   /** Any Harness but Latch 内置: a fact about who decides, not a warning. */
@@ -777,15 +777,15 @@ export const MODE_COPY = {
     label: `${agent} 不询问，Latch 不隔离它`,
     detail: `${MODE_COPY.agentDecidesLine(agent)}。`,
   }),
+  /** The same as the 权限 row says it: the label already says it never asks; who sets the limits stays one press away. */
+  agentDecidesRow: '只有扩展要求确认时才问你',
+  agentDecidesNote: (agent: string): Brief => ({ label: `${agent} 自己决定`, detail: 'Latch 不限制它，也不隔离它。' }),
   unverifiable: '权限无法确认',
-  unverifiableLine: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
+  unverifiableLine: '设为只读，但读不回来',
   afterStart: '开始后可以选',
-  afterStartLine: (agent: string) => `${agent} 开始后才告诉 Latch 它有哪几项权限`,
   /** A Harness whose lists can be read before a session: the read reports its modes too. */
   afterRead: '读取后可以选',
-  afterReadLine: (agent: string) => `${agent} 读取或开始时告诉 Latch 它有哪几项权限`,
   reading: '正在读取…',
-  readingLine: (agent: string) => `正在读取 ${agent} 的权限…`,
   /** Under the current row before start: the rows Latch can set are the ones the agent's session offers. */
   changeAfterStart: (agent: string): Brief => ({ label: '发第一条消息后可以换', detail: `${agent} 开始会话时才给出其他几项。` }),
   /** The same, for a Harness whose read reports them before any session. */
@@ -804,12 +804,10 @@ export const MODE_COPY = {
   tierTitles: { plan: '只看不改', ask: '先问你', rule: '按规则放行', model: '由模型判断', never: '不再询问' },
   /** A fork onto a Harness without the source's row: the row it takes instead, never a wider one unless there is none. */
   forkOtherRow: (was: string, agent: string, now: string, stricter: boolean) =>
-    stricter
-      ? `来源会话的权限是「${was}」，${agent} 没有这一项，这里用更严的「${now}」。`
-      : `来源会话的权限是「${was}」，${agent} 没有这一项或更严的，这里用它最严的「${now}」。`,
-  forkNoRow: (was: string, agent: string) => `来源会话的权限是「${was}」，${agent} 的权限对应不上，这里从它默认的那一项开始。`,
-  forkDrifted: (agent: string) => `来源会话的权限被它的 Harness 自己改过，没有沿用，这里从 ${agent} 默认的那一项开始。`,
-  forkFromChat: (agent: string) => `来源会话不读写文件，${agent} 没有这一项，这里从它默认的那一项开始。`,
+    stricter ? `权限「${was}」→ 更严的「${now}」` : `权限「${was}」→ ${agent} 最严的「${now}」`,
+  forkNoRow: (was: string, agent: string) => `权限「${was}」→ ${agent} 的默认项`,
+  forkDrifted: (agent: string) => `来源权限被改过，用 ${agent} 的默认项`,
+  forkFromChat: (agent: string) => `来源不读写文件，用 ${agent} 的默认项`,
   more: '更多',
   fewer: '收起',
 } as const
@@ -819,13 +817,13 @@ export const MODE_COPY = {
  * reason that names a key or an unconfirmed address points to where that is done; it never offers to do it here.
  */
 export const MODEL_MENU_COPY = {
-  unusable: (count: number) => `另有 ${count} 个模型服务，这个 Harness 用不了`,
+  unusable: (count: number) => `${count} 个服务用不了`,
   /** The Harness speaks a protocol the service does not. */
   wrongProtocol: (agent: string) => `${agent} 不说这个服务的协议`,
   /** A Harness that Latch cannot route to a service yet. */
-  notRouted: (agent: string) => `让 Latch 把 ${agent} 的请求转给它，尚未实现`,
+  notRouted: (agent: string) => `转发 ${agent} 的请求尚未实现`,
   /** Claude Agent, Cursor, a custom command or a plugin's source: it uses its own models only. */
-  ownModelsOnly: (agent: string) => `${agent} 不经 Latch 用模型服务`,
+  ownModelsOnly: (agent: string) => `${agent} 只用自己的模型`,
   missingKey: '没有密钥 · 在设置 › 模型里添加',
   unconfirmed: (computer = 'Mac') => `地址还没确认 · 在 ${computer} 上确认`,
 } as const
@@ -860,14 +858,7 @@ export const JUDGED_COPY = {
 /** The drawer's one line when a session cannot go on as it is, and what it offers. */
 export const RECOVERY_COPY = {
   folderMissing: (project: string) => `项目文件夹「${project}」找不到了`,
-  chooseFolder: '重新选择文件夹',
   continueInNew: '在新会话中继续',
-  continuePlaceholder: '在新会话中继续…',
-  settingsChanged: SESSION_STOP_TEXT['agent-definition-changed'],
-  modelUnavailable: (model: string, status: number) => `${model} 暂时不可用（${status}）`,
-  retry: '重试',
-  changeModel: '换个模型',
-  contextUsed: (percent: number) => `上下文已用 ${percent}% · 压缩并继续`,
 } as const
 
 const FIXED: Record<string, string> = {

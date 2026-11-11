@@ -144,8 +144,8 @@ describe('permission states in a browser', () => {
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
     await card.getByRole('button', { name: '拒绝', exact: true }).waitFor()
-    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
-    expect(await note.getAttribute('placeholder')).toBe('输入内容会拒绝并告诉 Harness 改做什么')
+    const note = page.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
+    expect(await note.getAttribute('placeholder')).toBe('拒绝并说明改做什么…')
     // Enter with nothing written decides nothing.
     await note.press('Enter')
     expect((await detail(sessionId)).approvals).toHaveLength(1)
@@ -188,7 +188,7 @@ describe('permission states in a browser', () => {
         .evaluateAll(buttons => buttons.map(button => button.firstChild?.textContent ?? '')),
     ).toEqual(['更多', '拒绝', '允许'])
     // Focus in the empty input: Esc refuses, ⌘⏎ would send there, so 允许 has no cap.
-    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
+    const note = page.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
     await note.focus()
     expect(await caps(card, '拒绝')).toBe('Esc')
     expect(await caps(card, '允许')).toBe('')

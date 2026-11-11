@@ -69,7 +69,7 @@ function tierRows(
 /** What the composer says about who decides, and the rows when the engine has modes to choose from. */
 export interface PermissionView {
   label: string
-  /** One sentence on what this means: the row's line, and the chip's tooltip. */
+  /** A few words on what this means: the row's line. */
   line: string
   icon: ModeIcon
   /** A mode in which the agent never asks, or one Latch cannot confirm. */
@@ -126,14 +126,18 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
   if (declared?.approvals === 'none')
     return {
       label: MODE_COPY.agentDecides(harness.capabilities.display.label),
-      line: MODE_COPY.agentDecidesLine(harness.capabilities.display.label),
+      line: MODE_COPY.agentDecidesRow,
       icon: 'shield-alert',
       amber: true,
+      note: {
+        ...MODE_COPY.agentDecidesNote(harness.capabilities.display.label),
+        ...(harness.capabilities.display.mark ? { mark: harness.capabilities.display.mark } : {}),
+      },
     }
   if (declared?.readback === 'none')
     return {
       label: MODE_COPY.unverifiable,
-      line: MODE_COPY.unverifiableLine(harness.capabilities.display.label),
+      line: MODE_COPY.unverifiableLine,
       icon: 'shield-alert',
       amber: true,
     }
@@ -141,17 +145,15 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
     return {
       label: MODE_COPY.askFirst,
       // A profile's one `ask` mode is the one its sessions start in: the line the session's own row shows.
-      line:
-        Object.values(declared.modeTiers ?? {}).find(tier => tier.tier === 'ask')?.line
-        ?? MODE_COPY.askFirstLine(harness.capabilities.display.label),
+      line: Object.values(declared.modeTiers ?? {}).find(tier => tier.tier === 'ask')?.line ?? MODE_COPY.askFirstLine,
       icon: 'shield',
       amber: false,
       ...modesNote(harness, read),
     }
-  const name = harness.capabilities.display.label
-  if (read === 'reading') return { label: MODE_COPY.reading, line: MODE_COPY.readingLine(name), icon: 'shield', amber: false }
-  if (read === 'readable') return { label: MODE_COPY.afterRead, line: MODE_COPY.afterReadLine(name), icon: 'shield', amber: false }
-  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(name), icon: 'shield', amber: false }
+  // The title says when the rows come; a line under it would only repeat it.
+  if (read === 'reading') return { label: MODE_COPY.reading, line: '', icon: 'shield', amber: false }
+  if (read === 'readable') return { label: MODE_COPY.afterRead, line: '', icon: 'shield', amber: false }
+  return { label: MODE_COPY.afterStart, line: '', icon: 'shield', amber: false }
 }
 
 /** No tools run, so nothing can be asked and no mode applies. */
@@ -180,10 +182,13 @@ export function permissionView(input: {
   if (!option) {
     // The session's own report outranks the declaration, and once it started the agent has said what modes it has.
     if (!permission) return declaredPermission(harness)
-    const { note: _beforeStart, ...started } = declaredPermission({
+    const declared = declaredPermission({
       ...harness,
       permission: { approvals: permission.approvals ?? 'prompts', readback: permission.readback ?? 'none' },
     })
+    // When the rows can be changed is a draft's note; who decides stays.
+    if (declared.amber) return declared
+    const { note: _beforeStart, ...started } = declared
     return started
   }
   const rows = tierRows(option, permission?.modeTiers, locked)

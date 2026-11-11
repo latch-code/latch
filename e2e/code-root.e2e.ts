@@ -12,7 +12,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, openSection, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/code-root'
-const NOTICE = '这个文件夹在 Latch 的程序目录里，每次写入都要你允许'
+const NOTICE = '在程序目录里，每次写入都问你'
 
 /**
  * A Host whose start directory lies inside Latch's program directory (here a temporary stand-in for it): the three
@@ -76,7 +76,7 @@ describe('a start directory inside Latch’s program directory', () => {
       const notice = settings.locator('.project-code-root')
       await notice.getByText(NOTICE, { exact: false }).waitFor()
       expect(await notice.getAttribute('data-tone')).toBe('warn')
-      expect(await notice.textContent()).toContain('这是 Latch 启动时的文件夹。要在别的文件夹里工作，可以新建一个项目。')
+      expect(await notice.textContent()).toContain('Latch 启动时的文件夹')
       await page.screenshot({ path: `${OUTPUT}/settings-projects--${viewport.name}.png`, fullPage: true, animations: 'disabled' })
       await closeSettings(settings)
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, SquareTerminal } from 'lucide-react'
 import { settleLogin, type AgentProbeResult, type HarnessInfo, type HarnessLogin, type HarnessLoginCheck } from '@latch/protocol'
-import { Button, CopyButton, InlineNotice } from '@latch/ui'
+import { Button, CopyButton, Icon, InlineNotice } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 
@@ -148,7 +148,12 @@ function LoginCommand({
           </Button>
         )}
       </div>
-      {opened && <p>在打开的终端里登录，完成后回到这里。</p>}
+      {opened && (
+        <p>
+          <Icon icon={SquareTerminal} size={12} />
+          登录后回到这里
+        </p>
+      )}
       {error && (
         <p className="harness-login-error" role="alert">
           {error}
@@ -239,10 +244,6 @@ export function DraftLoginNotice({
       </section>
     )
   if (status === 'authenticated' && expiresAt && loginEndsSoon(expiresAt))
-    return (
-      <InlineNotice tone="warn" title={`${name} 的登录 ${loginEndDay(expiresAt)}到期`}>
-        到期后要按它自己的方式重新登录。
-      </InlineNotice>
-    )
+    return <InlineNotice tone="warn" title={`${name} 的登录 ${loginEndDay(expiresAt)}到期`} />
   return null
 }

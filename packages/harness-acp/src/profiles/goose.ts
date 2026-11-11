@@ -11,8 +11,8 @@ export const gooseProfile: HarnessProfile = {
     // Tools the person set to always allow in goose run without asking in `approve` and `smart_approve` alike.
     modeTiers: {
       chat: { tier: 'plan', line: '只聊天，不用工具' },
-      approve: { tier: 'ask', line: '运行工具前问你；你设为总是允许的除外' },
-      smart_approve: { tier: 'model', line: '它的模型判为只读的不问，其余问你；可能判错' },
+      approve: { tier: 'ask', line: '运行工具前问你' },
+      smart_approve: { tier: 'model', line: '只读的不问，其余问你' },
       auto: { tier: 'never', line: '直接运行所有工具' },
     },
     readback: 'mode',

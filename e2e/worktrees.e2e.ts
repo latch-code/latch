@@ -17,7 +17,7 @@ const OUT = 'test-results/worktrees'
 const choice = (page: Page, name: RegExp): Locator =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
 
-const UNCOMMITTED = '未提交的改动不会带过去。'
+const UNCOMMITTED = '不带未提交的改动 · '
 
 /**
  * Opens the folder menu on the desktop and tablet, light and dark: 新工作树's one line starts with what stays behind,

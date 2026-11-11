@@ -1157,7 +1157,7 @@ describe('visual capture of the real product', () => {
         await recorder.capture(desktopApp, viewport, 'new-session-full-access-empty', 'starting a full-access session, nothing typed yet')
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         await reachable(desktopApp.getByRole('button', { name: '发送', exact: true }))
-        expect(await desktopApp.getByText('它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。').count()).toBe(0)
+        expect(await desktopApp.getByText('Latch 不隔离它', { exact: true }).count()).toBe(0)
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-full-access', 'starting a full-access session in the desktop app')
@@ -1435,7 +1435,7 @@ describe('visual capture of the real product', () => {
       // A decision whose answer never arrived: the card offers to send the same choice again.
       await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
       // Typing says what to do instead: 拒绝 becomes 拒绝并发送, and the text goes with it.
-      const answerBox = target.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
+      const answerBox = target.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
       await answerBox.fill('先写到草稿目录')
       await r1.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
       await settleMotion(target)

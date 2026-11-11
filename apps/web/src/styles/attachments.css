@@ -6,12 +6,6 @@
   overflow: auto;
 }
 .attachment-draft,
-.attachment-intro {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  min-width: 0;
-}
 .attachment-draft {
   border: 1px solid var(--line);
   border-radius: var(--r-8);
@@ -27,11 +21,6 @@
   max-width: 240px;
 }
 .attachment-state,
-.attachment-intro {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
 .attachment-state {
   display: inline-flex;
   align-items: center;
@@ -42,7 +31,6 @@
 .attachment-draft[data-state='failed'] .attachment-state {
   color: var(--red);
 }
-.attachment-intro > span,
 .attachment-draft > .attachment-state {
   flex: 1;
 }

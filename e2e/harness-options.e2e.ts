@@ -187,7 +187,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
     await page.getByText(/^来自上次会话 · /u).waitFor()
-    expect(await page.getByText('开始后才报告', { exact: false }).count()).toBe(0)
+    expect(await page.getByText('发第一条消息后可以换', { exact: true }).count()).toBe(0)
     await shot(page, 'listed-1440-light')
     await row(page, /Large/u).click()
     // Codex's list said what thinking Large offers, so 思考 says it before any session ran on Large.
@@ -520,7 +520,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
       const permission = sheet.getByRole('button', { name: /^权限：/u })
       await expect.poll(() => permission.getAttribute('aria-label')).toBe('权限：读取后可以选')
-      expect(await page.getByText('开始后才告诉 Latch', { exact: false }).count()).toBe(0)
+      expect(await page.getByText('开始后才知道', { exact: false }).count()).toBe(0)
       await shot(page, 'permission-before-read-390-dark')
       // Only 权限 is opened: the model row never is.
       await permission.click()

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, ListChecks, Scale, Shield, ShieldAlert } from 'lucide-react'
-import { Button, ChoiceList, Hint, Kbd, useLayerClose } from '@latch/ui'
-import { MarkTile } from '../components/BrandTile.tsx'
+import { Button, ChoiceList, Kbd, useLayerClose } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
+import { BriefHint } from './BriefHint.tsx'
 import { controlKeyCaps } from './modelReasoning.ts'
 import type { ModeIcon, PermissionRow, PermissionView } from './permission.ts'
 
@@ -79,14 +79,7 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
           {more ? MODE_COPY.fewer : MODE_COPY.more}
         </Button>
       )}
-      {view.note && (
-        <Hint
-          className="permission-list-note"
-          label={view.note.label}
-          {...(view.note.mark ? { lead: <MarkTile mark={view.note.mark} size={14} /> } : {})}>
-          {view.note.detail}
-        </Hint>
-      )}
+      {view.note && <BriefHint brief={view.note} className="permission-list-note" />}
     </div>
   )
 }

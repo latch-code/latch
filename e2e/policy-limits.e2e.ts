@@ -246,8 +246,8 @@ describe('what this computer can take back', () => {
     const harness = page.locator('.composer-stack .harness-picker')
     await harness.click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
+    // The pin says itself: 取消新会话默认 and its icon, without a sentence.
     await page.getByRole('menuitem', { name: '取消新会话默认' }).waitFor()
-    await page.getByText('每个新会话都从这里开始', { exact: false }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/pinned--desktop--light.png` })
     await page.keyboard.press('Escape')
 

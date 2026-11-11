@@ -213,12 +213,8 @@ export function engineEntries(catalog: HostCatalog, workspaceId?: string): Engin
       return {
         harness,
         label: harnessName(harness),
-        line: harness.capabilities.tools.shell
-          ? (harness.statusMessage ?? '能读写这台 Mac 上的文件并运行命令')
-          : '只能读写文件，不能运行命令',
-        ...(max !== undefined && count > max
-          ? { disabledReason: `这个项目有 ${count} 个文件夹，${harnessName(harness)} 最多使用 ${max} 个` }
-          : {}),
+        line: harness.capabilities.tools.shell ? (harness.statusMessage ?? '读写文件、运行命令') : '只读写文件，不运行命令',
+        ...(max !== undefined && count > max ? { disabledReason: `最多 ${max} 个文件夹，这个项目有 ${count} 个` } : {}),
       }
     })
 }

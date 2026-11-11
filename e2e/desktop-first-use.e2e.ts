@@ -129,7 +129,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // Nothing else can run here, so the page says what to install; the built-in Harness is one quiet line.
         const setup = page.getByRole('region', { name: '安装 Harness', exact: true })
         await setup.getByText('没有找到可用的 Harness', { exact: true }).waitFor()
-        await setup.getByRole('button', { name: /^也可以用 Latch 内置/ }).click()
+        await setup.getByRole('button', { name: /^改用 Latch 内置/ }).click()
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()
         expect(await page.locator('.settings-page').count()).toBe(0)

@@ -2,8 +2,10 @@ import type { ReactNode } from 'react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, InlineNotice, MenuFooterLink, ValuePicker, useLayerClose, type PickerOption } from '@latch/ui'
 import type { DeviceAccess } from '../core/permissions.ts'
+import type { Brief } from '../core/securityCopy.ts'
 import { draftConfig, engineEntries, harnessName, servicePick, thinkingLevels, type ComposerChoice } from '../composerChoice.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { BriefHint } from './BriefHint.tsx'
 import { readOnSelect, readsOnSelect, useReading } from './harnessCatalogue.tsx'
 import {
   agentConfigBlocked,
@@ -46,7 +48,7 @@ function ThinkingPicker({
   options: Array<PickerOption<string>>
   /** The trigger's words when they are not the chosen row's: a switch for the next message, an unknown outcome. */
   valueText?: string | undefined
-  note?: string | undefined
+  note?: string | Brief | undefined
   /** Rows after the note: undoing a switch, refreshing after an unknown outcome. */
   footer?: ReactNode
   pending?: boolean
@@ -61,7 +63,7 @@ function ThinkingPicker({
   const content =
     note || footer ? (
       <div className="model-footer">
-        {note && <p className="model-note">{note}</p>}
+        {typeof note === 'string' ? <p className="model-note">{note}</p> : note && <BriefHint brief={note} className="model-note" />}
         {footer}
       </div>
     ) : null
@@ -270,10 +272,10 @@ export function DraftThinkingControl({
   const service = servicePick(catalog, harness, choice.config)
   const option = service ? undefined : known?.config.find(item => item.category === 'thought_level')
   const note = service
-    ? THINKING_AFTER_START(name)
+    ? THINKING_AFTER_START
     : known
       ? known.thinkingUnknown
-        ? THINKING_AFTER_START(name)
+        ? THINKING_AFTER_START
         : unreportedThinkingNote(name, true, known.config)
       : harness.catalogueRead
         ? undefined

@@ -435,6 +435,11 @@
 .model-note[data-tone='error'] {
   color: var(--red);
 }
+/* A short label that waits on the person or warns (a turn that did not go through Latch): amber, glyph and words. */
+.ui-hint.is-warn,
+.ui-hint.is-warn > .ui-hint-lead {
+  color: var(--amber);
+}
 /*
  * The services this Harness cannot use: one row, then, opened, each service with its reason under its name. Muted: they
  * are facts, not choices.

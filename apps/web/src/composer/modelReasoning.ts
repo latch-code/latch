@@ -1,4 +1,5 @@
 import type { ModelRef, ProviderKind, SessionConfigOption } from '@latch/protocol'
+import type { Brief } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { COMPOSER_CONTROLS, shortcutCaps, shortcutKeys, type ComposerControl } from '../workbenchShortcuts.ts'
 
@@ -37,23 +38,26 @@ export const DEFAULT_MODEL = '默认模型'
 /** The thinking control's value when no level is chosen or none was reported: the model's own default. */
 export const DEFAULT_LEVEL = '默认'
 
-/** The model menu's one sentence on a model the Harness has not told Latch of. Nothing when it reported one. */
+/** Before the first send, a list the Harness reports only once started: the words the 权限 menu uses too. */
+const AFTER_FIRST_SEND = '发第一条消息后可以换'
+
+/** The model menu's few words on a model the Harness has not told Latch of. Nothing when it reported one. */
 export function unreportedModelNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
-  if (!started) return `${harness} 开始后才报告可选的模型，发第一条消息后可以在这里换。`
-  return config.some(option => option.category === 'model') ? undefined : `${harness} 没有报告可选的模型，由它自己决定。`
+  if (!started) return AFTER_FIRST_SEND
+  return config.some(option => option.category === 'model') ? undefined : `由 ${harness} 决定`
 }
 
-/** The thinking menu's one sentence on levels the Harness has not told Latch of. Nothing when it reported them. */
+/** The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them. */
 export function unreportedThinkingNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
-  if (!started) return `${harness} 开始后才报告有哪些思考，发第一条消息后可以在这里换。`
-  return config.some(option => option.category === 'thought_level') ? undefined : `${harness} 没有报告思考，用它自己的默认值。`
+  if (!started) return AFTER_FIRST_SEND
+  return config.some(option => option.category === 'thought_level') ? undefined : `用 ${harness} 的默认值`
 }
 
 /** A draft picked a model no session has run on yet, so what thinking it offers is not known. */
-export const THINKING_AFTER_START = (harness: string) => `这个模型有哪些思考，${harness} 开始后才告诉 Latch。`
+export const THINKING_AFTER_START = '开始后才知道'
 
 /** On the built-in Harness, for a model with no thinking levels declared in settings. */
-export const BUILTIN_THINKING_NOTE = '这个模型没有设置思考，用它自己的默认值。可以在 设置 › 模型 里为它选择。'
+export const BUILTIN_THINKING_NOTE: Brief = { label: '用模型默认值', detail: '可以在 设置 › 模型 里为它选择。' }
 
 const THINKING_WORDS: Readonly<Record<string, string>> = {
   none: '不思考',

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
 import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo } from '@latch/protocol'
-import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
+import { Badge, Button, Hint, ICON_STROKE, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
 import {
   draftConfig,
   engineEntries,
@@ -29,6 +29,7 @@ import {
 import { draftPermission, draftRead } from '../composer/permission.ts'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { MODE_ICONS } from '../composer/PermissionList.tsx'
+import { BriefHint } from '../composer/BriefHint.tsx'
 import { computerName, MODE_COPY } from '../core/securityCopy.ts'
 import {
   CatalogueRows,
@@ -292,7 +293,7 @@ export function NewSessionSheet({
                   <div className="model-footer">
                     <UnusableServices services={unusableServices(catalog, harness, computer)} />
                     {rows(modelOption !== undefined)}
-                    {forwards && <p className="model-note">{ROUTE_NOTE(harnessName(harness), computer)}</p>}
+                    {forwards && <BriefHint brief={ROUTE_NOTE(harnessName(harness), computer)} className="model-note" />}
                   </div>
                 }
                 onOpenChange={opened}
@@ -382,7 +383,7 @@ export function NewSessionSheet({
                     ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
                     media: <Glyph size={16} aria-hidden="true" className={row.neverAsks ? 'permission-never' : undefined} />,
                   }
-                }) ?? [{ value: 'current', label: permission.label }]
+                }) ?? [{ value: 'current', label: permission.label, ...(permission.line ? { description: permission.line } : {}) }]
               }
               footer={
                 <>
@@ -398,7 +399,7 @@ export function NewSessionSheet({
                       {morePermission ? MODE_COPY.fewer : MODE_COPY.more}
                     </Button>
                   )}
-                  <MenuFooterNote>{permission.note?.label ?? permission.line}</MenuFooterNote>
+                  {permission.note && <BriefHint brief={permission.note} className="permission-list-note" />}
                 </>
               }
               onValueChange={value => {
@@ -422,10 +423,11 @@ export function NewSessionSheet({
         </div>
       )}
       {present && demo && (
-        <p className="new-sheet-note">
-          <FlaskConical size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <Badge tone="warn">演示</Badge>回复由本地脚本生成，不调用模型服务。
-        </p>
+        <div className="new-sheet-note">
+          <Hint lead={<FlaskConical size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />} label={<Badge tone="warn">演示</Badge>}>
+            回复由本地脚本生成，不调用模型服务。
+          </Hint>
+        </div>
       )}
       {present && setup}
       {present && composer}

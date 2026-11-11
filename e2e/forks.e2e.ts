@@ -34,7 +34,11 @@ describe('conversation forks', () => {
         await palette.getByRole('option').filter({ hasText: '讨论另一个方案' }).first().click()
         await page.locator('.turn-reply').first().hover()
         await page.getByRole('button', { name: '从这里分叉', exact: true }).first().click()
-        await page.getByText('文件不会复制或回滚', { exact: false }).waitFor()
+        // A short label; that files are not copied or rolled back stays behind its ⓘ.
+        const forking = page.locator('.fork-notice')
+        await forking.getByText('从「', { exact: false }).waitFor()
+        await forking.getByRole('button', { name: '说明', exact: true }).click()
+        await forking.getByText('文件不会复制或回滚', { exact: false }).waitFor()
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         expect(await input.inputValue()).toBe('请接着这个会话继续。')
         // What a fork borrows from its source is for this draft: nothing goes into what this device remembers.
@@ -123,20 +127,24 @@ describe('conversation forks', () => {
       const popover = page.getByRole('dialog', { name: 'Harness', exact: true })
       const forkRow = popover.locator('.harness-fork')
       await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
-      await forkRow.getByText('从最后一轮分叉，可以换 Harness；文件不会复制或回滚。', { exact: true }).waitFor()
+      await popover.getByText('开始后不能换 Harness', { exact: true }).waitFor()
+      await forkRow.getByText('从最后一轮，可以换 Harness', { exact: true }).waitFor()
       expect(await forkRow.getAttribute('aria-disabled')).toBeNull()
       await forkRow.click()
 
       // The new-session page: one notice, the sentence in the input, and the Harness menu open on the source's Harness.
-      const notice = page.locator('.ui-notice', { hasText: '正在从' }).first()
-      await notice.getByText('正在从「从弹层分叉」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。', { exact: false }).waitFor()
+      const notice = page.locator('.fork-notice').first()
+      await notice.getByText('从「从弹层分叉」分叉', { exact: true }).waitFor()
       expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('请接着这个会话继续。')
       const menu = page.getByRole('menu', { name: /^Harness/u })
       await menu.waitFor()
       await menu.getByRole('menuitemradio', { name: /goose/u }).click()
       await expect
         .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
-        .toContain('来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。')
+        .toContain('权限「按规则放行」→ 更严的「先问你」')
+      // That files are not copied or rolled back stays one press away on the notice.
+      await notice.getByRole('button', { name: '说明', exact: true }).click()
+      await notice.getByText('文件不会复制或回滚；同一项目中的会话共用项目文件夹。', { exact: true }).waitFor()
       await expect
         .poll(async () =>
           page
@@ -156,10 +164,10 @@ describe('conversation forks', () => {
       await palette.getByRole('option').filter({ hasText: '从弹层分叉' }).first().click()
       await palette.waitFor({ state: 'hidden' })
       await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
-      await forkRow.getByText('请等这一轮结束后再从这里分叉', { exact: true }).waitFor()
+      await forkRow.getByText('这一轮结束后才能分叉', { exact: true }).waitFor()
       expect(await forkRow.getAttribute('aria-disabled')).toBe('true')
       await forkRow.dispatchEvent('click')
-      expect(await page.locator('.ui-notice', { hasText: '正在从' }).count()).toBe(0)
+      expect(await page.locator('.fork-notice').count()).toBe(0)
       await page.screenshot({ path: 'test-results/fork-popover-running-1440.png' })
       await owner.request(`tasks/${source.sessionId}/cancel`, { method: 'POST', body: { requestId: randomUUID() } }).catch(() => {})
       await context.close()
@@ -242,7 +250,7 @@ describe('conversation forks', () => {
           .getByRole('radio', { name: new RegExp(name, 'u') })
           .or(page.getByRole('menuitemradio', { name: new RegExp(name, 'u') }))
           .first()
-      const notice = page.locator('.ui-notice', { hasText: '正在从' }).first()
+      const notice = page.locator('.fork-notice').first()
       // This device remembers a wider row for Qwen Code.
       await page
         .getByRole('button', { name: /^Harness：/u })
@@ -289,10 +297,7 @@ describe('conversation forks', () => {
         }).observe(document.body, { subtree: true, childList: true, characterData: true })
       })
       await pick(page, 'goose').click()
-      const mapped = [
-        '没有沿用来源会话的模型「Large」：goose 在这里不能选。',
-        '来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。',
-      ]
+      const mapped = ['没有沿用来源会话的模型「Large」：goose 在这里不能选。', '权限「按规则放行」→ 更严的「先问你」']
       await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
       const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))
       expect([...shown].filter(line => !mapped.includes(line))).toEqual([
@@ -374,7 +379,7 @@ describe('conversation forks', () => {
       await pick(page, 'Qwen Code').click()
       await expect
         .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
-        .toContain('来源会话不读写文件，Qwen Code 没有这一项，这里从它默认的那一项开始。')
+        .toContain('来源不读写文件，用 Qwen Code 的默认项')
       expect(await label(/^权限：/u)).toContain('先问你')
       await page.screenshot({ path: 'test-results/fork-chat-1280.png', fullPage: true })
       await context.close()

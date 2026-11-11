@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { Eraser, Info, ShieldAlert } from 'lucide-react'
+import { Eraser, Folder, GitFork, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
-import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
+import { Button, Collapse, Hint, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
@@ -345,11 +345,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
         <section className="composer-drawer clearing-drawer" aria-label="清空上下文">
           <Icon icon={Eraser} size={14} />
           <p role="status">
-            <strong>下一条消息开始新的上下文</strong>
-            <span>
-              {hostCleared ? '上下文已经清空，' : ''}
-              {harnessInfo ? harnessName(harnessInfo) : 'Harness'} 看不到之前的消息，记录仍留在这里。
-            </span>
+            <strong>{hostCleared ? '上下文已清空' : '下一条消息开始新的上下文'}</strong>
           </p>
           {!hostCleared && (
             <Button size="xs" onClick={() => shell.armClear(false)}>
@@ -406,7 +402,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             actions: [
               {
                 name: 'clear',
-                description: '清空上下文：之后的消息从头开始，记录仍留在这里',
+                description: '清空上下文',
                 run: () => shell.armClear(true),
               },
             ],
@@ -458,10 +454,13 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               </p>
             </Collapse>
             <Collapse open={chosenScopeCaption !== undefined}>
-              <p className="composer-notice" role="note">
-                <Icon icon={Info} size={14} />
-                <VisibleText text={chosenScopeCaption ?? ''} />
-              </p>
+              <div className="composer-notice composer-scope" role="note">
+                {chosenScopeCaption && (
+                  <Hint lead={<Icon icon={Folder} size={14} />} label={<VisibleText text={chosenScopeCaption.label} />}>
+                    {chosenScopeCaption.detail && <VisibleText text={chosenScopeCaption.detail} />}
+                  </Hint>
+                )}
+              </div>
             </Collapse>
           </>
         ) : undefined
@@ -658,7 +657,8 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       readOnly={gate.kind === 'read-only' ? gate.text : undefined}
       below={
         codeRootChoice ? (
-          <p className="composer-notice" role="note">
+          <p className="composer-notice" data-tint="warn" role="note">
+            <Icon icon={ShieldAlert} size={14} />
             {CODE_ROOT_COPY.notice}
           </p>
         ) : undefined
@@ -692,13 +692,11 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
               取消分叉
             </Button>
           }>
-          正在从「{submission.fork.title ?? submission.fork.taskId}」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。
-          {chosenHarness?.capabilities.fork === 'native' && submission.fork.source?.harnessId === chosenHarness.id && (
-            <span className="fork-own">
-              在同一个文件夹里，{chosenHarness.capabilities.display.label}{' '}
-              用它自己的记录分叉，带上到这一轮为止的完整上下文；做不到时改为以文字带上，并在会话里说明。
-            </span>
-          )}
+          <Hint
+            lead={<Icon icon={GitFork} size={14} />}
+            label={<VisibleText text={`从「${submission.fork.title ?? submission.fork.taskId}」分叉`} />}>
+            文件不会复制或回滚；同一项目中的会话共用项目文件夹。
+          </Hint>
           {submission.forkMissed.map(line => (
             <span key={line} className="fork-missed">
               {line}

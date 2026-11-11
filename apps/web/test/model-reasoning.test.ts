@@ -110,11 +110,11 @@ describe('Agent model and reasoning controls', () => {
     expect(named(html(modelOnly), '模型')).toBe('First model')
     expect(html(modelOnly)).not.toContain('role="slider"')
     expect(named(thinkingHtml(modelOnly), '思考')).toBe('默认')
-    expect(thinkingHtml(modelOnly)).toContain('Fake Agent 没有报告思考，用它自己的默认值。')
+    expect(thinkingHtml(modelOnly)).toContain('用 Fake Agent 的默认值')
     // Nothing reported: each control names its own fact and says the Harness decides.
     const silent = { ...props(), config: [] }
     expect(named(html(silent), '模型')).toBe('默认模型')
-    expect(html(silent)).toContain('Fake Agent 没有报告可选的模型，由它自己决定。')
+    expect(html(silent)).toContain('由 Fake Agent 决定')
     expect(html(silent)).not.toContain('思考')
     expect(named(thinkingHtml(silent), '思考')).toBe('默认')
   })
@@ -261,8 +261,10 @@ describe('the 权限 chip', () => {
     expect(decides).toMatchObject({
       amber: true,
       label: '不询问 · 由 Fake Agent 决定',
-      line: 'Fake Agent 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它',
+      line: '只有扩展要求确认时才问你',
     })
+    // Who decides stays under the rows once it runs, with that Latch does not limit it one press away.
+    expect(decides?.note).toMatchObject({ label: 'Fake Agent 自己决定', detail: 'Latch 不限制它，也不隔离它。' })
     const blind = permissionView({ harness, permission: { ...permission, readback: 'none' }, config: [], access: local })
     expect(blind).toMatchObject({ amber: true, label: '权限无法确认' })
   })
@@ -302,7 +304,7 @@ describe('the 权限 chip', () => {
     expect(draftPermission(codex, 'agent')).toMatchObject({ label: '先问你', line: '只读；改文件或联网前先问你', amber: false })
     // Without a word for its modes, the general line stays.
     expect(draftPermission({ ...codex, permission: { approvals: 'prompts', readback: 'mode' } }, 'agent')?.line).toBe(
-      'Fake Agent 改文件或运行命令前问你',
+      '改文件或运行命令前问你',
     )
   })
 
@@ -353,14 +355,11 @@ describe('the 权限 chip', () => {
 
     const before = draftPermission(readable, 'agent', undefined, 'readable')
     expect(before).toMatchObject({ label: '读取后可以选', amber: false })
-    expect(before?.line).toBe('Fake Agent 读取或开始时告诉 Latch 它有哪几项权限')
-    expect(draftPermission(readable, 'agent', undefined, 'reading')).toMatchObject({
-      label: '正在读取…',
-      line: '正在读取 Fake Agent 的权限…',
-      amber: false,
-    })
+    // The title says when the rows come; no line repeats it.
+    expect(before?.line).toBe('')
+    expect(draftPermission(readable, 'agent', undefined, 'reading')).toMatchObject({ label: '正在读取…', line: '', amber: false })
     // Without a read the agent tells only once started.
-    expect(draftPermission(harness, 'agent')?.line).toBe('Fake Agent 开始后才告诉 Latch 它有哪几项权限')
+    expect(draftPermission(harness, 'agent')).toMatchObject({ label: '开始后可以选', line: '' })
     // What a Harness declares, and a chat, need no read.
     expect(
       draftPermission({ ...readable, permission: { approvals: 'none', readback: 'none' } }, 'agent', undefined, 'reading'),
@@ -420,14 +419,14 @@ describe('what a Harness has not reported', () => {
     currentValue: 'a',
     options: [{ value: 'a', name: 'A' }],
   })
-  it('gives each control one sentence on its own fact', () => {
-    expect(unreportedModelNote('pi', false, [])).toBe('pi 开始后才报告可选的模型，发第一条消息后可以在这里换。')
-    expect(unreportedThinkingNote('pi', false, [])).toBe('pi 开始后才报告有哪些思考，发第一条消息后可以在这里换。')
-    expect(unreportedModelNote('pi', true, [])).toBe('pi 没有报告可选的模型，由它自己决定。')
-    expect(unreportedThinkingNote('pi', true, [])).toBe('pi 没有报告思考，用它自己的默认值。')
+  it('gives each control a few words on its own fact', () => {
+    expect(unreportedModelNote('pi', false, [])).toBe('发第一条消息后可以换')
+    expect(unreportedThinkingNote('pi', false, [])).toBe('发第一条消息后可以换')
+    expect(unreportedModelNote('pi', true, [])).toBe('由 pi 决定')
+    expect(unreportedThinkingNote('pi', true, [])).toBe('用 pi 的默认值')
     expect(unreportedModelNote('pi', true, [option('model')])).toBeUndefined()
-    expect(unreportedThinkingNote('pi', true, [option('model')])).toBe('pi 没有报告思考，用它自己的默认值。')
-    expect(unreportedModelNote('pi', true, [option('thought_level')])).toBe('pi 没有报告可选的模型，由它自己决定。')
+    expect(unreportedThinkingNote('pi', true, [option('model')])).toBe('用 pi 的默认值')
+    expect(unreportedModelNote('pi', true, [option('thought_level')])).toBe('由 pi 决定')
     expect(unreportedThinkingNote('pi', true, [option('thought_level')])).toBeUndefined()
   })
 })
@@ -580,26 +579,26 @@ describe("a draft's list of a Harness's own options", () => {
     }
     const markup = renderToStaticMarkup(createElement(DraftModelControl, draft))
     expect(named(markup, '模型')).toBe('LARGE')
-    expect(markup).not.toContain('开始后才报告')
+    expect(markup).not.toContain('发第一条消息后可以换')
     // Large's own levels, as the list says, in the thinking control.
     const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
     expect(named(thinking, '思考')).toBe('LOW')
     for (const level of ['LOW', 'HIGH', 'MAX']) expect(thinking).toContain(level)
-    expect(thinking).not.toContain('开始后才报告')
+    expect(thinking).not.toContain('发第一条消息后可以换')
     // A model no session ran on: its levels are not known yet, so 默认 and why.
     const huge = renderToStaticMarkup(
       createElement(DraftThinkingControl, { ...draft, choice: { ...draft.choice, config: { model: 'huge' } } }),
     )
     expect(named(huge, '思考')).toBe('默认')
-    expect(huge).toContain('这个模型有哪些思考，Codex 开始后才告诉 Latch。')
+    expect(huge).toContain('开始后才知道')
     // Nothing read yet: each control says it comes with the start.
     const unread = {
       ...draft,
       catalog: { ...catalog, harnesses: [testHarness('pi')] },
       choice: { mode: 'agent' as const, harnessId: 'pi' },
     }
-    expect(renderToStaticMarkup(createElement(DraftModelControl, unread))).toContain('pi 开始后才报告可选的模型')
-    expect(renderToStaticMarkup(createElement(DraftThinkingControl, unread))).toContain('pi 开始后才报告有哪些思考')
+    expect(renderToStaticMarkup(createElement(DraftModelControl, unread))).toContain('发第一条消息后可以换')
+    expect(renderToStaticMarkup(createElement(DraftThinkingControl, unread))).toContain('发第一条消息后可以换')
   })
 })
 
@@ -676,7 +675,9 @@ describe('thinking on the built-in Harness', () => {
     expect(named(none, '思考')).toBe('默认')
     // Still a button that opens, without the arrow.
     expect(none).toMatch(/<button[^>]*class="ui-value-picker thinking-picker is-fixed"[^>]*aria-haspopup="menu"/u)
-    expect(none).toContain('这个模型没有设置思考，用它自己的默认值。可以在 设置 › 模型 里为它选择。')
+    // A short label; where to set it stays behind its ⓘ.
+    expect(none).toContain('用模型默认值')
+    expect(none).toContain('aria-label="说明"')
     const gone = { providerId: 'lab', model: 'alpha', effort: 'max' }
     expect(named(thinking(gone, gone), '思考')).toBe('最高')
     expect(thinking(gone, gone)).toContain('这个模型不再设置「最高」，重新选一个后再发送。')

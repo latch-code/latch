@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from
 import { FileText, Image, Plus, X } from 'lucide-react'
 import { Button, ConfirmDialog, Icon, IconButton, InlineNotice, Modal, ModalHeader, Spinner, TextAreaField } from '@latch/ui'
 import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
-import { storageGet, storageSet } from '../preferences.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
 const uploadBytes = (value: number) =>
@@ -124,26 +123,11 @@ export function AttachmentDrafts({
   const [preview, setPreview] = useState<string>(),
     [confirm, setConfirm] = useState<string>()
   const item = controller.items.find(item => item.key === preview)
-  const noticeKey = 'latch.attachment-intro'
-  const [intro, setIntro] = useState(() => storageGet(noticeKey) !== 'seen')
   return (
     <>
       {controller.error && <InlineNotice tone="error">{controller.error}</InlineNotice>}
       {controller.items.length > 0 && (
         <div className="attachment-drafts" aria-label="消息附件">
-          {intro && (
-            <div className="attachment-intro" role="note">
-              <span>附件内容会发送给当前模型服务或 Harness。</span>
-              <IconButton
-                label="知道了"
-                icon={X}
-                onClick={() => {
-                  setIntro(false)
-                  storageSet(noticeKey, 'seen')
-                }}
-              />
-            </div>
-          )}
           {controller.items.map(item => (
             <div key={item.key} className="attachment-draft" data-state={item.status}>
               <Button

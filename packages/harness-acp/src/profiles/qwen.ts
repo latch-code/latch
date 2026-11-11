@@ -11,11 +11,11 @@ export const qwenProfile: HarnessProfile = {
     modeTiers: {
       plan: { tier: 'plan', line: '只看和规划，不改文件' },
       default: { tier: 'ask', line: '改文件或运行命令前问你' },
-      'auto-edit': { tier: 'rule', line: '直接改文件；运行命令前问你' },
+      'auto-edit': { tier: 'rule', line: '直接改文件，命令前问你' },
       // The person's allow rules, read-only tools and edits inside the project (not `.git`, `package.json` and the like)
       // pass before its classifier; it asks when the classifier cannot decide, and reports no verdict.
-      auto: { tier: 'model', line: '只读和改项目文件不问；其余由它的模型判断，可能判错' },
-      yolo: { tier: 'never', line: '直接读写这台 Mac 上的文件并运行命令' },
+      auto: { tier: 'model', line: '项目内不问，其余由模型判断' },
+      yolo: { tier: 'never', line: '直接改文件和运行命令' },
     },
     readback: 'mode',
     inheritEnv: ['QWEN_HOME', 'QWEN_RUNTIME_DIR'],

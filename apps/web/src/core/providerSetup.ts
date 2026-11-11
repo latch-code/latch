@@ -118,10 +118,10 @@ export function heldBackService(
   const first = catalog.unusableProviders?.[0]
   if (!first) return undefined
   const name = `「${escapeSecurityText(first.name)}」`
-  const where = `在 ${computerName(hostName)} 上，打开 设置 › 模型`
+  const where = `在 ${computerName(hostName)} 的 设置 › 模型 里`
   return first.reason === 'key-missing'
-    ? { message: `${name}还没有填写密钥。`, hint: `${where} 填写密钥后即可开始。` }
-    : { message: `${name}的地址还没有确认。`, hint: `${where} 确认地址后即可开始。` }
+    ? { message: `${name}还没有填写密钥。`, hint: `${where}填写密钥` }
+    : { message: `${name}的地址还没有确认。`, hint: `${where}确认地址` }
 }
 
 /** A saved service's destination; older Hosts do not report it and enforce their own rules. */

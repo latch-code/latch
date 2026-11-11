@@ -264,7 +264,8 @@ describe('pi over its own RPC mode', () => {
     const turn = page.locator('.turn-reply').first()
     await turn.hover()
     await turn.getByRole('button', { name: '从这里分叉', exact: true }).click({ force: true })
-    await expect.poll(() => page.locator('.fork-own').innerText()).toContain('pi 用它自己的记录分叉')
+    // How pi forks is said once the fork runs, in the session; the notice only names the source.
+    await page.locator('.fork-notice').getByText('从「', { exact: false }).waitFor()
     await draft(page).fill('recall what came before')
     await draft(page).press('Meta+Enter')
     // The fork holds pi's record up to the first turn and no further.
@@ -355,7 +356,7 @@ describe('pi over its own RPC mode', () => {
       },
     })
     expect(created.status).toBe(201)
-    const reason = '让 Latch 把 pi 的请求转给它，尚未实现'
+    const reason = '转发 pi 的请求尚未实现'
     for (const width of [1440, 390] as const) {
       const page = await open(width, 'dark')
       for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {

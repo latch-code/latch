@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, CircleAlert, CircleCheck, ExternalLink, LockKeyhole, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CircleAlert, CircleCheck, ExternalLink, LockKeyhole, RefreshCw, ShieldAlert } from 'lucide-react'
 import {
   PROVIDER_PRESETS,
   type AgentPresetSettings,
@@ -20,7 +20,7 @@ import { destinationOf, SERVICE_FORM, servicesToPick, type ProvidersResponse } f
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
-import { Badge, Button, ButtonLink, Icon, IconButton, InlineNotice, Loading, CopyButton } from '@latch/ui'
+import { Badge, Button, ButtonLink, Hint, Icon, IconButton, InlineNotice, Loading, CopyButton } from '@latch/ui'
 import { MarkTile, ProviderTile } from './BrandTile.tsx'
 
 const ProviderAddForm = deferredComponent(
@@ -225,12 +225,9 @@ export function AgentSetupPanel({
       onBack={onBack}
       footer={
         canAdd ? (
-          <>
-            <span className="setup-panel-caption">{SETUP_COPY.saveAgent}</span>
-            <Button variant="primary" loading={busy === 'add'} disabled={busy !== null} onClick={() => void add()}>
-              添加
-            </Button>
-          </>
+          <Button variant="primary" loading={busy === 'add'} disabled={busy !== null} onClick={() => void add()}>
+            添加
+          </Button>
         ) : (
           <Elsewhere>{SETUP_COPY.addAgentElsewhere(computer)}</Elsewhere>
         )
@@ -260,7 +257,9 @@ export function AgentSetupPanel({
         {`${hostOf(preset.homepage)} · ${preset.license}`}
         <Icon icon={ExternalLink} size={12} />
       </ButtonLink>
-      <p className="setup-panel-caption">{SETUP_COPY.agentFullAccess}</p>
+      <Hint className="setup-panel-caption" lead={<Icon icon={ShieldAlert} size={12} />} label={SETUP_COPY.agentFullAccess.label}>
+        {SETUP_COPY.agentFullAccess.detail}
+      </Hint>
       <InlineConfirm active={busy === 'add'} rank={2} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </SetupPanel>

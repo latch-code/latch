@@ -381,8 +381,8 @@ export function ModeSwitch({ value, onChange, disabled }: { value: TaskMode; onC
       onValueChange={onChange}
       className="mode-switch"
       options={[
-        { value: 'chat', label: '对话', title: '只对话，不调用工具' },
-        { value: 'agent', label: 'Agent', title: '可调用工具，需要时请你批准' },
+        { value: 'chat', label: '对话' },
+        { value: 'agent', label: 'Agent' },
       ]}
     />
   )

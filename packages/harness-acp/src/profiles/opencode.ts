@@ -108,8 +108,8 @@ export const opencodeProfile: HarnessProfile = {
     expectedMode: 'build',
     modeLadder: ['plan', 'build'],
     modeTiers: {
-      plan: { tier: 'plan', line: '只看和规划，不改文件也不运行命令；其他工具先问你' },
-      build: { tier: 'ask', line: '读文件不问；其他操作先问你' },
+      plan: { tier: 'plan', line: '只看和规划，不改文件' },
+      build: { tier: 'ask', line: '读文件不问，其余问你' },
     },
     readback: 'mode',
     // The configuration keys above are those of OpenCode 1.x, which 2.x still reads as the same ordered rules (`task` as

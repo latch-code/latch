@@ -11,10 +11,10 @@ export const codexProfile: HarnessProfile = {
     // `agent` is codex-acp's 「Auto review」: the sandbox of `workspace-write`, with every request it would ask about decided
     // by Codex's own review model, which approves or denies and never passes one on.
     modeTiers: {
-      'read-only': { tier: 'ask', line: '只读；改文件或联网前先问你' },
-      'workspace-write': { tier: 'rule', line: '项目里直接改和运行；越界或联网前问你' },
-      agent: { tier: 'model', line: '项目里直接做；越界或联网由它的模型判断，可能判错' },
-      'agent-full-access': { tier: 'never', line: '直接读写这台 Mac 上的文件、联网并运行命令' },
+      'read-only': { tier: 'ask', line: '改文件或联网前问你' },
+      'workspace-write': { tier: 'rule', line: '项目内直接做，越界前问你' },
+      agent: { tier: 'model', line: '越界或联网由它的模型判断' },
+      'agent-full-access': { tier: 'never', line: '直接改文件、联网和运行命令' },
     },
     reviewCallPrefix: 'guardian_assessment:',
     // Accepting these would store a rule inside Codex that outlives the session.

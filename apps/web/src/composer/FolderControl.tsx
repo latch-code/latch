@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Folder, FolderGit2, Info } from 'lucide-react'
+import { Folder, FolderGit2 } from 'lucide-react'
 import type { WorkspaceInfo, WorktreeBase } from '@latch/protocol'
-import { MenuFooterNote, ValuePicker } from '@latch/ui'
+import { ValuePicker } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
-import { BranchSegment, StatusSegment, WORKTREE_SHARED } from './ComposerStatus.tsx'
+import { BriefHint } from './BriefHint.tsx'
+import { BranchSegment, StatusSegment } from './ComposerStatus.tsx'
 
 type Where = 'folder' | 'worktree'
 
@@ -15,9 +16,9 @@ const WORKTREE_COPY = {
   folder: '当前文件夹',
   worktree: '新工作树',
   folderLine: '直接在项目文件夹里改',
-  uncommitted: '未提交的改动不会带过去。',
-  /** A worktree separates files only: ports, processes and this computer's permissions stay shared. */
-  shared: WORKTREE_SHARED,
+  uncommitted: '不带未提交的改动',
+  /** A worktree separates files only: ports, processes and this computer's permissions stay shared (no isolation implied). */
+  shared: { label: '工作树只分开文件', detail: '端口、进程和这台电脑上的权限仍然共用。' },
 } as const
 
 /** 从 main 的 3f2a1c9; a detached HEAD has no branch to name. */
@@ -57,8 +58,9 @@ function useWorktreeBase(projectId: string) {
  */
 function worktreeLine(base: BaseState | undefined): string | undefined {
   if (base?.state === 'refused') return undefined
-  if (base?.state === 'ready') return `${WORKTREE_COPY.uncommitted}${baseWords(base.base)}`
-  return `${WORKTREE_COPY.uncommitted}正在读取分支…`
+  // The warning first: a long branch name is what the ellipsis cuts, never the warning.
+  if (base?.state === 'ready') return `${WORKTREE_COPY.uncommitted} · ${baseWords(base.base)}`
+  return `${WORKTREE_COPY.uncommitted} · 正在读取分支…`
 }
 
 /**
@@ -109,7 +111,7 @@ export function FolderControl({
           ...(base?.state === 'refused' ? { disabledReason: base.message } : {}),
         },
       ]}
-      footer={<MenuFooterNote icon={Info}>{WORKTREE_COPY.shared}</MenuFooterNote>}
+      footer={<BriefHint brief={WORKTREE_COPY.shared} className="model-note" />}
       onValueChange={next => {
         onWorktree(next === 'worktree')
       }}
