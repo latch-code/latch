@@ -128,6 +128,48 @@ export async function buildHtmlFrames(directory = resolve('dist/web/preview-fram
   }
 }
 
+/**
+ * The plugin page runtime: one inline script (React, the primitives and the bridge) whose hash the Host and the desktop
+ * app put in the frame's CSP, and the design system's styles. The same sources give the same bytes, so the hash is
+ * fixed for a build.
+ */
+export async function buildAppFrame(directory = resolve('dist/web/app-frame')): Promise<void> {
+  const result = await bundle({
+    entryPoints: [fileURLToPath(new URL('./src/app-frame/runtime.ts', import.meta.url))],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2023',
+    minify: true,
+    write: false,
+    legalComments: 'none',
+    jsx: 'automatic',
+    define: { 'process.env.NODE_ENV': '"production"' },
+  })
+  const styles = await bundle({
+    entryPoints: [fileURLToPath(import.meta.resolve('@latch/ui/tokens.css')), fileURLToPath(import.meta.resolve('@latch/ui/ui.css'))],
+    bundle: true,
+    minify: true,
+    write: false,
+    outdir: directory,
+    legalComments: 'none',
+  })
+  const css = styles.outputFiles
+    .map(file => file.text)
+    .join('')
+    .replace(/<\/style/giu, '<\\/style')
+  const script = result.outputFiles[0]!.text.replace(/<\/script/giu, '<\\/script')
+  const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
+  const page =
+    'html,body{margin:0;min-height:100%;background:var(--canvas);color:var(--ink);font-family:var(--font);font-size:var(--fs-ui);line-height:var(--lh-ui)}#app{box-sizing:border-box;max-width:960px;padding:var(--sp-16) var(--sp-24) var(--sp-32)}@media (max-width:600px){#app{padding:var(--sp-12) var(--sp-16) var(--sp-24)}}'
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    resolve(directory, 'runtime.html'),
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${page}</style></head><body><div id="app"></div><script>${script}</script></body></html>`,
+  )
+  await writeFile(resolve(directory, 'runtime.json'), JSON.stringify({ file: 'runtime.html', scriptHash }))
+}
+
 export default defineConfig(async ({ command }): Promise<UserConfig> => ({
   // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
   // repository root's dist/web, the path every Host build reads.
@@ -139,6 +181,7 @@ export default defineConfig(async ({ command }): Promise<UserConfig> => ({
         await buildOfficeFrame()
         await buildDiagramFrame()
         await buildHtmlFrames()
+        await buildAppFrame()
       },
     },
   ],

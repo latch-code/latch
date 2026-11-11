@@ -19,6 +19,8 @@ import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
 import { setPreference, usePreferences } from '../preferences.ts'
 import { shortcutWorksOnPage, workbenchShortcut } from '../workbenchShortcuts.ts'
+import { frameShortcutAllowed } from '../plugin-pages/model.ts'
+import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
   SIDEBAR_DEFAULT,
@@ -30,7 +32,7 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { visibleEntries, type AgentPageTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
+import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
@@ -197,9 +199,29 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const contentSearch = useSessionSearch(search, snapshot.catalog?.features?.search === true)
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null)
   const [filter, setFilter] = useState<SessionFilter>('all')
-  const entries = visibleEntries(settingsSections(snapshot, access), phone, snapshot.catalog?.features?.customAgents === true)
+  const entries = visibleEntries(
+    settingsSections(snapshot, access),
+    phone,
+    snapshot.catalog?.features?.customAgents === true,
+    snapshot.apps?.some(page => page.status !== 'disabled') === true,
+  )
   /** The delegation this device sent from 我的 Agent and has no answer for; kept apart from the new session's draft. */
   const delegation = useDelegation(snapshot, refresh)
+  // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
+  const shownEntry = useRef(route.entry)
+  useLayoutEffect(() => {
+    if (route.entry === 'sessions' && shownEntry.current !== 'sessions') conversationShown()
+    shownEntry.current = route.entry
+  }, [route.entry])
+  useEffect(() => {
+    const visible = () => {
+      if (document.visibilityState === 'visible') conversationShown()
+    }
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [])
   const entriesKey = entries.join()
   // An entry this device can no longer use closes at once.
   useLayoutEffect(() => {
@@ -422,6 +444,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     drawer.setOpen(false)
     setNewSheet(false)
     setRoute({ entry: 'agents', ...(target ? { myAgent: target } : {}) })
+  }
+  /** 应用, at a page or at the list. */
+  const openApp = (target?: AppTarget) => {
+    drawer.setOpen(false)
+    setNewSheet(false)
+    setRoute({ entry: 'apps', ...(target ? { app: target } : {}) })
   }
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
@@ -766,6 +794,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     window.addEventListener('keydown', workbenchKeys)
     return () => window.removeEventListener('keydown', workbenchKeys)
   }, [workbenchKeys])
+  /**
+   * A Cmd/Ctrl key pressed in a plugin page's frame: only the shell's own navigation shortcuts hear it. It is never
+   * dispatched in the page, so no other listener (an approval's Esc, an undo) can be reached from a frame.
+   */
+  const frameShortcut = (init: KeyboardEventInit) => {
+    const event = new KeyboardEvent('keydown', { ...init, cancelable: true })
+    // Never a command that focuses a field (新会话, the input, the palette, find): what the person types next would go
+    // into the shell instead of the page.
+    if (frameShortcutAllowed(workbenchShortcut({ ...stroke(event), typing: false }, currentShell() !== null))) workbenchKeys(event)
+  }
   // A phone has no keys, so nothing it could close the shortcuts with: a window narrowed to one lets them go.
   useEffect(() => {
     if (phone) setShortcutsOpen(false)
@@ -1182,6 +1220,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openSettings,
     openAgentPage,
     openMyAgent,
+    openApp,
+    frameShortcut,
     delegation,
     openProjectSettings,
     openSearch,

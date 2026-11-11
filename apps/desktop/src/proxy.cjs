@@ -127,9 +127,37 @@ function isPreviewFrameUrl(raw) {
   }
 }
 
+/** The plugin page runtime: one fixed file, framed only by the app page. */
+function isAppFrameUrl(raw) {
+  try {
+    const url = new URL(raw)
+    return (
+      url.protocol === 'latch-frame:'
+      && url.hostname === 'app'
+      && !url.port
+      && !url.username
+      && !url.password
+      && !url.search
+      && url.pathname === '/runtime.html'
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The plugin page frame's policy, the same as the Host's (`apps/host/src/app-frame.ts`) with the app page as the only
+ * ancestor: an opaque origin, the runtime's script by hash and page code only from the Blob it checked.
+ */
+function appFrameCsp(scriptHash) {
+  return `sandbox allow-scripts; default-src 'none'; script-src '${scriptHash}' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data:; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`
+}
+
 function isAllowedRendererDetails(details, options) {
-  if (isPreviewFrameUrl(details.url)) return details.resourceType === 'subFrame'
+  if (isPreviewFrameUrl(details.url) || isAppFrameUrl(details.url)) return details.resourceType === 'subFrame'
   if (details.resourceType === 'subFrame') return false
+  // A page's module: only the Blob the runtime made from the bytes the app page handed it.
+  if (details.frame?.parent && isAppFrameUrl(details.frame.url) && details.resourceType === 'script') return details.url.startsWith('blob:')
   if (details.frame?.parent) return ['image', 'font', 'media'].includes(details.resourceType) && /^(?:blob:|data:)/u.test(details.url)
   if (details.initiatorOrigin === 'null') return false
   try {
@@ -1147,7 +1175,9 @@ function createShellProxy(options) {
 
   /** Public bootstrap only; no credentials, caller headers or caller-controlled upstream path. */
   async function previewFrame(request) {
-    if (!isPreviewFrameUrl(request.url) || !['GET', 'HEAD'].includes(request.method)) return errorResponse(404, 'not-found', '页面不存在')
+    if (!['GET', 'HEAD'].includes(request.method)) return errorResponse(404, 'not-found', '页面不存在')
+    if (isAppFrameUrl(request.url)) return appFrame(request)
+    if (!isPreviewFrameUrl(request.url)) return errorResponse(404, 'not-found', '页面不存在')
     const name = new URL(request.url).pathname.slice(1)
     try {
       const result = await upstream('GET', `/link/preview-frame/${name}`, {}, undefined)
@@ -1173,6 +1203,35 @@ function createShellProxy(options) {
       })
     } catch {
       return errorResponse(404, 'preview-unavailable', '文档预览器不可用')
+    }
+  }
+
+  /** The plugin page runtime, checked against its hash like a preview bootstrap; nothing of the caller goes upstream. */
+  async function appFrame(request) {
+    try {
+      const result = await upstream('GET', '/link/app-frame/runtime.html', {}, undefined)
+      const bytes = await readBody(result.response, 16 * 1024 * 1024)
+      const hash = result.response.headers['x-latch-frame-hash']
+      const scripts = [...bytes.toString('utf8').matchAll(/<script>([\s\S]*?)<\/script>/gu)]
+      if (
+        result.response.statusCode !== 200
+        || typeof hash !== 'string'
+        || !/^sha256-[A-Za-z0-9+/]{43}=$/u.test(hash)
+        || scripts.length !== 1
+        || `sha256-${createHash('sha256').update(scripts[0][1]).digest('base64')}` !== hash
+      )
+        return errorResponse(404, 'app-frame-unavailable', '插件页面运行环境不可用')
+      return new Response(request.method === 'HEAD' ? null : bytes, {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer',
+          'content-security-policy': appFrameCsp(hash),
+        },
+      })
+    } catch {
+      return errorResponse(404, 'app-frame-unavailable', '插件页面运行环境不可用')
     }
   }
 
@@ -1210,6 +1269,8 @@ module.exports = {
   isAllowedRendererRequest,
   isAllowedRendererDetails,
   isPreviewFrameUrl,
+  isAppFrameUrl,
+  appFrameCsp,
   isAppUrl,
   externalUrl,
   externalLinkDialog,

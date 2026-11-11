@@ -50,6 +50,9 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   '@latch/protocol': { dir: 'packages/protocol', env: 'isomorphic', dependencies: [] },
   // The design system of the browser client: design tokens, the order of the cascade layers and the primitive components.
   '@latch/ui': { dir: 'packages/ui', env: 'browser', dependencies: [] },
+  // Plugin pages: the author types, the bridge client and the runtime that run inside the opaque page frame. It never
+  // reaches the shell's code: the design system's primitives come in from the runtime's entry in the web client.
+  '@latch/app-sdk': { dir: 'packages/app-sdk', env: 'browser', dependencies: ['@latch/protocol'] },
   '@latch/sdk': { dir: 'packages/sdk', env: 'node', dependencies: ['@latch/protocol'] },
   '@latch/core': { dir: 'packages/core', env: 'node', dependencies: ['@latch/protocol', '@latch/sdk'] },
   '@latch/testkit': { dir: 'packages/testkit', env: 'node', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devOnly: true },
@@ -66,12 +69,13 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
     dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core', '@latch/harness-acp', '@latch/link-wire', '@latch/link-client'],
     devDependencies: ['@latch/testkit'],
   },
-  // At run time the page uses the protocol package and the design system. Its Vite config reads host.json through the
-  // Host's modules, and its tests compare the browser's security encodings with the Host's and with the shared vectors.
+  // At run time the page uses the protocol package and the design system; the plugin page runtime it builds also carries
+  // the page SDK. Its Vite config reads host.json through the Host's modules, and its tests compare the browser's
+  // security encodings with the Host's and with the shared vectors.
   '@latch/web': {
     dir: 'apps/web',
     env: 'browser',
-    dependencies: ['@latch/protocol', '@latch/ui'],
+    dependencies: ['@latch/protocol', '@latch/ui', '@latch/app-sdk'],
     devDependencies: ['@latch/testkit', '@latch/host', '@latch/core'],
   },
   // The shell's tests renew a credential against a real Host.

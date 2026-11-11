@@ -6,7 +6,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 1. 运行 `git status`，保留已有的未提交改动。
 2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`，再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
-3. 遵守「本机运行安全」：不碰用户正在运行的 Host 与默认数据目录。
+3. 遵守「本机运行安全」，不碰用户的 Host 与数据。
 
 ## 代码地图
 
@@ -21,6 +21,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
+| `packages/app-sdk/` | 插件页面框内的桥与运行时 |
 | `packages/core/` | Cordis、执行循环、快照与 Node 工具 `./node-kit` |
 | `packages/harness-acp/` | ACP 驱动与权限预设 |
 | `packages/testkit/` | Host、确认后端、安全向量与假 ACP 测试夹具 |
@@ -33,11 +34,11 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `.agents/skills/` | 技能；`.claude/skills/` 由 `pnpm agents:sync` 生成 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |
 
-依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `check:boundaries`、`knip` 与 `lint` 执行；违规在边界上修，不加例外。
+依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol`、`ui` 与 `app-sdk`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `check:boundaries`、`knip` 与 `lint` 执行；违规在边界上修，不加例外。
 
 ## 命令
 
-需要 Node.js 24.22.1（`.node-version`；`engines` 只接受含 2026-10-20 安全修复的版本，用 `fnm use` 切换）与 pnpm 11.28.6（`packageManager` 固定版本与 sha512），构建原生组件需要 Go 1.26.10（`.go-version`）。
+需要 Node.js 24.22.1（`.node-version`；`engines` 只接受含 2026-10-20 安全修复的版本，用 `fnm use` 切换）与 pnpm 11.28.6（`packageManager` 固定版本），构建原生组件需要 Go 1.26.10（`.go-version`）。
 
 ```sh
 pnpm install
@@ -54,7 +55,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 pnpm latch --help                # 列出子命令；调用时都加 --data-dir <临时目录>
 pnpm start:demo -- --port 0 --data-dir <临时数据目录> --workspace <临时工作区>
 pnpm stop -- --data-dir <同一数据目录>
-LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；按 Vite 打印的 http://h-<hostId>.localhost:<端口>/link/ 打开
+LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 /link/ 地址
 ```
 
 其余命令见 [docs/TESTING.md](docs/TESTING.md#命令)。
@@ -82,7 +83,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；按 Vite 打印的 htt
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码与页面能力变宽；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 都经受限运行器（文件与配置钩子、fsmonitor、filter、传输关闭）；只有人按下的提交、推送与有 filter 的暂存以你的账户运行 Git：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
-- **插件页面只凭已批准的能力行事。** Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
+- **插件页面只凭已批准的能力行事。** 只在不透明隔离框中运行、不拿凭据；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（格式见 [docs/TESTING.md](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`。
 - **共享安全编码。** 修改 base32、指纹、`canonicalJson`、确认预览与 previewHash、`hashDisplay`、`escapeSecurityText` 或签名文本时，同时更新 `packages/testkit/vectors/security-v1.json`、`native/macos/LatchPresence.swift` 与各处实现（`apps/host/src/crypto.ts`、`auth.ts`（签名文本）、`presence*.ts`（确认预览）、`packages/core/src/node-kit/digest.ts`、`packages/protocol/src/text.ts`、`apps/web/src/core/deviceKey.ts`、`contentHash.ts`、`apps/desktop/src/credentials.cjs`），再 `pnpm build:presence` 并运行 `presence.test.ts`（自检用例对旧组件失败）。
@@ -119,7 +120,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；按 Vite 打印的 htt
 
 ## 完成标准
 
-1. `pnpm build` 与 `pnpm check` 通过，先构建：`presence.test.ts` 的自检用例对比源码旧的确认组件失败并说明要先构建；构建后 `dist/` 中没有测试代码（见「安全」）。
+1. 先 `pnpm build` 再 `pnpm check`，都通过（确认组件自检需先构建）；构建后 `dist/` 中没有测试代码（见「安全」）。
 2. 其余检查由 `pnpm check -- --plan` 按改动列出（e2e、Electron、`check:supply`、[安全定向用例](docs/TESTING.md#按改动选择回归)），技能 `latch-verify` 按它运行并汇报。
 3. UI 改动在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待状态与深色模式（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts` 的截图）。测试夹具、测试确认后端与演示模型不等于真实模型、Touch ID 或真机验收；系统确认表单只能由用户本人用 `pnpm latch presence test` 人工检查。
 4. 行为变化时运行 `pnpm docs:affected`，更新对应的 `docs/` 机制文档与 `AGENTS.md`。

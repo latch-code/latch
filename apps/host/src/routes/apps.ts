@@ -168,6 +168,8 @@ const key = (page: Gate, requestId: string) => `${page.pluginId}/${page.appId}\n
 
 const ROOT = '/link/api/apps/'
 const PLUGIN = '([A-Za-z0-9_-]{1,64})'
+/** A page's built module: the hash in the path is the current one, or 404. */
+const MODULE = new RegExp(`^/link/api/app-modules/${PLUGIN}/${PLUGIN}/([a-f0-9]{64})\\.js$`, 'u')
 const DATA = new RegExp(`^/link/api/apps/${PLUGIN}/data(?:/([^/]+)(?:/([^/]+))?)?$`, 'u')
 const DIAGNOSTICS = new RegExp(`^/link/api/apps/${PLUGIN}/diagnostics$`, 'u')
 const PAGE = new RegExp(`^/link/api/apps/${PLUGIN}/pages/${PLUGIN}/(lookup|sessions)/([^/]+)(/last-reply)?$`, 'u')
@@ -183,6 +185,27 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
   const writes = new Window(APP_WRITES_PER_MINUTE, context.now)
   /** Starts on their way, by page and request ID, so a lookup can say `pending`. */
   const pending = new Map<string, number>()
+  /** Built page modules by applied revision and page, with their hash; a new revision makes new entries. */
+  const modules = new Map<string, { hash: string; bytes: Buffer } | null>()
+
+  /**
+   * A page's module: until the Host builds pages itself, an applied package's prebuilt `.js` entry is the module as it
+   * is; a `.ts` or `.tsx` entry has no module yet.
+   */
+  function moduleOf(record: ReturnType<PluginAssets['get']>, appId: string): { hash: string; bytes: Buffer } | undefined {
+    const revision = record.appliedRevision
+    const bundle = record.appliedBundle
+    if (!revision || !bundle) return undefined
+    const name = `${revision}/${appId}`
+    if (!modules.has(name)) {
+      const app = bundle.manifest.apps?.find(item => item.id === appId)
+      const file = app && /\.js$/iu.test(app.entry) ? bundle.files.find(item => item.path === app.entry) : undefined
+      const bytes = file ? Buffer.from(file.content, 'utf8') : undefined
+      if (modules.size >= 64) modules.clear()
+      modules.set(name, bytes ? { bytes, hash: createHash('sha256').update(bytes).digest('hex') } : null)
+    }
+    return modules.get(name) ?? undefined
+  }
 
   function refuse(pluginId: string, appId: string, deviceId: string, capability: string): never {
     // A refused call is a diagnostic, within the device's report budget so a page cannot fill the disk with them.
@@ -330,7 +353,8 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
             ? 'ready'
             : (await deps.data.status(owner, codeVersion).catch(() => undefined))?.status
         if (!status) continue
-        for (const app of bundle.manifest.apps)
+        for (const app of bundle.manifest.apps) {
+          const built = moduleOf(record, app.id)
           out.push({
             pluginId: record.id,
             appId: app.id,
@@ -342,12 +366,39 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
             capabilities: structuredClone(app.capabilities),
             dataVersion: app.dataVersion,
             status,
+            ...(built ? { bundleHash: built.hash } : {}),
           })
+        }
       }
       return out
     },
 
     async route({ req, res, caller, path, method }) {
+      const moduleMatch = MODULE.exec(path)
+      if (moduleMatch) {
+        context.requireScope(caller, 'view')
+        if (method !== 'GET' && method !== 'HEAD') throw new AppError(404, 'not-found', '接口不存在。')
+        // Only the shell's own fetch takes the bytes; a script, frame or navigation never runs them on its origin.
+        const dest = req.headers['sec-fetch-dest']
+        if (dest !== undefined && dest !== 'empty') throw new AppError(403, 'app-module-refused', '页面代码只交给页面框。')
+        const [, pluginId, appId, hash] = moduleMatch as unknown as [string, string, string, string]
+        const assets = deps.assets()
+        const revision = assets.has(pluginId) ? assets.get(pluginId).appliedRevision : undefined
+        if (!revision) throw new AppError(404, 'app-not-found', '找不到这个页面。')
+        // The same checks as any page call, at the applied revision: enabled, the page exists, approval still holds.
+        gate(caller, { app: `${pluginId}/${appId}`, revision }, undefined, pluginId)
+        const built = moduleOf(assets.get(pluginId), appId)
+        if (!built || built.hash !== hash) throw new AppError(404, 'app-module-not-found', '这个页面版本已不可用，请重新加载。')
+        context.recheck(caller, 'view')
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-content-type-options': 'nosniff',
+          'content-length': String(built.bytes.length),
+          'cache-control': 'no-store',
+        })
+        res.end(method === 'HEAD' ? undefined : built.bytes)
+        return true
+      }
       if (!path.startsWith(ROOT)) return false
       context.requireScope(caller, 'view')
       const url = requestUrl(req.url)

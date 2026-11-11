@@ -16,6 +16,7 @@ import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import type { AgentExecutionContext, AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
+import { readAppFrame } from './app-frame.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
@@ -6900,6 +6901,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!isLocalListener(listener.listener) && (match[1] === 'html-script' || req.headers['sec-fetch-dest'] !== 'iframe'))
           throw new AppError(403, 'preview-refused', '请在文档预览中打开这个文件')
         const frame = await readPreviewFrame(resolve(options.uiDir), match[1]!)
+        res.removeHeader('x-frame-options')
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy': frame.csp,
+          'x-latch-frame-hash': frame.hash,
+          'cache-control': 'no-store',
+        })
+        res.end(method === 'HEAD' ? undefined : frame.data)
+        return
+      }
+      if (relativePath.startsWith('app-frame/')) {
+        // The page runtime is public and fixed; it holds nothing, and a page's code reaches it only from the parent.
+        if (relativePath !== 'app-frame/runtime.html') throw new AppError(404, 'not-found', '页面不存在')
+        if (!isLocalListener(listener.listener) && req.headers['sec-fetch-dest'] !== 'iframe')
+          throw new AppError(403, 'preview-refused', '请在插件页面中打开')
+        const frame = await readAppFrame(resolve(options.uiDir))
         res.removeHeader('x-frame-options')
         res.writeHead(200, {
           'content-type': 'text/html; charset=utf-8',

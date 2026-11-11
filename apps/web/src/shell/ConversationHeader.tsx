@@ -1,4 +1,5 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
+import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import {
   Bot,
   ChevronDown,
@@ -247,7 +248,13 @@ function SourceLink({ source }: { source: HeaderSource }) {
     return (
       <span className="topbar-agent topbar-handoff">
         {glyph}
-        <span>来自另一个会话</span>
+        {source.title ? (
+          <span>
+            来自 <VisibleText text={source.title} />
+          </span>
+        ) : (
+          <span>来自另一个会话</span>
+        )}
       </span>
     )
   return (
@@ -545,6 +552,20 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   const desktop = currentShell() !== null
   const delegated = sessionAgent(snapshot, summary)
   const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
+  // A session a plugin page started: 「来自 <页面名>」, the way back to the page while it is listed.
+  const originApp = summary?.origin?.app
+  const originPage = originApp ? listedApps(snapshot).find(page => appRef(page) === originApp) : undefined
+  const pageOrigin =
+    summary && originApp
+      ? {
+          title: originTitle(summary, snapshot),
+          onOpen: originPage
+            ? () => {
+                shell.openApp({ pluginId: originPage.pluginId, appId: originPage.appId })
+              }
+            : undefined,
+        }
+      : undefined
   // A dot while the newest turn changed files nobody has opened here yet.
   const seen = useRef<Map<string, string>>(new Map())
   const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
@@ -603,7 +624,9 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
                 : undefined,
             },
           }
-        : {})}
+        : pageOrigin
+          ? { from: pageOrigin }
+          : {})}
       onPanel={togglePanel}
       sessionMenu={titleMenu}
       menu={topMenu}

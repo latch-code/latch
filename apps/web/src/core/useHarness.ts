@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { publishAppData } from './appEvents.ts'
 import type { AppSnapshot, ChangeEvent, TaskDetail } from '@latch/protocol'
 import { api, ApiError, errorMessage, setAuthHooks } from './api.ts'
 import { browserRenewal, RenewalScheduler } from './credentials.ts'
@@ -389,6 +390,7 @@ export function useHarness() {
           if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail), false)
         } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
         else if (message.event === 'host-state') hostState(message.data)
+        else if (message.event === 'app.data') publishAppData(message.data, guard.current.instanceId ?? undefined)
       },
       onError: () => {
         if (disposed) return

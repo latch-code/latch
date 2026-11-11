@@ -34,6 +34,7 @@ import { Button, Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import { EntryRows } from '../agents/parts.tsx'
+import { originTitle } from '../plugin-pages/model.ts'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -95,9 +96,12 @@ const SessionItem = memo(function SessionItem({
   onSelect,
   menu,
   handoffWaits = false,
+  from,
 }: {
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
+  /** The plugin page that started it: 「来自 <页面名>」. */
+  from?: string | undefined
   task: TaskSummary
   harness: TaskHarness
   /** Named on the second line in 等你处理, where the shelf no longer says where the session belongs. */
@@ -178,10 +182,11 @@ const SessionItem = memo(function SessionItem({
             {named && <span className="session-harness">{engine}</span>}
             {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
             {note && <span className="session-meta-rest">{`· ${note}`}</span>}
+            {from && <span className="session-meta-rest session-from">{`· 来自 ${from}`}</span>}
             {handoffWaits && <span className="session-handoff">待交回</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
-          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
+          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${from ? `，来自 ${from}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
         </button>
         <span className="session-actions">
           {archive && (
@@ -290,6 +295,7 @@ function SessionGroupView({
             return (
               <SessionItem
                 handoffWaits={awaiting.has(task.id)}
+                from={originTitle(task, snapshot)}
                 key={task.id}
                 task={task}
                 harness={taskHarness(snapshot, task)}
@@ -362,7 +368,10 @@ export function Sidebar({
   sessionMenu,
   now,
   keepAwake,
+  apps,
 }: ProjectNavigationActions & {
+  /** The 「应用」 group: the plugin pages applied on the Host. */
+  apps?: import('react').ReactNode
   snapshot: AppSnapshot
   archiveBatch?: import('react').ReactNode
   /** The line that offers to take back an archive, while it can. */
@@ -444,6 +453,7 @@ export function Sidebar({
           <span>搜索</span>
         </Button>
         {entries.includes('agents') && <EntryRows current="sessions" onEntry={onEntry} />}
+        {apps}
       </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>

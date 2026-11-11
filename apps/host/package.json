@@ -7,6 +7,7 @@
   "license": "MIT",
   "exports": {
     ".": "./src/server.ts",
+    "./app-frame": "./src/app-frame.ts",
     "./auth": "./src/auth.ts",
     "./backup": "./src/backup.ts",
     "./build-native-tls": "./scripts/build-native-tls.ts",

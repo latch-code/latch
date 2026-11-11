@@ -1,7 +1,10 @@
 export type SettingsSection = 'general' | 'providers' | 'engines' | 'workspaces' | 'plugins' | 'devices' | 'shortcuts' | 'about'
 
-/** Where the shell can be: the sessions (Code), 我的 Agent, or 设置; a page takes the panel's place and the main area. */
-export type ShellEntry = 'sessions' | 'agents' | 'settings'
+/**
+ * Where the shell can be: the sessions (Code), 我的 Agent, 应用 (plugin pages) or 设置; a page takes the panel's place
+ * and the main area.
+ */
+export type ShellEntry = 'sessions' | 'agents' | 'apps' | 'settings'
 export type PageEntry = Exclude<ShellEntry, 'sessions'>
 
 /** A page inside the Agent section that something else can open. */
@@ -17,6 +20,13 @@ export interface ShellRoute {
   agent?: AgentPageTarget
   /** 我的 Agent: the Agent whose page is open, and its tab; absent, the list. */
   myAgent?: MyAgentTarget
+  /** 应用: the plugin page that is open (`apps/<pluginId>/<appId>`); absent, the list. */
+  app?: AppTarget
+}
+
+export interface AppTarget {
+  pluginId: string
+  appId: string
 }
 
 export type MyAgentTab = 'delegate' | 'memory' | 'schedules' | 'settings'
@@ -46,13 +56,14 @@ export function settingsSectionsAt(phone: boolean): readonly SettingsSection[] {
 }
 
 /**
- * The entries this device can use: 我的 Agent where the Host has them, and 设置 when at least one of its sections is open
- * to it.
+ * The entries this device can use: 我的 Agent where the Host has them, 应用 where plugin pages are applied, and 设置 when
+ * at least one of its sections is open to it.
  */
-export function visibleEntries(allowed: readonly SettingsSection[], phone: boolean, agents = false): ShellEntry[] {
+export function visibleEntries(allowed: readonly SettingsSection[], phone: boolean, agents = false, apps = false): ShellEntry[] {
   return [
     'sessions',
     ...(agents ? (['agents'] as const) : []),
+    ...(apps ? (['apps'] as const) : []),
     ...(settingsSectionsAt(phone).some(section => allowed.includes(section)) ? (['settings'] as const) : []),
   ]
 }

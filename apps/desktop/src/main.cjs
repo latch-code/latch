@@ -76,6 +76,7 @@ const {
   htmlErrorPage,
   isAllowedRendererDetails,
   isPreviewFrameUrl,
+  isAppFrameUrl,
   isAppSender,
   isAppUrl,
   unexpectedArguments,
@@ -265,6 +266,12 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-frame-navigate', event => {
     if (event.isMainFrame) {
       if (!isAppUrl(event.url)) event.preventDefault()
+    } else if (event.frame && isAppFrameUrl(event.frame.url)) {
+      // A plugin page frame never navigates, not even to itself or to another fixed bootstrap.
+      event.preventDefault()
+    } else if (isAppFrameUrl(event.url)) {
+      // Only the app page itself points a frame at the page runtime.
+      if (!event.initiator || event.initiator.parent !== null || !isAppUrl(event.initiator.url)) event.preventDefault()
     } else if (!isPreviewFrameUrl(event.url)) event.preventDefault()
   })
   contents.on('will-attach-webview', event => event.preventDefault())

@@ -44,6 +44,7 @@ export default defineConfig({
         },
       },
       { extends: true, test: { name: '@latch/web', include: ['apps/web/test/**/*.test.ts'] } },
+      { extends: true, test: { name: '@latch/app-sdk', include: ['packages/app-sdk/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/desktop', include: ['apps/desktop/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/harness-acp', include: ['packages/harness-acp/test/**/*.test.ts'] } },
       // The design system's tests run in a real browser (Vitest browser mode, Playwright only as the driver): Chrome at

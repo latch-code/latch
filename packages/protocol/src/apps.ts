@@ -55,6 +55,11 @@ export interface AppSummary {
   capabilities: AppCapabilities
   dataVersion: number
   status: AppStatus
+  /**
+   * SHA-256 (hex) of the page's built module, which `GET /link/api/app-modules/:pluginId/:appId/:bundleHash.js` serves;
+   * absent while the page has no build.
+   */
+  bundleHash?: string
 }
 
 export interface AppDataDocument {

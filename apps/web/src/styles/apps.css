@@ -1,0 +1,228 @@
+/*
+ * 应用: plugin pages. Laid out as 我的 Agent is (settings.css, agents.css): on wide windows the pages stand where the
+ * sidebar stands and the open page fills the work panel under its own header; on phones the list is the root page and
+ * a page is pushed over it. The frame is a plain part of the panel: nothing of the shell is drawn inside it, and the
+ * shell's security surfaces stay outside it.
+ */
+
+/* The sidebar's 「应用」 group, under 新会话, 搜索 and the entries. */
+.sidebar-apps {
+  display: grid;
+  gap: 1px;
+  margin-top: var(--sp-12);
+}
+.sidebar-apps-head {
+  padding: 0 10px var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.sidebar-app > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-app[aria-current='page'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+  color: var(--ink);
+  font-weight: 500;
+}
+.sidebar-app[aria-current='page'] > svg {
+  color: var(--ink);
+}
+.apps-nav-body {
+  width: var(--entry-nav-width);
+}
+@media (min-width: 1024px) {
+  .apps-nav-body {
+    width: var(--sidebar-open-width);
+  }
+}
+
+/* The page: its header over the frame, which takes the rest of the panel. */
+.apps-panel {
+  display: flex;
+  flex-direction: column;
+}
+.app-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  min-height: 52px;
+  padding: var(--sp-8) var(--sp-12) var(--sp-8) var(--sp-24);
+  box-shadow: inset 0 -1px var(--line);
+}
+.app-page-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+.app-page-title {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.app-page-title h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
+  font-weight: 600;
+}
+.app-page-plugin {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.app-page-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.app-page-error {
+  margin: var(--sp-12) var(--sp-24) 0;
+}
+.app-page-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-page-body > .ui-empty,
+.app-page-body > .ui-error-state {
+  margin: auto;
+  padding: var(--sp-24);
+}
+.app-page-body > .ui-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+}
+.app-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--canvas);
+}
+/* Until the page says it is drawn, the frame waits under the loading line. */
+.app-page:not([data-phase='ready']) .app-frame {
+  opacity: 0;
+}
+
+/* Phones: the list of pages, then a page under its own bar. */
+.apps-list {
+  display: grid;
+  gap: 1px;
+  margin: var(--sp-8) var(--sp-16);
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--r-12);
+  background: var(--line);
+  list-style: none;
+}
+.apps-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--sp-8) var(--sp-16);
+  border: 0;
+  background: var(--raised);
+  color: var(--ink);
+  text-align: left;
+}
+.apps-list-row:active {
+  background: var(--hover);
+}
+.apps-list-row > svg {
+  color: var(--faint);
+}
+.apps-list-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+.apps-list-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.apps-list-title {
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+.apps-list-meta {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+@media (max-width: 767.98px) {
+  .app-page-head {
+    padding: var(--sp-4) var(--sp-8);
+  }
+  .app-page-error {
+    margin-inline: var(--sp-16);
+  }
+}
+
+/* 诊断: the page's last records, newest first. */
+.app-diagnostics-body {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding: 0 var(--sp-20) var(--sp-20);
+}
+.app-diagnostics-list {
+  display: grid;
+  gap: var(--sp-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.app-diagnostics-list > li {
+  display: grid;
+  gap: var(--sp-4);
+}
+.app-diagnostics-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.app-diagnostics-meta code {
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.app-diagnostics-message {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

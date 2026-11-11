@@ -25,6 +25,7 @@ export * from './features.ts'
 export * from './notifications.ts'
 export * from './plugin-packages.ts'
 export * from './apps.ts'
+export * from './app-bridge.ts'
 export * from './questions.ts'
 export * from './attachments.ts'
 

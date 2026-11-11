@@ -1,0 +1,25 @@
+{
+  "name": "@latch/app-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch plugin pages: the author types, the bridge client and the runtime that run inside the opaque page frame",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.tsx"
+  },
+  "latch": {
+    "env": "browser"
+  },
+  "dependencies": {
+    "@latch/protocol": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:"
+  }
+}

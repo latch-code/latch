@@ -55,6 +55,7 @@
     "packages/harness-acp": {},
     "packages/protocol": {},
     "packages/sdk": {},
+    "packages/app-sdk": {},
     "packages/testkit": {},
     "packages/ui": {
       // The test-only gallery page: index.html loads this script; the visual capture builds and serves it.

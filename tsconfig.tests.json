@@ -21,6 +21,7 @@
     "apps/desktop/test",
     "packages/harness-acp/test",
     "packages/ui/test",
+    "packages/app-sdk/test",
     "packages/testkit"
   ]
 }

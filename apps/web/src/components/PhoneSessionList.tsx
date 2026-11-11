@@ -1,4 +1,5 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
+import { originTitle } from '../plugin-pages/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
@@ -87,9 +88,12 @@ const PhoneRow = memo(function PhoneRow({
   onSelect,
   onHold,
   handoffWaits = false,
+  from,
 }: {
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
+  /** The plugin page that started it: 「来自 <页面名>」. */
+  from?: string | undefined
   task: TaskSummary
   harness: TaskHarness
   project: string | undefined
@@ -109,7 +113,9 @@ const PhoneRow = memo(function PhoneRow({
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const engine = harness.label
-  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
+  const meta = [rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined), from && `来自 ${from}`]
+    .filter(Boolean)
+    .join(' · ')
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
     status.kind === 'waiting'
@@ -240,6 +246,7 @@ function PhoneGroup({
           return (
             <PhoneRow
               handoffWaits={awaiting.has(task.id)}
+              from={originTitle(task, snapshot)}
               key={task.id}
               task={task}
               harness={taskHarness(snapshot, task)}

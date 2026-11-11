@@ -81,10 +81,19 @@ export function LockedAgents() {
 }
 
 /** Code and 我的 Agent, the two places of the navigation, under 新会话 and 搜索. */
-export function EntryRows({ current, onEntry }: { current: ShellEntry; onEntry: (entry: ShellEntry) => void }) {
+export function EntryRows({
+  current,
+  onEntry,
+  agents = true,
+}: {
+  current: ShellEntry
+  onEntry: (entry: ShellEntry) => void
+  /** 我的 Agent is one of this device's entries. */
+  agents?: boolean
+}) {
   const rows: Array<{ entry: ShellEntry; label: string; icon: LucideIcon }> = [
     { entry: 'sessions', label: 'Code', icon: Code2 },
-    { entry: 'agents', label: '我的 Agent', icon: Bot },
+    ...(agents ? [{ entry: 'agents' as const, label: '我的 Agent', icon: Bot }] : []),
   ]
   return (
     <div className="sidebar-entries" role="group" aria-label="入口">

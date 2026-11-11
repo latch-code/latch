@@ -113,7 +113,7 @@ Node ESM 模块本身会缓存到 Host 退出，清理 effect 不等于卸载 Ja
 
 ### 页面（formatVersion 2）
 
-`formatVersion: 2` 的包可以带 `apps`：最多 4 个页面，每个声明入口、`dataVersion` 与能力（`tasks.read`、`tasks.start`、`tasks.continue`、`tasks.readOwn`、`storage`），可选 `requires.appSdk`（`^1`）。格式 1 原样加载，格式 2 也可以带其他贡献。页面不在 Host 进程里运行，没有可执行摘要；它的信任绑定能力集合：第一次应用或能力变宽时经 `plugin.package.apply` 确认，确认里逐条列出每个页面的能力；相同或更窄的应用只审计（`plugin.package.app-trust`）。页面经 `via` 开始与继续会话、读写插件数据、上报诊断，规则、接口与数据目录见 [APP-PAGES.md](APP-PAGES.md)。页面框、桥与构建尚未实现，所以页面目前不显示。
+`formatVersion: 2` 的包可以带 `apps`：最多 4 个页面，每个声明入口、`dataVersion` 与能力（`tasks.read`、`tasks.start`、`tasks.continue`、`tasks.readOwn`、`storage`），可选 `requires.appSdk`（`^1`）。格式 1 原样加载，格式 2 也可以带其他贡献。页面不在 Host 进程里运行，没有可执行摘要；它的信任绑定能力集合：第一次应用或能力变宽时经 `plugin.package.apply` 确认，确认里逐条列出每个页面的能力；相同或更窄的应用只审计（`plugin.package.app-trust`）。页面经 `via` 开始与继续会话、读写插件数据、上报诊断，规则、接口与数据目录见 [APP-PAGES.md](APP-PAGES.md)。页面在不透明隔离框里运行（侧栏「应用」，手机网页底部栏「应用」），用 `@latch/app-sdk` 的 `defineApp({ page })` 导出，`page` 收到桥 `latch` 与原语 `ui`，见 [APP-PAGES.md](APP-PAGES.md#桥)。Host 还不构建 `.ts`/`.tsx` 入口（尚未实现），在那之前入口用预先构建的 `.js` 模块，它导入的 `react` 与 `@latch/app-sdk` 取自 `globalThis.__latchModules`。
 
 ## 连接载体
 

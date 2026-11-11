@@ -13,6 +13,7 @@ import { AgentForm } from './AgentForm.tsx'
 import { AgentPage } from './AgentPage.tsx'
 import { agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
 import { AgentTile, Availability, EntryRows, LockedAgents } from './parts.tsx'
+import { AppsGroup } from '../plugin-pages/AppsPage.tsx'
 import { useAgentDetail, useAgentList, type AgentRead } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
 
@@ -196,6 +197,7 @@ function AgentsNav({
           <span>搜索</span>
         </Button>
         <EntryRows current="agents" onEntry={shell.goEntry} />
+        <AppsGroup shell={shell} />
       </div>
       <nav className="agents-nav" aria-label="Agent 列表">
         <h2 className="agents-nav-head">

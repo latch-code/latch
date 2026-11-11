@@ -1,7 +1,12 @@
 ---
-description: 插件页面的 Host 基座：formatVersion 2 的 apps 清单与能力、按能力集合的本机信任、via 核对、页面开始的会话、插件数据与迁移代、诊断、回退。
+description: 插件页面：formatVersion 2 的 apps 清单与能力、按能力集合的本机信任、via 核对、页面开始的会话、插件数据与迁移代、诊断、回退；不透明页面框、桥与壳层。
 sources:
   - apps/host/src/app-capabilities.ts
+  - apps/host/src/app-frame.ts
+  - packages/protocol/src/app-bridge.ts
+  - packages/app-sdk/src
+  - apps/web/src/plugin-pages
+  - apps/web/src/app-frame/runtime.ts
   - apps/host/src/app-data.ts
   - apps/host/src/app-diagnostics.ts
   - apps/host/src/routes/apps.ts
@@ -11,7 +16,7 @@ sources:
 ---
 # 插件页面
 
-插件包 `formatVersion: 2` 可以带「页面」（`apps`）。页面是插件作者写的界面，将来在不透明隔离框里运行，拿不到设备凭据，只能经 Host 使用清单里声明、并在这台电脑上确认过的能力。本文写 Host 这一侧：清单、信任、会话、存储、诊断与回退。页面框、桥与构建见后续步骤；在那之前页面不在任何界面上显示。
+插件包 `formatVersion: 2` 可以带「页面」（`apps`）。页面是插件作者写的界面，在不透明隔离框里运行，拿不到设备凭据，只能经父页面的桥使用清单里声明、并在这台电脑上确认过的能力，Host 再逐次核对。本文写清单、信任、会话、存储、诊断与回退（Host），以及页面框、桥与壳层（客户端）。Host 还不构建 `.ts`/`.tsx` 入口（尚未实现），在那之前页面的模块是包里预先构建的 `.js` 入口。
 
 Host 声明 `catalog.features.appPages: 1`。
 
@@ -46,7 +51,7 @@ Host 声明 `catalog.features.appPages: 1`。
 
 - `formatVersion: 1` 的包原样加载；`formatVersion: 2` 也可以带 `host`、`skills`、`panels`、`dataPanels`。两种格式都是严格校验，未知字段、未知能力都使整个包无效。
 - 格式 2 的插件名称与页面标题不能含「」『』、冒号（全角或半角）与换行，免得读起来像确认的固定文字。
-- 每个插件最多 4 个页面，页面标识不重复；`entry` 是包内的 `.ts` 或 `.tsx` 源文件（构建在后续步骤）；`requires.appSdk` 只接受 `^1` 的范围；同一插件的页面用同一个 `dataVersion`（存储是插件的）。
+- 每个插件最多 4 个页面，页面标识不重复；`entry` 是包内的 `.ts`、`.tsx` 源文件，或预先构建的 `.js` 模块（见「页面框」）；`requires.appSdk` 只接受 `^1` 的范围；同一插件的页面用同一个 `dataVersion`（存储是插件的）。
 - 能力：`tasks.read`（会话摘要）、`tasks.start`（`projects` 为 `any` 或最多 32 个项目 ID）、`tasks.continue`（只对本页面开始的会话，须同时声明 `tasks.start`）、`tasks.readOwn`（本页面开始的会话的最后回复）、`storage`（`plugin`、`project`、`session` 的子集）。没有批准、授权、确认、配对或改设置类的能力。
 
 ## 信任
@@ -110,7 +115,7 @@ Host 声明 `catalog.features.appPages: 1`。
 - `POST /apps/:pluginId/data/migrate/lease` `{ via }`（`run`）：同一插件同时一个租约，60 秒；返回 `{ lease, fromGeneration, fromVersion, toVersion, expiresAt, documents }`。`documents` 只含这个页面声明的作用域，以及这台设备上页面能用的会话（私有、找不到或判断失败的会话都不交出）；没有交出的文档留在 Host 上，迁移时原样带进新的一代，页面不能覆盖它们。另一台设备持有时 409 `app-data-migrating`；租约期间状态是 `migrating`，只能读。
 - `POST /apps/:pluginId/data/migrate` `{ via, requestId, lease, fromGeneration, toVersion, documents: [{ scope, key, value }] }`（`run`）：核对租约、代与版本（不符 409 `app-data-lease-lost`）和上限，先审计 `app.data.migrate`，再一次写成新的一代。之后只保留编号最大的 3 代。失败、超时或租约丢失时停在旧一代。
 
-快照的 `apps[]` 列出每个已应用的页面：`{ pluginId, appId, title, icon?, pluginName, version, revision, capabilities, dataVersion, status }`，`status` 为 `ready`、`disabled`、`migrating`、`needs-migration` 或 `data-newer`。
+快照的 `apps[]` 列出每个已应用的页面：`{ pluginId, appId, title, icon?, pluginName, version, revision, capabilities, dataVersion, status, bundleHash? }`，`status` 为 `ready`、`disabled`、`migrating`、`needs-migration` 或 `data-newer`；`bundleHash` 是页面模块的 SHA-256，没有模块时不带。
 
 ## 诊断
 
@@ -118,6 +123,56 @@ Host 声明 `catalog.features.appPages: 1`。
 
 - `GET /apps/:pluginId/diagnostics?app=&revision=`（`view`）。
 - `POST /apps/:pluginId/diagnostics` `{ via, source, code?, message }`（`view`）：每台设备每分钟最多 20 条，Host 记下的拒绝也计在里面。
+
+## 页面框
+
+页面框是一个固定的引导页：Host 在 `/link/app-frame/runtime.html` 提供（不需要凭据；别的设备只在 `sec-fetch-dest: iframe` 时得到它），桌面端在 `latch-frame://app/runtime.html` 经 `host.sock` 取来并核对。引导页里只有一个内联脚本：React、设计系统的令牌与原语、`@latch/app-sdk` 的桥与运行时。`pnpm build:web` 把它构建进 `app-frame/`，同样的源码得到同样的字节，脚本的哈希写在 `runtime.json` 里，Host 与桌面端读文件时再算一次，不一致就不提供。响应头：
+
+```
+sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data:; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'
+```
+
+桌面端的 `frame-ancestors` 是 `latch://app`。框没有 `allow-same-origin`（不透明来源：没有 Cookie、存储，读不到父页面），也没有弹窗、模态框、顶层导航、下载等沙箱权限；`<iframe allow>` 把全屏、剪贴板、摄像头、位置等特性都设为 `'none'`。`connect-src 'none'`：页面不能经 fetch、WebSocket 等联网。CSP 管不住 WebRTC（Chrome 不认 `webrtc` 指令），所以运行时在页面代码运行前删掉所有 `RTC*`、`WebTransport`、`MediaStream*` 构造器与 `navigator.mediaDevices`、`connection`、`sendBeacon`；`frame-src 'none'` 让页面拿不到新的子框来找回它们。桌面端每个 webContents 另有 `disable_non_proxied_udp`，网络经黑洞代理。
+
+**仍有的旁路。** 框里的导航（`location.href = …`）会被拒绝或让父页面销毁框，但浏览器在拒绝之前可能已经为目标地址做了 DNS 查询或建立了 TCP 连接，所以页面能经域名把少量数据带到它选的 DNS 服务器或地址。这不是凭据或 Host 数据：页面本来就拿不到它们；能带出的只是页面经桥读到的东西（会话摘要、它开始的会话的回复、它的数据）。
+
+1. 父页面用一个随机 nonce 打开框（地址片段 `#nonce=`），同时带自己的凭据取模块：`GET /link/api/app-modules/:pluginId/:appId/:bundleHash.js`（`view`，照常核对修订、启用与批准；`no-store`；旧哈希 404 `app-module-not-found`）。它以 `application/octet-stream` 与 `nosniff` 返回，`sec-fetch-dest` 不是 `empty` 时 403 `app-module-refused`，所以从不作为脚本、框或页面在壳层的来源上运行。
+2. 框只说一次 `{ type: 'ready', protocol: 1, nonce }`。父页面核对 `event.source` 是自己的框、`origin` 是 `'null'`、nonce 一致，然后发 `init`，把一个 MessagePort 与模块字节一起转交。之后只走这个端口，窗口消息一概不理。
+3. 运行时核对字节的 SHA-256 等于 `bundleHash`，从 Blob 地址导入，默认导出必须来自 `defineApp`。模块里的 `react`、`react/jsx-runtime` 与 `@latch/app-sdk` 是运行时放在 `globalThis.__latchModules` 的冻结对象，版本与 Web 同一 catalog。
+4. 15 秒内没有 `ready` 与画好的页面、页面发来无法识别的消息、框离开引导页（第二次 `load`）或页面在画好前出错，都算一次打开失败：父页面销毁框，记诊断（`handshake` 或 `runtime`）。连续 3 次失败只显示错误卡；中间画好过也照样计数，页面不能画好又失败地无限重载。只有「重新加载」或新版本从零开始。
+
+桌面端对 `latch-frame://app/` 拒绝一切权限请求；框里的导航（包括回到引导页）与新窗口一律拒绝；框里的脚本只能来自 Blob；preload 的 IPC 只回应顶层的 `latch://app/`，框里没有 `latchShell`。
+
+## 桥
+
+`@latch/app-sdk`（`appProtocol: 1`）给页面 `{ latch, ui }`。消息与校验在 `@latch/protocol` 的 `app-bridge.ts`，两边都严格核对字段。
+
+| 页面调用 | 能力 | 父页面怎么做 |
+| --- | --- | --- |
+| `tasks.list(filter)`、`tasks.subscribe(filter, listener)` | `tasks.read` | 取自已同步的快照：只有 `id、title、status、running、runOutcome、projectId、projectName、harnessId、originApp、updatedAt`；带私有上下文的会话与已归档的不给 |
+| `tasks.start(input)` | `tasks.start` | `POST /tasks` 带 `via`；设备没有 `run` 回答 `forbidden` |
+| `tasks.lookup(requestId)` | `tasks.start` | `GET …/lookup/:requestId` |
+| `tasks.continue(id, input)` | `tasks.continue` | `POST /tasks/:id/prompt` 带 `via` |
+| `tasks.readReply(id)` | `tasks.readOwn` | `GET …/sessions/:id/last-reply` |
+| `storage.get/list/put/delete`、`storage.onChange` | `storage`（作用域要声明） | 存储接口带 `via`；SSE `app.data` 里本插件、已声明作用域的变化转给页面 |
+| `view.getState/setState` | 无 | 只收 JSON 值，按 JSON 计 ≤ 64 KiB，只在这个标签页的内存里，按页面保存；重新加载与新版本带过去 |
+| `nav.openSession(id)` | 无 | 只限这台设备列出的会话；壳层盖着框时、父页面没有刚发生的用户手势时、或会话等你处理（审批或提问）时回答 `forbidden`，等你处理的会话只从列表打开 |
+| `diag.report(message)` | 无 | `POST /apps/:pluginId/diagnostics`，来源 `bridge` |
+| `host.info()` | 无 | SDK 版本、主题、是否离线、能否开始会话（`run`） |
+
+- 父页面先查：形状、清单里的能力（不在清单里的直接 `capability-denied`，不问 Host）、页面仍挂着；再用自己的凭据问 Host。写请求的 `requestId` 由 SDK 生成，结果未知（`unknown`）时错误里带回它，用同一个重试。
+- 限速在父页面也镜像一份（开始与继续每分钟 6 次、写入 60 次、上报 20 次），只为让页面早点知道；Host 仍是权威。
+- 订阅：断线时先发一次 `offline`（带上次的列表），重新同步后发一次完整列表，不跨缺口补增量。
+- 停用、卸载、换版本时父页面关闭端口与订阅，之后什么都不再发。快照里页面的修订或 `bundleHash` 变了就重建框，`view` 状态带过去。
+
+## 壳层
+
+- 侧栏「应用」组（会话、我的 Agent 与应用页的侧栏都有）每个未停用的页面一行，图标与标题；路由 `apps/<pluginId>/<appId>`。手机网页在有页面时，底部栏多一个「应用」：Code / 我的 Agent / 应用 / 设置。停用后入口、框、端口与订阅立刻消失。
+- 页面上方是壳层自己的页头：标题、灰色「插件 · 名称 版本」与 ⋯（重新加载、诊断；这台 Mac 的管理设备另有停用与「回退到 x.y.z」，用现有的插件接口与本机确认）。页面打开时会话栏不卸载，会话、草稿与阅读位置不变。
+- 状态：打开中、页面没有打开（连续 3 次失败）、插件已停用、正在更新数据（`migrating`；`needs-migration` 时有 `run` 的设备取租约、在隐藏的框里跑页面的 `migrate` 并一次提交，失败写「数据更新没成功」）、数据需要更新（只能查看的设备）、数据比这个版本新、页面还没有构建。
+- 框里画不出安全界面：审批、本机确认、登记与 Toast 都由壳层画在框外。壳层有 `[data-secure]` 界面、打开的对话框或 Toast 时，框设 `inert`。会话从页面下面回到眼前（页面的 `nav.openSession`、切回 Code、标签页重新显示）时，审批与提问卡重新经过 320 ms 的待命，双击的第二下落不到「允许」上。
+- 框里的按键：运行时只转发真实按下的 Cmd/Ctrl 组合键与 Esc；父页面只在框有焦点、没被盖住、不在迁移时收，Cmd/Ctrl 还要有刚发生的用户手势。它们作为调用交给壳层，不在壳层里派发事件：Esc 只是手机上的返回，Cmd/Ctrl 只能开关侧栏或打开设置，从不打开新会话、输入框、命令面板或查找，焦点不会被带进壳层的输入框。`ui` 原语没有 `secure` 变体，也没有对话框、面板、菜单或 Toast。
+- 页面开始的会话在会话列表与页头写「来自 <页面名>」；页面还在时点它回到页面。
 
 ## 失败码
 
@@ -130,10 +185,15 @@ Host 声明 `catalog.features.appPages: 1`。
 | 429 `app-rate-limited` | `rate-limited` |
 | 400 `invalid-input` 及其他 400 | `invalid-input` |
 | 404 | `not-found` |
+| 409 `app-data-conflict`、`request-conflict` | `invalid-input`（冲突时带当前 `version`） |
+| 其他 409、401 | `forbidden` |
 | 503、网络错误、超时 | `unknown`（同一个 `requestId` 重试） |
+
+父页面自己判定的：设备没有 `run` 为 `forbidden`，这台设备不在线为 `offline`，超过镜像的限速为 `rate-limited`。
 
 ## 不变量
 
-- 插件页面不拿凭据；每次调用由 Host 按已应用清单逐次核对能力、修订与启用状态，再按设备 scope 检查。
+- 插件页面只在不透明隔离框中运行，不拿凭据；每次调用先由父页面核对，再由 Host 按已应用清单逐次核对能力、修订与启用状态，再按设备 scope 检查。
+- 框里没有安全界面；有安全界面、对话框或 Toast 时框是 `inert`。
 - 页面开始的会话只用项目的默认权限，记 `origin`，经同一个 `startSession`、启动审计与请求回执。
 - 页面的信任绑定已确认的能力集合；更宽的能力要本机确认，相同或更窄的只审计。

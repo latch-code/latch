@@ -72,8 +72,9 @@ export function checkedPluginBundle(input: unknown): { bundle: PluginPackageBund
         ? { apps: data.manifest.apps.map(app => ({ ...app, entry: required(app.entry, 1000000) })) }
         : {}),
     }
-    if (manifest.apps?.some(app => !/\.tsx?$/iu.test(app.entry)))
-      throw new AppError(400, 'plugin-package-app-entry', '页面入口必须是包内的 .ts 或 .tsx 源文件。')
+    // A `.js` entry is a page module built beforehand: it runs only in the page frame, never on the Host.
+    if (manifest.apps?.some(app => !/\.(?:tsx?|js)$/iu.test(app.entry)))
+      throw new AppError(400, 'plugin-package-app-entry', '页面入口必须是包内的 .ts、.tsx 源文件或预先构建的 .js 模块。')
     if (manifest.skills.some(skill => !/\.(?:md|txt)$/iu.test(skill.file)))
       throw new AppError(400, 'plugin-package-skill-file', '应用内技能文件只接受 .md 或 .txt 文本，执行模块必须单独保存。')
     if (Buffer.byteLength(JSON.stringify(manifest)) > 65536) throw new AppError(413, 'plugin-package-large', '插件声明超过 64 KiB。')

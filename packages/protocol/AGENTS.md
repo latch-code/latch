@@ -20,4 +20,4 @@
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
 - `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。
-- 线上类型：插件页面（`src/apps.ts`，页面从不收到凭据，[APP-PAGES](../../docs/APP-PAGES.md)）、终端（`src/terminal.ts`，只接受 `host.sock`，[TERMINAL](../../docs/TERMINAL.md)）、交付（`src/git-delivery.ts`，[GIT-DELIVERY](../../docs/GIT-DELIVERY.md)）。
+- 线上类型：插件页面（`src/apps.ts`、桥 `src/app-bridge.ts`，页面从不收到凭据，[APP-PAGES](../../docs/APP-PAGES.md)）、终端（`src/terminal.ts`，只接受 `host.sock`，[TERMINAL](../../docs/TERMINAL.md)）、交付（`src/git-delivery.ts`，[GIT-DELIVERY](../../docs/GIT-DELIVERY.md)）。
