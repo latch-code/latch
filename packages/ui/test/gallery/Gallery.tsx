@@ -52,6 +52,7 @@ import {
   ICON_STROKE,
   InlineNotice,
   Kbd,
+  Meter,
   LiveChanges,
   Loading,
   MenuFooterLink,
@@ -239,10 +240,49 @@ function Buttons() {
           <div className="gallery-actions">
             <IconButton label="更多批准选项" icon={Ellipsis} />
             <Button variant="outline">拒绝</Button>
-            <Button variant="primary" shortcut="⌘⏎">
+            <Button variant="primary" shortcut="mod+enter">
               允许一次
             </Button>
           </div>
+        </Cell>
+        <Cell caption="此刻按键生效：键帽在按钮上（触屏不画）">
+          <div className="gallery-actions">
+            <Button variant="ghost" menu>
+              更多
+            </Button>
+            <Button variant="outline" size="md" keys={['esc']}>
+              拒绝
+            </Button>
+            <Button variant="primary" size="md" keys={['mod', 'enter']}>
+              允许
+            </Button>
+          </div>
+        </Cell>
+      </Row>
+      <Row label="键帽">
+        {STATES.map(([caption, force]) => (
+          <Cell key={caption} caption={caption} force={force}>
+            <Button variant="outline" keys={['esc']}>
+              拒绝
+            </Button>
+          </Cell>
+        ))}
+        {STATES.map(([caption, force]) => (
+          <Cell key={`primary-${caption}`} caption={`主 · ${caption}`} force={force}>
+            <Button variant="primary" keys={['mod', 'enter']}>
+              允许
+            </Button>
+          </Cell>
+        ))}
+        <Cell caption="xs">
+          <Button variant="secondary" size="xs" keys={['mod', 'k']}>
+            搜索
+          </Button>
+        </Cell>
+        <Cell caption="禁用">
+          <Button variant="primary" keys={['mod', 'enter']} disabled tooltip="正在等待上一条消息">
+            发送
+          </Button>
         </Cell>
       </Row>
       <Row label="图标按钮">
@@ -342,6 +382,37 @@ function Pills() {
         <Kbd>⌘K</Kbd>
         <Kbd>Esc</Kbd>
         <Kbd>⌘⏎</Kbd>
+      </Row>
+    </Section>
+  )
+}
+
+function Meters() {
+  return (
+    <Section title="计量">
+      <Row label="细条 · sm">
+        {(
+          [
+            [0, '空'],
+            [9, '一格'],
+            [62, '62k / 128k'],
+            [128, '满'],
+          ] as const
+        ).map(([value, caption]) => (
+          <Cell key={caption} caption={caption}>
+            <span className="gallery-inline">
+              上下文 <Meter label="上下文" value={value} max={128} valueText={`${value}k / 128k`} />
+            </span>
+          </Cell>
+        ))}
+      </Row>
+      <Row label="图例 · md">
+        <Cell caption="12 格">
+          <Meter label="上下文" value={62} max={128} size="md" valueText="62k / 128k" />
+        </Cell>
+        <Cell caption="18 格">
+          <Meter label="上下文" value={84} max={272} cells={18} size="md" valueText="84k / 272k" />
+        </Cell>
       </Row>
     </Section>
   )
@@ -1837,6 +1908,7 @@ export function Gallery() {
       <div className="gallery-grid">
         <Buttons />
         <Pills />
+        <Meters />
         <Pickers />
         <Inputs />
         <Choices />

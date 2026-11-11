@@ -98,7 +98,7 @@ describe('gallery of the primitives', () => {
     expect([primary(), surface()]).toEqual(['rgb(36, 97, 224)', 'rgb(255, 255, 255)'])
     await emulateMedia({ 'prefers-color-scheme': 'dark' }, async () => {
       // The button's fill eases over --m-micro when the system flips (a page switches without it, theme.ts).
-      await expect.poll(() => [primary(), surface()]).toEqual(['rgb(47, 107, 230)', 'rgb(27, 27, 31)'])
+      await expect.poll(() => [primary(), surface()]).toEqual(['rgb(47, 107, 230)', 'rgb(39, 39, 44)'])
     })
   })
 

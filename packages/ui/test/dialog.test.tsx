@@ -102,7 +102,7 @@ describe('dialog', () => {
     expect(closed).toHaveBeenCalled()
   })
 
-  it('draws the 56px header, the body and a 56px footer on the sidebar grey, on a raised surface with 16px corners', async () => {
+  it('draws the 56px header, the body and a 56px footer on the status band, on the pop face with 16px corners', async () => {
     const screen = await render(<Project />)
     await userEvent.click(screen.getByRole('button', { name: '添加项目…' }))
     const dialog = screen.getByRole('dialog').element()
@@ -112,7 +112,7 @@ describe('dialog', () => {
     // Layout sizes: the dialog scales from .985 while it opens.
     expect(surface.querySelector<HTMLElement>('.ui-dialog-header')!.offsetHeight).toBe(56)
     const footer = surface.querySelector<HTMLElement>('.ui-dialog-footer')!
-    expect([footer.offsetHeight, getComputedStyle(footer).backgroundColor]).toEqual([56, 'rgb(235, 235, 239)'])
+    expect([footer.offsetHeight, getComputedStyle(footer).backgroundColor]).toEqual([56, 'rgba(18, 18, 28, 0.024)'])
     const body = getComputedStyle(surface.querySelector('.ui-dialog-body')!)
     expect([body.paddingTop, body.paddingInlineStart]).toEqual(['4px', '24px'])
     // It opens from a scale of .985 over --m-sheet, over a scrim that blurs the page by 4px.

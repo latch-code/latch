@@ -1,27 +1,27 @@
 /*
- * Layers pinned to a trigger. A menu or a picker is glass (the raised colour at 88% over a blur) with 8px corners and
- * 4px inside; a popover with content of its own (role=dialog) and a form shown in a picker's place are solid raised
- * with 12px corners. Both carry the pop shadow, are at least 220 wide and sit 6px from the trigger, in the top layer,
+ * Layers pinned to a trigger: a menu, a picker, a popover with content of its own (role=dialog) and a form shown in a
+ * picker's place. Each is the highest surface (pop, solid) with 12px corners, lifted by sh-lift: no rules, but a hair
+ * between groups. A menu keeps 6px inside. They are at least 220 wide and sit 6px from the trigger, in the top layer,
  * so no scrolling list or dialog clips them. Opening fades them in from a scale of .98 toward the trigger over
- * --m-enter; closing plays it backwards in 70% of the time. A dot or count inside is cut out in the raised colour.
+ * --m-enter; closing plays it backwards in 70% of the time. A dot or count inside is cut out in the pop colour. On the
+ * pop face the faintest grey falls short of 4.5:1 in the dark theme, so a layer reads faint words in muted ink.
  */
 .ui-popover {
-  --surface: var(--raised);
+  --surface: var(--pop);
+  --faint: var(--muted);
   position: fixed;
   inset: auto;
   min-width: 220px;
   max-width: calc(100vw - 16px);
   margin: 0;
-  padding: var(--sp-4);
+  padding: var(--sp-6);
   overflow: auto;
   overscroll-behavior: contain;
   border: 0;
-  border-radius: var(--r-8);
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(16px) saturate(1.1);
-  backdrop-filter: blur(16px) saturate(1.1);
+  border-radius: var(--r-12);
+  background: var(--pop);
   color: var(--ink);
-  box-shadow: var(--sh-pop);
+  box-shadow: var(--sh-lift);
   opacity: 0;
   transform: scale(0.98);
   transform-origin: top left;
@@ -30,12 +30,6 @@
     transform calc(var(--m-enter) * 0.7) var(--e-exit),
     display calc(var(--m-enter) * 0.7) allow-discrete,
     overlay calc(var(--m-enter) * 0.7) allow-discrete;
-}
-.ui-popover:is([role='dialog'], [data-panel]) {
-  border-radius: var(--r-12);
-  background: var(--raised);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 /* It grows out of the trigger's corner: the side it opens from, and the edge it lines up with. */
 .ui-popover[data-align='end'] {
@@ -78,26 +72,30 @@
   opacity: 1;
   transform: none;
 }
-/* A searchable picker: the search row spans the layer's width and the list keeps the 4px inside. */
+/* A searchable picker: the search row spans the layer's width, on the layer's own face, and the list keeps the 6px
+ * inside. */
 .ui-popover:has(> .ui-menu-search) {
   padding: 0;
 }
 .ui-popover:has(> .ui-menu-search) > .ui-menu {
-  padding: var(--sp-4);
+  padding: var(--sp-6);
+}
+.ui-popover > .ui-menu-search {
+  background: var(--pop);
 }
 
 .ui-menu {
   display: grid;
   min-width: 212px;
 }
-/* Headings and group labels: 12/16·500 in muted ink. */
+/* Headings and group labels: 12/16·500 in muted ink, on the items' text edge. */
 .ui-menu-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-8);
   min-height: 28px;
-  padding: 0 var(--sp-8);
+  padding: 0 var(--sp-10);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
@@ -114,23 +112,23 @@
   align-items: center;
   gap: var(--sp-6);
   min-height: 28px;
-  padding: 0 var(--sp-8);
+  padding: 0 var(--sp-10);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
 }
-/* A separator runs from edge to edge of the layer. */
+/* A hair between groups, inset to the items' text. */
 .ui-menu-separator {
   height: 1px;
-  margin: var(--sp-4) calc(-1 * var(--sp-4));
-  background: var(--line);
+  margin: var(--sp-4) var(--sp-10);
+  background: var(--line-strong);
 }
 
 /*
- * Items: 28px (44 with a description), 6px corners, a 16px leading slot (the ink check of the chosen value, or an
- * action's glyph), the label (13/18; 500 when chosen), and one trailing element. The highlight is instant. A disabled
- * item dims its slot, label and description; the reason under it stays readable.
+ * Items: 32px (48 with a description), 8px corners, 10 inside, a 16px leading slot 8 from the label (the ink check of
+ * the chosen value, or an action's glyph), the label (the ui role; 500 when chosen), and one trailing element. The
+ * highlight is instant. A disabled item dims its slot, label and description; the reason under it stays readable.
  */
 .ui-menu-item {
   /* The height of the title's line, on which a two-line item keeps its check and its trailing element. */
@@ -140,10 +138,10 @@
   column-gap: var(--sp-8);
   align-items: center;
   width: 100%;
-  min-height: 28px;
-  padding: 0 var(--sp-8);
+  min-height: 32px;
+  padding: 0 var(--sp-10);
   border: 0;
-  border-radius: var(--r-6);
+  border-radius: var(--r-8);
   background: transparent;
   color: var(--ink);
   font-size: var(--fs-ui);
@@ -153,8 +151,8 @@
 }
 .ui-menu-item[data-two-line] {
   align-items: start;
-  min-height: 44px;
-  padding: var(--sp-6) var(--sp-8);
+  min-height: 48px;
+  padding: var(--sp-6) var(--sp-10) var(--sp-8);
 }
 /* The check (or glyph) and the trailing element sit on the title's line, not between the title and the description. */
 .ui-menu-item[data-two-line] > :is(.ui-menu-item-lead, .ui-menu-item-meta) {
@@ -268,7 +266,7 @@
 }
 
 /*
- * The footer row under a separator, 28px on the items' grid so its text starts on their titles' column: a link to where
+ * The footer row under a separator, 32px on the items' grid so its text starts on their titles' column: a link to where
  * the setting lives (13/18 in ink, an empty leading slot, chevron-right at the end), or a note (12/16 in muted ink)
  * with its lock centred in the leading slot.
  */
@@ -281,8 +279,8 @@
   grid-template-columns: 16px minmax(0, 1fr) auto;
   column-gap: var(--sp-8);
   align-items: center;
-  min-height: 28px;
-  padding: 0 var(--sp-8);
+  min-height: 32px;
+  padding: 0 var(--sp-10);
 }
 /* Outside a menu's list a row without a glyph starts its text at its own padding. */
 .ui-menu-footer-link[data-no-lead] {
@@ -298,7 +296,7 @@
 .ui-menu-footer-link {
   width: 100%;
   border: 0;
-  border-radius: var(--r-6);
+  border-radius: var(--r-8);
   background: transparent;
   color: var(--ink);
   font-size: var(--fs-ui);

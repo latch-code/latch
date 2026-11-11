@@ -1,0 +1,38 @@
+/*
+ * Meters are cells, not pills: a whole number of cells at a whole-pixel pitch, so the run never blurs or shimmers.
+ * sm (a status line): 3px cells a pixel apart, 8 tall, 12 cells in 47px. md (a legend or a panel): 14px cells two apart,
+ * 10 tall. The track is the faint grey and a filled cell meter ink in both themes; nothing animates. A limit and what
+ * ran past it are not drawn yet.
+ */
+.ui-meter {
+  --meter-cell: 3px;
+  --meter-slit: 1px;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: var(--meter-slit);
+  height: 8px;
+  vertical-align: middle;
+}
+.ui-meter[data-size='md'] {
+  --meter-cell: 14px;
+  --meter-slit: 2px;
+  height: 10px;
+}
+.ui-meter-cell {
+  flex: none;
+  width: var(--meter-cell);
+  background: var(--track);
+}
+.ui-meter-cell[data-on] {
+  background: var(--meter);
+}
+/* Forced colours drop backgrounds: the cells keep their shape in the system's own greys. */
+@media (forced-colors: active) {
+  .ui-meter-cell {
+    forced-color-adjust: none;
+    background: GrayText;
+  }
+  .ui-meter-cell[data-on] {
+    background: CanvasText;
+  }
+}

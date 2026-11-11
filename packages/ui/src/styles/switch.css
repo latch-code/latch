@@ -1,13 +1,13 @@
 /*
- * Switch: a 30×18 track with a 14px thumb (44×26 and 22 on touch) in a box at least 24px (44px on touch) tall. Off is
- * a soft neutral track, on the accent. The thumb is white with its own small shadow; it slides and the track changes
+ * Switch: a 34×20 track with a 16px thumb (44×26 and 22 on touch) in a box at least 24px (44px on touch) tall. Off is
+ * the meter's track grey, on the accent. The thumb is white with its own small shadow; it slides and the track changes
  * colour over --m-micro, and while pressed the thumb stretches 4px toward where it is going. The keyboard ring follows
  * the track, 2px outside it.
  */
 .ui-switch {
-  --track-width: 30px;
-  --track-height: 18px;
-  --thumb-size: 14px;
+  --track-width: 34px;
+  --track-height: 20px;
+  --thumb-size: 16px;
   position: relative;
   display: inline-grid;
   place-items: center;
@@ -23,7 +23,7 @@
   width: var(--track-width);
   height: var(--track-height);
   border-radius: var(--r-full);
-  background: var(--switch-off);
+  background: var(--track);
   transition: background-color var(--m-micro) var(--e-micro);
 }
 .ui-switch-thumb {

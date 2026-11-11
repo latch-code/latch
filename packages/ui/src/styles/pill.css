@@ -1,5 +1,5 @@
 /*
- * Badges (an attribute after a name): 18px, 4px corners, 11/14·500 on a soft fill; amber colours only the words, red the
+ * Badges (an attribute after a name): 18px, 4px corners, 11/14·500 on the tag fill (a tag is not a key: no edge, no lip); amber colours only the words, red the
  * fill and the words. Counts are tabular digits without a box. Status dots are 6px, 8px on phones.
  */
 .ui-badge {
@@ -9,7 +9,7 @@
   height: 18px;
   padding: 0 var(--sp-6);
   border-radius: var(--r-4);
-  background: var(--hover);
+  background: var(--tag);
   color: var(--muted);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);

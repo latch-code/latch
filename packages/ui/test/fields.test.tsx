@@ -22,13 +22,13 @@ describe('text fields', () => {
     expect(getComputedStyle(address.element()).boxShadow).toBe('rgb(180, 35, 31) 0px 0px 0px 1px inset')
   })
 
-  it('draws a field raised inside a line-strong ring that turns accent with a soft halo whenever it has focus', async () => {
+  it('draws a field as a well whose edge turns an accent ring with a soft halo whenever it has focus', async () => {
     const screen = await render(<TextField label="设备名称" placeholder="例如：工作电脑" />)
     const field = screen.getByRole('textbox', { name: '设备名称' })
     const style = getComputedStyle(field.element())
     expect([style.backgroundColor, style.boxShadow, style.borderTopLeftRadius, field.element().getBoundingClientRect().height]).toEqual([
-      'rgb(255, 255, 255)',
-      'rgba(18, 18, 28, 0.14) 0px 0px 0px 1px inset',
+      'rgb(243, 243, 246)',
+      'rgba(18, 18, 28, 0.043) 0px 0px 0px 1px inset, rgba(18, 18, 28, 0.05) 0px 1px 2px 0px inset',
       '8px',
       32,
     ])
@@ -49,9 +49,12 @@ describe('search field', () => {
   it('shows its key while empty, a clear button once there is text, and clears on Escape', async () => {
     const screen = await render(<Search />)
     const input = screen.getByRole('searchbox', { name: '搜索会话' })
-    // A soft fill without a ring at rest.
+    // A well at rest.
     const field = getComputedStyle(input.element().parentElement!)
-    expect([field.backgroundColor, field.boxShadow]).toEqual(['rgba(18, 18, 28, 0.05)', 'none'])
+    expect([field.backgroundColor, field.boxShadow]).toEqual([
+      'rgb(243, 243, 246)',
+      'rgba(18, 18, 28, 0.043) 0px 0px 0px 1px inset, rgba(18, 18, 28, 0.05) 0px 1px 2px 0px inset',
+    ])
     await expect.element(screen.getByText('⌘K')).toBeVisible()
     // The glyph sits 6 from the text, the gap between an icon and its text inside a control.
     const glyph = input.element().parentElement?.querySelector('.ui-search-glyph')?.getBoundingClientRect()
@@ -66,7 +69,7 @@ describe('search field', () => {
     await expect.element(input).toHaveValue('')
   })
 
-  it('draws the ghost search as a row on the sidebar: nothing at rest, the raised field and its ring only under focus', async () => {
+  it('draws the ghost search as a row on the sidebar: nothing at rest, the well and its ring only under focus', async () => {
     const screen = await render(
       <div style={{ width: 240 }}>
         <SearchField variant="ghost" label="搜索会话" value="" onValueChange={() => {}} trailing={<Kbd>⌘K</Kbd>} />
@@ -81,7 +84,7 @@ describe('search field', () => {
     const box = field.getBoundingClientRect()
     expect([glyph.width, glyph.left - box.left, input.element().getBoundingClientRect().left - glyph.right]).toEqual([16, 8, 8])
     await userEvent.click(input)
-    await expect.poll(() => getComputedStyle(field).backgroundColor).toBe('rgb(255, 255, 255)')
+    await expect.poll(() => getComputedStyle(field).backgroundColor).toBe('rgb(243, 243, 246)')
     await expect.poll(() => getComputedStyle(field).boxShadow).toContain('rgb(36, 97, 224)')
   })
 

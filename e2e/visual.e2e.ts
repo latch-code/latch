@@ -1906,7 +1906,7 @@ describe('visual capture of the real product', () => {
               .getByRole('switch')
               .first()
               .evaluate(element => getComputedStyle(element, '::before').width)
-            expect(switchTrack).toBe(viewport.touch ? '44px' : '30px')
+            expect(switchTrack).toBe(viewport.touch ? '44px' : '34px')
             await recorder.capture(target, viewport, `ui-gallery-${name}`, `design system: ${name}`, section)
           }
         } finally {

@@ -1,6 +1,6 @@
 /*
  * Dialogs: native modal <dialog> elements over the scrim, which blurs what is behind it by 4px. The element itself is
- * only a transparent frame; the surface inside carries the raised colour, the 16px corners and the dialog shadow, so a
+ * only a transparent frame; the surface inside carries the pop colour, the 16px corners and the dialog shadow, so a
  * design sheet can show it in place. A dialog fades in from a scale of .985 over --m-sheet and the scrim with it;
  * closing plays it backwards in 70% of the time on the exit curve.
  */
@@ -99,16 +99,19 @@
   outline: none;
 }
 
-/* 480 for a confirmation, 560 for a form, 720 for two columns; never wider than the window less 16px a side. */
+/*
+ * 480 for a confirmation, 560 for a form, 720 for two columns; never wider than the window less 16px a side. A dialog
+ * is the highest surface (pop) over the scrim, with the dialog shadow.
+ */
 .ui-dialog-surface {
-  --surface: var(--raised);
+  --surface: var(--pop);
   display: flex;
   flex-direction: column;
   width: min(480px, calc(100vw - 2 * var(--sp-16)));
   max-height: calc(100dvh - 2 * var(--sp-32));
   overflow: hidden;
   border-radius: var(--r-16);
-  background: var(--raised);
+  background: var(--pop);
   box-shadow: var(--sh-dialog);
 }
 .ui-dialog-surface[data-size='sheet'] {
@@ -191,11 +194,12 @@
   gap: var(--sp-8);
   flex-shrink: 0;
 }
-/* The footer: the sidebar's grey under a hairline, 56px, buttons on the right and a note on the left. */
+/* The footer: the status band (a faint strip of the dialog's own face) under a hairline, 56px, buttons on the right
+ * and a note on the left. */
 .ui-dialog-footer {
   min-height: 56px;
   padding: var(--sp-12) var(--sp-16);
-  background: var(--sidebar);
+  background: var(--band);
   box-shadow: inset 0 1px 0 var(--line);
 }
 .ui-dialog-actions {

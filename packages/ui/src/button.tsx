@@ -3,6 +3,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import { Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
 import { Swap } from './motion.tsx'
+import { Kbd, ariaKeyShortcuts } from './pill.tsx'
 import { Tooltip } from './tooltip.tsx'
 
 /**
@@ -41,7 +42,14 @@ type ButtonProps = Omit<ComponentProps<'button'>, 'disabled'> & {
   disabled?: boolean
   /** Shown on hover and keyboard focus: a shortcut's action, or the reason a disabled button cannot be used. */
   tooltip?: ReactNode
+  /** A shortcut named only in the tooltip (`mod+k`), for a button whose key is not drawn on it. */
   shortcut?: string
+  /**
+   * The keys that press this button right now, one cap each after the words (`['mod', 'enter']` draws ⌘ ⏎ on a Mac,
+   * Ctrl ⏎ elsewhere): only on a control whose key does that thing at this moment. Touch screens hide them; the
+   * accessible name stays the words, the keys go to aria-keyshortcuts, and the tooltip does not repeat them.
+   */
+  keys?: readonly string[]
   block?: boolean
 }
 
@@ -59,7 +67,8 @@ function guard(inactive: boolean, onClick: ((event: MouseEvent<HTMLButtonElement
 /**
  * A text button. Pressing scales it to .97 for a moment (not a button that opens a menu). Keep to two visible buttons
  * per card, dialog footer or panel header (the quieter one first, the primary last); a third action goes into a ⋯
- * menu. Keyboard shortcuts go in the tooltip, never inside the button.
+ * menu. A key that presses it right now is drawn on it as key caps after the words (`keys`); any other shortcut goes in
+ * the tooltip.
  */
 export function Button({
   variant = 'secondary',
@@ -74,6 +83,7 @@ export function Button({
   disabled = false,
   tooltip,
   shortcut,
+  keys,
   block = false,
   type = 'button',
   className,
@@ -83,6 +93,7 @@ export function Button({
   style,
   ...props
 }: ButtonProps) {
+  const capped = keys !== undefined && keys.length > 0
   const own = useRef<HTMLButtonElement>(null)
   const width = useRef(0)
   // While it runs the button keeps at least the width it had before: the running label may be wider, never narrower.
@@ -118,6 +129,7 @@ export function Button({
       data-leading={lead ? '' : undefined}
       data-block={block ? '' : undefined}
       data-menu={menu ? '' : undefined}
+      aria-keyshortcuts={capped ? ariaKeyShortcuts(keys) : undefined}
       // A running button is busy, not disabled: it keeps its colours (the primary its blue) even when the caller also
       // disables it for the duration, and it still takes no clicks.
       aria-disabled={(disabled && !held) || undefined}
@@ -134,12 +146,21 @@ export function Button({
       ) : (
         words
       )}
+      {capped && (
+        <span className="ui-button-keys" aria-hidden="true">
+          {keys.map(key => (
+            <Kbd key={key} keys={key} />
+          ))}
+        </span>
+      )}
       {menu && <Icon icon={ChevronDown} size={12} className="ui-button-chevron" />}
     </button>
   )
+  // Keys drawn on the button are not repeated in its tooltip.
+  const tip = capped ? undefined : shortcut
   // Always inside the tooltip, which renders nothing more without content: the button keeps its place in the tree.
   return (
-    <Tooltip content={tooltip ?? (shortcut ? children : undefined)} shortcut={shortcut}>
+    <Tooltip content={tooltip ?? (tip ? children : undefined)} shortcut={tip}>
       {button}
     </Tooltip>
   )

@@ -28,7 +28,7 @@ export function StatusPill({
 }
 
 /**
- * A badge: an attribute that follows a name (本机, 默认, 内置, 离线), 18px with 4px corners, 11/14·500 on a soft
+ * A badge: an attribute that follows a name (本机, 默认, 内置, 离线), 18px with 4px corners, 11/14·500 on the tag
  * fill. Never a card's or row's state, which is a status word.
  */
 export function Badge({
@@ -135,7 +135,43 @@ export function keyGlyphs(keys: string, mac: boolean = onMac()): string {
   return glyphs.join(mac ? '' : '+')
 }
 
-/** A key or shortcut: only in tooltips, menu item ends, the search row and an approval's hint line, never in a button. */
+const ARIA_KEYS: Record<string, string> = {
+  ctrl: 'Control',
+  alt: 'Alt',
+  option: 'Alt',
+  shift: 'Shift',
+  enter: 'Enter',
+  esc: 'Escape',
+  backspace: 'Backspace',
+  delete: 'Delete',
+  tab: 'Tab',
+  space: 'Space',
+  up: 'ArrowUp',
+  down: 'ArrowDown',
+  left: 'ArrowLeft',
+  right: 'ArrowRight',
+  '⌘': 'Meta',
+  '⌃': 'Control',
+  '⌥': 'Alt',
+  '⇧': 'Shift',
+  '⏎': 'Enter',
+}
+
+/** The keys of a button (`['mod', 'enter']`) as aria-keyshortcuts reads them: 「Meta+Enter」 on a Mac. */
+export function ariaKeyShortcuts(keys: readonly string[], mac: boolean = onMac()): string {
+  return keys
+    .map(key => {
+      const name = key.toLowerCase()
+      if (name === 'mod' || name === 'cmd') return mac ? 'Meta' : 'Control'
+      return ARIA_KEYS[name] ?? key.toUpperCase()
+    })
+    .join('+')
+}
+
+/**
+ * A key or shortcut: in tooltips, menu item ends, the search row, an approval's hint line, and on a button whose key
+ * presses it right now (Button's `keys`, one cap per key).
+ */
 export function Kbd({
   keys,
   children,

@@ -100,7 +100,7 @@ describe('badges, counts and marks', () => {
     expect([badge.height, badge.borderTopLeftRadius, badge.backgroundColor, badge.color]).toEqual([
       '18px',
       '4px',
-      'rgba(18, 18, 28, 0.05)',
+      'rgba(18, 18, 28, 0.067)',
       'rgb(136, 74, 6)',
     ])
   })
@@ -109,7 +109,10 @@ describe('badges, counts and marks', () => {
     const screen = await render(<DevMark description="开发模式：Host 代码可被本机修改" />)
     const mark = screen.getByRole('note', { name: '开发模式：Host 代码可被本机修改' })
     await expect.element(mark).toHaveTextContent('开发版')
-    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(86, 86, 95)', 'rgba(18, 18, 28, 0.05)'])
+    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual([
+      'rgb(86, 86, 95)',
+      'rgba(18, 18, 28, 0.067)',
+    ])
   })
 
   it('hides a status dot from screen readers unless it is labelled', async () => {
@@ -365,9 +368,9 @@ describe('tiles', () => {
     expect(cutOuts()).toEqual([true, true, true, true])
     await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
       expect(cutOuts()).toEqual([true, true, true, true])
-      // In the dark theme a raised layer (#1b1b1f) is lighter than the canvas (#131316): the ring is not the canvas's.
+      // In the dark theme a layer's pop face (#27272c) is lighter than the canvas (#131316): the ring is not the canvas's.
       const dot = screen.container.querySelector('.ui-popover .ui-tile-dot')!
-      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(27, 27, 31\) /u)
+      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(39, 39, 44\) /u)
     })
   })
 })

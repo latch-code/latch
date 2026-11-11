@@ -8,6 +8,7 @@ export { SearchField, TextAreaField, TextField } from './field.tsx'
 export { ICON_STROKE, Icon, Spinner, type IconSize, type LucideIcon, type SpinnerSize } from './icon.tsx'
 export { DemoMark, DevMark } from './marks.tsx'
 export { FoldHeader } from './fold.tsx'
+export { Meter, type MeterSize } from './meter.tsx'
 export { Collapse, EASING, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
 export {
   Menu,

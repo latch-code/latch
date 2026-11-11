@@ -1,6 +1,6 @@
 /*
  * Native <dialog> variants whose content owns its layout: a centred dialog, a phone bottom sheet and a full page. A
- * dialog and a sheet are raised with 16px corners and the dialog shadow over the blurred scrim; a dialog fades in from
+ * dialog and a sheet are the pop face with 16px corners and the dialog shadow over the blurred scrim; a dialog fades in from
  * a scale of .985 and a sheet rises from below, both over --m-sheet; a page covers the window without a shadow. A dialog
  * and a sheet go the way they came in 70% of the time, through a still picture of them (useLeaveBehind in dialog.tsx).
  */
@@ -25,7 +25,7 @@
   min-height: 0;
   max-height: inherit;
   overflow: hidden;
-  background: var(--raised);
+  background: var(--pop);
   box-shadow: var(--sh-dialog);
 }
 
@@ -130,7 +130,7 @@
   flex-shrink: 0;
   min-height: 56px;
   padding: var(--sp-12) var(--sp-16);
-  background: var(--sidebar);
+  background: var(--band);
   box-shadow: inset 0 1px 0 var(--line);
 }
 .ui-modal-sheet .ui-modal-body {

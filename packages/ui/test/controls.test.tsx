@@ -32,15 +32,15 @@ function Toggle({ disabled = false }: { disabled?: boolean }) {
 }
 
 describe('switch', () => {
-  it('is a 30×18 switch that Space toggles, a soft track when off and the accent when on, its white thumb sliding over --m-micro', async () => {
+  it('is a 34×20 switch that Space toggles, the track grey when off and the accent when on, its white thumb sliding over --m-micro', async () => {
     const screen = await render(<Toggle />)
     const toggle = screen.getByRole('switch', { name: '允许其他设备' })
     await expect.element(toggle).toHaveAttribute('aria-checked', 'false')
     const off = style(toggle.element(), '::before')
-    expect([off.width, off.height, off.backgroundColor]).toEqual(['30px', '18px', 'rgba(0, 0, 0, 0.12)'])
+    expect([off.width, off.height, off.backgroundColor]).toEqual(['34px', '20px', 'rgba(18, 18, 28, 0.11)'])
     const thumb = toggle.element().querySelector('.ui-switch-thumb')!
     expect([style(thumb).width, style(thumb).backgroundColor, style(thumb).transitionDuration]).toEqual([
-      '14px',
+      '16px',
       'rgb(255, 255, 255)',
       '0.12s, 0.12s',
     ])
@@ -48,7 +48,7 @@ describe('switch', () => {
     await userEvent.keyboard(' ')
     await expect.element(toggle).toHaveAttribute('aria-checked', 'true')
     await expect.poll(() => style(toggle.element(), '::before').backgroundColor).toBe('rgb(36, 97, 224)')
-    await expect.poll(() => style(thumb).translate).toBe('12px')
+    await expect.poll(() => style(thumb).translate).toBe('14px')
   })
 
   it('rings the track on keyboard focus, so the ring follows the pill and not the box around it', async () => {
@@ -151,10 +151,14 @@ describe('segmented control', () => {
     await expect.element(screen.getByRole('radio', { name: 'Agent' })).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('raises the selected 24px segment on its own face on a soft track, and never slides it', async () => {
+  it('raises the selected 24px segment on its own ringed face in a well, and never slides it', async () => {
     const screen = await render(<Modes />)
     const group = screen.getByRole('radiogroup').element()
-    expect([style(group).boxShadow, style(group).backgroundColor, style(group).padding]).toEqual(['none', 'rgba(18, 18, 28, 0.05)', '2px'])
+    expect([style(group).boxShadow, style(group).backgroundColor, style(group).padding]).toEqual([
+      'rgba(18, 18, 28, 0.043) 0px 0px 0px 1px inset, rgba(18, 18, 28, 0.05) 0px 1px 2px 0px inset',
+      'rgb(243, 243, 246)',
+      '2px',
+    ])
     expect(group.querySelector('.ui-segmented-thumb')).toBeNull()
     const chosen = screen.getByRole('radio', { name: '对话' }).element()
     const other = screen.getByRole('radio', { name: 'Agent' }).element()
@@ -163,7 +167,7 @@ describe('segmented control', () => {
       'rgb(255, 255, 255)',
       'rgb(23, 23, 26)',
     ])
-    expect(style(chosen).boxShadow).not.toBe('none')
+    expect(style(chosen).boxShadow).toMatch(/^rgba\(18, 18, 28, 0\.14\) 0px 0px 0px 1px inset, /u)
     expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(86, 86, 95)'])
     expect(style(chosen).transitionProperty).not.toMatch(/translate|transform|left/u)
   })

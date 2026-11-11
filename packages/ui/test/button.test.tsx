@@ -84,7 +84,7 @@ describe('buttons', () => {
     expect(clicked).not.toHaveBeenCalled()
   })
 
-  it('puts a shortcut in the tooltip and never inside the button', async () => {
+  it('puts a shortcut that is not drawn on the button in the tooltip', async () => {
     const screen = await render(
       <Button variant="primary" shortcut="⌘⏎">
         允许一次
@@ -98,6 +98,64 @@ describe('buttons', () => {
     expect(tooltip.element().querySelector('kbd')?.textContent).toBe('⌘⏎')
     await userEvent.keyboard('{Escape}')
     await expect.poll(openTooltips).toEqual([])
+  })
+
+  it('draws one key cap per key after the words, keeps the name to the words and does not repeat the keys in the tooltip', async () => {
+    const screen = await render(
+      <div>
+        <Button variant="outline" keys={['esc']}>
+          拒绝
+        </Button>
+        <Button variant="primary" keys={['mod', 'enter']} shortcut="mod+enter" tooltip="允许这一次">
+          允许
+        </Button>
+      </div>,
+    )
+    const allow = screen.getByRole('button', { name: '允许' })
+    await expect.element(allow).toHaveAccessibleName('允许')
+    const caps = Array.from(allow.element().querySelectorAll('kbd'), cap => cap.textContent)
+    const mac = /Mac|iPhone|iPad/u.test(navigator.platform)
+    expect(caps).toEqual(mac ? ['⌘', '⏎'] : ['Ctrl', '⏎'])
+    await expect.element(allow).toHaveAttribute('aria-keyshortcuts', mac ? 'Meta+Enter' : 'Control+Enter')
+    const reject = screen.getByRole('button', { name: '拒绝' })
+    expect(Array.from(reject.element().querySelectorAll('kbd'), cap => cap.textContent)).toEqual(['Esc'])
+    await expect.element(reject).toHaveAttribute('aria-keyshortcuts', 'Escape')
+    // The caps follow the words, two apart; on the accent they are darker caps with white glyphs.
+    const keys = allow.element().querySelector('.ui-button-keys')!
+    expect(keys.previousSibling?.textContent).toBe('允许')
+    expect(style(keys).columnGap).toBe('2px')
+    expect(style(allow.element().querySelector('kbd')!).color).toBe('rgb(255, 255, 255)')
+    expect(style(reject.element().querySelector('kbd')!).backgroundColor).toBe('rgb(251, 251, 252)')
+    // The tooltip says what the button does, without the keys already on it.
+    await userEvent.tab()
+    await userEvent.tab()
+    await expect.element(screen.getByRole('tooltip')).toHaveTextContent('允许这一次')
+    expect(screen.getByRole('tooltip').element().querySelector('kbd')).toBeNull()
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(openTooltips).toEqual([])
+    // A button with keys and no tooltip of its own has none.
+    await screen.rerender(
+      <Button variant="primary" keys={['mod', 'enter']} shortcut="mod+enter">
+        允许
+      </Button>,
+    )
+    expect(document.querySelectorAll('.ui-tooltip')).toHaveLength(0)
+  })
+
+  it('hides the key caps on touch screens, where no key presses the button', async () => {
+    const screen = await render(
+      <Button variant="primary" keys={['mod', 'enter']}>
+        允许
+      </Button>,
+    )
+    const allow = screen.getByRole('button', { name: '允许' }).element()
+    const keys = allow.querySelector('.ui-button-keys')!
+    expect(style(keys).display).toBe('flex')
+    const wide = allow.getBoundingClientRect().width
+    await onTouchScreen(async () => {
+      await expect.poll(() => style(keys).display).toBe('none')
+      expect(allow.getBoundingClientRect().width).toBeLessThan(wide)
+    })
   })
 
   it('shows a tooltip after 400ms of hover, glides it to a neighbour at once, and hides it on leaving', async () => {
@@ -181,7 +239,7 @@ describe('buttons', () => {
     })
   })
 
-  it('draws a secondary button as a soft fill, and outlined (raised inside a line-strong ring) as outline or inside a tint', async () => {
+  it('draws a secondary button as a soft fill, and outlined (the pop face inside a line-strong ring) as outline or inside a tint', async () => {
     const screen = await render(
       <div>
         <Button>稍后</Button>

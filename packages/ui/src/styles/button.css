@@ -3,7 +3,8 @@
  * (6px corners, 12/16), sm 28 (the desktop default), md 32 (dialog and panel footers), lg 44 (phones, a pill). A
  * leading glyph takes 4px off the start padding. A disabled button (aria-disabled, still focusable) is the whole
  * control at 45%; a running one keeps its colours and ignores the pointer. The keyboard ring is drawn inside the edge,
- * and outside a filled button, where it shows against the surface.
+ * and outside a filled button, where it shows against the surface. Key caps after the words (two apart) end 4px closer
+ * to the edge than the words would; touch screens have no keys, so they go.
  */
 .ui-button {
   position: relative;
@@ -74,6 +75,27 @@
   opacity: 0.45;
 }
 
+/* The key caps of the key that presses the button right now. On the accent they are darker caps with white glyphs. */
+.ui-button-keys {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: var(--sp-2);
+  margin-inline-end: calc(-1 * var(--sp-4));
+}
+.ui-button[data-size='xs'] > .ui-button-keys {
+  margin-inline-end: calc(-1 * var(--sp-2));
+}
+.ui-button:is([data-variant='primary'], [data-variant='destroy']) .ui-kbd {
+  background: color-mix(in srgb, var(--tip-bg) 22%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--tip-bg) 20%, transparent);
+  color: var(--on-accent);
+}
+@media (pointer: coarse) {
+  .ui-button-keys {
+    display: none;
+  }
+}
+
 /* Waiting on something of the system's: the words keep the width under a spinner in the middle. */
 .ui-button[data-pending] > .ui-button-words {
   opacity: 0;
@@ -109,9 +131,12 @@
   background: var(--press);
 }
 
-/* Outline (and danger, its red-worded twin): raised with a line-strong ring; hover lays the hover fill over it. */
+/*
+ * Outline (and danger, its red-worded twin): the face of a control (pop) with a line-strong ring, so it stands up from
+ * a panel, a card or a dialog alike; hover lays the hover fill over it.
+ */
 .ui-button:is([data-variant='outline'], [data-variant='danger']) {
-  background: var(--raised);
+  background: var(--pop);
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
     var(--sh-1);
@@ -120,18 +145,18 @@
   color: var(--red);
 }
 .ui-button:is([data-variant='outline'], [data-variant='danger']):hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  background: linear-gradient(var(--hover), var(--hover)) var(--pop);
 }
 
 /* Inside a warning or a risk a secondary button is outlined: translucent ink turns muddy over red, and both read alike. */
 :is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary'] {
-  background: var(--raised);
+  background: var(--pop);
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
     var(--sh-1);
 }
 :is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  background: linear-gradient(var(--hover), var(--hover)) var(--pop);
 }
 
 /* Ghost: no fill until hovered, ink-2 words that turn ink. */
@@ -321,7 +346,7 @@
   border: 0;
   border-start-end-radius: var(--r-8);
   border-end-end-radius: var(--r-8);
-  background: var(--raised);
+  background: var(--pop);
   color: var(--muted);
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
@@ -338,7 +363,7 @@
 }
 .ui-split-more:hover:not([aria-disabled='true']),
 .ui-split-more[aria-expanded='true'] {
-  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  background: linear-gradient(var(--hover), var(--hover)) var(--pop);
   color: var(--ink);
 }
 .ui-split-more[aria-disabled='true'] {
@@ -363,7 +388,7 @@
 }
 
 /*
- * A button that holds a value in a settings row and opens its picker: a 28 outline face with an optional 16 tile or
+ * A button that holds a value in a settings row and opens its picker: a 28 outline face (pop) with an optional 16 tile or
  * glyph, the value in ink at the regular weight, and a 14 muted chevron. An amber one says the value needs attention.
  */
 .ui-select-button {
@@ -376,7 +401,7 @@
   padding: 0 var(--sp-8) 0 var(--sp-10);
   border: 0;
   border-radius: var(--r-8);
-  background: var(--raised);
+  background: var(--pop);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--line-strong);
   font-size: var(--fs-ui);
@@ -389,7 +414,7 @@
 }
 .ui-select-button:hover:not([aria-disabled='true']),
 .ui-select-button[aria-expanded='true'] {
-  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  background: linear-gradient(var(--hover), var(--hover)) var(--pop);
 }
 .ui-select-button[aria-disabled='true'] {
   opacity: 0.45;
