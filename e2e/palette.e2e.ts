@@ -384,12 +384,20 @@ it.each([
       await query.press('Escape')
       await find.waitFor({ state: 'hidden' })
 
-      // 快捷键 shows this client's keys only. A phone has no such page.
+      // 快捷键 shows this client's keys only: over the session first, then as the page 设置 › 快捷键. A phone has neither.
       if (width >= 768) {
         await page.keyboard.press('Alt+/')
-        const search = page.getByRole('searchbox', { name: '搜索快捷键', exact: true })
-        await search.waitFor()
+        const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
+        await overlay.waitFor()
+        expect(await overlay.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt', 'N'])
+        expect(await page.locator('.settings-page').count()).toBe(0)
+        await overlay.getByRole('button', { name: '设置 › 快捷键', exact: true }).click()
+        await overlay.waitFor({ state: 'detached' })
         const page_ = page.locator('.settings-page')
+        const search = page_.getByRole('searchbox', { name: '搜索快捷键', exact: true })
+        await search.waitFor()
+        // The page's name heads it once.
+        expect(await page_.getByRole('heading', { name: '快捷键', exact: true }).count()).toBe(1)
         expect(await page_.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt', 'N'])
         expect(await page_.locator('[data-keys="⌘N"]').count()).toBe(0)
         await noHorizontalOverflow(page, page_)

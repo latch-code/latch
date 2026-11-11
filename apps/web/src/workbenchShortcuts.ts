@@ -11,6 +11,15 @@ export type WorkbenchAction =
   | 'compose'
   | 'side-panel'
   | 'settings'
+  /** ⌘1 to ⌘9: the Nth session as the sidebar draws it. */
+  | { kind: 'session'; index: number }
+  /** ⌥⌘1 to ⌥⌘4: open one of the composer's four controls. */
+  | { kind: 'control'; control: ComposerControl }
+
+/** The composer's four controls in key order; each is the trigger inside `[data-composer-control="<name>"]`. */
+export const COMPOSER_CONTROLS = ['harness', 'model', 'thinking', 'permission'] as const
+export type ComposerControl = (typeof COMPOSER_CONTROLS)[number]
+
 interface KeyStroke {
   code: string
   metaKey: boolean
@@ -40,9 +49,11 @@ const SHORTCUTS = [
   { id: 'quick-look', label: '快速查看预览中的文件', desktop: 'Space', browser: null },
   { id: 'previous', label: '上一个会话', desktop: '⇧⌘[', browser: 'Alt [' },
   { id: 'next', label: '下一个会话', desktop: '⇧⌘]', browser: 'Alt ]' },
+  { id: 'session', label: '跳到第 N 个会话', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
   { id: 'next-approval', label: '下一个等你处理的请求', desktop: '⌥⌘A', browser: 'Alt Shift A' },
   { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
   { id: 'compose', label: '聚焦输入框', desktop: '⌘L', browser: 'Alt L' },
+  { id: 'controls', label: 'Harness · 模型 · 思考 · 权限', desktop: '⌥⌘1 … ⌥⌘4', browser: 'Alt Shift 1 … Alt Shift 4' },
   { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },
   { id: 'stop', label: '在输入框里停止运行', desktop: 'esc esc', browser: 'Esc Esc' },
   { id: 'undo-archive', label: '撤销归档', desktop: '⌘Z', browser: 'Mod Z' },
@@ -67,9 +78,27 @@ export function shortcutRows(desktop: boolean, mac: boolean = onMac()): Array<{ 
   })
 }
 
-/** A shortcut as the keys to draw: each alternative, split into its keys. */
-export function shortcutCaps(keys: string): string[][] {
-  return keys.split(' · ').map(alternative => alternative.match(/[⌘⇧⌥⌃]|[^\s⌘⇧⌥⌃]+/gu) ?? [])
+/**
+ * A shortcut as the keys to draw: each part split into its keys, with what joins it to the one before (「或」 between
+ * alternatives, 「…」 between the ends of a range).
+ */
+export function shortcutCaps(keys: string): Array<{ join: '或' | '…' | null; caps: string[] }> {
+  return keys.split(' · ').flatMap((alternative, index) =>
+    alternative.split(' … ').map((part, end) => ({
+      join: end > 0 ? ('…' as const) : index > 0 ? ('或' as const) : null,
+      caps: part.match(/[⌘⇧⌥⌃]|[^\s⌘⇧⌥⌃]+/gu) ?? [],
+    })),
+  )
+}
+
+const BUTTON_KEYS: Record<string, string> = { '⌘': 'mod', '⇧': 'shift', '⌥': 'alt', '⌃': 'ctrl', Alt: 'alt', Shift: 'shift', Ctrl: 'ctrl' }
+
+/** A one-part shortcut as a Button's `keys` (`['mod', 'N']`), for the button that key presses; null for what this client lacks. */
+export function shortcutButtonKeys(id: ShortcutId, desktop: boolean, mac: boolean = onMac()): string[] | null {
+  const keys = shortcutKeys(id, desktop, mac)
+  const [part, ...more] = keys === null ? [] : shortcutCaps(keys)
+  if (!part || more.length) return null
+  return part.caps.map(cap => BUTTON_KEYS[cap] ?? cap)
 }
 
 /** What still shows over a page, which hides the session's columns: moving to another page, and what opens above it. */
@@ -78,6 +107,16 @@ export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
 }
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {
   if (event.isComposing) return null
+  // The digits come first: their ⌥ (the desktop app's) or Shift (a browser's) picks a control instead of a session.
+  const digit = /^Digit([1-9])$/u.exec(event.code)?.[1]
+  if (digit !== undefined) {
+    const index = Number(digit)
+    const held = desktop ? (event.metaKey || event.ctrlKey) && !event.shiftKey : event.altKey && !event.metaKey && !event.ctrlKey
+    if (!held) return null
+    const control = desktop ? event.altKey : event.shiftKey
+    if (!control) return { kind: 'session', index }
+    return index <= COMPOSER_CONTROLS.length ? { kind: 'control', control: COMPOSER_CONTROLS[index - 1]! } : null
+  }
   if (desktop && event.code === 'KeyB' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'side-panel'
   const modifier = desktop ? (event.metaKey || event.ctrlKey) && !event.altKey : event.altKey && !event.metaKey && !event.ctrlKey
   if (!modifier) return null

@@ -12,6 +12,7 @@ import { rowStatus, runningWords, silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { contextWords } from '../composer/permission.ts'
 import { currentShell } from '../core/shell.ts'
+import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -72,10 +73,11 @@ function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; ca
 
 /**
  * 改动 in the title row. Once the page has read the session's totals (the panel was opened), the button writes them
- * after its glyph; before that it is the plain toggle, and nothing is guessed.
+ * after its glyph and the key that toggles it as caps; before that it is the plain toggle, and nothing is guessed.
  */
 function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: ChangeTotals | undefined }) {
   if (!totals?.files) return <Toggle toggle={toggle} />
+  const keys = shortcutButtonKeys('changes', currentShell() !== null)
   return (
     <span className="topbar-changes">
       <Button
@@ -85,6 +87,7 @@ function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: Chan
         aria-pressed={toggle.pressed}
         tooltip={toggle.label}
         shortcut={toggle.shortcut}
+        {...(keys ? { keys } : {})}
         onClick={toggle.onToggle}>
         <span className="topbar-changes-stat" aria-hidden="true">
           <span data-tone="add">+{totals.add}</span>

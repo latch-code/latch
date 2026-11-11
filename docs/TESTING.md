@@ -20,8 +20,8 @@ sources:
 预览引用边界由 `apps/web/test/preview-quotes.test.ts` 覆盖，真实的 Office 页/选区、表格选区与更新后的冻结偏好由 `e2e/preview-renderers.e2e.ts` 验证；`file-tree.e2e.ts` 验证三种宽度的真实文件摘录只追加草稿且不发请求，`file-preview.e2e.ts` 检查文件自动更新后保留阅读行。
 
 `e2e/workflows.e2e.ts` 覆盖外观切换时保留草稿、输入聚焦与上一条消息、Host 分支投影、可操作首次引导及通知首次选择；通知 UI 使用有限壳夹具，真实主进程状态和 preload 过滤由 `apps/desktop/test/notifications.test.ts` 验证，Electron 用例核对实际公开接口。`e2e/file-tree.e2e.ts` 同时验证没有标签时的文件快捷键。
-`e2e/palette.e2e.ts` 在三种宽度与深浅色用真实 Host 走完命令面板的分组、搜索中与失败的文字、Esc 逐级退回、焦点回到输入框，查找条的位置（不挤压对话）、长回答内的定位、运行中不跳走与不丢步，迟到的结果不换回车打开的行，输入法组合键，Esc 不误停运行或误拒请求，以及只显示当前客户端按键的快捷键页；截图写入 `test-results/palette/`。
-`e2e/workbench-keyboard.e2e.ts` 在三种宽度驱动真实 Alt 按键，核对会话循环、待处理审批卡的循环与焦点高亮、文件搜索及关闭；同时检查草稿、消息与审批身份保留，且导航不增加模型调用或执行提交。
+`e2e/palette.e2e.ts` 在三种宽度与深浅色用真实 Host 走完命令面板的分组、搜索中与失败的文字、Esc 逐级退回、焦点回到输入框，查找条的位置（不挤压对话）、长回答内的定位、运行中不跳走与不丢步，迟到的结果不换回车打开的行，输入法组合键，Esc 不误停运行或误拒请求，以及只显示当前客户端按键的快捷键浮层与它链到的快捷键页；截图写入 `test-results/palette/`。
+`e2e/workbench-keyboard.e2e.ts` 在三种宽度驱动真实 Alt 按键，核对会话循环、数字跳到第 N 个会话（超出不动）、待处理审批卡的循环与焦点高亮、文件搜索及关闭；同时检查草稿、消息与审批身份保留，且导航不增加模型调用或执行提交。另在 Chromium 与 WebKit 的三宽里检查 Alt / 的快捷键浮层盖在运行中的会话上（焦点进搜索、Esc 回到输入框、再按关上、不导航）与 Alt Shift 1–4 在会话和新会话页各打开自己的控件菜单，手机宽度两者都没有，按键不离开页面、不打开新页。
 `e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或 Agent 会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属。内存缓存的按会话隔离、私有清理、数量与字符上限由 `apps/web/test/session-drafts.test.ts` 覆盖。
 连接插件的定向回归包括 `tests/transport-registry.test.ts`、`packages/link-client/test/transport.test.ts`、`carrier-vector.test.ts` 与 Host 的 `native.test.ts`；`e2e/native-relay.e2e.ts` 另把官方 relay 通过注册 driver 真实消费。MessagePort 示例会实际加载并运行。它们是纯 Node/Go 与本机消息测试，不等同真实飞书、手机 connector、OS 通知或真机验收。
 

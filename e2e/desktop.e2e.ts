@@ -593,6 +593,44 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       await page.screenshot({ path: 'test-results/native-desktop.png', animations: 'disabled' })
 
+      // The desktop app's own keys, never a browser's: ⌘/ lays them over the running session with ⌘ caps and takes
+      // itself away again; ⌥⌘1 opens the Harness menu, Alt Shift 1 does nothing here; ⌘1 is the app's (the first row,
+      // already open) and types nothing; 新会话 and 搜索 wear ⌘N and ⌘K.
+      const keysOverlay = page.getByRole('dialog', { name: '快捷键', exact: true })
+      await page.keyboard.press('Meta+/')
+      await keysOverlay.waitFor()
+      expect(await keysOverlay.locator('[data-keys="⌘1 … ⌘9"] kbd').allTextContents()).toEqual(['⌘', '1', '⌘', '9'])
+      expect(await keysOverlay.locator('[data-keys="⌥⌘1 … ⌥⌘4"]').count()).toBe(1)
+      expect(await keysOverlay.locator('[data-keys*="Alt"]').count()).toBe(0)
+      expect(await page.locator('.settings-page').count()).toBe(0)
+      await page.screenshot({ path: 'test-results/native-desktop-shortcuts.png', animations: 'disabled' })
+      await page.keyboard.press('Meta+/')
+      await keysOverlay.waitFor({ state: 'hidden' })
+      const harnessTrigger = page.locator('.composer-stack [data-composer-control="harness"] button').first()
+      await page.keyboard.press('Alt+Shift+Digit1')
+      await new Promise(done => setTimeout(done, 200))
+      expect(await harnessTrigger.getAttribute('aria-expanded')).not.toBe('true')
+      await page.keyboard.press('Meta+Alt+Digit1')
+      await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) === 'true')
+      await page.keyboard.press('Escape')
+      await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) !== 'true')
+      const jumped = page.evaluate(
+        () =>
+          new Promise<boolean>(done => {
+            const heard = (event: KeyboardEvent) => {
+              if (event.code !== 'Digit1') return
+              removeEventListener('keydown', heard)
+              setTimeout(() => done(event.defaultPrevented))
+            }
+            addEventListener('keydown', heard)
+          }),
+      )
+      await page.keyboard.press('Meta+Digit1')
+      expect(await jumped).toBe(true)
+      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+N"] .ui-kbd').allTextContents()).toEqual(['⌘', 'N'])
+      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+K"] .ui-kbd').allTextContents()).toEqual(['⌘', 'K'])
+      await page.locator('.sidebar-top').screenshot({ path: 'test-results/native-desktop-sidebar-keys.png', animations: 'disabled' })
+
       // Settings › 通用: main keeps the Mac awake while the session runs (it reads host-info over host.sock every few
       // seconds). The login item needs a packaged app, so a development run, which main reports as unavailable, has no row.
       const general = await openSettings(page, '设置')

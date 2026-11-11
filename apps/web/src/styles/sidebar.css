@@ -94,13 +94,17 @@
 .sidebar-nav-row[aria-pressed='true'] > svg {
   color: var(--ink);
 }
-/* One shortcut style: the plain characters, never a keycap beside a bare one. */
-.sidebar-shortcut {
-  margin-left: auto;
-  color: var(--faint);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  white-space: nowrap;
+/* Drawn with the Button primitive for its key caps, laid out as a row: words from the start, no press scale. */
+.sidebar-nav-row.ui-button {
+  justify-content: flex-start;
+  font-weight: 400;
+}
+.sidebar-nav-row.ui-button:active {
+  transform: none;
+}
+/* The caps of the key that presses it, at the row's end (touch screens have none). */
+.sidebar-nav-row > .ui-button-keys {
+  margin-inline: auto 0;
 }
 
 /* Rows under the list (已归档): ghost, so the open session's selection stays the only resting fill. */

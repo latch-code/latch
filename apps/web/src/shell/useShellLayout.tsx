@@ -172,6 +172,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const searchRef = useRef<HTMLInputElement>(null)
   const [commandMode, setCommandMode] = useState<PaletteLevel>('root')
   const [commandOpen, setCommandOpen] = useState(false)
+  /** The shortcuts over the session (⌘/), which stays open and running under it. */
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   /** Pressing ⌘F with the bar open goes back to its field. */
   const [findFocus, setFindFocus] = useState(0)
@@ -609,8 +611,30 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const action = workbenchShortcut(event, currentShell() !== null)
     if (!action) return
     const dialogs = document.querySelectorAll('dialog[open]')
-    if (dialogs.length && !(action === 'files' && dialogs.length === 1 && dialogs[0]!.classList.contains('new-session-sheet'))) return
+    const only = dialogs.length === 1 ? dialogs[0]! : null
+    // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
+    const passes =
+      (action === 'files' && only?.classList.contains('new-session-sheet'))
+      || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
+    if (dialogs.length && !passes) return
     if (route.entry !== 'sessions' && !shortcutWorksOnPage(action)) return
+    if (typeof action === 'object') {
+      // Held, the digits would type into the draft (a Mac's ⌥1 is ¡), so the key is the app's even where it finds nothing.
+      event.preventDefault()
+      if (action.kind === 'session') {
+        const folded = readFolded(shelvesKey(snapshot.device.id))
+        const target = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded })[action.index - 1]
+        if (target && target.id !== selectedId) choose(target.id)
+        return
+      }
+      // A key opens the control's own menu, as a click would; it never picks a value. Phones have no keys for it.
+      if (phone) return
+      const trigger = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${action.control}"]`)]
+        .find(control => control.getClientRects().length > 0 && !control.closest('[inert]'))
+        ?.querySelector<HTMLButtonElement>('button')
+      if (trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') trigger.click()
+      return
+    }
     if (action === 'close-file') {
       if (fileTabs.active) {
         event.preventDefault()
@@ -672,7 +696,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     if (action === 'shortcuts') {
-      if (settingsSections(snapshot, access).includes('shortcuts') && !phone) openSettings('shortcuts')
+      if (!phone) setShortcutsOpen(open => !open)
       return
     }
     const folded = readFolded(shelvesKey(snapshot.device.id))
@@ -684,6 +708,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     window.addEventListener('keydown', workbenchKeys)
     return () => window.removeEventListener('keydown', workbenchKeys)
   }, [workbenchKeys])
+  // A phone has no keys, so nothing it could close the shortcuts with: a window narrowed to one lets them go.
+  useEffect(() => {
+    if (phone) setShortcutsOpen(false)
+  }, [phone])
   const resizeInspector = (raw: number, step: ResizePhase) => {
     const width = clampRightPanel(raw, windowWidth)
     if (step === 'drag') {
@@ -1002,6 +1030,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setCommandMode,
     commandOpen,
     setCommandOpen,
+    shortcutsOpen,
+    setShortcutsOpen,
     closePalette,
     findOpen,
     setFindOpen,

@@ -31,6 +31,7 @@ import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
 import { Button, Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
+import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -61,8 +62,6 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
     ? { id: known.id, label: known.capabilities.display.label, mark: known.capabilities.display.mark }
     : { id: task.harnessId, label: task.harnessId, mark: presetOf(task.harnessId, HARNESS_MARKS) }
 }
-
-const shortcutFor = (key: string) => (currentShell() ? `⌘${key}` : `Alt ${key}`)
 
 /** Something wrong with reaching the Mac: the sentence for the dot beside 设置, and how bad it is. A healthy state has none. */
 function connectionTrouble(
@@ -398,6 +397,11 @@ export function Sidebar({
   const trouble = connectionTrouble(connection, hostProblem)
   const shell = currentShell()
   const desktop = shell !== null
+  // The keys that press 新会话 and 搜索, as caps on them; a drawer is for touch and narrow windows, so it has none.
+  const capsOf = (id: 'new' | 'palette') => {
+    const keys = drawer ? null : shortcutButtonKeys(id, desktop)
+    return keys ? { keys } : {}
+  }
   // 「这台电脑」 is only the Latch app on the Host's own socket; a loopback browser is told which computer it is reading.
   const remote = !deviceAccess(snapshot, shell).local
   const context = filter
@@ -413,23 +417,22 @@ export function Sidebar({
           </p>
         )}
         <div className="sidebar-nav-line">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             className="sidebar-nav-row"
             aria-label="新建会话"
             aria-pressed={drawer ? undefined : newActive}
+            {...capsOf('new')}
             onClick={onNew}>
             <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span>新会话</span>
-            {!drawer && <span className="sidebar-shortcut">{shortcutFor('N')}</span>}
-          </button>
+          </Button>
           {drawer && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
         </div>
-        <button type="button" className="sidebar-nav-row" aria-label="搜索" onClick={onSearch}>
+        <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette')} onClick={onSearch}>
           <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span>搜索</span>
-          {!drawer && <span className="sidebar-shortcut">{/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</span>}
-        </button>
+        </Button>
       </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>

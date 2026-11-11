@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { chromium, type Page } from '@playwright/test'
+import { chromium, webkit, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -122,8 +122,24 @@ it.each([
       // The steps follow the rows as drawn: what waits leads the list, so the open session is the last row.
       const waiting = ordered.filter(task => task.status === 'waiting-approval')
       expect(waiting).toHaveLength(2)
-      await page.keyboard.press('Alt+1')
+      // The digits jump to the Nth row as drawn (waiting, waiting, then the open one); past the list they do nothing.
+      // None of them reaches the draft, which a Mac's ⌥ digits would otherwise type into (⌥9 is ª).
+      const url = page.url()
+      for (const [digit, id] of [
+        ['3', neutralId],
+        ['1', waiting[0]!.id],
+        ['2', waiting[1]!.id],
+        ['3', neutralId],
+      ] as const) {
+        await page.keyboard.press(`Alt+${digit}`)
+        await selected(id)
+      }
+      await page.keyboard.press('Alt+9')
+      await page.waitForTimeout(300)
       await selected(neutralId)
+      expect(await input.inputValue()).toBe(draft)
+      expect(page.url()).toBe(url)
+      expect(context.pages()).toHaveLength(1)
       await page.keyboard.press('Alt+]')
       await selected(waiting[0]!.id)
       await page.keyboard.press('Alt+[')
@@ -195,3 +211,176 @@ it.each([
     await host.close()
   }
 })
+
+const SHOTS = 'test-results/workbench-keyboard'
+
+it.each([
+  ['chromium', 390, 'light'],
+  ['chromium', 900, 'dark'],
+  ['chromium', 1440, 'light'],
+  ['webkit', 390, 'dark'],
+  ['webkit', 900, 'light'],
+  ['webkit', 1440, 'dark'],
+] as const)(
+  'opens the shortcuts over a running session and each composer control with keys in %s at %i %s',
+  async (engine, width, theme) => {
+    let modelCalls = 0
+    let release: () => void = () => {}
+    const held = new Promise<void>(done => {
+      release = done
+    })
+    const plugin: HarnessPlugin = {
+      id: 'keys-model',
+      name: 'Keys fixture',
+      version: '1',
+      description: 'Only local test responses.',
+      activate(context) {
+        context.registerProvider({
+          id: 'keys-model',
+          name: 'Keys fixture',
+          model: 'fixture',
+          async *stream() {
+            modelCalls++
+            yield { type: 'text', text: '运行中的会话，浮层盖在它上面。' }
+            await held
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'), plugins: [plugin] })
+    const browser = await (engine === 'webkit' ? webkit.launch({ headless: true }) : chromium.launch(browserLaunchOptions()))
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const created = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          prompt: '键位浮层的运行中会话',
+          mode: 'agent',
+          model: { providerId: 'keys-model', model: 'fixture' },
+          requestId: randomUUID(),
+        },
+      })
+      const running = created.sessionId
+      await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + running)).summary.status, { timeout: 10_000 }).toBe('running')
+      const context = await browser.newContext({
+        viewport: { width, height: 900 },
+        colorScheme: theme,
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+      })
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      const submissions: string[] = []
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname
+        if (request.method() === 'POST' && /^\/link\/api\/(?:tasks(?:\/[^/]+\/(?:prompt|cancel))?|approvals\/[^/]+)$/u.test(path))
+          submissions.push(path)
+      })
+      try {
+        await enrollBrowser(page, host, { name: `键位 ${engine} ${String(width)}`, scopes: ['view', 'run'] })
+        await choose(page, '键位浮层的运行中会话')
+        await page.locator('.transcript').getByText('运行中的会话，浮层盖在它上面。').waitFor()
+        const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+        const draft = `键位草稿 ${engine} ${String(width)}`
+        await input.fill(draft)
+        const callsBefore = modelCalls
+        const url = page.url()
+        const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
+        const search = overlay.getByRole('searchbox', { name: '搜索快捷键', exact: true })
+        // Nothing a key does here leaves the page or opens another: none of them is the browser's own.
+        const stayed = async () => {
+          expect(page.url()).toBe(url)
+          expect(context.pages()).toHaveLength(1)
+          expect(await input.inputValue()).toBe(draft)
+        }
+        const shoot = async (name: string) => {
+          await mkdir(SHOTS, { recursive: true })
+          for (const scheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme: scheme })
+            await page.screenshot({ path: join(SHOTS, `${name}--${String(width)}--${scheme}--${engine}.png`), animations: 'disabled' })
+          }
+          await page.emulateMedia({ colorScheme: theme })
+        }
+
+        if (width < 768) {
+          // A phone has no keys: no overlay, and no control opens.
+          await page.keyboard.press('Alt+/')
+          await page.keyboard.press('Alt+Shift+1')
+          await page.waitForTimeout(300)
+          expect(await overlay.count()).toBe(0)
+          expect(await page.locator('[data-composer-control] [aria-expanded="true"]').count()).toBe(0)
+          await stayed()
+          await shoot('phone-no-overlay')
+        } else {
+          await input.focus()
+          await page.keyboard.press('Alt+/')
+          await overlay.waitFor()
+          await expect.poll(() => search.evaluate(element => element === document.activeElement)).toBe(true)
+          // Over the session, which keeps running under it: no page in between, no settings.
+          expect(await page.locator('.settings-page').count()).toBe(0)
+          expect(await page.locator('.transcript').getByText('运行中的会话，浮层盖在它上面。').count()).toBe(1)
+          expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt', '1', 'Alt', '9'])
+          expect(await overlay.locator('[data-keys="Alt Shift 1 … Alt Shift 4"]').count()).toBe(1)
+          expect(await overlay.locator('[data-keys="⌘1 … ⌘9"]').count()).toBe(0)
+          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(22)
+          await noHorizontalOverflow(page, overlay.locator('.ui-dialog-surface'))
+          await shoot('keys-overlay')
+          await search.fill('会话')
+          await overlay.getByText('跳到第 N 个会话', { exact: true }).waitFor()
+          expect(await overlay.getByText('改动', { exact: true }).count()).toBe(0)
+          await search.fill('没有这个键')
+          await overlay.getByText('没有匹配的快捷键', { exact: true }).waitFor()
+          await shoot('keys-overlay-none')
+          await search.fill('')
+          await page.keyboard.press('Escape')
+          await overlay.waitFor({ state: 'hidden' })
+          await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+          // ⌘/ (here Alt /) opens and closes it.
+          await page.keyboard.press('Alt+/')
+          await overlay.waitFor()
+          await page.keyboard.press('Alt+/')
+          await overlay.waitFor({ state: 'hidden' })
+          await stayed()
+
+          // Each control key opens its own menu, in the session and on the new-session page; Escape puts it away.
+          const controls = ['harness', 'model', 'thinking', 'permission'] as const
+          const opens = async (where: string) => {
+            const opened: string[] = []
+            for (const [index, control] of controls.entries()) {
+              const trigger = page.locator(`.composer-stack [data-composer-control="${control}"] button`).first()
+              if ((await trigger.count()) === 0) continue
+              if ((await trigger.getAttribute('aria-disabled')) === 'true' || (await trigger.isDisabled())) continue
+              await page.keyboard.press(`Alt+Shift+${String(index + 1)}`)
+              await expect.poll(() => trigger.getAttribute('aria-expanded'), { message: `${where} ${control}` }).toBe('true')
+              if (control === 'model') await shoot(`control-${where}-${control}`)
+              await page.keyboard.press('Escape')
+              await expect.poll(() => trigger.getAttribute('aria-expanded')).not.toBe('true')
+              opened.push(control)
+            }
+            return opened
+          }
+          expect(await opens('session')).toEqual(controls)
+          expect(await input.inputValue()).toBe(draft)
+          await page.keyboard.press('Alt+n')
+          const newInput = page.getByRole('textbox', { name: '新会话消息', exact: true })
+          await newInput.waitFor()
+          await newInput.fill('新会话草稿')
+          expect(await opens('draft')).toEqual(controls)
+          expect(await newInput.inputValue()).toBe('新会话草稿')
+          await choose(page, '键位浮层的运行中会话')
+          await stayed()
+          if (width >= 1024) await shoot('sidebar-caps')
+        }
+        expect(submissions).toEqual([])
+        expect(modelCalls).toBe(callsBefore)
+      } finally {
+        await context.close()
+      }
+    } finally {
+      release()
+      await browser.close()
+      await host.close()
+    }
+  },
+)

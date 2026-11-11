@@ -4,6 +4,8 @@ import { ShellPalette } from '../palette/ShellPalette.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { toolRowId } from '../conversation.ts'
 import { Button, Toast } from '@latch/ui'
+import { settingsSections } from '../settings/SettingsPage.tsx'
+import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -69,7 +71,7 @@ function ToastClearance() {
   return null
 }
 
-/** What opens over the shell: the palette, dialogs and toasts. */
+/** What opens over the shell: the palette, the shortcuts, dialogs and toasts. */
 export function Overlays({ shell }: { shell: ShellState }) {
   const {
     renaming,
@@ -86,10 +88,36 @@ export function Overlays({ shell }: { shell: ShellState }) {
     snapshot,
     selectedId,
     refresh,
+    shortcutsOpen,
+    setShortcutsOpen,
+    openSettings,
+    route,
+    composerRef,
+    access,
   } = shell
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
+      {shortcutsOpen && (
+        <ShortcutsOverlay
+          onClose={() => {
+            setShortcutsOpen(false)
+            // The dialog gives the focus back to where it was; opened from nowhere in particular, it lands in the input.
+            requestAnimationFrame(() => {
+              if (route.entry === 'sessions' && (document.activeElement === null || document.activeElement === document.body))
+                composerRef.current?.focus({ preventScroll: true })
+            })
+          }}
+          onSettings={
+            settingsSections(snapshot, access).includes('shortcuts')
+              ? () => {
+                  setShortcutsOpen(false)
+                  openSettings('shortcuts')
+                }
+              : undefined
+          }
+        />
+      )}
       {renaming && (
         <PromptDialog
           title="重命名会话"

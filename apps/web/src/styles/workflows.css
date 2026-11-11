@@ -271,8 +271,10 @@
   }
 }
 
+/* 设置 › 快捷键: the search under the page's name, then the table. */
 .shortcuts-search {
-  width: 180px;
+  justify-self: start;
+  width: 240px;
 }
 .settings-row.shortcut-row {
   min-height: 40px;
@@ -294,6 +296,68 @@
   color: var(--faint);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+
+/*
+ * The shortcuts over the session (⌘/): 880 wide, the search in the title row beside the close button, the rows in two
+ * columns, the footer's hint and the way to 设置 › 快捷键.
+ */
+/* Near the top of the window, so the session's input stays in view below it. */
+.shortcuts-overlay.ui-dialog {
+  margin-block: 52px auto;
+}
+.shortcuts-overlay .ui-dialog-surface {
+  position: relative;
+  width: min(880px, calc(100vw - 2 * var(--sp-16)));
+  max-height: calc(100dvh - 52px - var(--sp-32));
+}
+.shortcuts-overlay-search {
+  position: absolute;
+  top: var(--sp-12);
+  right: 56px;
+  width: 240px;
+}
+.shortcuts-overlay-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  column-gap: var(--sp-40);
+}
+.shortcuts-overlay-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shortcuts-overlay-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  margin-inline: calc(-1 * var(--sp-8));
+  padding: var(--sp-4) var(--sp-8);
+  border-radius: var(--r-6);
+  color: var(--ink-2);
+}
+.shortcuts-overlay-row:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.shortcuts-overlay-label {
+  flex: 1;
+  min-width: 0;
+}
+.shortcuts-overlay-row > .shortcut-caps {
+  flex-shrink: 0;
+}
+.shortcuts-overlay-none {
+  padding-block: var(--sp-16);
+  color: var(--muted);
+}
+.shortcuts-overlay-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
 }
 
 .getting-started {

@@ -1858,8 +1858,14 @@ describe('visual capture of the real product', () => {
 
       // A phone has no such page: it has no keys.
       if (viewport.name !== 'phone') {
+        // Alt / lays the keys over the session; its link leads to the same table as a page.
         await target.keyboard.press('Alt+/')
-        await target.getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
+        const keys = target.getByRole('dialog', { name: '快捷键', exact: true })
+        await keys.getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
+        await settleMotion(target)
+        await recorder.capture(target, viewport, 'shortcuts-overlay', 'the keys of this kind of client over the session')
+        await keys.getByRole('button', { name: '设置 › 快捷键', exact: true }).click()
+        await target.locator('.settings-page').getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
         await settleMotion(target)
         await recorder.capture(target, viewport, 'settings-shortcuts', 'the keys of this kind of client')
       }

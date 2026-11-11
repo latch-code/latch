@@ -2,14 +2,15 @@ import { useState } from 'react'
 import { Kbd, SearchField } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import { shortcutCaps, shortcutRows } from '../workbenchShortcuts.ts'
-import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { SettingsGroup, SettingsRow } from './common.tsx'
 
-function ShortcutCaps({ keys }: { keys: string }) {
+/** A shortcut's keys as caps: alternatives apart with 「或」, the ends of a range with 「…」. */
+export function ShortcutCaps({ keys }: { keys: string }) {
   return (
     <span className="shortcut-caps" data-keys={keys}>
-      {shortcutCaps(keys).map((caps, alternative) => (
+      {shortcutCaps(keys).map(({ join, caps }) => (
         <span key={caps.join(' ')} className="shortcut-alternative">
-          {alternative > 0 && <span className="shortcut-or">或</span>}
+          {join && <span className="shortcut-or">{join}</span>}
           {caps.map((cap, at) => (
             <Kbd key={`${cap}-${String(at)}`}>{cap}</Kbd>
           ))}
@@ -19,17 +20,14 @@ function ShortcutCaps({ keys }: { keys: string }) {
   )
 }
 
-/** The shortcuts of this kind of client, and no other's. */
+/** The shortcuts of this kind of client, and no other's. The page's name heads the section; the search stands under it. */
 export function ShortcutsSettings() {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
   const rows = shortcutRows(currentShell() !== null).filter(row => `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle))
   return (
     <>
-      <SectionHeading
-        title="快捷键"
-        action={<SearchField className="shortcuts-search" label="搜索快捷键" value={query} onValueChange={setQuery} />}
-      />
+      <SearchField className="shortcuts-search" label="搜索快捷键" value={query} onValueChange={setQuery} />
       <SettingsGroup>
         {rows.map(row => (
           <SettingsRow key={row.id} className="shortcut-row" title={row.label} trailing={<ShortcutCaps keys={row.keys} />} />
