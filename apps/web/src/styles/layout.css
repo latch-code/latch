@@ -9,11 +9,12 @@ body {
 }
 
 /*
- * Shell, from 768px: the 52px title row spans the window; under it the sidebar, the main area and the right panel. The canvas is full-bleed. The page sets --sidebar-width (0 while shut, and on tablets, where
- * the panel slides over) with --sidebar-open-width (the width its content keeps), and --inspector-width (0 while closed
- * or overlaying) with --inspector-open-width: opening and shutting slide the tracks (--m-panel) while the content stays
- * as wide as it was and is clipped, and a drag writes the variables each frame and persists once, on release. Phones
- * stack their pages instead (phone.css).
+ * Shell, from 768px: the 52px title row spans the window; under it the sidebar, the main area and the right panel. The
+ * window is the ground; the main area is a work panel floating on it (below). The page sets --sidebar-width (0 while
+ * shut, and on tablets, where the panel slides over) with --sidebar-open-width (the width its content keeps), and
+ * --inspector-width (0 while closed or overlaying) with --inspector-open-width: opening and shutting slide the tracks
+ * (--m-panel) while the content stays as wide as it was and is clipped, and a drag writes the variables each frame and
+ * persists once, on release. Phones stack their pages instead (phone.css).
  */
 .app-shell {
   --entry-nav-width: var(--sidebar-width);
@@ -27,8 +28,39 @@ body {
   background: var(--canvas);
   transition: grid-template-columns var(--m-panel) var(--e-panel);
 }
+/*
+ * The work panel, from 768px: one canvas inset from the window by --shell-inset on every side but the sidebar's, rounded
+ * (12) and lifted by --sh-panel, spanning the title row and the main area, so the conversation's half of the title row
+ * sits in it with no rule under it. It is drawn under the columns, which keep their boxes: the title row and the main
+ * area only keep their content inside it. A page (设置) has its list where the sidebar stands, so its panel starts there.
+ */
+@media (min-width: 768px) {
+  .app-shell {
+    /* What the panel leaves on its left: nothing beside the sidebar, the inset where the sidebar is shut or slides over. */
+    --panel-start: max(0px, var(--shell-inset) - var(--sidebar-width));
+    background: var(--sidebar);
+  }
+  .app-shell::before {
+    content: '';
+    grid-area: 1 / 2 / 3 / 3;
+    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
+    border-radius: var(--r-12);
+    background: var(--canvas);
+    box-shadow: var(--sh-panel);
+    transition: margin-left var(--m-panel) var(--e-panel);
+  }
+  .app-shell:not([data-entry='sessions'])::before {
+    grid-column: 1 / -1;
+    margin-left: max(var(--shell-inset), var(--entry-nav-width));
+  }
+  .app-shell[data-resizing]::before {
+    transition: none;
+  }
+}
+
 /* A column folding away takes 70% of its opening, on the exit curve. */
 .app-shell[data-folding],
+.app-shell[data-folding]::before,
 .app-shell[data-folding] :is(.titlebar-lead, .sidebar-resize) {
   transition-duration: calc(var(--m-panel) * 0.7);
   transition-timing-function: var(--e-exit);
@@ -81,8 +113,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   width: var(--sidebar-width);
   height: 100%;
   padding-left: var(--lead-inset);
-  border-right: 1px solid var(--line);
-  background: var(--sidebar);
   transition: width var(--m-panel) var(--e-panel);
 }
 .app-shell[data-resizing] .titlebar-lead {
@@ -102,16 +132,23 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .titlebar[data-lights] .titlebar-lead {
   --lead-inset: 78px;
 }
-/* Shut, the row turns canvas and holds only ◧ and what the sidebar would otherwise offer. */
+/*
+ * Shut, the lead moves into the panel's title row and holds only ◧ and what the sidebar would otherwise offer, clear of
+ * the panel's edge (or of the traffic lights, which float over its corner).
+ */
 .titlebar[data-shut] .titlebar-lead {
   --surface: var(--canvas);
   /* Explicit, so it glides with the track: the left padding, ◧, the gap and ✎, then 等你处理 while something waits. */
   width: calc(var(--lead-inset) + 68px);
   /* Touch targets are larger, and the row's title must not start under them. */
   min-width: max-content;
+  align-self: flex-start;
+  height: 52px;
+  margin-top: var(--shell-inset);
   padding-right: var(--sp-8);
-  border-right: 0;
-  background: var(--canvas);
+}
+.titlebar[data-shut]:not([data-lights]) .titlebar-lead {
+  --lead-inset: calc(var(--shell-inset) + var(--sp-12));
 }
 .titlebar[data-shut][data-waiting] .titlebar-lead {
   width: calc(var(--lead-inset) + 100px);
@@ -133,6 +170,22 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .app-shell:not([data-entry='sessions']) :is(.sidebar, .workspace, .inspector-column, .inspector-resize, .phone-list) {
   visibility: hidden;
 }
+/*
+ * A page (设置) sits on the same ground: its list where the sidebar stands, its content in the work panel under the
+ * title row. The shell owns that frame, so it is drawn here over the page's own surfaces.
+ */
+@media (min-width: 768px) {
+  .app-shell > .settings-page,
+  .app-shell > .settings-page .settings-nav-pane {
+    background: transparent;
+    box-shadow: none;
+  }
+  .app-shell > .settings-page .settings-panel {
+    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) max(0px, var(--shell-inset) - var(--entry-nav-width));
+    border-radius: 0 0 var(--r-12) var(--r-12);
+    background: transparent;
+  }
+}
 
 .sidebar {
   grid-area: 2 / 1;
@@ -145,13 +198,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .sidebar:focus {
   outline: none;
 }
+/* Beside the panel the sidebar is the ground itself, so the panel's shadow falls on it. */
 @media (min-width: 1024px) {
   .sidebar {
     overflow: hidden;
-    border-right: 1px solid var(--line);
+    background: transparent;
   }
   .app-shell[data-sidebar='collapsed'] .sidebar {
-    border-right: 0;
     visibility: hidden;
     transition: visibility 0s linear calc(var(--m-panel) * 0.7);
   }
@@ -178,6 +231,24 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   min-height: 0;
   overflow: clip;
   background: var(--canvas);
+}
+/*
+ * In the panel the main area keeps its box (the column's) and its content inside the panel: under the panel's half of
+ * the title row, and clear of the panel's other edges.
+ */
+@media (min-width: 768px) {
+  .workspace {
+    padding: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
+    background: transparent;
+    transition: padding-left var(--m-panel) var(--e-panel);
+  }
+  .app-shell[data-folding] .workspace {
+    transition-duration: calc(var(--m-panel) * 0.7);
+    transition-timing-function: var(--e-exit);
+  }
+  .app-shell[data-resizing] .workspace {
+    transition: none;
+  }
 }
 /* The rest of the main column; it has no box of its own, so the page layout is unchanged. */
 .workspace-view {
@@ -283,9 +354,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   padding: 0 var(--sp-12) 0 var(--sp-16);
   background: var(--canvas);
 }
+/* In the title row the conversation's half is the panel's top: 52 tall from the panel's edge, on its canvas. */
 .titlebar .topbar {
   flex-shrink: 1;
-  height: 100%;
+  align-self: flex-start;
+  height: 52px;
+  margin: var(--shell-inset) var(--shell-inset) 0 0;
+  background: transparent;
 }
 .topbar-crumb {
   display: inline-flex;
@@ -383,6 +458,34 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   background: var(--ink);
   /* The shared badge sits outside the button, for a count; a dot belongs on the icon's corner. */
   transform: translate(-5px, 10px);
+}
+/* 改动 with the totals the page has read: the glyph, then +a −d in tabular digits; open, it keeps the hover fill. */
+.topbar-changes {
+  position: relative;
+  display: inline-flex;
+}
+.topbar-changes > .ui-button[aria-pressed='true'] {
+  background: var(--hover);
+}
+.topbar-changes-stat {
+  display: inline-flex;
+  gap: var(--sp-6);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.topbar-changes-stat > [data-tone='add'] {
+  color: var(--green);
+}
+.topbar-changes-stat > [data-tone='remove'] {
+  color: var(--red);
+}
+.topbar-changes > .topbar-toggle-dot {
+  position: absolute;
+  top: var(--sp-4);
+  left: var(--sp-16);
+  transform: none;
 }
 .topbar-title {
   display: flex;
@@ -681,8 +784,10 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 }
 
 /*
- * The right panel beside the conversation. Its content keeps the open width and is clipped while the column slides shut;
- * its edge toward the conversation is the resize handle from 1024px.
+ * The right panel beside the conversation: a column of the window, its surface a second panel on the ground, inset like
+ * the work panel and as tall, its strip level with the title row. Its content keeps the open width and is clipped while
+ * the column slides shut (the clip reaches past the column far enough for the panel's ring); its edge toward the
+ * conversation is the resize handle from 1024px.
  */
 .inspector-column {
   --panel-strip-height: 52px;
@@ -690,39 +795,50 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   z-index: 1;
   min-width: 0;
   min-height: 0;
+  padding: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
+  overflow: clip;
+  overflow-clip-margin: var(--shell-inset);
+}
+.inspector-column-inner {
+  width: calc(var(--inspector-open-width) - var(--shell-inset));
+  height: 100%;
   overflow: hidden;
+  border-radius: var(--r-12);
   background: var(--canvas);
+  box-shadow: var(--sh-panel);
 }
-.app-shell[data-inspector] .inspector-column {
-  border-left: 1px solid var(--line);
-}
-/* The conversation would go under 480: the panel overlays it, under the title row. */
+/* The conversation would go under 480: the panel overlays it in the work panel, under the title row. */
 .app-shell[data-inspector='sheet'] .inspector-column {
   /* Out of its track, whose area would otherwise be what it is placed against. */
   grid-area: auto;
   position: absolute;
   z-index: 6;
-  top: 52px;
-  right: 0;
-  bottom: 0;
+  top: calc(52px + var(--shell-inset));
+  right: var(--shell-inset);
+  bottom: var(--shell-inset);
   --panel-strip-height: 40px;
   width: var(--inspector-open-width);
-  max-width: calc(100% - 52px);
+  max-width: calc(100% - 52px - var(--shell-inset));
+  padding: 0;
+  overflow: hidden;
+  /* Its right edge is the work panel's: only the corner it shares with it, and the two it floats by, are round. */
+  border-radius: var(--r-12) 0 var(--r-12) var(--r-12);
+  background: var(--canvas);
   box-shadow: var(--sh-pop);
   animation: fade-in var(--m-panel) var(--e-panel);
 }
-.inspector-column-inner {
-  width: var(--inspector-open-width);
-  height: 100%;
-  overflow: hidden;
+.app-shell[data-inspector='sheet'] .inspector-column-inner {
+  width: 100%;
+  border-radius: 0;
+  box-shadow: none;
 }
 .app-shell:not([data-inspector]) .inspector-column {
   visibility: hidden;
   transition: visibility 0s linear calc(var(--m-panel) * 0.7);
 }
 .inspector-resize {
-  top: 52px;
-  bottom: 0;
+  top: calc(52px + var(--shell-inset));
+  bottom: var(--shell-inset);
   right: calc(var(--inspector-width) - 3px);
 }
 /* Narrowed until it fits, a sheet takes its place beside the conversation. */
@@ -803,6 +919,14 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
     text-align: center;
   }
 }
+/* From 768px the page (a maximised panel) takes the conversation's place in the work panel. */
+@media (min-width: 768px) {
+  .info-page {
+    inset: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
+    border-radius: 0 0 var(--r-12) var(--r-12);
+    background: var(--canvas);
+  }
+}
 @keyframes page-in {
   from {
     translate: 100% 0;
@@ -835,8 +959,10 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 /* Reduced motion: the columns and the resize handle move at once; pages and floating pieces only fade. */
 @media (prefers-reduced-motion: reduce) {
   .app-shell,
+  .app-shell::before,
   .titlebar-lead,
-  .sidebar-resize {
+  .sidebar-resize,
+  .workspace {
     transition: none;
   }
   .jump-latest,

@@ -1,12 +1,14 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronLeft, Ellipsis, Folder, FolderGit2, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
-import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
+import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
-import { ICON_STROKE, IconButton, Popover, StatusPill } from '@latch/ui'
+import { Button, ICON_STROKE, IconButton, Popover, StatusPill, StatusWord } from '@latch/ui'
+import { hostNow, useTicker } from '../core/hostClock.ts'
+import { rowStatus, runningWords, silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { contextWords } from '../composer/permission.ts'
 import { currentShell } from '../core/shell.ts'
@@ -21,6 +23,77 @@ function sessionPill(summary: TaskSummary, cancelling: boolean) {
   if (summary.status === 'cancelled') return <StatusPill tone="neutral">已停止</StatusPill>
   if (summary.status === 'interrupted') return <StatusPill tone="neutral">已中断</StatusPill>
   return null
+}
+
+/** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
+function RunningWords({ live }: { live: RunLive | undefined }) {
+  useTicker('second')
+  return <>{runningWords(live, hostNow())}</>
+}
+
+function SilentWords({ live }: { live: RunLive | undefined }) {
+  useTicker('second')
+  return <>{silentWords(live, hostNow())}</>
+}
+
+/**
+ * The title row's state, in the sidebar's words: running with its clock, waiting on the person, gone quiet, stopping,
+ * failed or how a run ended. A session at rest says nothing; while the connection is down nothing live is drawn (the
+ * connection says so on the right).
+ */
+function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; cancelling: boolean; frozen: boolean }) {
+  const status = rowStatus(summary, { stopping: cancelling, frozen })
+  const live = summary.live
+  switch (status.kind) {
+    case 'stopping':
+      return <StatusPill tone="neutral">正在停止</StatusPill>
+    case 'waiting':
+      return <StatusWord tone="waiting">等你处理</StatusWord>
+    case 'silent':
+      return (
+        <StatusWord tone="warn">
+          <SilentWords live={live} />
+        </StatusWord>
+      )
+    case 'running':
+      return (
+        <StatusWord tone="running">
+          <RunningWords live={live} />
+        </StatusWord>
+      )
+    case 'failed':
+      return <StatusPill tone="err">失败</StatusPill>
+    case 'ended':
+      return <StatusPill tone={status.unknown > 0 || status.word === '已强制停止' ? 'warn' : 'neutral'}>{status.word}</StatusPill>
+    default:
+      return null
+  }
+}
+
+/**
+ * 改动 in the title row. Once the page has read the session's totals (the panel was opened), the button writes them
+ * after its glyph; before that it is the plain toggle, and nothing is guessed.
+ */
+function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: ChangeTotals | undefined }) {
+  if (!totals?.files) return <Toggle toggle={toggle} />
+  return (
+    <span className="topbar-changes">
+      <Button
+        variant="ghost"
+        icon={toggle.icon}
+        aria-label={toggle.label}
+        aria-pressed={toggle.pressed}
+        tooltip={toggle.label}
+        shortcut={toggle.shortcut}
+        onClick={toggle.onToggle}>
+        <span className="topbar-changes-stat" aria-hidden="true">
+          <span data-tone="add">+{totals.add}</span>
+          <span data-tone="remove">−{totals.del}</span>
+        </span>
+      </Button>
+      {toggle.dot && <span className="topbar-toggle-dot" />}
+    </span>
+  )
 }
 
 /** The connection only when it is not healthy: its name and the retry glyph, which syncs the latest state. */
@@ -212,9 +285,10 @@ function Toggle({ toggle }: { toggle: HeaderToggle }) {
 }
 
 /**
- * The conversation's half of the title row. Left: the breadcrumb, project / title (a button that opens the session's
- * menu, with the rename pencil on hover), then its state when that is not the default. The project opens where it runs. Right: the
- * connection only when it is not healthy, full access, the demo model, the surfaces' slots, the panel toggle and ⋯.
+ * The conversation's half of the title row, the work panel's top. Left: the breadcrumb, project / title (a button that
+ * opens the session's menu, with the rename pencil on hover), then its state (running with its clock, waiting, or how it
+ * ended). The project opens where it runs. Right: the connection only when it is not healthy, full access, the demo
+ * model, the surfaces' slots (改动 with its totals once the page has them), the panel toggle and ⋯.
  * Phones draw their own header in the conversation's page (above).
  */
 export function SessionHeader({
@@ -238,7 +312,10 @@ export function SessionHeader({
   filesOpen,
   slots = {},
   crumb,
+  changesTotals,
 }: {
+  /** The session's change totals, once the page has read them. */
+  changesTotals?: ChangeTotals | undefined
   /** What the breadcrumb's popover says of this session, beyond its branch. */
   crumb?: { folders?: ReactNode; after?: ReactNode }
   summary?: TaskSummary
@@ -301,7 +378,7 @@ export function SessionHeader({
           </h1>
         )}
         {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={Pencil} size="xs" onClick={onRename} />}
-        {summary && sessionPill(summary, cancelling)}
+        {summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>
       <div className="topbar-actions">
         <ConnectionPill connection={connection} onRefresh={onRefresh} />
@@ -312,7 +389,7 @@ export function SessionHeader({
         )}
         {slots.gitAction}
         {slots.terminal && <Toggle toggle={slots.terminal} />}
-        {slots.changes && <Toggle toggle={slots.changes} />}
+        {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
         {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
         {onFiles && !summary && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
         {summary && (
@@ -409,6 +486,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           }
         : {})}
       panelOpen={columnOpen || (pageMode && infoPage)}
+      changesTotals={shell.changesTotals}
       onPanel={togglePanel}
       sessionMenu={titleMenu}
       menu={topMenu}

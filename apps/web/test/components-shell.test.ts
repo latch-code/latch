@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { GitCompare } from 'lucide-react'
 import { testHarness } from '@latch/testkit'
 import { entryOfSection, routeAtWidth, visibleEntries } from '../src/shell/routes.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -44,18 +45,32 @@ describe('top bar', () => {
     expect(renderToStaticMarkup(createElement(SessionHeader, topBar))).not.toContain('connection-pill')
   })
 
-  it('shows the state only when it is not the default, and where the session runs', () => {
-    const pill = (status: TaskSummary['status'], cancelling = false) =>
-      /class="ui-status-word" data-tone="(\w+)">(?:<svg.*?<\/svg>)?([^<]+)</u
-        .exec(renderToStaticMarkup(createElement(SessionHeader, { ...topBar, summary: session({ status }), cancelling })))
-        ?.slice(1)
-    expect(pill('running')).toBeUndefined()
-    expect(pill('idle')).toBeUndefined()
-    expect(pill('waiting-approval')).toBeUndefined()
-    expect(pill('failed')).toEqual(['failed', '失败'])
-    expect(pill('cancelled')).toEqual(['neutral', '已停止'])
-    expect(pill('interrupted')).toEqual(['neutral', '已中断'])
-    expect(pill('running', true)).toEqual(['neutral', '正在停止'])
+  it('says the state in the title row, running with its clock, and where the session runs', () => {
+    vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
+    const pill = (extra: Partial<TaskSummary>, { cancelling = false, connection = 'connected' as 'connected' | 'offline' } = {}) => {
+      const html = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, summary: session(extra), cancelling, connection }))
+      const word = /<span class="ui-status-word" data-tone="(\w+)">(.*?)<\/span>(?=<\/div>)/u.exec(html)
+      return word && [word[1], word[2]!.replace(/<svg.*?<\/svg>|<span[^>]*><\/span>|<!-- -->/gu, '').replace(/<[^>]+>/gu, '')]
+    }
+    const live = {
+      runId: 'r',
+      activity: 'model' as const,
+      since: '2026-11-11T10:01:00Z',
+      runStartedAt: '2026-11-11T10:00:00Z',
+      lastEventAt: '2026-11-11T10:01:10Z',
+    }
+    expect(pill({ status: 'running', live })).toEqual(['running', '运行中 1:12'])
+    expect(pill({ status: 'running' })).toEqual(['running', '运行中'])
+    expect(pill({ status: 'idle' })).toBeNull()
+    expect(pill({ status: 'waiting-approval' })).toEqual(['waiting', '等你处理'])
+    expect(pill({ status: 'running', pendingQuestions: 1 })).toEqual(['waiting', '等你处理'])
+    expect(pill({ status: 'failed' })).toEqual(['failed', '失败'])
+    expect(pill({ status: 'cancelled' })).toEqual(['neutral', '已停止'])
+    expect(pill({ status: 'interrupted' })).toEqual(['neutral', '已中断'])
+    expect(pill({ status: 'running' }, { cancelling: true })).toEqual(['neutral', '正在停止'])
+    // While the connection is down nothing live is drawn: the connection says so on the right.
+    expect(pill({ status: 'running', live }, { connection: 'offline' })).toBeNull()
+    vi.useRealTimers()
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
         ...topBar,
@@ -66,6 +81,21 @@ describe('top bar', () => {
     // The engine and branch live in the composer; the project opens where the session runs.
     expect(html).not.toContain('topbar-source')
     expect(html).toContain('aria-label="项目：latch-app"')
+  })
+
+  it('writes the change totals on 改动 only once the page has read them, keeping its name', () => {
+    const changes = { label: '改动', icon: GitCompare, shortcut: '⌘D', pressed: false, onToggle: noop }
+    const header = (changesTotals?: { add: number; del: number; files: number }) =>
+      renderToStaticMarkup(createElement(SessionHeader, { ...topBar, slots: { changes }, ...(changesTotals ? { changesTotals } : {}) }))
+    for (const html of [header(), header({ add: 0, del: 0, files: 0 })]) {
+      expect(html).toMatch(/<button[^>]*class="ui-icon-button"[^>]*aria-label="改动"/u)
+      expect(html).not.toContain('topbar-changes-stat')
+    }
+    const read = header({ add: 9, del: 3, files: 2 })
+    expect(read).toMatch(/<button[^>]*aria-label="改动"[^>]*aria-pressed="false"/u)
+    expect(read).toContain(
+      '<span class="topbar-changes-stat" aria-hidden="true"><span data-tone="add">+9</span><span data-tone="remove">−3</span></span>',
+    )
   })
 
   it('heads a phone session page with the way back, the title over where it runs, and the panel toggle', () => {
