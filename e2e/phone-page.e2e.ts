@@ -6,7 +6,7 @@ import type { Device, NativeLinkInfo, NativePairingStatus, WaitingEnrollmentView
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { openEntry, openSettings } from './helpers/layout.ts'
+import { backToSection, openEntry, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/phone-page'
 const SIZES = [
@@ -105,7 +105,7 @@ async function asDesktop(page: Page, state: PageState) {
   await page.route('**/link/api/native/pairings/*/device', route => route.fulfill({ json: { removed: true } }))
 }
 
-describe('the 手机 page', () => {
+describe('设置 › 设备', () => {
   let testHost: TestHost
   let browser: Browser
 
@@ -148,7 +148,7 @@ describe('the 手机 page', () => {
         await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
       }
       const phone = size.label === 'phone'
-      await openEntry(page, '手机')
+      await openEntry(page, '设备')
 
       // No device yet.
       await page.getByText('还没有别的设备连接这台 Mac。', { exact: true }).waitFor()
@@ -167,7 +167,7 @@ describe('the 手机 page', () => {
       ]
       await page.reload()
       await connected(page)
-      await openEntry(page, '手机')
+      await openEntry(page, '设备')
       const row = page.locator('[data-device-id="dev_phone"]')
       await row.waitFor()
       expect(await page.locator(`[data-device-id="${self}"]`).count()).toBe(0)
@@ -190,10 +190,9 @@ describe('the 手机 page', () => {
       await page.locator('[data-device-id="dev_browser"] .plugin-nav-row').click()
       await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).waitFor()
       await capture('browser-device')
-      if (phone) await page.getByRole('button', { name: '返回手机与设备', exact: true }).click()
-      await row.locator('.plugin-nav-row').click()
-      await page.getByRole('button', { name: '移除…', exact: true }).waitFor()
-      await capture('device')
+      // A device is a page inside 设备 at every width; its way back names the section.
+      if (phone) await page.getByRole('button', { name: '返回设备', exact: true }).click()
+      else await page.locator('.settings-back').getByText('设备', { exact: true }).click()
       if (!phone) {
         await row.hover()
         await row.getByRole('button', { name: 'iPhone 16 Pro 的操作', exact: true }).click()
@@ -201,11 +200,14 @@ describe('the 手机 page', () => {
         await capture('menu')
         await page.keyboard.press('Escape')
       }
+      await row.locator('.plugin-nav-row').click()
+      await page.getByRole('button', { name: '移除…', exact: true }).waitFor()
+      await capture('device')
       await page.getByRole('button', { name: '移除…', exact: true }).click()
       await page.getByText('移除「iPhone 16 Pro」？', { exact: true }).waitFor()
       await capture('remove')
       await page.keyboard.press('Escape')
-      if (phone) await page.getByRole('button', { name: '返回手机与设备', exact: true }).click()
+      await backToSection(page.locator('.settings-page'))
 
       // A browser asking to connect: who, whether it could manage, and its code shut until wanted.
       const asking: WaitingEnrollmentView = {
@@ -340,7 +342,7 @@ describe('the 手机 page', () => {
       await asDesktop(page, state)
       await page.reload()
       await connected(page)
-      await openEntry(page, '手机')
+      await openEntry(page, '设备')
       const sheet = page.getByRole('dialog', { name: '连接手机', exact: true })
       return { context, page, sheet, qr: sheet.getByAltText('原生客户端配对二维码') }
     }
@@ -376,7 +378,10 @@ describe('the 手机 page', () => {
       })
       const { context, page } = await open(state)
       const manage = page.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
-      const pick = (id: string) => page.locator(`[data-device-id="${id}"] .plugin-nav-row`).click()
+      const pick = async (id: string) => {
+        await backToSection(page.locator('.settings-page'))
+        await page.locator(`[data-device-id="${id}"] .plugin-nav-row`).click()
+      }
 
       await pick('dev_browser')
       await manage.click()
@@ -480,7 +485,7 @@ describe('the 手机 page', () => {
       context.setDefaultTimeout(15_000)
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'approve:standard'] })
-      await openSettings(page, '手机与设备')
+      await openSettings(page, '设备')
       await page.getByText('新设备在 studio-mini 上的 Latch 里连接：设置 › 设备。', { exact: true }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/pair-elsewhere-desktop-light.png`, animations: 'disabled' })
       expect(await page.locator('.device-connect').count()).toBe(0)

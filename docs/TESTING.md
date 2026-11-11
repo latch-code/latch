@@ -31,7 +31,7 @@ sources:
 
 ## 命令
 
-手机接入的 `desktop-native.e2e.ts` 经真实 Electron 的 host.sock 代理打开配对表单、签发非 URL 二维码，并核对没有设置表单、权限选择、暂停或倒计时，关闭表单后 Host 上的二维码失效，Touch ID 之后连按 Esc 也不起作用。设置页覆盖 390/820/1280、浅深色；截图只在没有二维码时写到 `test-results/native-phone/`。`phone-page.e2e.ts` 在浏览器里把这台设备当作 Mac 上的桌面端、Host 的回答换成固定值，走完手机页与配对表单的每个状态，三宽浅深色截图写到 `test-results/phone-page/`，并在桌面宽度核对列表读取失败、开关与恢复的请求、无法确认后恢复、被拦下与请求不重叠；那里的二维码由失效的固定内容生成。`native-settings.test.ts` 检查 `native/info` 的内容，且配置与暂停路由已不存在。
+手机接入的 `desktop-native.e2e.ts` 经真实 Electron 的 host.sock 代理打开配对表单、签发非 URL 二维码，并核对没有设置表单、权限选择、暂停或倒计时，关闭表单后 Host 上的二维码失效，Touch ID 之后连按 Esc 也不起作用。设置页覆盖 390/820/1280、浅深色；截图只在没有二维码时写到 `test-results/native-phone/`。`phone-page.e2e.ts` 在浏览器里把这台设备当作 Mac 上的桌面端、Host 的回答换成固定值，走完 设置 › 设备 与配对表单的每个状态，三宽浅深色截图写到 `test-results/phone-page/`，并在桌面宽度核对列表读取失败、开关与恢复的请求、无法确认后恢复、被拦下与请求不重叠；那里的二维码由失效的固定内容生成。`native-settings.test.ts` 检查 `native/info` 的内容，且配置与暂停路由已不存在。
 
 Host、host-swift、link-client 与 relay 四个 Node project 的 globalSetup 会从本地产品源码构建原生 TLS 组件，UI project 不触发它。需要修复过 TLS 安全问题的 Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3；`LATCH_RELAY_GO` 只选择构建编译器，不传运行时密钥。配置与清单约束直接读文件，不为它们添加字面断言。
 

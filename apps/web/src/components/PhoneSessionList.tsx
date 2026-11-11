@@ -1,7 +1,10 @@
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, RefreshCw, SquarePen } from 'lucide-react'
+import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
+import { deviceAccess } from '../core/permissions.ts'
+import { computerName } from '../core/securityCopy.ts'
+import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
@@ -255,8 +258,8 @@ function PhoneGroup({
 /**
  * The phone's root page: 会话 with 新建会话, the search, then 等你处理 while something waits and a section per project,
  * with 已归档 at the end. A row is 64 high: the title and its status slot, then the engine's mark, the Agent and one more
- * fact. Opening a row pushes the session over this page; holding it opens its menu as a sheet. The list ends with the
- * computer it comes from and 同步最新状态.
+ * fact. Opening a row pushes the session over this page; holding it opens its menu as a sheet. Elsewhere than the Latch
+ * app on that computer, the computer's name heads the page.
  */
 export function PhoneSessionList({
   snapshot,
@@ -279,7 +282,6 @@ export function PhoneSessionList({
   onNewIn,
   onEditProject,
   onProjectsChanged,
-  onRefresh,
   sessionMenu,
   now,
   banners,
@@ -303,8 +305,8 @@ export function PhoneSessionList({
   onSelect: (id: string) => void
   onNew: () => void
   onNewIn?: (workspaceId: string) => void
-  /** 同步最新状态: reads the Host's state again. */
-  onRefresh: () => Promise<void>
+  /** No longer drawn here: the connection's own notices offer 重试. Kept until the shell stops passing it. */
+  onRefresh?: () => Promise<void>
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
   /** Notices about the connection and the Host, at the top of the list. */
@@ -312,7 +314,6 @@ export function PhoneSessionList({
 }) {
   const list = useRef<HTMLElement>(null)
   const [held, setHeld] = useState<TaskSummary | null>(null)
-  const [syncing, setSyncing] = useState(false)
   const empty = snapshot.tasks.length === 0
   const closeSearch = () => {
     onSearch('')
@@ -334,8 +335,15 @@ export function PhoneSessionList({
   const remeasure = useListMotion(list, context, signature)
   const heldTask = held ? snapshot.tasks.find(task => task.id === held.id) : undefined
   const heldMenu = useMemo(() => (heldTask ? sessionMenu(heldTask) : null), [heldTask, sessionMenu])
+  const remote = !deviceAccess(snapshot, currentShell()).local
   return (
     <div className="phone-list-page">
+      {remote && (
+        <p className="phone-list-host" title={computerName(snapshot.hostName)}>
+          <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <span className="phone-list-host-name">{computerName(snapshot.hostName)}</span>
+        </p>
+      )}
       <header className="phone-list-head">
         <h1>会话</h1>
         <IconButton size="lg" label="新建会话" icon={SquarePen} onClick={onNew} />
@@ -423,25 +431,6 @@ export function PhoneSessionList({
             <span className="phone-archived-count">{archivedCount}</span>
           </button>
         )}
-        <footer className="phone-list-foot">
-          <Laptop className="phone-list-foot-icon" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span className="phone-list-host" title={snapshot.hostName}>
-            {snapshot.hostName || 'Mac'}
-          </span>
-          <Button
-            size="xs"
-            variant="ghost"
-            icon={RefreshCw}
-            loading={syncing}
-            onClick={() => {
-              setSyncing(true)
-              void onRefresh().finally(() => {
-                setSyncing(false)
-              })
-            }}>
-            同步最新状态
-          </Button>
-        </footer>
       </div>
       {archiveUndo}
       <ActionSheet

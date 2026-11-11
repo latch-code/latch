@@ -1,12 +1,15 @@
 import { createElement } from 'react'
 import { GitCompare } from 'lucide-react'
 import { testHarness } from '@latch/testkit'
-import { entryOfSection, routeAtWidth, visibleEntries } from '../src/shell/routes.ts'
+import { settingsSectionsAt, visibleEntries } from '../src/shell/routes.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { scrollMovesAnchor } from '../src/components/overlays.tsx'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
+import { Sidebar } from '../src/components/Sidebar.tsx'
+import { PhoneSessionList } from '../src/components/PhoneSessionList.tsx'
+import { settingsSections } from '../src/settings/SettingsPage.tsx'
 
 const noop = () => {}
 afterEach(() => {
@@ -163,24 +166,137 @@ describe('popover anchoring', () => {
 })
 
 describe('shell routes', () => {
-  it('draws only the entries this device can use', () => {
+  it('draws 设置 when this device can use any of its sections, and nothing else beside the sessions', () => {
     expect(visibleEntries(['general', 'about'], false)).toEqual(['sessions', 'settings'])
-    expect(visibleEntries(['general', 'plugins', 'devices', 'workspaces'], false)).toEqual(['sessions', 'phone', 'settings'])
-  })
-
-  it('gives a phone 会话 and 设置, with every section inside 设置', () => {
+    expect(visibleEntries(['general', 'plugins', 'devices', 'workspaces'], false)).toEqual(['sessions', 'settings'])
     expect(visibleEntries(['general', 'plugins', 'devices', 'workspaces'], true)).toEqual(['sessions', 'settings'])
-    expect(entryOfSection('workspaces', true)).toBe('settings')
-    expect(entryOfSection('workspaces', false)).toBe('settings')
-    expect(entryOfSection('devices', true)).toBe('settings')
-    expect(entryOfSection('devices', false)).toBe('phone')
+    expect(visibleEntries(['shortcuts'], true)).toEqual(['sessions'])
   })
 
-  it('keeps the open section when the window crosses the phone breakpoint', () => {
-    expect(routeAtWidth({ entry: 'phone' }, true)).toEqual({ entry: 'settings', section: 'devices' })
-    expect(routeAtWidth({ entry: 'settings', section: 'devices' }, false)).toEqual({ entry: 'phone', section: 'devices' })
-    expect(routeAtWidth({ entry: 'settings', section: 'plugins' }, true)).toEqual({ entry: 'settings', section: 'plugins' })
-    expect(routeAtWidth({ entry: 'settings' }, true)).toEqual({ entry: 'settings' })
-    expect(routeAtWidth({ entry: 'sessions' }, true)).toEqual({ entry: 'sessions' })
+  it('lists 设备 among the sections, before 快捷键, which a phone does not have', () => {
+    expect(settingsSectionsAt(false)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'shortcuts', 'about'])
+    expect(settingsSectionsAt(true)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'about'])
+  })
+})
+
+const device = (listener: AppSnapshot['device']['listener'], scopes: AppSnapshot['device']['scopes']): AppSnapshot['device'] => ({
+  id: 'd',
+  name: '浏览器',
+  status: 'active',
+  listener,
+  scopes,
+  dataScope: 'work',
+  fingerprint: 'ABCD EFGH IJKL MNOP QRST',
+  createdAt: '',
+  lastSeenAt: '',
+  credentialExpiresAt: '',
+  pairedBy: { method: 'lpc' },
+  current: true,
+  renewAfter: '',
+})
+const snapshotOf = (listener: AppSnapshot['device']['listener'], scopes: AppSnapshot['device']['scopes'] = ['view', 'run', 'admin']) =>
+  ({
+    instanceId: 'host',
+    device: device(listener, scopes),
+    host: { hostId: 'h', devMode: false, presence: { status: 'available' }, tls: null },
+    catalog: { harnesses: [], providers: [], workspaces: [], defaults: { harnessId: 'standard', mode: 'agent' } },
+    tasks: [],
+    approvals: [],
+    demo: false,
+    hostName: 'studio-mini',
+  }) as unknown as AppSnapshot
+
+describe('设置 sections', () => {
+  it('gives a device that manages this Mac every section, and one that does not 通用 · 设备 · 快捷键 · 关于', () => {
+    expect(settingsSections(snapshotOf('loopback-tcp'))).toEqual([
+      'general',
+      'providers',
+      'engines',
+      'workspaces',
+      'plugins',
+      'devices',
+      'shortcuts',
+      'about',
+    ])
+    expect(settingsSections(snapshotOf('loopback-tcp', ['view', 'run']))).toEqual(['general', 'devices', 'shortcuts', 'about'])
+  })
+})
+
+describe('the sidebar foot and the computer name', () => {
+  // Folded shelves are remembered per page origin.
+  beforeEach(() => {
+    vi.stubGlobal('location', { origin: 'http://127.0.0.1:4317', host: '127.0.0.1:4317', pathname: '/link/' })
+  })
+  const sidebar = (snapshot: AppSnapshot, onCreateProject?: () => void) =>
+    renderToStaticMarkup(
+      createElement(Sidebar, {
+        snapshot,
+        selectedId: null,
+        isUnread: () => false,
+        cancelling: new Set<string>(),
+        filter: 'all',
+        onFilter: noop,
+        onSelect: noop,
+        onNew: noop,
+        onSearch: noop,
+        drawer: false,
+        onClose: noop,
+        connection: 'connected',
+        onRefresh: noop,
+        sessionMenu: () => [],
+        now: 0,
+        entries: ['sessions', 'settings'],
+        onEntry: noop,
+        hostProblem: null,
+        ...(onCreateProject ? { onCreateProject } : {}),
+      }),
+    )
+  const phoneList = (snapshot: AppSnapshot) =>
+    renderToStaticMarkup(
+      createElement(PhoneSessionList, {
+        snapshot,
+        connection: 'connected',
+        selectedId: null,
+        isUnread: () => false,
+        cancelling: new Set<string>(),
+        search: '',
+        onSearch: noop,
+        searchRef: { current: null },
+        searching: false,
+        onSearching: noop,
+        filter: 'all',
+        onFilter: noop,
+        onSelect: noop,
+        onNew: noop,
+        sessionMenu: () => [],
+        now: 0,
+      }),
+    )
+
+  it('names the computer at the top for a browser, even one on this Mac over loopback', () => {
+    const html = sidebar(snapshotOf('loopback-tcp'))
+    expect(html).toContain('<span class="sidebar-host-name">studio-mini</span>')
+    expect(html.indexOf('sidebar-host')).toBeLessThan(html.indexOf('新会话'))
+    const phone = phoneList(snapshotOf('native-relay'))
+    expect(phone).toContain('<span class="phone-list-host-name">studio-mini</span>')
+    expect(phone.indexOf('phone-list-host')).toBeLessThan(phone.indexOf('<h1>会话</h1>'))
+    expect(phone).not.toContain('同步最新状态')
+  })
+
+  it('does not name it in the Latch app on that Mac', () => {
+    vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })
+    expect(sidebar(snapshotOf('unix'), noop)).not.toContain('sidebar-host')
+    expect(phoneList(snapshotOf('unix'))).not.toContain('phone-list-host')
+  })
+
+  it('puts 设置 with its word at the foot, 添加项目 only where the app offers it, and no 手机', () => {
+    const foot = (html: string) => html.slice(html.indexOf('<nav class="sidebar-foot"'))
+    const remote = foot(sidebar(snapshotOf('loopback-tcp')))
+    expect(remote).toMatch(/<button[^>]*class="ui-button sidebar-settings"[^>]*>.*设置<\/button>/)
+    expect(remote).not.toContain('添加项目')
+    expect(remote).not.toContain('手机')
+    vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })
+    const local = foot(sidebar(snapshotOf('unix'), noop))
+    expect(local.indexOf('添加项目')).toBeLessThan(local.indexOf('设置'))
   })
 })

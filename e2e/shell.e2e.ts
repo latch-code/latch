@@ -48,11 +48,12 @@ describe('the shell', () => {
     expect(await box(page, '.titlebar')).toMatchObject({ left: 0, top: 0, width: 1440, height: 52 })
     expect(await box(page, '#session-navigation')).toMatchObject({ left: 0, top: 52, width: 248 })
     expect((await box(page, 'main.workspace')).left).toBe(248)
+    // A browser, even over loopback on the Mac, is told which computer it reads; its foot has 设置 alone, with its word.
     const foot = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await foot.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))).toEqual([
-      '手机',
-      '设置',
-    ])
+    expect(await foot.getByRole('button').allTextContents()).toEqual(['设置'])
+    const name = page.locator('#session-navigation .sidebar-top > .sidebar-host')
+    expect((await name.textContent())?.trim()).not.toBe('')
+    expect((await box(page, '.sidebar-host')).top).toBeLessThan((await box(page, '.sidebar-top .sidebar-nav-line')).top)
     expect(await page.locator('main.workspace').getAttribute('class')).toContain('is-new')
     await noHorizontalOverflow(page)
     await page.context().close()
@@ -65,7 +66,7 @@ describe('the shell', () => {
     await openEntry(page, '设置')
     expect(await page.locator('dialog[open]').count()).toBe(0)
     await page.locator('.settings-page').waitFor()
-    expect(await page.locator('.topbar .titlebar-page-title').textContent()).toBe('通用')
+    expect(await page.locator('.settings-panel .settings-title').textContent()).toBe('通用')
     await page.keyboard.press('Escape')
     await page.locator('.settings-page').waitFor()
     await openSessions(page)
@@ -116,6 +117,20 @@ describe('the shell', () => {
     await page.goBack()
     await page.locator('.settings-layout[data-level="root"]').waitFor()
     await page.context().close()
+  })
+
+  it('lists 设备 among the sections of 设置, with or without 管理此 Host', async () => {
+    const tabsOf = async (page: Page) => {
+      await openEntry(page, '设置')
+      return page.locator('.settings-page').getByRole('tab').allTextContents()
+    }
+    const owner = await open(1440, 900, '壳层分区管理', true)
+    await allData(owner)
+    expect(await tabsOf(owner)).toEqual(['通用', '模型', 'Harness', '项目', '插件', '设备', '快捷键', '关于'])
+    await owner.context().close()
+    const guest = await open(1440, 900, '壳层分区只读')
+    expect(await tabsOf(guest)).toEqual(['通用', '设备', '快捷键', '关于'])
+    await guest.context().close()
   })
 
   it('has no Agent or 定时任务 entry while neither has a page', async () => {

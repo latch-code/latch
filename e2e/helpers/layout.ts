@@ -109,23 +109,20 @@ async function footInReach(page: Page): Promise<void> {
   await settleShell(page)
 }
 
-/** Sections that are opened inside 设置, on every width. */
-const IN_SETTINGS = new Set(['插件'])
-
 /**
- * Opens 设置 or 手机 from the sidebar's foot, or a section of 设置 by its name; on a phone, the tab (from its session list
- * when a session's page is pushed over it). Tests do not select a breakpoint.
+ * Opens 设置 from the sidebar's foot, or a section of it by its name; on a phone, the tab (from its session list when a
+ * session's page is pushed over it). Tests do not select a breakpoint.
  */
 export async function openEntry(page: Page, name: string): Promise<void> {
   await settleShell(page)
   await backToPhoneSessions(page)
   const phone = await isPhone(page)
-  if (IN_SETTINGS.has(name) || (phone && name === '手机')) {
+  if (name !== '设置') {
     await openEntry(page, '设置')
-    await openSection(page.locator('.settings-page'), name === '手机' ? '手机与设备' : name)
+    await openSection(page.locator('.settings-page'), name)
     return
   }
-  if (!phone && (await page.locator(`.settings-page[data-entry="${name === '手机' ? 'phone' : 'settings'}"]`).count()) > 0) return
+  if (!phone && (await page.locator('.settings-page').count()) > 0) return
   if (!phone) await footInReach(page)
   const button = mainNavigation(page).getByRole('button', { name, exact: true })
   await reachable(button)
@@ -144,14 +141,12 @@ export async function openSessions(page: Page): Promise<void> {
   await page.locator('.settings-page').waitFor({ state: 'detached' })
 }
 
-/**
- * Returns the opened 设置 page, or the devices page when `section` is 手机与设备 (on a phone, inside 设置).
- */
-export async function openSettings(page: Page, section: '设置' | '手机与设备' = '设置'): Promise<Locator> {
+/** Returns the opened 设置 page, on its 设备 section when `section` names it. */
+export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
   await openEntry(page, '设置')
   const settings = page.locator('.settings-page')
   await settings.waitFor()
-  if (section === '手机与设备') await openSection(settings, '手机与设备')
+  if (section === '设备') await openSection(settings, '设备')
   return settings
 }
 
@@ -185,17 +180,12 @@ export async function backToSection(settings: Locator): Promise<void> {
   }
 }
 
-/** Opens a section, through its page when the other page is showing; on a phone, from the section list. */
+/** Opens a section of 设置, opening the page first when it is not showing; on a phone, from the section list. */
 export async function openSection(settings: Locator, name: string): Promise<void> {
-  const page = settings.page()
   const tab = settings.getByRole('tab', { name, exact: true })
   await backToSections(settings)
   if ((await tab.count()) === 0) {
-    if (name === '手机与设备' && !(await isPhone(page))) {
-      await openEntry(page, '手机')
-      return
-    }
-    await openEntry(page, '设置')
+    await openEntry(settings.page(), '设置')
     await tab.waitFor()
   }
   await reachable(tab)

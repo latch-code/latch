@@ -23,7 +23,7 @@ import { currentShell } from '../core/shell.ts'
 import { setPreference } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
-import { entrySections, entryOfSection, type SettingsSection } from '../shell/routes.ts'
+import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
 import { CommandPalette } from './CommandPalette.tsx'
@@ -38,8 +38,8 @@ const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string
   { section: 'engines', keywords: 'agent' },
   { section: 'workspaces', keywords: '文件夹' },
   { section: 'plugins' },
+  { section: 'devices', keywords: '手机 连接手机 配对 浏览器' },
   { section: 'shortcuts', keywords: '键盘' },
-  { section: 'devices', keywords: '手机 配对' },
   { section: 'about', keywords: '版本 许可' },
 ]
 
@@ -141,7 +141,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     : []
 
   const settings: PaletteEntry[] = SETTINGS_ROWS.filter(
-    row => allowed.includes(row.section) && entrySections(entryOfSection(row.section, phone), phone).includes(row.section),
+    row => allowed.includes(row.section) && settingsSectionsAt(phone).includes(row.section),
   ).map(row => ({
     id: `settings:${row.section}`,
     label: sectionLabel(row.section),

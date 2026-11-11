@@ -70,7 +70,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('button', { name: '继续', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       expect(host.presence.requests).toHaveLength(0)
-      await openSettings(page, '手机与设备')
+      await openSettings(page, '设备')
       await capture(page, 'ready-desktop')
       await page.locator('.device-connect').waitFor()
       for (const text of ['设置连接', '暂停所有手机输入', '使用个人助手和项目文件', '浏览器配对', '发送到其他设备', '防火墙'])

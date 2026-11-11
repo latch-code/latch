@@ -545,7 +545,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
       // 「在浏览器中打开」: main gets a one-time loopback invitation with the shell's credential and gives the
       // link to the default browser (recorded instead of opened) without a dialog; the page never sees the invitation.
-      const browserHere = await openSettings(page, '手机与设备')
+      const browserHere = await openSettings(page, '设备')
       await page.getByRole('button', { name: '在浏览器中打开', exact: true }).click()
       await waitFor(async () => (await externalLinks()).opened.length === 2)
       const browserLink = (await externalLinks()).opened[1]
@@ -697,7 +697,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
       // 手机: the pairing sheet, and the confirmation of an action that does not show it in place yet (the dock).
       const phone = await testHost.enroll({ name: '测试手机', scopes: ['view'] })
-      const settings = await openSettings(page, '手机与设备')
+      const settings = await openSettings(page, '设备')
       const connectPhone = page.locator('.device-connect')
       await connectPhone.waitFor()
       await captureThemes(page, 'native-desktop-pairing')
@@ -804,7 +804,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const confirmationsBefore = testHost.presence.requests.length
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const heldBack = page.locator('.settings-page')
-      await openSection(heldBack, '手机与设备')
+      await openSection(heldBack, '设备')
       await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
       const manage = heldBack.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
       await manage.click()
@@ -855,7 +855,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const computer = page.locator('.settings-page')
       // Pairing starts here, so the sheet names the running agent that would hold a phone back.
-      await openSection(computer, '手机与设备')
+      await openSection(computer, '设备')
       await page.locator('.device-connect').click()
       await page
         .locator('.pair-sheet')
@@ -1176,7 +1176,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await host.bridge.detail(runningId)).summary.status === 'running')
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
-      await openSection(computer, '手机与设备')
+      await openSection(computer, '设备')
       await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
       await computer.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).click()
       const refused = page.locator('.inline-confirm[data-confirmation-phase="paused"]')

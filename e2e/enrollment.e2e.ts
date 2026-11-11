@@ -380,8 +380,9 @@ describe('device enrollment in the browser', () => {
     await captureSizes(page, 'legacy')
     await page.getByRole('button', { name: '重新确认', exact: true }).click()
     await connected(page)
-    // The device keeps its name; this device's name is on the 手机 page (the sidebar names the Host's computer).
-    const settings = await openSettings(page, '手机与设备')
+    // The device keeps its name; this device's name is on its page in 设置 › 设备 (the sidebar names the Host's computer).
+    const settings = await openSettings(page, '设备')
+    await settings.locator('.device-nav-row .plugin-nav-row').first().click()
     await settings.getByLabel('设备名称', { exact: true }).waitFor()
     expect(await settings.getByLabel('设备名称', { exact: true }).inputValue()).toBe('旧版浏览器')
   })

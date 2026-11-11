@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
 import {
   ArrowLeft,
   Box,
@@ -22,8 +21,8 @@ import { currentShell } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { Count, ICON_STROKE, Icon, IconButton, SearchField, type LucideIcon } from '@latch/ui'
-import { entrySections, type AgentPageTarget, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
+import { Count, ICON_STROKE, Icon, IconButton, Kbd, SearchField, type LucideIcon } from '@latch/ui'
+import { settingsSectionsAt, type AgentPageTarget, type PageEntry, type SettingsSection } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
@@ -31,7 +30,7 @@ const AboutSettings = deferredComponent(async () => ({ default: (await import('.
 const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '设置')
 const PhoneDevicesPage = deferredComponent(
   async () => ({ default: (await import('./devices/PhoneDevicesPage.tsx')).PhoneDevicesPage }),
-  '手机与设备',
+  '设备',
 )
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
@@ -51,12 +50,12 @@ const WorkspacesSettings = deferredComponent(
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 登录时打开 唤醒 名称',
-  providers: '服务 密钥 key 添加服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
+  providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
   workspaces: '文件夹 添加项目 新建项目 快照',
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',
-  devices: '手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
+  devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
   about: '版本 许可与条款',
 }
 
@@ -65,11 +64,6 @@ export function searchSections<T extends { id: SettingsSection; label: string }>
   const needle = query.trim().toLocaleLowerCase()
   if (!needle) return [...list]
   return list.filter(section => `${section.label} ${SEARCH_TERMS[section.id] ?? ''}`.toLocaleLowerCase().includes(needle))
-}
-
-const ENTRY_LABELS: Record<PageEntry, string> = {
-  phone: '手机',
-  settings: '设置',
 }
 
 /**
@@ -89,8 +83,8 @@ const sections: Array<{
   { id: 'engines', label: 'Harness', icon: Cpu, admin: true, catalog: true },
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
+  { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
-  { id: 'devices', label: '手机与设备', icon: MonitorSmartphone, admin: false, secured: true },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
 
@@ -126,18 +120,17 @@ export function settingsPanel(
 }
 
 /**
- * A page of the shell: its sections where the sidebar stands, under the way back, and the chosen one in the main area,
- * with its name in the title row. It covers the session's columns without unmounting them, so the conversation keeps its
- * state. On phones the section list is the root and a section, and each page inside it, is pushed over the level before.
+ * 设置: its sections where the sidebar stands, under the way back and the search, and the chosen one in the main area
+ * under its name. 设备 is a section like the others; a device opens as a page inside it. The page covers the session's
+ * columns without unmounting them, so the conversation keeps its state. On phones the section list is the root and a
+ * section, and each page inside it, is pushed over the level before.
  */
 export function SettingsPage({
   snapshot,
   access: given,
-  entry = 'settings',
   section: chosen = null,
   initialProjectId,
   initialAgent,
-  titleSlot,
   waiting = 0,
   onBack,
   onSection,
@@ -146,18 +139,19 @@ export function SettingsPage({
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
+  /** Always 设置; the shell names the entry it shows. */
   entry?: PageEntry
   /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
   section?: SettingsSection | null
   initialProjectId?: string
   initialAgent?: AgentPageTarget
-  /** Where the page puts its title on wide windows. */
+  /** The title row; the page names itself above its content instead, so it leaves the row empty. */
   titleSlot?: HTMLElement | null
   /** How many sessions wait on the person, for the way back to them. */
   waiting?: number
   /** Back to the sessions, on wide windows. */
   onBack?: () => void
-  /** Opens a section, of this entry or another. Without an argument, goes back to this entry's list. */
+  /** Opens a section. Without an argument, goes back to the section list. */
   onSection: (section?: SettingsSection) => void
   onChanged: () => void
   onOpenSession?: (id: string) => void
@@ -165,13 +159,13 @@ export function SettingsPage({
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
   const allowed = settingsSections(snapshot, access)
-  const ids = entrySections(entry, phone).filter(id => allowed.includes(id))
+  const ids = settingsSectionsAt(phone).filter(id => allowed.includes(id))
   const available = ids.flatMap(id => sections.filter(section => section.id === id))
   const [query, setQuery] = useState('')
   const found = searchSections(available, query)
-  const searchable = entry === 'settings' && available.length > 1
+  const searchable = available.length > 1
   const search = useRef<HTMLDivElement>(null)
-  const caption = entry === 'settings' ? hiddenSectionsCaption(snapshot, access) : undefined
+  const caption = hiddenSectionsCaption(snapshot, access)
   // On phones the last section stays laid out under the list, so going back slides it away instead of blanking it.
   const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : (ids[0] ?? null)))
   const { active, panel } = settingsPanel(ids, chosen, phone, shown)
@@ -191,7 +185,7 @@ export function SettingsPage({
   const current = available.find(section => section.id === panel)
   const pushed = phone && active !== null
 
-  // Pages open inside the section on a phone, and the way back from the top one.
+  // Pages open inside the section (on a phone each over the level before), and the way back from the top one.
   const [layers, setLayers] = useState<HTMLElement | null>(null)
   const [depth, setDepthState] = useState(0)
   const levelBack = useRef<(() => void) | undefined>(undefined)
@@ -199,16 +193,11 @@ export function SettingsPage({
     levelBack.current = back
     setDepthState(next)
   }, [])
-  // 手机 lists its devices where 设置 lists sections, and titles the page with the one shown.
-  const objectEntry = entry === 'phone' && !phone
-  const [navSlot, setNavSlot] = useState<HTMLElement | null>(null)
   const navigation: SettingsNavigation = {
     phone,
     section: current?.label ?? '',
     layers,
     setDepth,
-    navSlot,
-    titleSlot: titleSlot ?? null,
   }
   const level = !phone ? undefined : depth > 0 && pushed ? 'page' : pushed ? 'section' : 'root'
 
@@ -267,15 +256,14 @@ export function SettingsPage({
   }, [searchable, phone])
 
   return (
-    <section aria-label={ENTRY_LABELS[entry]} className="settings-page" data-entry={entry} onKeyDown={escape}>
-      {!phone && !objectEntry && titleSlot && current && createPortal(<h1 className="titlebar-page-title">{current.label}</h1>, titleSlot)}
+    <section aria-label="设置" className="settings-page" data-entry="settings" onKeyDown={escape}>
       <SettingsNavigationProvider value={navigation}>
         <div ref={layout} className="settings-layout" data-level={level}>
           <div className="settings-nav-pane" inert={pushed || undefined}>
             {phone && (
               <header className="settings-bar">
                 <span />
-                <h2>{ENTRY_LABELS[entry]}</h2>
+                <h2>设置</h2>
               </header>
             )}
             {!phone && onBack && (
@@ -290,31 +278,18 @@ export function SettingsPage({
             {searchable && (
               <div ref={search} className="settings-search">
                 <SearchField
-                  variant="ghost"
                   label="搜索设置"
                   placeholder="搜索设置"
                   value={query}
                   onValueChange={setQuery}
+                  trailing={!phone && !query ? <Kbd>/</Kbd> : undefined}
                   onKeyDown={event => {
                     if (event.key === 'Enter' && found[0]) open(found[0].id)
                   }}
                 />
-                {!phone && !query && (
-                  <span className="settings-search-key" aria-hidden="true">
-                    /
-                  </span>
-                )}
               </div>
             )}
-            {objectEntry && <div ref={setNavSlot} className="settings-objects" />}
-            <div
-              ref={tabs}
-              hidden={objectEntry}
-              className="settings-nav"
-              role="tablist"
-              aria-orientation="vertical"
-              aria-label={`${ENTRY_LABELS[entry]}分类`}
-              onKeyDown={keydown}>
+            <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" onKeyDown={keydown}>
               {found.map(section => (
                 <button
                   key={section.id}
@@ -359,6 +334,8 @@ export function SettingsPage({
               <div className="settings-scroll">
                 {panel !== null && (
                   <div key={panel} className="settings-content settings-enter">
+                    {/* The section's name heads it; a page opened inside it names itself under its way back. */}
+                    {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}

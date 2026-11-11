@@ -1,5 +1,6 @@
 /*
- * The sidebar: 新会话, 搜索 and the pages (32, ghost) over a line, the shelves, and the foot under a line. From
+ * The sidebar: the computer's name (elsewhere than its own Latch app), 新会话 and 搜索 (32, ghost) over a line, the
+ * shelves, and the foot: 添加项目 and 设置. From
  * 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of reflowing it.
  */
 .sidebar-body {
@@ -23,6 +24,33 @@
   margin-inline: calc(-1 * var(--sp-8));
   padding: 0 var(--sp-8) var(--sp-4);
   border-bottom: 1px solid var(--line);
+}
+/* The computer this page reads, in a well, where the page is not the Latch app on it: it is data, in mono. */
+.sidebar-host {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 32px;
+  margin-bottom: var(--sp-4);
+  padding: 0 10px;
+  border-radius: var(--r-6);
+  background: var(--sunken);
+  box-shadow: var(--sh-well);
+  color: var(--ink-2);
+}
+.sidebar-host > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.sidebar-host-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sidebar-nav-line {
   display: flex;
@@ -524,7 +552,10 @@
   min-height: 28px;
   padding: 0 var(--sp-4) 0 10px;
 }
-/* 添加项目 on the left, 手机 and 设置 on the right; always in reach, however long the list is. */
+/*
+ * 添加项目 on the left (only in the Latch app on this Mac), 设置 with its word on the right, the trouble dot beside it;
+ * always in reach, however long the list is.
+ */
 .sidebar-foot {
   /* Counts on its buttons are cut out of the ground. */
   --surface: var(--sidebar);
@@ -534,7 +565,6 @@
   flex-shrink: 0;
   margin-inline: calc(-1 * var(--sp-8));
   padding: var(--sp-6) var(--sp-8) calc(var(--sp-6) + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
 }
 .sidebar-foot-spacer {
   flex: 1;
@@ -564,7 +594,14 @@
 .sidebar-add-project:active {
   background: var(--press);
 }
-/* Beside 手机, only while the Mac cannot be reached as it should; the sentence is in its title. */
+/* The ghost button in the quiet ink of 添加项目 beside it. */
+.sidebar-foot .sidebar-settings.ui-button {
+  color: var(--muted);
+}
+.sidebar-foot .sidebar-settings.ui-button:hover {
+  color: var(--ink-2);
+}
+/* Beside 设置, only while the Mac cannot be reached as it should; the sentence is in its title. */
 .sidebar-trouble {
   flex-shrink: 0;
   width: 8px;

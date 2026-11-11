@@ -220,6 +220,9 @@ it.each([
       await palette.getByRole('option', { name: '设置', exact: true }).waitFor()
       await expect.poll(groupNames).toContain('命令')
       await shot(page, 'typed-groups')
+      // 设备 is a section of 设置, and still answers to the words of the page it used to be.
+      await input.fill('手机')
+      await palette.getByRole('option', { name: '设备', exact: true }).waitFor()
       await input.fill('搜索项目')
       await palette.getByRole('option', { name: '搜索项目文件', exact: true }).click()
       const files = page.getByRole('dialog', { name: '搜索文件', exact: true })

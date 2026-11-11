@@ -9,6 +9,28 @@
   min-height: 0;
   padding-top: env(safe-area-inset-top);
 }
+/* Above the title, elsewhere than the Latch app on that computer: the computer this list comes from, in mono hint ink. */
+.phone-list-host {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  flex-shrink: 0;
+  min-width: 0;
+  padding: var(--sp-8) var(--sp-16) 0;
+  color: var(--muted);
+}
+.phone-list-host > svg {
+  flex-shrink: 0;
+}
+.phone-list-host-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The header (52): the large title, then 44px ghost buttons in ink. */
 .phone-list-head {
   display: flex;
@@ -246,33 +268,6 @@
 }
 .phone-empty > .ui-button {
   margin-top: var(--sp-8);
-}
-
-/* The list ends with the computer it comes from and the way to read its state again, in hint ink. */
-.phone-list-foot {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  min-width: 0;
-  padding: var(--sp-16) 0 0;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.phone-list-foot-icon {
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.phone-list-host {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.phone-list-foot > .ui-button {
-  flex-shrink: 0;
-  color: var(--ink-2);
 }
 
 /* Reduced motion: a row that leaves fades without folding. */

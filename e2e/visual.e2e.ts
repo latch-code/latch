@@ -772,22 +772,12 @@ describe('visual capture of the real product', () => {
     await row(sessions.cancelled).waitFor()
     await expect.poll(() => archived.count()).toBe(0)
 
-    // The list ends with the computer it comes from and 同步最新状态, which reads the Host's state again.
-    const foot = list.locator('.phone-list-foot')
-    const sync = foot.getByRole('button', { name: '同步最新状态', exact: true })
-    await reachable(sync)
-    expect(await foot.locator('.phone-list-host').innerText()).toBe(HOST_NAME)
-    const snapshots: string[] = []
-    const watch = (request: { url: () => string }) => {
-      if (new URL(request.url()).pathname.endsWith('/link/api/snapshot')) snapshots.push(request.url())
-    }
-    target.on('request', watch)
-    await sync.click()
-    await expect.poll(() => snapshots.length).toBeGreaterThan(0)
-    target.off('request', watch)
+    // The computer it comes from heads the list; the list no longer ends with a way to sync (the notices have 重试).
+    expect(await list.locator('.phone-list-host').innerText()).toBe(HOST_NAME)
+    expect(await list.getByRole('button', { name: '同步最新状态', exact: true }).count()).toBe(0)
     await settleMotion(target)
     await scrollList('end')
-    await recorder.capture(target, viewport, 'navigation-end', 'the end of the list: the computer and 同步最新状态')
+    await recorder.capture(target, viewport, 'navigation-end', 'the end of the list')
 
     // Offline, the list says so at its top, with 重试.
     await pages.get(viewport.name)!.context.setOffline(true)
@@ -1754,7 +1744,7 @@ describe('visual capture of the real product', () => {
         ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
-        ['settings-devices', '手机与设备', target.getByRole('button', { name: '关于连接', exact: true })],
+        ['settings-devices', '设备', target.getByRole('button', { name: '关于连接', exact: true })],
         ['settings-about', '关于', settings.getByText('Harness 和插件以你的权限在这台电脑上运行。').first()],
       ] as const) {
         await openSection(settings, section)

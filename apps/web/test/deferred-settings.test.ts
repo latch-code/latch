@@ -53,5 +53,15 @@ describe('optional settings loading', () => {
     expect(searchSections(list, '深色').map(item => item.id)).toEqual(['general'])
     expect(searchSections(list, 'KEY').map(item => item.id)).toEqual(['providers'])
     expect(searchSections(list, '没有这个')).toEqual([])
+    expect(searchSections(list, '添加模型服务').map(item => item.id)).toEqual(['providers'])
+  })
+
+  it('finds 设备 by its name and by the words people used for it before', () => {
+    const list: Array<{ id: SettingsSection; label: string }> = [
+      { id: 'general', label: '通用' },
+      { id: 'devices', label: '设备' },
+    ]
+    for (const query of ['设备', '手机', '连接手机', '在浏览器中打开'])
+      expect(searchSections(list, query).map(item => item.id)).toEqual(['devices'])
   })
 })

@@ -82,15 +82,16 @@ describe('responsive workspace controls', () => {
       const phone = width < 768
       if (phone) {
         // A phone opens on its session list: the title with a new session, then its search; a new session is a sheet
-        // over the list. With no session yet the list says so and offers to start one, and its end still names the
-        // computer and syncs its state.
+        // over the list. With no session yet the list says so and offers to start one; the computer it reads is named
+        // above the title, and the list no longer ends with a way to sync (the connection's notices have 重试).
         const head = page.locator('.phone-list-head')
         await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
         await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
         await reachable(page.getByRole('searchbox', { name: '搜索会话', exact: true }))
         await page.locator('.phone-empty').getByText('还没有会话', { exact: true }).waitFor()
         await reachable(page.locator('.phone-empty').getByRole('button', { name: '新建会话', exact: true }))
-        await reachable(page.locator('.phone-list-foot').getByRole('button', { name: '同步最新状态', exact: true }))
+        await page.locator('.phone-list-host').waitFor()
+        expect(await page.getByRole('button', { name: '同步最新状态', exact: true }).count()).toBe(0)
         await noHorizontalOverflow(page)
         await capture(page, `${label}-navigation`)
         await head.getByRole('button', { name: '新建会话', exact: true }).click()
@@ -172,10 +173,10 @@ describe('responsive workspace controls', () => {
       await capture(page, `${label}-plugin-settings`)
       await closeSettings(settings)
 
-      const devices = await openSettings(page, '手机与设备')
+      const devices = await openSettings(page, '设备')
       // A browser cannot pair a phone, so it has no way to open the sheet; its page lists itself, with no address.
       expect(await page.getByRole('button', { name: '连接手机', exact: true }).count()).toBe(0)
-      if (phone) await page.locator('.device-nav-row .plugin-nav-row').first().click()
+      await page.locator('.device-nav-row .plugin-nav-row').first().click()
       await reachable(devices.getByRole('button', { name: '移除…', exact: true }))
       expect(await devices.getByText(/--tls-cert|设备指纹|局域网|HTTPS/).count()).toBe(0)
       await noHorizontalOverflow(page, devices)

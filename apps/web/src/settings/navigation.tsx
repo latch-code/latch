@@ -16,12 +16,11 @@ export interface SettingsNavigation {
   section: string
   /** Where phone pages are drawn, over the section. */
   layers: HTMLElement | null
-  /** How many pages the section has open on a phone, and the way back from the top one (the bar's back, Escape). */
+  /**
+   * How many pages the section has open, and the way back from the top one (on a phone, the bar's back and Escape). A
+   * wide window names the section above its content only while none is open: a page names itself under its way back.
+   */
   setDepth: (depth: number, back: (() => void) | undefined) => void
-  /** Wide windows: the panel beside the rail, for an entry that lists its own objects there instead of sections. */
-  navSlot: HTMLElement | null
-  /** Wide windows: the title row, for a page whose title is the object it shows. */
-  titleSlot: HTMLElement | null
 }
 
 export const NavigationContext = createContext<SettingsNavigation>({
@@ -29,8 +28,6 @@ export const NavigationContext = createContext<SettingsNavigation>({
   section: '',
   layers: null,
   setDepth: () => {},
-  navSlot: null,
-  titleSlot: null,
 })
 export const SettingsNavigationProvider = NavigationContext.Provider
 
@@ -68,8 +65,8 @@ export function SettingsPages({ main, levels }: { main: ReactNode; levels: Setti
   const { phone, setDepth } = navigation
   const back = top?.onBack
   useLayoutEffect(() => {
-    if (phone) setDepth(levels.length, back)
-  }, [phone, setDepth, levels.length, back])
+    setDepth(levels.length, back)
+  }, [setDepth, levels.length, back])
   useLayoutEffect(
     () => () => {
       setDepth(0, undefined)

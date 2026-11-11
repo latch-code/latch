@@ -170,22 +170,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .app-shell:not([data-entry='sessions']) :is(.sidebar, .workspace, .inspector-column, .inspector-resize, .phone-list) {
   visibility: hidden;
 }
-/*
- * A page (设置) sits on the same ground: its list where the sidebar stands, its content in the work panel under the
- * title row. The shell owns that frame, so it is drawn here over the page's own surfaces.
- */
-@media (min-width: 768px) {
-  .app-shell > .settings-page,
-  .app-shell > .settings-page .settings-nav-pane {
-    background: transparent;
-    box-shadow: none;
-  }
-  .app-shell > .settings-page .settings-panel {
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) max(0px, var(--shell-inset) - var(--entry-nav-width));
-    border-radius: 0 0 var(--r-12) var(--r-12);
-    background: transparent;
-  }
-}
 
 .sidebar {
   grid-area: 2 / 1;

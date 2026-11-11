@@ -18,7 +18,7 @@ const device = (over: Partial<Device>): Device => ({
   ...over,
 })
 
-describe('the 手机 page rows', () => {
+describe('the 设备 section rows', () => {
   const devices = [
     device({ id: 'old', lastSeenAt: '2026-10-01T00:00:00.000Z' }),
     device({ id: 'mac', listener: 'unix', lastSeenAt: '2026-11-02T00:00:00.000Z' }),

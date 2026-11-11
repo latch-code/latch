@@ -1,9 +1,11 @@
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Pin, Plus, Search, Settings, Smartphone, SquarePen, X } from 'lucide-react'
+import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Laptop, Pin, Plus, Search, Settings, SquarePen, X } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
+import { deviceAccess } from '../core/permissions.ts'
+import { computerName } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
@@ -27,7 +29,7 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
@@ -62,7 +64,7 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
 
 const shortcutFor = (key: string) => (currentShell() ? `⌘${key}` : `Alt ${key}`)
 
-/** Something wrong with reaching the Mac: the sentence for the dot beside 手机, and how bad it is. A healthy state has none. */
+/** Something wrong with reaching the Mac: the sentence for the dot beside 设置, and how bad it is. A healthy state has none. */
 function connectionTrouble(
   connection: ConnectionStatus,
   hostProblem: { text: string } | null,
@@ -319,9 +321,9 @@ function useFoldedShelves(key: string) {
 }
 
 /**
- * The whole navigation of a wide window: 新会话 and 搜索 (the palette searches); the shelves
- * 等你处理, each project, 无项目 and a quiet 已归档 row; at the foot 添加项目, 手机 and 设置. A shelf folds with its chevron;
- * what ended up there stays one click away.
+ * The whole navigation of a wide window: the computer's name where the page is not the Latch app on that computer, 新会话
+ * and 搜索 (the palette searches); the shelves 等你处理, each project, 无项目 and a quiet 已归档 row; at the foot 添加项目
+ * (on this Mac) and 设置, with 设备 inside it. A shelf folds with its chevron; what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
@@ -394,13 +396,22 @@ export function Sidebar({
   })
   const archivedCount = snapshot.tasks.filter(task => task.archived).length
   const trouble = connectionTrouble(connection, hostProblem)
-  const desktop = currentShell() !== null
+  const shell = currentShell()
+  const desktop = shell !== null
+  // 「这台电脑」 is only the Latch app on the Host's own socket; a loopback browser is told which computer it is reading.
+  const remote = !deviceAccess(snapshot, shell).local
   const context = filter
   const signature = groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)
   return (
     <div className="sidebar-body">
       <div className="sidebar-top">
+        {remote && (
+          <p className="sidebar-host" title={computerName(snapshot.hostName)}>
+            <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
+          </p>
+        )}
         <div className="sidebar-nav-line">
           <button
             type="button"
@@ -503,24 +514,17 @@ export function Sidebar({
             <span className="sr-only">{trouble.text}</span>
           </span>
         )}
-        {entries.includes('phone') && (
-          <IconButton
-            label="手机"
-            icon={Smartphone}
-            onClick={() => {
-              onEntry('phone')
-            }}
-          />
-        )}
         {entries.includes('settings') && (
-          <IconButton
-            label="设置"
+          <Button
+            variant="ghost"
+            className="sidebar-settings"
             icon={Settings}
             shortcut={desktop ? '⌘,' : 'Alt ,'}
             onClick={() => {
               onEntry('settings')
-            }}
-          />
+            }}>
+            设置
+          </Button>
         )}
       </nav>
     </div>

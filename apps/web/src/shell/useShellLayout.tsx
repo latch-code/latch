@@ -31,7 +31,7 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { entryOfSection, routeAtWidth, visibleEntries, type AgentPageTarget, type ShellEntry, type ShellRoute } from './routes.ts'
+import { visibleEntries, type AgentPageTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
@@ -138,8 +138,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const appShell = useRef<HTMLDivElement>(null)
   const titlebar = useRef<HTMLDivElement>(null)
   /** The current entry, its section, and where a page puts its title. */
-  const [chosenRoute, setRoute] = useState<ShellRoute>({ entry: 'sessions' })
-  const route = routeAtWidth(chosenRoute, phone)
+  const [route, setRoute] = useState<ShellRoute>({ entry: 'sessions' })
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
   const sidebarShut = sidebarColumn && (sidebarDrag !== null ? sidebarDrag.collapsed : preferences.sidebar.collapsed)
@@ -379,9 +378,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openSettings = (section?: SettingsSection) => {
     drawer.setOpen(false)
     setNewSheet(false)
-    setRoute(section ? { entry: entryOfSection(section, phone), section } : { entry: 'settings' })
+    setRoute({ entry: 'settings', ...(section ? { section } : {}) })
   }
-  /** A foot icon, a tab or the way back. 会话 returns to the last open session. */
+  /** 设置 at the sidebar's foot, a tab or the way back. 会话 returns to the last open session. */
   const goEntry = (entry: ShellEntry) => {
     setNewSheet(false)
     drawer.setOpen(false)
@@ -390,12 +389,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
     setNewSheet(false)
-    setRoute({ entry: entryOfSection('workspaces', phone), section: 'workspaces', projectId })
+    setRoute({ entry: 'settings', section: 'workspaces', projectId })
   }
   const openAgentPage = (target: AgentPageTarget) => {
     drawer.setOpen(false)
     setNewSheet(false)
-    setRoute({ entry: entryOfSection('engines', phone), section: 'engines', agent: target })
+    setRoute({ entry: 'settings', section: 'engines', agent: target })
   }
   /** The palette searches, except on a phone, which keeps its search under the title. */
   const openSearch = () => {
