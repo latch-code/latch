@@ -126,6 +126,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 会话自己的文件夹：名称、0700、从不沿用已存在的条目、同一请求得到同一个文件夹、没建成会话时删除空文件夹、只认启动目录中的真实目录 | `session-folders.test.ts`；在真实 Host 中的新建、只对话与所有者指定的启动目录、重启后继续、链接替换、远程策略、L3 确认中的工作目录与「存为项目」见 `server.test.ts` 的 `sessions in folders of their own` |
 | 新建工作树：钩子、fsmonitor、filter（仓库、include 与全局配置，含全局 `includeIf "onbranch:latch/**"` 只在新分支上带进的驱动）与 LFS 从不运行，继承的 `GIT_*` 变量不起作用，每种拒绝都不留下分支或工作树，任一步失败都回滚，`.worktreeinclude` 的复制规则，只认带标记的工作树（换分支或分离 HEAD 后仍认），重启后的重试找回同一个，没开始的会话只在 Git 判断没有改动时移除，不在 Latch 自己的目录周围新建；会话在工作树里开始：启动指纹取工作树里的配置，引用文件在工作树里核对，确定失败不留下工作树与分支，标记不再属于会话时之后的轮次被拒绝 | `worktrees.test.ts`、`worktree-sessions.test.ts`；会话记录见 `hub.test.ts` 的 `keeps the worktree a session was started in`；共用的 Git 运行器见 `changes-git.test.ts`；页面见 `e2e/worktrees.e2e.ts` |
 | 交付：读状态、无 filter 的暂存与取消暂存从不运行钩子、fsmonitor 与 filter，提交运行钩子（跳过钩子时不运行），有 filter 时经你的 Git 暂存；你的 Git 的环境没有 Latch 秘密且不会提示，信息不进参数；审计与调用方复查先于执行；每个仓库一次一个写入；回执在重启后找回提交、结果未知从不再提交；推送的固定失败原因；路由的权限、数据范围、私有会话、运行中的回合与合并中 | `git-delivery.test.ts`（临时仓库与本地裸远端，不连网络）、`git-routes.test.ts`；审计 schema 见 `audit-actions.test.ts` |
+| 交付的 PR：远端地址的形式、`gh` 的固定原因、检查归类与失败任务、日志摘录的行数字节与脱敏；经假 `gh` 创建（先审计、正文只在文件里、没有 token）、绑定已开的 PR 不再新建、结果未知的重试先按分支查找、未登录与没有 `gh`、不在 GitHub 的远端与未推送的分支在运行之前拒绝；读状态、评论与日志；路由的权限、元数据与安装更新期间的拒绝 | `git-pr.test.ts`、`git-routes.test.ts`（`@latch/testkit` 的 `installFakeGh`，不连 GitHub、找不到真的 `gh`） |
 | Standard 工具的风险分级（R0/R1/R2，按所选项目文件夹判断） | `risk.test.ts`；运行时按分级询问见 `runtime.test.ts` 的 `Host risk classification` |
 | 日志脱敏，以及文本是否含密钥（`containsSecret`） | `redact.test.ts` |
 | 会话文件：引用解析、文件夹边界、文件分类与句柄、本机动作、预览范围与审计；桌面端原生动作与内容代理；回复里的路径标记 | `files.test.ts`、`file-content.test.ts`、`desktop-files.test.ts`、`desktop-proxy.test.ts`、`file-reference.test.ts`、`file-references.test.ts`、`message-content.test.ts`；浏览器 `file-chips.e2e.ts`，Electron `desktop-files.e2e.ts` |
@@ -530,6 +531,8 @@ pnpm latch presence test --data-dir <临时目录>
 `delivery.e2e.ts` 用真实临时仓库、本地裸远端与假 ACP Agent 走完交付页签：逐个暂存与取消暂存、通过与失败的提交钩子（「加入对话」只进草稿不发送）、跳过钩子、推送并设上游、远端 `pre-receive` 拒绝的行、没有远端、推送结果未知后用同一请求重试、回合等审批时停用写入，以及 390 与 320 宽和数据范围不足的设备仍能提交与推送（截图在 `test-results/delivery/`，含 768 与深色）。
 
 `desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`）让桌面端经 `host.sock` 连接配假终端组件的测试 Host（不启动真实 shell）：打开、输入与回显、Ctrl-B 留在终端、本地服务链接、15 万字节的括号粘贴完整送达、按窗口调整大小与其他设备不能调整、「加入对话」只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、⌘J 仍归 Latch（截图在 `test-results/desktop-terminal/`，含 768 与深色）。
+
+`pr-checks.e2e.ts` 用假 `gh`（远端名为 GitHub、推送到本地裸仓库）走完 PR 一节：创建 PR、另一个会话按同一分支绑定而不新建、失败检查的日志与「加入对话」只进草稿、审阅与行级评论进草稿、「旧提交」、gh 未登录与没有 gh，以及 390 与 320 宽（截图在 `test-results/pr-checks/`，含 768 与深色）；假 `gh` 没有记下任何 token 违规。
 
 `changes-panel.e2e.ts` 用真实工具与真实 Git 仓库走完改动页签的范围、撤销与恢复、合并中的拒绝和数据范围不足的说明，再按 Host 的答复在三种宽度、浅深色下画出每个状态（截图在 `test-results/changes-panel/`），并量过两万个文件的列表。
 

@@ -58,6 +58,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     setUpstream: true,
     hooks: ['pre-push'],
   },
+  'git.pr.create': { sessionId, requestHash: hex, remoteHash: hex, headHash: hex, baseHash: hex, draft: false },
+  'git.pr.link': { sessionId, requestHash: hex, number: 12, remoteHash: hex, headHash: hex },
   'git.result': { sessionId, requestHash: hex, operation: 'push', outcome: 'failed', code: 'git-push-non-fast-forward' },
   'presence.launch-trusted': { keyHash: hex },
   'host.started': { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hex, settingsHash: hex, devMode: true },

@@ -1,7 +1,7 @@
 import type { GitOperation } from './changes.ts'
 
-/** The writes a session's 交付 makes in its repository; each takes a `requestId`. */
-export type GitDeliveryKind = 'stage' | 'unstage' | 'commit' | 'push'
+/** The writes a session's 交付 makes in its repository (`pr` creates or binds its pull request); each takes a `requestId`. */
+export type GitDeliveryKind = 'stage' | 'unstage' | 'commit' | 'push' | 'pr'
 
 /** A file's state on one side: added, modified, deleted or type changed (a file became a link, or back). */
 export type GitFileStatus = 'A' | 'M' | 'D' | 'T'
@@ -74,6 +74,100 @@ export interface GitPushResult {
   setUpstream?: true
   replay?: true
 }
+
+/** The pull request bound to a session (`sessions-meta.json`): where it is and which branches it joins. */
+export interface GitPrBinding {
+  number: number
+  /** `https://<host>/<owner>/<repo>/pull/<number>`. */
+  url: string
+  base: string
+  head: string
+}
+
+export type GitPrStatus = 'open' | 'closed' | 'merged'
+export type GitReviewDecision = 'approved' | 'changes-requested' | 'review-required'
+
+/** The bound pull request as GitHub reports it now, through your `gh`. */
+export interface GitPullRequest extends GitPrBinding {
+  title: string
+  state: GitPrStatus
+  draft: boolean
+  reviewDecision?: GitReviewDecision
+  /** The commit the pull request's head is at on GitHub; its checks are for this commit. */
+  headSha?: string
+}
+
+export type GitCheckState = 'pass' | 'fail' | 'pending' | 'skipped'
+
+/** One check of the pull request's head commit: a GitHub Actions job (or another check run), or a commit status. */
+export interface GitCheck {
+  name: string
+  /** The workflow a GitHub Actions job belongs to. */
+  workflow?: string
+  state: GitCheckState
+  startedAt?: string
+  completedAt?: string
+  /** A failed GitHub Actions job whose failed steps' log the Host can read (`GET …/git/pr/checks/:job/log`). */
+  job?: string
+}
+
+export type GitReviewState = 'approved' | 'changes-requested' | 'commented' | 'dismissed'
+
+/** A review, a conversation comment or a line comment of the pull request; read-only. */
+export interface GitPrComment {
+  kind: 'review' | 'comment' | 'line'
+  author: string
+  review?: GitReviewState
+  /** Line comments: the file and line they are on. */
+  path?: string
+  line?: number
+  /** Redacted, control characters removed, at most 8 KiB. */
+  body: string
+  at?: string
+}
+
+/** `GET /link/api/tasks/:id/git/pr`. */
+export interface GitPrState {
+  /** The pull request bound to the session; absent before one is created or found. */
+  pr?: GitPullRequest
+  /** Checks of `pr.headSha`. */
+  checks: GitCheck[]
+  /** Reviews and comments, oldest first, for devices whose data scope covers the session's files. */
+  discussion?: GitPrComment[]
+  /** Older reviews or comments were left out: only the newest are listed. */
+  discussionCapped?: true
+  /** Without a pull request: what 创建 PR starts from (the last commit's subject, the repository's default branch). */
+  draft?: { title?: string; base?: string }
+}
+
+/** `POST …/git/pr`: the bound pull request, made now or found open for the branch (`linked`). */
+export interface GitPrResult {
+  pr: GitPrBinding
+  /** An open pull request for the branch already existed; it was bound, nothing was created. */
+  linked?: true
+  replay?: true
+}
+
+/** `GET …/git/pr/checks/:job/log`: the end of a failed job's failed steps, redacted, at most 200 lines and 32 KiB. */
+export interface GitCheckLog {
+  name: string
+  text: string
+  /** Earlier lines were left out. */
+  truncated?: true
+}
+
+/** Error codes of the pull request routes, besides `host-updating` for a write while an update installs. */
+export type GitPrError =
+  | 'gh-missing'
+  | 'gh-logged-out'
+  | 'gh-no-remote'
+  | 'gh-unreachable'
+  | 'gh-failed'
+  | 'pr-exists-elsewhere'
+  | 'pr-not-pushed'
+  | 'pr-create-failed'
+  | 'pr-input-invalid'
+  | 'pr-check-not-found'
 
 /**
  * Error codes the delivery routes answer with (body `{ error, message, ...details }`). Failures of a write that ran carry

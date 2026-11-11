@@ -1,14 +1,37 @@
 // The 交付 tab's pure logic: where the repository stands, what the one blue button does, and what each fixed reason says.
-import type { GitDeliveryFile, GitDeliveryKind, GitDeliveryRunning, GitDeliveryState, GitFileStatus, GitOperation } from '@latch/protocol'
+import type {
+  GitCheck,
+  GitCheckState,
+  GitDeliveryFile,
+  GitDeliveryKind,
+  GitDeliveryRunning,
+  GitDeliveryState,
+  GitFileStatus,
+  GitOperation,
+  GitPrComment,
+  GitPrStatus,
+  GitPullRequest,
+  GitReviewDecision,
+  GitReviewState,
+} from '@latch/protocol'
 
-export type DeliveryStep = 'stage' | 'commit' | 'push' | 'done'
+export type DeliveryStep = 'stage' | 'commit' | 'push' | 'pr' | 'done'
 
-/** The progress line's place: staged files wait for a commit, local commits for a push, changed files for staging. */
-export function deliveryStep(state: GitDeliveryState): DeliveryStep {
+/**
+ * The progress line's place: staged files wait for a commit, local commits for a push, changed files for staging, and
+ * a branch on its remote for a pull request until one is bound.
+ */
+export function deliveryStep(state: GitDeliveryState, pr: { bound: boolean } = { bound: true }): DeliveryStep {
   if (state.staged.length > 0) return 'commit'
   if (changedCount(state) > 0) return 'stage'
   if (canPush(state)) return 'push'
+  if (prAvailable(state) && !pr.bound) return 'pr'
   return 'done'
+}
+
+/** The branch is on its remote as the same name, so a pull request can be made from it. */
+export function prAvailable(state: Pick<GitDeliveryState, 'branch' | 'remote' | 'upstream'>): boolean {
+  return !!state.branch && !!state.remote && state.upstream === `${state.remote}/${state.branch}`
 }
 
 /** Files that can still be staged: unstaged, untracked and conflicted. */
@@ -31,14 +54,16 @@ export type PrimaryAction =
   | { kind: 'stage'; label: string; paths: string[] }
   | { kind: 'commit'; label: string }
   | { kind: 'push'; label: string }
+  | { kind: 'pr'; label: string }
 
 export function pushLabel(state: Pick<GitDeliveryState, 'upstream' | 'ahead'>): string {
   return state.upstream && state.ahead > 0 ? `推送 ${state.ahead} 个提交` : '推送'
 }
 
-/** The one blue button: 暂存全部, then 提交 N 个文件, then 推送 (推送 N 个提交 when the branch is ahead). */
-export function primaryAction(state: GitDeliveryState): PrimaryAction | undefined {
-  const step = deliveryStep(state)
+/** The one blue button: 暂存全部, then 提交 N 个文件, then 推送 (推送 N 个提交 when the branch is ahead), then 创建 PR. */
+export function primaryAction(state: GitDeliveryState, pr: { bound: boolean } = { bound: true }): PrimaryAction | undefined {
+  const step = deliveryStep(state, pr)
+  if (step === 'pr') return { kind: 'pr', label: '创建 PR' }
   if (step === 'commit') return { kind: 'commit', label: `提交 ${state.staged.length} 个文件` }
   if (step === 'stage') return { kind: 'stage', label: '暂存全部', paths: stageAllPaths(state) }
   if (step === 'push') return { kind: 'push', label: pushLabel(state) }
@@ -65,6 +90,7 @@ export const RUNNING_WORD: Record<GitDeliveryKind, string> = {
   unstage: '取消暂存中…',
   commit: '提交中…',
   push: '推送中…',
+  pr: '创建 PR 中…',
 }
 
 export function runningLabel(running: Pick<GitDeliveryRunning, 'kind' | 'hook'>): string {
@@ -172,6 +198,26 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return { label: '同一请求换了内容，没有执行', tone: 'failed' }
     case 'git-failed':
       return { label: 'Git 没有完成', tone: 'failed' }
+    case 'gh-missing':
+      return { label: '没有 gh', tone: 'warn', detail: '安装 GitHub CLI（gh），再在终端里运行 gh auth login。' }
+    case 'gh-logged-out':
+      return { label: 'gh 未登录', tone: 'warn', detail: '在终端里运行 gh auth login。' }
+    case 'gh-no-remote':
+      return { label: '这个远端不是 GitHub', tone: 'neutral', detail: '其他平台的 PR 尚未实现。' }
+    case 'gh-unreachable':
+      return { label: '连不上 GitHub', tone: 'failed' }
+    case 'gh-failed':
+      return { label: 'gh 没有完成', tone: 'failed' }
+    case 'pr-exists-elsewhere':
+      return { label: '这个分支已有 PR，不在推送的仓库里', tone: 'warn', detail: '在 GitHub 上查看这个分支的 PR。' }
+    case 'pr-not-pushed':
+      return { label: '先推送这个分支', tone: 'neutral' }
+    case 'pr-create-failed':
+      return { label: 'PR 没有创建', tone: 'failed' }
+    case 'pr-input-invalid':
+      return { label: '标题或基线无效', tone: 'failed', detail: '标题一行、最多 256 个字符；基线是分支名。' }
+    case 'pr-check-not-found':
+      return { label: '这个检查已不在 PR 上', tone: 'neutral' }
     default:
       return undefined
   }
@@ -254,3 +300,67 @@ export function groupRows(state: GitDeliveryState, group: FileGroup): GroupRow[]
 
 /** A short commit for display. */
 export const shortSha = (sha: string) => sha.slice(0, 7)
+
+export const PR_STATE_WORD: Record<GitPrStatus, string> = { open: '开启', closed: '已关闭', merged: '已合并' }
+
+export const REVIEW_DECISION_WORD: Record<GitReviewDecision, string> = {
+  approved: '已批准',
+  'changes-requested': '要求修改',
+  'review-required': '待审阅',
+}
+
+export const REVIEW_WORD: Record<GitReviewState, string> = {
+  approved: '批准',
+  'changes-requested': '要求修改',
+  commented: '审阅',
+  dismissed: '已撤销的审阅',
+}
+
+export const CHECK_WORD: Record<GitCheckState, string> = { pass: '通过', fail: '失败', pending: '进行中', skipped: '跳过' }
+
+/** The checks as one state: any failure, else any still running, else passed; nothing without checks. */
+export function checksSummary(checks: readonly GitCheck[]): 'fail' | 'pending' | 'pass' | undefined {
+  if (checks.some(check => check.state === 'fail')) return 'fail'
+  if (checks.some(check => check.state === 'pending')) return 'pending'
+  if (checks.some(check => check.state === 'pass')) return 'pass'
+  return undefined
+}
+
+/** The checks are of another commit than the one the branch is at here: an older push, or a commit not pushed yet. */
+export function checksStale(pr: Pick<GitPullRequest, 'headSha'>, head: string | undefined): boolean {
+  return !!pr.headSha && !!head && pr.headSha !== head
+}
+
+/** How long a finished check ran, as m:ss (h:mm:ss past an hour). */
+export function checkDuration(check: Pick<GitCheck, 'startedAt' | 'completedAt'>): string | undefined {
+  if (!check.startedAt || !check.completedAt) return undefined
+  const ms = Date.parse(check.completedAt) - Date.parse(check.startedAt)
+  if (!Number.isFinite(ms) || ms < 0) return undefined
+  const total = Math.round(ms / 1000)
+  const hours = Math.floor(total / 3600),
+    minutes = Math.floor((total % 3600) / 60),
+    seconds = String(total % 60).padStart(2, '0')
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`
+}
+
+/** A failed check's log excerpt for the composer draft, fenced, with the check and the commit it ran on. */
+export function checkExcerpt(input: { number: number; check: string; sha?: string | undefined; text: string }): string {
+  const fence = fenceFor(input.text)
+  const at = input.sha ? `（${shortSha(input.sha)}）` : ''
+  return `PR #${input.number} 的检查 ${input.check} 失败${at}：\n\n${fence}text\n${input.text.replace(/\s+$/u, '')}\n${fence}`
+}
+
+/** Where a review or comment is: the file and line of a line comment, else what kind of remark it is. */
+export function commentPlace(comment: Pick<GitPrComment, 'kind' | 'review' | 'path' | 'line'>): string {
+  if (comment.kind === 'line') return comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ''}` : '行内评论'
+  if (comment.kind === 'review') return comment.review ? REVIEW_WORD[comment.review] : '审阅'
+  return '评论'
+}
+
+/** A review or comment for the composer draft: author, place and the original words, fenced. */
+export function commentExcerpt(input: { number: number; comment: GitPrComment }): string {
+  const { comment } = input
+  const text = comment.body || '（没有正文）'
+  const fence = fenceFor(text)
+  return `PR #${input.number} · ${comment.author} · ${commentPlace(comment)}：\n\n${fence}text\n${text}\n${fence}`
+}

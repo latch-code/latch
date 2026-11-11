@@ -2,10 +2,11 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import type { TaskSummary } from '@latch/protocol'
+import type { GitPrBinding, TaskSummary } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
+import { PR_URL } from './git-pr.ts'
 import { WORKTREE_BRANCH } from './worktrees.ts'
 
 export const SESSION_META_FILE = 'sessions-meta.json'
@@ -58,13 +59,27 @@ const configReceiptSchema = z.strictObject({
 })
 const oidText = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
 const hex64Text = z.string().regex(/^[a-f0-9]{64}$/u)
+/** The pull request bound to a session (docs/GIT-DELIVERY.md#pr-与检查). */
+const branchText = z
+  .string()
+  .min(1)
+  .max(256)
+  // eslint-disable-next-line no-control-regex
+  .regex(/^[^\u0000-\u001f\u007f]+$/u)
+const prBindingSchema = z.strictObject({
+  number: z.number().int().positive().max(999_999_999),
+  url: z.string().max(512).regex(PR_URL),
+  /** For display: never handed back to Git. */
+  base: branchText,
+  head: branchText,
+})
 /**
- * A commit or push of 交付 (docs/GIT-DELIVERY.md): written `pending` before Git runs, so a retry or a later Host process
+ * A commit, push or pull request of 交付 (docs/GIT-DELIVERY.md): written `pending` before Git runs, so a retry or a later Host process
  * never runs it a second time. A `pending` one read from the file is `unknown`: Git may or may not have finished.
  */
 const gitReceiptSchema = z.strictObject({
   kind: z.literal('git'),
-  operation: z.enum(['commit', 'push']),
+  operation: z.enum(['commit', 'push', 'pr']),
   requestId: requestIdText,
   deviceId: deviceIdText,
   payloadHash: hex64Text,
@@ -86,10 +101,13 @@ const gitReceiptSchema = z.strictObject({
   via: z.enum(['upstream', 'push-remote', 'origin']).optional(),
   /** The commit made, once done. */
   commit: oidText.optional(),
+  /** PR: the pull request made or bound, once done; `linked` when it was found open rather than made. */
+  pr: prBindingSchema.optional(),
+  linked: z.literal(true).optional(),
   /** The fixed reason a failed one gives on a retry, and the hook that failed. */
   code: z
     .string()
-    .regex(/^git-[a-z-]{1,60}$/u)
+    .regex(/^(?:git|gh|pr)-[a-z-]{1,60}$/u)
     .optional(),
   hook: z
     .string()
@@ -100,6 +118,56 @@ const gitReceiptSchema = z.strictObject({
 })
 const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema, gitReceiptSchema])
 
+/** One session's entry; `update` checks each change against it, so the file never holds what it cannot read back. */
+const sessionEntrySchema = z.object({
+  id: z.string().min(1).max(256),
+  title: z.string().min(1).max(200).optional(),
+  pinned: z.literal(true).optional(),
+  archived: z.literal(true).optional(),
+  personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
+  agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
+  automationId: z.string().min(1).max(64).optional(),
+  origin: z
+    .strictObject({
+      app: z.string().regex(APP_REF),
+      requestId: requestIdText,
+      install: z
+        .string()
+        .regex(/^[A-Za-z0-9_-]{22}$/u)
+        .optional(),
+      level: z.enum(['L1', 'L3']).optional(),
+      mode: z.string().max(256).optional(),
+      changed: z.literal(true).optional(),
+    })
+    .optional(),
+  agentPrivate: z.literal(true).optional(),
+  workspaceId: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
+    .optional(),
+  sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+  worktree: z
+    .strictObject({
+      path: z.string().min(2).max(4096).startsWith('/'),
+      branch: z.string().regex(WORKTREE_BRANCH),
+      unfiltered: z.number().int().min(1).max(10_000_000).optional(),
+    })
+    .optional(),
+  firstStart: z.literal(true).optional(),
+  pr: prBindingSchema.optional(),
+  forkOf: z
+    .object({
+      taskId: z.string().min(1).max(256),
+      upToMessageId: z.string().min(1).max(256),
+      title: z.string().max(80),
+      turn: z.number().int().nonnegative(),
+      prefixLength: z.number().int().min(1).max(201_000),
+      truncated: z.literal(true).optional(),
+    })
+    .optional(),
+  receipts: z.array(z.unknown()).max(MAX_RECEIPTS).optional(),
+})
+
 /**
  * Version 1 since titles, pins and archives; receipts were added as an optional field, so files written before them
  * load unchanged and older builds read newer files (dropping the receipts) while they hold at most 100,000 sessions.
@@ -108,57 +176,7 @@ const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cance
  */
 const metaSchema = z.object({
   version: z.literal(1),
-  sessions: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(256),
-        title: z.string().min(1).max(200).optional(),
-        pinned: z.literal(true).optional(),
-        archived: z.literal(true).optional(),
-        personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
-        agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
-        automationId: z.string().min(1).max(64).optional(),
-        origin: z
-          .strictObject({
-            app: z.string().regex(APP_REF),
-            requestId: requestIdText,
-            install: z
-              .string()
-              .regex(/^[A-Za-z0-9_-]{22}$/u)
-              .optional(),
-            level: z.enum(['L1', 'L3']).optional(),
-            mode: z.string().max(256).optional(),
-            changed: z.literal(true).optional(),
-          })
-          .optional(),
-        agentPrivate: z.literal(true).optional(),
-        workspaceId: z
-          .string()
-          .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
-          .optional(),
-        sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
-        worktree: z
-          .strictObject({
-            path: z.string().min(2).max(4096).startsWith('/'),
-            branch: z.string().regex(WORKTREE_BRANCH),
-            unfiltered: z.number().int().min(1).max(10_000_000).optional(),
-          })
-          .optional(),
-        firstStart: z.literal(true).optional(),
-        forkOf: z
-          .object({
-            taskId: z.string().min(1).max(256),
-            upToMessageId: z.string().min(1).max(256),
-            title: z.string().max(80),
-            turn: z.number().int().nonnegative(),
-            prefixLength: z.number().int().min(1).max(201_000),
-            truncated: z.literal(true).optional(),
-          })
-          .optional(),
-        receipts: z.array(z.unknown()).max(MAX_RECEIPTS).optional(),
-      }),
-    )
-    .max(MAX_META_SESSIONS + MAX_RECEIPTS),
+  sessions: z.array(sessionEntrySchema).max(MAX_META_SESSIONS + MAX_RECEIPTS),
 })
 
 export type ApprovalRecord = z.infer<typeof approvalReceiptSchema>
@@ -198,6 +216,8 @@ export interface StoredMeta {
    */
   worktree?: { path: string; branch: string; unfiltered?: number }
   firstStart?: true
+  /** The pull request 交付 made or found for the session's branch. */
+  pr?: GitPrBinding
   forkOf?: TaskSummary['forkOf']
 }
 
@@ -350,6 +370,8 @@ export class SessionMetaStore implements SessionReceipts {
     return this.enqueue(async () => {
       const next = new Map(this.meta)
       const meta = change({ ...next.get(sessionId) })
+      if (meta && Object.keys(meta).length && !sessionEntrySchema.safeParse({ id: sessionId, ...meta }).success)
+        throw new AppError(500, 'session-meta-invalid', '会话设置无法保存：内容不符合格式，没有写入。')
       if (meta && Object.keys(meta).length) next.set(sessionId, meta)
       else next.delete(sessionId)
       await this.write(next)

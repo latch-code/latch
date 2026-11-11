@@ -5,6 +5,7 @@ import {
   CircleAlert,
   CircleHelp,
   GitCommitHorizontal,
+  GitPullRequest,
   Info,
   MessageSquarePlus,
   TriangleAlert,
@@ -18,6 +19,7 @@ import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import {
   canPush,
   changedCount,
+  checksSummary,
   deliveryStep,
   failureCopy,
   groupRows,
@@ -27,6 +29,7 @@ import {
   HOOKS_UNLISTED,
   operationNote,
   primaryAction,
+  prAvailable,
   pushLabel,
   RUNNING_WORD,
   runningLabel,
@@ -35,6 +38,9 @@ import {
   type DeliveryStep,
   type FileGroup,
 } from './model.ts'
+import { Line, Output } from './parts.tsx'
+import { PullRequestSection, prInput, type PrForm } from './PullRequestSection.tsx'
+import { usePullRequest } from './usePullRequest.ts'
 import { useDelivery, type DeliveryFailure, type UnknownWrite } from './useDelivery.ts'
 
 const ACTIVE = new Set(['running', 'waiting-approval'])
@@ -56,41 +62,10 @@ export interface DeliveryPanelProps {
   onCompose?: ((text: string) => void) | undefined
 }
 
-function Line({
-  tone = 'plain',
-  icon: Glyph,
-  children,
-  detail,
-  action,
-}: {
-  tone?: 'plain' | 'muted' | 'amber' | 'red'
-  icon?: LucideIcon
-  children: ReactNode
-  detail?: string | undefined
-  action?: ReactNode
-}) {
-  const glyph = Glyph ? <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" /> : undefined
-  return (
-    <div className="delivery-line" data-tone={tone}>
-      {detail ? (
-        <Hint {...(glyph ? { lead: glyph } : {})} label={children}>
-          {detail}
-        </Hint>
-      ) : (
-        <>
-          {glyph}
-          <span className="delivery-line-text">{children}</span>
-        </>
-      )}
-      {action}
-    </div>
-  )
-}
+const STEP_ORDER = ['stage', 'commit', 'push', 'pr'] as const
+const STEP_WORD = { stage: '暂存', commit: '提交', push: '推送', pr: 'PR' } as const
 
-const STEP_ORDER = ['stage', 'commit', 'push'] as const
-const STEP_WORD = { stage: '暂存', commit: '提交', push: '推送' } as const
-
-/** 暂存 › 提交 › 推送: the steps before the current one are done. */
+/** 暂存 › 提交 › 推送 › PR: the steps before the current one are done. */
 function Steps({ step }: { step: DeliveryStep }) {
   const at = step === 'done' ? STEP_ORDER.length : STEP_ORDER.indexOf(step)
   return (
@@ -106,14 +81,6 @@ function Steps({ step }: { step: DeliveryStep }) {
         </li>
       ))}
     </ol>
-  )
-}
-
-function Output({ text, label }: { text: string; label: string }) {
-  return (
-    <pre className="delivery-output" tabIndex={0} aria-label={label}>
-      <VisibleText text={text} />
-    </pre>
   )
 }
 
@@ -229,6 +196,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const [message, setMessage] = useState('')
   const [skipHooks, setSkipHooks] = useState(false)
   const [showOutput, setShowOutput] = useState(false)
+  const [prForm, setPrForm] = useState<PrForm>({ title: '', body: '', base: '', draft: false })
   const turnRunning = ACTIVE.has(summary.status)
   const readOnly = summary.personal !== undefined
   const canWrite = canRun && !readOnly
@@ -238,6 +206,55 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const blocked = offline || !canWrite || !!state?.gitOperation
   const fileWrites = !blocked && !turnRunning && !hostRunning
   const frozen = writing === 'commit' || unknown?.kind === 'commit'
+  // A device that cannot list the files still sees and makes the pull request: the Host says what it may read.
+  const prEnabled = read.kind === 'denied' || (!!state && prAvailable(state))
+  const pull = usePullRequest({
+    sessionId: summary.id,
+    enabled: prEnabled,
+    open,
+    offline,
+    pushed: outcome?.kind === 'pushed' ? outcome.result.sha : undefined,
+  })
+  const prState = pull.read.kind === 'ready' ? pull.read.state : undefined
+  const prUnbound = !!prState && !prState.pr
+  const prBlocked = offline || !canWrite || busy || pull.creating || !!pull.unknown
+  const createPr = async () => {
+    const end = await pull.create(prInput(prForm, prState))
+    if (end === 'done') setPrForm({ title: '', body: '', base: '', draft: false })
+  }
+  const prReady = !!prState && !!prInput(prForm, prState).title && !!prInput(prForm, prState).base
+  const prSection = prEnabled ? (
+    <PullRequestSection
+      read={pull.read}
+      head={state?.head}
+      branch={state?.branch}
+      form={prForm}
+      onForm={setPrForm}
+      canWrite={canWrite}
+      disabled={prBlocked}
+      creating={pull.creating}
+      failure={pull.failure}
+      unknown={pull.unknown}
+      logs={pull.logs}
+      onReload={() => void pull.reload()}
+      onRetry={() => void pull.retry()}
+      onReadLog={job => void pull.readLog(job)}
+      onCloseLog={pull.closeLog}
+      onCompose={onCompose}
+    />
+  ) : null
+  const prButton = (
+    <Button
+      variant="primary"
+      icon={GitPullRequest}
+      loading={pull.creating}
+      loadingLabel="创建 PR 中…"
+      disabled={prBlocked || !prReady}
+      tooltip={!prReady ? '先写标题' : undefined}
+      onClick={() => void createPr()}>
+      创建 PR
+    </Button>
+  )
 
   const commit = async () => {
     const end = await writes.commit(message.trim(), skipHooks)
@@ -361,6 +378,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           </div>
           {notes}
           {canWrite && messageBox}
+          {prSection}
         </div>
         {canWrite && (
           <div className="delivery-foot">
@@ -373,15 +391,19 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
               推送
             </Button>
             <span className="delivery-space" />
-            <Button
-              variant="primary"
-              loading={writing === 'commit'}
-              loadingLabel="提交中…"
-              disabled={offline || busy || !message.trim() || unknown?.kind === 'commit'}
-              tooltip={!message.trim() ? '先写提交信息' : undefined}
-              onClick={() => void commit()}>
-              提交已暂存的
-            </Button>
+            {prUnbound && !message.trim() ? (
+              prButton
+            ) : (
+              <Button
+                variant="primary"
+                loading={writing === 'commit'}
+                loadingLabel="提交中…"
+                disabled={offline || busy || !message.trim() || unknown?.kind === 'commit'}
+                tooltip={!message.trim() ? '先写提交信息' : undefined}
+                onClick={() => void commit()}>
+                提交已暂存的
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -411,8 +433,9 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       </div>
     )
 
-  const step = deliveryStep(state)
-  const primary = primaryAction(state)
+  const step = deliveryStep(state, { bound: !prUnbound })
+  const primary = primaryAction(state, { bound: !prUnbound })
+  const summaryWord = prState?.pr ? checksSummary(prState.checks) : undefined
   const upstreamOther = !!state.upstream && !!state.remote && !!state.branch && state.upstream !== `${state.remote}/${state.branch}`
   const pushable = canPush(state) && !upstreamOther
   const total = state.staged.length + changedCount(state)
@@ -434,7 +457,15 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       <div className="delivery-bar">
         <Steps step={step} />
         <span className="delivery-space" />
-        {runningWord && <StatusWord tone="running">{runningWord}</StatusWord>}
+        {runningWord ? (
+          <StatusWord tone="running">{runningWord}</StatusWord>
+        ) : summaryWord === 'fail' ? (
+          <StatusWord tone="failed">检查失败</StatusWord>
+        ) : summaryWord === 'pending' ? (
+          <StatusWord tone="running">检查进行中</StatusWord>
+        ) : summaryWord === 'pass' ? (
+          <StatusWord tone="done">检查通过</StatusWord>
+        ) : null}
       </div>
       <div className="delivery-body">
         {notes}
@@ -568,11 +599,13 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
             </>
           )}
         </section>
+        {prSection}
       </div>
       <div className="delivery-foot">
         <FootNote state={state} step={step} />
         <span className="delivery-space" />
-        {primary && (primary.kind !== 'push' || pushable) && canWrite && (
+        {primary?.kind === 'pr' && canWrite && prButton}
+        {primary && primary.kind !== 'pr' && (primary.kind !== 'push' || pushable) && canWrite && (
           <Button
             variant="primary"
             icon={primary.kind === 'push' ? Upload : primary.kind === 'commit' ? GitCommitHorizontal : undefined}

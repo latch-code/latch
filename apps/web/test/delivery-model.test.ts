@@ -3,7 +3,14 @@ import type { GitDeliveryState } from '@latch/protocol'
 import { launcherRows } from '../src/panel/PanelLauncher.tsx'
 import {
   canPush,
+  checkDuration,
+  checkExcerpt,
+  checksStale,
+  checksSummary,
+  commentExcerpt,
+  commentPlace,
   deliveryStep,
+  prAvailable,
   failureCopy,
   failureDetails,
   fenceFor,
@@ -164,5 +171,54 @@ describe('the delivery tab', () => {
       ['文件', 'F'],
       ['交付', undefined],
     ])
+  })
+
+  it('adds PR after the push: 创建 PR is the blue button until a pull request is bound', () => {
+    expect(prAvailable(state())).toBe(true)
+    expect(prAvailable(state({ upstream: undefined }))).toBe(false)
+    expect(prAvailable(state({ upstream: 'origin/other' }))).toBe(false)
+    expect(deliveryStep(state(), { bound: false })).toBe('pr')
+    expect(primaryAction(state(), { bound: false })).toEqual({ kind: 'pr', label: '创建 PR' })
+    expect(deliveryStep(state(), { bound: true })).toBe('done')
+    // Commits not pushed come first; a branch the remote does not have yet is pushed before any PR.
+    expect(deliveryStep(state({ ahead: 1 }), { bound: false })).toBe('push')
+    expect(deliveryStep(state({ upstream: undefined }), { bound: false })).toBe('push')
+  })
+
+  it('sums up checks, marks those of another commit 旧提交, and times finished ones', () => {
+    const check = (state: 'pass' | 'fail' | 'pending' | 'skipped') => ({ name: state, state })
+    expect(checksSummary([])).toBeUndefined()
+    expect(checksSummary([check('skipped')])).toBeUndefined()
+    expect(checksSummary([check('pass'), check('skipped')])).toBe('pass')
+    expect(checksSummary([check('pass'), check('pending')])).toBe('pending')
+    expect(checksSummary([check('pending'), check('fail')])).toBe('fail')
+    expect(checksStale({ headSha: 'a'.repeat(40) }, 'a'.repeat(40))).toBe(false)
+    expect(checksStale({ headSha: 'a'.repeat(40) }, 'b'.repeat(40))).toBe(true)
+    expect(checksStale({}, 'b'.repeat(40))).toBe(false)
+    expect(checkDuration({ startedAt: '2026-11-12T10:00:00Z', completedAt: '2026-11-12T10:01:12Z' })).toBe('1:12')
+    expect(checkDuration({ startedAt: '2026-11-12T10:00:00Z', completedAt: '2026-11-12T11:00:05Z' })).toBe('1:00:05')
+    expect(checkDuration({ startedAt: '2026-11-12T10:00:00Z' })).toBeUndefined()
+  })
+
+  it('says gh missing, logged out and other platforms in short words, with the terminal command behind the Hint', () => {
+    expect(failureCopy('gh-missing')).toMatchObject({ label: '没有 gh', tone: 'warn' })
+    expect(failureCopy('gh-logged-out')).toEqual({ label: 'gh 未登录', tone: 'warn', detail: '在终端里运行 gh auth login。' })
+    expect(failureCopy('gh-no-remote')).toMatchObject({ label: '这个远端不是 GitHub', tone: 'neutral', detail: '其他平台的 PR 尚未实现。' })
+    for (const code of ['gh-unreachable', 'gh-failed', 'pr-exists-elsewhere', 'pr-not-pushed', 'pr-create-failed', 'pr-check-not-found'])
+      expect(failureCopy(code), code).toBeDefined()
+  })
+
+  it('puts a failed check or a comment into the draft fenced, with the check name, the author and the place', () => {
+    expect(checkExcerpt({ number: 12, check: 'test (node 24)', sha: 'abcdef1234567', text: 'FAIL a\n```\nb\n' })).toBe(
+      'PR #12 的检查 test (node 24) 失败（abcdef1）：\n\n````text\nFAIL a\n```\nb\n````',
+    )
+    const line = { kind: 'line' as const, author: 'rev', path: 'src/a.ts', line: 18, body: 'unused import' }
+    expect(commentPlace(line)).toBe('src/a.ts:18')
+    expect(commentExcerpt({ number: 12, comment: line })).toBe('PR #12 · rev · src/a.ts:18：\n\n```text\nunused import\n```')
+    expect(commentPlace({ kind: 'review', review: 'changes-requested' })).toBe('要求修改')
+    expect(commentPlace({ kind: 'comment' })).toBe('评论')
+    expect(commentExcerpt({ number: 3, comment: { kind: 'review', author: 'pat', review: 'approved', body: '' } })).toContain(
+      '（没有正文）',
+    )
   })
 })

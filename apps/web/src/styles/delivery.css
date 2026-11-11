@@ -1,5 +1,5 @@
 /*
- * The 交付 tab: a 36 row with 暂存 › 提交 › 推送, then lines, the file groups, the message and the push target, and a
+ * The 交付 tab: a 36 row with 暂存 › 提交 › 推送 › PR, then lines, the file groups, the message and the push target, and a
  * footer with the one blue button. Amber only for what waits on the person or warns, red only for a real failure.
  */
 .delivery-panel {
@@ -357,9 +357,204 @@
   line-height: var(--lh-caption);
 }
 
+/* The PR step: the bound pull request, its head commit's checks, and its reviews and comments, read-only. */
+.delivery-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.delivery-subhead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 28px;
+  margin-top: var(--sp-8);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: var(--lh-caption);
+}
+.delivery-section > .delivery-loading,
+.delivery-section > .delivery-group-empty {
+  padding-right: 0;
+  padding-left: 0;
+}
+.delivery-pr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.delivery-pr-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  min-height: 32px;
+  color: var(--muted);
+}
+.delivery-pr-line > svg {
+  flex: none;
+}
+.delivery-pr-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-pr-number {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.delivery-pr-states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+  padding-left: calc(var(--sp-16) + var(--sp-4));
+}
+.delivery-pr-branches {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-checks,
+.delivery-comments {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--sp-12));
+}
+.delivery-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  padding: 0 var(--sp-12);
+  color: var(--muted);
+}
+.delivery-check > svg {
+  flex: none;
+}
+.delivery-check[data-state='fail'] > svg,
+.delivery-check[data-state='fail'] .delivery-check-word {
+  color: var(--red);
+}
+.delivery-check-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-check-word {
+  flex: none;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.delivery-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-4) var(--sp-12) var(--sp-8);
+}
+.delivery-checks .delivery-loading {
+  padding: var(--sp-4) var(--sp-12) var(--sp-8);
+}
+.delivery-comment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-8) var(--sp-12);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.delivery-comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.delivery-comment-head > strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.delivery-comment-place {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-comment-place[data-review='changes-requested'] {
+  color: var(--amber);
+}
+.delivery-comment-body {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.delivery-pr-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+.delivery-pr-into {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.delivery-pr-base {
+  flex: 0 1 200px;
+  min-width: 0;
+}
+.delivery-pr-base input,
+.delivery-pr-base input::placeholder {
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
+.delivery-pr-head {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-8) 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-pr-body textarea {
+  resize: vertical;
+}
+
 /* Phones: rows a finger can hit. */
 .delivery-panel[data-phone] .delivery-file,
-.delivery-panel[data-phone] .delivery-group-head {
+.delivery-panel[data-phone] .delivery-group-head,
+.delivery-panel[data-phone] .delivery-check {
   min-height: 44px;
 }
 .delivery-panel[data-phone] .delivery-foot {

@@ -235,7 +235,8 @@ touch '${control}/commit-ran'`,
     // A passing hook runs, as in a terminal.
     await panel.getByRole('checkbox', { name: '暂存 command-edit.txt', exact: true }).click()
     await expect.poll(() => primary.innerText(), SLOW).toBe('提交 1 个文件')
-    expect(await skip.getAttribute('aria-checked')).toBe('false')
+    // The switch goes off once the commit's answer and the state read after it are in.
+    await expect.poll(() => skip.getAttribute('aria-checked'), SLOW).toBe('false')
     await panel.getByLabel('提交信息').fill('add the command edit')
     await primary.click()
     await expect.poll(() => git(repo, 'log', '-1', '--format=%s'), SLOW).toBe('add the command edit')

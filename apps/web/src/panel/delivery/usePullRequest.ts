@@ -1,0 +1,197 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { GitCheckLog, GitPrResult, GitPrState } from '@latch/protocol'
+import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
+import { unknownAfter, writeEnd, type WriteEnd } from './model.ts'
+
+/** The Host gives `gh pr create` 60 s; its reads 30 s each, two of them for a pull request with its comments. */
+const CREATE_WAIT_MS = 90_000
+const READ_WAIT_MS = 75_000
+/** Only while a check is still running and the tab is on screen. */
+const PENDING_MS = 30_000
+const NOT_RUN = new Set(['git-receipt-unsaved', 'host-closing'])
+const uncertainWrite = (cause: unknown) =>
+  !(cause instanceof ApiError && NOT_RUN.has(cause.code))
+  && (isUncertain(cause) || (cause instanceof ApiError && cause.code === 'git-result-unknown'))
+
+export type PrRead =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; state: GitPrState }
+  | { kind: 'failed'; code: string; text: string }
+
+export interface PrCreateInput {
+  title: string
+  body: string
+  base: string
+  draft: boolean
+}
+
+export interface PrFailure {
+  code: string
+  text: string
+  tail?: string
+}
+
+/** A creation whose answer never came: the retry sends the same request with the same content. */
+export interface PrUnknown {
+  requestId: string
+  body: PrCreateInput
+}
+
+export type LogRead = { kind: 'loading' } | { kind: 'ready'; log: GitCheckLog } | { kind: 'failed'; code: string; text: string }
+
+/**
+ * The pull request step: read when the tab opens or comes back, after a push, on 刷新 and after a creation; every 30 s
+ * only while a check is still running and the tab is on screen. No other background reads.
+ */
+export function usePullRequest(input: {
+  sessionId: string
+  /** The branch is on its remote (or a pull request may be bound): only then is there anything to read. */
+  enabled: boolean
+  open: boolean
+  offline: boolean
+  /** Changes after each push that went through: the pull request's checks start over. */
+  pushed?: string | undefined
+}) {
+  const { sessionId, enabled, open, offline, pushed } = input
+  const base = `tasks/${encodeURIComponent(sessionId)}/git/pr`
+  const [read, setRead] = useState<PrRead>({ kind: 'idle' })
+  const [creating, setCreating] = useState(false)
+  const [failure, setFailure] = useState<PrFailure>()
+  const [unknown, setUnknown] = useState<PrUnknown>()
+  const [created, setCreated] = useState<GitPrResult>()
+  const [logs, setLogs] = useState<Record<string, LogRead>>({})
+  const asked = useRef(0)
+  const openRef = useRef(open && enabled)
+  useEffect(() => {
+    openRef.current = open && enabled
+  }, [open, enabled])
+
+  const load = useCallback(async () => {
+    const mine = ++asked.current
+    setRead(previous => (previous.kind === 'ready' ? previous : { kind: 'loading' }))
+    try {
+      const state = await api<GitPrState>(base, { timeoutMs: READ_WAIT_MS })
+      if (mine === asked.current) setRead({ kind: 'ready', state })
+    } catch (cause) {
+      if (mine !== asked.current) return
+      const code = cause instanceof ApiError ? cause.code : 'request-failed'
+      // gh going away or logging out replaces what was shown; a network hiccup keeps it.
+      setRead(previous =>
+        previous.kind === 'ready' && !(cause instanceof ApiError && cause.code.startsWith('gh-') && cause.code !== 'gh-unreachable')
+          ? previous
+          : { kind: 'failed', code, text: errorMessage(cause) },
+      )
+    }
+  }, [base])
+
+  useEffect(() => {
+    if (open && enabled && !offline) void load()
+  }, [open, enabled, offline, load])
+
+  const seenPush = useRef(pushed)
+  useEffect(() => {
+    if (pushed === seenPush.current) return
+    seenPush.current = pushed
+    if (openRef.current) void load()
+  }, [pushed, load])
+
+  useEffect(() => {
+    const back = () => {
+      if (document.visibilityState === 'visible' && openRef.current) void load()
+    }
+    window.addEventListener('focus', back)
+    document.addEventListener('visibilitychange', back)
+    return () => {
+      window.removeEventListener('focus', back)
+      document.removeEventListener('visibilitychange', back)
+    }
+  }, [load])
+
+  const pending = read.kind === 'ready' && read.state.checks.some(check => check.state === 'pending')
+  useEffect(() => {
+    if (!pending || !open || !enabled || offline) return undefined
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, PENDING_MS)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [pending, open, enabled, offline, load])
+
+  const send = useCallback(
+    async (write: PrUnknown): Promise<WriteEnd> => {
+      setCreating(true)
+      setFailure(undefined)
+      try {
+        const result = await api<GitPrResult>(base, {
+          method: 'POST',
+          body: { requestId: write.requestId, ...write.body },
+          timeoutMs: CREATE_WAIT_MS,
+        })
+        setUnknown(previous => unknownAfter(previous, write, 'done'))
+        setCreated(result)
+        return 'done'
+      } catch (cause) {
+        const end = writeEnd({ code: cause instanceof ApiError ? cause.code : undefined, uncertain: uncertainWrite(cause) })
+        setUnknown(previous => unknownAfter(previous, write, end))
+        if (end !== 'unknown')
+          setFailure(
+            cause instanceof ApiError
+              ? {
+                  code: cause.code,
+                  text: cause.message,
+                  ...(typeof (cause.details as { tail?: unknown }).tail === 'string'
+                    ? { tail: (cause.details as { tail: string }).tail }
+                    : {}),
+                }
+              : { code: 'request-failed', text: errorMessage(cause) },
+          )
+        return end
+      } finally {
+        setCreating(false)
+        await load()
+      }
+    },
+    [base, load],
+  )
+
+  const readLog = useCallback(
+    async (job: string) => {
+      setLogs(previous => ({ ...previous, [job]: { kind: 'loading' } }))
+      try {
+        const log = await api<GitCheckLog>(`${base}/checks/${encodeURIComponent(job)}/log`, { timeoutMs: READ_WAIT_MS })
+        setLogs(previous => ({ ...previous, [job]: { kind: 'ready', log } }))
+      } catch (cause) {
+        setLogs(previous => ({
+          ...previous,
+          [job]: { kind: 'failed', code: cause instanceof ApiError ? cause.code : 'request-failed', text: errorMessage(cause) },
+        }))
+      }
+    },
+    [base],
+  )
+
+  return {
+    read,
+    creating,
+    failure,
+    unknown,
+    created,
+    logs,
+    reload: load,
+    readLog,
+    closeLog: (job: string) => {
+      setLogs(previous => {
+        const next = { ...previous }
+        delete next[job]
+        return next
+      })
+    },
+    create: (body: PrCreateInput) => send({ requestId: newRequestId(), body }),
+    retry: async () => (unknown ? send(unknown) : undefined),
+    dismiss: () => {
+      setFailure(undefined)
+    },
+  }
+}

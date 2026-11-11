@@ -9,6 +9,7 @@ import type {
   SessionPermission,
   TaskDetail,
   DriverTaskSummary,
+  GitPrBinding,
   TaskSummary,
 } from '@latch/protocol'
 import {
@@ -616,6 +617,26 @@ export class HarnessHub implements Bridge {
   worktreeOf(sessionId: string): { path: string; branch: string } | undefined {
     const worktree = this.meta.get(sessionId)?.worktree
     return worktree && { path: worktree.path, branch: worktree.branch }
+  }
+
+  /** The pull request 交付 bound to the session (docs/GIT-DELIVERY.md#pr-与检查). */
+  prOf(sessionId: string): GitPrBinding | undefined {
+    const pr = this.meta.get(sessionId)?.pr
+    return pr && { ...pr }
+  }
+
+  /** Settles when the session metadata holds it; only a session the Host knows. */
+  async bindPr(sessionId: string, pr: GitPrBinding): Promise<void> {
+    await this.route(sessionId)
+    await this.meta.update(sessionId, current => ({ ...current, pr: { ...pr } }))
+  }
+
+  async unbindPr(sessionId: string): Promise<void> {
+    await this.meta.update(sessionId, current => {
+      const next = { ...current }
+      delete next.pr
+      return next
+    })
   }
 
   /** The names of the folders the Host made for sessions, from the session metadata. */

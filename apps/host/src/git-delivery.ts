@@ -10,7 +10,18 @@ import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
-import type { GitCommitResult, GitDeliveryKind, GitDeliveryRunning, GitDeliveryState, GitPushResult, GitStageResult } from '@latch/protocol'
+import type {
+  GitCheckLog,
+  GitCommitResult,
+  GitDeliveryKind,
+  GitDeliveryRunning,
+  GitDeliveryState,
+  GitPrBinding,
+  GitPrResult,
+  GitPrState,
+  GitPushResult,
+  GitStageResult,
+} from '@latch/protocol'
 import { canonicalJson, redactSecrets, sha256Hex } from '@latch/core/node-kit'
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
@@ -36,6 +47,30 @@ import {
   type HookName,
   type RepositoryConfig,
 } from './changes/git-status.ts'
+import {
+  BODY_LIMIT,
+  BRANCH,
+  PR_FIELDS,
+  PR_LIST_FIELDS,
+  createdUrl,
+  discussionOf,
+  DISCUSSION_JQ,
+  knownGitHub,
+  LINE_COMMENTS,
+  LINE_COMMENTS_JQ,
+  sameRepo,
+  ghFailure,
+  logExcerpt,
+  readDefaultBranch,
+  readDiscussion,
+  readLineComments,
+  readPrList,
+  readPrView,
+  repoOfPr,
+  repoOfUrl,
+  validTitle,
+  type GhRepo,
+} from './git-pr.ts'
 import { codeOf } from './http-util.ts'
 import type { GitRecord, SessionReceipts } from './session-meta.ts'
 import { loginShell, terminalEnvironment, type ShellCommand } from './terminal/environment.ts'
@@ -44,7 +79,7 @@ export const MESSAGE_LIMIT = 64 * 1024
 /** What a failure or a hook's output returns at most, after redaction: the end of it. */
 export const TAIL_LIMIT = 256 * 1024
 const REMOTE_LINES = 100
-const TIMEOUTS = { commit: 10 * 60_000, push: 2 * 60_000, stage: 2 * 60_000 }
+const TIMEOUTS = { commit: 10 * 60_000, push: 2 * 60_000, stage: 2 * 60_000, gh: 30_000, prCreate: 60_000, log: 60_000 }
 /** After a stop's SIGTERM, how long the process group has before SIGKILL. */
 const KILL_GRACE_MS = 5_000
 /** After Git exits, how long its output pipes have to drain before they are closed. */
@@ -57,6 +92,18 @@ const SHELL_SCRIPT =
   'unset LC_ALL LANGUAGE GIT_ASKPASS SSH_ASKPASS; export LC_MESSAGES=C GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never SSH_ASKPASS_REQUIRE=never GIT_EDITOR=: GIT_PAGER=cat; exec "$0" "$@"'
 /** Shells whose `-c` takes `$0` and `"$@"` as above; any other login shell is replaced by /bin/zsh. */
 const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash'])
+/**
+ * Your `gh`, found on the PATH your profile sets: no prompt, pager, colour, spinner or update check. Its login is its own
+ * (its configuration and the system keychain); Latch never asks it for a token and puts none in its environment.
+ */
+const GH_SCRIPT = SHELL_SCRIPT.replace(
+  '; exec',
+  ' GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1 GH_SPINNER_DISABLED=1 GH_PAGER=cat PAGER=cat NO_COLOR=1 CLICOLOR=0; exec',
+)
+  // A profile's enterprise token would go to whatever host `--repo` names, and these switch the host or print requests.
+  .replace('unset ', 'unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST GH_REPO GH_DEBUG DEBUG GH_MDWIDTH ')
+/** How long a `gh auth status --hostname` that said yes is believed. */
+const HOST_LOGIN_MS = 5 * 60_000
 const HOOK_NAMES: ReadonlySet<string> = new Set(KNOWN_HOOKS)
 
 /** The environment your Git starts with: the terminal's, without its terminal marks, and nothing that prompts. */
@@ -73,7 +120,7 @@ export function deliveryEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: 
 }
 
 export interface DeliveryAuditEvent {
-  action: 'git.stage' | 'git.unstage' | 'git.commit' | 'git.push'
+  action: 'git.stage' | 'git.unstage' | 'git.commit' | 'git.push' | 'git.pr.create' | 'git.pr.link'
   detail: Record<string, unknown>
 }
 export interface DeliveryResultEvent {
@@ -81,6 +128,17 @@ export interface DeliveryResultEvent {
   outcome: 'done' | 'failed' | 'unknown'
   code?: (typeof RESULT_CODES)[number]
   commit?: string
+  /** The pull request created or bound. */
+  number?: number
+}
+
+/** The pull request bound to each session, kept with its metadata. */
+export interface PrBindings {
+  get(sessionId: string): GitPrBinding | undefined
+  /** Settles when the metadata holds it. */
+  bind(sessionId: string, pr: GitPrBinding): Promise<void>
+  /** The bound pull request was merged or closed and the branch moved on: 创建 PR may make the next one. */
+  unbind(sessionId: string): Promise<void>
 }
 
 /** One write of one device on one session, with the route's checks. */
@@ -106,6 +164,8 @@ export interface GitDeliveryOptions {
   hostEnv?: NodeJS.ProcessEnv
   shell?: () => Promise<ShellCommand>
   receipts: Pick<SessionReceipts, 'git' | 'recordGit'>
+  /** The sessions' pull requests; without it the pull request step is refused. */
+  prs?: PrBindings
   now?: () => number
   timeouts?: Partial<typeof TIMEOUTS>
   /** A write started or ended in the repository of this session: clients read its state again. */
@@ -130,8 +190,12 @@ interface Outcome {
   hooks: Array<{ name: string; code?: number }>
 }
 
+type Program = 'git' | 'gh'
+
 const refuse = (code: string, message: string, details?: Record<string, unknown>) => new AppError(409, code, message, details)
 const gitFailed = () => new AppError(500, 'git-failed', 'Git 没有完成读取，请稍后再试。')
+const existsElsewhere = () => new AppError(409, 'pr-exists-elsewhere', '这个分支已有打开的 PR，没有再建一个。在 GitHub 上查看它。')
+const noRemote = () => new AppError(409, 'gh-no-remote', '推送的远端不是 GitHub 上的仓库。')
 const unknown = (details: Record<string, unknown> = {}) =>
   new AppError(504, 'git-result-unknown', '还不知道 Git 是否完成。用同一个请求重试会查看结果，不会再执行一次。', {
     retry: true,
@@ -256,8 +320,11 @@ function storedFailure(receipt: GitRecord): AppError {
     ...(receipt.exitCode !== undefined ? { exitCode: receipt.exitCode } : {}),
     replay: true,
   }
-  const code = receipt.code ?? (receipt.operation === 'commit' ? 'git-commit-failed' : 'git-push-failed')
-  return new AppError(code === 'git-commit-not-made' ? 409 : 422, code, '这个请求之前没有成功，没有再执行一次。', details)
+  const code =
+    receipt.code
+    ?? (receipt.operation === 'commit' ? 'git-commit-failed' : receipt.operation === 'pr' ? 'pr-create-failed' : 'git-push-failed')
+  const status = code === 'git-commit-not-made' || code.startsWith('gh-') || code === 'pr-exists-elsewhere' ? 409 : 422
+  return new AppError(status, code, '这个请求之前没有成功，没有再执行一次。', details)
 }
 
 /** The writes of 交付, one at a time per repository, and its status read. */
@@ -273,6 +340,10 @@ export class GitDelivery {
   private readonly inflight = new Map<string, { payload: string; answer: Promise<unknown> }>()
   /** Stage and unstage answers, for a retry after a lost response; they are safe to repeat, so not kept on disk. */
   private readonly answered = new Map<string, { payload: string; result: GitStageResult }>()
+  /** Process groups of your `gh` reading a pull request, stopped with the rest on close. */
+  private readonly reading = new Set<Running>()
+  /** GitHub Enterprise Server hosts `gh` said it has a login for, until when. */
+  private readonly hostLogins = new Map<string, number>()
   private closing = false
 
   constructor(private readonly options: GitDeliveryOptions) {
@@ -288,7 +359,7 @@ export class GitDelivery {
   /** Stops every Git it started (SIGTERM, then SIGKILL): a commit stopped this way is answered by its receipt later. */
   async close(): Promise<void> {
     this.closing = true
-    for (const running of this.running.values()) if (running.pid) signal(running.pid, 'SIGTERM')
+    for (const running of [...this.running.values(), ...this.reading]) if (running.pid) signal(running.pid, 'SIGTERM')
   }
 
   private git(): GitReader {
@@ -395,7 +466,8 @@ export class GitDelivery {
     this.running.set(common, running)
     this.options.changed?.(caller.sessionId)
     try {
-      if (await gitOperation(layout).catch(() => 'unmerged' as const))
+      // A pull request is made on GitHub and leaves the work tree alone.
+      if (kind !== 'pr' && (await gitOperation(layout).catch(() => 'unmerged' as const)))
         throw refuse('git-operation-in-progress', '仓库正在合并、变基、拣选或还原，在终端里完成后再试。')
       return await work(running, common)
     } finally {
@@ -836,6 +908,348 @@ export class GitDelivery {
     }
   }
 
+  /** Where the branch's push goes, on GitHub: the remote 推送 would use, and the repository its URL names. */
+  private async pushRepo(layout: GitLayout, sessionId: string): Promise<{ repo: GhRepo; remote: string; branch: string }> {
+    if (!('branch' in layout.head)) throw refuse('git-detached', 'HEAD 没有指向分支，没有 PR 可建。')
+    const branch = layout.head.branch
+    // Only a name `gh` takes and the session metadata can hold.
+    if (!BRANCH.test(branch)) throw new AppError(409, 'pr-input-invalid', '这个分支名不能用于 PR。')
+    const config = await this.config(layout)
+    let remote: string
+    try {
+      remote = pushTarget(config, branch).remote
+    } catch {
+      throw noRemote()
+    }
+    // The fetch URL with `insteadOf` applied, as `gh` reads remotes; only printed, nothing is contacted.
+    const url = await this.git()
+      .run(layout, ['ls-remote', '--get-url', '--end-of-options', remote], { maxBytes: 8192 })
+      .then(out => out.toString('utf8').trim())
+      .catch(() => '')
+    const repo = repoOfUrl(url)
+    if (!repo) throw noRemote()
+    await this.allowHost(layout, sessionId, repo)
+    return { repo, remote, branch }
+  }
+
+  /**
+   * `gh` runs against GitHub, GitHub Enterprise Cloud, or a GitHub Enterprise Server it already has a login for
+   * (`gh auth status --hostname`, which prints no token); any other host is not GitHub and nothing is run against it.
+   */
+  private async allowHost(layout: GitLayout, sessionId: string, repo: GhRepo): Promise<void> {
+    if (knownGitHub(repo.host)) return
+    if ((this.hostLogins.get(repo.host) ?? 0) > this.now()) return
+    if (this.closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+    const running: Running = { kind: 'pr', requestId: '', startedAt: new Date(this.now()).toISOString(), sessionId }
+    this.reading.add(running)
+    try {
+      const outcome = await this.runAs('gh', layout, running, ['auth', 'status', '--hostname', repo.host], { timeoutMs: this.timeouts.gh })
+      const stderr = outcome.stderr.toString('utf8')
+      if (outcome.code === 127) throw ghFailure({ code: 127, stderr })
+      // A login there that no longer works: GitHub, but logged out.
+      if (!outcome.timedOut && outcome.code !== 0 && /Failed to log in|token .*(?:invalid|expired)/iu.test(stderr))
+        throw new AppError(409, 'gh-logged-out', 'gh 在这台主机上的登录已失效。在终端里运行 gh auth login。')
+      if (outcome.timedOut || outcome.code !== 0) throw noRemote()
+      this.hostLogins.set(repo.host, this.now() + HOST_LOGIN_MS)
+    } finally {
+      this.reading.delete(running)
+    }
+  }
+
+  /** A read through your `gh`: its standard output, or the fixed reason it gave none. */
+  private async ghRead(layout: GitLayout, sessionId: string, args: string[], timeoutMs = this.timeouts.gh): Promise<string> {
+    if (this.closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+    const running: Running = { kind: 'pr', requestId: '', startedAt: new Date(this.now()).toISOString(), sessionId }
+    this.reading.add(running)
+    try {
+      const outcome = await this.runAs('gh', layout, running, args, { timeoutMs })
+      if (outcome.timedOut) throw new AppError(504, 'gh-unreachable', 'gh 没有及时答复。')
+      if (outcome.code !== 0) throw ghFailure({ code: outcome.code, stderr: outcome.stderr.toString('utf8') })
+      return outcome.stdout.toString('utf8')
+    } finally {
+      this.reading.delete(running)
+    }
+  }
+
+  /** The open pull requests from this repository's branch, newest first as `gh` lists them. */
+  private async openPrs(
+    layout: GitLayout,
+    sessionId: string,
+    target: { repo: GhRepo; branch: string },
+  ): Promise<{ open: GitPrBinding[]; exists: boolean }> {
+    const out = await this.ghRead(layout, sessionId, [
+      'pr',
+      'list',
+      '--repo',
+      target.repo.full,
+      `--head=${target.branch}`,
+      '--state',
+      'open',
+      '--json',
+      PR_LIST_FIELDS,
+      '--limit',
+      '20',
+    ])
+    return readPrList(out, target.branch, target.repo)
+  }
+
+  /**
+   * The pull request step's state. With a bound pull request: its state, review decision and its head commit's checks,
+   * and with `discussion` its reviews and comments; without one, what 创建 PR starts from (`title`: the last commit's
+   * subject).
+   */
+  async prState(input: { sessionId: string; folder: string; discussion: boolean; title: boolean }): Promise<GitPrState> {
+    const layout = await this.layout(input.folder)
+    const bound = this.options.prs?.get(input.sessionId)
+    if (bound) {
+      const where = repoOfPr(bound.url)
+      if (!where) throw noRemote()
+      await this.allowHost(layout, input.sessionId, where.repo)
+      const view = readPrView(
+        await this.ghRead(layout, input.sessionId, ['pr', 'view', String(where.number), '--repo', where.repo.full, '--json', PR_FIELDS]),
+        where.repo,
+      )
+      if (view.pr.state !== 'open' && (await this.movedOn(layout, input.sessionId, bound, view.pr.headSha))) {
+        await this.options.prs?.unbind(input.sessionId)
+        return this.unboundState(layout, input)
+      }
+      let discussion: { items: GitPrState['discussion'] & object; capped: boolean } | undefined
+      if (input.discussion) discussion = await this.discussion(layout, input.sessionId, where)
+      return {
+        pr: view.pr,
+        checks: view.checks,
+        ...(discussion ? { discussion: discussion.items, ...(discussion.capped ? { discussionCapped: true as const } : {}) } : {}),
+      }
+    }
+    return this.unboundState(layout, input)
+  }
+
+  private async unboundState(layout: GitLayout, input: { sessionId: string; title: boolean }): Promise<GitPrState> {
+    const target = await this.pushRepo(layout, input.sessionId)
+    const base = readDefaultBranch(
+      await this.ghRead(layout, input.sessionId, ['repo', 'view', target.repo.full, '--json', 'defaultBranchRef']),
+    )
+    const title = input.title ? await this.lastSubject(layout) : undefined
+    return { checks: [], draft: { ...(title ? { title } : {}), ...(base ? { base } : {}) } }
+  }
+
+  /** The bound pull request's branch was pushed past the commit it ended at: a new push after a merge or a close. */
+  private async movedOn(layout: GitLayout, sessionId: string, bound: GitPrBinding, headSha: string | undefined): Promise<boolean> {
+    if (!headSha) return false
+    const target = await this.pushRepo(layout, sessionId).catch(() => undefined)
+    if (!target || target.branch !== bound.head) return false
+    const pushed = await this.git()
+      .commit(layout, `refs/remotes/${target.remote}/${target.branch}`)
+      .catch(() => undefined)
+    return !!pushed && pushed !== headSha
+  }
+
+  /**
+   * Reviews, conversation comments and line comments: the newest of each, cut by `gh` itself (`--jq`) so a long
+   * discussion stays readable; an unreadable one leaves the checks as they are.
+   */
+  private async discussion(
+    layout: GitLayout,
+    sessionId: string,
+    where: { repo: GhRepo; number: number },
+  ): Promise<{ items: NonNullable<GitPrState['discussion']>; capped: boolean }> {
+    try {
+      const talk = readDiscussion(
+        await this.ghRead(layout, sessionId, [
+          'pr',
+          'view',
+          String(where.number),
+          '--repo',
+          where.repo.full,
+          '--json',
+          'reviews,comments',
+          '--jq',
+          DISCUSSION_JQ,
+        ]),
+      )
+      const lines = readLineComments(
+        await this.ghRead(layout, sessionId, [
+          'api',
+          '--hostname',
+          where.repo.host,
+          '--method',
+          'GET',
+          '--jq',
+          LINE_COMMENTS_JQ,
+          `repos/${where.repo.owner}/${where.repo.name}/pulls/${where.number}/comments?per_page=${LINE_COMMENTS}&sort=created&direction=desc`,
+        ]),
+      )
+      const shown = talk.items.length
+      return discussionOf([...talk.items, ...lines], talk.total > shown || lines.length >= LINE_COMMENTS)
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'gh-failed') return { items: [], capped: true }
+      throw error
+    }
+  }
+
+  private async lastSubject(layout: GitLayout): Promise<string | undefined> {
+    const out = await this.git()
+      .run(layout, ['log', '-1', '--no-show-signature', '--format=%s', 'HEAD', '--'], { maxBytes: 64 * 1024 })
+      .catch(() => undefined)
+    const subject = out?.toString('utf8').trim().replace(/\s+/gu, ' ').slice(0, 256)
+    return subject && validTitle(subject) ? subject : undefined
+  }
+
+  /**
+   * 创建 PR: an open pull request from the branch is bound instead of a second one (`git.pr.link`); otherwise one is made
+   * (`git.pr.create`, recorded first). A retry of an attempt whose result is unknown looks for the branch's pull request
+   * again before it makes one. Never closes, merges or edits a pull request.
+   */
+  async createPr(
+    caller: DeliveryCaller,
+    input: { requestId: string; title: string; body: string; base: string; draft?: boolean },
+  ): Promise<GitPrResult> {
+    if (!validTitle(input.title) || !BRANCH.test(input.base) || Buffer.byteLength(input.body) > BODY_LIMIT || input.body.includes('\0'))
+      throw new AppError(400, 'pr-input-invalid', '标题必填（一行，最多 256 个字符），基线是分支名，正文最多 64 KB。')
+    const prs = this.options.prs
+    if (!prs) throw noRemote()
+    const title = input.title.trim()
+    const payload = payloadHash({ kind: 'pr', title, body: input.body, base: input.base, draft: !!input.draft })
+    return this.once(caller, input.requestId, payload, async () => {
+      const receipt = this.options.receipts.git(caller.sessionId, caller.deviceId, input.requestId)
+      if (receipt && (receipt.operation !== 'pr' || receipt.payloadHash !== payload))
+        throw refuse('request-conflict', '同一个请求标识不能用于不同的操作。')
+      if (receipt?.state === 'done' && receipt.pr)
+        return { pr: receipt.pr, ...(receipt.linked ? { linked: true as const } : {}), replay: true }
+      if (receipt?.state === 'failed') throw storedFailure(receipt)
+      const layout = await this.layout(caller.folder)
+      const target = await this.pushRepo(layout, caller.sessionId)
+      const git = this.git()
+      if (!(await git.commit(layout, `refs/remotes/${target.remote}/${target.branch}`).catch(() => undefined)))
+        throw refuse('pr-not-pushed', '这个分支还不在远端。先推送，再创建 PR。')
+      return this.hold(caller, layout, 'pr', input.requestId, async running => {
+        const request = { sessionId: caller.sessionId, requestHash: sha256Hex(input.requestId) }
+        const where = { remoteHash: sha256Hex(target.remote), headHash: sha256Hex(target.branch) }
+        const base: GitRecord = {
+          kind: 'git',
+          operation: 'pr',
+          requestId: input.requestId,
+          deviceId: caller.deviceId,
+          payloadHash: payload,
+          state: 'pending',
+          startedAt: running.startedAt,
+          at: new Date(this.now()).toISOString(),
+        }
+        const link = async (pr: GitPrBinding, again: boolean): Promise<GitPrResult> => {
+          await caller.authorize('pr')
+          await caller.audit({ action: 'git.pr.link', detail: { ...request, number: pr.number, ...where } })
+          await this.bindPr(caller.sessionId, pr)
+          await this.record(caller, { ...base, state: 'done', pr, linked: true, at: new Date(this.now()).toISOString() })
+          await this.reportResult(caller, { operation: 'pr', outcome: 'done', number: pr.number })
+          // A retry that finds the branch's pull request finds the one its first attempt made.
+          return again ? { pr, replay: true } : { pr, linked: true }
+        }
+        const found = await this.openPrs(layout, caller.sessionId, target)
+        if (found.open[0]) return link(found.open[0], !!receipt)
+        // Open already, under a base the metadata cannot hold: never a second one.
+        if (found.exists) throw existsElsewhere()
+        await caller.authorize('pr')
+        await caller.audit({
+          action: 'git.pr.create',
+          detail: { ...request, ...where, baseHash: sha256Hex(input.base), draft: !!input.draft },
+        })
+        await this.record(caller, base, true)
+        const outcome = await this.runAs(
+          'gh',
+          layout,
+          running,
+          [
+            'pr',
+            'create',
+            '--repo',
+            target.repo.full,
+            `--head=${target.branch}`,
+            `--base=${input.base}`,
+            `--title=${title}`,
+            '--body-file=BODY',
+            ...(input.draft ? ['--draft'] : []),
+          ],
+          { timeoutMs: this.timeouts.prCreate, body: input.body },
+        )
+        const stillUnknown = async () => {
+          await this.record(caller, { ...base, state: 'unknown', at: new Date(this.now()).toISOString() })
+          await this.reportResult(caller, { operation: 'pr', outcome: 'unknown' })
+          return unknown()
+        }
+        if (outcome.timedOut) throw await stillUnknown()
+        if (outcome.code !== 0) {
+          const failure = ghFailure({ code: outcome.code, stderr: outcome.stderr.toString('utf8') }, true)
+          // The connection broke during the request: GitHub may have made it.
+          if (failure.code === 'gh-unreachable') throw await stillUnknown()
+          if (failure.code === 'pr-exists-elsewhere') {
+            // Made meanwhile, from another device or a terminal: bind it when it is open in this repository.
+            const again = await this.openPrs(layout, caller.sessionId, target).catch(() => ({ open: [], exists: false }))
+            if (again.open[0]) return link(again.open[0], false)
+          }
+          await this.record(caller, {
+            ...base,
+            state: 'failed',
+            code: failure.code,
+            ...(typeof failure.details?.exitCode === 'number' ? { exitCode: failure.details.exitCode } : {}),
+            at: new Date(this.now()).toISOString(),
+          })
+          await this.reportResult(caller, {
+            operation: 'pr',
+            outcome: 'failed',
+            code: failure.code as DeliveryResultEvent['code'] & string,
+          })
+          throw failure
+        }
+        const url = createdUrl(outcome.stdout.toString('utf8'))
+        const made = url ? repoOfPr(url) : undefined
+        // Bound only when it is where it was asked for.
+        if (!url || !made || !sameRepo(made.repo, target.repo)) throw await stillUnknown()
+        const pr: GitPrBinding = { number: made.number, url, base: input.base, head: target.branch }
+        await this.bindPr(caller.sessionId, pr)
+        await this.record(caller, { ...base, state: 'done', pr, at: new Date(this.now()).toISOString() })
+        await this.reportResult(caller, { operation: 'pr', outcome: 'done', number: pr.number })
+        return { pr }
+      })
+    })
+  }
+
+  /** A failed write of the binding is only logged: the next 创建 PR finds the pull request open and binds it. */
+  private async bindPr(sessionId: string, pr: GitPrBinding): Promise<void> {
+    try {
+      await this.options.prs?.bind(sessionId, pr)
+    } catch (error) {
+      this.options.log(`PR 没有记到会话上：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** A failed GitHub Actions job of the bound pull request's checks: the end of its failed steps' log. */
+  async checkLog(input: { sessionId: string; folder: string; job: string }): Promise<GitCheckLog> {
+    const bound = this.options.prs?.get(input.sessionId)
+    const where = bound ? repoOfPr(bound.url) : undefined
+    if (!where || !/^\d{1,20}$/u.test(input.job)) throw new AppError(404, 'pr-check-not-found', '找不到这个检查。')
+    const layout = await this.layout(input.folder)
+    await this.allowHost(layout, input.sessionId, where.repo)
+    const view = readPrView(
+      await this.ghRead(layout, input.sessionId, ['pr', 'view', String(where.number), '--repo', where.repo.full, '--json', PR_FIELDS]),
+      where.repo,
+    )
+    // Only a failed job of this pull request's current checks, in its own repository.
+    const check = view.checks.find(item => item.job === input.job)
+    if (!check) throw new AppError(404, 'pr-check-not-found', '找不到这个检查。')
+    const out = await this.ghRead(
+      layout,
+      input.sessionId,
+      ['run', 'view', '--job', input.job, '--repo', where.repo.full, '--log-failed'],
+      this.timeouts.log,
+    ).catch((error: unknown) => {
+      // The job or its log is gone (expired, or the run was deleted).
+      if (error instanceof AppError && error.code === 'gh-no-remote')
+        throw new AppError(404, 'pr-check-not-found', '找不到这个检查的日志。')
+      throw error
+    })
+    return { name: check.name, ...logExcerpt(out) }
+  }
+
   /** `first`: the record a write must have before it runs; otherwise a failed write is logged and memory keeps it. */
   private async record(caller: DeliveryCaller, receipt: GitRecord, first = false): Promise<void> {
     try {
@@ -851,13 +1265,28 @@ export class GitDelivery {
    * in `args` name 0600 files in a fresh 0700 folder that holds the message and the NUL-separated paths; the message is
    * never an argument. Nothing is read from standard input.
    */
-  private async runYourGit(
+  private runYourGit(
     layout: GitLayout,
     running: Running,
     args: string[],
     options: { timeoutMs: number; message?: string; paths?: readonly string[] },
   ): Promise<Outcome> {
-    const binary = this.binary!
+    return this.runAs('git', layout, running, args, options)
+  }
+
+  /**
+   * Your Git or your `gh`, as you: through your login shell, in the terminal's environment, in the work tree. Git is
+   * the one the Host found; `gh` is whichever your profile's PATH finds. `MESSAGE`, `PATHS` and `BODY` in `args` name
+   * 0600 files in a fresh 0700 folder; the content is never an argument. Nothing is read from standard input.
+   */
+  private async runAs(
+    program: Program,
+    layout: GitLayout,
+    running: Running,
+    args: string[],
+    options: { timeoutMs: number; message?: string; paths?: readonly string[]; body?: string },
+  ): Promise<Outcome> {
+    const binary = program === 'git' ? this.binary! : 'gh'
     const folder = await mkdtemp(join(tmpdir(), 'latch-git-'))
     try {
       const file = async (name: string, content: string) => {
@@ -867,7 +1296,14 @@ export class GitDelivery {
       }
       const message = options.message === undefined ? undefined : await file('message', options.message)
       const paths = options.paths === undefined ? undefined : await file('paths', `${options.paths.join('\0')}\0`)
-      const resolved = args.map(arg => arg.replace('=MESSAGE', `=${message}`).replace('=PATHS', `=${paths}`))
+      const body = options.body === undefined ? undefined : await file('body', options.body)
+      // Only a whole placeholder argument: a title or a branch that holds `=BODY` stays as it is.
+      const files: Record<string, string | undefined> = {
+        '--file=MESSAGE': message && `--file=${message}`,
+        '--pathspec-from-file=PATHS': paths && `--pathspec-from-file=${paths}`,
+        '--body-file=BODY': body && `--body-file=${body}`,
+      }
+      const resolved = args.map(arg => (Object.hasOwn(files, arg) ? (files[arg] ?? arg) : arg))
       const trace = join(folder, 'trace')
       const shell = await (this.options.shell ?? loginShell)()
       const posix = POSIX_SHELLS.has(shell.argv[0]!.replace(/^-/u, ''))
@@ -875,11 +1311,12 @@ export class GitDelivery {
         argv0 = posix ? shell.argv[0]! : '-zsh'
       const env = {
         ...deliveryEnvironment({ hostEnv: this.hostEnv, shell: file0, folder: layout.root }),
-        GIT_TRACE2_EVENT: trace,
+        ...(program === 'git' ? { GIT_TRACE2_EVENT: trace } : {}),
         ...(options.paths ? { GIT_LITERAL_PATHSPECS: '1' } : {}),
       }
+      const argv = program === 'git' ? ['-c', SHELL_SCRIPT, binary, '-C', layout.root, ...resolved] : ['-c', GH_SCRIPT, binary, ...resolved]
       return await new Promise<Outcome>(resolve => {
-        const child = spawn(file0, ['-c', SHELL_SCRIPT, binary, '-C', layout.root, ...resolved], {
+        const child = spawn(file0, argv, {
           argv0,
           cwd: layout.root,
           env,
@@ -889,7 +1326,8 @@ export class GitDelivery {
         })
         running.pid = child.pid
         const output = new Tail(TAIL_LIMIT),
-          stdout = new Tail(256 * 1024),
+          // `gh` answers in JSON, read whole; Git's output is only classified.
+          stdout = new Tail(program === 'gh' ? 8 * 1024 * 1024 : 256 * 1024),
           stderr = new Tail(256 * 1024)
         const hooks: Outcome['hooks'] = [],
           children = new Map<number, number>()
