@@ -120,14 +120,3 @@ export interface AppLastReply {
   runOutcome?: string
   reply?: { messageId: string; text: string; truncated?: true }
 }
-
-/** The fixed failure codes a page sees; the Host's own error text never reaches it. */
-export const APP_ERROR_CODES = [
-  'capability-denied',
-  'forbidden',
-  'offline',
-  'unknown',
-  'rate-limited',
-  'invalid-input',
-  'not-found',
-] as const

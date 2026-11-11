@@ -3,7 +3,18 @@
  * page that holds it. The frame never talks to the Host; the shell checks every call, asks the Host with its own
  * credentials and hands back only the whitelisted fields below. See docs/APP-PAGES.md.
  */
-import { APP_ERROR_CODES, type AppCapabilities, type AppDataDocument, type AppStorageScopeKind } from './apps.ts'
+import type { AppCapabilities, AppDataDocument, AppStorageScopeKind } from './apps.ts'
+
+/** The fixed failure codes a page sees; the Host's own error text never reaches it. */
+export const APP_ERROR_CODES = [
+  'capability-denied',
+  'forbidden',
+  'offline',
+  'unknown',
+  'rate-limited',
+  'invalid-input',
+  'not-found',
+] as const
 
 export const APP_PROTOCOL = 1
 /** The SDK version the runtime carries; a manifest asks for `^1`. */
