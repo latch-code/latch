@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload } from 'lucide-react'
+import { Cpu, Download, FileText, Info, Lock, MonitorSmartphone, Shield, Upload } from 'lucide-react'
 import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
-import { Button, ConfirmDialog, Dialog, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
+import { Button, ConfirmDialog, Dialog, Hint, Icon, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
-import { SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { addPluginSource, editPluginSource, manifestReach, readPluginBundle, typedManifest, type PluginReach } from './pluginAssets.ts'
 
 interface PendingChange {
@@ -30,13 +30,28 @@ export const packageState = (record: PluginPackageSummary) =>
           ? '已开启'
           : '未开启'
 
-/** Where a plugin's parts run and which devices receive them, in the words a person would use. */
+const REACH_ICONS = { page: MonitorSmartphone, host: Cpu, text: FileText } as const
+
+/**
+ * Where a plugin's parts run and which devices receive them: each part's glyph, its name and where it runs (with 不隔离
+ * where it is code), the full sentence behind ⓘ.
+ */
 export function PluginReachGroup({ reach, onRetryRead }: { reach: PluginReach[]; onRetryRead?: () => void }) {
   if (reach.length === 0 && !onRetryRead) return null
   return (
     <SettingsGroup title={PLUGIN_REACH_COPY.title}>
       {reach.map(item => (
-        <SettingsRow key={item.id} className="plugin-reach" title={item.title} description={item.body} />
+        <SettingsRow
+          key={item.id}
+          className="plugin-reach"
+          leading={<IconTile icon={REACH_ICONS[item.id]} />}
+          title={item.title}
+          description={
+            <Hint lead={<Icon icon={item.id === 'text' ? Info : Shield} size={12} />} label={item.label}>
+              {item.body}
+            </Hint>
+          }
+        />
       ))}
       {onRetryRead && (
         <SettingsRow
@@ -246,7 +261,6 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         open={adding}
         title="添加插件"
         size="sheet"
-        subtitle="新建一个工具，或导入插件文件。"
         onClose={() => setAdding(false)}
         footer={
           <>
@@ -263,13 +277,13 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
             </Button>
           </>
         }>
-        <p className="plugin-add-note">工具是在这台 Mac 上运行的代码，权限和 Latch 相同。</p>
+        <NoteLine icon={Shield} brief={{ label: PLUGIN_REACH_COPY.host.label, detail: PLUGIN_REACH_COPY.host.body }} />
       </Dialog>
       <Dialog
         open={editor !== null}
         title={record ? record.name : '新建插件'}
         size="wide"
-        subtitle="保存为草稿，或应用到 Latch。应用前不会执行编辑中的代码。"
+        subtitle="应用前不会运行编辑中的代码"
         onClose={() => {
           if (!locked) {
             setEditor(null)
@@ -414,7 +428,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                       onChange={event => editBundle(editPluginSource(editor.bundle, selectedFile.path, event.target.value))}
                     />
                   ) : (
-                    <p className="settings-empty">这个插件没有文本文件，可以在高级声明中编辑静态面板。</p>
+                    <p className="settings-empty">没有文本文件</p>
                   )}
                 </div>
               )}
@@ -453,7 +467,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   maxLength={64}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
                 />
-                <p>技能和静态面板可以直接应用。含代码的插件第一次应用时，要在这台 Mac 上确认。</p>
+                <NoteLine icon={Lock} brief={{ label: '含代码的插件要在这台 Mac 上确认' }} />
               </details>
             </fieldset>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}

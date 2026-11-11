@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, LockKeyhole, Pencil, Plus, Trash } from 'lucide-react'
+import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, Lock, LockKeyhole, Network, Pencil, Plus, Trash } from 'lucide-react'
 import {
   PROVIDER_KINDS,
   type AppSnapshot,
@@ -45,6 +45,7 @@ import {
   Button,
   DemoMark,
   Dialog,
+  Hint,
   Icon,
   IconButton,
   InlineNotice,
@@ -58,7 +59,17 @@ import {
 } from '@latch/ui'
 import { THINKING_SETS, thinkingSetText } from '../composer/modelReasoning.ts'
 import { ProviderTile } from '../components/BrandTile.tsx'
-import { IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import {
+  IconTile,
+  Loading,
+  MiddleEllipsis,
+  moreButton,
+  NoteLine,
+  ObjectRow,
+  SectionHeading,
+  SettingsGroup,
+  SettingsRow,
+} from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
 import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
@@ -216,9 +227,7 @@ function CheckRow({
     <SettingsRow
       title="检测连接"
       description={
-        result === null ? (
-          '用这个地址和密钥请求服务的模型列表'
-        ) : local ? (
+        result === null ? undefined : local ? (
           <span className="check-result" role="status">
             <Icon icon={Info} size={12} />
             Latch 还不能访问这个地址
@@ -269,10 +278,12 @@ function LocalAddressNotice({
   atSave?: boolean
   onAllow: () => void
 }) {
-  if (atSave && abilities.confirm) return <InlineNotice tone="neutral">{PROVIDER_COPY.localAddressAtSave(target)}</InlineNotice>
+  if (atSave && abilities.confirm) return <NoteLine icon={Network} brief={PROVIDER_COPY.localNoteAtSave(target)} />
+  const note = PROVIDER_COPY.localNote(target)
   return (
-    <InlineNotice
-      tone="neutral"
+    <NoteLine
+      icon={Network}
+      brief={abilities.confirm ? note : { label: note.label, detail: `${note.detail ?? ''}${elsewhere}` }}
       action={
         abilities.confirm ? (
           <Button
@@ -285,10 +296,8 @@ function LocalAddressNotice({
             {actionLabel}
           </Button>
         ) : undefined
-      }>
-      {PROVIDER_COPY.localAddress(target)}
-      {!abilities.confirm && ` ${elsewhere}`}
-    </InlineNotice>
+      }
+    />
   )
 }
 
@@ -424,7 +433,16 @@ function ModelsGroups({
             获取模型
           </Button>
         }
-        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考选「默认」时用模型自己的默认值。`}>
+        caption={caption}
+        captionIcon={null}
+        note={
+          <NoteLine
+            brief={{
+              label: onVision ? '图片与思考按服务的文档设置' : '思考按服务的文档设置',
+              detail: `${onVision ? '图片未开启时只发送文字。' : ''}思考选「默认」时用模型自己的默认值。`,
+            }}
+          />
+        }>
         {models.map(model => (
           <div key={model} className="settings-row model-row" data-leading="" data-check="">
             <span className="settings-row-lead">
@@ -568,9 +586,10 @@ function FoundModels({
 /** The address's state under the add form's fields: confirmed once on first use, and where that happens. */
 function addressNote(destination: Destination, abilities: ProviderAbilities, localTarget: string | undefined, computer: string): ReactNode {
   if (destination !== 'unconfirmed') return null
-  if (abilities.confirm) return localTarget ? PROVIDER_COPY.localAddressAtSave(localTarget) : PROVIDER_COPY.firstUse
+  // The save button says 「用 Touch ID 保存」, and a local address has its own line.
+  if (abilities.confirm) return null
   if (abilities.offline) return offlineText(abilities)
-  return `这个地址要在 ${computer} 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed(computer)}`
+  return PROVIDER_COPY.savedUnconfirmed(computer)
 }
 
 /**
@@ -744,9 +763,7 @@ export function ProviderAddForm({
       if (listed.length === 0 || listed.length > TAKE_ALL_UP_TO) {
         if (listed.length === 0) manual.current?.focus()
         setGuide(
-          listed.length === 0
-            ? '服务没有列出模型。手动输入一个模型 ID，再保存。'
-            : `找到 ${listed.length} 个模型。打开要用的模型，第一个打开的是默认模型，然后再保存。`,
+          listed.length === 0 ? '服务没有列出模型。手动输入一个模型 ID，再保存。' : `找到 ${listed.length} 个模型，第一个打开的是默认`,
         )
         return
       }
@@ -911,7 +928,10 @@ export function ProviderAddForm({
             }}
           />
         ) : (
-          <p className="settings-caption">{keyElsewhere}</p>
+          <p className="settings-caption">
+            <Icon icon={Lock} size={14} />
+            <span>{keyElsewhere}</span>
+          </p>
         )}
       </div>
       <CheckRow busy={probe.busy !== null} disabled={busy} result={probe.check} onCheck={needsAddress(checkAndTake)} />
@@ -992,10 +1012,7 @@ function ThinkingPicker({
       size="xs"
       value={current}
       valueText={current === NO_THINKING ? '思考：默认' : `思考：${thinkingSetText(levels!)}`}
-      options={[
-        { value: NO_THINKING, label: '默认', description: '不发送思考设置，用模型自己的默认值' },
-        ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) })),
-      ]}
+      options={[{ value: NO_THINKING, label: '默认' }, ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) }))]}
       header={{ title: '这个模型接受的思考' }}
       width={300}
       disabled={disabled}
@@ -1130,7 +1147,7 @@ function ProviderPage({
   const confirmLabel = unconfirmed && abilities.confirm ? '用 Touch ID 保存' : '保存'
   const scope = origin ? shownAddress(origin) : undefined
   const keyCaption = keyEditable
-    ? PROVIDER_COPY.keyHeld
+    ? undefined
     : abilities.offline
       ? PROVIDER_COPY.keyOffline(provider.id)
       : requiresKey || provider.hasKey
@@ -1168,11 +1185,13 @@ function ProviderPage({
               </Button>
             ) : undefined
           }>
-          {abilities.confirm
-            ? '确认后 Latch 才会向它发送请求；localhost 或局域网地址同时允许 Latch 访问。'
-            : abilities.offline
-              ? offlineText(abilities, provider.id)
-              : PROVIDER_COPY.confirmElsewhere(provider.name, computer)}
+          {abilities.confirm ? (
+            <Hint label={PROVIDER_COPY.unconfirmedNote.label}>{PROVIDER_COPY.unconfirmedNote.detail}</Hint>
+          ) : abilities.offline ? (
+            offlineText(abilities, provider.id)
+          ) : (
+            PROVIDER_COPY.confirmElsewhere(provider.name, computer)
+          )}
         </InlineNotice>
       )}
       {!unconfirmed && keyless && (
@@ -1191,7 +1210,7 @@ function ProviderPage({
               </Button>
             ) : undefined
           }>
-          {keyEditable ? PROVIDER_COPY.missingKeyHere : PROVIDER_COPY.missingKeyElsewhere(provider.name, computer)}
+          {keyEditable ? undefined : PROVIDER_COPY.missingKeyElsewhere(provider.name, computer)}
         </InlineNotice>
       )}
       <InlineConfirm active={saving} rank={1} />
@@ -1200,15 +1219,6 @@ function ProviderPage({
         <SwitchRow
           className="settings-row"
           title="启用"
-          description={
-            !enabled
-              ? PROVIDER_COPY.disabled
-              : unconfirmed
-                ? PROVIDER_COPY.enabledUnconfirmed
-                : keyless
-                  ? PROVIDER_COPY.enabledMissingKey
-                  : PROVIDER_COPY.enabled
-          }
           checked={enabled}
           disabled={saving}
           onCheckedChange={next => {
@@ -1306,7 +1316,11 @@ function ProviderPage({
           {checkFailure.text}
         </InlineNotice>
       )}
-      <SettingsGroup title="密钥" caption={keyCaption} captionIcon={keyCaption === undefined ? null : keyEditable ? 'info' : 'lock'}>
+      <SettingsGroup
+        title="密钥"
+        caption={keyCaption}
+        captionIcon="lock"
+        note={keyEditable ? <NoteLine icon={Lock} brief={PROVIDER_COPY.keyHeld} /> : undefined}>
         <SettingsRow
           leading={<IconTile icon={provider.hasKey ? KeyRound : LockKeyhole} />}
           title={provider.hasKey ? '已保存（不回显）' : '未设置'}
@@ -1357,7 +1371,6 @@ function ProviderPage({
         {provider.hasKey && (
           <SettingsRow
             title="移除密钥"
-            description="移除后，需要密钥的服务在重新设置前不能使用"
             trailing={
               <Button
                 variant="danger"
@@ -1372,7 +1385,6 @@ function ProviderPage({
         )}
         <SettingsRow
           title="删除服务"
-          description="删除这个服务和它保存的密钥；使用它的会话要换用其他模型"
           trailing={
             <Button
               variant="danger"
@@ -1405,12 +1417,7 @@ function ProviderPage({
         placeholder="https://api.example.com/v1"
         warning={value => {
           const drops = provider.hasKey && keyScopeOf(value, provider.keyPath !== undefined) !== origin
-          const first = abilities.confirm && destinationOf(value, data) === 'unconfirmed'
-          const lines = [
-            ...(drops ? ['密钥只发往原来的地址：保存后会移除已保存的密钥。'] : []),
-            ...(first ? ['这个地址第一次使用：保存时要用 Touch ID 确认。'] : []),
-          ]
-          return lines.length ? lines.join('') : undefined
+          return drops ? '密钥只发往原来的地址：保存后会移除已保存的密钥。' : undefined
         }}
         onSubmit={value =>
           update({ baseURL: value, ...(abilities.confirm && destinationOf(value, data) === 'unconfirmed' ? { confirmOrigin: true } : {}) })
@@ -1423,11 +1430,10 @@ function ProviderPage({
         open={dialog === 'key'}
         title={provider.hasKey ? '替换密钥' : '设置密钥'}
         subtitle={scope ? `密钥只发往 ${scope}` : undefined}
-        note={unconfirmed && abilities.confirm ? '保存时要用 Touch ID 确认这个地址' : undefined}
         label={SERVICE_FORM.key}
         type="password"
         placeholder="输入密钥"
-        hint={PROVIDER_COPY.keyHeld}
+        hint={PROVIDER_COPY.keyHeld.label}
         confirmLabel={confirmLabel}
         onSubmit={value => update({ apiKey: value, ...(unconfirmed && abilities.confirm ? { confirmOrigin: true } : {}) })}
         onClose={() => {
@@ -1674,7 +1680,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
           </Button>
         }>
         {data.providers.length === 0 ? (
-          <SettingsRow title="还没有模型服务" description="添加一个后，Latch 内置就能用它" />
+          <SettingsRow title="还没有模型服务" />
         ) : (
           data.providers.map(provider => (
             <ObjectRow
@@ -1777,7 +1783,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                   {provider.kind === 'demo' && <DemoMark compact />}
                 </span>
               }
-              description={provider.kind === 'demo' ? '演示模型，回复由本地脚本生成' : '由插件提供'}
+              description={provider.kind === 'demo' ? '本地脚本回复' : '由插件提供'}
             />
           ))}
         </SettingsGroup>
@@ -1851,11 +1857,10 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
         open={keyFor !== null}
         title={keyFor?.hasKey ? '更新密钥' : '设置密钥'}
         subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? `密钥只发往 ${shownAddress(keyScopeOf(keyFor.baseURL)!)}` : undefined}
-        note={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '保存时要用 Touch ID 确认这个地址' : undefined}
         label={SERVICE_FORM.key}
         type="password"
         placeholder="输入密钥"
-        hint={PROVIDER_COPY.keyHeld}
+        hint={PROVIDER_COPY.keyHeld.label}
         confirmLabel={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '用 Touch ID 保存' : '保存'}
         onSubmit={async value => {
           if (!keyFor) return ''

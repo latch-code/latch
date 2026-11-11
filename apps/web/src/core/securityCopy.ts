@@ -74,15 +74,17 @@ export const SETUP_COPY = {
   addAgentElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › Harness`,
   addProviderElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › 模型`,
   keyElsewhere: (computer = 'Mac') => `密钥只能在 ${computer} 上的 Latch 里填写：设置 › 模型。`,
-  keyStorage: '密钥只保存在这台 Mac 上，不会发给浏览器。',
   addProjectElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加项目`,
   confirmAddressElsewhere: (computer = 'Mac') => `这个地址要先在 ${computer} 上确认一次，才能在这里使用：设置 › 模型。`,
   saveAgent: '保存后就能用它开始会话；每次启动都留有记录。',
   agentFullAccess: '它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。',
   /** 设置 › Harness, a definition's page: what a session started with it is. */
-  externalNote: '用它开始的会话是外部 Harness 的会话：它自己决定执行范围，Latch 不隔离它。',
+  externalNote: { label: '外部 Harness，Latch 不隔离', detail: '用它开始的会话由它自己决定执行范围。' } satisfies Brief,
   /** 设置 › 项目, a project's folders for each Harness. */
-  externalFolders: '外部 Harness 的文件夹范围由它自己执行，不是隔离。',
+  externalFolders: {
+    label: '由各 Harness 自己执行，不隔离',
+    detail: '外部 Harness 的文件夹范围由它自己执行，Latch 不隔离它。',
+  } satisfies Brief,
 } as const
 
 /**
@@ -295,20 +297,19 @@ export function waitText(seconds: number): string {
 /** The enrollment page. */
 export const ENROLLMENT_COPY = {
   title: '连接到 Latch',
-  local: '第一次连接时，在 Mac 上允许一次。之后打开即可继续工作。',
+  local: '在 Mac 上允许一次，之后直接打开',
   /** The desktop app on its first launch, one sentence and one button; nothing else is asked until another device connects. */
   desktopTitle: 'Latch',
   desktopFirst: '第一次在这台 Mac 上打开 Latch。',
-  desktopAgain: '在这台 Mac 上用 Touch ID 确认后继续。',
+  desktopAgain: '用 Touch ID 继续',
   desktopSubmit: '继续',
   /** The intro while local confirmation is unavailable: the offline code is the way in. */
-  offline: '这台设备会生成自己的密钥，再用离线连接码完成连接。',
+  offline: '用离线连接码连接',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
   unavailable: (reason: string) =>
     `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 pnpm latch device enroll --offline，把生成的离线连接码填在下面。`,
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
   unavailableRemote: (reason: string) => `Mac 现在不能确认：${reason || '未知原因'}。要等它能确认后才能连接。`,
-  invited: '点下面的按钮，再到 Mac 上允许。',
   invitationRequired: '这台设备还没连接到 Latch。用运行 Latch 的人发来的链接打开这一页，就能连接。',
   /** A browser on loopback is not this computer either: the desktop app makes its link, or the command line where there is none. */
   browserNotConnected: '这个浏览器还没连接到 Latch。在 Mac 上的 Latch 里点「在浏览器中打开」，或在终端运行：',
@@ -324,7 +325,7 @@ export const ENROLLMENT_COPY = {
   waiting: '在 Mac 上确认',
   cancel: '取消',
   retry: '重试',
-  compare: '用 Touch ID 或登录密码允许这台设备。',
+  compare: '用 Touch ID 或登录密码允许',
   completing: '正在完成连接…',
   connecting: '正在连接…',
   confirmFailed: '已经连上，但还没能读取 Mac 上的状态。',
@@ -335,7 +336,7 @@ export const ENROLLMENT_COPY = {
   unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Mac 上的 Latch。',
   mismatch: '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
   legacyTitle: '这台设备要在 Mac 上重新确认',
-  legacyBody: 'Latch 更新了连接方式。点下面的按钮，再到 Mac 上允许。',
+  legacyBody: '连接方式已更新',
   legacySubmit: '重新确认',
   oldHost: '这台 Mac 上的 Latch 版本太旧，请重新启动它。',
 } as const
@@ -391,7 +392,7 @@ export const DEVICES_COPY = {
   /** The Latch app on this Mac is not in its own list, so a fresh one has none. */
   empty: '还没有别的设备连接这台 Mac。',
   /** Any other device, in place of 「连接新设备」: where new devices are connected. */
-  pairElsewhere: (computer = 'Mac') => `新设备在 ${computer} 上的 Latch 里连接：设置 › 设备。`,
+  pairElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里连接`,
   /** 「连接新设备」: only the ways that work in this build. */
   connectTitle: '连接新设备',
   thisBrowser: '这台 Mac 的浏览器',
@@ -399,11 +400,10 @@ export const DEVICES_COPY = {
   thisBrowserNote: '默认看不到项目文件',
   /** Only while the Host reports an HTTPS entry; the link goes to the clipboard through the Latch app, never to the page. */
   otherComputer: '另一台电脑',
-  otherComputerNote: '复制一条链接，在那台电脑的浏览器里打开。页面上不显示这条链接。',
+  otherComputerNote: '链接只复制到剪贴板',
   copyLink: '复制链接',
   /** After 复制链接: the page holds nothing to copy again, so a second press makes a new link. */
-  linkCopied:
-    '链接已复制到剪贴板：10 分钟内有效，只能用一次。在另一台电脑的浏览器里打开它，然后回到这台 Mac 上确认。再点一次会换一条新的。',
+  linkCopied: '已复制：10 分钟内有效，只能用一次',
   phone: '连接手机',
   phoneNote: 'iPhone App 还没有可安装的版本',
   /** The QR sheet stays reachable for an iPhone app built from source. */
@@ -415,19 +415,24 @@ export const DEVICES_COPY = {
   lastSeen: '上次在线',
   state: '状态',
   /** `native.input` and `status` a person can act on; a healthy device says nothing about them. */
-  verificationRequired: '30 天未验证，现在只能查看；在手机上验证后恢复',
+  verificationRequired: '只能查看，去手机上验证',
   review: '只能查看，等你恢复',
-  reviewNote: '连接它的设备已被移除。恢复后可以继续运行和允许操作。',
+  reviewNote: { label: '连接它的设备已移除', detail: '恢复后可以继续运行和允许操作。' } satisfies Brief,
   restore: '恢复使用',
   legacy: '要在这台设备上重新确认',
   manage: '可以管理这台 Mac',
   /** On another device the switch names the computer it manages. */
   manageOf: (local: boolean, computer = 'Mac') => (local ? '可以管理这台 Mac' : `可以管理 ${computer}`),
-  manageNote: '修改模型、Harness、插件、项目和设备。密钥和连接新地址仍只能在 Mac 上操作。',
+  manageNote: {
+    label: '能改设置，密钥除外',
+    detail: '修改模型、Harness、插件、项目和设备。密钥和连接新地址仍只能在 Mac 上操作。',
+  } satisfies Brief,
   /** `dataScope: 'all'`: more than files (private sessions too), so the line does not promise less than it opens. */
   files: '可以看项目文件',
-  filesNote:
-    '能看项目里的文件和每个会话的改动，能在消息里 @ 文件；能开始会话的设备还能撤销、重做或丢弃某一轮的改动。也会看到含私有内容的会话。',
+  filesNote: {
+    label: '也能看含私有内容的会话',
+    detail: '能看项目里的文件和每个会话的改动，能在消息里 @ 文件；能开始会话的设备还能撤销、重做或丢弃某一轮的改动。',
+  } satisfies Brief,
   /** A switch only the Latch app on that computer turns on. */
   raiseOnMac: (computer = 'Mac') => `在 ${computer} 上开启`,
   remove: '移除',
@@ -441,12 +446,12 @@ export const DEVICES_COPY = {
   removeCascade: '由它连接的设备会降为只能查看，等你恢复。',
   removed: (name: string) => `已移除「${name}」`,
   about: '关于连接',
-  /** 「关于连接」, one fact each: this Mac's browser, another computer, the phone. */
-  aboutBrowser: '这台 Mac 的浏览器连上后默认看不到项目文件，可以在它的设备页里打开「可以看项目文件」。',
-  aboutOtherComputer: '另一台电脑：链接 10 分钟内有效，只能用一次；连接时要在这台 Mac 上确认。',
-  /** No HTTPS entry: the installed app cannot open one yet. */
-  aboutOtherComputerMissing: '另一台电脑：尚未实现。要先有「让其他电脑连接这台 Mac」，今天的安装包打不开这个入口。',
-  aboutPhone: '同一个 Wi‑Fi 下，手机直接连接这台 Mac，全程端到端加密。',
+  /** 「关于连接」: what the rows above do not say. No HTTPS entry: the installed app cannot open one yet. */
+  aboutOtherComputerMissing: {
+    label: '另一台电脑：尚未实现',
+    detail: '要先有「让其他电脑连接这台 Mac」，今天的安装包打不开这个入口。',
+  } satisfies Brief,
+  aboutPhone: { label: '手机在同一 Wi‑Fi 下连接，端到端加密' } satisfies Brief,
   savedRelay: '已保存的中继',
   savedDirectory: '已保存的地址目录',
   browser: '在浏览器中打开',
@@ -458,7 +463,7 @@ export const NATIVE_LINK_COPY = {
   title: '连接手机',
   enable: '连接手机',
   scan: '用 iPhone 上的 Latch 扫码',
-  sameWifi: 'iPhone 需要和这台 Mac 连接同一个 Wi‑Fi。',
+  sameWifi: '和这台 Mac 连同一个 Wi‑Fi',
   /** The known cost of trusting a device once, said where that trust is given. */
   drivesAgents: '连接后，拿着这台解锁手机的人可以操作这台 Mac 上的 Agent，直到你移除它。',
   qrAlt: '原生客户端配对二维码',
@@ -479,7 +484,6 @@ export const NATIVE_LINK_COPY = {
   yes: '是的，完成',
   no: '没有，移除',
   removedBefore: '已移除「',
-  removed: '它已断开，之后要重新扫码才能连接。',
   removeFailed: '没能移除。请在设备列表里移除它。',
   done: '好',
   retry: '重试',
@@ -599,14 +603,17 @@ export const PLUGIN_REACH_COPY = {
   title: '代码在哪里运行',
   page: {
     title: '界面面板',
+    label: '每台能看会话的设备，不隔离',
     body: '代码会发到每台能查看会话的设备，在那台设备的 Latch 页面里运行：这台 Mac 上的 Latch，以及手机和其他电脑的浏览器。那个页面能做的事它都能做，没有隔离。iPhone App 不运行它。',
   },
   host: {
     title: '工具和后台代码',
+    label: '在这台 Mac 上运行，不隔离',
     body: '在这台 Mac 上运行，权限和 Latch 相同：可以读写你的文件、运行程序、访问网络，也可以注册界面面板，发到能查看会话的设备。',
   },
   text: {
     title: '技能和静态面板',
+    label: '只是文字，不运行代码',
     body: '只是文字，不运行代码。技能交给这台 Mac 上的 Latch 内置；静态面板每台能查看会话的设备都能看到。',
   },
   unread: {
@@ -622,41 +629,34 @@ export const PLUGIN_REACH_COPY = {
  * once (Touch ID or the login password), together with its key. Every restricted control says why and where to go.
  */
 export const PROVIDER_COPY = {
-  keyHeld: '密钥只保存在这台 Mac 上，不会发给浏览器或手机。',
+  keyHeld: { label: '只存在这台 Mac 上', detail: '密钥不会发给浏览器或手机。' } satisfies Brief,
   /** Other devices: the key field becomes this line. */
-  keyElsewhere: (computer = 'Mac') => `密钥只能在 ${computer} 上的 Latch 里填写：设置 › 模型。`,
+  keyElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里填写`,
   /** Without Touch ID or a password to confirm with, for an address not confirmed yet: the key goes in with the address. */
   keyOffline: (id: string) => `地址确认之前不能在这里填写密钥：退出 Latch 后运行 pnpm latch provider set-key ${id}，密钥与地址一起确认。`,
   /** The add form on a device that cannot type keys, for a service that needs one. */
-  keyAfterSave: (computer = 'Mac') => `这个服务需要密钥：保存后，在 ${computer} 上的 Latch 里填写密钥，它才能使用。`,
+  keyAfterSave: (computer = 'Mac') => `保存后在 ${computer} 上填写密钥`,
   /** A saved service at a known address without a key: it is not offered. */
-  missingKey: '还没有填写密钥，Latch 不会使用它。',
+  missingKey: '还没有密钥，Latch 不会使用它',
   missingKeyBadge: '缺密钥',
-  missingKeyRow: '还没有填写密钥',
-  missingKeyHere: '填写密钥后才能使用这个服务。',
   missingKeyElsewhere: (name: string, computer = 'Mac') => `在 ${computer} 上的 Latch 里填写密钥：设置 › 模型 › ${name}。`,
   /** The check is a model listing: a service without one is not a failed connection. */
-  listingUnavailable: '无法自动检测：这个服务不提供模型列表',
+  listingUnavailable: '这个服务不提供模型列表',
   /** 已连接 comes from a listing, and some services list their models without looking at the key. */
   connectedReason: '服务刚刚回答了模型列表请求。有些服务列出模型不需要密钥，所以这不证明密钥能用于对话。',
   checkNeedsAddress: '确认地址后才能检测',
   checkNeedsKey: '填写密钥后才能检测',
-  enabled: 'Latch 内置可以使用它的模型',
-  enabledUnconfirmed: '确认地址后 Latch 内置才能使用它的模型',
-  enabledMissingKey: '填写密钥后 Latch 内置才能使用它的模型',
-  disabled: '停用后 Latch 内置不能使用它的模型',
-  presetKey: '已知服务的地址：密钥直接保存，不需要确认。',
-  /** An address not confirmed yet, on the desktop that can confirm it. */
-  firstUse: '第一次使用这个地址：保存时用 Touch ID 确认一次，之后不再询问。',
-  /** The probe met a local or private address: not an error, it is confirmed with the save. */
+  /** The probe met a local or private address: not an error, it is confirmed with the save. The sentence is the probe's. */
   localAddress: (target: string) => `这是这台 Mac 或局域网上的地址。确认后 Latch 才会访问 ${target}。`,
-  localAddressAtSave: (target: string) => `这是这台 Mac 或局域网上的地址，保存时确认一次，之后 Latch 才会访问 ${target}。`,
+  localNote: (target: string): Brief => ({ label: '这台 Mac 或局域网上的地址', detail: `确认后 Latch 才会访问 ${target}。` }),
+  localNoteAtSave: (target: string): Brief => ({ label: '这台 Mac 或局域网地址，保存时确认', detail: `确认后 Latch 才会访问 ${target}。` }),
   allowAndFetch: '用 Touch ID 允许并获取模型',
   saveWithTouchID: '用 Touch ID 保存',
   confirmAddress: '用 Touch ID 确认地址',
   waitingTouchID: '等待 Touch ID…',
   save: '保存',
-  unconfirmed: '这个服务的地址还没有确认，Latch 不会使用它。',
+  unconfirmed: '地址还没确认，Latch 不会使用它',
+  unconfirmedNote: { label: '确认后才会发出请求', detail: 'localhost 或局域网地址确认后，Latch 同时可以访问它。' } satisfies Brief,
   unconfirmedBadge: '未确认',
   unconfirmedRow: (computer = 'Mac') => `需要在 ${computer} 上确认这个地址`,
   /** Other devices: where the address is confirmed. */
@@ -667,12 +667,15 @@ export const PROVIDER_COPY = {
   confirmOfflineNew: '这台电脑不能用 Touch ID 或登录密码确认。先不填密钥保存，再退出 Latch，运行 pnpm latch provider confirm <服务 ID>。',
   /** A Mac whose confirmation component needs fixing (rebuilt, signature lost): the given reason, with its fix. */
   presenceBroken: (message: string) => `这台 Mac 暂时不能确认：${message}`,
-  savedUnconfirmed: (computer = 'Mac') => `保存后它会显示在列表里，等你在 ${computer} 上确认地址。`,
+  savedUnconfirmed: (computer = 'Mac') => `保存后在 ${computer} 上确认这个地址`,
   /** A confirmed address whose allowance was removed. */
   allowAgain: (target: string) => `用 Touch ID 允许访问 ${target}`,
   allowElsewhere: (computer = 'Mac') => `需要在 ${computer} 上的 Latch 里允许这个地址。`,
   confirmedAddressesTitle: '已确认的地址',
-  confirmedAddressesCaption: '自定义和这台 Mac 上的模型服务，地址确认一次后才能使用。移除后，用它的服务随即停止。',
+  confirmedAddressesCaption: {
+    label: '确认一次后才能使用',
+    detail: '自定义和这台 Mac 上的模型服务，地址确认一次后才能使用。移除后，用它的服务随即停止。',
+  } satisfies Brief,
   addressUse: (services: readonly string[], allowance?: string) =>
     [
       services.length ? `${services.map(escapeSecurityText).join('、')} 在用` : '没有服务在用',
@@ -682,6 +685,17 @@ export const PROVIDER_COPY = {
     `${services.length ? `${services.map(name => `「${escapeSecurityText(name)}」`).join('、')}随即停止发送请求，正在运行的会话下一次请求会失败。` : ''}要再用这个地址，保存模型服务时重新确认。`,
   allowanceRow: 'Latch 可以连接这个地址',
   removeAllowance: '依赖这个地址的连接随即断开。要再用它，需要在这台 Mac 上重新确认。',
+} as const
+
+/** 设置 › 关于 and 设置 › Harness: who the code runs as. `on` is 「这台 Mac 上」 or 「 <name> 上」. */
+export const RUNS_AS_YOU_COPY = {
+  about: (on: string): Brief => ({ label: 'Harness 和插件以你的权限运行', detail: `它们在${on}运行，Latch 不隔离它们。` }),
+  engines: (on: string): Brief => ({
+    label: 'Harness 以你的权限运行',
+    detail: `Harness 是${on}已安装的程序。Latch 不会替你安装它们，也不隔离它们。`,
+  }),
+  /** Beside the 开发版 mark, which says it only on hover: what a development run means for whoever reads it. */
+  devMode: { label: '其他程序可以修改 Latch 的代码' } satisfies Brief,
 } as const
 
 /** Why a session no longer accepts input: one line, with 「在新会话中继续」 beside it. */

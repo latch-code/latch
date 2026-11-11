@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { AppWindow, Laptop, Link, QrCode, Smartphone } from 'lucide-react'
+import { AppWindow, Laptop, Link, Lock, QrCode, Smartphone } from 'lucide-react'
 import type { NativeLinkInfo } from '@latch/protocol'
 import { Button, Icon, InlineNotice } from '@latch/ui'
 import { api, inlineError } from '../../core/api.ts'
 import { describeFailure, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
-import { IconTile, SettingsGroup, SettingsRow } from '../common.tsx'
+import { IconTile, NoteLine, SettingsGroup, SettingsRow } from '../common.tsx'
 import { WaitingDevices } from './WaitingDevices.tsx'
 
 /** The note after 在浏览器中打开 says what happens next, so it goes once that has had time to happen. */
@@ -120,7 +120,14 @@ export function ConnectNew({
   if (!local)
     return (
       <SettingsGroup title={COPY.connectTitle}>
-        <SettingsRow title={<span className="device-pair-elsewhere">{COPY.pairElsewhere(computer)}</span>} />
+        <SettingsRow
+          title={
+            <span className="device-pair-elsewhere">
+              <Icon icon={Lock} size={12} />
+              {COPY.pairElsewhere(computer)}
+            </span>
+          }
+        />
       </SettingsGroup>
     )
   return (
@@ -257,17 +264,15 @@ function SavedRoutes() {
 }
 
 /**
- * 关于连接, one fact each: this Mac's browser, another computer (or why it cannot connect yet), the phone. A relay or
- * directory saved by an earlier build is listed under them on the Latch app on this Mac, to be removed.
+ * 关于连接, what the rows above do not say: that another computer cannot connect yet (and why, behind ⓘ) and that the
+ * phone connects directly, end to end encrypted. A relay or directory saved by an earlier build is listed under them on
+ * the Latch app on this Mac, to be removed.
  */
 export function AboutConnection({ entry, canManageRoutes }: { entry: boolean; canManageRoutes: boolean }) {
   return (
     <SettingsGroup title={COPY.about} bare>
-      <ul className="device-about">
-        <li>{COPY.aboutBrowser}</li>
-        <li>{entry ? COPY.aboutOtherComputer : COPY.aboutOtherComputerMissing}</li>
-        <li>{COPY.aboutPhone}</li>
-      </ul>
+      {!entry && <NoteLine brief={COPY.aboutOtherComputerMissing} icon={Laptop} />}
+      <NoteLine brief={COPY.aboutPhone} icon={Lock} />
       {canManageRoutes && <SavedRoutes />}
     </SettingsGroup>
   )

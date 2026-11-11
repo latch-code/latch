@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Eye, Lock } from 'lucide-react'
 import { isAcceptableDeviceName, type Device } from '@latch/protocol'
-import { Button, Icon, InlineNotice, SwitchRow } from '@latch/ui'
+import { Button, Hint, Icon, InlineNotice, SwitchRow } from '@latch/ui'
 import { InlineConfirm } from '../../components/InlineConfirm.tsx'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { api, errorMessage, inlineError } from '../../core/api.ts'
@@ -10,7 +11,7 @@ import type { DeviceAccess } from '../../core/permissions.ts'
 import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 import { deviceIcon } from './deviceIcon.ts'
-import { deviceSwitches, filesChange, grantedText, manageChange, removeBody, seenText, type ScopeChange } from './deviceRows.ts'
+import { deviceSwitches, filesChange, grantedText, manageChange, seenText, type ScopeChange } from './deviceRows.ts'
 
 export function SeenLine({ device, self }: { device: Device; self: boolean }) {
   return (
@@ -115,7 +116,6 @@ function useScopeChange(device: Device, onChanged: () => void) {
  */
 export function DevicePage({
   device,
-  devices,
   self,
   access,
   computer,
@@ -125,7 +125,6 @@ export function DevicePage({
   onChanged,
 }: {
   device: Device
-  devices: readonly Device[]
   self: boolean
   access: DeviceAccess
   computer: string
@@ -180,7 +179,7 @@ export function DevicePage({
         {statusText && (
           <SettingsRow
             title={COPY.state}
-            description={device.status === 'review' ? COPY.reviewNote : undefined}
+            description={device.status === 'review' ? <Hint label={COPY.reviewNote.label}>{COPY.reviewNote.detail}</Hint> : undefined}
             trailing={
               restore ? (
                 <Button
@@ -212,7 +211,11 @@ export function DevicePage({
             <SwitchRow
               className="settings-row"
               title={COPY.manageOf(access.local, computer)}
-              description={COPY.manageNote}
+              description={
+                <Hint lead={<Icon icon={Lock} size={12} />} label={COPY.manageNote.label}>
+                  {COPY.manageNote.detail}
+                </Hint>
+              }
               checked={admin}
               locked={admin ? undefined : locked}
               disabled={scope.pending}
@@ -225,7 +228,11 @@ export function DevicePage({
             <SwitchRow
               className="settings-row"
               title={COPY.files}
-              description={COPY.filesNote}
+              description={
+                <Hint lead={<Icon icon={Eye} size={12} />} label={COPY.filesNote.label}>
+                  {COPY.filesNote.detail}
+                </Hint>
+              }
               checked={files}
               locked={files ? undefined : locked}
               disabled={scope.pending}
@@ -242,7 +249,6 @@ export function DevicePage({
         <SettingsGroup>
           <SettingsRow
             title={COPY.remove}
-            description={removeBody(device, self, devices)}
             trailing={
               <Button variant="danger" onClick={onAskRemove}>
                 {COPY.remove}…

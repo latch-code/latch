@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AppSnapshot, PromptTemplate } from '@latch/protocol'
-import { Button, InlineNotice, TextAreaField, TextField } from '@latch/ui'
+import { Button, InlineNotice, Kbd, TextAreaField, TextField } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
@@ -34,7 +34,14 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
         : `Agent：${snapshot.catalog?.harnesses.find(item => item.id === scope.id)?.capabilities.display.label ?? scope.id}`
   }
   return (
-    <SettingsGroup title="提示模板" caption="在输入框键入 / 选择模板；插入草稿后可编辑，再由你发送。">
+    <SettingsGroup
+      title="提示模板"
+      caption={
+        <>
+          在输入框键入 <Kbd>/</Kbd> 选择，插入后可编辑
+        </>
+      }
+      captionIcon={null}>
       {templates.map(template => (
         <SettingsRow
           key={template.id}

@@ -132,12 +132,13 @@ describe('desktop lifecycle copy', () => {
   it('says whether the Mac is kept awake now and why', () => {
     const awake = (patch: Partial<ShellLifecycle['keepAwake']>) =>
       keepAwakeLine({ enabled: true, active: false, cause: null, power: 'ac', batteryLimitReached: false, ...patch })
-    expect(awake({ active: true, cause: 'running' })).toBe('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。')
-    expect(awake({ active: true, cause: 'waiting' })).toBe('保持唤醒中：有审批在等你处理。显示器仍按系统设置熄灭。')
-    expect(awake({ power: 'battery', batteryLimitReached: true })).toBe('正在使用电池：已保持唤醒 1 小时，之后这台 Mac 按系统设置休眠。')
-    expect(awake({ power: 'battery' })).toBe('正在使用电池：只在会话运行时保持唤醒，每次最长 1 小时。')
-    expect(awake({ enabled: false })).toBe('已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。')
-    expect(awake({})).toBe('没有运行中的会话或等待的审批，这台 Mac 按系统设置休眠。')
+    expect(awake({ active: true, cause: 'running' })).toBe('保持唤醒中：有会话在运行')
+    expect(awake({ active: true, cause: 'waiting' })).toBe('保持唤醒中：有审批在等你')
+    expect(awake({ power: 'battery', batteryLimitReached: true })).toBe('用电池时已到 1 小时上限')
+    expect(awake({ power: 'battery' })).toBe('用电池时每次最长 1 小时')
+    // Off, or on with nothing to keep awake for: the switch says it, so the row has no line.
+    expect(awake({ enabled: false })).toBe('')
+    expect(awake({})).toBe('')
   })
 
   it('reports restarts and a crash loop, and offers a start only where it can work', () => {

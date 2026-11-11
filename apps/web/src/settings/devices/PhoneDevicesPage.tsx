@@ -169,7 +169,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
                     <DevicePage
                       key={selected.id}
                       device={selected}
-                      devices={devices ?? []}
                       self={selected.id === snapshot.device.id}
                       access={access}
                       computer={computer}

@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react'
 import { FlaskConical } from 'lucide-react'
 import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentSettings } from '@latch/protocol'
-import { Button, InlineNotice, CopyButton } from '@latch/ui'
+import { Button, Hint, InlineNotice, CopyButton } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, inlineError, isUncertain } from '../core/api.ts'
 import { dateTime } from '../format.ts'
-import { SettingsGroup, SettingsRow } from './common.tsx'
+import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 
 export function probeResultTitle(result: AgentProbeResult | undefined): string {
   if (!result) return '尚未测试启动'
@@ -86,8 +86,9 @@ export function AgentProbe({
   return (
     <SettingsGroup
       title="测试启动"
-      caption={disabledReason ?? '会运行 Harness 程序；只检查启动握手，不发送提示词。'}
-      captionIcon={disabledReason ? 'lock' : 'info'}>
+      caption={disabledReason}
+      captionIcon="lock"
+      note={disabledReason ? undefined : <NoteLine brief={{ label: '不发送提示词', detail: '会运行 Harness 程序，只检查启动握手。' }} />}>
       <SettingsRow
         title={busy ? '正在测试启动' : probeResultTitle(result)}
         description={probeRowDescription(result, busy)}
@@ -122,7 +123,9 @@ export function AgentProbe({
             </p>
             {result.program?.unchecked && (
               <InlineNotice tone="warn" title="这个组合 Latch 没有核对过">
-                {`仍可以开始会话；会话出现异常时，可能与适配器和 ${result.program.name} 的版本不配套有关。`}
+                <Hint label="仍可以开始会话">
+                  <VisibleText text={`会话出现异常时，可能与适配器和 ${result.program.name} 的版本不配套有关。`} />
+                </Hint>
               </InlineNotice>
             )}
             {result.status === 'ready' && <p className="agent-probe-meta">{supported ? `声明支持：${supported}` : '没有声明附加能力。'}</p>}

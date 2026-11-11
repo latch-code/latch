@@ -191,7 +191,7 @@ describe('the add-service form', () => {
 
   it('names the computer where another device types the key, and draws no key field there', () => {
     const remote = form('deepseek', false, { keys: false, confirm: false, offline: false }, 'Studio')
-    expect(remote).toContain('保存后，在 Studio 上的 Latch 里填写密钥')
+    expect(remote).toContain('保存后在 Studio 上填写密钥')
     expect(remote).not.toContain('type="password"')
     expect(labels(remote)).toEqual(['地址'])
   })

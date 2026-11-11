@@ -11,16 +11,13 @@ export function loginItemNote(view: ShellLifecycle['loginItem']): string {
   return ''
 }
 
-/** Whether the Mac is being kept awake now, and why or why not. */
+/** Whether the Mac is being kept awake now and why, in a few words; empty when the switch already says it all. */
 export function keepAwakeLine(view: ShellLifecycle['keepAwake']): string {
-  if (!view.enabled) return '已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。'
-  if (view.active)
-    return view.cause === 'waiting'
-      ? '保持唤醒中：有审批在等你处理。显示器仍按系统设置熄灭。'
-      : '保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。'
-  if (view.batteryLimitReached) return '正在使用电池：已保持唤醒 1 小时，之后这台 Mac 按系统设置休眠。'
-  if (view.power === 'battery') return '正在使用电池：只在会话运行时保持唤醒，每次最长 1 小时。'
-  return '没有运行中的会话或等待的审批，这台 Mac 按系统设置休眠。'
+  if (!view.enabled) return ''
+  if (view.active) return view.cause === 'waiting' ? '保持唤醒中：有审批在等你' : '保持唤醒中：有会话在运行'
+  if (view.batteryLimitReached) return '用电池时已到 1 小时上限'
+  if (view.power === 'battery') return '用电池时每次最长 1 小时'
+  return ''
 }
 
 /** The Host as main sees it, for Settings and for the connection banner. */

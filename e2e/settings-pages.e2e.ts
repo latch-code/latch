@@ -192,7 +192,7 @@ describe('settings pages', () => {
 
         await openSection(settings, '项目')
         await settings.getByRole('heading', { name: '项目', exact: true }).waitFor()
-        await settings.getByText('每个会话保留最近 20 轮', { exact: false }).waitFor()
+        await settings.getByText('快照保留 20 轮，最多 2 GB', { exact: true }).waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('projects')
 
@@ -203,16 +203,18 @@ describe('settings pages', () => {
         }
 
         await openSection(settings, '关于')
-        // A browser is another device: the sentence names the computer, never 「这台」.
-        await settings.getByText(/^Harness 和插件以你的权限在 .+ 上运行。$/).waitFor()
+        // A browser is another device: the detail behind ⓘ names the computer, never 「这台」.
+        const runsAsYou = settings.locator('.ui-hint', { hasText: 'Harness 和插件以你的权限运行' })
+        await runsAsYou.getByRole('button', { name: '说明', exact: true }).click()
+        await runsAsYou.getByText(/^它们在 .+ 上运行，Latch 不隔离它们。$/).waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('about')
 
         await openSection(settings, '插件')
         await page.locator('.plugin-nav-row', { hasText: '项目文件' }).click()
-        // A plugin's page says where its code runs, in the same words the plugin form uses.
+        // A plugin's page says where its code runs and that nothing isolates it, in the same words the plugin form uses.
         await page.getByRole('heading', { name: '代码在哪里运行', exact: true }).waitFor()
-        await page.getByText('在这台 Mac 上运行，权限和 Latch 相同', { exact: false }).waitFor()
+        await page.locator('.plugin-reach').getByText('在这台 Mac 上运行，不隔离', { exact: true }).waitFor()
         await settle(page)
         await shot('plugins')
 

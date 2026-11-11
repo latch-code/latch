@@ -137,7 +137,7 @@ function Shelves({
 }
 
 /** Why a plugin's switch is locked while sessions run on it. */
-const inUseText = (sessions: number) => `有 ${sessions} 个会话正在使用，结束后才能停用`
+const inUseText = (sessions: number) => `${sessions} 个会话在用，结束后才能停用`
 
 /**
  * One plugin: what it is, what it provides, where its code runs and which devices receive it.

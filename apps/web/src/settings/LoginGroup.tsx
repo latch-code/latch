@@ -46,12 +46,9 @@ export function LoginGroup({
         : status === 'unauthenticated'
           ? '还没登录'
           : '登录状态未知'
-  const details = [
-    signedIn && label,
-    signedIn && expiresAt && `${loginEndDay(expiresAt)}到期`,
-    doubted && '登录检查说已登录，最近一次测试启动说还没登录。重新登录后再测试一次。',
-    !left && (status === undefined || status === 'unknown') && '没登录时，开始会话会提示。',
-  ].filter((part): part is string => Boolean(part))
+  const details = [signedIn && label, signedIn && expiresAt && `${loginEndDay(expiresAt)}到期`, doubted && '测试启动说还没登录'].filter(
+    (part): part is string => Boolean(part),
+  )
   const steps = (!signedIn || switching || doubted) && (runnable || login.note)
   return (
     <SettingsGroup

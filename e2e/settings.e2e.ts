@@ -234,7 +234,7 @@ describe('adding a model service', () => {
       await sheet.getByRole('button', { name: '自定义地址…', exact: true }).click()
       await sheet.getByLabel('名称', { exact: true }).fill('实验室模型')
       await sheet.getByLabel('地址', { exact: true }).fill(service.baseURL)
-      await sheet.getByText('密钥只能在 工作室 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
+      await sheet.getByText('在 工作室 上的 Latch 里填写', { exact: true }).waitFor()
 
       await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
       await sheet.getByText('模型服务返回了错误（HTTP 500）。', { exact: false }).waitFor()
@@ -262,9 +262,8 @@ describe('adding a model service', () => {
       await lab.waitFor()
       await expect.poll(() => lab.locator('.service-status').count()).toBe(0)
       await settings.getByRole('button', { name: '编辑 实验室模型', exact: true }).click()
-      await settings.getByText('用这个地址和密钥请求服务的模型列表', { exact: true }).waitFor()
       await settings.getByRole('button', { name: '检测连接', exact: true }).click()
-      await settings.getByText('无法自动检测：这个服务不提供模型列表', { exact: true }).waitFor()
+      await settings.getByText('这个服务不提供模型列表', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '移除此服务', exact: true }).count()).toBe(0)
       expect(await settings.locator('.check-result.is-error').count()).toBe(0)
       await page.screenshot({ path: 'test-results/settings-provider-saved-no-listing.png', animations: 'disabled' })
@@ -274,7 +273,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '模型', exact: true }).click()
       await addService.click()
       await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
-      await sheet.getByText('这个服务需要密钥：保存后，在 工作室 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+      await sheet.getByText('保存后在 工作室 上填写密钥', { exact: true }).waitFor()
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).fill('deepseek-chat')
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
       await sheet.getByRole('button', { name: '保存', exact: true }).click()
@@ -284,9 +283,8 @@ describe('adding a model service', () => {
       // The way out is drawn on every device; here it is held back and says where to go.
       expect(await deepseek.getByRole('button', { name: '设置密钥', exact: true }).getAttribute('aria-disabled')).toBe('true')
       await settings.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
-      await settings.getByText('还没有填写密钥，Latch 不会使用它。', { exact: true }).waitFor()
+      await settings.getByText('还没有密钥，Latch 不会使用它', { exact: true }).waitFor()
       await settings.getByText('在 工作室 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
-      await settings.getByText('填写密钥后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByText('密钥不对或已过期', { exact: false }).count()).toBe(0)
@@ -296,11 +294,7 @@ describe('adding a model service', () => {
       // An address nobody has confirmed: saved from here, never used, and the page says where to confirm it.
       await addService.click()
       await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
-      await sheet
-        .getByText('这个地址要在 工作室 上确认后才能使用。保存后它会显示在列表里，等你在 工作室 上确认地址。', {
-          exact: true,
-        })
-        .waitFor()
+      await sheet.getByText('保存后在 工作室 上确认这个地址', { exact: true }).waitFor()
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).fill('llama3')
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
       await sheet.getByRole('button', { name: '保存', exact: true }).click()
@@ -313,13 +307,11 @@ describe('adding a model service', () => {
       }
       await page.emulateMedia({ colorScheme: 'light' })
       await settings.getByRole('button', { name: '编辑 Ollama', exact: true }).click()
-      await settings.getByText('这个服务的地址还没有确认，Latch 不会使用它。', { exact: true }).waitFor()
+      await settings.getByText('地址还没确认，Latch 不会使用它', { exact: true }).waitFor()
       // The notice's sentence follows its title in the same element.
       await settings.getByText('需要在 工作室 上确认这个地址：设置 › 模型 › Ollama。').waitFor()
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
-      // The switch says what the address still needs, the check says why it cannot run, and no command for the
-      // computer running Latch is offered on this device.
-      await settings.getByText('确认地址后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
+      // The check says why it cannot run, and no command for the computer running Latch is offered on this device.
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.innerText()).not.toContain('pnpm latch')
       expect(testHost.host.security.policy.get().confirmedAddresses).toEqual([])
@@ -366,7 +358,7 @@ describe('an agent that has not started yet', () => {
       const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
       await palette.getByRole('searchbox').fill('本地 ACP')
       await palette.getByRole('option', { name: '本地 ACP Harness', exact: true }).click()
-      await page.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).waitFor()
+      await page.getByText('还没有开启过会话', { exact: true }).waitFor()
       await page.reload()
       await connected(page)
       const settings = await openSettings(page, '设置')
@@ -379,7 +371,7 @@ describe('an agent that has not started yet', () => {
       }
       await page.emulateMedia({ colorScheme: 'light' })
       await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
-      await settings.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).waitFor()
+      await settings.getByText('还没有开启过会话', { exact: true }).waitFor()
       await page.screenshot({ path: 'test-results/settings-agent-page-not-started.png', animations: 'disabled' })
       await backToSection(settings)
 
@@ -394,7 +386,7 @@ describe('an agent that has not started yet', () => {
       // 重新检测 on its page reads the agents again.
       await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
       await settings.getByRole('button', { name: '重新检测', exact: true }).click()
-      await expect.poll(() => settings.getByText('第一次开始会话时，会话开头会说明它能做什么。', { exact: true }).count()).toBe(0)
+      await expect.poll(() => settings.getByText('还没有开启过会话', { exact: true }).count()).toBe(0)
       await backToSection(settings)
       await row.waitFor()
       await context.close()

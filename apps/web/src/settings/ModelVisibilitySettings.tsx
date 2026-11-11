@@ -20,7 +20,7 @@ export function ModelVisibilitySettings({ catalog }: { catalog: HostCatalog }) {
     <SettingsGroup
       title="显示的模型"
       meta={models.length >= 6 ? <SearchField label="搜索模型" value={query} onValueChange={setQuery} /> : undefined}
-      caption="只影响这台设备的模型选择器。"
+      caption="只影响这台设备"
       captionIcon={null}>
       {shown.map(item => (
         <SwitchRow

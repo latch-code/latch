@@ -446,7 +446,7 @@ describe('error copy', () => {
     expect(SETUP_COPY.addProjectElsewhere(name)).toBe('在 studio-mini 上的 Latch 里添加项目')
     expect(SETUP_COPY.confirmAddressElsewhere(name)).toBe('这个地址要先在 studio-mini 上确认一次，才能在这里使用：设置 › 模型。')
     expect(SETTINGS_ADMIN_HIDDEN(name)).toBe('其他设置在 studio-mini 上的 Latch 里')
-    expect(DEVICES_COPY.pairElsewhere(name)).toBe('新设备在 studio-mini 上的 Latch 里连接：设置 › 设备。')
+    expect(DEVICES_COPY.pairElsewhere(name)).toBe('在 studio-mini 上的 Latch 里连接')
     expect(DEVICES_COPY.raiseOnMac(name)).toBe('在 studio-mini 上开启')
     expect(FILE_COPY.elsewhere(name)).toBe('在 studio-mini 上的 Latch 里可以快速查看和打开。')
     expect(PROVIDER_COPY.missingKeyElsewhere('DeepSeek', name)).toBe('在 studio-mini 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。')
@@ -454,7 +454,7 @@ describe('error copy', () => {
     // Without a name each reads as it did before names were known.
     expect(SETUP_COPY.keyElsewhere()).toBe('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。')
     expect(SETTINGS_ADMIN_HIDDEN()).toBe('其他设置在 Mac 上的 Latch 里')
-    expect(PROVIDER_COPY.keyAfterSave()).toBe('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。')
+    expect(PROVIDER_COPY.keyAfterSave()).toBe('保存后在 Mac 上填写密钥')
     expect(PROVIDER_COPY.save).toBe('保存')
   })
 

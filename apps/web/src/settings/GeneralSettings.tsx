@@ -98,7 +98,7 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
         <SwitchRow
           className="settings-row"
           title="有任务时保持 Mac 唤醒"
-          description={keepAwakeLine(view.keepAwake)}
+          description={keepAwakeLine(view.keepAwake) || undefined}
           checked={view.keepAwake.enabled}
           disabled={busy !== null}
           onCheckedChange={enabled => {

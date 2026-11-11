@@ -1,7 +1,8 @@
 import { useId, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Ellipsis, Info, Lock } from 'lucide-react'
 import { usePresence } from '../hooks/useListMotion.ts'
-import { Button, Icon, IconButton, Loading as InlineLoading, type LucideIcon, type MenuTriggerProps } from '@latch/ui'
+import { Button, Hint, Icon, IconButton, Loading as InlineLoading, type LucideIcon, type MenuTriggerProps } from '@latch/ui'
+import type { Brief } from '../core/securityCopy.ts'
 
 /**
  * The page's own layout for settings: groups of rows in a well sunk into the panel, divided by hairlines. Controls
@@ -22,14 +23,30 @@ export function SectionHeading({ title, description, action }: { title: string; 
 }
 
 /**
- * A group: its heading (with meta text or an action on the right), its rows, and at most one caption under them. A
- * secure group is a security surface (data-secure, security.css).
+ * A fact in a few words with the rest behind ⓘ (`Hint`), under a group's card or in a form: a glyph that says what kind
+ * of fact it is (a lock for 「only there」), the label, and at most one action after it.
+ */
+export function NoteLine({ brief, icon = Info, action }: { brief: Brief; icon?: LucideIcon; action?: ReactNode }) {
+  return (
+    <div className="settings-note">
+      <Hint lead={<Icon icon={icon} size={12} />} label={brief.label}>
+        {brief.detail}
+      </Hint>
+      {action && <span className="settings-note-action">{action}</span>}
+    </div>
+  )
+}
+
+/**
+ * A group: its heading (with meta text or an action on the right), its rows, at most one caption under them and a
+ * `NoteLine` after it. A secure group is a security surface (data-secure, security.css).
  */
 export function SettingsGroup({
   title,
   meta,
   caption,
   captionIcon = 'info',
+  note,
   bare = false,
   secure = false,
   children,
@@ -38,6 +55,8 @@ export function SettingsGroup({
   meta?: ReactNode
   caption?: ReactNode
   captionIcon?: 'info' | 'lock' | null
+  /** Fine print as a `NoteLine`: the label shows, the rest is behind ⓘ. */
+  note?: ReactNode
   /** The children lay out themselves instead of as rows. */
   bare?: boolean
   secure?: boolean
@@ -63,6 +82,7 @@ export function SettingsGroup({
           <span>{caption}</span>
         </p>
       )}
+      {note}
     </section>
   )
 }

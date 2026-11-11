@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
-import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
+import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, Shield, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
-import { computerName, SETUP_COPY } from '../core/securityCopy.ts'
+import { computerName, RUNS_AS_YOU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import type { AgentPageTarget } from '../shell/routes.ts'
 import { builtinHarness, harnessName } from '../composerChoice.ts'
@@ -26,7 +26,7 @@ import {
   CopyButton,
 } from '@latch/ui'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
-import { IconTile, Loading, MiddleEllipsis, NavRow, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, Loading, MiddleEllipsis, NavRow, NoteLine, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
 import { LoginGroup } from './LoginGroup.tsx'
@@ -41,14 +41,13 @@ type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPres
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 /** Where the Harnesses run, as a person on this device names that computer: 「这台 Mac」 in its own app, else its name. */
 const onComputer = (local: boolean, hostName?: string) => (local ? '这台 Mac 上' : ` ${computerName(hostName)} 上`)
-const enginesCaption = (on: string) => `Harness 是${on}已安装的程序，以你的权限运行。Latch 不会替你安装它们。`
 /** A session started with a definition is an external Harness's session: it decides its own reach, Latch does not isolate it. */
-const FULL_ACCESS_NOTE = SETUP_COPY.externalNote
+const FULL_ACCESS_NOTE = <NoteLine icon={Shield} brief={SETUP_COPY.externalNote} />
 const CUSTOM_START = '自定义启动方式'
-const SAVE_NOTE = '保存后就能用它开始会话，每次启动都留有记录。'
+/** Environment values: kept on this Mac and never shown again. */
+const ENV_HELD = '只存在这台 Mac 上，不再显示'
 /** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
 const NOT_STARTED = '还没有开启过会话'
-const NOT_STARTED_NOTE = '第一次开始会话时，会话开头会说明它能做什么。'
 const lines = (text: string) =>
   text
     .split('\n')
@@ -219,7 +218,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
           <InstallRows preset={preset} />
         </SettingsGroup>
       )}
-      <SettingsGroup title="启动方式" caption={`${SAVE_NOTE}${FULL_ACCESS_NOTE}`}>
+      <SettingsGroup title="启动方式" note={FULL_ACCESS_NOTE}>
         <div className="settings-card-body settings-fields">
           <TextField
             label="名称"
@@ -251,13 +250,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
             }}
           />
         </div>
-        <SwitchRow
-          className="settings-row"
-          title="添加后启用"
-          description="停用的 Harness 不能用来发起会话"
-          checked={enabled}
-          onCheckedChange={setEnabled}
-        />
+        <SwitchRow className="settings-row" title="添加后启用" checked={enabled} onCheckedChange={setEnabled} />
       </SettingsGroup>
       <SettingsGroup
         title="环境变量"
@@ -271,8 +264,9 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
             添加变量
           </Button>
         }
-        caption="值只保存在这台 Mac 上，不会再显示。">
-        {env.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境；需要额外的变量时在这里添加" />}
+        caption={ENV_HELD}
+        captionIcon="lock">
+        {env.length === 0 && <SettingsRow title="没有环境变量" />}
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
@@ -328,8 +322,7 @@ function DefinitionDialog({
       open={open}
       size="form"
       title="编辑启动方式"
-      subtitle={FULL_ACCESS_NOTE}
-      note={SAVE_NOTE}
+      subtitle={SETUP_COPY.externalNote.label}
       onClose={() => {
         if (!busy) onClose()
       }}
@@ -410,8 +403,7 @@ function EnvDialog({
       open={open}
       size="form"
       title="添加环境变量"
-      subtitle="值只保存在这台 Mac 上，不会再显示"
-      note={SAVE_NOTE}
+      subtitle={ENV_HELD}
       onClose={() => {
         if (!busy) close()
       }}
@@ -538,7 +530,6 @@ function AgentPage({
         <SwitchRow
           className="settings-row"
           title="启用"
-          description={enabled ? '新会话可以选择这个 Harness' : '停用后不能用它发起新会话'}
           checked={enabled}
           disabled={busy}
           onCheckedChange={next => {
@@ -565,9 +556,8 @@ function AgentPage({
             编辑…
           </Button>
         }
-        caption={FULL_ACCESS_NOTE}
-        captionIcon="info">
-        {agent.started === false && <SettingsRow title={NOT_STARTED} description={NOT_STARTED_NOTE} />}
+        note={FULL_ACCESS_NOTE}>
+        {agent.started === false && <SettingsRow title={NOT_STARTED} />}
         <SettingsRow title="命令" description={<MiddleEllipsis text={agent.command} className="settings-mono" />} />
         <SettingsRow
           title="参数"
@@ -587,8 +577,9 @@ function AgentPage({
             添加…
           </Button>
         }
-        caption="值只保存在这台 Mac 上，不会再显示。">
-        {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境" />}
+        caption={ENV_HELD}
+        captionIcon="lock">
+        {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" />}
         {agent.envKeys.map(key => (
           <SettingsRow
             key={key}
@@ -639,7 +630,7 @@ function AgentPage({
         <SettingsRow
           leading={<IconTile icon={agent.verified ? ShieldCheck : ShieldQuestion} />}
           title={agent.verified ? 'Latch 已收录' : '未验证的定义'}
-          description={agent.verified ? '命令和参数与 Latch 收录的一致' : '命令或参数与 Latch 收录的不同'}
+          description={agent.verified ? undefined : '命令或参数与 Latch 收录的不同'}
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
@@ -648,7 +639,6 @@ function AgentPage({
       <SettingsGroup>
         <SettingsRow
           title="删除 Harness"
-          description="删除启动配置和环境变量；它的会话正在运行时无法删除"
           trailing={
             <Button
               variant="danger"
@@ -982,15 +972,14 @@ export function AgentsSettings({
             自定义 Harness
           </Button>
         }
-        caption={enginesCaption(on)}
-        captionIcon={null}>
+        note={<NoteLine icon={Shield} brief={RUNS_AS_YOU_COPY.engines(on)} />}>
         {builtin && (
           <SettingsRow
             className="agent-row"
             leading={<HarnessTile harness={builtin} size={24} />}
             record
             title={harnessName(builtin)}
-            description="内置 Harness，用你在 设置 › 模型 里接入的服务"
+            description="内置，用你接入的模型服务"
             trailing={<span className="service-status">{builtin.status === 'ready' ? '可用' : '需要模型服务'}</span>}
           />
         )}

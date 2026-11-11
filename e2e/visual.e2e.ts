@@ -1745,8 +1745,8 @@ describe('visual capture of the real product', () => {
         ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
-        ['settings-devices', '设备', settings.getByText(`新设备在 ${HOST_NAME} 上的 Latch 里连接：设置 › 设备。`, { exact: true })],
-        ['settings-about', '关于', settings.getByText(/^Harness 和插件以你的权限在.+上运行。$/).first()],
+        ['settings-devices', '设备', settings.getByText(`在 ${HOST_NAME} 上的 Latch 里连接`, { exact: true })],
+        ['settings-about', '关于', settings.getByText('Harness 和插件以你的权限运行', { exact: true }).first()],
       ] as const) {
         await openSection(settings, section)
         await ready.waitFor()
@@ -1780,7 +1780,7 @@ describe('visual capture of the real product', () => {
             sheet.getByRole('button', { name: '保存', exact: true }),
           ])
             await reachable(control, { allowDisabled: true })
-          await sheet.getByText(`这个服务需要密钥：保存后，在 ${HOST_NAME} 上的 Latch 里填写密钥，它才能使用。`, { exact: true }).waitFor()
+          await sheet.getByText(`保存后在 ${HOST_NAME} 上填写密钥`, { exact: true }).waitFor()
           await recorder.capture(target, viewport, 'settings-provider-add', 'adding a model service from a preset')
           await sheet.getByRole('button', { name: '取消', exact: true }).click()
           await sheet.waitFor({ state: 'hidden' })

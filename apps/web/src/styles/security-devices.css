@@ -108,6 +108,43 @@
   background-color: var(--on-accent) !important;
   box-shadow: var(--sh-thumb) !important;
 }
+/*
+ * A switch's note is a Hint: what the grant opens, in a few words, with the rest behind ⓘ. Its label, glyph, ⓘ and
+ * unfolded detail are pinned like the switch they explain.
+ */
+[data-secure] .ui-hint {
+  display: grid !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-hint-lead {
+  display: inline-grid !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-hint-label {
+  display: block !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-hint > .ui-icon-button {
+  display: inline-grid !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-hint[data-open] > .ui-icon-button {
+  color: var(--ink) !important;
+}
+[data-secure] .ui-hint-detail {
+  display: block !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
 
 /*
  * 连接手机: a 420 by 540 sheet. The code stays dark on white in both themes so scanners read it; while a device is being
@@ -263,6 +300,19 @@
   color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
+}
+/* 同一 Wi‑Fi after its glyph, centred like the lines around it. */
+.pair-foot-note.pair-foot-wifi {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+}
+.pair-foot-wifi > span {
+  display: inline !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
 }
 .pair-center {
   display: flex !important;

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { HostCatalog, UsageSummary } from '@latch/protocol'
 import { InlineNotice, Loading, SegmentedControl } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
-import { SettingsGroup } from './common.tsx'
+import { NoteLine, SettingsGroup } from './common.tsx'
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 })
 const exact = new Intl.NumberFormat('zh-CN')
@@ -74,8 +74,9 @@ export function UsageSettings({ catalog }: { catalog: HostCatalog }) {
           }}
         />
       }
-      caption={value && value.rows.length > 0 ? '只汇总这台 Mac 记录到的 tokens，不是账单。' : undefined}
-      captionIcon={null}>
+      note={
+        value && value.rows.length > 0 ? <NoteLine brief={{ label: '不是账单', detail: '只汇总这台 Mac 记录到的 tokens。' }} /> : undefined
+      }>
       {loading && <Loading label="正在读取用量…" />}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {value && value.rows.length === 0 && <p className="settings-empty">这个期间还没有用量记录。</p>}

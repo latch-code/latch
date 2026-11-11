@@ -149,9 +149,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         ? info?.firstDevice
           ? COPY.desktopFirst
           : COPY.desktopAgain
-        : invited
-          ? COPY.invited
-          : COPY.local
+        : COPY.local
 
   if (step.kind === 'loading')
     return (

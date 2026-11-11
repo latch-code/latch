@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { WifiOff } from 'lucide-react'
+import { Wifi, WifiOff } from 'lucide-react'
 import type { AppSnapshot, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
 import { Button, Icon, InlineNotice, Modal, ModalHeader, Spinner } from '@latch/ui'
 import { useViewport } from '../../breakpoints.ts'
@@ -219,7 +219,6 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
           <VisibleText text={removed} />
           {COPY.closingQuote}
         </p>
-        <p className="pair-note">{COPY.removed}</p>
         <Button className="pair-center-action" onClick={onClose}>
           {COPY.done}
         </Button>
@@ -326,7 +325,10 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
         </div>
         <div className="pair-foot" data-dim={busy ? '' : undefined}>
           <p className="pair-foot-title">{COPY.scan}</p>
-          <p className="pair-foot-note">{COPY.sameWifi}</p>
+          <p className="pair-foot-note pair-foot-wifi">
+            <Icon icon={Wifi} size={12} />
+            <span>{COPY.sameWifi}</span>
+          </p>
           <p className="pair-foot-note">{COPY.drivesAgents}</p>
         </div>
         <WaitingDevices place="sheet" />

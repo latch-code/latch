@@ -161,9 +161,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await page.getByText('手机上显示已连接了吗？', { exact: true }).isVisible()).toBe(true)
       const shownBefore = host.presence.requests.length
       await page.getByRole('button', { name: '没有，移除', exact: true }).click()
-      await page.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor()
+      const removedLine = page.locator('.pair-title', { hasText: '已移除「' })
+      await removedLine.waitFor()
       await page.getByRole('button', { name: '好', exact: true }).click()
-      await page.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor({ state: 'hidden' })
+      await removedLine.waitFor({ state: 'hidden' })
       expect(host.presence.requests.length).toBe(shownBefore)
       const id = (completed.body as { device: { id: string } }).device.id
       expect(host.host.security.devices.get(id)?.status).toBe('revoked')

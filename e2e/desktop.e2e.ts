@@ -638,7 +638,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const background = general.getByRole('region', { name: '这台 Mac', exact: true })
       const keepAwake = background.getByRole('switch', { name: '有任务时保持 Mac 唤醒', exact: true })
       expect(await keepAwake.getAttribute('aria-checked')).toBe('true')
-      await background.getByText('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。', { exact: true }).waitFor({ timeout: 20_000 })
+      await background.getByText('保持唤醒中：有会话在运行', { exact: true }).waitFor({ timeout: 20_000 })
       expect(await background.getByRole('switch', { name: '登录时打开 Latch', exact: true }).count()).toBe(0)
       expect(await general.getByRole('button', { name: '重新启动 Host', exact: true }).count()).toBe(0)
       await page.screenshot({ path: 'test-results/native-desktop-background.png', animations: 'disabled' })
@@ -650,16 +650,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.emulateMedia({ colorScheme: 'light' })
       // Turning it off releases the Mac at once and is remembered in the shell's own data directory.
       await keepAwake.click()
-      await background.getByText('已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。', { exact: true }).waitFor()
+      // Off, the switch says it all: the row has no line under it.
+      await expect.poll(() => background.getByText('保持唤醒中：有会话在运行', { exact: true }).count()).toBe(0)
       expect(JSON.parse(await readFile(join(userData, 'lifecycle.json'), 'utf8'))).toEqual({ version: 1, keepAwake: false })
       await keepAwake.click()
-      await background.getByText('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。', { exact: true }).waitFor()
+      await background.getByText('保持唤醒中：有会话在运行', { exact: true }).waitFor()
       await closeSettings(general)
       // The footer says so in a few quiet words, whole at the window's default width (a 248px sidebar with 开发版), with
       // the reason in the title and the target still reaching past the 16px line.
       const awake = page.locator('.sidebar-footer').getByRole('button', { name: '保持唤醒中', exact: true })
       await awake.waitFor()
-      expect(await awake.getAttribute('title')).toBe('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。 · 同步最新状态')
+      expect(await awake.getAttribute('title')).toBe('保持唤醒中：有会话在运行 · 同步最新状态')
       expect(
         await awake.evaluate(element => {
           // The words against the button's own box: scrollWidth would also count the ::before that reaches past it.
@@ -989,12 +990,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
         await sheet.getByLabel('地址', { exact: true }).fill(models.baseURL)
         await sheet.getByRole('button', { name: '用 Touch ID 保存', exact: true }).waitFor()
-        await sheet.getByText('第一次使用这个地址：保存时用 Touch ID 确认一次，之后不再询问。', { exact: true }).waitFor()
         // Listing a local address waits for its confirmation; the save button is the one lock on screen.
         await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
-        await sheet
-          .getByText(`这是这台 Mac 或局域网上的地址，保存时确认一次，之后 Latch 才会访问 ${models.allow}。`, { exact: true })
-          .waitFor()
+        const localAddress = sheet.locator('.ui-hint', { hasText: '这台 Mac 或局域网地址，保存时确认' })
+        await localAddress.getByRole('button', { name: '说明', exact: true }).click()
+        await localAddress.getByText(`确认后 Latch 才会访问 ${models.allow}。`, { exact: true }).waitFor()
         expect(await sheet.getByRole('button', { name: /Touch ID/u }).allInnerTexts()).toEqual(['用 Touch ID 保存'])
         await captureThemes(page, 'native-desktop-provider-local-address')
         // One press: the confirmation, then the listing, and a single model saves at once.
@@ -1486,7 +1486,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // host.sock is the one listener that takes offline codes, so with no local confirmation the page offers only that
       // way in: its intro points to the code, and nothing on it promises Touch ID.
       await page.getByRole('heading', { name: 'Latch', exact: true }).waitFor()
-      await page.getByText('这台设备会生成自己的密钥，再用离线连接码完成连接。', { exact: true }).waitFor()
+      await page.getByText('用离线连接码连接', { exact: true }).waitFor()
       await page.getByText(/^Mac 现在不能确认：.*pnpm latch device enroll --offline/u).waitFor()
       expect(await page.getByText(/Touch ID/u).count()).toBe(0)
       expect(await page.getByRole('button', { name: '继续', exact: true }).count()).toBe(0)

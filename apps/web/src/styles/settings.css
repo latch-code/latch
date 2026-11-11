@@ -476,6 +476,25 @@
   margin-top: var(--sp-2);
   color: var(--muted);
 }
+/* A fact in a few words with its detail behind ⓘ, on the caption's line; an action, if any, after it. */
+.settings-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+}
+.settings-group > .settings-note {
+  padding-inline: var(--sp-16);
+}
+.settings-note > .ui-hint {
+  flex: 1;
+  min-width: 0;
+}
+.settings-note-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  min-height: 28px;
+  align-items: center;
+}
 .settings-empty,
 .settings-hint {
   color: var(--muted);
@@ -1144,11 +1163,6 @@
   flex-wrap: wrap;
 }
 /* 添加插件: one sentence on what a tool is, above the two ways to start. */
-.plugin-add-note {
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui-para);
-}
 .plugin-asset-spacer {
   flex: 1;
 }
@@ -1537,8 +1551,14 @@
   gap: var(--sp-24);
 }
 .device-pair-elsewhere {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
   color: var(--ink-2);
   font-weight: 400;
+}
+.device-pair-elsewhere > .ui-icon {
+  color: var(--muted);
 }
 /* The ⋯ of a device row shows on hover or focus where a pointer can hover; on touch it is always there. */
 @media (hover: hover) {
@@ -1587,31 +1607,7 @@
   line-height: var(--lh-caption-para);
   text-align: end;
 }
-/* 关于连接: one fact a line, in the reading size, then any relay saved by an earlier build. */
-.device-about {
-  display: grid;
-  gap: var(--sp-6);
-  margin: 0;
-  padding: 0 var(--sp-16);
-  list-style: none;
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui-para);
-}
-.device-about > li {
-  position: relative;
-  padding-inline-start: var(--sp-12);
-}
-.device-about > li::before {
-  content: '';
-  position: absolute;
-  top: calc(var(--lh-ui-para) / 2 - 2px);
-  left: 0;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--line-strong);
-}
+/* 关于连接: a fact a line, then any relay saved by an earlier build. */
 .device-saved-list {
   margin-block-start: var(--sp-12);
 }
@@ -1766,12 +1762,9 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
 }
-/* The sentences about where code runs read as paragraphs, not as a row's one line. */
+/* Where code runs: the part's name, then where it runs in a few words with the sentence behind ⓘ. */
 .plugin-reach .settings-row-title {
   font-weight: 500;
-}
-.plugin-reach .settings-row-description {
-  line-height: var(--lh-caption-para);
 }
 @media (max-width: 767.98px) {
   .plugin-shelves {

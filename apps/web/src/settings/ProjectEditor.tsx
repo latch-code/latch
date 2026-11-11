@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
-import { ArrowDown, ArrowUp, Copy, FolderOpen, FolderPlus, GripVertical, Pencil, Trash } from 'lucide-react'
+import { ArrowDown, ArrowUp, Copy, FolderOpen, FolderPlus, GripVertical, Pencil, Send, Shield, Trash } from 'lucide-react'
 import {
   escapeSecurityText,
   PROJECT_GLYPHS,
@@ -18,7 +18,7 @@ import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectNa
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { IconTile, MiddleEllipsis, moreButton, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, MiddleEllipsis, moreButton, NavRow, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
 function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {
   return snapshot.tasks.some(
@@ -128,10 +128,7 @@ export function ProjectEditor({
   const missing = folders.filter(folder => folder.unavailable)
   return (
     <div className="project-editor">
-      <SectionHeading
-        title={escapeSecurityText(name)}
-        description={`新会话在主文件夹「${escapeSecurityText(basename(folders[0]!.path))}」中启动。`}
-      />
+      <SectionHeading title={escapeSecurityText(name)} />
       {error && (
         <InlineNotice
           tone={retry ? 'warn' : 'error'}
@@ -185,10 +182,10 @@ export function ProjectEditor({
             )
           }
         />
-        <SettingsRow title={`${projectSessionCount(project, snapshot.tasks)} 个会话`} description="已有会话保留开始时记录的文件夹。" />
+        <SettingsRow title={`${projectSessionCount(project, snapshot.tasks)} 个会话`} />
       </SettingsGroup>
       {onOpenSession && (
-        <SettingsGroup title="最近会话" caption="按最近更新排列，打开会话继续查看。">
+        <SettingsGroup title="最近会话">
           <div className="project-recent-sessions">
             {recent.map(task => (
               <NavRow
@@ -199,12 +196,14 @@ export function ProjectEditor({
                 onClick={() => onOpenSession(task.id)}
               />
             ))}
-            {recent.length === 0 && <SettingsRow title="还没有可访问的会话" description="在这个项目开始工作后，会话会显示在这里。" />}
+            {recent.length === 0 && <SettingsRow title="还没有可访问的会话" />}
           </div>
         </SettingsGroup>
       )}
       {missing.length > 0 && (
-        <InlineNotice tone="warn">{missing.length} 个文件夹暂不可用。项目已保留，恢复或重新选择之前不能在这里新建会话。</InlineNotice>
+        <InlineNotice tone="warn" title={`${missing.length} 个文件夹不可用`}>
+          恢复或重新选择之前不能新建会话
+        </InlineNotice>
       )}
       {refused && (
         <InlineNotice
@@ -243,7 +242,15 @@ export function ProjectEditor({
             </Button>
           ) : undefined
         }
-        caption="Latch 内置可以读取这些文件夹中的文件，并把读到的内容发给模型服务；写入前会询问你。">
+        note={
+          <NoteLine
+            icon={Send}
+            brief={{
+              label: '读到的内容会发给模型服务',
+              detail: 'Latch 内置可以读取这些文件夹中的文件，并把读到的内容发给模型服务；写入前会询问你。',
+            }}
+          />
+        }>
         <div className="project-folder-list" data-drop={over ? '' : undefined} {...folderDrop}>
           {over && (
             <p className="project-drop" role="status">
@@ -427,7 +434,7 @@ export function ProjectEditor({
         </p>
       )}
       {folders.length > 1 && (
-        <SettingsGroup title="各 Harness 使用的文件夹" caption={SETUP_COPY.externalFolders}>
+        <SettingsGroup title="各 Harness 使用的文件夹" note={<NoteLine icon={Shield} brief={SETUP_COPY.externalFolders} />}>
           {snapshot.catalog?.harnesses
             .filter(harness => harness.status === 'ready')
             .map(harness => (
@@ -444,7 +451,6 @@ export function ProjectEditor({
         <SettingsGroup>
           <SettingsRow
             title="移除项目"
-            description="文件夹中的文件不会被删除。"
             trailing={
               <Button
                 variant="danger"

@@ -81,6 +81,8 @@ export function addPluginSource(bundle: PluginPackageBundle, path: string): Plug
 export interface PluginReach {
   id: 'page' | 'host' | 'text'
   title: string
+  /** Where it runs and that nothing isolates it, in a few words; `body` is the rest, behind ⓘ. */
+  label: string
   body: string
 }
 

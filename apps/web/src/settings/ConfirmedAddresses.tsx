@@ -3,7 +3,7 @@ import { Button, ConfirmDialog, InlineNotice } from '@latch/ui'
 import { errorMessage } from '../core/api.ts'
 import { addressRows, readPolicy, removeFromPolicy, type PolicyView } from '../core/policyView.ts'
 import { AUDIT_NOT_RECORDED_TEXT, PROVIDER_COPY } from '../core/securityCopy.ts'
-import { SettingsGroup, SettingsRow } from './common.tsx'
+import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 
 interface Removal {
   address?: string
@@ -61,7 +61,7 @@ export function ConfirmedAddresses({
   // The last removal empties the list, and what it failed to record still has to be said.
   if (addresses.length === 0 && allowances.length === 0 && !auditMissing) return null
   return (
-    <SettingsGroup title={PROVIDER_COPY.confirmedAddressesTitle} caption={PROVIDER_COPY.confirmedAddressesCaption}>
+    <SettingsGroup title={PROVIDER_COPY.confirmedAddressesTitle} note={<NoteLine brief={PROVIDER_COPY.confirmedAddressesCaption} />}>
       {addresses.map(row => (
         <SettingsRow
           key={row.address}

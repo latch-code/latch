@@ -10,7 +10,7 @@ import { ProjectIcon, projectFolders } from '../projects.tsx'
 import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { Button, InlineNotice, Menu, PromptDialog, StatusPill, type ActionMenuSection } from '@latch/ui'
-import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
+import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { ProjectEditor } from './ProjectEditor.tsx'
 import { SettingsPages } from './navigation.tsx'
 
@@ -20,7 +20,10 @@ const lockedCaption = (hostName?: string) => `${SETUP_COPY.addProjectElsewhere(c
 const RESTART_CAPTION = '重新启动 Latch 后，可以在这里添加项目。'
 
 /** Where a project's history stops, as the Host keeps it: the limits are the Host's own, not a setting. */
-const HISTORY_CAP = '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。'
+const HISTORY_CAP = {
+  label: '快照保留 20 轮，最多 2 GB',
+  detail: '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。',
+}
 
 /**
  * A project as one row: its glyph, its name, how many folders and where the first one is, and a ⋯ menu. A project the
@@ -118,7 +121,7 @@ export function ProjectRow({
         }
         description={
           disabled ? (
-            <span className="workspace-unavailable">{workspace.unavailable || '此项目本次未通过检查，不能用于新会话。'}</span>
+            <span className="workspace-unavailable">{workspace.unavailable || '本次检查没通过'}</span>
           ) : (
             <span className="project-row-where">
               <span>{members.length} 个文件夹 ·</span>
@@ -300,7 +303,7 @@ export function WorkspacesSettings({
               }}
             />
           )}
-          <SettingsGroup title="项目" meta={addAction} caption={caption ? `${caption} ${HISTORY_CAP}` : HISTORY_CAP} captionIcon={null}>
+          <SettingsGroup title="项目" meta={addAction} caption={caption} captionIcon="lock" note={<NoteLine brief={HISTORY_CAP} />}>
             {folders && drag !== 'none' && (
               <div className="project-drop" role="status">
                 {drag === 'files' ? '只能拖入文件夹' : '松开以用这些文件夹添加项目'}
@@ -310,7 +313,7 @@ export function WorkspacesSettings({
               <SettingsRow
                 leading={<IconTile icon={Folder} />}
                 title="还没有项目"
-                description={folders ? '选择一个文件夹，或把文件夹拖到这里' : '把一个文件夹作为项目，新会话就可以在其中工作'}
+                {...(folders ? { description: '选择一个文件夹，或把文件夹拖到这里' } : {})}
               />
             )}
             <FoldRows items={projects} keyOf={workspace => workspace.id} className="project-rows">

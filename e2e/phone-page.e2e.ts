@@ -187,7 +187,12 @@ describe('设置 › 设备', () => {
       expect(await page.locator('.settings-group-head h3').allInnerTexts()).toEqual(['连到这台 Mac 的设备', '连接新设备', '关于连接'])
       expect(await page.getByRole('button', { name: '复制链接', exact: true }).count()).toBe(0)
       await page.getByText('iPhone App 还没有可安装的版本', { exact: true }).waitFor()
-      await page.getByText(/^另一台电脑：尚未实现。/u).waitFor()
+      const missing = page.locator('.ui-hint', { hasText: '另一台电脑：尚未实现' })
+      await missing.waitFor()
+      // The reason is one press away, by touch too.
+      await missing.getByRole('button', { name: '说明', exact: true }).click()
+      await missing.getByText(/今天的安装包打不开这个入口/u).waitFor()
+      await missing.getByRole('button', { name: '说明', exact: true }).click()
       await capture('list')
       // The ways to connect hand out links, so styles added to the page cannot hide, recolour or shrink them.
       if (size.label === 'desktop')
@@ -208,8 +213,15 @@ describe('设置 › 设备', () => {
       await page.locator('[data-device-id="dev_browser"] .settings-row-main').click()
       await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).waitFor()
       await page.getByRole('switch', { name: '可以看项目文件', exact: true }).waitFor()
+      // What the files switch opens is never put behind ⓘ in full: private sessions stay in its visible line.
+      await page.getByText('也能看含私有内容的会话', { exact: true }).waitFor()
       await capture('browser-device')
-      // The switches grant what the device may do: their words, track and thumb keep their look under added styles.
+      // What managing opens is one press away; opening it leaves the switch as it was.
+      const manageHint = page.locator('[data-secure] .ui-hint', { hasText: '能改设置，密钥除外' })
+      await manageHint.getByRole('button', { name: '说明', exact: true }).click()
+      await manageHint.getByText(/密钥和连接新地址仍只能在 Mac 上操作/u).waitFor()
+      expect(await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).getAttribute('aria-checked')).toBe('false')
+      // The switches grant what the device may do: their words, notes, track and thumb keep their look under added styles.
       if (size.label === 'desktop')
         await expectUnmovedByInjectedStyles(page, [
           '[data-secure] .ui-switch-row',
@@ -217,7 +229,13 @@ describe('设置 › 设备', () => {
           '[data-secure] .ui-switch-row-description',
           '[data-secure] .ui-switch',
           '[data-secure] .ui-switch-thumb',
+          '[data-secure] .ui-hint',
+          '[data-secure] .ui-hint-lead',
+          '[data-secure] .ui-hint-label',
+          '[data-secure] .ui-hint > .ui-icon-button',
+          '[data-secure] .ui-hint-detail',
         ])
+      await manageHint.getByRole('button', { name: '说明', exact: true }).click()
       // A device is a page inside 设备 at every width; its way back names the section.
       if (phone) await page.getByRole('button', { name: '返回设备', exact: true }).click()
       else await page.locator('.settings-back').getByText('设备', { exact: true }).click()
@@ -337,7 +355,7 @@ describe('设置 › 设备', () => {
       await sheet.getByRole('button', { name: '是的，完成', exact: true }).waitFor()
       await capture('sheet-done')
       await sheet.getByRole('button', { name: '没有，移除', exact: true }).click()
-      await sheet.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor()
+      await sheet.locator('.pair-title', { hasText: '已移除「' }).waitFor()
       await capture('sheet-removed')
       await sheet.getByRole('button', { name: '好', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })
@@ -427,9 +445,9 @@ describe('设置 › 设备', () => {
       await openEntry(page, '设备')
       await page.getByRole('button', { name: '复制链接', exact: true }).click()
       const said = page.locator('.device-connect-said')
-      await said.getByText(/^链接已复制到剪贴板：10 分钟内有效，只能用一次。/u).waitFor()
+      await said.getByText('已复制：10 分钟内有效，只能用一次', { exact: true }).waitFor()
       expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toMatch(/#pair=|lpi1-|https:\/\/studio/u)
-      await page.getByText('另一台电脑：链接 10 分钟内有效，只能用一次；连接时要在这台 Mac 上确认。', { exact: true }).waitFor()
+      expect(await page.getByText('另一台电脑：尚未实现', { exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/link-copied-desktop-light.png`, animations: 'disabled' })
       await context.close()
     })
@@ -475,8 +493,10 @@ describe('设置 › 设备', () => {
 
       // A desktop device left behind can only be removed, in its own words.
       await pick('dev_old_mac')
-      await page.getByText('它会立即断开，之后要在那台电脑的 Latch 里重新确认才能连接。', { exact: true }).waitFor()
       expect(await manage.count()).toBe(0)
+      await page.getByRole('button', { name: '移除…', exact: true }).click()
+      await page.getByText('它会立即断开，之后要在那台电脑的 Latch 里重新确认才能连接。', { exact: true }).waitFor()
+      await page.keyboard.press('Escape')
       await context.close()
     })
 
@@ -556,7 +576,7 @@ describe('设置 › 设备', () => {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'approve:standard'] })
       await openSettings(page, '设备')
-      await page.getByText('新设备在 studio-mini 上的 Latch 里连接：设置 › 设备。', { exact: true }).waitFor()
+      await page.getByText('在 studio-mini 上的 Latch 里连接', { exact: true }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/pair-elsewhere-desktop-light.png`, animations: 'disabled' })
       expect(await page.locator('.device-connect').count()).toBe(0)
       await context.close()

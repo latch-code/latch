@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { AGENT_PRESETS, type AppSnapshot } from '@latch/protocol'
-import { Button, ButtonLink, DevMark, InlineNotice } from '@latch/ui'
+import { Shield, TriangleAlert } from 'lucide-react'
+import { Button, ButtonLink, DevMark, Hint, Icon, InlineNotice } from '@latch/ui'
 import { BrandMark } from '../components/ui.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { DEV_MODE_TEXT, hostView } from '../core/permissions.ts'
-import { computerName, presenceUnavailableText } from '../core/securityCopy.ts'
-import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { computerName, presenceUnavailableText, RUNS_AS_YOU_COPY } from '../core/securityCopy.ts'
+import { NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages } from './navigation.tsx'
 
 /** Latch's own licence and those of the engines it can start; the engines are programs of their own, each under its licence. */
@@ -59,12 +60,14 @@ export function AboutSettings({
             {dev && <DevMark description={DEV_MODE_TEXT} />}
           </h2>
           {snapshot.version && <p>版本 {snapshot.version}</p>}
+          {dev && <Hint lead={<Icon icon={TriangleAlert} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
         </div>
       </header>
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
       <SettingsGroup
-        caption={`Harness 和插件以你的权限在${access.local ? '这台 Mac' : ` ${computerName(snapshot.hostName)}`} 上运行。`}
-        captionIcon={null}>
+        note={
+          <NoteLine icon={Shield} brief={RUNS_AS_YOU_COPY.about(access.local ? '这台 Mac 上' : ` ${computerName(snapshot.hostName)} 上`)} />
+        }>
         <SettingsRow
           title="许可与条款"
           trailing={
