@@ -20,36 +20,6 @@ strictDepBuilds: true
 # with three comment lines, `reason:`, `reviewer:` and `expires:` (YYYY-MM-DD in UTC, at most
 # 90 days ahead). `pnpm check:supply` fails once a group has expired or names a version that
 # is no longer in pnpm-lock.yaml.
-minimumReleaseAgeExclude:
-  # reason: direct dependencies locked before the seven-day rule; both published on 2026-10-21
-  # reviewer: Nirvana-Jie
-  # expires: 2026-10-28
-  - cordis@4.0.0-rc.12
-  - lucide-react@1.61.0
-  # reason: vite 8.2.2 dependencies locked before the seven-day rule (rolldown and its bindings
-  #   2026-10-21, @oxc-project/types 2026-10-19, postcss 2026-10-18). Frozen installs verify
-  #   every lockfile entry, so every platform binding is listed, not only the local one.
-  # reviewer: Nirvana-Jie
-  # expires: 2026-10-28
-  - rolldown@1.2.15
-  - '@rolldown/binding-android-arm-eabi@1.2.15'
-  - '@rolldown/binding-android-arm64@1.2.15'
-  - '@rolldown/binding-darwin-arm64@1.2.15'
-  - '@rolldown/binding-darwin-x64@1.2.15'
-  - '@rolldown/binding-freebsd-x64@1.2.15'
-  - '@rolldown/binding-linux-arm-gnueabihf@1.2.15'
-  - '@rolldown/binding-linux-arm64-gnu@1.2.15'
-  - '@rolldown/binding-linux-arm64-musl@1.2.15'
-  - '@rolldown/binding-linux-ppc64-gnu@1.2.15'
-  - '@rolldown/binding-linux-s390x-gnu@1.2.15'
-  - '@rolldown/binding-linux-x64-gnu@1.2.15'
-  - '@rolldown/binding-linux-x64-musl@1.2.15'
-  - '@rolldown/binding-openharmony-arm64@1.2.15'
-  - '@rolldown/binding-win32-arm64-msvc@1.2.15'
-  - '@rolldown/binding-win32-x64-msvc@1.2.15'
-  - '@oxc-project/types@0.155.0'
-  - postcss@8.5.31
-
 trustPolicyExclude:
   # reason: @types/node 22 requires undici-types ~6.21.0. 6.13.0 to 6.19.2 were published with
   #   provenance and 6.19.3 to 6.21.0 without it, so no-downgrade rejects 6.21.0. Remove this
