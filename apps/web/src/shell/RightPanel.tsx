@@ -2,6 +2,7 @@ import { fileContextKey } from '../preview/fileContext.ts'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
+import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
@@ -43,6 +44,9 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     connection,
     canViewChanges,
     changesOpen,
+    canDeliver,
+    deliveryOpen,
+    openChangesTab,
     showSurface,
     launcherTakesFocus,
     closePanel,
@@ -62,6 +66,14 @@ export function RightPanel({ shell }: { shell: ShellState }) {
   // The title row's crumb holds these facts; a session without one keeps them under the launcher.
   const noCrumb = !shell.project && (summary?.mode === 'chat' || !summary?.cwd)
   const canCompose = gate.kind === 'open' && !submission.pending && !submission.sending && sessionBlock === undefined
+  const offline = connection === 'reconnecting' || connection === 'offline'
+  /** Text for the draft, never sent from here; a page over the conversation steps aside so it can be read. */
+  const compose = (text: string) => {
+    submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
+    if (pageMode) setInfoPage(false)
+    composerRef.current?.focus()
+  }
+  const readsChanges = canViewChanges && snapshot.device.dataScope === 'all'
   return (
     <SessionPanels
       key={contextKey}
@@ -77,7 +89,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 canRead={snapshot.device.dataScope === 'all'}
                 hostName={snapshot.hostName}
                 phone={phone}
-                offline={connection === 'reconnecting' || connection === 'offline'}
+                offline={offline}
                 {...(changesTarget ? { target: changesTarget } : {})}
                 {...(canCompose && !phone ? { onComment: commentOnLine } : {})}
                 onOpenFile={file => {
@@ -89,11 +101,35 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                   setToast({ text, tone })
                 }}
                 onTotals={setChangesTotals}
+                {...(canDeliver ? { onDeliver: () => showSurface({ kind: 'delivery' }) } : {})}
               />
             ),
           }
         : {})}
       changesOpen={changesOpen}
+      {...(summary && canDeliver
+        ? {
+            delivery: (
+              <DeliveryPanel
+                key={summary.id}
+                summary={summary}
+                revision={current?.summary.id === summary.id ? current.sync?.revision : undefined}
+                open={deliveryOpen && !fileTabs.active}
+                canRun={access.scopes.has('run')}
+                {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
+                offline={offline}
+                phone={phone}
+                onOpenFile={path => {
+                  const root = summary.folders?.[0]?.id
+                  if (readsChanges) openChangesTab({ scope: 'uncommitted', file: { path, ...(root ? { root } : {}) } })
+                  else openFile({ sessionId: summary.id, reference: path, ...(root ? { rootId: root } : {}) })
+                }}
+                onCompose={canCompose ? compose : undefined}
+              />
+            ),
+          }
+        : {})}
+      deliveryOpen={deliveryOpen}
       {...(summary && (phone || noCrumb)
         ? {
             launcherNote: (
@@ -168,11 +204,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
       }}
       summary={summary}
       canCompose={canCompose}
-      onCompose={text => {
-        submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
-        if (pageMode) setInfoPage(false)
-        composerRef.current?.focus()
-      }}
+      onCompose={compose}
     />
   )
 }

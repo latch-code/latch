@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { FileDiff, Folder, Puzzle, type LucideIcon } from 'lucide-react'
+import { FileDiff, Folder, GitCommitHorizontal, Puzzle, type LucideIcon } from 'lucide-react'
 import { Icon, Kbd } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
@@ -7,10 +7,16 @@ import type { PanelSurface } from '../components/SessionPanels.tsx'
 type Row = { id: string; label: string; icon: LucideIcon; letter?: string; surface: PanelSurface }
 
 /** Only what this session can open; the keys work while the launcher holds focus. */
-export function launcherRows(input: { changes?: boolean; files?: boolean; plugins?: ReadonlyArray<{ id: string; title: string }> }): Row[] {
+export function launcherRows(input: {
+  changes?: boolean
+  files?: boolean
+  delivery?: boolean
+  plugins?: ReadonlyArray<{ id: string; title: string }>
+}): Row[] {
   return [
     ...(input.changes ? [{ id: 'changes', label: '改动', icon: FileDiff, letter: 'D', surface: { kind: 'changes' as const } }] : []),
     ...(input.files ? [{ id: 'files', label: '文件', icon: Folder, letter: 'F', surface: { kind: 'files' as const } }] : []),
+    ...(input.delivery ? [{ id: 'delivery', label: '交付', icon: GitCommitHorizontal, surface: { kind: 'delivery' as const } }] : []),
     ...(input.plugins ?? []).map(plugin => ({
       id: `plugin:${plugin.id}`,
       label: plugin.title,
@@ -23,6 +29,7 @@ export function launcherRows(input: { changes?: boolean; files?: boolean; plugin
 export function PanelLauncher({
   changes,
   files,
+  delivery,
   plugins,
   takesFocus,
   onOpen,
@@ -32,11 +39,17 @@ export function PanelLauncher({
   takesFocus?: () => boolean
   changes?: boolean
   files?: boolean
+  delivery?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
   onOpen(surface: PanelSurface): void
   children?: ReactNode
 }) {
-  const rows = launcherRows({ ...(changes ? { changes } : {}), ...(files ? { files } : {}), ...(plugins ? { plugins } : {}) })
+  const rows = launcherRows({
+    ...(changes ? { changes } : {}),
+    ...(files ? { files } : {}),
+    ...(delivery ? { delivery } : {}),
+    ...(plugins ? { plugins } : {}),
+  })
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (takesFocus?.()) list.current?.focus({ preventScroll: true })

@@ -242,6 +242,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const canViewChanges = catalog?.features?.changes === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
   const [changesWanted, setChangesWanted] = useState(false)
   const changesOpen = changesWanted && canViewChanges
+  // Like 改动, a device without the data scope keeps the tab: it says the list is locked, and a commit and a push still work.
+  const canDeliver = catalog?.features?.gitDelivery === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
+  const [deliveryWanted, setDeliveryWanted] = useState(false)
+  const deliveryOpen = deliveryWanted && canDeliver
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   useLayoutEffect(() => {
@@ -252,6 +256,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setInfoPage(false)
     setFileExpanded(false)
     setChangesWanted(false)
+    setDeliveryWanted(false)
     setChangesTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
@@ -273,12 +278,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const placement =
     !summary && !filesVisible
       ? null
-      : (filesVisible || changesOpen || pluginPanel !== undefined) && fileExpanded
+      : (filesVisible || changesOpen || deliveryOpen || pluginPanel !== undefined) && fileExpanded
         ? { kind: 'page' as const }
         : placed
   const pageMode = placement?.kind === 'page'
   const columnOpen =
-    placement !== null && placement.kind !== 'page' && (filesVisible || changesOpen || (!!summary && preferences.rightPanel.open))
+    placement !== null
+    && placement.kind !== 'page'
+    && (filesVisible || changesOpen || deliveryOpen || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
@@ -580,6 +587,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const showSurface = (surface: PanelSurface) => {
     launcherAsked.current = surface.kind === 'launcher'
     setChangesWanted(surface.kind === 'changes')
+    setDeliveryWanted(surface.kind === 'delivery')
     setFilesOpen(surface.kind === 'files')
     setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
     fileTabs.select(surface.kind === 'file' ? surface.id : undefined)
@@ -598,14 +606,17 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       ? { kind: 'file', id: fileTabs.active.id }
       : changesOpen
         ? { kind: 'changes' }
-        : filesOpen
-          ? { kind: 'files' }
-          : pluginPanel !== undefined
-            ? { kind: 'plugin', id: pluginPanel }
-            : { kind: 'launcher' }
+        : deliveryOpen
+          ? { kind: 'delivery' }
+          : filesOpen
+            ? { kind: 'files' }
+            : pluginPanel !== undefined
+              ? { kind: 'plugin', id: pluginPanel }
+              : { kind: 'launcher' }
   const closePanel = () => {
     lastSurface.current = shownSurface()
     setChangesWanted(false)
+    setDeliveryWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setFileExpanded(false)
@@ -616,6 +627,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
     if (!canViewChanges) return
     setChangesWanted(true)
+    setDeliveryWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setInfoPage(true)
@@ -926,6 +938,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const browseFiles = () => {
     if (!canBrowseFiles) return
     setChangesWanted(false)
+    setDeliveryWanted(false)
     if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
       setInfoPage(false)
@@ -1117,6 +1130,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFilesOpen,
     canViewChanges,
     changesOpen,
+    canDeliver,
+    deliveryOpen,
     showSurface,
     launcherTakesFocus,
     closePanel,

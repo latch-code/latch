@@ -16,7 +16,7 @@ import {
   type UiPanelDocument,
   type UiPanelInfo,
 } from '@latch/protocol'
-import { FileDiff, Folder, Maximize2, Minimize2, Puzzle, X } from 'lucide-react'
+import { FileDiff, Folder, GitCommitHorizontal, Maximize2, Minimize2, Puzzle, X } from 'lucide-react'
 import { Button, IconButton, InlineNotice, Loading, PanelTabs, type PanelTab } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
@@ -31,12 +31,13 @@ const closeShortcut = () => (currentShell() !== null ? '⌥⌘B' : 'Alt Shift B'
 export type PanelSurface =
   | { kind: 'launcher' }
   | { kind: 'changes' }
+  | { kind: 'delivery' }
   | { kind: 'files' }
   | { kind: 'file'; id: string }
   | { kind: 'plugin'; id: string }
 
 function surfaceOf(value: string): PanelSurface {
-  if (value === 'changes' || value === 'files') return { kind: value }
+  if (value === 'changes' || value === 'files' || value === 'delivery') return { kind: value }
   if (value.startsWith('file:')) return { kind: 'file', id: value.slice(5) }
   return { kind: 'plugin', id: value.slice(7) }
 }
@@ -75,6 +76,8 @@ export function SessionPanels({
   changes,
   changesOpen = false,
   changesTotals,
+  delivery,
+  deliveryOpen = false,
   launcherNote,
   launcherTakesFocus,
 }: {
@@ -84,6 +87,9 @@ export function SessionPanels({
   /** The 改动 tab's content, when the session has one. */
   changes?: ReactNode
   changesOpen?: boolean
+  /** The 交付 tab's content, when the Host delivers and the session has a folder. */
+  delivery?: ReactNode
+  deliveryOpen?: boolean
   /** The number on the tab, only while another tab is showing. */
   changesTotals?: { add: number; del: number; files: number }
   files?: FileTab[]
@@ -144,10 +150,16 @@ export function SessionPanels({
   useEffect(() => {
     if (changesOpen) setChangesStarted(true)
   }, [changesOpen])
+  const [deliveryStarted, setDeliveryStarted] = useState(deliveryOpen)
+  useEffect(() => {
+    if (deliveryOpen) setDeliveryStarted(true)
+  }, [deliveryOpen])
   const showingChanges = changesOpen && !activeFile
-  const showingFiles = showFiles && !activeFile && !showingChanges
-  const active = !activeFile && !showingChanges && !showingFiles ? offered.find(panel => panel.id === plugin) : undefined
-  const launcher = !activeFile && !showingChanges && !showingFiles && !active
+  const showingDelivery = deliveryOpen && !activeFile && !showingChanges
+  const showingFiles = showFiles && !activeFile && !showingChanges && !showingDelivery
+  const active =
+    !activeFile && !showingChanges && !showingDelivery && !showingFiles ? offered.find(panel => panel.id === plugin) : undefined
+  const launcher = !activeFile && !showingChanges && !showingDelivery && !showingFiles && !active
   const tabs: Array<PanelTab<string>> = [
     ...(changes
       ? [
@@ -161,6 +173,7 @@ export function SessionPanels({
         ]
       : []),
     ...(fileContext ? [{ value: 'files', label: '文件', icon: Folder, controls: id }] : []),
+    ...(delivery ? [{ value: 'delivery', label: '交付', icon: GitCommitHorizontal, controls: id }] : []),
     ...files.map(tab => {
       const name = escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference)
       return {
@@ -178,11 +191,13 @@ export function SessionPanels({
     ? `file:${activeFile.id}`
     : showingChanges
       ? 'changes'
-      : showingFiles
-        ? 'files'
-        : active
-          ? `plugin:${active.id}`
-          : ''
+      : showingDelivery
+        ? 'delivery'
+        : showingFiles
+          ? 'files'
+          : active
+            ? `plugin:${active.id}`
+            : ''
   return (
     <div className="session-panels">
       <PanelTabs
@@ -208,6 +223,11 @@ export function SessionPanels({
           {changes}
         </div>
       )}
+      {delivery && deliveryStarted && (
+        <div className="session-panel-changes" hidden={!showingDelivery}>
+          {delivery}
+        </div>
+      )}
       {fileContext && treeStarted && (
         <div className="session-file-tree" hidden={!showingFiles}>
           <FileTree
@@ -228,7 +248,7 @@ export function SessionPanels({
       )}
       <div
         className="session-panel-body"
-        hidden={showingChanges || showingFiles}
+        hidden={showingChanges || showingDelivery || showingFiles}
         role={launcher ? undefined : 'tabpanel'}
         id={id}
         aria-label={launcher ? undefined : (activeFile?.file?.name ?? active?.title)}>
@@ -274,6 +294,7 @@ export function SessionPanels({
           <PanelLauncher
             {...(changes ? { changes: true } : {})}
             files={!!fileContext}
+            {...(delivery ? { delivery: true } : {})}
             plugins={offered.map(panel => ({ id: panel.id, title: panel.title }))}
             {...(launcherTakesFocus ? { takesFocus: launcherTakesFocus } : {})}
             onOpen={surface => onSurface?.(surface)}>

@@ -72,6 +72,8 @@ import { PARTIAL_NOTE } from '../../conversation/turnChanges.ts'
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
   turnId?: string
+  /** 交付 opens a file in 未提交, the work tree against HEAD. */
+  scope?: 'uncommitted'
   /** A line of the conversation does not always know which session folder its file is in. */
   file?: { root?: string; path: string }
   /** The same link pressed again goes there again. */
@@ -100,6 +102,8 @@ export interface ChangesPanelProps {
   onToast: (text: string, tone?: 'ok' | 'error') => void
   /** What the tab says while another tab is showing. */
   onTotals?: (totals: ChangeList['totals'] | undefined) => void
+  /** Opens 交付, from 未提交. */
+  onDeliver?: () => void
 }
 
 function Line({
@@ -535,9 +539,16 @@ function ReadableChanges({
   knownSession,
   onToast,
   onTotals,
+  onDeliver,
 }: ChangesPanelProps) {
   const preferences = usePreferences()
-  const [choice, setChoice] = useState<ScopeChoice>(target?.turnId ? { kind: 'turn', turnId: target.turnId } : { kind: 'latest' })
+  const [choice, setChoice] = useState<ScopeChoice>(
+    target?.turnId
+      ? { kind: 'turn', turnId: target.turnId }
+      : target?.scope === 'uncommitted'
+        ? { kind: 'uncommitted' }
+        : { kind: 'latest' },
+  )
   const { list, turns, running, failure, busy, actionError, result, undoneFiles, revision, reload, actions, readFile } = useChanges(
     summary,
     choice,
@@ -575,6 +586,7 @@ function ReadableChanges({
   useEffect(() => {
     if (!target) return
     if (target.turnId) setChoice({ kind: 'turn', turnId: target.turnId })
+    else if (target.scope === 'uncommitted') setChoice({ kind: 'uncommitted' })
   }, [target?.nonce])
 
   const files = useMemo(() => (list ? list.files.toSorted(compareFiles) : []), [list])
@@ -748,6 +760,11 @@ function ReadableChanges({
         <span className="changes-scope-action">
           <ScopeOptions action={action} list={list} actions={actions} busy={busy} turnId={shownTurnId} onDiscard={askDiscard} />
         </span>
+        {choice.kind === 'uncommitted' && onDeliver && (
+          <Button size="xs" variant="ghost" onClick={onDeliver}>
+            去交付
+          </Button>
+        )}
         <span className="changes-scope-space" />
         {!narrow && !phone && (
           <SegmentedControl
