@@ -120,18 +120,51 @@ const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xls
 export const producedFiles = (outputs: readonly FileChange[]) =>
   outputs.filter(file => file.change === 'created' && file.kind !== undefined && DOCUMENT_KINDS.has(file.kind))
 
-/** Why 撤销本轮 cannot run, in words; `no-changes` and `undone` draw no words because there is no card or a record line. */
-const BLOCK_WORDS: Partial<Record<UndoBlock, string>> = {
-  running: '运行中不能撤销',
-  'not-settled': '没有结算，不能撤销',
-  'changed-since': '之后又改过这些文件，不能撤销',
-  'not-retained': '内容没有留存，不能撤销',
+/** Who may press 撤销本轮 or 恢复 on this device, as the Host will check it. */
+export interface UndoRights {
+  /** `run`: a device without it reads. */
+  canRun: boolean
+  /** The session opens only to be read, whatever this device may do: the Host refuses every change to it. */
+  readOnly?: boolean
+  /** The session runs or waits: the Host refuses every write, whatever a list read earlier says. */
+  active: boolean
+  /** No connection to the Host. */
+  offline: boolean
 }
 
-export const undoBlockWords = (reason: UndoBlock): string | undefined => BLOCK_WORDS[reason]
+/**
+ * What a turn offers on its card and in the 改动 tab alike: 撤销本轮, 恢复, or the one sentence why neither. `someFiles`:
+ * the turn as a whole cannot go back, but files still as it left them can.
+ */
+export type TurnUndo = { kind: 'undo' } | { kind: 'redo' } | { kind: 'why'; text: string; someFiles?: true } | { kind: 'none' }
 
-/** Why an undone turn cannot come back: its undo already ran, so 「不能撤销」 would say the opposite of what happened. */
-export const redoBlockWords = (reason: UndoBlock): string | undefined => BLOCK_WORDS[reason]?.replace('撤销', '恢复')
+/** The reasons the Host gives, said once for both actions; `no-changes` and `undone` leave nothing to say. */
+const BLOCK_WHY: Partial<Record<UndoBlock, (word: string) => string>> = {
+  running: word => `运行中不能${word}`,
+  'not-settled': word => `这一轮没有正常结束，不能${word}`,
+  'changed-since': word => `之后又改过这些文件，不能${word}`,
+  'not-retained': word => `这些文件的内容没有留存，不能${word}`,
+}
+
+/**
+ * The one judgement on taking a turn back, read by the card and the 改动 tab. It shows what the Host will check, and the
+ * Host checks again: a device with `run` may undo from anywhere, so this computer is not a condition.
+ */
+export function turnUndo(list: ChangeList, turn: Pick<TurnChanges, 'state'> | undefined, rights: UndoRights): TurnUndo {
+  const word = list.undone ? '恢复' : '撤销'
+  const why = (text: string): TurnUndo => ({ kind: 'why', text })
+  if (rights.offline) return why(`离线时不能${word}`)
+  // The turn's state first, because `ChangeList.running` is also true of one that was interrupted.
+  if (rights.active || turn?.state === 'running') return why(BLOCK_WHY.running!(word))
+  if (turn?.state === 'interrupted') return why(BLOCK_WHY['not-settled']!(word))
+  if (rights.readOnly) return why('这个会话只能查看')
+  if (!rights.canRun) return why('这台设备只能查看')
+  const availability = list.undone ? list.redo : list.undo
+  if (availability?.available) return { kind: list.undone ? 'redo' : 'undo' }
+  const text = availability ? BLOCK_WHY[availability.reason]?.(word) : undefined
+  if (!availability || !text) return { kind: 'none' }
+  return !list.undone && availability.reason === 'changed-since' ? { kind: 'why', text, someFiles: true } : why(text)
+}
 
 /** Files 撤销本轮 would leave alone, said before it runs: without them the undo runs at once. */
 export function undoExceptions(list: ChangeList): string[] {

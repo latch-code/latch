@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChangeList, ChangedFile, FileChange, Message, TurnChanges } from '@latch/protocol'
+import type { ChangeList, ChangedFile, FileChange, Message, TurnChanges, UndoBlock } from '@latch/protocol'
 import {
   changedOutputs,
   firstOpenable,
@@ -7,8 +7,7 @@ import {
   notRestoredLine,
   producedFiles,
   turnSummary,
-  redoBlockWords,
-  undoBlockWords,
+  turnUndo,
   undoExceptions,
 } from '../src/conversation/turnChanges.ts'
 import { turnsOf } from '../src/conversation.ts'
@@ -141,10 +140,45 @@ describe('undo', () => {
     expect(firstOpenable([{ path: 'gone', deleted: true }])).toBeUndefined()
   })
 
-  it('has words for the reasons that leave a card standing', () => {
-    expect(undoBlockWords('running')).toBe('运行中不能撤销')
-    expect(undoBlockWords('changed-since')).toBe('之后又改过这些文件，不能撤销')
-    expect(undoBlockWords('no-changes')).toBeUndefined()
-    expect(redoBlockWords('changed-since')).toBe('之后又改过这些文件，不能恢复')
+  it("decides once for the card and the 改动 tab, from the Host's answer and this device", () => {
+    const settled = record('t', 0)
+    const rights = { canRun: true, active: false, offline: false }
+    const blocked = (reason: UndoBlock) => ({ available: false as const, reason })
+    const turn = (extra: Partial<ChangeList> = {}) => list([changed('a.ts')], { undo: { available: true }, ...extra })
+    expect(turnUndo(turn(), settled, rights)).toEqual({ kind: 'undo' })
+    expect(turnUndo(turn({ undo: blocked('changed-since') }), settled, rights)).toEqual({
+      kind: 'why',
+      text: '之后又改过这些文件，不能撤销',
+      someFiles: true,
+    })
+    expect(turnUndo(turn({ undo: blocked('not-retained') }), settled, rights)).toEqual({
+      kind: 'why',
+      text: '这些文件的内容没有留存，不能撤销',
+    })
+    expect(turnUndo(turn({ undo: blocked('not-settled') }), settled, rights)).toEqual({ kind: 'why', text: '这一轮没有正常结束，不能撤销' })
+    expect(turnUndo(turn({ undo: blocked('no-changes') }), settled, rights)).toEqual({ kind: 'none' })
+    // An interrupted turn reads as running in the list; its own state says which.
+    expect(turnUndo(turn({ running: true }), { ...settled, state: 'interrupted' }, rights)).toEqual({
+      kind: 'why',
+      text: '这一轮没有正常结束，不能撤销',
+    })
+    expect(turnUndo(turn(), settled, { ...rights, active: true })).toEqual({ kind: 'why', text: '运行中不能撤销' })
+    expect(turnUndo(turn(), settled, { ...rights, offline: true })).toEqual({ kind: 'why', text: '离线时不能撤销' })
+    expect(turnUndo(turn(), settled, { ...rights, canRun: false })).toEqual({ kind: 'why', text: '这台设备只能查看' })
+    expect(turnUndo(turn(), settled, { ...rights, readOnly: true })).toEqual({ kind: 'why', text: '这个会话只能查看' })
+  })
+
+  it('offers 恢复 once undone, or says in the same words why not', () => {
+    const settled = record('t', 0)
+    const rights = { canRun: true, active: false, offline: false }
+    const undone = (redo: ChangeList['redo']) =>
+      list([changed('a.ts')], { undone: true, undo: { available: false, reason: 'undone' }, ...(redo ? { redo } : {}) })
+    expect(turnUndo(undone({ available: true }), settled, rights)).toEqual({ kind: 'redo' })
+    expect(turnUndo(undone({ available: false, reason: 'changed-since' }), settled, rights)).toEqual({
+      kind: 'why',
+      text: '之后又改过这些文件，不能恢复',
+    })
+    expect(turnUndo(undone({ available: true }), settled, { ...rights, active: true })).toEqual({ kind: 'why', text: '运行中不能恢复' })
+    expect(turnUndo(undone(undefined), settled, rights)).toEqual({ kind: 'none' })
   })
 })

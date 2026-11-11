@@ -1,17 +1,7 @@
 // What the 改动 tab draws from the Host's answers: which scope is shown, the file tree, what stands in the scope row, the
 // lines above the list and the empty states. Pure, so every state of the table has a test. See docs/CHANGES.md.
-import type {
-  Availability,
-  ChangedFile,
-  ChangeHunk,
-  ChangeList,
-  ChangeScope,
-  GitOperation,
-  Message,
-  NotRestoredFile,
-  TurnChanges,
-  UndoBlock,
-} from '@latch/protocol'
+import type { ChangedFile, ChangeHunk, ChangeList, ChangeScope, GitOperation, Message, NotRestoredFile, TurnChanges } from '@latch/protocol'
+import { turnUndo, type TurnUndo, type UndoRights } from '../../conversation/turnChanges.ts'
 import type { DiffHunk, DiffGap, DiffLine, LineDiff } from '../../diff.ts'
 
 /** `latest` follows the session's newest turn; a picked turn stays until another is picked. */
@@ -307,71 +297,27 @@ export function reviewOf(hunks: readonly ChangeHunk[]): { view: LineDiff; oldTex
 
 // ---- the scope row -------------------------------------------------------------------------------------------------
 
-export type ScopeAction =
-  | { kind: 'undo' }
-  | { kind: 'redo' }
-  | { kind: 'discard' }
-  /** No action, and why. `someFiles`: the turn as a whole cannot go back, but files still as it left them can. */
-  | { kind: 'why'; text: string; someFiles?: true }
-  | { kind: 'none' }
-
-const UNDO_WHY: Partial<Record<UndoBlock, string>> = {
-  running: '运行中不能撤销',
-  'not-settled': '这一轮没有正常结束，不能撤销',
-  'changed-since': '之后又改过这些文件，不能撤销',
-  'not-retained': '这些文件的内容没有留存，不能撤销',
-}
-const REDO_WHY: Partial<Record<UndoBlock, string>> = {
-  running: '运行中不能恢复',
-  'not-settled': '这一轮没有正常结束，不能恢复',
-  'changed-since': '之后又改过这些文件，不能恢复',
-  'not-retained': '这些文件的内容没有留存，不能恢复',
-}
+/** A turn's action or the reason there is none (`turnUndo`), or for uncommitted changes 撤销未提交的改动. */
+export type ScopeAction = TurnUndo | { kind: 'discard' }
 
 /** Who may press what on this device, as the Host will check it. */
-export interface UndoRights {
-  /** `run`: a device without it reads. */
-  canRun: boolean
-  /** The session opens only to be read, whatever this device may do: the Host refuses every change to it. */
-  readOnly?: boolean
-  /** The connection is `host.sock`. */
+export interface ScopeRights extends UndoRights {
+  /** The connection is `host.sock`: nothing brings discarded files back, so for now the Host takes that only from it. */
   local: boolean
-  /** The Host takes this session's input only from this computer (an external engine). */
-  /** The session runs or waits: the Host refuses every write, whatever a list read earlier says. */
-  active: boolean
-  /** No connection to the Host. */
-  offline: boolean
 }
 
-const blockedWhy = (table: Partial<Record<UndoBlock, string>>, availability: Availability | undefined): ScopeAction => {
-  if (!availability || availability.available) return { kind: 'none' }
-  const text = table[availability.reason]
-  if (!text) return { kind: 'none' }
-  return table === UNDO_WHY && availability.reason === 'changed-since' ? { kind: 'why', text, someFiles: true } : { kind: 'why', text }
-}
-
-/** The action or the reason there is none: always one place, the scope row. */
-export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | undefined, rights: UndoRights): ScopeAction {
+/** The action or the reason there is none: always one place, the scope row. A turn reads as on its card. */
+export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | undefined, rights: ScopeRights): ScopeAction {
   if (!list || list.unavailable) return { kind: 'none' }
   if (list.scope === 'session' || list.scope === 'base') return { kind: 'why', text: '只读' }
-  const word = list.undone ? '恢复' : '撤销'
-  if (rights.offline) return { kind: 'why', text: `离线时不能${word}` }
-  if (list.scope === 'uncommitted') {
-    if (list.conflict) return { kind: 'why', text: conflictWhy(list.conflict.operation) }
-    if (rights.readOnly) return { kind: 'why', text: '这个会话只能查看' }
-    if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
-    if (!rights.local) return { kind: 'why', text: '只能在 Mac 的 Latch 中撤销' }
-    if (!list.files.length) return { kind: 'none' }
-    return rights.active ? { kind: 'why', text: '运行中不能撤销' } : { kind: 'discard' }
-  }
-  // A turn: its state first, because `ChangeList.running` is also true of one that was interrupted.
-  if (rights.active || turn?.state === 'running') return { kind: 'why', text: `运行中不能${word}` }
-  if (turn?.state === 'interrupted') return { kind: 'why', text: '没有结算，不能撤销' }
+  if (list.scope !== 'uncommitted') return turnUndo(list, turn, rights)
+  if (rights.offline) return { kind: 'why', text: '离线时不能撤销' }
+  if (list.conflict) return { kind: 'why', text: conflictWhy(list.conflict.operation) }
   if (rights.readOnly) return { kind: 'why', text: '这个会话只能查看' }
   if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
-  if (list.undone) return list.redo?.available ? { kind: 'redo' } : blockedWhy(REDO_WHY, list.redo)
-  if (list.undo?.available) return { kind: 'undo' }
-  return blockedWhy(UNDO_WHY, list.undo)
+  if (!rights.local) return { kind: 'why', text: '只能在 Mac 的 Latch 中撤销' }
+  if (!list.files.length) return { kind: 'none' }
+  return rights.active ? { kind: 'why', text: '运行中不能撤销' } : { kind: 'discard' }
 }
 
 const OPERATION_WORD: Record<GitOperation, string> = {

@@ -14,10 +14,10 @@ import {
   changedOutputs,
   producedFiles,
   turnSummary,
-  redoBlockWords,
-  undoBlockWords,
+  turnUndo,
   undoExceptions,
   type SummaryFile,
+  type TurnUndo,
 } from './turnChanges.ts'
 
 /**
@@ -235,11 +235,15 @@ export function TurnCards({
   const unknown = phase === 'uncertain'
   const receipt = done?.receipt
   const exceptions = list ? undoExceptions(list) : []
+  // The same judgement and words as the 改动 tab. A device or session that only reads is said so at the composer, and
+  // the card cannot tell which of the two it is, so it offers nothing and says nothing more.
+  const decision: TurnUndo =
+    list && record && undoGate !== 'read-only' ? turnUndo(list, record, { canRun: true, active, offline: false }) : { kind: 'none' }
+  const why = decision.kind === 'why' ? decision.text : undefined
   if (undone) {
     const undoReceipt = receipt?.action === 'undo' ? receipt : undefined
     const notCovered = undoReceipt?.notCovered ?? list?.notCovered ?? []
-    const redoBlock = list?.redo && !list.redo.available ? redoBlockWords(list.redo.reason) : undefined
-    const canRedo = !active && !redoBlock && undoGate === 'open'
+    const canRedo = decision.kind === 'redo'
     // The engine hears as soon as a turn begins, so nothing is still to be told once one runs.
     const noted = !active && (done && done.record === record ? done.receipt.noteNextTurn : record?.notePending === true)
     return (
@@ -264,7 +268,7 @@ export function TurnCards({
             </>
           )}
           {unknown && !canRedo && <span> · 恢复结果未知</span>}
-          {redoBlock && <span> · {redoBlock}</span>}
+          {why && <span> · {why}</span>}
           {noted && <span> · 下一条消息会告诉 {engine}</span>}
         </p>
         <PartialNote list={list} />
@@ -307,20 +311,11 @@ export function TurnCards({
         {notes}
       </div>
     )
-  const blockedWords = !record
-    ? undefined
-    : undoGate === 'mac-only'
-      ? '在 Mac 的 Latch 中撤销'
-      : active
-        ? '运行中不能撤销'
-        : list?.undo && !list.undo.available
-          ? undoBlockWords(list.undo.reason)
-          : undefined
-  const canUndo = undoGate === 'open' && !active && list?.undo?.available === true
+  const canUndo = decision.kind === 'undo'
   const count = list?.totals.files ?? summary.files.length
   const undoControl = (
     <>
-      {blockedWords && <span className="changed-files-why">{blockedWords}</span>}
+      {why && <span className="changed-files-why">{why}</span>}
       {unknown && !canUndo && <span className="changed-files-why">撤销结果未知</span>}
       {canUndo && (
         <Tooltip content="恢复留存的文件；恢复不了的会列出来" describe={false}>

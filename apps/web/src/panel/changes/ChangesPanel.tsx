@@ -29,6 +29,7 @@ import {
 } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage } from '../../core/api.ts'
+import { computerName } from '../../core/securityCopy.ts'
 import { setPreference, usePreferences } from '../../preferences.ts'
 import { ChangesFile } from './ChangesFile.tsx'
 import {
@@ -66,7 +67,9 @@ import {
 } from './model.ts'
 import { useChanges, type ChangesActions, type ChangesResult } from './useChanges.ts'
 
-const DENIED_DETAIL = '这台设备没有查看项目文件的权限，所以读不到改动。在这台 Mac 的 Latch 桌面端查看。'
+/** Why a device reads no changes, and where the Host's computer grants it: the device's own page in 设置 › 设备. */
+const filesScopeDenied = (computer: string) =>
+  `这台设备没有查看项目文件的权限，所以读不到改动。在 ${computer} 上的 Latch 里打开：设置 › 设备。`
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
@@ -84,10 +87,11 @@ export interface ChangesPanelProps {
   engine: string
   local: boolean
   canRun: boolean
-  /** The Host takes this session's input only from this computer. */
   /** The device's data scope covers the session's folders; the routes refuse it otherwise. */
   canRead: boolean
   phone: boolean
+  /** The Host's computer by the name it reports (`Snapshot.hostName`), for where to grant access. */
+  hostName?: string
   /** No connection to the Host: what is on screen stays, and nothing can be written. */
   offline: boolean
   target?: ChangesTarget
@@ -497,7 +501,7 @@ export function ChangesPanel(props: ChangesPanelProps) {
   if (!props.canRead)
     return (
       <div className="changes-panel">
-        <Empty title="这台设备看不到会话文件夹里的文件" detail={DENIED_DETAIL} />
+        <Empty title="这台设备看不到会话文件夹里的文件" detail={filesScopeDenied(computerName(props.hostName))} />
       </div>
     )
   return <ReadableChanges key={props.summary.id} {...props} />
@@ -510,6 +514,7 @@ function ReadableChanges({
   local,
   canRun,
   phone,
+  hostName,
   offline,
   target,
   onComment,
@@ -830,7 +835,7 @@ function ReadableChanges({
       {failure?.kind === 'turn-gone' ? (
         <Empty title={missingTurnTitle(choice, numbers, turns)} />
       ) : failure?.kind === 'denied' ? (
-        <Empty title="这台设备看不到会话文件夹里的文件" detail={DENIED_DETAIL} />
+        <Empty title="这台设备看不到会话文件夹里的文件" detail={filesScopeDenied(computerName(hostName))} />
       ) : failure && !list ? (
         <Empty title="读不到改动" detail={failure.text}>
           <Button

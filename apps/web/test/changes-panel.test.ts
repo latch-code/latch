@@ -77,7 +77,7 @@ describe('the scope row', () => {
   it('switches on the turn state, because an interrupted turn also reads as running in the list', () => {
     expect(scopeAction(list({ running: true }), { ...settled, state: 'interrupted' }, rights)).toEqual({
       kind: 'why',
-      text: '没有结算，不能撤销',
+      text: '这一轮没有正常结束，不能撤销',
     })
   })
 

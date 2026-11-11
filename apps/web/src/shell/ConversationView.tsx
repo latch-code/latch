@@ -194,12 +194,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       changes={{
                         // The Host shows a session's files only to a device whose data scope covers them.
                         enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
-                        undo:
-                          current.summary.personal || !access.scopes.has('run')
-                            ? 'read-only'
-                            : !access.local && harnessInfo?.level !== 'L1'
-                              ? 'mac-only'
-                              : 'open',
+                        undo: current.summary.personal || !access.scopes.has('run') ? 'read-only' : 'open',
                       }}
                       {...(run ? { onStop: run.onCancel } : {})}
                       {...(current.summary.personal

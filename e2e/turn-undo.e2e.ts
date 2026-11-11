@@ -155,7 +155,7 @@ it('offers undo without a reload when a run that just ended settles in view', as
     })
     await page.locator(`[data-task-id="${id}"]`).first().click()
     await cardOf(page).getByRole('button', { name: '撤销本轮', exact: true }).waitFor()
-    expect(await cardOf(page).getByText('没有结算，不能撤销').count()).toBe(0)
+    expect(await cardOf(page).getByText('这一轮没有正常结束，不能撤销').count()).toBe(0)
   })
 })
 
@@ -232,5 +232,30 @@ it('says a record is incomplete, wherever the card stands', async () => {
     await cardOf(page).getByText('记录不完整：文件夹太大').waitFor()
     await cardOf(page).getByRole('button', { name: '撤销本轮', exact: true }).click()
     await recordOf(page).getByText('记录不完整：文件夹太大').waitFor()
+  })
+})
+
+it('says why a turn cannot go back in the same words on its card and in the 改动 tab', async () => {
+  const id = await settledSession('之后又改过')
+  const written = `run-${runs}.txt`
+  await withPage(async page => {
+    // The record's end is taken once the run has settled; a later hand on its file is what the Host will not overwrite.
+    await vi.waitFor(
+      async () =>
+        expect(
+          await page.evaluate(async session => {
+            const answer = (await (await fetch(`/link/api/tasks/${session}/changes/turns`)).json()) as { turns: { state: string }[] }
+            return answer.turns.at(-1)?.state
+          }, id),
+        ).toBe('settled'),
+      { timeout: 15_000 },
+    )
+    await writeFile(join(host.workspaceRoot, written), 'changed since\n')
+    await page.locator(`[data-task-id="${id}"]`).first().click()
+    const why = '之后又改过这些文件，不能撤销'
+    await cardOf(page).getByText(why, { exact: true }).waitFor()
+    expect(await cardOf(page).getByRole('button', { name: '撤销本轮', exact: true }).count()).toBe(0)
+    await cardOf(page).getByRole('button', { name: '打开改动', exact: true }).click()
+    await page.locator('.changes-panel .changes-why').getByText(why, { exact: true }).waitFor()
   })
 })

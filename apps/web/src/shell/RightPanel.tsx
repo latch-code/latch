@@ -75,6 +75,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 local={access.local}
                 canRun={access.scopes.has('run')}
                 canRead={snapshot.device.dataScope === 'all'}
+                hostName={snapshot.hostName}
                 phone={phone}
                 offline={connection === 'reconnecting' || connection === 'offline'}
                 {...(changesTarget ? { target: changesTarget } : {})}
