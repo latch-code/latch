@@ -30,6 +30,9 @@ const CODEX_MODELS = JSON.stringify(
 const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
 const input = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true })
 const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+/** Words of the model menu, not the same words in the composer's status line or its tooltips. */
+const menuText = (page: Page, text: string): Locator =>
+  page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
 const row = (page: Page, name: RegExp | string) =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
 
@@ -193,11 +196,10 @@ describe('a Harness with its own models on a saved service', () => {
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
     await page.getByText('Codex 不认识这个模型', { exact: true }).waitFor()
     // What it promises is what the Host checks: a whole turn that did not reach Latch.
-    await page
-      .getByText('「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。', {
-        exact: true,
-      })
-      .waitFor()
+    await menuText(
+      page,
+      '「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
+    ).waitFor()
     await shot(page, 'draft-menu-1440-light')
     await row(page, 'fake-model-large').click()
     await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
@@ -233,11 +235,13 @@ describe('a Harness with its own models on a saved service', () => {
 
     // In the session the service is fixed; the menu says where its requests go.
     await chip(page, '模型').click()
-    await page.getByText('这个会话经 Latch 用「OpenAI」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', { exact: true }).waitFor()
+    await menuText(page, '这个会话经 Latch 用「OpenAI」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。').waitFor()
     // What Codex lists now is that service's; another service it speaks needs a new session.
-    await page.getByText('OpenAI · 经 Latch', { exact: true }).waitFor()
+    await menuText(page, 'OpenAI · 经 Latch').waitFor()
     await page.getByText('换服务要新开会话：开始时确认的是这个服务。', { exact: true }).waitFor()
-    expect(await page.getByText('Codex 自己的模型', { exact: true }).count()).toBe(0)
+    expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
+    // The status line says the same way, in the same words.
+    expect(await page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 经 Latch')
     await shot(page, 'session-menu-1440-light')
     await page.keyboard.press('Escape')
 
@@ -245,10 +249,9 @@ describe('a Harness with its own models on a saved service', () => {
     expect((await owner.request(`providers/${openai.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
     // The menu says so by the service's name before anything is sent, and offers no model of it.
     await chip(page, '模型').click()
-    await page.getByText('OpenAI · 已停用', { exact: true }).waitFor()
-    await page
-      .getByText('这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。', { exact: true })
-      .waitFor()
+    await menuText(page, 'OpenAI · 已停用').waitFor()
+    await expect.poll(() => page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 已停用')
+    await menuText(page, '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。').waitFor()
     await expect.poll(() => row(page, 'fake-model-large').getAttribute('aria-disabled')).toBe('true')
     expect(await page.getByText(/经 Latch 用|openai · /u).count()).toBe(0)
     await shot(page, 'service-off-menu-1440-light')
@@ -346,7 +349,7 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
     await chip(page, '模型').click()
-    await page.getByText('MyGemini · 经 Latch', { exact: true }).waitFor()
+    await menuText(page, 'MyGemini · 经 Latch').waitFor()
     await row(page, 'fake-model').click()
     // The first time, this Harness's options are read by a process of its own; the chip says so until they are.
     await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toBe('fake-model')
@@ -361,7 +364,7 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await connected(page)
 
     await chip(page, '模型').click()
-    await page.getByText('MyGemini · 经 Latch', { exact: true }).waitFor()
+    await menuText(page, 'MyGemini · 经 Latch').waitFor()
     await row(page, 'fake-model-large').waitFor()
     expect(await page.getByText('Fake Small', { exact: true }).count()).toBe(0)
     expect(await page.getByText('vendor/typed', { exact: true }).count()).toBe(0)

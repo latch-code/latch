@@ -3,20 +3,23 @@ import { Eraser, Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { draftConfig, harnessName, nothingInstalled, sameModel, worktreeProject } from '../composerChoice.ts'
+import { draftConfig, harnessName, nothingInstalled, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
+import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
-import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
-import { FolderControl, WorktreeLabel } from '../composer/FolderControl.tsx'
+import { MoreMenu } from '../composer/Footer.tsx'
+import { FolderControl } from '../composer/FolderControl.tsx'
+import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
+import { sessionTotals } from '../composer/sessionTotals.ts'
 import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
-import { contextUse, draftPermission, draftRead, permissionView } from '../composer/permission.ts'
+import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -38,17 +41,15 @@ export function SendingBubble({ shell }: { shell: ShellState }) {
 /** On a phone the input has no room for the part after the two spaces, which teaches @ and /. */
 const phoneWords = (words: string) => words.split('  ')[0]!
 
-/** The new-session page's question: the project is a picker in it, named when there is one and offered when there is not. */
+/**
+ * The new-session page's title is the project, a picker: the one chosen, or 选择项目 while there is none. What to do is
+ * the input's to ask, so the title asks nothing.
+ */
 export function NewSessionTitle({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
-  const question = (
-    <>
-      要做什么<span className="new-session-mark">？</span>
-    </>
-  )
-  if (!catalog) return question
+  if (!catalog) return '新会话'
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
-  const picker = (
+  return (
     <ProjectPicker
       access={access}
       catalog={catalog}
@@ -63,18 +64,6 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
       notice={projectAsk.notice}
       onClosed={projectAsk.clearNotice}
     />
-  )
-  if (project)
-    return (
-      <>
-        在 {picker} 里做什么<span className="new-session-mark">？</span>
-      </>
-    )
-  return (
-    <span className="new-session-question">
-      <span>{question}</span>
-      {picker}
-    </span>
   )
 }
 
@@ -194,15 +183,49 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     if (model) setToast({ text: `下一轮起用 ${modelWords(model)}`, tone: 'ok' })
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
-  const use = selectedId === null ? undefined : contextUse(current?.usageReport)
   // A new-context send that did not start has cleared it on the Host already: there is nothing left to keep.
   const hostCleared = current?.contextCleared === true && current.summary.id === selectedId
-  const branch =
-    selectedId === null
-      ? catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')?.branch
-      : summary?.branch
   const showControls = selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped')
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
+  const status = (() => {
+    if (selectedId === null) {
+      const project = catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
+      const place = worktreeOffer ? (
+        <FolderControl
+          project={worktreeOffer}
+          worktree={submission.worktree}
+          onWorktree={submission.setWorktree}
+          disabled={newChoicesLocked}
+          branch={project?.branch}
+        />
+      ) : project && choice.mode !== 'chat' ? (
+        <>
+          <FolderSegment name={project.name || basename(project.path)} tip={`项目 ${project.name || basename(project.path)}`} />
+          {project.branch && <BranchSegment branch={project.branch} />}
+        </>
+      ) : undefined
+      const route = statusRoute(catalog, chosenHarness, { picked: servicePick(catalog, chosenHarness, choice.config) })
+      return <ComposerStatus place={place} route={route} phone={phone} />
+    }
+    if (!summary || summary.personal) return null
+    const project = catalog && summary.mode !== 'chat' ? projectOf(summary, catalog.workspaces) : undefined
+    const folder = summary.mode === 'chat' ? undefined : project?.name || (summary.cwd ? basename(summary.cwd) : undefined)
+    const worktree = summary.worktree ? (summary.branch ?? summary.worktree.branch) : undefined
+    const place = (
+      <>
+        {folder && <FolderSegment name={folder} tip={summary.cwd ? `文件夹 ${summary.cwd}` : `项目 ${folder}`} worktree={!!worktree} />}
+        {worktree ? <BranchSegment branch={worktree} worktree /> : summary.branch && <BranchSegment branch={summary.branch} />}
+      </>
+    )
+    return (
+      <ComposerStatus
+        place={folder || worktree || summary.branch ? place : undefined}
+        route={statusRoute(catalog, harnessInfo, { route: summary.modelRoute })}
+        totals={sessionTotals({ summary, detail: current, harness: harnessInfo })}
+        phone={phone}
+      />
+    )
+  })()
   const drawers = (
     <>
       {current && workspaceChanged.has(current.summary.id) && (
@@ -365,43 +388,25 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       {...(answer ? { answer } : {})}
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
+      status={status}
       below={
-        <>
-          {(worktreeOffer || branch || (selectedId !== null && summary?.worktree)) && (
-            <div className="composer-context">
-              {worktreeOffer && (
-                <FolderControl
-                  project={worktreeOffer}
-                  worktree={submission.worktree}
-                  onWorktree={submission.setWorktree}
-                  disabled={newChoicesLocked}
-                />
-              )}
-              {summary?.worktree && selectedId !== null ? (
-                <WorktreeLabel branch={summary.branch ?? summary.worktree.branch} />
-              ) : (
-                branch && !(worktreeOffer && submission.worktree) && <BranchLabel branch={branch} />
-              )}
-            </div>
-          )}
-          {selectedId === null && catalog && (
-            <>
-              {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
-              <Collapse open={codeRootChoice !== undefined}>
-                <p className="composer-notice" data-tint="warn" role="note">
-                  <Icon icon={ShieldAlert} size={14} />
-                  {codeRootChoice && CODE_ROOT_COPY.notice}
-                </p>
-              </Collapse>
-              <Collapse open={chosenScopeCaption !== undefined}>
-                <p className="composer-notice" role="note">
-                  <Icon icon={Info} size={14} />
-                  <VisibleText text={chosenScopeCaption ?? ''} />
-                </p>
-              </Collapse>
-            </>
-          )}
-        </>
+        selectedId === null && catalog ? (
+          <>
+            {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
+            <Collapse open={codeRootChoice !== undefined}>
+              <p className="composer-notice" data-tint="warn" role="note">
+                <Icon icon={ShieldAlert} size={14} />
+                {codeRootChoice && CODE_ROOT_COPY.notice}
+              </p>
+            </Collapse>
+            <Collapse open={chosenScopeCaption !== undefined}>
+              <p className="composer-notice" role="note">
+                <Icon icon={Info} size={14} />
+                <VisibleText text={chosenScopeCaption ?? ''} />
+              </p>
+            </Collapse>
+          </>
+        ) : undefined
       }
       confirmation={
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
@@ -415,14 +420,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       queueable={canQueue && !answer}
       steerable={steer && !answer}
       inline={phone && selectedId !== null}
-      meta={
-        showControls && !phone ? (
-          <>
-            {use && <UsageRing use={use} />}
-            <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />
-          </>
-        ) : undefined
-      }
+      meta={showControls && !phone ? <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} /> : undefined}
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (

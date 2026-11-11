@@ -8,7 +8,7 @@ import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionM
 import { DraftThinkingControl, SessionThinkingControl } from '../src/composer/ThinkingControl.tsx'
 import { draftConfig, harnessPicks, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
-import { contextUse, contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
+import { contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
   agentConfigValues,
@@ -383,17 +383,12 @@ describe('the 权限 chip', () => {
   })
 })
 
-describe('the context ring', () => {
-  it('appears from half full, only from what the engine reported', () => {
-    expect(contextUse(undefined)).toBeUndefined()
-    expect(contextUse({ contextUsed: 100 })).toBeUndefined()
-    expect(contextUse({ contextUsed: 100_000, contextSize: 400_000 })).toBeUndefined()
-    expect(contextUse({ contextUsed: 248_000, contextSize: 400_000 })).toEqual({ percent: 62, words: '上下文已用 62% · 248K / 400K' })
-  })
-
-  it('still has the words below that, for the breadcrumb', () => {
-    expect(contextWords({ contextUsed: 100_000, contextSize: 400_000 })?.percent).toBe(25)
+describe('the context words of the title row', () => {
+  it('say the share only when the engine reported both numbers', () => {
+    expect(contextWords(undefined)).toBeUndefined()
     expect(contextWords({ contextUsed: 100 })).toBeUndefined()
+    expect(contextWords({ contextUsed: 100_000, contextSize: 400_000 })?.percent).toBe(25)
+    expect(contextWords({ contextUsed: 248_000, contextSize: 400_000 })).toEqual({ percent: 62, words: '上下文已用 62% · 248K / 400K' })
   })
 })
 

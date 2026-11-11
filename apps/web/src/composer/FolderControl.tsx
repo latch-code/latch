@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Folder, FolderGit2, GitBranch, Info } from 'lucide-react'
+import { Folder, FolderGit2, Info } from 'lucide-react'
 import type { WorkspaceInfo, WorktreeBase } from '@latch/protocol'
-import { ICON_STROKE, MenuFooterNote, Tooltip, ValuePicker } from '@latch/ui'
+import { MenuFooterNote, ValuePicker } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
-import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
+import { BranchSegment, StatusSegment, WORKTREE_SHARED } from './ComposerStatus.tsx'
 
 type Where = 'folder' | 'worktree'
 
@@ -16,7 +17,7 @@ const WORKTREE_COPY = {
   folderLine: '直接在项目文件夹里改',
   uncommitted: '未提交的改动不会带过去。',
   /** A worktree separates files only: ports, processes and this computer's permissions stay shared. */
-  shared: '工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。',
+  shared: WORKTREE_SHARED,
 } as const
 
 /** 从 main 的 3f2a1c9; a detached HEAD has no branch to name. */
@@ -70,8 +71,11 @@ export function FolderControl({
   onWorktree,
   disabled,
   variant = 'inline',
+  branch,
 }: {
   project: WorkspaceInfo
+  /** In the status line: the project's branch, shown while the session would start in the project folder. */
+  branch?: string | undefined
   worktree: boolean
   onWorktree: (worktree: boolean) => void
   disabled: boolean
@@ -111,32 +115,16 @@ export function FolderControl({
       }}
     />
   )
-  if (variant === 'row' || !worktree || base?.state !== 'ready') return picker
-  // Beside the choice under the input, where the branch alone was: where the new worktree starts.
+  if (variant === 'row') return picker
+  // In the status line: the choice is the folder segment, and the branch segment says where a new worktree starts.
   return (
     <>
-      {picker}
-      <span className="composer-branch">
-        <GitBranch size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        <span className="composer-branch-name">
-          <VisibleText text={baseWords(base.base)} />
-        </span>
-      </span>
+      <StatusSegment kind="folder">{picker}</StatusSegment>
+      {worktree && base?.state === 'ready' ? (
+        <BranchSegment branch={baseWords(base.base)} base />
+      ) : (
+        !worktree && branch && <BranchSegment branch={branch} />
+      )}
     </>
-  )
-}
-
-/** A session in a worktree, once started: 工作树 · its branch, where the branch alone was. */
-export function WorktreeLabel({ branch }: { branch: string }) {
-  const name = escapeHiddenCharacters(branch)
-  return (
-    <Tooltip content={`工作树 · ${name}。${WORKTREE_COPY.shared}`}>
-      <span className="composer-branch" tabIndex={0}>
-        <FolderGit2 size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        <span className="composer-branch-name" data-worktree="">
-          工作树 · <VisibleText text={branch} />
-        </span>
-      </span>
-    </Tooltip>
   )
 }

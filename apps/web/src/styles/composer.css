@@ -1,7 +1,8 @@
 .composer-stack {
+  --stack-gap: var(--sp-8);
   position: relative;
   display: grid;
-  gap: var(--sp-8);
+  gap: var(--stack-gap);
   width: 100%;
   max-width: var(--content-width);
   margin: 0 auto;
@@ -34,8 +35,9 @@
 }
 
 /*
- * The composer floats on its own shadow. With focus inside, its ring darkens to line-strong, never blue: the resting
- * and the focused shadow are two layers over the frame whose opacities cross-fade, so no shadow is animated itself.
+ * The composer floats off the panel on the lift shadow, which carries its own hairline ring. With focus inside, the ring
+ * darkens to line-strong, never blue: the resting and the focused shadow are two layers over the frame whose opacities
+ * cross-fade, so no shadow is animated itself.
  */
 .composer {
   position: relative;
@@ -53,15 +55,13 @@
   pointer-events: none;
 }
 .composer::before {
-  box-shadow:
-    0 0 0 1px var(--line),
-    var(--sh-1);
+  box-shadow: var(--sh-lift);
   transition: opacity var(--m-micro) var(--e-micro);
 }
 .composer::after {
   box-shadow:
     0 0 0 1px var(--line-strong),
-    var(--sh-1);
+    var(--sh-lift);
   opacity: 0;
   transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
 }
@@ -140,10 +140,27 @@
   }
 }
 
+/* The prompt glyph: a faint mono 「>」 on the first line, where the text starts after it. */
+.composer-input {
+  position: relative;
+  min-width: 0;
+}
+.composer-prompt {
+  position: absolute;
+  top: var(--sp-16);
+  left: var(--sp-16);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-prose);
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
+}
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: calc(var(--lh-prose) * 2 + 24px);
+  min-height: calc(var(--lh-prose) + 24px);
   max-height: 232px;
   padding: var(--sp-16) var(--sp-16) var(--sp-8);
   overflow-y: auto;
@@ -167,6 +184,9 @@
 }
 .composer textarea:disabled {
   color: var(--ink-2);
+}
+.composer-input > textarea {
+  padding-inline-start: calc(var(--sp-16) + var(--sp-20));
 }
 
 .composer-toolbar {
@@ -277,34 +297,104 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.composer-branch,
-.composer-usage {
-  display: inline-flex;
+/*
+ * The status line, the frame's last row: a faint band under a hairline, in the caption size with tabular figures and the
+ * values in the mono face. Where the session works and which way its model goes on the left; what it used on the right,
+ * after a gap. Segments are split by thin rules. A narrow line lets go of 用时, then the tokens, then the cost, then
+ * the route (ComposerStatus sets data-drop); the folder and the branch are cut with an ellipsis; the context stays.
+ */
+.composer-status {
+  display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 var(--sp-12);
+  overflow: hidden;
+  border-radius: 0 0 var(--r-16) var(--r-16);
+  background: var(--band);
+  box-shadow: inset 0 1px 0 var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.composer-branch-name {
-  max-width: 160px;
+.composer-status-seg {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.composer-status-seg + .composer-status-seg::before {
+  content: '';
+  flex: none;
+  width: 1px;
+  height: 12px;
+  margin: 0 var(--sp-8);
+  background: var(--line-strong);
+}
+.composer-status-gap {
+  flex: 1 1 auto;
+  min-width: var(--sp-12);
+}
+.composer-status-seg:is([data-seg='folder'], [data-seg='branch']) {
+  flex: 0 1 auto;
+  max-width: 200px;
+}
+/* 工作树 · latch/20261108-a1b2 is read whole where there is room. */
+.composer-status-seg[data-seg='branch']:has([data-worktree]) {
+  max-width: 320px;
+}
+.composer-status-seg:is([data-seg='folder'], [data-seg='branch']):not(:has(.ui-value-picker)) {
+  min-width: 64px;
+}
+.composer-status[data-fit='whole'] .composer-status-seg:is([data-seg='folder'], [data-seg='branch']) {
+  flex-shrink: 0;
+}
+.composer-status-cut {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  overflow: hidden;
+}
+.composer-status-cut > svg {
+  flex: none;
+}
+.composer-status-cut > .composer-status-value {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 工作树 · latch/20261108-a1b2 is read whole. */
-.composer-branch-name[data-worktree] {
-  max-width: 280px;
+.composer-status-value {
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-weight: 500;
 }
-.composer-usage-track,
-.composer-usage-value {
-  fill: none;
-  stroke-width: 1.5;
+.composer-status-key,
+.composer-status-by {
+  color: var(--muted);
 }
-.composer-usage-track {
-  stroke: var(--line);
+.composer-status-route,
+.composer-status-pair,
+.composer-status-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
 }
-.composer-usage-value {
-  stroke: var(--muted);
-  transform: rotate(-90deg);
-  transform-origin: center;
+/* The folder choice of a draft sits in the line at its own size; its glyph lines up where a folder's would. */
+.composer-status-seg:has(> .ui-value-picker[data-size='xs']):first-child {
+  margin-inline-start: calc(-1 * var(--sp-6));
+}
+.composer-status-seg > .ui-value-picker[data-size='xs'] {
+  color: var(--ink-2);
+}
+.composer-status[data-drop='1'] [data-seg='time'],
+.composer-status[data-drop='2'] :is([data-seg='time'], [data-seg='tokens']),
+.composer-status[data-drop='3'] :is([data-seg='time'], [data-seg='tokens'], [data-seg='cost']),
+.composer-status[data-drop='4'] :is([data-seg='time'], [data-seg='tokens'], [data-seg='cost'], [data-seg='route']) {
+  display: none;
 }
 .composer-more-body {
   display: grid;
@@ -539,13 +629,21 @@
 
 @media (max-width: 767.98px) {
   .composer-dock .composer-stack {
-    gap: var(--sp-6);
+    --stack-gap: var(--sp-6);
   }
   /* Phones type in the input role (16/24), which also keeps iOS from zooming on focus. */
   .composer textarea {
     min-height: calc(var(--lh-input) + 16px);
     padding: var(--sp-12) var(--sp-12) var(--sp-4);
     font-size: var(--fs-input);
+    line-height: var(--lh-input);
+  }
+  .composer-input > textarea {
+    padding-inline-start: calc(var(--sp-12) + var(--sp-20));
+  }
+  .composer-prompt {
+    top: var(--sp-12);
+    left: var(--sp-12);
     line-height: var(--lh-input);
   }
   .composer-toolbar {
@@ -822,15 +920,16 @@
 }
 
 /*
- * Drawers attach above the card: inset 20 each side, tucked 14 under its top edge, so the card reads as what they belong to.
- * The next item is said by a pager; nothing peeks behind.
+ * Drawers attach above the card as one object with it: as wide as the card, with a single 3px joint between each and
+ * what is under it. The front drawer's lower corners and the card's upper ones are small, so they read as one piece cut
+ * in two. The next item is said by a pager; nothing peeks behind.
  */
 .composer-drawers {
   display: grid;
-  gap: var(--sp-8);
-  margin-bottom: calc(-1 * (var(--sp-8) + var(--sp-12) + var(--sp-2)));
-  padding: 0 var(--sp-20);
+  gap: 3px;
   min-width: 0;
+  margin-bottom: calc(-1 * var(--stack-gap));
+  padding-bottom: 3px;
 }
 .composer-drawers:empty {
   display: none;
@@ -838,12 +937,33 @@
 .composer-drawers + .composer {
   z-index: 1;
 }
+.composer-drawers:not(:empty) + .composer,
+.composer-drawers:not(:empty) + .composer .run-bar-collapse,
+.composer-drawers:not(:empty) + .composer .run-bar {
+  border-start-start-radius: var(--r-4);
+  border-start-end-radius: var(--r-4);
+}
 .composer-drawer {
+  position: relative;
   min-width: 0;
-  padding: var(--sp-12) var(--sp-12) calc(var(--sp-24) + var(--sp-2));
+  padding: var(--sp-12);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-16) var(--r-16) 0 0;
-  background: var(--raised);
+  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-4);
+  background: var(--card);
+}
+.composer-drawer + .composer-drawer {
+  border-radius: var(--r-4);
+}
+/* The joint: a 3px groove under each drawer, a pixel in from each side, in the gap to what is under it. */
+.composer-drawer::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -4px;
+  left: 0;
+  height: 3px;
+  background: var(--joint);
+  pointer-events: none;
 }
 @media (prefers-reduced-motion: no-preference) {
   .composer-drawer {
@@ -923,14 +1043,4 @@
 }
 .composer-stop > svg {
   flex-shrink: 0;
-}
-/* The branch, under the card where the toolbar's first glyph starts. */
-.composer-context {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  padding: 0 var(--sp-16);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
 }

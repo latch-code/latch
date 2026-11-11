@@ -927,7 +927,7 @@ export function useSessionController({
         }
       : undefined
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
-  const startWords = mode === 'chat' ? '写下问题或想法…' : '要做什么？@ 文件，/ 命令'
+  const startWords = mode === 'chat' ? '写下问题或想法…' : '@ 文件，/ 命令'
   const placeholder =
     submission.pending !== null
       ? '等待确认上一条提交…'
@@ -942,7 +942,7 @@ export function useSessionController({
                 ? '补充或排队一条消息'
                 : '可以先写，本轮结束后发送…'
               : mode === 'chat'
-                ? '继续对话 · 不读写文件、不运行命令'
+                ? '不读写文件、不运行命令'
                 : startWords
 
   return {

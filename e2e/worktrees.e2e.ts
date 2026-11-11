@@ -126,7 +126,7 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await folder.click()
     await expect.poll(() => worktree.innerText()).toContain(`${UNCOMMITTED}从 main 的 ${head}`)
     await worktree.click()
-    const row = page.locator('.composer-context').first()
+    const row = page.locator('.composer-status').first()
     await expect.poll(() => row.innerText()).toContain(`从 main 的 ${head}`)
     await page.screenshot({ path: `${OUT}/draft-1280.png` })
 
@@ -141,7 +141,8 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     const label = `工作树 · ${task.worktree!.branch}`
     expect(await page.locator('.topbar-crumb-worktree').innerText()).toBe(label)
     expect(await page.locator('.session-worktree').first().getAttribute('aria-label')).toBe(label)
-    await expect.poll(() => row.innerText()).toBe(label)
+    // The status line's branch segment says it, where the branch alone was.
+    await expect.poll(() => row.locator('[data-seg="branch"]').innerText()).toBe(label)
     await page.getByText('新工作树里有 1 个文件的 filter（例如 Git LFS）没有运行', { exact: false }).waitFor()
     expect(existsSync(join(directory, 'filter-ran'))).toBe(false)
     // The project folder is untouched: the agent's files are in the worktree.

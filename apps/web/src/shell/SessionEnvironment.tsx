@@ -6,12 +6,12 @@ import { CodeRootNotice, codeRootWorkspace } from '../components/CodeRootNotice.
 import { MiddleText } from '../components/ui.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { sessionHarness } from '../composerChoice.ts'
-import { turnsOf } from '../conversation.ts'
+import { costClause, sessionTotals } from '../composer/sessionTotals.ts'
 import { errorMessage } from '../core/api.ts'
 import type { ComposerGate } from '../core/permissions.ts'
-import { parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
+import { parseTime, useTicker } from '../core/hostClock.ts'
 import { currentShell, revealLabel, shellFolders } from '../core/shell.ts'
-import { absoluteTime, basename, currencyAmount, formatDuration, messageTime, tokenAmount, tokenLines } from '../format.ts'
+import { absoluteTime, basename, messageTime, tokenAmount } from '../format.ts'
 import { folderAccessText, projectFolders } from '../projects.tsx'
 import { projectOf } from '../sessions.ts'
 
@@ -110,40 +110,39 @@ export function SessionFolders({
   )
 }
 
-/** The session's totals. The hover footer on each turn holds that turn's; these are what the whole session cost. */
-function SessionUsage({ summary, detail, agentReported }: { summary: TaskSummary; detail: TaskDetail | null; agentReported: boolean }) {
+/**
+ * The session's totals. The hover footer on each turn holds that turn's; these are what the whole session cost. They are
+ * the same numbers as the composer's status line (`sessionTotals`), in full words.
+ */
+function SessionUsage({
+  summary,
+  detail,
+  harness,
+}: {
+  summary: TaskSummary
+  detail: TaskDetail | null
+  harness: Pick<HarnessInfo, 'capabilities'> | undefined
+}) {
   const now = useTicker('minute')
-  const own = detail?.summary.id === summary.id ? detail : null
-  const usage = summary.usage
-  const report = own?.usageReport
-  const timed = (own ? turnsOf(own.messages) : []).flatMap(turn => {
-    const active = parseDuration(turn.user?.turn?.activeMs)
-    return active === undefined || turn.user?.turn?.endedAt === undefined ? [] : [active]
-  })
+  const { tokens, cost, time } = sessionTotals({ summary, detail, harness })
   const created = parseTime(summary.createdAt)
-  const [inputLine, outputLine] = usage ? tokenLines(usage) : []
   return (
     <>
-      {usage && (
+      {tokens && (
         <CrumbRow label="用量">
-          <Tooltip content={`${inputLine}；${outputLine}${agentReported ? '，由 Harness 报告' : ''}`}>
+          <Tooltip content={`${tokens.lines[0]}；${tokens.lines[1]}${tokens.reporter ? `，由 ${tokens.reporter} 报告` : ''}`}>
             <span tabIndex={0}>
-              输入 {tokenAmount(usage.inputTokens)} · 输出 {tokenAmount(usage.outputTokens)}
+              输入 {tokenAmount(tokens.usage.inputTokens)} · 输出 {tokenAmount(tokens.usage.outputTokens)}
             </span>
           </Tooltip>
         </CrumbRow>
       )}
-      {report?.cost && (
+      {cost && (
         <CrumbRow label="费用">
-          {report.cost.amount > 0 && report.cost.amount < 0.01 ? '<$0.01' : currencyAmount(report.cost.amount, report.cost.currency)}
-          {' · 由 Harness 报告，不是账单'}
+          {cost.text} · {costClause(cost.reporter)}
         </CrumbRow>
       )}
-      {timed.length > 0 && (
-        <CrumbRow label="用时">
-          {[formatDuration(timed.reduce((sum, value) => sum + value, 0)), `${timed.length} 轮`].filter(Boolean).join(' · ')}
-        </CrumbRow>
-      )}
+      {time && <CrumbRow label="用时">{time.text}</CrumbRow>}
       {created !== undefined && (
         <CrumbRow label="开始于">
           <Tooltip content={absoluteTime(created)}>
@@ -186,7 +185,7 @@ export function SessionFacts({
 }) {
   return (
     <>
-      <SessionUsage summary={summary} detail={detail} agentReported={harness?.capabilities.models.owner === 'harness'} />
+      <SessionUsage summary={summary} detail={detail} harness={harness} />
       <LockedOptions config={detail?.summary.id === summary.id ? (detail.config ?? []) : []} gate={gate} />
     </>
   )

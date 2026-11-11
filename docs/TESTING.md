@@ -147,6 +147,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | SSE 合并、会话隔离、刷新回退、事件与快照带的 Host 时间 | `streaming.test.ts` |
 | Host 记录的时间与用量：审批等待按并集计、不计入用时，思考用时，工具的开始与结束，回合的 `turn`，用量的缓存与推理部分只在每一步都报告时保留，ACP 的 `starting` 阶段与 `usage_update` | `timing.test.ts`、`runtime.test.ts` 的 `times and usage the runtime records`、`acp.test.ts` 的 `ACP times and usage reports`、`providers.test.ts` |
 | 对话的推导：回合、结果（按这一轮实际留下的内容）、复制与用量合计、回复的时间与它的提示、工作行的说法与用时、回合的块与折叠、送达的过程、重试前的说明、按 Host 时钟的已运行时间、状态行的说法与沉默的询问、运行的结束方式、运行中回合的模型 | `conversation.test.ts` |
+| 输入框的状态行：每段只写报告了的（Latch 内置没有上下文、外部 Harness 的费用总带「不是账单」与报告者、经服务的路与停用后的说法、还没结算的一轮、草稿只写在哪与走哪条路），手机只留上下文，标题行弹层与状态行读同一个 `sessionTotals`；窄栏按用时、输入输出、费用、路的顺序收起，四个控件在 560 宽仍是一行，320 宽不横向溢出；卡与输入框之间的接缝 | `composer-status.test.ts`；真实 Host 与假 Agent 见 `e2e/composer-status.e2e.ts` |
 | 回合与每轮记录的匹配、回合卡片的数字来源、撤销前说明恢复不了的文件 | `turn-changes.test.ts`；在真实 Host 上撤销与恢复见 `e2e/turn-undo.e2e.ts` |
 | 每个数都带单位：回合脚部、活的一行与项目弹层的行里没有不带单位的数 | `components-*.test.ts` 的 `units` |
 | 消息到达的动效只在页面亲眼看到时播放（重新加载与切换会话后没有），减少动效时直接出现；切换会话时对话区淡入 | `streaming-ui.e2e.ts` |

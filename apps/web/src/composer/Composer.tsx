@@ -25,8 +25,8 @@ const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(n
 const MAX_TEXTAREA = 232
 
 /**
- * The message input, on the new-session page and docked under a conversation, with its drawers attached above the
- * card. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
+ * The message input, on the new-session page and docked under a conversation, with its drawers joined above the card
+ * and the status line as its last row. It starts one line high behind a faint 「>」. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
  * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is the one
  * blue control: an arrow (a neutral fill while there is nothing to send, still focusable with its reason as its
  * tooltip), 追加 while a run that takes more text is active and there is text, 排队 while another run is, or the stop
@@ -63,6 +63,7 @@ export function Composer({
   drawers,
   stepBack = false,
   below,
+  status,
   inline = false,
   confirmation,
   queueable = false,
@@ -119,8 +120,10 @@ export function Composer({
   drawers?: ReactNode
   /** The stop circle gives way to what a drawer asks. */
   stepBack?: boolean
-  /** Under the input, outside its frame: the context row and captions of a new session. */
+  /** Under the input, outside its frame: the captions of a new session. */
   below?: ReactNode
+  /** The frame's last row: where the session works, which way its model goes and what it has used (`ComposerStatus`). */
+  status?: ReactNode
   /**
    * Phone session: the toolbar takes two rows inside the frame, Harness and 模型 on the first, 「+」, 思考, 权限 and
    * send on the second, so neither the Harness's name nor the model is cut.
@@ -228,31 +231,42 @@ export function Composer({
       )
   })
 
+  const textarea = (
+    <textarea
+      ref={textareaRef}
+      aria-label={label}
+      aria-autocomplete={slash.open ? 'list' : undefined}
+      aria-controls={slash.open ? slash.id : undefined}
+      aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
+      placeholder={placeholder}
+      value={draft}
+      rows={variant === 'sheet' ? 5 : 1}
+      disabled={locked}
+      onChange={event => {
+        mentions.setCaret(event.target.selectionStart)
+        onDraft(event.target.value)
+      }}
+      onKeyDown={keydown}
+      onSelect={event => mentions.setCaret(event.currentTarget.selectionStart)}
+      onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
+    />
+  )
+  // The prompt glyph says where to tell it what to do; the phone's sheet is a page of its own and has none.
   const input =
     readOnly !== undefined ? (
       <p className="composer-readonly" role="note">
         <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>{readOnly}</span>
       </p>
+    ) : variant === 'sheet' ? (
+      textarea
     ) : (
-      <textarea
-        ref={textareaRef}
-        aria-label={label}
-        aria-autocomplete={slash.open ? 'list' : undefined}
-        aria-controls={slash.open ? slash.id : undefined}
-        aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
-        placeholder={placeholder}
-        value={draft}
-        rows={variant === 'sheet' ? 5 : inline ? 1 : 2}
-        disabled={locked}
-        onChange={event => {
-          mentions.setCaret(event.target.selectionStart)
-          onDraft(event.target.value)
-        }}
-        onKeyDown={keydown}
-        onSelect={event => mentions.setCaret(event.currentTarget.selectionStart)}
-        onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
-      />
+      <div className="composer-input">
+        <span className="composer-prompt" aria-hidden="true">
+          &gt;
+        </span>
+        {textarea}
+      </div>
     )
   const action = (
     <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
@@ -389,6 +403,7 @@ export function Composer({
             </div>
           </div>
         )}
+        {status}
       </form>
       {below}
     </div>

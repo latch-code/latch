@@ -710,10 +710,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   font-weight: 500;
   text-align: center;
 }
-/* A full-width 「？」 is half blank: it hangs out, so the block centres on what can be seen. */
-.new-session-mark {
-  margin-right: -0.44em;
-}
 .project-inline.ui-value-picker {
   display: inline-flex;
   height: auto;
@@ -735,19 +731,9 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   font: inherit;
   color: inherit;
 }
+/* The title is the project picker: its chevron says it opens. */
 .project-inline > svg {
-  display: none;
-}
-/* With no project the question and the picker sit on one line and wrap as a pair, centred on both. */
-.new-session-question {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-4) var(--sp-16);
-}
-.new-session-question > span:first-child {
-  white-space: nowrap;
+  color: var(--muted);
 }
 /* How a fork carries its source, and what it could not take from it: each on its own line under the fork's sentence. */
 .fork-own,

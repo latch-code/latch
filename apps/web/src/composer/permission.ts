@@ -1,6 +1,7 @@
 import type { HarnessInfo, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
+import { contextTotals } from './sessionTotals.ts'
 
 export type ModeIcon = 'eye' | 'shield' | 'list-checks' | 'scale' | 'shield-alert'
 
@@ -224,17 +225,10 @@ const thousands = (value: number) => (value >= 1000 ? `${Math.round(value / 1000
 
 type ContextReport = { contextUsed?: number; contextSize?: number } | undefined
 
-/** How full the context is, only from what the engine itself reported. */
+/** How full the context is, only from what the engine itself reported: the same share as the composer's status line. */
 export function contextWords(report: ContextReport): { percent: number; words: string } | undefined {
-  const used = report?.contextUsed
-  const size = report?.contextSize
-  if (used === undefined || !size || size <= 0) return undefined
-  const percent = Math.min(100, Math.round((used / size) * 100))
+  const context = contextTotals(report)
+  if (context?.size === undefined || context.percent === undefined) return undefined
+  const { used, size, percent } = context
   return { percent, words: `上下文已用 ${percent}% · ${thousands(used)} / ${thousands(size)}` }
-}
-
-/** The footer's ring appears from half full. */
-export function contextUse(report: ContextReport): { percent: number; words: string } | undefined {
-  const use = contextWords(report)
-  return use && use.percent >= 50 ? use : undefined
 }
