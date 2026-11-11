@@ -72,6 +72,19 @@ const stroke = (event: KeyboardEvent) => ({
   isComposing: event.isComposing,
 })
 
+/**
+ * Gives the input the keys on the next frame, once the page that holds it is drawn, unless something took focus in that
+ * frame: a control opened by its key at once (⌥⇧1 right after ⌥N) keeps its menu, and Escape still reaches it.
+ */
+function focusNextFrame(target: RefObject<HTMLElement | null>) {
+  const before = document.activeElement
+  requestAnimationFrame(() => {
+    const now = document.activeElement
+    if (now !== before && now !== null && now !== document.body && now !== target.current) return
+    target.current?.focus({ preventScroll: true })
+  })
+}
+
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
@@ -395,9 +408,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     choose(null)
     if (project) submission.updateChoice({ workspaceId: project })
-    requestAnimationFrame(() => {
-      composerRef.current?.focus({ preventScroll: true })
-    })
+    focusNextFrame(composerRef)
   }
   /**
    * Phones: the open session slides back to the list (180ms), then is let go, and focus lands on its row; at once without

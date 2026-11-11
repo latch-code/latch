@@ -295,7 +295,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }, project)
         await open.click()
         await page.locator('.new-session-title').getByText('rust-learn', { exact: true }).first().waitFor()
-        expect(await open.isVisible()).toBe(false)
+        // Shut by the choice, not opened again: the title can name the project while the list still fades out.
+        expect(await page.locator('.new-session-title [aria-haspopup]').getAttribute('aria-expanded')).toBe('false')
+        await open.waitFor({ state: 'hidden' })
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 
         // Sending saves the definition and runs what was saved.
