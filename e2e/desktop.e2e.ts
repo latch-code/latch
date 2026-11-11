@@ -556,7 +556,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.screenshot({ path: 'test-results/native-desktop-browser-here.png', animations: 'disabled' })
       // It hands out an invitation like the pairing sheet, so its words keep their look under styles added to the page.
       await page.mouse.move(0, 0)
-      await expectUnmovedByInjectedStyles(page, ['.device-foot-browser[data-secure] .ui-button', '.device-foot-note'])
+      await expectUnmovedByInjectedStyles(page, ['.settings-group[data-secure] .ui-button', '.device-connect-said'])
       // That link enrolls a browser over loopback only, and the confirmation names this desktop as the inviter.
       const pair = new URL(browserLink).hash.slice('#pair='.length)
       const enrollBrowser = () =>
@@ -838,20 +838,33 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const heldBack = page.locator('.settings-page')
       await openSection(heldBack, '设备')
-      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .settings-row-main`).click()
       const manage = heldBack.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
       await manage.click()
       const blockedDock = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
-      expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(
-        `Fake Agent 在「${advisoryTitle}」里等你处理，结束后才能为设备增加权限。`,
+      // Every session holding it back gets its own row: the Harness, the title, whether it runs or waits for you.
+      expect(await blockedDock.locator('.ui-notice-title').innerText()).toBe(
+        '有外部 Harness 的会话正在运行或等你处理，结束后才能为设备增加权限。',
       )
+      const advisoryRow = blockedDock.locator(`.blocked-row[data-session-id="${advisoryId}"]`)
+      expect(await advisoryRow.locator('.blocked-row-title').innerText()).toBe(advisoryTitle)
+      expect(await advisoryRow.locator('.blocked-row-agent').innerText()).toBe('Fake Agent')
+      await advisoryRow.getByText('等你处理', { exact: true }).waitFor()
       expect(await blockedDock.getByRole('button').count()).toBe(3)
       for (const name of ['查看', '停止', '关闭']) await blockedDock.getByRole('button', { name, exact: true }).waitFor()
       expect(testHost.presence.requests.length).toBe(confirmationsBefore)
       await captureThemes(page, 'native-desktop-confirmation-blocked')
-      await expectUnmovedByInjectedStyles(page, ['.inline-confirm', '.inline-confirm .ui-notice', '.inline-confirm .ui-button'])
+      await expectUnmovedByInjectedStyles(page, [
+        '.inline-confirm',
+        '.inline-confirm .ui-notice',
+        '.inline-confirm .ui-button',
+        '.blocked-row',
+        '.blocked-row-title',
+        '.blocked-row-agent',
+        '.blocked-row .ui-status-word',
+      ])
       await blockedDock.getByRole('button', { name: '查看', exact: true }).click()
       await blockedDock.waitFor({ state: 'detached' })
       await heldBack.waitFor({ state: 'detached' })
@@ -901,15 +914,15 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看', '停止'])
       await captureThemes(page, 'native-desktop-pairing-blocked')
       await page.locator('.pair-sheet').getByRole('button', { name: '关闭', exact: true }).click()
-      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .settings-row-main`).click()
       const manageRaise = computer.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
       await manageRaise.click()
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
-      expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(
-        `Fake Agent 正在运行「${hangTitle}」，结束后才能为设备增加权限。`,
-      )
-      await blockedDock.getByRole('button', { name: '停止', exact: true }).click()
+      const hangRow = blockedDock.locator(`.blocked-row[data-session-id="${hangId}"]`)
+      expect(await hangRow.locator('.blocked-row-title').innerText()).toBe(hangTitle)
+      await hangRow.getByText('正在运行', { exact: true }).waitFor()
+      await hangRow.getByRole('button', { name: '停止', exact: true }).click()
       await expect
         .poll(async () => ({ status: (await host.bridge.detail(hangId)).summary.status, text: await blockedDock.innerText() }), {
           timeout: 15_000,
@@ -929,6 +942,21 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await page.locator('.presence-dock').count()).toBe(0)
       testHost.presence.denyNext()
       await page.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'detached' })
+      // 可以看项目文件 takes the same one confirmation, whose fixed sentence says 查看全部数据; turning it off asks nothing.
+      const files = computer.getByRole('switch', { name: '可以看项目文件', exact: true })
+      expect(host.security.devices.get(phone.device.id)?.dataScope).toBe('work')
+      await files.click()
+      const widen = await testHost.presence.waitForRequest(15_000)
+      expect(widen.preview.action).toBe('device.grant')
+      expect(widen.preview.reason).toContain('查看全部数据')
+      await captureThemes(page, 'native-desktop-device-files-waiting')
+      testHost.presence.approveNext()
+      await waitFor(() => host.security.devices.get(phone.device.id)?.dataScope === 'all')
+      await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
+      const beforeLower = testHost.presence.requests.length
+      await files.click()
+      await waitFor(() => host.security.devices.get(phone.device.id)?.dataScope === 'work')
+      expect(testHost.presence.requests.length).toBe(beforeLower)
 
       // 设置 › 模型服务: a preset provider's key saves without a confirmation; a local address is confirmed once,
       // before its models are listed, and saving the service there then asks nothing more.
@@ -1210,11 +1238,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
       await openSection(computer, '设备')
-      await page.locator(`[data-device-id="${phone.device.id}"] .plugin-nav-row`).click()
+      await page.locator(`[data-device-id="${phone.device.id}"] .settings-row-main`).click()
       await computer.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).click()
       const refused = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await refused.waitFor()
-      await refused.getByText(`Fake Agent 正在运行「${runningTitle}」，结束后才能为设备增加权限。`, { exact: true }).waitFor()
+      await refused.getByText('有外部 Harness 的会话正在运行或等你处理，结束后才能为设备增加权限。', { exact: true }).waitFor()
+      await refused.locator(`.blocked-row[data-session-id="${runningId}"]`).getByText('正在运行', { exact: true }).waitFor()
       expect(testHost.presence.requests.length).toBe(beforeRunningConfirmation)
       expect(await page.locator('.presence-dock').count()).toBe(0)
       await captureThemes(page, 'native-desktop-confirmation-blocked')

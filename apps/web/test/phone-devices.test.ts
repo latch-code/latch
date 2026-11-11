@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { Device, NativePairingStatus } from '@latch/protocol'
-import { deviceLabel, listedDevices, removeBody, seenText } from '../src/settings/devices/deviceRows.ts'
+import type { DeviceAccess } from '../src/core/permissions.ts'
+import type { LatchShell } from '../src/core/shell.ts'
+import {
+  connectWays,
+  deviceLabel,
+  deviceSwitches,
+  filesChange,
+  grantedText,
+  listedDevices,
+  manageChange,
+  removeBody,
+  seenText,
+} from '../src/settings/devices/deviceRows.ts'
 import { QR_REFRESH_MS, readPairing } from '../src/settings/devices/pairingFlow.ts'
 
 const device = (over: Partial<Device>): Device => ({
@@ -60,6 +72,81 @@ describe('the 设备 section rows', () => {
 
   it('escapes hidden characters in a name it puts into a sentence', () => {
     expect(deviceLabel('iPhone‮')).toBe('iPhone\\u{202E}')
+  })
+})
+
+describe('a device page', () => {
+  const access = (local: boolean, admin: boolean): DeviceAccess => ({
+    legacy: false,
+    local,
+    admin,
+    scopes: new Set(admin ? ['view', 'admin'] : ['view']),
+    device: null,
+  })
+  const browser = device({ id: 'browser', listener: 'loopback-tcp', dataScope: 'work' })
+  const phone = device({ id: 'phone' })
+  const desktop = device({ id: 'desktop', listener: 'unix' })
+
+  it('gives a browser both switches, live on this Mac and locked off elsewhere, and none without 管理', () => {
+    expect(deviceSwitches(browser, false, access(true, true))).toEqual({ manage: true, files: true, raise: true })
+    expect(deviceSwitches(browser, false, access(false, true))).toEqual({ manage: true, files: true, raise: false })
+    expect(deviceSwitches(browser, false, access(false, false))).toMatchObject({ manage: false, files: false })
+  })
+
+  it('draws no switch on its own page, or for a device that is not active', () => {
+    expect(deviceSwitches(browser, true, access(false, true))).toMatchObject({ manage: false, files: false })
+    expect(deviceSwitches({ ...browser, status: 'review' }, false, access(true, true))).toMatchObject({ manage: false, files: false })
+  })
+
+  it('never offers 项目文件 to a phone or a desktop device, which see everything from the start', () => {
+    expect(deviceSwitches(phone, false, access(true, true))).toMatchObject({ manage: false, files: false })
+    expect(deviceSwitches({ ...phone, scopes: [...phone.scopes, 'admin'] }, false, access(true, true))).toMatchObject({
+      manage: true,
+      files: false,
+    })
+    expect(deviceSwitches(desktop, false, access(true, true))).toMatchObject({ manage: false, files: false })
+  })
+
+  it('asks for exactly the change the switch names', () => {
+    expect(manageChange(browser, true)).toEqual({ scopes: ['view', 'run', 'approve:standard', 'admin'] })
+    expect(manageChange({ scopes: ['view', 'admin', 'run'] }, false)).toEqual({ scopes: ['view', 'run'] })
+    expect(filesChange(true)).toEqual({ dataScope: 'all' })
+    expect(filesChange(false)).toEqual({ dataScope: 'work' })
+  })
+
+  it('says what the device may do, leaving 管理 to its switch', () => {
+    const managing = { scopes: ['view', 'run', 'admin'] as Device['scopes'] }
+    expect(grantedText(managing, true)).toBe('查看会话、开始和继续会话')
+    expect(grantedText(managing, false)).toBe('查看会话、开始和继续会话、管理这台 Mac（模型服务、插件、项目和设备）')
+  })
+})
+
+describe('连接新设备', () => {
+  const opened = () => Promise.resolve({ ok: true as const })
+  const shell = (over: Partial<LatchShell> = {}): Pick<LatchShell, 'platform' | 'openInBrowser' | 'copyComputerLink'> => ({
+    platform: 'darwin',
+    openInBrowser: opened,
+    copyComputerLink: opened,
+    ...over,
+  })
+  const here = { local: true, admin: true }
+  const entry = { origin: 'https://studio.example.test:4318' }
+
+  it('offers another computer only while the Host has an HTTPS entry and the app can copy its link', () => {
+    expect(connectWays(shell(), here, null).copyLink).toBeUndefined()
+    expect(connectWays(shell({ copyComputerLink: undefined }), here, entry).copyLink).toBeUndefined()
+    expect(connectWays(shell(), here, entry).copyLink).toBe(opened)
+  })
+
+  it('offers nothing but the way to a Mac elsewhere, and nothing the app cannot do outside macOS', () => {
+    expect(connectWays(shell(), { local: false, admin: true }, entry)).toEqual({
+      pair: false,
+      openInBrowser: undefined,
+      copyLink: undefined,
+    })
+    expect(connectWays(shell(), { local: true, admin: false }, entry).pair).toBe(false)
+    expect(connectWays(null, here, entry)).toEqual({ pair: true, openInBrowser: undefined, copyLink: undefined })
+    expect(connectWays(shell({ platform: 'win32' }), here, entry)).toMatchObject({ openInBrowser: undefined, copyLink: undefined })
   })
 })
 

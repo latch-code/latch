@@ -7,10 +7,10 @@ import { api, errorMessage, inlineError } from '../../core/api.ts'
 import { withConfirmation } from '../../core/confirmations.ts'
 import { BASE_SCOPES } from '../../core/enrollment.ts'
 import type { DeviceAccess } from '../../core/permissions.ts'
-import { DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
+import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 import { deviceIcon } from './deviceIcon.ts'
-import { isBrowserDevice, isPhoneDevice, removeBody, seenText } from './deviceRows.ts'
+import { deviceSwitches, filesChange, grantedText, manageChange, removeBody, seenText, type ScopeChange } from './deviceRows.ts'
 
 export function SeenLine({ device, self }: { device: Device; self: boolean }) {
   return (
@@ -91,12 +91,12 @@ function NameRow({ device, self, canRename, onSaved }: { device: Device; self: b
 function useScopeChange(device: Device, onChanged: () => void) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
-  const change = async (scopes: Device['scopes']) => {
+  const change = async (body: ScopeChange) => {
     setPending(true)
     setError('')
     try {
       await withConfirmation(confirmation =>
-        api(`devices/${encodeURIComponent(device.id)}`, { method: 'PATCH', body: { scopes }, ...(confirmation ? { confirmation } : {}) }),
+        api(`devices/${encodeURIComponent(device.id)}`, { method: 'PATCH', body, ...(confirmation ? { confirmation } : {}) }),
       )
       onChanged()
     } catch (cause) {
@@ -109,14 +109,16 @@ function useScopeChange(device: Device, onChanged: () => void) {
 }
 
 /**
- * One device's page inside 设置 › 设备: its name, when it was last seen, what needs doing about it, 可以管理这台 Mac for a
- * browser, and 移除. On a wide window it names the device above the rows; a phone's bar does that.
+ * One device's page inside 设置 › 设备: its name, when it was last seen, what it may do, what needs doing about it, the
+ * two switches for a browser (可以管理, 可以看项目文件), and 移除. On a wide window it names the device above the rows; a
+ * phone's bar does that. Elsewhere than this Mac the switches name the computer (`computer`).
  */
 export function DevicePage({
   device,
   devices,
   self,
   access,
+  computer,
   phone,
   renaming,
   onAskRemove,
@@ -126,6 +128,7 @@ export function DevicePage({
   devices: readonly Device[]
   self: boolean
   access: DeviceAccess
+  computer: string
   phone: boolean
   renaming: number
   onAskRemove: () => void
@@ -138,8 +141,10 @@ export function DevicePage({
     if (renaming > 0) body.current?.querySelector<HTMLInputElement>('[data-device-name]')?.select()
   }, [renaming])
   const restore = device.status === 'review' && access.admin && !self
-  // A phone starts without 管理此 Host and cannot be given it here, but one that kept it from before can still lose it.
-  const manageable = (isBrowserDevice(device) || (isPhoneDevice(device) && admin)) && device.status === 'active' && access.admin && !self
+  const switches = deviceSwitches(device, self, access)
+  const locked = switches.raise ? undefined : COPY.raiseOnMac(computer)
+  const files = device.dataScope === 'all'
+  const granted = grantedText(device, switches.manage)
   const statusText =
     device.status === 'review'
       ? COPY.review
@@ -181,9 +186,9 @@ export function DevicePage({
                 <Button
                   loading={scope.pending}
                   disabled={!access.local}
-                  title={access.local ? undefined : COPY.raiseOnMac()}
+                  title={locked}
                   onClick={() => {
-                    void scope.change(BASE_SCOPES)
+                    void scope.change({ scopes: BASE_SCOPES })
                   }}>
                   {COPY.restore}
                 </Button>
@@ -193,21 +198,45 @@ export function DevicePage({
             }
           />
         )}
-        {manageable && (
-          <SwitchRow
-            className="settings-row"
-            title={COPY.manage}
-            description={COPY.manageNote}
-            checked={admin}
-            locked={!admin && !access.local ? COPY.raiseOnMac() : undefined}
-            disabled={scope.pending}
-            onCheckedChange={next => {
-              void scope.change(next ? [...device.scopes, 'admin'] : device.scopes.filter(item => item !== 'admin'))
-            }}
+        {granted && (
+          <SettingsRow
+            className="device-granted-row"
+            title={CONNECTION_DETAILS_COPY.granted}
+            trailing={<span className="settings-row-value device-granted">{granted}</span>}
           />
         )}
       </SettingsGroup>
-      <InlineConfirm active={scope.pending} />
+      {(switches.manage || switches.files) && (
+        <SettingsGroup secure>
+          {switches.manage && (
+            <SwitchRow
+              className="settings-row"
+              title={COPY.manageOf(access.local, computer)}
+              description={COPY.manageNote}
+              checked={admin}
+              locked={admin ? undefined : locked}
+              disabled={scope.pending}
+              onCheckedChange={next => {
+                void scope.change(manageChange(device, next))
+              }}
+            />
+          )}
+          {switches.files && (
+            <SwitchRow
+              className="settings-row"
+              title={COPY.files}
+              description={COPY.filesNote}
+              checked={files}
+              locked={files ? undefined : locked}
+              disabled={scope.pending}
+              onCheckedChange={next => {
+                void scope.change(filesChange(next))
+              }}
+            />
+          )}
+        </SettingsGroup>
+      )}
+      <InlineConfirm active={scope.pending} list />
       {scope.error && <InlineNotice tone="error">{scope.error}</InlineNotice>}
       {(self || access.admin) && (
         <SettingsGroup>

@@ -60,6 +60,8 @@ export const computerLabel = (local: boolean, hostName?: string): string => (loc
  */
 export const SETUP_COPY = {
   modelNeedsAdmin: (computer = 'Mac') => `这台设备不能添加模型。在 ${computer} 上的 Latch 里添加：设置 › 模型。`,
+  /** A device whose data scope leaves out the session's folders: where its 「可以看项目文件」 is turned on. */
+  filesNeedScope: (computer = 'Mac') => `这台设备没有查看项目文件的权限，所以读不到改动。在 ${computer} 上的 Latch 里打开：设置 › 设备。`,
   harnessNeedsAdmin: (computer = 'Mac') => `这台设备不能管理 Harness。在 ${computer} 上的 Latch 里查看：设置 › Harness。`,
   addAgentElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › Harness`,
   addProviderElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › 模型`,
@@ -380,7 +382,6 @@ export const DEVICES_COPY = {
   listTitle: '连到这台 Mac 的设备',
   /** The Latch app on this Mac is not in its own list, so a fresh one has none. */
   empty: '还没有别的设备连接这台 Mac。',
-  emptyBody: '用 iPhone 上的 Latch 扫一扫，在同一个 Wi‑Fi 下继续你的会话。',
   /** Any other device, in place of 「连接新设备」: where new devices are connected. */
   pairElsewhere: (computer = 'Mac') => `新设备在 ${computer} 上的 Latch 里连接：设置 › 设备。`,
   /** 「连接新设备」: only the ways that work in this build. */
@@ -397,6 +398,8 @@ export const DEVICES_COPY = {
     '链接已复制到剪贴板：10 分钟内有效，只能用一次。在另一台电脑的浏览器里打开它，然后回到这台 Mac 上确认。再点一次会换一条新的。',
   phone: '连接手机',
   phoneNote: 'iPhone App 还没有可安装的版本',
+  /** The QR sheet stays reachable for an iPhone app built from source. */
+  phoneQr: '显示二维码',
   name: '名称',
   nameLabel: '设备名称',
   unnamed: '未命名设备',
@@ -410,6 +413,8 @@ export const DEVICES_COPY = {
   restore: '恢复使用',
   legacy: '要在这台设备上重新确认',
   manage: '可以管理这台 Mac',
+  /** On another device the switch names the computer it manages. */
+  manageOf: (local: boolean, computer = 'Mac') => (local ? '可以管理这台 Mac' : `可以管理 ${computer}`),
   manageNote: '修改模型、Harness、插件、项目和设备。密钥和连接新地址仍只能在 Mac 上操作。',
   /** `dataScope: 'all'`: more than files (private sessions too), so the line does not promise less than it opens. */
   files: '可以看项目文件',
@@ -428,7 +433,6 @@ export const DEVICES_COPY = {
   removeCascade: '由它连接的设备会降为只能查看，等你恢复。',
   removed: (name: string) => `已移除「${name}」`,
   about: '关于连接',
-  aboutBody: '同一个 Wi‑Fi 下，手机直接连接这台 Mac，全程端到端加密。Latch 目前还不提供其他网络下的连接。',
   /** 「关于连接」, one fact each: this Mac's browser, another computer, the phone. */
   aboutBrowser: '这台 Mac 的浏览器连上后默认看不到项目文件，可以在它的设备页里打开「可以看项目文件」。',
   aboutOtherComputer: '另一台电脑：链接 10 分钟内有效，只能用一次；连接时要在这台 Mac 上确认。',
@@ -851,6 +855,8 @@ const FIXED: Record<string, string> = {
   'credential-store-failed': '无法安全保存设备凭据，连接未完成。',
   'browser-open-unsupported': '此系统上不能从 Latch 应用直接打开浏览器，请运行 pnpm latch device invite --loopback。',
   'browser-open-failed': '无法在浏览器中打开 Latch，请重试。',
+  'copy-link-unsupported': '此系统上不能从 Latch 应用复制链接，请运行 pnpm latch device invite。',
+  'copy-link-failed': '无法复制链接，请重试。',
   'native-not-configured': '请先在 设置 › 设备 中设置手机的连接方式。',
   'native-config-changed': '手机连接配置已变化。请重新打开设置连接，再核对后保存。',
   'native-relay-duplicate': '每个中继节点只能添加一次。',

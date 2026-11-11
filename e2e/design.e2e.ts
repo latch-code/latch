@@ -176,7 +176,7 @@ describe('responsive workspace controls', () => {
       const devices = await openSettings(page, '设备')
       // A browser cannot pair a phone, so it has no way to open the sheet; its page lists itself, with no address.
       expect(await page.getByRole('button', { name: '连接手机', exact: true }).count()).toBe(0)
-      await page.locator('.device-nav-row .plugin-nav-row').first().click()
+      await page.locator('[data-device-id] .settings-row-main').first().click()
       await reachable(devices.getByRole('button', { name: '移除…', exact: true }))
       expect(await devices.getByText(/--tls-cert|设备指纹|局域网|HTTPS/).count()).toBe(0)
       await noHorizontalOverflow(page, devices)

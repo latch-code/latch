@@ -1217,15 +1217,6 @@
 .device-row > .settings-row-end {
   align-self: center;
 }
-.device-row.is-revoked {
-  background: var(--sunken);
-}
-.device-row-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .project-editor {
   display: grid;
@@ -1540,37 +1531,25 @@
   text-align: end;
 }
 
-/* 设置 › 设备: 连接手机, the devices, then 关于连接 at the foot; a device opens as a page inside the section. */
+/* 设置 › 设备: the devices, 连接新设备, then 关于连接; a device opens as a page inside the section. */
 .device-list {
   display: grid;
-  gap: var(--sp-16);
-}
-.device-list .plugin-nav-row {
-  min-height: 56px;
-}
-.device-list .device-empty {
-  min-height: 240px;
+  gap: var(--sp-24);
 }
 .device-pair-elsewhere {
-  padding: var(--sp-8);
+  color: var(--ink-2);
+  font-weight: 400;
 }
-.device-nav-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.device-nav-row > .plugin-nav-row {
-  padding-inline-end: var(--sp-32);
-}
-.device-nav-more {
-  position: absolute;
-  inset-inline-end: var(--sp-4);
-  opacity: 0;
-  transition: opacity var(--m-micro) var(--e-micro);
-}
-.device-nav-row:is(:hover, :focus-within) .device-nav-more,
-.device-nav-more:has([aria-expanded='true']) {
-  opacity: 1;
+/* The ⋯ of a device row shows on hover or focus where a pointer can hover; on touch it is always there. */
+@media (hover: hover) {
+  .device-row .device-nav-more {
+    opacity: 0;
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+  .device-row:is(:hover, :focus-within) .device-nav-more,
+  .device-nav-more:has([aria-expanded='true']) {
+    opacity: 1;
+  }
 }
 .device-seen {
   display: inline-flex;
@@ -1583,35 +1562,58 @@
   border-radius: 50%;
   background: var(--muted);
 }
-.device-foot {
-  display: grid;
-  gap: var(--sp-8);
+/* Groups that lay out their own parts keep their name on the rows' 16 inset, as the other groups do. */
+.device-list .settings-group[data-bare] > .settings-group-head {
+  padding-inline-start: var(--sp-16);
 }
-.device-foot .ui-switch-row {
-  padding: var(--sp-4) 0;
-  gap: var(--sp-8);
+/* 可以 keeps its name whole; the words take what the row leaves and wrap at its end. */
+.device-granted-row > .settings-row-text {
+  flex: none;
 }
-.device-foot-links {
-  display: grid;
-  justify-items: start;
-  gap: var(--sp-4);
+.device-granted-row > .settings-row-end {
+  flex: 1 1 auto;
+  min-width: 0;
 }
-.device-foot-link.ui-button {
-  height: auto;
-  min-height: 0;
-  padding: 0;
-  color: var(--ink);
+/* 名称 keeps room for its two characters; on a narrow phone the field gives way instead. */
+.device-name-row > .settings-row-text {
+  min-width: 3em;
+}
+.device-name-row > .settings-row-end {
+  flex: 0 1 240px;
+  min-width: 0;
+}
+.device-granted {
   font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
+  line-height: var(--lh-caption-para);
+  text-align: end;
 }
+/* 关于连接: one fact a line, in the reading size, then any relay saved by an earlier build. */
 .device-about {
-  padding: var(--sp-12);
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0 var(--sp-16);
+  list-style: none;
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
+}
+.device-about > li {
+  position: relative;
+  padding-inline-start: var(--sp-12);
+}
+.device-about > li::before {
+  content: '';
+  position: absolute;
+  top: calc(var(--lh-ui-para) / 2 - 2px);
+  left: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.device-saved-list {
+  margin-block-start: var(--sp-12);
 }
 .device-saved {
   display: flex;
@@ -1619,6 +1621,8 @@
   justify-content: space-between;
   gap: var(--sp-8);
   padding: var(--sp-8) var(--sp-12);
+}
+.device-saved + .device-saved {
   box-shadow: inset 0 1px var(--line);
 }
 .device-saved-text {
@@ -1660,30 +1664,12 @@
   gap: var(--sp-16);
 }
 .device-name-input {
-  width: 240px;
-  max-width: 100%;
+  width: 100%;
+  min-width: 0;
   height: 28px;
 }
 .device-name-error {
   color: var(--red);
-}
-.device-empty {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: var(--sp-12);
-  min-height: 70vh;
-  text-align: center;
-}
-.device-empty .ui-empty {
-  justify-items: center;
-  text-align: center;
-}
-.device-empty .ui-empty-title {
-  font-weight: 600;
-}
-.device-empty .ui-empty-description {
-  max-width: 240px;
 }
 
 /* 插件: shelves, then one plugin over them. */

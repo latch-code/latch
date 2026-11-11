@@ -130,7 +130,14 @@ export function ObjectRow({
   label,
   trailing,
   onOpen,
-}: RowContent & { label: string; trailing?: ReactNode; onOpen?: () => void }) {
+  data,
+}: RowContent & {
+  label: string
+  trailing?: ReactNode
+  onOpen?: () => void
+  /** Attributes that name the object for tests and lookups, such as `data-device-id`. */
+  data?: Record<`data-${string}`, string>
+}) {
   const body = (
     <>
       {leading && <span className="settings-row-lead">{leading}</span>}
@@ -139,6 +146,7 @@ export function ObjectRow({
   )
   return (
     <div
+      {...data}
       className={className ? `settings-row ${className}` : 'settings-row'}
       data-leading={leading ? '' : undefined}
       data-dim={dim ? '' : undefined}>

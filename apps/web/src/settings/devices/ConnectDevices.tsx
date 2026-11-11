@@ -1,55 +1,47 @@
-import { useEffect, useState } from 'react'
-import { QrCode } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { AppWindow, Laptop, Link, QrCode, Smartphone } from 'lucide-react'
 import type { NativeLinkInfo } from '@latch/protocol'
-import { Button, InlineNotice, Popover } from '@latch/ui'
+import { Button, Icon, InlineNotice } from '@latch/ui'
 import { api, inlineError } from '../../core/api.ts'
-import { describeFailure, DEVICES_COPY as COPY, NATIVE_LINK_COPY } from '../../core/securityCopy.ts'
+import { describeFailure, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
+import { IconTile, SettingsGroup, SettingsRow } from '../common.tsx'
 import { WaitingDevices } from './WaitingDevices.tsx'
 
 /** The note after 在浏览器中打开 says what happens next, so it goes once that has had time to happen. */
 const OPENED_NOTE_MS = 15_000
+/** The copied link lives ten minutes; its line goes with it. */
+const COPIED_NOTE_MS = 10 * 60_000
+
+type ShellAction = NonNullable<LatchShell['openInBrowser']>
+/** Stands in for an action this shell does not have; its row is not drawn, so it is never pressed. */
+const missing: ShellAction = () => Promise.resolve({ ok: false, status: 409, error: 'browser-open-unsupported', message: '' })
 
 /**
- * 连接手机, on the Latch app on this Mac with 管理此 Host only, and the devices waiting to be let in under it while the
- * pairing sheet is closed.
+ * A button that asks the Latch app's main process for something it keeps from the page (a link, the browser it opens):
+ * busy while main answers, then one line saying what happened, or the failure from the fixed catalogue. The page never
+ * receives the link itself, so there is nothing here to show or copy again: a second press asks for a new one.
  */
-export function ConnectPhone({ pairing, onPair }: { pairing: boolean; onPair: () => void }) {
-  return (
-    <>
-      <Button variant="primary" icon={QrCode} block className="device-connect" onClick={onPair}>
-        {NATIVE_LINK_COPY.enable}
-      </Button>
-      {!pairing && <WaitingDevices place="page" />}
-    </>
-  )
-}
-
-/**
- * 在浏览器中打开, in the desktop app on macOS only. A browser here enrolls over loopback, which takes a one-time invitation;
- * the shell's main process makes one and opens the default browser with it in the fragment, so this page never sees
- * the invitation. Elsewhere the invitation would land on a command line, so nothing is offered.
- */
-function OpenInBrowser({ open }: { open: NonNullable<LatchShell['openInBrowser']> }) {
+function useShellAction(run: ShellAction, failure: string, keepMs: number) {
   const [busy, setBusy] = useState(false)
-  const [opened, setOpened] = useState(false)
+  const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
-    if (!opened) return undefined
+    if (!done) return undefined
     const timer = window.setTimeout(() => {
-      setOpened(false)
-    }, OPENED_NOTE_MS)
+      setDone(false)
+    }, keepMs)
     return () => {
       clearTimeout(timer)
     }
-  }, [opened])
-  const run = async () => {
+  }, [done, keepMs])
+  const start = async () => {
     setBusy(true)
-    setOpened(false)
+    setDone(false)
     setError('')
     try {
-      const result = await open()
-      if (result.ok) setOpened(true)
+      const result = await run()
+      if (result.ok) setDone(true)
       else
         setError(
           describeFailure(
@@ -60,33 +52,147 @@ function OpenInBrowser({ open }: { open: NonNullable<LatchShell['openInBrowser']
           ),
         )
     } catch {
-      setError(describeFailure(502, 'browser-open-failed', ''))
+      setError(describeFailure(502, failure, ''))
     } finally {
       setBusy(false)
     }
   }
+  return { busy, done, error, start }
+}
+
+/** One way of connecting: what it is, one line about it, and its button. */
+function ConnectRow({
+  icon,
+  title,
+  note,
+  dim,
+  action,
+}: {
+  icon: typeof AppWindow
+  title: string
+  note: string
+  dim?: boolean
+  action?: ReactNode
+}) {
+  return <SettingsRow leading={<IconTile icon={icon} />} title={title} description={note} dim={dim} trailing={action} />
+}
+
+/** What a shell action left: its line while it holds, or its failure. */
+function ActionLine({ done, text, error }: { done: boolean; text: string; error: string }) {
+  if (error)
+    return (
+      <InlineNotice tone="error" secure>
+        {error}
+      </InlineNotice>
+    )
+  if (!done) return null
   return (
-    <div className="device-foot-browser" data-secure="">
-      <Button
-        variant="link"
-        className="device-foot-link"
-        loading={busy}
-        onClick={() => {
-          void run()
-        }}>
-        {COPY.browser}
-      </Button>
-      {opened && (
-        <p className="device-foot-note" role="status">
-          {COPY.browserOpened}
-        </p>
-      )}
-      {error && (
-        <InlineNotice tone="error" secure>
-          {error}
-        </InlineNotice>
-      )}
-    </div>
+    <p className="device-connect-said" role="status">
+      <Icon icon={Link} size={14} />
+      <span>{text}</span>
+    </p>
+  )
+}
+
+/**
+ * 连接新设备, on the Latch app on this Mac with 管理 only, listing only the ways that work in this build: this Mac's
+ * browser (the app opens it with a one-time link in the fragment), another computer while the Host has an HTTPS entry
+ * and the app can copy its link, and the phone as one line (no installable iPhone app yet; the QR stays reachable for one
+ * built from source). Devices waiting to be let in follow while the pairing sheet is closed. Elsewhere this is one line
+ * saying where new devices are connected.
+ */
+export function ConnectNew({
+  local,
+  computer,
+  openInBrowser,
+  copyLink,
+  pairing,
+  onPair,
+}: {
+  /** The Latch app on this Mac, with 管理. */
+  local: boolean
+  computer: string
+  openInBrowser: ShellAction | undefined
+  copyLink: ShellAction | undefined
+  pairing: boolean
+  onPair: () => void
+}) {
+  if (!local)
+    return (
+      <SettingsGroup title={COPY.connectTitle}>
+        <SettingsRow title={<span className="device-pair-elsewhere">{COPY.pairElsewhere(computer)}</span>} />
+      </SettingsGroup>
+    )
+  return (
+    <SettingsGroup title={COPY.connectTitle} secure bare>
+      <ConnectRows openInBrowser={openInBrowser} copyLink={copyLink} onPair={onPair} />
+      {!pairing && <WaitingDevices place="page" />}
+    </SettingsGroup>
+  )
+}
+
+function ConnectRows({
+  openInBrowser,
+  copyLink,
+  onPair,
+}: {
+  openInBrowser: ShellAction | undefined
+  copyLink: ShellAction | undefined
+  onPair: () => void
+}) {
+  const browser = useShellAction(openInBrowser ?? missing, 'browser-open-failed', OPENED_NOTE_MS)
+  const link = useShellAction(copyLink ?? missing, 'copy-link-failed', COPIED_NOTE_MS)
+  return (
+    <>
+      <div className="settings-card">
+        {openInBrowser && (
+          <ConnectRow
+            icon={AppWindow}
+            title={COPY.thisBrowser}
+            note={COPY.thisBrowserNote}
+            action={
+              <Button
+                loading={browser.busy}
+                onClick={() => {
+                  void browser.start()
+                }}>
+                {COPY.browser}
+              </Button>
+            }
+          />
+        )}
+        {copyLink && (
+          <ConnectRow
+            icon={Laptop}
+            title={COPY.otherComputer}
+            note={COPY.otherComputerNote}
+            action={
+              <Button
+                icon={Link}
+                loading={link.busy}
+                onClick={() => {
+                  void link.start()
+                }}>
+                {COPY.copyLink}
+              </Button>
+            }
+          />
+        )}
+        <ConnectRow
+          icon={Smartphone}
+          title={COPY.phone}
+          note={COPY.phoneNote}
+          dim
+          action={
+            <Button variant="ghost" icon={QrCode} className="device-connect" onClick={onPair}>
+              {COPY.phoneQr}
+            </Button>
+          }
+        />
+      </div>
+      <ActionLine done={browser.done} text={COPY.browserOpened} error={browser.error} />
+      <ActionLine done={link.done} text={COPY.linkCopied} error={link.error} />
+    </>
   )
 }
 
@@ -115,8 +221,9 @@ function SavedRoutes() {
       setError(inlineError(cause))
     })
   }
+  if (!info?.directory && (info?.relays.length ?? 0) === 0 && !error) return null
   return (
-    <>
+    <div className="settings-card device-saved-list">
       {info?.relays.map(relay => (
         <div key={relay.relayId} className="device-saved">
           <span className="device-saved-text">
@@ -145,43 +252,23 @@ function SavedRoutes() {
         </div>
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-    </>
-  )
-}
-
-function AboutConnection({ canManageRoutes }: { canManageRoutes: boolean }) {
-  return (
-    <Popover
-      label={COPY.about}
-      title={COPY.about}
-      width={280}
-      side="top"
-      align="start"
-      trigger={props => (
-        <Button {...props} variant="link" className="device-foot-link">
-          {COPY.about}
-        </Button>
-      )}>
-      <p className="device-about">{COPY.aboutBody}</p>
-      {canManageRoutes && <SavedRoutes />}
-    </Popover>
-  )
-}
-
-/** The foot of 设置 › 设备: 关于连接, and 在浏览器中打开 where the desktop app can hand a browser its link. */
-export function ConnectionFoot({
-  canManageRoutes,
-  openInBrowser,
-}: {
-  canManageRoutes: boolean
-  openInBrowser: LatchShell['openInBrowser'] | undefined
-}) {
-  return (
-    <div className="device-foot">
-      <div className="device-foot-links">
-        <AboutConnection canManageRoutes={canManageRoutes} />
-        {openInBrowser && <OpenInBrowser open={openInBrowser} />}
-      </div>
     </div>
+  )
+}
+
+/**
+ * 关于连接, one fact each: this Mac's browser, another computer (or why it cannot connect yet), the phone. A relay or
+ * directory saved by an earlier build is listed under them on the Latch app on this Mac, to be removed.
+ */
+export function AboutConnection({ entry, canManageRoutes }: { entry: boolean; canManageRoutes: boolean }) {
+  return (
+    <SettingsGroup title={COPY.about} bare>
+      <ul className="device-about">
+        <li>{COPY.aboutBrowser}</li>
+        <li>{entry ? COPY.aboutOtherComputer : COPY.aboutOtherComputerMissing}</li>
+        <li>{COPY.aboutPhone}</li>
+      </ul>
+      {canManageRoutes && <SavedRoutes />}
+    </SettingsGroup>
   )
 }

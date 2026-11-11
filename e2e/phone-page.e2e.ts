@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Device, NativeLinkInfo, NativePairingStatus, WaitingEnrollmentView } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
+import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToSection, openEntry, openSettings } from './helpers/layout.ts'
 
@@ -47,20 +48,27 @@ interface PageState {
   createDelay?: number
   created?: number
   /** The bodies of scope changes, in order. */
-  patches?: { id: string; scopes: Device['scopes'] }[]
+  patches?: { id: string; scopes?: Device['scopes']; dataScope?: Device['dataScope'] }[]
 }
 
-async function asDesktop(page: Page, state: PageState) {
+async function asDesktop(page: Page, state: PageState, options: { tls?: boolean } = {}) {
+  // The shell's link actions answer like main does: only whether it worked, never the link.
   await page.addInitScript(() => {
     Object.defineProperty(window, 'latchShell', {
-      value: { kind: 'electron', platform: 'darwin', openInBrowser: async () => ({ ok: true }) },
+      value: {
+        kind: 'electron',
+        platform: 'darwin',
+        openInBrowser: async () => ({ ok: true }),
+        copyComputerLink: async () => ({ ok: true }),
+      },
     })
   })
   await page.route('**/link/api/snapshot', async route => {
     const response = await route.fetch()
-    const snapshot = (await response.json()) as { device: Device; host: { presence: unknown } }
+    const snapshot = (await response.json()) as { device: Device; host: { presence: unknown; tls: { origin: string } | null } }
     snapshot.device = { ...snapshot.device, listener: 'unix', scopes: ['view', 'run', 'approve:standard', 'admin'] }
     if (state.presenceDown) snapshot.host.presence = { status: 'unavailable', message: '测试中的原因' }
+    if (options.tls) snapshot.host.tls = { origin: 'https://studio.example.test:4318' }
     await route.fulfill({ response, json: snapshot })
   })
   await page.route('**/link/api/devices', route =>
@@ -71,9 +79,9 @@ async function asDesktop(page: Page, state: PageState) {
   await page.route('**/link/api/devices/*', async route => {
     if (route.request().method() !== 'PATCH') return route.fallback()
     const id = decodeURIComponent(route.request().url().split('/').at(-1)!)
-    const { scopes } = route.request().postDataJSON() as { scopes: Device['scopes'] }
-    state.patches?.push({ id, scopes })
-    state.devices = state.devices.map(item => (item.id === id ? { ...item, scopes, status: 'active' } : item))
+    const body = route.request().postDataJSON() as { scopes?: Device['scopes']; dataScope?: Device['dataScope'] }
+    state.patches?.push({ id, ...body })
+    state.devices = state.devices.map(item => (item.id === id ? { ...item, ...body, status: 'active' } : item))
     return route.fulfill({ json: { device: state.devices.find(item => item.id === id) } })
   })
   await page.route('**/link/api/enrollments', route =>
@@ -174,22 +182,42 @@ describe('设置 › 设备', () => {
       await page.locator('[data-device-id="dev_old_mac"]').waitFor()
       for (const word of ['指纹', '权限', '局域网', '回环', 'HTTPS', '登记有效期'])
         expect(await page.locator('.settings-page').getByText(word).count()).toBe(0)
+      // The page's order: the devices, 连接新设备, 关于连接. Without an HTTPS entry there is no row for another computer,
+      // and 关于连接 says why; the phone is one line, its QR kept for an app built from source.
+      expect(await page.locator('.settings-group-head h3').allInnerTexts()).toEqual(['连到这台 Mac 的设备', '连接新设备', '关于连接'])
+      expect(await page.getByRole('button', { name: '复制链接', exact: true }).count()).toBe(0)
+      await page.getByText('iPhone App 还没有可安装的版本', { exact: true }).waitFor()
+      await page.getByText(/^另一台电脑：尚未实现。/u).waitFor()
       await capture('list')
-      await page.getByRole('button', { name: '关于连接', exact: true }).click()
-      await page.getByText('Latch 目前还不提供其他网络下的连接', { exact: false }).waitFor()
-      await capture('about')
+      // The ways to connect hand out links, so styles added to the page cannot hide, recolour or shrink them.
+      if (size.label === 'desktop')
+        await expectUnmovedByInjectedStyles(page, [
+          '.settings-group[data-secure] .settings-row',
+          '.settings-group[data-secure] .settings-row-title',
+          '.settings-group[data-secure] .settings-row-description',
+          '.settings-group[data-secure] .ui-button',
+        ])
       // A saved relay can be taken back, here and only here.
       await page.getByText('wss://relay.fixture.test', { exact: true }).waitFor()
       await capture('about-saved')
       await page.locator('.device-saved').getByRole('button', { name: '移除', exact: true }).click()
       await page.getByText('wss://relay.fixture.test', { exact: true }).waitFor({ state: 'hidden' })
-      await page.keyboard.press('Escape')
       await page.getByRole('button', { name: '在浏览器中打开', exact: true }).click()
       await page.getByText('已在浏览器中打开', { exact: false }).waitFor()
       await capture('browser-opened')
-      await page.locator('[data-device-id="dev_browser"] .plugin-nav-row').click()
+      await page.locator('[data-device-id="dev_browser"] .settings-row-main').click()
       await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).waitFor()
+      await page.getByRole('switch', { name: '可以看项目文件', exact: true }).waitFor()
       await capture('browser-device')
+      // The switches grant what the device may do: their words, track and thumb keep their look under added styles.
+      if (size.label === 'desktop')
+        await expectUnmovedByInjectedStyles(page, [
+          '[data-secure] .ui-switch-row',
+          '[data-secure] .ui-switch-row-title',
+          '[data-secure] .ui-switch-row-description',
+          '[data-secure] .ui-switch',
+          '[data-secure] .ui-switch-thumb',
+        ])
       // A device is a page inside 设备 at every width; its way back names the section.
       if (phone) await page.getByRole('button', { name: '返回设备', exact: true }).click()
       else await page.locator('.settings-back').getByText('设备', { exact: true }).click()
@@ -200,7 +228,7 @@ describe('设置 › 设备', () => {
         await capture('menu')
         await page.keyboard.press('Escape')
       }
-      await row.locator('.plugin-nav-row').click()
+      await row.locator('.settings-row-main').click()
       await page.getByRole('button', { name: '移除…', exact: true }).waitFor()
       await capture('device')
       await page.getByRole('button', { name: '移除…', exact: true }).click()
@@ -364,6 +392,48 @@ describe('设置 › 设备', () => {
       await context.close()
     })
 
+    it('opens and closes project files for a browser only, with the data scope alone in the request', async () => {
+      const state = base({
+        patches: [],
+        devices: [device('dev_browser', '我的浏览器', 'loopback-tcp', 1), device('dev_phone', 'iPhone 16 Pro', 'native-direct', 2)],
+      })
+      state.devices[0] = { ...state.devices[0]!, dataScope: 'work' }
+      const { context, page } = await open(state)
+      const files = page.getByRole('switch', { name: '可以看项目文件', exact: true })
+      await page.locator('[data-device-id="dev_browser"] .settings-row-main').click()
+      await page.getByText('查看会话、开始和继续会话、批准普通操作', { exact: true }).waitFor()
+      expect(await files.getAttribute('aria-checked')).toBe('false')
+      await files.click()
+      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'all' })
+      await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
+      await files.click()
+      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'work' })
+      await backToSection(page.locator('.settings-page'))
+      await page.locator('[data-device-id="dev_phone"] .settings-row-main').click()
+      await page.getByRole('button', { name: '移除…', exact: true }).waitFor()
+      expect(await files.count()).toBe(0)
+      await context.close()
+    })
+
+    it('offers another computer only with an HTTPS entry, and says only that the link is on the clipboard', async () => {
+      const state = base()
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+      context.setDefaultTimeout(15_000)
+      const page = await context.newPage()
+      await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
+      await asDesktop(page, state, { tls: true })
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '设备')
+      await page.getByRole('button', { name: '复制链接', exact: true }).click()
+      const said = page.locator('.device-connect-said')
+      await said.getByText(/^链接已复制到剪贴板：10 分钟内有效，只能用一次。/u).waitFor()
+      expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toMatch(/#pair=|lpi1-|https:\/\/studio/u)
+      await page.getByText('另一台电脑：链接 10 分钟内有效，只能用一次；连接时要在这台 Mac 上确认。', { exact: true }).waitFor()
+      await page.screenshot({ path: `${OUTPUT}/link-copied-desktop-light.png`, animations: 'disabled' })
+      await context.close()
+    })
+
     it('raises and lowers management, restores a device, and takes it from a phone that kept it', async () => {
       const scopes: Device['scopes'] = ['view', 'run', 'approve:standard']
       const state = base({
@@ -380,7 +450,7 @@ describe('设置 › 设备', () => {
       const manage = page.getByRole('switch', { name: '可以管理这台 Mac', exact: true })
       const pick = async (id: string) => {
         await backToSection(page.locator('.settings-page'))
-        await page.locator(`[data-device-id="${id}"] .plugin-nav-row`).click()
+        await page.locator(`[data-device-id="${id}"] .settings-row-main`).click()
       }
 
       await pick('dev_browser')

@@ -1745,7 +1745,7 @@ describe('visual capture of the real product', () => {
         ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
-        ['settings-devices', '设备', target.getByRole('button', { name: '关于连接', exact: true })],
+        ['settings-devices', '设备', settings.getByText(`新设备在 ${HOST_NAME} 上的 Latch 里连接：设置 › 设备。`, { exact: true })],
         ['settings-about', '关于', settings.getByText(/^Harness 和插件以你的权限在.+上运行。$/).first()],
       ] as const) {
         await openSection(settings, section)

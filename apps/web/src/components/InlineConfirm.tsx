@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { BlockingTask, ConfirmationTicket } from '@latch/protocol'
-import { Button, Collapse, InlineNotice, MOTION } from '@latch/ui'
+import { Button, Collapse, InlineNotice, MOTION, StatusWord } from '@latch/ui'
 import {
   useInlineConfirmation,
   type Blocked,
@@ -13,6 +13,7 @@ import { useSessionLinks } from '../core/sessionLinks.ts'
 import { namedSession, stillBlocking } from '../core/blocking.ts'
 import { errorMessage, isUncertain } from '../core/api.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
+import { MarkTile } from './BrandTile.tsx'
 import { VisibleText } from './VisibleText.tsx'
 
 /** The fold's own transition before the content is dropped. */
@@ -186,14 +187,105 @@ export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefin
   )
 }
 
+/** One session holding the confirmation back: its Harness, title and state, and the ways to open or stop it. */
+function BlockedRow({ task }: { task: BlockingTask }) {
+  const links = useSessionLinks()
+  const [stopping, setStopping] = useState(false)
+  const [error, setError] = useState<{ text: string; uncertain: boolean } | null>(null)
+  const snapshot = links?.snapshot ?? null
+  const session = namedSession(task, snapshot)
+  const mark = snapshot?.catalog?.harnesses.find(harness => harness.id === task.harnessId)?.capabilities.display.mark
+  const halt = async () => {
+    if (!links) return
+    setStopping(true)
+    setError(null)
+    try {
+      await links.stop(task.id)
+    } catch (cause) {
+      setError({ text: errorMessage(cause), uncertain: isUncertain(cause) })
+      setStopping(false)
+    }
+  }
+  return (
+    <li className="blocked-row" data-session-id={task.id}>
+      <MarkTile mark={mark} size={16} />
+      <span className="blocked-row-text">
+        <span className="blocked-row-title">{session.title}</span>
+        {session.agent && <span className="blocked-row-agent">{session.agent}</span>}
+      </span>
+      <StatusWord tone={stopping ? 'neutral' : session.waiting ? 'waiting' : 'running'}>
+        {stopping ? BLOCKED_COPY.stopping : session.waiting ? BLOCKED_COPY.waiting : BLOCKED_COPY.running}
+      </StatusWord>
+      {links && (
+        <span className="blocked-row-actions">
+          <Button size="xs" variant="ghost" onClick={() => links.open(task.id)}>
+            {BLOCKED_COPY.view}
+          </Button>
+          <Button
+            size="xs"
+            disabled={stopping}
+            onClick={() => {
+              void halt()
+            }}>
+            {BLOCKED_COPY.stop}
+          </Button>
+        </span>
+      )}
+      {error && (
+        <InlineNotice tone={error.uncertain ? 'neutral' : 'error'} className="blocked-row-error">
+          {error.text}
+        </InlineNotice>
+      )}
+    </li>
+  )
+}
+
+/**
+ * Every session the Host named as holding the confirmation back, one row each, the ones waiting for the person first (the
+ * Host's order). A stopped session leaves the list once the snapshot shows it settled; when none is left the line says
+ * the person can try again. Without names (an older Host) it is the one general sentence.
+ */
+export function BlockedList({ blocked, onDismiss }: { blocked: Blocked | undefined; onDismiss?: () => void }) {
+  const links = useSessionLinks()
+  const named = blocked?.tasks ?? []
+  const remaining = stillBlocking(named, links?.snapshot ?? null)
+  const action = blocked?.action && Object.hasOwn(BLOCKED_VERBS, blocked.action) ? blocked.action : undefined
+  if (remaining.length === 0 || action === undefined) return <BlockedLine blocked={blocked} onDismiss={onDismiss} />
+  return (
+    <InlineNotice
+      tone="neutral"
+      secure
+      className="blocked-list"
+      title={BLOCKED_COPY.headline(action)}
+      {...(onDismiss ? { onClose: onDismiss, closeLabel: COPY.close } : {})}>
+      <ul className="blocked-rows">
+        {remaining.map(task => (
+          <BlockedRow key={task.id} task={task} />
+        ))}
+      </ul>
+    </InlineNotice>
+  )
+}
+
 /** Whether a state has anything to read: a line where the person acted, or what the sheet leaves out while it is open. */
 const hasLine = (view: ConfirmationView) =>
   view.phase === 'failed'
   || view.phase === 'paused'
   || (view.phase === 'waiting' && ((view.ticket.warnings ?? []).length > 0 || detailsLeftOut(view.ticket).length > 0))
 
-/** What one state shows. Waiting and sending have no line of their own: the button that asked shows them. */
-export function ConfirmationContent({ view, actions }: { view: ConfirmationView; actions: ConfirmationActions }): ReactNode {
+/**
+ * What one state shows. Waiting and sending have no line of their own: the button that asked shows them. With `list` a
+ * refusal while sessions run names every one of them, one row each, instead of the first and a count.
+ */
+export function ConfirmationContent({
+  view,
+  actions,
+  list = false,
+}: {
+  view: ConfirmationView
+  actions: ConfirmationActions
+  list?: boolean
+}): ReactNode {
   if (view.phase === 'failed')
     return (
       <InlineNotice tone="error" secure onClose={actions.dismiss} closeLabel={COPY.close}>
@@ -201,7 +293,12 @@ export function ConfirmationContent({ view, actions }: { view: ConfirmationView;
       </InlineNotice>
     )
   if (view.phase === 'paused') {
-    if (view.reason === 'blocked') return <BlockedLine blocked={view.blocked} onDismiss={actions.dismiss} />
+    if (view.reason === 'blocked')
+      return list ? (
+        <BlockedList blocked={view.blocked} onDismiss={actions.dismiss} />
+      ) : (
+        <BlockedLine blocked={view.blocked} onDismiss={actions.dismiss} />
+      )
     return (
       <InlineNotice tone={view.reason === 'cooldown' ? 'warn' : 'neutral'} secure onClose={actions.dismiss} closeLabel={COPY.close}>
         {view.reason === 'cooldown' ? COPY.cooldown : COPY.busy}
@@ -245,7 +342,18 @@ function ConfirmationStatus({ view }: { view: ConfirmationView | undefined }) {
  * confirmation that request starts. A request that did not run, or could not start, leaves one line here. The gate is
  * the Host and the system sheet, never this element.
  */
-export function InlineConfirm({ active, rank, className }: { active: boolean; rank?: number; className?: string }) {
+export function InlineConfirm({
+  active,
+  rank,
+  className,
+  list = false,
+}: {
+  active: boolean
+  rank?: number
+  className?: string
+  /** Name every session that holds a refused confirmation back, one row each (设置 › 设备). */
+  list?: boolean
+}) {
   const id = useId()
   const line = useRef<HTMLElement>(null)
   const live = useInlineConfirmation(id, active, rank)
@@ -272,7 +380,7 @@ export function InlineConfirm({ active, rank, className }: { active: boolean; ra
             data-confirmation-phase={shown.view.phase}
             data-paused-reason={shown.view.phase === 'paused' ? shown.view.reason : undefined}
             aria-label={COPY.label}>
-            <ConfirmationContent view={shown.view} actions={shown.actions} />
+            <ConfirmationContent view={shown.view} actions={shown.actions} list={list} />
           </section>
         )}
       </Collapse>

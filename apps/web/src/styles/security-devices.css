@@ -22,11 +22,12 @@
   background-color: var(--hover) !important;
   color: var(--ink-2) !important;
 }
+/* A group's name: the same quiet label as every other group's, pinned. */
 [data-secure] .settings-group-head h3 {
   display: block !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
 }
 [data-secure] .settings-row-title {
   display: block !important;
@@ -53,6 +54,59 @@
 }
 [data-secure] .settings-caption > span span {
   display: inline !important;
+}
+/* A row's own colour and size, which anything in it that is not pinned inherits. */
+[data-secure] .settings-row {
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+/*
+ * The switches on a device's page grant what it may do, so they are pinned like the rows around them: the words, the
+ * track (grey off, accent on), the white thumb with its shadow, and the faded look of a locked or busy switch.
+ */
+[data-secure] .ui-switch-row {
+  display: flex !important;
+}
+[data-secure] .ui-switch-row-text {
+  display: grid !important;
+}
+[data-secure] .ui-switch-row-title {
+  display: block !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+[data-secure] .ui-switch-row-description {
+  display: block !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+[data-secure] .ui-switch-row-lock {
+  color: var(--muted) !important;
+}
+[data-secure] :is(.ui-switch, .ui-switch-thumb) {
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+[data-secure] .ui-switch {
+  display: inline-grid !important;
+}
+[data-secure] .ui-switch::before {
+  background-color: var(--track) !important;
+}
+[data-secure] .ui-switch[aria-checked='true']::before {
+  background-color: var(--accent) !important;
+}
+[data-secure] .ui-switch[aria-disabled='true'] {
+  opacity: 0.45 !important;
+}
+[data-secure] .ui-switch-thumb {
+  display: block !important;
+  background-color: var(--on-accent) !important;
+  box-shadow: var(--sh-thumb) !important;
 }
 
 /*
@@ -273,24 +327,100 @@
 .pair-center > .ui-notice {
   margin-block-start: var(--sp-12);
 }
-/* The two links at the panel's foot read alike; blue is only for what runs. */
-[data-secure] .device-foot-link.ui-button[data-variant='link'] {
+/*
+ * 连接新设备: what a press did (the browser opened, the link is on the clipboard) in one line under the rows, led by a
+ * small glyph. The page never holds the link, so the line is all there is to read.
+ */
+.device-connect-said {
+  display: flex !important;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  margin-block-start: var(--sp-8);
+  padding-inline: var(--sp-16);
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.device-connect-said > .ui-icon {
+  flex: none;
+  margin-block-start: 2px;
+  color: var(--muted) !important;
+}
+.device-connect-said > span {
+  display: block !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+[data-secure] > .ui-notice {
+  margin-block-start: var(--sp-8);
+}
+/* A device asking to connect sits under the ways to connect. */
+[data-secure] > .device-waiting {
+  margin-block-start: var(--sp-12);
+}
+
+/*
+ * A confirmation held back by sessions, on a device's page: one row per session under the notice's headline, its
+ * Harness, title and state, then 查看 and 停止. Inside the secure notice, so each part keeps its display and colour.
+ */
+[data-secure] .blocked-rows {
+  display: grid !important;
+  gap: var(--sp-2);
+  margin: var(--sp-8) 0 0;
+  padding: 0;
+  list-style: none;
+}
+[data-secure] .blocked-row {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: var(--sp-8);
+  min-height: 32px;
+}
+[data-secure] .blocked-row-text {
+  display: flex !important;
+  align-items: baseline;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+[data-secure] .blocked-row-title {
+  display: block !important;
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-secure] .blocked-row-agent {
+  display: block !important;
+  flex: none;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
 }
-/* 在浏览器中打开: what it says after opening, and its failure, at the panel's foot. */
-.device-foot-browser {
-  display: grid !important;
-  justify-items: start;
+[data-secure] .blocked-row-actions {
+  display: inline-flex !important;
   gap: var(--sp-4);
-  min-width: 0;
 }
-.device-foot-note {
-  display: block !important;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
+[data-secure] .blocked-row-error {
+  grid-column: 1 / -1;
+}
+/* Narrow: the state and the buttons go under the title. */
+@media (max-width: 560px) {
+  [data-secure] .blocked-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--sp-4);
+    padding-block: var(--sp-4);
+  }
+  [data-secure] .blocked-row > .ui-status-word {
+    grid-column: 2;
+  }
+  [data-secure] .blocked-row-actions {
+    grid-column: 2;
+  }
 }
 
 /* A device asking to connect, in the Mac's panel: the name it gave, what it could do, and its code behind the fold. */
