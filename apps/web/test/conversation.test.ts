@@ -143,6 +143,39 @@ describe('turns of a conversation', () => {
     })
   })
 
+  it('offers 停止 on a subagent that can be stopped alone, and reads 正在停止… until it says it stopped', () => {
+    const row = (subagent: Partial<NonNullable<Message['subagent']>>) =>
+      tool('subagent:1', {
+        toolName: 'subagent',
+        state: 'running',
+        subagent: { title: 'Test runner', status: 'running', steps: [], ...subagent },
+      })
+    const render = (message: Message, stop?: (id: string) => Promise<void>) =>
+      renderToStaticMarkup(
+        createElement(Transcript, {
+          detail: detail([user('u'), message], {}, 'running'),
+          approvals: [],
+          harnessName: 'Codex',
+          ...(stop ? { onStopSubagent: stop } : {}),
+        }),
+      )
+    const stop = async () => {}
+    expect(render(row({ stoppable: true }), stop)).toContain('aria-label="停止子 Agent Test runner"')
+    // Only where it said it can be, and only where this page may stop the session.
+    expect(render(row({}), stop)).not.toContain('停止子 Agent')
+    expect(render(row({ stoppable: true }))).not.toContain('停止子 Agent')
+    const stopping = render(row({ stopping: true }), stop)
+    expect(stopping).toContain('正在停止…')
+    expect(stopping).not.toContain('运行中')
+    expect(stopping).not.toContain('停止子 Agent')
+    expect(
+      livePhase(detail([user('u'), row({ stopping: true })], {}, 'running'), { cancelling: false, approvals: 0, hostNow: T0 }),
+    ).toEqual({
+      kind: 'tool',
+      text: '子 Agent Test runner 正在停止…',
+    })
+  })
+
   it('reads the outcome of the latest turn from the session and of earlier ones from their own messages', () => {
     const turn = firstTurn([user('u'), reply('a', '部分', { state: 'cancelled' })])
     expect(turnOutcome(turn, 'failed')).toBe('failed')
@@ -414,6 +447,10 @@ describe('decided approvals', () => {
     expect(decisionLine(decision('cancelled'), now)).toMatchObject({
       text: '已取消（会话停止）',
       title: expect.not.stringContaining('没有执行'),
+    })
+    expect(decisionLine({ ...decision('cancelled'), subagentStopped: true }, now)).toMatchObject({
+      text: '已取消（子 Agent 停止）',
+      title: expect.stringContaining('这个子 Agent 被单独停止时还没有人回答'),
     })
     expect(decisionLine(decision('expired'), now).text).toBe('已过期')
     expect(decisionLine({ outcome: 'rejected', at: 'not a time' }, now)).toMatchObject({ text: '已拒绝', title: '已拒绝' })

@@ -208,6 +208,7 @@ import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-packag
 import { createRoutes } from './routes/index.ts'
 import { TerminalService, type TerminalServiceOptions } from './terminal/service.ts'
 import { RENEW_INTERVAL_MS, UNIX_ADDRESS } from './routes/devices.ts'
+import { opaqueId } from './audit-actions/fields.ts'
 import {
   BASE_RETRIES,
   CONFIG_BODY_LIMIT,
@@ -324,6 +325,8 @@ const cancelSchema = z.strictObject({
   requestId: requestIdSchema.optional(),
   runId: z.string().regex(RUN_ID).optional(),
 })
+/** A subagent row's message ID. */
+const stopSubagentSchema = z.strictObject({ subagentId: opaqueId })
 /** Names the threshold the person saw, so a retry or a second device cannot double it again. */
 const keepWaitingSchema = z.strictObject({
   runId: z.string().regex(RUN_ID),
@@ -5016,6 +5019,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { accepted: true, receipt: await cancelTask(caller, id, input, res) })
         return true
       }
+      if (method === 'POST' && action === 'stop-subagent') {
+        // Narrows like a cancel, so it takes what a cancel takes, and an audit failure does not block it.
+        requireScope(caller, 'view')
+        limits.classC.take(caller.device.id)
+        const { subagentId } = stopSubagentSchema.parse(await jsonBody(req))
+        const seq = await audited(
+          { action: 'task.subagent.stopped', actor: actorOf(caller), target: id, detail: { sessionId: id, subagentId } },
+          res,
+        )
+        let stopped: boolean
+        try {
+          stopped = await hub!.cancelSubagent(id, subagentId)
+        } catch (error) {
+          auditFailed(seq, caller)
+          throw error
+        }
+        if (!stopped) {
+          auditFailed(seq, caller)
+          throw new AppError(409, 'subagent-not-stoppable', '这个子 Agent 已经结束，或它的 Harness 不能单独停止它。')
+        }
+        json(res, { accepted: true })
+        return true
+      }
       if (method === 'POST' && action === 'keep-waiting') {
         requireScope(caller, 'view')
         limits.classC.take(caller.device.id)
@@ -5943,7 +5969,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
-      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config))?$/)
+      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent))?$/)
       if (task && (await handleTask(req, res, caller, safeDecode(task[1]!), task[2], method))) return
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {

@@ -30,7 +30,8 @@ export interface HostProject {
 export type HarnessSecurityEvent =
   | { type: 'permission-drift'; sessionId: string; observedHash: string }
   | { type: 'permission-unverified'; sessionId: string }
-  | { type: 'approval-auto-rejected'; sessionId: string; reason: 'persistent-only' | 'unknown-kind' }
+  /** `subagent-wider`: a subagent asked for more than the session's own permission mode lets it. */
+  | { type: 'approval-auto-rejected'; sessionId: string; reason: 'persistent-only' | 'unknown-kind' | 'subagent-wider' }
   /**
    * A call no person was asked about, in a mode where the harness's own model decides: its verdict as the harness reported
    * it (`agent-report`), or that it ran with no ask seen (`no-ask-seen`). Hashes and enums only.

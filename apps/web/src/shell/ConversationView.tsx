@@ -1,5 +1,5 @@
 import { ShieldAlert } from 'lucide-react'
-import { errorMessage } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
 import { projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
@@ -186,6 +186,21 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                               : 'open',
                       }}
                       {...(run ? { onStop: run.onCancel } : {})}
+                      {...(current.summary.personal
+                        ? {}
+                        : {
+                            onStopSubagent: async (subagentId: string) => {
+                              try {
+                                await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
+                                  method: 'POST',
+                                  body: { subagentId },
+                                })
+                              } catch (cause) {
+                                setToast({ text: errorMessage(cause), tone: 'error' })
+                                throw cause
+                              }
+                            },
+                          })}
                       onReveal={reading.reveal}
                       {...(frozenAt !== undefined ? { frozenAt } : {})}
                       cancelling={cancelState === 'cancelling'}

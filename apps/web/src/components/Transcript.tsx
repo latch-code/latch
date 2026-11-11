@@ -46,7 +46,7 @@ import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, ThinkingRow, type LiveReasoning } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
-import { SubagentRow } from './SubagentRow.tsx'
+import { SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
@@ -494,6 +494,7 @@ export function Transcript({
   onSource,
   onCopyError,
   onStop,
+  onStopSubagent,
   onReveal,
   changes,
 }: {
@@ -526,6 +527,8 @@ export function Transcript({
   onSource?: (sessionId: string) => void
   onCopyError?: (error: unknown) => void
   onStop?: () => void
+  /** Stops one subagent that can be stopped alone, by its row's ID; rejects when that failed, after saying so. */
+  onStopSubagent?: (subagentId: string) => Promise<void>
   /** Brings a row into view, for what the status line points at. */
   onReveal?: (messageId: string) => void
   /** The Host's per-turn records and what this device may do with them. */
@@ -557,6 +560,8 @@ export function Transcript({
     if (last) onFork?.(last.id, '请接着这个会话继续。')
   })
   const changesError = useStableCallback((error: unknown) => onCopyError?.(error))
+  // Stable, so the subagent rows under it do not draw again with every render of the page.
+  const stopSubagent = useStableCallback((subagentId: string) => onStopSubagent!(subagentId))
   const lastKey = turns.at(-1)?.key ?? ''
   // The latest turn before the last change the page saw happen ('' for none): a different latest turn arrived live.
   const previousLast = useLivePrevious(lastKey)
@@ -602,90 +607,92 @@ export function Transcript({
   }
   return (
     <FileSession.Provider value={fileSession}>
-      <TurnSummaryOptions.Provider value={summaryOptions}>
-        <FileReferences sessionId={sessionId} active={active}>
-          {detail.summary.forkOf && (
-            <p className="fork-origin">
-              从「
-              {onSource ? (
-                <button type="button" aria-label="返回来源会话" onClick={() => onSource(detail.summary.forkOf!.taskId)}>
+      <SubagentStop.Provider value={onStopSubagent ? stopSubagent : undefined}>
+        <TurnSummaryOptions.Provider value={summaryOptions}>
+          <FileReferences sessionId={sessionId} active={active}>
+            {detail.summary.forkOf && (
+              <p className="fork-origin">
+                从「
+                {onSource ? (
+                  <button type="button" aria-label="返回来源会话" onClick={() => onSource(detail.summary.forkOf!.taskId)}>
+                    <VisibleText text={detail.summary.forkOf.title} />
+                  </button>
+                ) : (
                   <VisibleText text={detail.summary.forkOf.title} />
-                </button>
-              ) : (
-                <VisibleText text={detail.summary.forkOf.title} />
-              )}
-              」第 {detail.summary.forkOf.turn} 轮分叉
-            </p>
-          )}
-          {turns.map((turn, index) => {
-            const latest = index === turns.length - 1
-            const trailingLive = latest && active
-            const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
-            const resend =
-              latest && !trailingLive && retry && turn.user
-                ? {
-                    warning: resendWarning(sideEffects(turn)),
-                    onResend: () => {
-                      retry.onResend(resendText(turn.user!))
-                    },
-                  }
-                : undefined
-            const rowIds = turn.replies.filter(message => message.role === 'tool').map(message => message.id)
-            const ownApprovals = approvals.length ? approvals.filter(approval => rowIds.includes(toolRowId(approval) ?? '')) : NONE
-            const ownQuestions = detail.questions?.length
-              ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
-              : NONE
-            const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
-            const stamped = turnModel(turn)
-            const route = trailingLive ? undefined : turnRoute(turn)
-            const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
-            const delivery = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
-            const record = records.get(turn.key)
-            return (
-              <TurnView
-                key={turn.key}
-                turn={turn}
-                context={{
-                  sessionId,
-                  approvals: ownApprovals,
-                  questions: ownQuestions,
-                  ...(streaming ? { streamingId: liveId } : {}),
-                  ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
-                  coarse,
-                  frozen: frozen && trailingLive,
-                }}
-                {...(engine ? { engine } : {})}
-                harnessName={harnessName}
-                login={login}
-                harness={harness}
-                model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
-                provider={providerId ? providerName?.(providerId) : undefined}
-                {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
-                latest={latest}
-                trailingLive={trailingLive}
-                outcome={outcome}
-                arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-                {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
-                {...(trailingLive ? { status: statusProps } : {})}
-                {...(delivery ? { delivery } : {})}
-                {...(latest ? { summary: detail.summary } : {})}
-                {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
-                retry={resend}
-                reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
-                onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
-                onCopyUpTo={!trailingLive ? copyUpTo : undefined}
-                {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
-                {...(onFork ? { onContinue: continueRun } : {})}
-                {...(record ? { changes: record } : {})}
-                sessionActive={active}
-                changesRevision={changesRevision}
-                changesEnabled={changes?.enabled === true}
-                onChangesError={changesError}
-              />
-            )
-          })}
-        </FileReferences>
-      </TurnSummaryOptions.Provider>
+                )}
+                」第 {detail.summary.forkOf.turn} 轮分叉
+              </p>
+            )}
+            {turns.map((turn, index) => {
+              const latest = index === turns.length - 1
+              const trailingLive = latest && active
+              const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
+              const resend =
+                latest && !trailingLive && retry && turn.user
+                  ? {
+                      warning: resendWarning(sideEffects(turn)),
+                      onResend: () => {
+                        retry.onResend(resendText(turn.user!))
+                      },
+                    }
+                  : undefined
+              const rowIds = turn.replies.filter(message => message.role === 'tool').map(message => message.id)
+              const ownApprovals = approvals.length ? approvals.filter(approval => rowIds.includes(toolRowId(approval) ?? '')) : NONE
+              const ownQuestions = detail.questions?.length
+                ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
+                : NONE
+              const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
+              const stamped = turnModel(turn)
+              const route = trailingLive ? undefined : turnRoute(turn)
+              const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
+              const delivery = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
+              const record = records.get(turn.key)
+              return (
+                <TurnView
+                  key={turn.key}
+                  turn={turn}
+                  context={{
+                    sessionId,
+                    approvals: ownApprovals,
+                    questions: ownQuestions,
+                    ...(streaming ? { streamingId: liveId } : {}),
+                    ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
+                    coarse,
+                    frozen: frozen && trailingLive,
+                  }}
+                  {...(engine ? { engine } : {})}
+                  harnessName={harnessName}
+                  login={login}
+                  harness={harness}
+                  model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
+                  provider={providerId ? providerName?.(providerId) : undefined}
+                  {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
+                  latest={latest}
+                  trailingLive={trailingLive}
+                  outcome={outcome}
+                  arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+                  {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
+                  {...(trailingLive ? { status: statusProps } : {})}
+                  {...(delivery ? { delivery } : {})}
+                  {...(latest ? { summary: detail.summary } : {})}
+                  {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
+                  retry={resend}
+                  reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
+                  onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
+                  onCopyUpTo={!trailingLive ? copyUpTo : undefined}
+                  {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
+                  {...(onFork ? { onContinue: continueRun } : {})}
+                  {...(record ? { changes: record } : {})}
+                  sessionActive={active}
+                  changesRevision={changesRevision}
+                  changesEnabled={changes?.enabled === true}
+                  onChangesError={changesError}
+                />
+              )
+            })}
+          </FileReferences>
+        </TurnSummaryOptions.Provider>
+      </SubagentStop.Provider>
     </FileSession.Provider>
   )
 }

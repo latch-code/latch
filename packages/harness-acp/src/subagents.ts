@@ -27,6 +27,11 @@ export const subagentUpdate = z.object({
     .object({ state: z.string().max(64), stopReason: z.string().max(64).nullish(), error: z.unknown().optional() })
     .nullish()
     .catch(undefined),
+  /** Replaced as a whole: absent leaves it, `null` or an object without `cancel` takes back what it allowed. */
+  capabilities: z
+    .object({ cancel: z.object({}).passthrough().nullish().catch(null) })
+    .nullish()
+    .catch(null),
 })
 export type SubagentUpdate = z.infer<typeof subagentUpdate>
 
@@ -50,6 +55,10 @@ export interface Child {
   loose: Map<string, ToolState>
   /** The step its text is being appended to, until a tool call comes between. */
   textStep?: string
+  /** It said it can be stopped alone (`capabilities.cancel`). */
+  cancellable?: boolean
+  /** Latch sent it a stop, and it has not yet said it stopped. */
+  stopping?: boolean
 }
 
 /** What a reported work state means to the row. Unknown states and stop reasons say nothing settled. */

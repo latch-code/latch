@@ -684,6 +684,13 @@ export class HarnessHub implements Bridge {
     return cancelled
   }
 
+  /** Stops one subagent of the session's turn; see `Bridge.cancelSubagent`. */
+  async cancelSubagent(sessionId: string, subagentId: string): Promise<boolean> {
+    const member = await this.route(sessionId)
+    if (!member.bridge.cancelSubagent) return false
+    return member.bridge.cancelSubagent(sessionId, subagentId)
+  }
+
   /** 「继续等」: asks later about this run's silence; nothing else about the run changes. */
   async keepWaiting(sessionId: string, input: { runId: string; thresholdMs: number }): Promise<KeepWaitingResult> {
     const member = await this.route(sessionId)

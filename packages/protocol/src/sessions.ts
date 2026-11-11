@@ -300,6 +300,8 @@ export interface ToolDecision {
   /** When it was decided (ISO). */
   at: string
   via?: 'this-mac' | 'other-device'
+  /** `cancelled` because the subagent that asked was stopped alone, while the session went on. */
+  subagentStopped?: true
 }
 
 /** Structured presentation of one tool call. `Message.text` keeps the plain-text form. */
@@ -430,6 +432,10 @@ export interface Subagent {
   steps: Message[]
   /** It did more than the steps kept. */
   truncated?: true
+  /** It is working and its harness says it can be stopped alone, without stopping the session's turn. */
+  stoppable?: true
+  /** A stop was sent and it has not yet said it stopped: never shown as stopped before it does. */
+  stopping?: true
 }
 
 export type ApprovalOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'

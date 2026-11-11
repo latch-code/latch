@@ -107,10 +107,12 @@ export const DECISION_COPY = {
   rejected: '已拒绝',
   expired: '已过期',
   cancelled: '已取消（会话停止）',
+  cancelledSubagent: '已取消（子 Agent 停止）',
   viaThisMac: '在这台 Mac 上决定',
   viaOtherDevice: '在其他设备上决定',
   expiredNote: '没有人在时限内回答',
   cancelledNote: '会话停止时还没有人回答',
+  cancelledSubagentNote: '这个子 Agent 被单独停止时还没有人回答',
   ranDespite: 'Harness 报告仍执行了这次调用',
   ranDespiteNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行。这一行显示的是 Harness 自己的报告。',
   /** Why what was typed cannot go with a rejection. */

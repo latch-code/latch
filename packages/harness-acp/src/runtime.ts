@@ -321,6 +321,8 @@ interface ModeChange {
 
 /** Recorded, and shown, as the observed mode when the agent stops reporting a mode it reported before. */
 const UNREPORTED_MODE = '未报告'
+/** The ACP tool kinds that change files or run something; in 只看不改 the session's own agent does none of them. */
+const CHANGING_KINDS = new Set(['edit', 'delete', 'move', 'execute'])
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -754,7 +756,7 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(sessionId)
     const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'
     const segment = active ? run?.segment : undefined
-    return structuredClone({
+    const detail: DriverTaskDetail = structuredClone({
       summary: this.projected(task),
       messages: task.messages,
       approvals: this.openApprovals(sessionId),
@@ -776,6 +778,8 @@ export class AgentRuntime implements Bridge {
       clearContext: true,
       ...(task.acp.contextCleared ? { contextCleared: true as const } : {}),
     })
+    this.markStops(sessionId, detail.messages)
+    return detail
   }
 
   /**
@@ -1399,6 +1403,51 @@ export class AgentRuntime implements Bridge {
     await run.done
     if (this.storageFailure) throw new AppError(503, 'storage-unavailable', '执行已停止，但取消状态未能持久化')
     return true
+  }
+
+  /**
+   * Stops one subagent that said it can be stopped alone (ACP subagents draft: `session/cancel` with its session), while it
+   * works; the session's turn goes on. Its own open requests are answered as cancelled, as a stop of the session answers
+   * the session's. Its row says it is stopping until it reports how it ended: a stop sent is not a stop that took effect.
+   */
+  async cancelSubagent(sessionId: string, subagentId: string): Promise<boolean> {
+    await this.ready()
+    const task = this.task(sessionId)
+    const live = this.lives.get(sessionId)
+    if (!live || live.wire.stopping || this.closed) return false
+    const child = [...live.children.values()].find(item => item.taskId === sessionId && item.messageId === subagentId)
+    if (!child) return false
+    if (child.stopping) return true
+    const status = this.childRow(task, child)?.subagent?.status
+    if (!child.cancellable || (status !== 'running' && status !== 'waiting')) return false
+    child.stopping = true
+    live.wire.notify('session/cancel', { sessionId: child.acpSessionId })
+    for (const permission of [...this.permissions.values()])
+      if (permission.child === child) this.closePermission(permission, CANCELLED_OUTCOME, { ...this.unanswered(), subagentStopped: true })
+    this.touch(task)
+    this.mark()
+    this.notify(sessionId)
+    return true
+  }
+
+  /** Which subagent rows of this process can be stopped alone now, or are being stopped: live facts, never stored. */
+  private markStops(sessionId: string, messages: Message[]): void {
+    const live = this.lives.get(sessionId)
+    if (!live || live.wire.stopping) return
+    const rows = new Map<string, Child>()
+    for (const child of live.children.values())
+      if (child.taskId === sessionId && child.messageId && (child.cancellable || child.stopping)) rows.set(child.messageId, child)
+    if (!rows.size) return
+    const visit = (items: Message[]): void => {
+      for (const item of items) {
+        if (!item.subagent) continue
+        const child = rows.get(item.id)
+        if (child?.stopping) item.subagent.stopping = true
+        else if (child && (item.subagent.status === 'running' || item.subagent.status === 'waiting')) item.subagent.stoppable = true
+        visit(item.subagent.steps)
+      }
+    }
+    visit(messages)
   }
 
   /**
@@ -2181,7 +2230,8 @@ export class AgentRuntime implements Bridge {
     throw new AppError(409, 'permission-unverified', `无法确认 ${this.agent.name} 已切换到所选的权限模式。`)
   }
 
-  private drift(task: AcpTask, expected: string | undefined, observed: string): void {
+  /** `subagent`: the name of the subagent that reported the mode, when it was not the session's own agent. */
+  private drift(task: AcpTask, expected: string | undefined, observed: string, subagent?: string): void {
     const taskId = task.summary.id
     task.acp.drift = { at: this.now(), observed: clip(observed, 64) }
     task.summary.permissionDrift = true
@@ -2189,7 +2239,10 @@ export class AgentRuntime implements Bridge {
     for (const permission of [...this.permissions.values()]) {
       if (permission.taskId === taskId) this.closePermission(permission, this.rejection(permission.visible), this.unanswered())
     }
-    const note = `检测到权限模式变化（${clip(expected ?? '未知', 64)} → ${clip(observed, 64)}），已取消本轮并拒绝挂起的询问。该会话不再接受输入，请新建会话。`
+    const change = `${clip(expected ?? '未知', 64)} → ${clip(observed, 64)}`
+    const note = subagent
+      ? `子 Agent「${subagent}」报告的权限模式比这个会话宽（${change}），已取消本轮并拒绝挂起的询问。该会话不再接受输入，请新建会话。`
+      : `检测到权限模式变化（${change}），已取消本轮并拒绝挂起的询问。该会话不再接受输入，请新建会话。`
     const run = this.runs.get(taskId)
     if (run) {
       run.notes.push(note)
@@ -2224,6 +2277,9 @@ export class AgentRuntime implements Bridge {
       const option = permission.options.find(item => item.optionId === optionId)
       if (!option) throw new AppError(400, 'approval-option-invalid', '该审批选项不存在')
       if (!isVisibleOption(this.profile, option)) throw new AppError(400, 'approval-option-hidden', '该选项会持久保存授权，Latch 不提供')
+      // `visible` is also what the subagent ceiling left, so an option it dropped is refused here too.
+      if (!permission.visible.some(item => item.optionId === optionId))
+        throw new AppError(400, 'approval-option-hidden', '该选项超出会话的权限模式，Latch 不提供')
       if (!option.kind.startsWith(decision)) throw new AppError(400, 'approval-option-mismatch', '审批选项与决定不一致')
       return option
     }
@@ -2535,6 +2591,8 @@ export class AgentRuntime implements Bridge {
       // The limit on rows counts only subagents that may still report, so a long session keeps showing new ones.
       for (const child of run.live?.children.values() ?? []) {
         if (child.taskId !== run.taskId) continue
+        // A stop it never answered is over with the turn: its row now says its state is unknown.
+        delete child.stopping
         const row = this.childRow(task, child)
         const status = row ? row.subagent?.status : child.status
         if (status === 'done' || status === 'failed' || status === 'cancelled') child.ended = true
@@ -3239,7 +3297,10 @@ export class AgentRuntime implements Bridge {
     live.idleTimer = setTimeout(() => {
       live.idleTimer = undefined
       // stop() marks the wire as stopping at once, so ensureProcess hands no new work to it.
-      if (this.lives.get(key) === live && !this.busy(key)) void live.wire.stop('stop', this.limits.stopGraceMs)
+      if (this.lives.get(key) !== live || this.busy(key)) return
+      // A stop sent after the turn that the subagent never answered is over with its process.
+      for (const child of live.children.values()) delete child.stopping
+      void live.wire.stop('stop', this.limits.stopGraceMs)
     }, this.limits.idleMs)
     live.idleTimer.unref()
   }
@@ -3958,6 +4019,9 @@ export class AgentRuntime implements Bridge {
       // A session is never re-parented, and one Latch already serves is no subagent.
       if (child.parent !== parent || child.taskId !== task.summary.id) return
       delete child.ended
+      if (update.capabilities !== undefined) child.cancellable = !!update.capabilities?.cancel
+      if (child.stopping && (update.state?.state === 'idle' || update.state?.state === 'unknown'))
+        this.childStopped(task, child, update.state.state === 'idle')
       const shown = this.childRow(task, child)
       if (shown) {
         patchSubagent(shown, update, this.redact)
@@ -3980,6 +4044,7 @@ export class AgentRuntime implements Bridge {
         tools: new Map(),
         loose: new Map(),
         ...(parent ? { parent } : {}),
+        ...(update.capabilities?.cancel ? { cancellable: true } : {}),
       }
       live.children.set(update.sessionId, child)
     }
@@ -4054,6 +4119,58 @@ export class AgentRuntime implements Bridge {
     })
   }
 
+  /**
+   * A subagent that was sent a stop said it is no longer working, or that it cannot tell: the stop is over. When it went
+   * idle, the calls it left unfinished are settled as a stopped turn's are; a report it sends later still wins.
+   */
+  private childStopped(task: AcpTask, child: Child, idle = true): void {
+    delete child.stopping
+    if (!idle) return
+    const at = this.now()
+    const row = this.childRow(task, child)
+    for (const state of child.tools.values()) if (!state.awaiting && settleTool(state, at) && row) upsertStep(row, toolMessage(state))
+    for (const state of child.loose.values()) if (!state.awaiting) settleTool(state, at)
+  }
+
+  /**
+   * A subagent's own mode, when its harness reports one: wider than the session's is the session widening, since the
+   * subagent works for it, and is handled as the session's own widening is.
+   */
+  private childMode(task: AcpTask, child: Child, value: string): void {
+    const taskId = task.summary.id
+    if (task.acp.drift || this.quiet.has(taskId)) return
+    const expected = this.expectedMode(task) ?? this.modeOption(task)?.currentValue
+    const changes = this.changes.get(taskId)
+    const allowed = changes?.size ? [expected, ...[...changes].flatMap(change => change.allowed)] : [expected]
+    if (allowed.some(mode => ['neutral', 'stricter'].includes(classifyMode(this.profile, mode, value)))) return
+    this.drift(task, expected, value, child.title)
+  }
+
+  /** In 只看不改, the session's own agent changes nothing; a subagent asking to is asking for more than the session has. */
+  private childBlockedByPlan(task: AcpTask, kind: string | undefined): boolean {
+    const expected = this.expectedMode(task)
+    return expected !== undefined && this.profile?.modeTiers?.[expected]?.tier === 'plan' && CHANGING_KINDS.has(kind ?? '')
+  }
+
+  /**
+   * What a subagent's request may offer the person: never more than the session's own mode. Latch cannot set or read a
+   * subagent's mode, so an answer that would switch it is offered only when the profile names the mode it switches to
+   * and that mode is not wider than the session's.
+   */
+  private childOffer(task: AcpTask, kind: string | undefined, visible: PermissionOption[]): PermissionOption[] {
+    const blocked = this.childBlockedByPlan(task, kind)
+    const expected = this.expectedMode(task)
+    return visible.filter(option => {
+      if (option.kind !== 'allow_once') return true
+      if (blocked) return false
+      const mode = this.profile?.modeAnswers?.find(
+        entry => entry.optionId === option.optionId && (entry.toolKind === undefined || entry.toolKind === kind),
+      )?.mode
+      if (mode !== undefined) return classifyMode(this.profile, expected, mode) !== 'wider'
+      return kind !== 'switch_mode'
+    })
+  }
+
   /** The row of a subagent, found through the subagents that started it. */
   private childRow(task: AcpTask, child: Child): Message | undefined {
     if (!child.messageId) return undefined
@@ -4095,6 +4212,17 @@ export class AgentRuntime implements Bridge {
         this.announceChild(live, task, run, child, parsed.data)
         break
       }
+      case 'current_mode_update': {
+        const parsed = modeUpdate.safeParse(update)
+        if (parsed.success) this.childMode(task, child, parsed.data.currentModeId)
+        return
+      }
+      case 'config_option_update': {
+        const parsed = configUpdate.safeParse(update)
+        const mode = parsed.success ? configFromOptions(parsed.data.configOptions).find(option => option.category === 'mode') : undefined
+        if (mode) this.childMode(task, child, mode.currentValue)
+        return
+      }
       default:
         return
     }
@@ -4117,6 +4245,7 @@ export class AgentRuntime implements Bridge {
     const taskId = child?.taskId ?? live.sessions.get(parsed.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
     let toolCall = parsed.data.toolCall
+    let unresolved = false
     if (!child && task) {
       const asked: unknown = Reflect.get(params as object, 'toolCall')
       const projected = isObject(asked) ? this.selection.profile?.readProjectedChild?.(asked as Record<string, unknown>) : undefined
@@ -4125,15 +4254,19 @@ export class AgentRuntime implements Bridge {
         child = this.projectedChild(live, task, parsed.data.sessionId, projected.child)
         if (child) toolCall = own.data
       }
+      unresolved = !!projected && !child
     }
     const run = taskId ? this.runs.get(taskId) : undefined
     const row = child && task ? this.childRow(task, child) : undefined
     const filtered = filterPermissionOptions(this.profile, parsed.data.options)
-    if (task?.acp.drift) return Promise.resolve(this.rejection(filtered.visible))
+    // Marked as a subagent's but no subagent of this session can be named: never asked as the session's own.
+    if (task?.acp.drift || unresolved) return Promise.resolve(this.rejection(filtered.visible))
     // A subagent that goes on after its turn ended still asks: the person answers it as during a turn.
     const afterTurn = !!child && !run && this.lives.get(child.taskId) === live && !live.wire.stopping
     if (!taskId || !task || this.closed || (!afterTurn && (!run?.sent || run.live !== live || run.cancelRequested)))
       return Promise.resolve(CANCELLED_OUTCOME)
+    // A subagent that was told to stop asks nothing more of the person, as a stopped turn does not.
+    if (child?.stopping) return Promise.resolve(CANCELLED_OUTCOME)
     if (run) {
       run.lastEventAt = this.clock()
       if (run.segment) this.settleSegment(run, task, 'completed')
@@ -4145,6 +4278,28 @@ export class AgentRuntime implements Bridge {
     const record = (item: Message) => {
       if (!child) this.upsert(task, item)
       else if (row) upsertStep(row, item)
+    }
+    if (child && !filtered.autoReject) {
+      const offered = this.childOffer(task, state.kind, filtered.visible)
+      if (!offered.some(option => option.kind === 'allow_once')) {
+        // Wider than the session's own mode: the person is not asked to let a subagent past it.
+        record(toolMessage(state))
+        task.messages.push({
+          id: randomUUID(),
+          role: 'system',
+          text: `已拒绝：子 Agent「${child.title}」请求「${clip(this.redact(state.title || toolLabel(state)), 200)}」，${
+            this.childBlockedByPlan(task, state.kind) ? '这个会话是「只看不改」' : '会把权限换得比这个会话宽，或换到 Latch 认不出的模式'
+          }，Latch 没有交给你。`,
+          createdAt: this.now(),
+        })
+        this.touch(task)
+        this.mark()
+        this.notify(taskId)
+        this.securityEvent({ type: 'approval-auto-rejected', sessionId: taskId, reason: 'subagent-wider' })
+        const reject = offered.find(option => option.kind === 'reject_once')
+        return Promise.resolve(reject ? selected(reject.optionId) : CANCELLED_OUTCOME)
+      }
+      filtered.visible = offered
     }
     if (filtered.autoReject) {
       // Persistent or unknown choices only: nothing Latch could offer, so the request is refused at once.

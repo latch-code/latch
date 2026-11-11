@@ -60,7 +60,12 @@ export const SESSION_ACTIONS = {
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   /** A turn of a session on a gateway route had a reply, and none of its requests came through the gateway. */
   'task.model.bypassed': z.strictObject({ sessionId: opaqueId }),
-  'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),
+  'task.approval-auto-rejected': z.strictObject({
+    sessionId: opaqueId,
+    reason: z.enum(['persistent-only', 'unknown-kind', 'subagent-wider']),
+  }),
+  /** A person stopped one subagent of the session; `subagentId` is its row's message ID. */
+  'task.subagent.stopped': z.strictObject({ sessionId: opaqueId, subagentId: opaqueId }),
   /** A call no person was asked about, in a mode where the harness's own model decides; written after the fact. */
   'task.tool.judged': z.strictObject({
     sessionId: opaqueId,

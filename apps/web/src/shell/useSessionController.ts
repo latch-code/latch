@@ -441,9 +441,14 @@ export function useSessionController({
   }, [snapshot.approvals, selectedId])
   useEffect(() => {
     if (!approvalToast) return
+    // Opened by any way: it is no longer another session, and the toast must not hide what this one says.
+    if (approvalToast.sessionId === selectedId) {
+      setApprovalToast(null)
+      return
+    }
     const timer = setTimeout(() => setApprovalToast(null), 6000)
     return () => clearTimeout(timer)
-  }, [approvalToast])
+  }, [approvalToast, selectedId])
   const approvalCursor = useRef<string | null>(null)
   const [approvalFocus, setApprovalFocus] = useState<string | null>(null)
   const nextApproval = useStableCallback(() => {

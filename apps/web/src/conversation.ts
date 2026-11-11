@@ -464,14 +464,13 @@ export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' 
 
 /**
  * The record line of a decided approval: 「已允许 · 14:32」 and 「已拒绝 · 昨天 09:15」 for a person's choice, with where
- * they decided in the tooltip; 「已过期」 and 「已取消（会话停止）」 when nobody answered.
+ * they decided in the tooltip; 「已过期」, 「已取消（会话停止）」 and 「已取消（子 Agent 停止）」 when nobody answered.
  */
 export function decisionLine(decision: ToolDecision, now: number): { text: string; title: string; full: string } {
   const at = parseTime(decision.at)
   const when = at === undefined ? undefined : absoluteTime(at)
   const chosen = decision.outcome === 'allowed' || decision.outcome === 'rejected'
-  const words =
-    DECISION_COPY[decision.outcome === 'expired' ? 'expired' : decision.outcome === 'cancelled' ? 'cancelled' : decision.outcome]
+  const words = decision.subagentStopped ? DECISION_COPY.cancelledSubagent : DECISION_COPY[decision.outcome]
   const about = chosen
     ? decision.via === 'this-mac'
       ? DECISION_COPY.viaThisMac
@@ -480,7 +479,9 @@ export function decisionLine(decision: ToolDecision, now: number): { text: strin
         : undefined
     : decision.outcome === 'expired'
       ? DECISION_COPY.expiredNote
-      : DECISION_COPY.cancelledNote
+      : decision.subagentStopped
+        ? DECISION_COPY.cancelledSubagentNote
+        : DECISION_COPY.cancelledNote
   const title = [when, about].filter(Boolean).join(' · ')
   return {
     text: chosen && at !== undefined ? `${words} · ${messageTime(at, now)}` : words,
@@ -756,7 +757,7 @@ export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; appro
  * (「运行 pnpm test」, 「读取 a.ts」), or 「正在执行」 with its title when it has no kind Latch reads.
  */
 function toolText(message: Message): string {
-  if (message.subagent) return `子 Agent ${message.subagent.title} 运行中`
+  if (message.subagent) return `子 Agent ${message.subagent.title} ${message.subagent.stopping ? '正在停止…' : '运行中'}`
   const label = toolLabel({ ...message, state: 'running' })
   if (label.verb) return `${label.verb} ${label.object}`
   return message.tool?.toolTitle ? `正在${message.tool.toolTitle}` : `正在执行 ${label.object}`

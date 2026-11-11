@@ -1,10 +1,10 @@
-import { memo, useState } from 'react'
+import { createContext, memo, useContext, useEffect, useState } from 'react'
 import { Bot, ChevronRight } from 'lucide-react'
 import type { Message, Subagent } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { Collapse, ICON_STROKE, StatusWord, type StatusTone } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone } from '@latch/ui'
 
 /** How a subagent last said it was doing, in the words a row uses. Nothing said, nothing shown. */
 const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
@@ -16,39 +16,66 @@ const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTon
   unknown: { tone: 'neutral', words: '状态未知' },
 }
 
+/** Stops one subagent by its row's ID; absent where this device cannot stop the session. Rejects with what went wrong. */
+export const SubagentStop = createContext<((subagentId: string) => Promise<void>) | undefined>(undefined)
+
 /**
  * A subagent the harness started for this turn: one row with its name and what it last said of itself, opening to what
- * it said and did, read only. Its requests for approval are in the approval drawer, under its name.
+ * it said and did, read only. Its requests for approval are in the approval drawer, under its name. One that can be
+ * stopped alone offers 停止; it reads 正在停止… until it says it stopped.
  */
 export const SubagentRow = memo(function SubagentRow({ message, frozen }: { message: Message; frozen: boolean }) {
   const [open, setOpen] = useState(false)
+  const [requested, setRequested] = useState(false)
+  const stop = useContext(SubagentStop)
   const agent = message.subagent!
-  const status = agent.status ? SUBAGENT_STATUS[agent.status] : undefined
+  // Asked from here and not yet shown by the Host; once the Host says it is stopping, or no longer stoppable, that is what shows.
+  useEffect(() => {
+    if (agent.stopping || !agent.stoppable) setRequested(false)
+  }, [agent.stopping, agent.stoppable])
+  const stopping = agent.stopping === true || (requested && agent.stoppable === true)
+  const status = stopping ? { tone: 'neutral' as const, words: '正在停止…' } : agent.status ? SUBAGENT_STATUS[agent.status] : undefined
   return (
     <div className="subagent-row" data-message-id={message.id} data-open={open ? '' : undefined}>
-      <button
-        type="button"
-        className="process-row"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open)
-        }}>
-        <span className="process-slot" aria-hidden="true">
-          <Bot size={16} strokeWidth={ICON_STROKE[16]} />
-        </span>
-        <span className="process-label">
-          <span className="process-verb">子 Agent</span>
-          <span className="process-object">
-            <VisibleText text={agent.title} />
+      <div className="subagent-head">
+        <button
+          type="button"
+          className="process-row"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open)
+          }}>
+          <span className="process-slot" aria-hidden="true">
+            <Bot size={16} strokeWidth={ICON_STROKE[16]} />
           </span>
-        </span>
-        {status && (
-          <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
-            {status.words}
-          </StatusWord>
+          <span className="process-label">
+            <span className="process-verb">子 Agent</span>
+            <span className="process-object">
+              <VisibleText text={agent.title} />
+            </span>
+          </span>
+          {status && (
+            <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
+              {status.words}
+            </StatusWord>
+          )}
+          <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        </button>
+        {stop && agent.stoppable && !stopping && !frozen && (
+          <Button
+            size="xs"
+            variant="ghost"
+            aria-label={`停止子 Agent ${agent.title}`}
+            onClick={() => {
+              setRequested(true)
+              stop(message.id).catch(() => {
+                setRequested(false)
+              })
+            }}>
+            停止
+          </Button>
         )}
-        <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-      </button>
+      </div>
       <Collapse
         open={open}
         onReveal={() => {

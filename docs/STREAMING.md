@@ -342,7 +342,7 @@ Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消�
 
 ### 子 Agent
 
-Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）；它的状态只来自它自己的报告，所在的一轮结束时仍未报告停止的记为 `unknown`。它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
+Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）；它的状态只来自它自己的报告，所在的一轮结束时仍未报告停止的记为 `unknown`。它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。能单独停止的子 Agent 带 `Subagent.stoppable`；停止它之后带 `stopping`，直到它报告结果或这一轮结束，页面在此之前不写「已停止」。机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
 
 ## Agent 提问与回答
 

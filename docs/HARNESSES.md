@@ -328,7 +328,11 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 
 - 子 Agent 在自己的会话上请求权限时，审批出现在启动它的会话里，`Approval.subagent` 写明是谁；它的调用只在子 Agent 的步骤里，不在会话自己的记录中。规则与会话自己的审批相同（可选项过滤、任何有 `run` 的设备都能允许）。
 - 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`；Claude Agent 在子 Agent 里拦下的调用同样写「拦下」，只有它的模型拦下的写这条记录。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
+- **以会话的权限为上限。** 子 Agent 的请求不会让它比启动它的会话宽：会话在「只看不改」时，子 Agent 改文件、删除、移动或运行命令（`edit`、`delete`、`move`、`execute`）的请求 Latch 直接拒绝，即使这个 Harness 在这一档自己会为只读命令问你（如 Claude Agent 的 `plan`），因为 Latch 分不出子 Agent 的命令是否只读；回答会换模式的选项（`modeAnswers`）只在换到的模式不比会话宽时给你，换到哪一档 Latch 认不出的（比如没有 profile 的 Harness、`switch_mode` 调用上没列出的选项）不给你。拿掉之后没有「仅此一次允许」时，Latch 不展示审批，直接以「仅此一次拒绝」答复（没有时答复为取消），会话里写「已拒绝：子 Agent「<名字>」请求「<调用>」，这个会话是「只看不改」，Latch 没有交给你。」或「…会把权限换得比这个会话宽，或换到 Latch 认不出的模式…」，并写审计 `task.approval-auto-rejected`（原因 `subagent-wider`），和会话自己被自动拒绝的请求一样。子 Agent 的回答从不算作人为会话选的档位。其他档位的子 Agent 请求照旧交给你：「按规则放行」「由模型判断」的规则由 Harness 自己执行，Latch 不知道它放行的范围，所以不替它放行任何请求；「不再询问」档里 Agent 仍然问的，是它自己的规则或安全检查要人看。
+- **子 Agent 报告自己的模式时**（在它自己的会话上发 `current_mode_update`，或带模式选项的 `config_option_update`），比会话的预期模式宽或 Latch 认不出时按会话自己放宽处理：取消这一轮、拒绝挂起的请求、会话不再接受输入，说明写「子 Agent「<名字>」报告的权限模式比这个会话宽（<预期> → <报告>）…」。ACP 不允许客户端改子会话的模式，Latch 只能这样守住上限。目前读到的 Harness（Codex、OpenCode 2.x）都不报告子会话的模式。
+- 子 Agent 的请求只是提示性审批，从不经本机确认；它的请求挂起时（一轮中或一轮后）会话处于等你处理，本机确认的动作（`PRESENCE_ACTIONS`）全部被拒绝，与会话自己的请求挂起时一样。
 - 停止会话时，子 Agent 挂起的请求与会话自己的一起答复为 `cancelled`。
+- **单独停止。** 子 Agent 宣告 `capabilities.cancel`（ACP 子 Agent 草案，`subagent_update` 里整体替换，`null` 或省略 `cancel` 即收回）且正在运行或等批准时，详情里它那一行带 `Subagent.stoppable`，页面在状态后面给「停止」。停止（`POST /tasks/:id/stop-subagent { subagentId }`，`subagentId` 是那一行的消息 ID；权限 `view`，和停止会话一样）先写审计 `task.subagent.stopped`（写不进去不阻止停止），再对子会话发 `session/cancel`，把这个子 Agent 自己挂起的请求答复为 `cancelled`（决定记录带 `subagentStopped`，调用上写「已取消（子 Agent 停止）」），之后它再发来的请求也直接答复为 `cancelled`。会话的这一轮照常继续。那一行带 `Subagent.stopping`，写「正在停止…」，直到它报告 `idle`（写它报告的结果，取消是「已停止」，它未完成的调用按停止的一轮结算）或 `unknown`（它的调用不按停止结算），或这一轮结束（记为「状态未知」），或一轮之后发出的停止所在的空闲进程被结束；发出停止不等于停下，所以在它报告之前不写「已停止」。`stoppable` 与 `stopping` 只来自运行中的进程，不保存。不能单独停止的行、已经结束的行或别的会话的行返回 409 `subagent-not-stoppable`。它启动的子 Agent 的请求不替它答复：草案说停下哪些后代由 Agent 决定，以它们自己的报告为准。停止会话照旧停止全部。
 - 一轮结束时仍说自己在运行或等批准的子 Agent 记为「状态未知」，不当作还在运行；它未完成的调用与会话自己的一样结算：在跑的记为结果未知，还没开始或在等批准的记为未执行，之后它再报告完成或失败时以报告为准。
 - 一轮自己结束（不是停止或失败）时仍在等你批准的子 Agent 请求不取消，一轮结束后才到的子 Agent 请求也照常给你：会话显示「等你批准」直到你答复，期间空闲进程不结束。答复后会话回到这一轮结束时的状态，那次调用记为结果未知（允许）或未执行（拒绝），之后它再报告时以报告为准。这时停止会话把这些请求答复为 `cancelled`，排队的消息和其他停止一样暂停，不会接着发出。
 - 没有宣告的会话 ID 的更新照旧丢弃，不猜归属；不支持的 Agent 仍把子 Agent 的工作当作普通工具调用报告。
@@ -395,7 +399,9 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | OpenCode 2.x 的子会话通道（`opencode/session/child_update`） | 未实现；Latch 不声明 `opencode/child-session-updates`，改读子会话发在启动它的会话上的更新与请求（见「子 Agent」） |
 | OpenCode 1.x 的子 Agent | 未实现；1.x 的 ACP 不回答子会话的权限请求，`task` 保持禁用 |
 | OpenCode 2.x 在后来的一轮里继续的子 Agent 的请求 | 未实现；OpenCode 的 ACP 不转发它们，Latch 收不到，这一轮会一直等到你停止（见「子 Agent」） |
-| 单独停止某个子 Agent | 未实现；停止只作用于整个会话。OpenCode 2.x 在后台运行的子 Agent 在一轮结束或停止后仍可能继续，停止会话只答复它已经发来的请求；会话空闲到进程被结束时，它随进程结束 |
+| 单独停止没有宣告 `capabilities.cancel` 的子 Agent | 未实现；ACP 不允许客户端停止没有宣告的子会话，停止只能作用于整个会话。OpenCode 2.x 不宣告：它在后台运行的子 Agent 在一轮结束或停止后仍可能继续，停止会话只答复它已经发来的请求；会话空闲到进程被结束时，它随进程结束 |
+| 在 iPhone 上单独停止子 Agent | 未实现；手机只显示子 Agent 的状态，要在网页或桌面端停止 |
+| 让启动子 Agent 的 Agent 回答子 Agent 的请求 | 未实现；没有 Harness 经 ACP 提供这件事，ACP 也没有把客户端收到的权限请求交给另一个 Agent 回答的方法。子 Agent 的请求由你在会话里回答，并以会话的权限为上限（见「子 Agent」） |
 | goose 的运行中追加 | 未实现；它的私有方法要 goose 自己的运行标识，也没有声明字段，要等真实录制核对 |
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
 | Cursor 的选择题（`cursor/ask_question`）放进提问卡片 | 未实现；提问卡片还没有接到 ACP 驱动上，现在回答 `skipped` 并把问题写进会话 |

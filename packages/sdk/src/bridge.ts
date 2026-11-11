@@ -161,6 +161,12 @@ export interface Bridge {
    * named a run that is no longer current. Drivers that cannot tell resolve without a value.
    */
   cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void>
+  /**
+   * Optional, with `Subagent.stoppable`. Stops one subagent's current work, named by its row's message ID, and answers its
+   * open requests as cancelled; the session's turn goes on. Resolves once the stop is sent, not once it took effect: the
+   * row says `stopping` until the subagent reports how it ended. `false`: that row cannot be stopped now.
+   */
+  cancelSubagent?(sessionId: string, subagentId: string): Promise<boolean>
   approvals(): Approval[]
   decide(approvalId: string, decision: 'allow' | 'reject', options?: DecideOptions): Promise<boolean>
   subscribe(listener: (sessionId?: string) => void): () => void

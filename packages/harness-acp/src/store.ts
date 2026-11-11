@@ -175,6 +175,7 @@ const toolDetail = z.object({
       outcome: z.enum(['allowed', 'rejected', 'expired', 'cancelled']),
       at: z.string(),
       via: z.enum(['this-mac', 'other-device']).optional(),
+      subagentStopped: z.literal(true).optional(),
     })
     .optional(),
   judged: z.object({ by: z.string(), outcome: z.enum(['approved', 'denied', 'none', 'unasked']) }).optional(),

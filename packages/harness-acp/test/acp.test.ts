@@ -4491,6 +4491,200 @@ describe('ACP subagents', () => {
       tool: { decision: { outcome: 'rejected' } },
     })
   })
+
+  it("never offers the person a subagent's request wider than the session's own mode, and records each one refused", async () => {
+    const refused = (fixture: Awaited<ReturnType<typeof setup>>, sessionId: string) =>
+      fixture.events.filter(event => event.type === 'approval-auto-rejected' && event.sessionId === sessionId)
+    const childAnswers = async (fixture: Awaited<ReturnType<typeof setup>>) =>
+      (await fixture.log()).filter(entry => entry.event === 'child-permission-answer').map(entry => entry.outcome)
+    const inMode = async (bridge: Bridge, mode: string) => {
+      const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+      await settled(bridge, sessionId)
+      await bridge.setConfig!(sessionId, 'mode', mode)
+      return sessionId
+    }
+
+    // In 只看不改 the session's own agent changes nothing, so a subagent asking to edit is refused, never shown.
+    const qwen = await preset('qwen', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' })
+    let bridge = await qwen.open()
+    let sessionId = await inMode(bridge, 'plan')
+    await bridge.prompt(sessionId, 'delegate ask', rid())
+    let detail = await settled(bridge, sessionId)
+    expect(detail.approvals).toEqual([])
+    expect(bridge.approvals()).toEqual([])
+    expect(await childAnswers(qwen)).toEqual([{ outcome: 'selected', optionId: 'reject' }])
+    expect(systemText(detail)).toContain('已拒绝：子 Agent「Test runner」请求「Edit a.txt」，这个会话是「只看不改」，Latch 没有交给你。')
+    expect(refused(qwen, sessionId)).toEqual([{ type: 'approval-auto-rejected', sessionId, reason: 'subagent-wider' }])
+    expect(subagents(detail)[0]!.subagent!.steps.find(step => step.tool?.title === 'Edit a.txt')?.tool?.decision).toBeUndefined()
+    // The same request in 先问你 is the person's, as the session's own would be.
+    await bridge.setConfig!(sessionId, 'mode', 'default')
+    await bridge.prompt(sessionId, 'delegate ask', rid())
+    const waiting = await until(bridge, sessionId, item => item.approvals.length === 1)
+    expect(waiting.approvals[0]).toMatchObject({ subagent: 'Test runner', reason: 'Edit a.txt' })
+    expect(await bridge.decide(waiting.approvals[0]!.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
+    expect(refused(qwen, sessionId)).toHaveLength(1)
+
+    // An answer that would move the subagent to a wider mode is not offered; one that keeps it within the session's is.
+    const claude = await preset('claude-agent', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'default,acceptEdits,plan,auto,bypassPermissions',
+      FAKE_ACP_INITIAL_MODE: 'auto',
+      FAKE_ACP_VERSION: '0.101.0',
+    })
+    bridge = await claude.open()
+    sessionId = await inMode(bridge, 'plan')
+    await bridge.prompt(sessionId, 'delegate exit', rid())
+    detail = await settled(bridge, sessionId)
+    expect(await childAnswers(claude)).toEqual([{ outcome: 'selected', optionId: 'reject' }])
+    expect(systemText(detail)).toContain('请求「Ready to code?」，会把权限换得比这个会话宽，或换到 Latch 认不出的模式，Latch 没有交给你。')
+    expect(refused(claude, sessionId)).toEqual([{ type: 'approval-auto-rejected', sessionId, reason: 'subagent-wider' }])
+    await bridge.prompt(sessionId, 'delegate enter', rid())
+    let asked = await until(bridge, sessionId, item => item.approvals.length === 1)
+    expect(asked.approvals[0]!.options!.map(option => option.id)).toEqual(['allow-once', 'reject'])
+    expect(await bridge.decide(asked.approvals[0]!.id, 'allow')).toBe(true)
+    detail = await settled(bridge, sessionId)
+    // A subagent's answer is never the person choosing the session's mode.
+    expect(detail.permission?.expectedMode).toBe('plan')
+    // An answer naming an option the ceiling dropped is refused by the driver itself, and the request stays open.
+    await bridge.prompt(sessionId, 'delegate either', rid())
+    asked = await until(bridge, sessionId, item => item.approvals.length === 1)
+    expect(asked.approvals[0]!.options!.map(option => option.id)).toEqual(['allow-once', 'reject'])
+    await expect(bridge.decide(asked.approvals[0]!.id, 'allow', { optionId: 'exit-plan-default' })).rejects.toMatchObject({
+      code: 'approval-option-hidden',
+      message: expect.stringContaining('权限模式'),
+    })
+    expect(bridge.approvals()).toHaveLength(1)
+    expect(await bridge.decide(asked.approvals[0]!.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
+    await bridge.setConfig!(sessionId, 'mode', 'default')
+    await bridge.prompt(sessionId, 'delegate exit', rid())
+    asked = await until(bridge, sessionId, item => item.approvals.length === 1)
+    expect(asked.approvals[0]!.options!.map(option => option.id)).toEqual(['exit-plan-default', 'reject'])
+    expect(await bridge.decide(asked.approvals[0]!.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
+    expect(refused(claude, sessionId)).toHaveLength(1)
+
+    // Without a profile Latch cannot tell where a mode-switching answer leads, so it is not offered either.
+    const plain = await setup()
+    bridge = await plain.open()
+    ;({ sessionId } = await bridge.createTask({ prompt: 'delegate enter', requestId: rid() }))
+    detail = await settled(bridge, sessionId)
+    expect(await childAnswers(plain)).toEqual([{ outcome: 'selected', optionId: 'reject' }])
+    expect(refused(plain, sessionId)).toEqual([{ type: 'approval-auto-rejected', sessionId, reason: 'subagent-wider' }])
+  })
+
+  it("stops the session as its own widening when a subagent reports a mode wider than the session's", async () => {
+    const env = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' }
+    const stricter = await preset('qwen', { ...env, FAKE_ACP_CHILD_MODE: 'plan' })
+    let bridge = await stricter.open()
+    let { sessionId } = await bridge.createTask({ prompt: 'delegate mode', requestId: rid() })
+    let detail = await settled(bridge, sessionId)
+    expect(detail.summary.runOutcome).toBe('completed')
+    expect(detail.permission?.drift).toBeUndefined()
+
+    const wider = await preset('qwen', { ...env, FAKE_ACP_CHILD_MODE: 'yolo' })
+    bridge = await wider.open()
+    ;({ sessionId } = await bridge.createTask({ prompt: 'delegate mode', requestId: rid() }))
+    detail = await settled(bridge, sessionId)
+    expect(detail.summary.runOutcome).toBe('cancelled')
+    expect(detail.permission?.drift).toMatchObject({ observed: 'yolo' })
+    expect(systemText(detail)).toContain('子 Agent「Test runner」报告的权限模式比这个会话宽（default → yolo）')
+    expect(wider.events).toContainEqual({ type: 'permission-drift', sessionId, observedHash: sha256Hex('yolo') })
+    await expect(bridge.prompt(sessionId, 'echo again', rid())).rejects.toMatchObject({ code: 'permission-drift' })
+  })
+
+  it('stops one subagent alone where it says it can be, and says it stopped only once it did', async () => {
+    const fixture = await setup({ FAKE_ACP_CHILD_STOP_MS: '300' })
+    const bridge = await fixture.open()
+    const row = (detail: DriverTaskDetail) => subagents(detail)[0]!
+    const { sessionId } = await bridge.createTask({ prompt: 'delegate stop', requestId: rid() })
+    const working = await until(bridge, sessionId, detail => detail.approvals.length === 1 && row(detail).subagent?.stoppable === true)
+    expect(row(working).subagent).toMatchObject({ status: 'waiting', stoppable: true })
+    // A row that is not the session's subagent, or no row, is nothing to stop.
+    expect(await bridge.cancelSubagent!(sessionId, 'subagent:unknown')).toBe(false)
+
+    expect(await bridge.cancelSubagent!(sessionId, row(working).id)).toBe(true)
+    const stopping = await bridge.detail(sessionId)
+    // Sent, not yet taken effect: the row says so, and its request is answered as a stop of the session would answer it.
+    expect(row(stopping).subagent).toMatchObject({ status: 'waiting', stopping: true })
+    expect(row(stopping).subagent!.stoppable).toBeUndefined()
+    expect(stopping.approvals).toEqual([])
+    expect(stopping.summary.status).toBe('running')
+    expect(await bridge.cancelSubagent!(sessionId, row(working).id)).toBe(true)
+    // The agent writes what it received as it reads it: the stop reaches it after this call returns.
+    await vi.waitFor(async () => expect(received(await fixture.log(), 'session/cancel')).toHaveLength(1), { timeout: 5_000, interval: 20 })
+    expect(String(received(await fixture.log(), 'session/cancel')[0]!.params?.sessionId)).toMatch(/:child$/u)
+
+    const detail = await settled(bridge, sessionId)
+    expect(row(detail).subagent).toMatchObject({ status: 'cancelled' })
+    expect(row(detail).subagent!.stopping).toBeUndefined()
+    expect(row(detail).subagent!.steps.find(step => step.tool?.title === 'Edit a.txt')).toMatchObject({
+      state: 'cancelled',
+      tool: { decision: { outcome: 'cancelled', subagentStopped: true } },
+    })
+    // The session's turn went on and ended by itself.
+    expect(detail.summary.runOutcome).toBe('completed')
+    expect(assistants(detail).at(-1)?.text).toBe('the session goes on without it')
+    expect((await fixture.log()).find(entry => entry.event === 'child-permission-answer')).toMatchObject({
+      outcome: { outcome: 'cancelled' },
+    })
+    expect(received(await fixture.log(), 'session/cancel')).toHaveLength(1)
+    expect(await bridge.cancelSubagent!(sessionId, row(detail).id)).toBe(false)
+
+    // One that never says it stopped is stopping until its turn ends, and then its state is unknown, never 已停止.
+    const quiet = await bridge.createTask({ prompt: 'delegate stopquiet', requestId: rid() })
+    const open = await until(bridge, quiet.sessionId, item => row(item).subagent?.stoppable === true)
+    expect(await bridge.cancelSubagent!(quiet.sessionId, row(open).id)).toBe(true)
+    expect(row(await bridge.detail(quiet.sessionId)).subagent!.stopping).toBe(true)
+    const ended = await settled(bridge, quiet.sessionId)
+    expect(row(ended).subagent).toMatchObject({ status: 'unknown' })
+    expect(row(ended).subagent!.stopping).toBeUndefined()
+
+    // One that says it cannot tell how it ended is no longer stopping, and its unfinished calls are not settled as stopped.
+    const unsure = await bridge.createTask({ prompt: 'delegate stopunknown', requestId: rid() })
+    const asking = await until(bridge, unsure.sessionId, item => row(item).subagent?.stoppable === true)
+    expect(await bridge.cancelSubagent!(unsure.sessionId, row(asking).id)).toBe(true)
+    const told = await until(bridge, unsure.sessionId, item => row(item).subagent?.status === 'unknown')
+    expect(told.summary.status).toBe('running')
+    expect(row(told).subagent!.stopping).toBeUndefined()
+    expect(row(told).subagent!.steps.find(step => step.tool?.title === 'Run pnpm test')?.state).toBe('running')
+    await settled(bridge, unsure.sessionId)
+
+    // A subagent that never said it can be stopped alone offers nothing, and a stop of it is refused.
+    const plain = await bridge.createTask({ prompt: 'delegate hang', requestId: rid() })
+    const hanging = await until(bridge, plain.sessionId, item => row(item)?.subagent?.status === 'running')
+    expect(row(hanging).subagent!.stoppable).toBeUndefined()
+    expect(await bridge.cancelSubagent!(plain.sessionId, row(hanging).id)).toBe(false)
+    // Stopping the session still stops it and every other.
+    await bridge.cancel(plain.sessionId)
+    expect(row(await bridge.detail(plain.sessionId)).subagent!.status).toBe('cancelled')
+
+    // Stopping the session stops a stoppable one as well, as before.
+    const other = await (await setup()).open()
+    const whole = await other.createTask({ prompt: 'delegate stop', requestId: rid() })
+    await until(other, whole.sessionId, item => item.approvals.length === 1)
+    await other.cancel(whole.sessionId)
+    const stopped = await other.detail(whole.sessionId)
+    expect(stopped.summary.runOutcome).toBe('cancelled')
+    expect(row(stopped).subagent!.stoppable).toBeUndefined()
+  })
+
+  it("refuses a request marked as a subagent's that names no subagent, never asking it as the session's own", async () => {
+    const fixture = await preset('opencode', { FAKE_ACP_CONFIG: 'legacy' })
+    const bridge = await fixture.open()
+    for (const argument of ['empty', 'self']) {
+      const { sessionId } = await bridge.createTask({ prompt: `projected ${argument}`, requestId: rid() })
+      const detail = await settled(bridge, sessionId)
+      expect(detail.approvals, argument).toEqual([])
+      expect(assistants(detail).at(-1)?.text).toBe('answered')
+    }
+    expect(bridge.approvals()).toEqual([])
+    expect((await fixture.log()).filter(entry => entry.event === 'projected-permission-answer').map(entry => entry.outcome)).toEqual([
+      { outcome: 'selected', optionId: 'reject' },
+      { outcome: 'selected', optionId: 'reject' },
+    ])
+  })
 })
 
 describe('Claude Agent and Cursor presets', () => {

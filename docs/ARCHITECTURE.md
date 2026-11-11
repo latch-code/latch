@@ -390,6 +390,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `DELETE /tasks/:id` | `run` | |
 | `PATCH /tasks/:id` | `run` | 重命名、置顶、归档；会话还有终端时归档可能被拒绝（见 [TERMINAL.md](./TERMINAL.md)） |
 | `POST /tasks/:id/cancel` | `view` | `{ requestId?, runId? }`，回答取消的回执 |
+| `POST /tasks/:id/stop-subagent` | `view` | `{ subagentId }`，单独停止一个宣告能单独停止的子 Agent，先写 `task.subagent.stopped`，见 [HARNESSES.md](./HARNESSES.md#子-agent) |
 | `POST /tasks/:id/keep-waiting` | `view` | `{ runId, thresholdMs }`，让这次运行晚一些再说沉默，见 [STREAMING.md](./STREAMING.md#运行的真实状态) |
 | `GET /traffic` | `admin` 或匿名 `host.sock` | 流量计数（只读） |
 | `POST /approvals/:id` | 拒绝：`view`；允许 R1：`approve:standard`；允许 R2：`approve:elevated`；允许 L3 询问：`run` | `{ decision, optionId?, requestId?, note? }`（`note` 只随拒绝，只交给 `capabilities.permission.rejectionNote` 为真的 Harness；交给它时另需 `run`，因为它是给模型的输入）；允许时会话目录已离开项目返回 workspace-changed |

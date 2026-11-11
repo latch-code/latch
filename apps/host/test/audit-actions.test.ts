@@ -86,6 +86,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.permission-drift': { sessionId, observedHash: hex },
   'task.model.bypassed': { sessionId },
   'task.approval-auto-rejected': { sessionId, reason: 'persistent-only' },
+  'task.subagent.stopped': { sessionId, subagentId: 'subagent:7c9e6679-7425-40de-944b-e07fc1f90ae7' },
   'task.tool.judged': { sessionId, callHash: hex, modeHash: hex, kind: 'execute', outcome: 'approved', source: 'agent-report' },
   'device.enroll.requested': { enrollmentId, listener: 'lan-tls', fingerprint: 'A'.repeat(20), scopes: ['view'], invitationId },
   'device.enrolled': {
@@ -161,6 +162,8 @@ describe('audit actions', () => {
       expect(schema.safeParse(detail).success, action).toBe(true)
       expect(schema.safeParse({ ...detail, note: 'free text' }).success, action).toBe(false)
     }
+    // A subagent asking for more than the session's mode is refused on record under its own reason.
+    expect(AUDIT_DETAIL['task.approval-auto-rejected'].safeParse({ sessionId, reason: 'subagent-wider' }).success).toBe(true)
   })
 
   it('writes each action through the log and refuses unknown actions and extra fields', async () => {

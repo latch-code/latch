@@ -1936,6 +1936,79 @@ describe('full-access (L3) sessions', () => {
     })
   })
 
+  it('lets any device stop one subagent alone, on record, and never confirms anything while a subagent waits', async () => {
+    const { t, desktop, browser } = await acpHost()
+    // This Host looks up no command by name, so no agent installed on this computer can be found or started.
+    const { presets } = await desktop.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
+    expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
+    const blockedWhile = async (sessionId: string) => {
+      const blocked = await desktop.request('policy', { method: 'PATCH', body: { hostEgressAllow: { add: ['127.0.0.1:11434'] } } })
+      expect(blocked.status).toBe(409)
+      expect(await body(blocked)).toMatchObject({ error: 'presence-blocked', blockingTasks: [{ id: sessionId }] })
+    }
+    // Enrolled first: a new device is a local confirmation too.
+    const viewer = await t.enroll({ scopes: ['view'] })
+    const sessionId = await startTask(browser, 'delegate stop', { harnessId: 'fake' })
+    const approval = await pendingApproval(t, sessionId)
+    expect(approval).toMatchObject({ subagent: 'Test runner', advisory: true })
+    // A subagent asking is the session's agent asking: every local confirmation waits until it is answered.
+    const confirmations = t.presence.requests.length
+    await blockedWhile(sessionId)
+
+    const row = (await viewer.json<TaskDetail>(`tasks/${sessionId}`)).messages.find(message => message.subagent)!
+    expect(row.subagent).toMatchObject({ status: 'waiting', stoppable: true })
+    const stop = (subagentId: string) => viewer.request(`tasks/${sessionId}/stop-subagent`, { method: 'POST', body: { subagentId } })
+    expect((await stop('not an id')).status).toBe(400)
+    expect(await body(await stop(row.id))).toEqual({ accepted: true })
+    expect((await auditRecords(t)).filter(record => record.action === 'task.subagent.stopped')).toEqual([
+      expect.objectContaining({ actor: expect.objectContaining({ deviceId: viewer.id }), detail: { sessionId, subagentId: row.id } }),
+    ])
+    await settled(t, sessionId)
+    const after = await viewer.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(after.messages.find(message => message.id === row.id)?.subagent).toMatchObject({ status: 'cancelled' })
+    expect(after.summary.runOutcome).toBe('completed')
+    expect(await body(await stop(row.id))).toMatchObject({ error: 'subagent-not-stoppable' })
+    // The refused stop's record is marked failed.
+    const refusedStop = (await auditRecords(t)).findLast(record => record.action === 'task.subagent.stopped')!
+    await expect
+      .poll(async () =>
+        (await auditRecords(t)).some(record => record.action === 'action.failed' && record.detail.refSeq === refusedStop.seq),
+      )
+      .toBe(true)
+
+    // A stop narrows, so it is still sent when its record cannot be written, and the answer says so.
+    const audit = t.host.security.audit
+    const append = audit.append.bind(audit)
+    const failing = vi
+      .spyOn(audit, 'append')
+      .mockImplementation(event =>
+        event.action === 'task.subagent.stopped'
+          ? Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
+          : append(event),
+      )
+    const unrecordedId = await startTask(browser, 'delegate stop', { harnessId: 'fake' })
+    await pendingApproval(t, unrecordedId)
+    const unrecordedRow = (await viewer.json<TaskDetail>(`tasks/${unrecordedId}`)).messages.find(message => message.subagent)!
+    const unrecorded = await viewer.request(`tasks/${unrecordedId}/stop-subagent`, {
+      method: 'POST',
+      body: { subagentId: unrecordedRow.id },
+    })
+    expect(unrecorded.headers.get('x-latch-audit')).toBe('failed')
+    expect(await body(unrecorded)).toEqual({ accepted: true })
+    await settled(t, unrecordedId)
+    expect(
+      (await viewer.json<TaskDetail>(`tasks/${unrecordedId}`)).messages.find(message => message.id === unrecordedRow.id)?.subagent,
+    ).toMatchObject({ status: 'cancelled' })
+    failing.mockRestore()
+
+    // The same holds for a subagent that asks after its turn ended.
+    const late = await startTask(browser, 'delegate late', { harnessId: 'fake' })
+    expect(await pendingApproval(t, late)).toMatchObject({ subagent: 'Test runner' })
+    await expect.poll(async () => (await t.host.bridge.detail(late)).summary.runOutcome, { timeout: 10_000 }).toBe('completed')
+    await blockedWhile(late)
+    expect(t.presence.requests).toHaveLength(confirmations)
+  })
+
   it('starts and continues a Harness session the same from a browser as from the desktop, every start on record', async () => {
     const { t, desktop, browser, enrolled } = await acpHost()
     const prompt = 'permission'

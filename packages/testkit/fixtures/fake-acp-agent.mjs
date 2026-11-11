@@ -1165,6 +1165,22 @@ const scenarios = {
     say(`mode=${session.mode}`)
     return END
   },
+  // A request marked as a subagent's, OpenCode 2.x style, that names no subagent Latch can tell: `empty` leaves the call
+  // no id of its own, `self` names the session itself.
+  projected: async ({ sessionId, argument, say, permission }) => {
+    const id = argument === 'self' ? sessionId : 'ses_child'
+    const { result } = await permission({
+      toolCallId: argument === 'empty' ? `${id}:` : `${id}:call_p`,
+      title: 'Edit a.txt',
+      kind: 'edit',
+      status: 'pending',
+      rawInput: { path: 'a.txt' },
+      _meta: { 'opencode/child-session': { id, parentID: sessionId, title: 'Run the tests' } },
+    })
+    log('projected-permission-answer', { outcome: result?.outcome ?? null })
+    say('answered')
+    return END
+  },
   unknownhang: async ({ sessionId }) => {
     await request('terminal/create', { sessionId })
     await request('terminal/create', { sessionId })
@@ -1292,7 +1308,10 @@ const scenarios = {
   // or after 200 steps of its own; `hang`: it works until the turn is cancelled, `silent` too but without saying it
   // stopped; `late`: it asks after the turn ended, `outlive` before the turn ends without the answer; `nest`: it starts
   // one of its own; `review`: its requests are reviewed as `review` reports them; `denied`: it reports calls refused
-  // before they ran as `denied` does.
+  // before they ran as `denied` does; `exit` and `enter`: it asks to leave or enter plan mode as Claude's adapter asks, `either` offering both;
+  // `mode`: it reports its own mode, FAKE_ACP_CHILD_MODE; `stop`: it says it can be stopped alone, asks, and waits until
+  // it or the session is stopped, then says so after FAKE_ACP_CHILD_STOP_MS (`stopquiet` never says it,
+  // `stopunknown` says at once that its state is unknown).
   delegate: async ({ sessionId, argument, say }) => {
     if (!clientCapabilities.subagents) {
       say('worked alone')
@@ -1339,6 +1358,59 @@ const scenarios = {
         toolCallId: 'call_2',
         status: result.outcome.optionId === 'allow' ? 'completed' : 'failed',
       })
+    }
+    if (argument === 'exit' || argument === 'enter' || argument === 'either') {
+      const call = {
+        toolCallId: 'call_mode',
+        title: argument === 'exit' ? 'Ready to code?' : argument === 'either' ? 'Switch mode?' : 'EnterPlanMode',
+        kind: 'switch_mode',
+        status: 'pending',
+      }
+      update(child, { sessionUpdate: 'tool_call', ...call })
+      const options =
+        argument === 'exit'
+          ? [
+              { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
+              { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+              { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+            ]
+          : argument === 'either'
+            ? [
+                { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+                { optionId: 'allow-once', name: 'Yes, enter plan mode', kind: 'allow_once' },
+                { optionId: 'reject', name: 'No', kind: 'reject_once' },
+              ]
+            : [
+                { optionId: 'allow-once', name: 'Yes, enter plan mode', kind: 'allow_once' },
+                { optionId: 'reject', name: 'No, start implementing now', kind: 'reject_once' },
+              ]
+      const { result } = await request('session/request_permission', { sessionId: child, toolCall: call, options })
+      log('child-permission-answer', { outcome: result?.outcome ?? null })
+    }
+    if (argument === 'mode') update(child, { sessionUpdate: 'current_mode_update', currentModeId: env.FAKE_ACP_CHILD_MODE ?? 'yolo' })
+    if (argument === 'stop' || argument === 'stopquiet' || argument === 'stopunknown') {
+      update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, capabilities: { cancel: {} } })
+      const edit = { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
+      update(child, { sessionUpdate: 'tool_call', ...edit })
+      report('requires_action')
+      const asked = request('session/request_permission', { sessionId: child, toolCall: edit, options: ALLOW_OPTIONS }).then(({ result }) =>
+        log('child-permission-answer', { outcome: result?.outcome ?? null }),
+      )
+      await Promise.race([waitCancel(child), waitCancel(sessionId)])
+      await asked
+      // `stopunknown` says at once that it cannot tell how it ended, and the turn goes on for a while.
+      if (argument === 'stopunknown') report('unknown')
+      await delay(Number(env.FAKE_ACP_CHILD_STOP_MS ?? 0))
+      if (argument === 'stop')
+        update(sessionId, {
+          sessionUpdate: 'subagent_update',
+          sessionId: child,
+          state: { state: 'idle', stopReason: 'cancelled' },
+          capabilities: null,
+        })
+      if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
+      say('the session goes on without it')
+      return END
     }
     if (argument === 'review')
       for (const [reviewId, status, end] of [
