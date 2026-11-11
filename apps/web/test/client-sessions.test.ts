@@ -4,7 +4,6 @@ import {
   emptySeen,
   filterSessions,
   groupSessions,
-  isOneLine,
   projectOf,
   readFolded,
   recentProjectSessions,
@@ -13,6 +12,7 @@ import {
   markUnread,
   pruneSeen,
   rowMeta,
+  rowModel,
   rowStatus,
   runningWords,
   silentWords,
@@ -21,6 +21,8 @@ import {
   listedSessions,
   steppedSession,
   type SessionFilter,
+  unknownNote,
+  waitKind,
   writeFolded,
 } from '../src/sessions.ts'
 import { steadyHold } from '../src/hooks/useSteady.ts'
@@ -218,23 +220,34 @@ describe('session row status', () => {
     expect(of({ status: 'idle', permissionDrift: true })).toEqual({ kind: 'read' })
   })
 
-  it('keeps a read session to one line and gives attention a second', () => {
-    expect(isOneLine({ kind: 'read' })).toBe(true)
-    expect(isOneLine({ kind: 'ended', word: '已停止', unknown: 0 })).toBe(true)
-    expect(isOneLine({ kind: 'ended', word: '已强制停止', unknown: 2 })).toBe(false)
-    for (const kind of ['waiting', 'silent', 'stopping', 'running', 'failed', 'unread', 'frozen'] as const)
-      expect(isOneLine({ kind })).toBe(false)
+  it('names the model on the second line: the routed one, else the reported one, else 默认模型', () => {
+    expect(rowModel({ model: 'deepseek-chat' })).toBe('deepseek-chat')
+    expect(rowModel({ model: 'gpt-5.5', modelRoute: { providerId: 'p', model: 'kimi-k2.5' } })).toBe('kimi-k2.5')
+    // An external Harness that has not reported its model yet.
+    expect(rowModel({})).toBe('默认模型')
+    // Text from the Host is escaped as anywhere else: an invisible character is shown, not hidden.
+    expect(rowModel({ model: 'gpt\u200b-5' })).not.toContain('\u200b')
   })
 
   it('reads the whole run on the Host clock, without the time spent waiting on a person', () => {
     const start = at(23).getTime()
     const started = { runStartedAt: new Date(start).toISOString() }
-    expect(runningWords(live(), start + 5000)).toBe('运行中')
-    expect(runningWords(live(started), start + 72_000)).toBe('运行中 1:12')
-    expect(runningWords(live({ ...started, runWaitMs: 60_000 }), start + 72_000)).toBe('运行中 0:12')
-    expect(runningWords(live({ ...started, runWaitingSince: new Date(start + 10_000).toISOString() }), start + 72_000)).toBe('运行中 0:10')
+    expect(runningWords(live(), start + 5000)).toBe('在等模型')
+    expect(runningWords(live(started), start + 72_000)).toBe('在等模型 1:12')
+    expect(runningWords(live({ ...started, runWaitMs: 60_000 }), start + 72_000)).toBe('在等模型 0:12')
+    expect(runningWords(live({ ...started, runWaitingSince: new Date(start + 10_000).toISOString() }), start + 72_000)).toBe(
+      '在等模型 0:10',
+    )
     // A phone's clock behind the Host's never shows a negative time.
-    expect(runningWords(live(started), start - 5000)).toBe('运行中 0:00')
+    expect(runningWords(live(started), start - 5000)).toBe('在等模型 0:00')
+  })
+
+  it('says what the run is doing from the activity the summary carries, and 运行中 when it carries none', () => {
+    const start = at(23).getTime()
+    expect(runningWords(live({ activity: 'command' }), start)).toBe('在跑命令')
+    expect(runningWords(live({ activity: 'tool' }), start)).toBe('在用工具')
+    expect(runningWords(live({ activity: 'starting' }), start)).toBe('在启动')
+    expect(runningWords(undefined, start)).toBe('运行中')
   })
 
   it('counts silence from the last sign of life', () => {
@@ -257,11 +270,37 @@ describe('session row status', () => {
     })
     expect(rowMeta(died, { kind: 'failed' }, undefined)).toBe('1 条结果未知')
     expect(rowMeta(task('a', at(23)), { kind: 'running' }, undefined)).toBeUndefined()
+    // The sidebar's second line adds only the results nobody can vouch for, never the branch.
+    expect(unknownNote(summary, { kind: 'running' })).toBeUndefined()
+    expect(unknownNote(died, { kind: 'failed' })).toBe('1 条结果未知')
   })
 })
 
 describe('等你处理', () => {
   const quiet: RunLive = { runId: 'r', activity: 'model', since: at(20).toISOString(), lastEventAt: at(20).toISOString(), silent: true }
+  it('says what a row waits on from the summary alone: the kind and how many, never what or where', () => {
+    expect(waitKind(task('a', at(21), { status: 'waiting-approval' }))).toEqual({ kind: 'asks', words: '审批' })
+    expect(waitKind(task('a', at(21), { status: 'running', pendingQuestions: 2 }))).toEqual({ kind: 'asks', words: '2 个问题' })
+    expect(waitKind(task('a', at(21), { status: 'waiting-approval', pendingQuestions: 1 }))).toEqual({
+      kind: 'asks',
+      words: '审批 · 1 个问题',
+    })
+    expect(waitKind(task('a', at(21), { status: 'running', live: quiet }))).toEqual({ kind: 'silent' })
+    const stuck: RunLive = {
+      runId: 'r',
+      activity: 'tool',
+      since: at(20).toISOString(),
+      lastEventAt: at(20).toISOString(),
+      unrecognized: { count: 1, at: at(20).toISOString() },
+    }
+    expect(waitKind(task('a', at(21), { status: 'running', live: stuck }))).toEqual({ kind: 'asks', words: '看不懂的请求' })
+    expect(waitKind(task('a', at(21), { status: 'running' }))).toBeUndefined()
+    expect(waitKind(task('a', at(21), { status: 'idle', pendingQuestions: 1 }))).toBeUndefined()
+    // A stop already asked for answers it.
+    const stopping: RunLive = { ...quiet, activity: 'cancelling', silent: undefined }
+    expect(waitKind(task('a', at(21), { status: 'waiting-approval', live: stopping }))).toBeUndefined()
+  })
+
   it('gathers what waits on the person ahead of the projects, and leaves it there when nothing else asks', () => {
     const tasks = [
       task('approval', at(21), { status: 'waiting-approval' }),

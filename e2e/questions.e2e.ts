@@ -156,8 +156,11 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
         }),
         page = await context.newPage()
       await enrollBrowser(page, host, { name: `问答 ${width}` })
-      // A question leaves the run's status alone; the list still says it waits. At 768 the list is an overlay nobody opened.
-      if (width !== 768) await page.locator(`[data-task-id="${sessionId}"]`).getByText('等你处理', { exact: true }).waitFor()
+      // A question leaves the run's status alone; the list still says it waits: the phone row in words, the sidebar's
+      // 等你处理 row with the kind of wait on its second line. At 768 the list is an overlay nobody opened.
+      const row = page.locator(`[data-task-id="${sessionId}"]`)
+      if (width === 390) await row.getByText('等你处理', { exact: true }).waitFor()
+      if (width === 1440) await row.locator('.session-wait', { hasText: '1 个问题' }).waitFor()
       const open = async () => {
         await page.keyboard.press('Meta+k')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })

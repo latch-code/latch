@@ -1,4 +1,5 @@
-import type { AppSnapshot, RunLive, TaskSummary, WorkspaceInfo } from '@latch/protocol'
+import { escapeSecurityText, type AppSnapshot, type RunLive, type TaskSummary, type WorkspaceInfo } from '@latch/protocol'
+import { DEFAULT_MODEL } from './composer/modelReasoning.ts'
 import { runClock, runElapsed } from './conversation.ts'
 import { parseTime } from './core/hostClock.ts'
 import { basename } from './format.ts'
@@ -70,13 +71,21 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
   return { kind: unread ? 'unread' : 'read' }
 }
 
-/** A read session is one line: its title and one signal. Anything that still asks for attention gets the second line. */
-export const isOneLine = (status: RowStatus) => status.kind === 'read' || (status.kind === 'ended' && status.unknown === 0)
+/** What a running row says the run is doing, from the summary's activity alone; 运行中 when the Host named none. */
+const ACTIVITY_WORDS: Partial<Record<RunLive['activity'], string>> = {
+  starting: '在启动',
+  model: '在等模型',
+  command: '在跑命令',
+  tool: '在用工具',
+}
 
-/** 运行中 1:12, or 运行中 alone when the Host did not say when the run began. */
+export const activityWords = (live: RunLive | undefined): string => (live && ACTIVITY_WORDS[live.activity]) ?? '运行中'
+
+/** 在跑命令 1:12, or the words alone when the Host did not say when the run began. */
 export function runningWords(live: RunLive | undefined, hostNow: number): string {
   const ms = live && runElapsed(live, hostNow)
-  return ms === undefined ? '运行中' : `运行中 ${runClock(ms)}`
+  const words = activityWords(live)
+  return ms === undefined ? words : `${words} ${runClock(ms)}`
 }
 
 /** 没有动静 3 分钟, counted from the engine's last sign of life. */
@@ -87,12 +96,45 @@ export function silentWords(live: RunLive | undefined, hostNow: number): string 
   return minutes < 60 ? `没有动静 ${minutes} 分钟` : `没有动静 ${Math.floor(minutes / 60)} 小时`
 }
 
-/** What the row's second line adds after the Agent: its project in 等你处理, otherwise its branch; results nobody can vouch for come first. */
-export function rowMeta(task: TaskSummary, status: RowStatus, project: string | undefined): string | undefined {
+/** Results nobody can vouch for after a run that ended without an answer: the one fact a row's second line adds. */
+export function unknownNote(task: TaskSummary, status: RowStatus): string | undefined {
   if (status.kind === 'ended' && status.unknown > 0) return `${status.unknown} 条结果未知`
   const unknown = task.runEnd?.unknownResultCount ?? 0
   if (status.kind === 'failed' && unknown > 0) return `${unknown} 条结果未知`
-  return project ?? task.branch
+  return undefined
+}
+
+/** What the phone row's second line adds after the Harness: its project in 等你处理, otherwise its branch; unknown results first. */
+export function rowMeta(task: TaskSummary, status: RowStatus, project: string | undefined): string | undefined {
+  return unknownNote(task, status) ?? project ?? task.branch
+}
+
+/**
+ * The model a sidebar row names: the one chosen on the model service Latch forwards to, else the one the session or its
+ * Harness reported, else 默认模型 (an external Harness may not have reported one yet). Escaped like any text from the Host.
+ */
+export function rowModel(task: Pick<TaskSummary, 'model' | 'modelRoute'>): string {
+  const model = task.modelRoute?.model || task.model
+  return model ? escapeSecurityText(model) : DEFAULT_MODEL
+}
+
+/**
+ * What a row in 等你处理 waits on, from the summary alone: an approval, how many questions, a request Latch could not
+ * read, or silence. Never what a request would do or where: the list holds no session content.
+ */
+export type WaitKind = { kind: 'asks'; words: string } | { kind: 'silent' }
+
+export function waitKind(task: TaskSummary): WaitKind | undefined {
+  const live = liveNow(task)
+  if (live?.activity === 'cancelling') return undefined
+  if (task.status !== 'running' && task.status !== 'waiting-approval') return undefined
+  const asks = [
+    ...(task.status === 'waiting-approval' ? ['审批'] : []),
+    ...(task.pendingQuestions ? [`${task.pendingQuestions} 个问题`] : []),
+  ]
+  if (asks.length > 0) return { kind: 'asks', words: asks.join(' · ') }
+  if (stuckOnRequest(live)) return { kind: 'asks', words: '看不懂的请求' }
+  return live?.silent ? { kind: 'silent' } : undefined
 }
 
 /** Archived sessions appear only under their own filter; search matches titles. */

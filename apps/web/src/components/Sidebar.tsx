@@ -2,7 +2,7 @@ import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from '.
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Pin, Plus, Search, Settings, Smartphone, SquarePen, X } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
-import { HARNESS_MARKS, presetOf } from '../brands.ts'
+import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
 import { currentShell } from '../core/shell.ts'
 import { relativeTime } from '../format.ts'
@@ -11,12 +11,13 @@ import { projectName } from '../projects.tsx'
 import {
   filterSessions,
   groupSessions,
-  isOneLine,
   projectOf,
   readFolded,
   shelvesKey,
-  rowMeta,
+  rowModel,
   rowStatus,
+  unknownNote,
+  waitKind,
   waitsOnYou,
   writeFolded,
   type SessionFilter,
@@ -25,7 +26,7 @@ import {
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
-import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
+import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
 import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
 
@@ -72,7 +73,11 @@ function connectionTrouble(
   return null
 }
 
-/** What a page the sidebar names is called and drawn with. */
+/**
+ * A session row, always two lines: the title with the time or what the run is doing, then the Harness's 12px mark and
+ * the model (the Harness's name too where its mark is the neutral glyph). In 等你处理 the second line says what waits
+ * instead of the model, and the project, since the shelf no longer says where the session belongs.
+ */
 const SessionItem = memo(function SessionItem({
   task,
   harness,
@@ -106,9 +111,11 @@ const SessionItem = memo(function SessionItem({
   const title = task.title || '未命名会话'
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
-  const oneLine = isOneLine(status)
   const engine = harness.label
-  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
+  const named = harnessArt(harness.mark).kind === 'glyph'
+  const model = rowModel(task)
+  const wait = inWaitingShelf && (status.kind === 'waiting' || status.kind === 'silent') ? waitKind(task) : undefined
+  const note = unknownNote(task, status)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
     status.kind === 'waiting'
@@ -120,17 +127,17 @@ const SessionItem = memo(function SessionItem({
   const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
   const said = statusLabel(status, task.live)
   const worktree = task.worktree ? `工作树 · ${escapeSecurityText(task.branch ?? task.worktree.branch)}` : undefined
+  const branch = task.branch === undefined ? undefined : escapeSecurityText(task.branch)
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <div
-        className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}
-        data-lines={oneLine ? 1 : 2}>
+        className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}>
         <button
           type="button"
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
-          title={oneLine ? [engine, worktree ?? task.branch, time].filter(Boolean).join(' · ') : worktree}
+          title={[engine, model, worktree ?? branch].filter(Boolean).join(' · ')}
           onClick={() => {
             onSelect(task.id)
           }}>
@@ -147,17 +154,25 @@ const SessionItem = memo(function SessionItem({
               dateTime={task.updatedAt}
             />
           </span>
-          {!oneLine && (
-            <span className="session-meta">
-              <span className="session-mark" title={engine}>
-                <MarkTile mark={harness.mark} size={14} />
-              </span>
-              <span>{engine}</span>
-              {meta && <span className="session-meta-rest">{`· ${meta}`}</span>}
-              {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
+          <span className="session-meta" aria-hidden="true">
+            <span className="session-mark">
+              <MarkTile mark={harness.mark} size={14} />
             </span>
-          )}
-          <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${time ? `，${time}` : ''}`}</span>
+            {wait ? (
+              <span className="session-wait">
+                <WaitWords wait={wait} live={task.live} />
+              </span>
+            ) : (
+              <span className="session-model" data-default={task.modelRoute?.model || task.model ? undefined : ''}>
+                {model}
+              </span>
+            )}
+            {named && <span className="session-harness">{engine}</span>}
+            {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
+            {note && <span className="session-meta-rest">{`· ${note}`}</span>}
+            {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
+          </span>
+          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${time ? `，${time}` : ''}`}</span>
         </button>
         <span className="session-actions">
           {archive && (

@@ -4,7 +4,7 @@ import { StatusSlot, type SlotStatus } from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
-import { runningWords, silentWords, type RowStatus } from '../sessions.ts'
+import { activityWords, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
 
 /** The clock's leaf: only this re-renders each second, and the shared ticker stops while the page is hidden. */
 function RunningWords({ live }: { live: RunLive | undefined }) {
@@ -15,6 +15,11 @@ function RunningWords({ live }: { live: RunLive | undefined }) {
 function SilentWords({ live }: { live: RunLive | undefined }) {
   useTicker('second')
   return <>{silentWords(live, hostNow())}</>
+}
+
+/** What a row in 等你处理 waits on, on its second line; silence counts its minutes there. */
+export function WaitWords({ wait, live }: { wait: WaitKind; live: RunLive | undefined }) {
+  return wait.kind === 'silent' ? <SilentWords live={live} /> : <>{wait.words}</>
 }
 
 const SLOT: Record<RowStatus['kind'], SlotStatus> = {
@@ -32,8 +37,8 @@ const SLOT: Record<RowStatus['kind'], SlotStatus> = {
 const statusKey = (status: RowStatus) => (status.kind === 'ended' ? `ended:${status.word}:${status.unknown}` : status.kind)
 
 /**
- * A session row's status slot. The words come from what the Host last said, change at most once a second, and the row's
- * shelf may already say that it waits, in which case the shield goes and the word stays.
+ * A session row's status slot. The words come from what the Host last said and change at most once a second. In
+ * 等你处理 the shelf says that the row waits and its second line says on what, so the slot shows the time.
  */
 export function SessionStatus({
   status,
@@ -51,12 +56,12 @@ export function SessionStatus({
   className?: string
 }) {
   const shown = useSteady(status, statusKey(status))
-  const quietWaiting = shown.kind === 'waiting' && inWaitingShelf
-  const attention = shown.kind === 'ended' ? shown.word : shown.kind === 'silent' ? <SilentWords live={live} /> : '等你处理'
+  const shelved = inWaitingShelf && (shown.kind === 'waiting' || shown.kind === 'silent')
+  const attention = shown.kind === 'ended' ? shown.word : <SilentWords live={live} />
   return (
     <StatusSlot
       className={className}
-      status={quietWaiting || (shown.kind === 'ended' && shown.unknown > 0) ? 'attention' : SLOT[shown.kind]}
+      status={shelved ? 'time' : shown.kind === 'ended' && shown.unknown > 0 ? 'attention' : SLOT[shown.kind]}
       running={shown.kind === 'stopping' ? '正在停止' : <RunningWords live={live} />}
       attention={attention}
       ended={shown.kind === 'ended' ? shown.word : undefined}
@@ -76,7 +81,7 @@ export function statusLabel(status: RowStatus, live: RunLive | undefined): strin
     case 'stopping':
       return '正在停止'
     case 'running':
-      return '运行中'
+      return activityWords(live)
     case 'failed':
       return '失败'
     case 'unread':

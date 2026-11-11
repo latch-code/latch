@@ -224,7 +224,7 @@ describe('resizable sidebar', () => {
 })
 
 /**
- * The session panel against a Host whose list says what is really happening: read rows on one line, 等你处理 ahead of the
+ * The session panel against a Host whose list says what is really happening: every row on two lines, 等你处理 ahead of the
  * projects with what waits, honest status words, folding, and the row actions. The list is rewritten on its way to the
  * page, so a silent run needs no waiting.
  */
@@ -297,7 +297,7 @@ describe('session panel', () => {
   const row = (id: string) => page.locator(`.session-item:has([data-task-id="${id}"])`)
   const height = (id: string) => row(id).evaluate(element => Math.round(element.getBoundingClientRect().height))
 
-  it('gathers what waits ahead of the projects, with a neutral count and the word in each row', async () => {
+  it('gathers what waits ahead of the projects, with a neutral count and what waits in each row', async () => {
     const shelves = page.locator('nav.session-list .session-group')
     await expect.poll(() => shelves.first().getAttribute('data-shelf')).toBe('waiting')
     const waiting = shelves.first()
@@ -307,19 +307,19 @@ describe('session panel', () => {
     expect(await waiting.locator('.shelf-count').textContent()).toBe('2')
     // The tab says what the shelf says.
     expect(await page.title()).toBe('(2) Latch')
-    // The shelf says it waits, so the row keeps the word and loses the shield.
-    const word = row('waiting').locator('.ui-status-word')
-    expect(await word.getAttribute('data-tone')).toBe('warn')
-    expect(await word.textContent()).toBe('等你处理')
-    expect(await word.locator('svg').count()).toBe(0)
-    expect(await row('silent').locator('.ui-status-word').textContent()).toBe('没有动静 3 分钟')
+    // The shelf says it waits, so the row's first line keeps its time and the second says what waits, in amber.
+    expect(await row('waiting').locator('.ui-status-word').count()).toBe(0)
+    await row('waiting').locator('.ui-status-time').waitFor()
+    expect(await row('waiting').locator('.session-wait').textContent()).toBe('审批')
+    expect(await row('silent').locator('.session-wait').textContent()).toBe('没有动静 3 分钟')
+    expect(
+      await page.locator('.session-group[data-shelf="waiting"] .shelf-count').evaluate(item => getComputedStyle(item).fontVariantNumeric),
+    ).toBe('tabular-nums')
     // Header rows have no hairline: nothing draws a line under a shelf's head.
     expect(await waiting.locator('.shelf-head').evaluate(head => getComputedStyle(head).borderBottomStyle)).toBe('none')
   })
 
-  it('keeps a read session to one line with the metadata in muted, and gives the others a second', async () => {
-    expect(await height('read')).toBe(32)
-    expect(await row('read').locator('.session-meta').count()).toBe(0)
+  it('gives every session two lines, the second in muted with the Harness mark and the model', async () => {
     // The status slot's time carries the muted ink, never the fainter one.
     const muted = await page.evaluate(() => {
       const probe = document.createElement('span')
@@ -335,16 +335,20 @@ describe('session panel', () => {
         .evaluate(item => getComputedStyle(item).color),
     ).toBe(muted)
     expect(await row('read').locator('.session-item-main').getAttribute('title')).toContain('main')
-    for (const id of ['running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) expect(await height(id)).toBe(52)
-    expect(await row('running').locator('.session-meta').textContent()).toContain('Latch 内置')
-    expect(await row('running').locator('.session-meta').textContent()).toContain('main')
+    for (const id of ['read', 'stopped', 'running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) expect(await height(id)).toBe(52)
+    // The built-in Harness is its app icon alone; none of these sessions reported a model.
+    expect(await row('running').locator('.session-meta').textContent()).toBe('默认模型')
+    expect(
+      await row('read')
+        .locator('.session-meta')
+        .evaluate(item => getComputedStyle(item).color),
+    ).toBe(muted)
   })
 
-  it('says only what the Host said: the whole run on the clock, 正在停止 until settled, then 已停止', async () => {
-    await expect.poll(() => row('running').locator('.ui-status-word').textContent()).toMatch(/^运行中 1:1\d$/)
+  it('says only what the Host said: what the run does on the clock of the whole run, 正在停止 until settled, then 已停止', async () => {
+    await expect.poll(() => row('running').locator('.ui-status-word').textContent()).toMatch(/^在等模型 1:1\d$/)
     expect(await row('stopping').locator('.ui-status-word').textContent()).toBe('正在停止')
     expect(await row('stopped').locator('.ui-status-word').textContent()).toBe('已停止')
-    expect(await height('stopped')).toBe(32)
     expect(await row('forced').locator('.ui-status-word').textContent()).toBe('已强制停止')
     expect(await row('forced').locator('.session-meta').textContent()).toContain('2 条结果未知')
   })

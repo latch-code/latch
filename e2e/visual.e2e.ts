@@ -1263,12 +1263,15 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
       if (sidebar) {
-        // Each row's status slot shows one thing in status words: 运行中 with its spinner, 等你处理 (its shelf has said
-        // why, so the shield goes), 失败, 已停止, the unread check or the time.
+        // Each row's status slot shows one thing in status words: what the run is doing with its spinner, 失败, 已停止,
+        // the unread check or the time. In 等你处理 the shelf says that the row waits and its second line on what (审批,
+        // in amber), so the slot keeps the time.
         const row = (id: string) => sidebar.locator(`[data-task-id="${id}"]`)
-        await row(sessions.running).locator('.ui-status-word[data-tone="running"]', { hasText: '运行中' }).waitFor()
-        for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory])
-          await row(id).locator('.ui-status-word', { hasText: '等你处理' }).waitFor()
+        await row(sessions.running).locator('.ui-status-word[data-tone="running"] .ui-spinner').waitFor()
+        for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory]) {
+          await row(id).locator('.ui-status-time').waitFor()
+          await row(id).locator('.session-wait', { hasText: '审批' }).waitFor()
+        }
         await row(sessions.failed).locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
         await row(sessions.cancelled).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
         await row(sessions.unread).locator('.ui-status-unread').waitFor()
