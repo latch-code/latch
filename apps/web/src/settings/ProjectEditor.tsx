@@ -18,6 +18,7 @@ import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectNa
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { LeftoverWorktrees } from './LeftoverWorktrees.tsx'
 import { IconTile, MiddleEllipsis, moreButton, NavRow, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
 function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {
@@ -446,6 +447,9 @@ export function ProjectEditor({
               />
             ))}
         </SettingsGroup>
+      )}
+      {owner && folders.length === 1 && project.branch !== undefined && snapshot.catalog?.features?.worktreeLifecycle && (
+        <LeftoverWorktrees project={project} />
       )}
       {owner && (
         <SettingsGroup>

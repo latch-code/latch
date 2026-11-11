@@ -112,6 +112,7 @@ export function useSessionController({
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const [renaming, setRenaming] = useState<TaskSummary | null>(null)
   const [deleting, setDeleting] = useState<TaskSummary | null>(null)
+  const [removingWorktree, setRemovingWorktree] = useState<TaskSummary | null>(null)
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const [actionError, setActionError] = useState<ActionError | null>(null)
   const [approvalBusy, setApprovalBusy] = useState<ReadonlyMap<string, string>>(new Map())
@@ -762,6 +763,17 @@ export function useSessionController({
           remove: () => {
             setDeleting(task)
           },
+          ...(task.worktree
+          && !task.worktree.removed
+          && catalog?.features?.worktreeLifecycle
+          && access.scopes.has('run')
+          && access.device?.dataScope !== 'work'
+            ? {
+                removeWorktree: () => {
+                  setRemovingWorktree(task)
+                },
+              }
+            : {}),
           ...(clearable && task.id === selectedId
             ? {
                 clear: () => {
@@ -847,13 +859,15 @@ export function useSessionController({
   const sessionBlock =
     selectedId === null
       ? undefined
-      : workspaceChanged.has(selectedId)
-        ? '选择一个项目继续，当前草稿会保留。'
-        : harnessInfo?.status === 'unavailable'
-          ? harnessInfo.statusMessage || `${harnessLabel(harnessInfo)} 暂不可用`
-          : !catalog && snapshot.execution?.ready === false
-            ? '当前模型接口不可用，请检查模型插件状态。'
-            : undefined
+      : summary?.worktree?.removed
+        ? '工作树已移除 · 只能查看'
+        : workspaceChanged.has(selectedId)
+          ? '选择一个项目继续，当前草稿会保留。'
+          : harnessInfo?.status === 'unavailable'
+            ? harnessInfo.statusMessage || `${harnessLabel(harnessInfo)} 暂不可用`
+            : !catalog && snapshot.execution?.ready === false
+              ? '当前模型接口不可用，请检查模型插件状态。'
+              : undefined
   const [approvalIndex, setApprovalIndex] = useState(0)
   useEffect(() => {
     setApprovalIndex(0)
@@ -967,6 +981,8 @@ export function useSessionController({
     setRenaming,
     deleting,
     setDeleting,
+    removingWorktree,
+    setRemovingWorktree,
     toast,
     setToast,
     actionError,

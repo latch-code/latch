@@ -50,7 +50,7 @@ sources:
 
 ## 一次一个写入
 
-同一仓库（共同 Git 目录，各工作树共用）同时只做一个写入，另一个得到 409 `git-busy` 与进行中的写入 `{ kind, requestId, startedAt, hook? }`；`GET git` 的 `running` 让所有设备看到同样的内容。仓库正在合并、变基、拣选或还原时所有写入 409 `git-operation-in-progress`，在终端里完成后再试；状态里给 `gitOperation`。
+同一仓库（共同 Git 目录，各工作树共用）同时只做一个写入，另一个得到 409 `git-busy` 与进行中的写入 `{ kind, requestId, startedAt, hook? }`；移除这个仓库的一个工作树（[BRANCHES.md](BRANCHES.md#移除工作树)）也持有它（`RepositoryHolds`），其间的交付写入同样 409 `git-busy`；`GET git` 的 `running` 让所有设备看到同样的内容。仓库正在合并、变基、拣选或还原时所有写入 409 `git-operation-in-progress`，在终端里完成后再试；状态里给 `gitOperation`。
 
 ## 暂存与取消暂存
 

@@ -205,8 +205,25 @@ export class AuditLog {
     return this.hashes[seq - 1]
   }
 
+  /** Worktree removals that happened, by request and by worktree hash, for retries after a restart (bounded). */
+  private readonly worktreeRemovals = new Map<string, AuditRecord>()
+
+  /** The `worktree.result` record of a removal: `request:<hash>` or `tree:<hash>`. */
+  worktreeRemoval(key: string): AuditRecord | undefined {
+    const found = this.worktreeRemovals.get(key)
+    return found && structuredClone(found)
+  }
+
   private index(record: AuditRecord): void {
     this.latestByAction.set(record.action, record)
+    if (record.action === 'worktree.result' && record.detail.outcome === 'removed') {
+      for (const key of [`request:${String(record.detail.requestHash)}`, `tree:${String(record.detail.worktreeHash)}`]) {
+        this.worktreeRemovals.delete(key)
+        this.worktreeRemovals.set(key, record)
+      }
+      while (this.worktreeRemovals.size > 2048) this.worktreeRemovals.delete(this.worktreeRemovals.keys().next().value!)
+      return
+    }
     if (record.action !== 'task.l3.started') return
     const { launchHash, definitionHash, harnessId } = record.detail
     if (typeof launchHash === 'string') this.started.launches.add(launchHash)

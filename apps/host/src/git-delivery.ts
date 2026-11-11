@@ -155,7 +155,30 @@ export interface DeliveryCaller {
   result: (event: DeliveryResultEvent) => Promise<void>
 }
 
+/**
+ * Which Host write holds a repository (its shared Git directory): a delivery write or a worktree removal. One at a time,
+ * so a removal never runs while a delivery does, and the other way round.
+ */
+export class RepositoryHolds {
+  private readonly held = new Map<string, 'delivery' | 'worktree-remove'>()
+
+  /** Takes the repository, or undefined when something holds it already. */
+  take(common: string, kind: 'delivery' | 'worktree-remove'): (() => void) | undefined {
+    if (this.held.has(common)) return undefined
+    this.held.set(common, kind)
+    return () => {
+      if (this.held.get(common) === kind) this.held.delete(common)
+    }
+  }
+
+  of(common: string): 'delivery' | 'worktree-remove' | undefined {
+    return this.held.get(common)
+  }
+}
+
 export interface GitDeliveryOptions {
+  /** Shared with worktree removal; a delivery of its own otherwise. */
+  holds?: RepositoryHolds
   /** Your Git; found where the 改动 reader finds it by default. */
   git?: string
   /** The restricted runner's home (whose global configuration applies); the Host user's by default. */
@@ -334,6 +357,7 @@ export class GitDelivery {
   private readonly hostEnv: NodeJS.ProcessEnv
   private readonly now: () => number
   private readonly timeouts: typeof TIMEOUTS
+  private readonly holds: RepositoryHolds
   /** By the repository's shared Git directory. */
   private readonly running = new Map<string, Running>()
   /** Requests under way, by session, device and request: a retry waits for the same answer. */
@@ -354,6 +378,7 @@ export class GitDelivery {
     this.hostEnv = options.hostEnv ?? process.env
     this.now = options.now ?? Date.now
     this.timeouts = { ...TIMEOUTS, ...options.timeouts }
+    this.holds = options.holds ?? new RepositoryHolds()
   }
 
   /** Stops every Git it started (SIGTERM, then SIGKILL): a commit stopped this way is answered by its receipt later. */
@@ -462,6 +487,8 @@ export class GitDelivery {
       throw refuse('git-busy', '这个仓库正在进行另一个交付操作，等它结束后再试。', {
         running: { kind: busy.kind, requestId: busy.requestId, startedAt: busy.startedAt, ...(busy.hook ? { hook: busy.hook } : {}) },
       })
+    const release = this.holds.take(common, 'delivery')
+    if (!release) throw refuse('git-busy', '这个仓库正在移除一个工作树，等它结束后再试。')
     const running: Running = { kind, requestId, startedAt: new Date(this.now()).toISOString(), sessionId: caller.sessionId }
     this.running.set(common, running)
     this.options.changed?.(caller.sessionId)
@@ -471,6 +498,7 @@ export class GitDelivery {
         throw refuse('git-operation-in-progress', '仓库正在合并、变基、拣选或还原，在终端里完成后再试。')
       return await work(running, common)
     } finally {
+      release()
       if (this.running.get(common) === running) this.running.delete(common)
       this.options.changed?.(caller.sessionId)
     }

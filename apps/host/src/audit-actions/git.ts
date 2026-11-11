@@ -7,6 +7,8 @@ const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
 const hooks = z.array(z.enum(KNOWN_HOOKS)).max(KNOWN_HOOKS.length)
 const request = { sessionId: opaqueId, requestHash: hex64 }
 const prNumber = z.number().int().positive().max(999_999_999)
+/** A Latch worktree being removed: its project, its session when it has one, and the hash of its path. */
+const worktree = { workspaceId: opaqueId, sessionId: opaqueId.optional(), worktreeHash: hex64, requestHash: hex64 }
 /** Why a write that ran did not succeed. */
 export const RESULT_CODES = [
   'git-stage-failed',
@@ -58,5 +60,27 @@ export const GIT_ACTIONS = {
     code: z.enum(RESULT_CODES).optional(),
     commit: oid.optional(),
     number: prNumber.optional(),
+  }),
+  /**
+   * Removing a Latch worktree (docs/BRANCHES.md), before Git runs: what it loses as counts, whether the removal is
+   * forced (uncommitted files discarded) and whether Latch made its branch. Never a path or a file name.
+   */
+  'worktree.remove': z.strictObject({
+    ...worktree,
+    staged: count,
+    unstaged: count,
+    untracked: count,
+    ignored: count.optional(),
+    forced: z.boolean(),
+    ownBranch: z.boolean(),
+    ahead: count.optional(),
+    unpushed: count.optional(),
+  }),
+  /** After: removed, and the branch Latch made deleted (`-d`), kept (not merged), or none. */
+  'worktree.result': z.strictObject({
+    ...worktree,
+    outcome: z.enum(['removed', 'failed']),
+    branch: z.enum(['deleted', 'kept', 'none']).optional(),
+    discarded: count.optional(),
   }),
 } as const satisfies Record<string, ZodType>

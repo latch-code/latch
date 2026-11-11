@@ -609,14 +609,35 @@ export class HarnessHub implements Bridge {
   }
 
   /** The worktrees the Host made for sessions, from the session metadata. */
-  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string }> {
+  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string; removed?: true }> {
     return this.meta.worktrees()
   }
 
   /** The worktree the Host made for this session, from its own records; never from the driver. */
-  worktreeOf(sessionId: string): { path: string; branch: string } | undefined {
+  worktreeOf(sessionId: string): { path: string; branch: string; removed?: true } | undefined {
     const worktree = this.meta.get(sessionId)?.worktree
-    return worktree && { path: worktree.path, branch: worktree.branch }
+    return worktree && { path: worktree.path, branch: worktree.branch, ...(worktree.removed ? { removed: true as const } : {}) }
+  }
+
+  /**
+   * What the Host's own records say about a session, whether or not its Harness lists it now: undefined once its
+   * metadata is gone (the session was deleted). `private`: personal, of 我的 Agent, or with private context.
+   */
+  sessionRecord(sessionId: string): { archived: boolean; private: boolean } | undefined {
+    const meta = this.meta.get(sessionId)
+    if (!meta) return undefined
+    return {
+      archived: meta.archived === true,
+      private: meta.personal !== undefined || meta.agent !== undefined || meta.agentPrivate === true || this.agentPrivate(sessionId),
+    }
+  }
+
+  /** The session's worktree was removed: it stays, read-only for files, and says so. */
+  async worktreeRemoved(sessionId: string): Promise<void> {
+    await this.meta.update(sessionId, current =>
+      current.worktree ? { ...current, worktree: { ...current.worktree, removed: true } } : current,
+    )
+    this.emit(sessionId)
   }
 
   /** The pull request 交付 bound to the session (docs/GIT-DELIVERY.md#pr-与检查). */
@@ -1021,7 +1042,13 @@ export class HarnessHub implements Bridge {
       ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
       ...(meta?.worktree
-        ? { worktree: { branch: meta.worktree.branch, ...(meta.worktree.unfiltered ? { unfiltered: meta.worktree.unfiltered } : {}) } }
+        ? {
+            worktree: {
+              branch: meta.worktree.branch,
+              ...(meta.worktree.unfiltered ? { unfiltered: meta.worktree.unfiltered } : {}),
+              ...(meta.worktree.removed ? { removed: true as const } : {}),
+            },
+          }
         : {}),
       ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })

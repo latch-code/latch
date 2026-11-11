@@ -132,7 +132,9 @@ const SessionItem = memo(function SessionItem({
   const sections = menu(task)
   const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
   const said = statusLabel(status, task.live)
-  const worktree = task.worktree ? `工作树 · ${escapeSecurityText(task.branch ?? task.worktree.branch)}` : undefined
+  const worktree = task.worktree
+    ? `${task.worktree.removed ? '工作树已移除' : '工作树'} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
+    : undefined
   const branch = task.branch === undefined ? undefined : escapeSecurityText(task.branch)
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>

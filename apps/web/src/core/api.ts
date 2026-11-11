@@ -1,6 +1,6 @@
 import { MODEL_EFFORT, isFileMention, type FileMention } from '@latch/protocol'
 import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
-import type { ApiFailure, ModelRef, TaskMode } from '@latch/protocol'
+import type { ApiFailure, ModelRef, TaskMode, WorktreeStart } from '@latch/protocol'
 import { describeFailure } from './securityCopy.ts'
 import { readStorage } from './storageKeys.ts'
 
@@ -309,10 +309,24 @@ export interface PendingSubmission {
   attachmentIds?: string[]
   /** A new session's picks from the Harness's own options. */
   config?: Array<{ configId: string; value: string }>
-  /** A new session starts in a new worktree of its project. */
-  worktree?: true
+  /** A new session starts in a worktree of its project: `true` from the folder's HEAD, or another start point. */
+  worktree?: true | WorktreeStart
   /** A new session of one of 我的 Agent (a delegation); the Host fills what the request leaves out from the Agent. */
   customAgentId?: string
+}
+
+/** A stored start point, as the Host accepts it; anything else is dropped. */
+export function worktreeStartOf(value: unknown): true | WorktreeStart | undefined {
+  if (value === true) return true
+  if (typeof value !== 'object' || value === null) return undefined
+  const item = value as Record<string, unknown>
+  const text = (field: unknown) => typeof field === 'string' && field.length > 0 && field.length <= 200
+  if (item.from === 'head') return { from: 'head' }
+  if (item.from === 'commit' && text(item.ref)) return { from: 'commit', ref: item.ref as string }
+  if (item.from === 'branch' && text(item.branch)) return { from: 'branch', branch: item.branch as string }
+  if (item.from === 'reuse' && typeof item.name === 'string' && /^\d{8}-[0-9a-f]{4}$/u.test(item.name))
+    return { from: 'reuse', name: item.name }
+  return undefined
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -342,7 +356,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.queue !== undefined && item.queue !== true) return null
     if (item.steer !== undefined && item.steer !== true) return null
     if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
-    if (item.worktree !== undefined && (item.worktree !== true || item.sessionId !== undefined)) return null
+    if (item.worktree !== undefined && (worktreeStartOf(item.worktree) === undefined || item.sessionId !== undefined)) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     if (
@@ -380,7 +394,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
       ...(item.freshContext === true ? { freshContext: true as const } : {}),
-      ...(item.worktree === true ? { worktree: true as const } : {}),
+      ...(worktreeStartOf(item.worktree) ? { worktree: worktreeStartOf(item.worktree)! } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
@@ -431,7 +445,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
       ...(submission.config?.length ? { config: submission.config } : {}),
-      ...(submission.worktree ? { worktree: true } : {}),
+      ...(submission.worktree ? { worktree: submission.worktree } : {}),
       ...(submission.customAgentId ? { customAgentId: submission.customAgentId } : {}),
     },
   }

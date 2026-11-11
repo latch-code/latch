@@ -83,12 +83,92 @@ export interface WorkspaceInfo {
   codeRoot?: true
 }
 
-/** `GET workspaces/:id/worktree`: where a new worktree of the project's folder would start. */
+/**
+ * Where a new worktree starts (`POST /tasks` `worktree`; `true` is `head`): the project folder's HEAD on a new branch,
+ * another local branch or commit on a new branch, an existing local branch checked out there, or an existing Latch
+ * worktree of the project (by its folder name) reused.
+ */
+export type WorktreeStart =
+  | { from: 'head' }
+  | { from: 'commit'; ref: string }
+  | { from: 'branch'; branch: string }
+  | { from: 'reuse'; name: string }
+
+/** A local branch a worktree can start from; `checkedOut`: checked out in a worktree already, so it cannot be checked out again. */
+export interface WorktreeBranchChoice {
+  name: string
+  commit: string
+  checkedOut?: true
+}
+
+/** A worktree Latch made for this project, by its folder name; `reason`: why it cannot be reused. */
+export interface LatchWorktree {
+  name: string
+  /** Its current branch, as the Host shows branches; absent when HEAD is detached. */
+  branch?: string
+  /** `leftover`: no session owns it (a start that never finished, a crash); `archived`: its session is archived. */
+  state: 'session' | 'archived' | 'leftover'
+  sessionId?: string
+  reusable: boolean
+  reason?: string
+}
+
+/** `GET workspaces/:id/worktree`: where a new worktree of the project's folder would start, and the other start points. */
 export interface WorktreeBase {
   /** The folder's branch, as the Host shows branches; absent when HEAD is detached. */
   branch?: string
   /** The commit HEAD names. */
   commit: string
+  /** Local branches, most recently committed first (at most 200). */
+  branches?: WorktreeBranchChoice[]
+  /** Latch worktrees of this project a new session could reuse. */
+  reusable?: LatchWorktree[]
+}
+
+/** `GET …/worktree` of a session or a leftover: what removing it would lose, read without running the repository's programs. */
+export interface WorktreeInventory {
+  name: string
+  branch?: string
+  staged: number
+  unstaged: number
+  untracked: number
+  /** Distinct files with uncommitted changes: what a forced removal discards. */
+  files: number
+  /** Ignored files and folders (as Git lists them), which removing the folder deletes as well; one of them as an example. */
+  ignored: number
+  ignoredExample?: string
+  /** The largest ignored folders with how many files each holds (at most three). */
+  ignoredFolders?: Array<{ path: string; files: number }>
+  /** An untracked or ignored folder that is another Git repository: removal is refused. */
+  nested?: string
+  /** A folder with too many entries to look through for a repository: removal is refused. */
+  tooLarge?: string
+  /** Checked-out submodules: removal is refused until they are deinitialised. */
+  submodules?: number
+  /** Submodule clones in the worktree's Git data (`modules/`): removal is refused until the person checks and deletes them. */
+  submoduleData?: { path: string }
+  /** Of the listing above: a removal that discards anything sends it back and is refused (`worktree-changed`) if it moved. */
+  digest: string
+  /** Lines added and removed in tracked files against HEAD; absent when too large to count. */
+  insertions?: number
+  deletions?: number
+  upstream?: string
+  /** Commits ahead of the upstream. */
+  ahead?: number
+  /** Without an upstream: commits on this branch and on no other branch or remote ref (从未推送). */
+  unpushed?: number
+  /** Latch made its branch, so removal tries `git branch -d` on it. */
+  ownBranch: boolean
+  /** Why it cannot be removed now. */
+  busy?: 'turn' | 'delivery' | 'terminal' | 'starting' | 'removing'
+}
+
+/** `POST …/worktree/remove`: `branch` is what happened to the branch Latch made (`none` when it made none). */
+export interface WorktreeRemoval {
+  removed: true
+  discarded: number
+  branch: 'deleted' | 'kept' | 'none'
+  branchName?: string
 }
 
 export interface SessionDefaults {

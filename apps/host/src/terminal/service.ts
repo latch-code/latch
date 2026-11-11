@@ -18,7 +18,7 @@ import {
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
-import { latchCodeRoot } from '../paths.ts'
+import { isInsidePath, latchCodeRoot } from '../paths.ts'
 import { loginShell, terminalEnvironment, type ShellCommand } from './environment.ts'
 import {
   helperLauncher,
@@ -231,6 +231,25 @@ export class TerminalService {
       terminals: running.filter(terminal => terminal.busy).length,
       services: running.reduce((sum, terminal) => sum + terminal.services.length, 0),
     }
+  }
+
+  /**
+   * Whether any terminal, of any session, starting or running has its folder in `path`: a worktree is not removed
+   * under a shell. One still starting whose folder is not settled counts too.
+   */
+  openInside(path: string): boolean {
+    return [...this.terminals.values()].some(
+      terminal =>
+        (terminal.status === 'running' || terminal.status === 'starting')
+        && (terminal.folder === '' || isInsidePath(terminal.folder, path)),
+    )
+  }
+
+  /** Whether any of these sessions has a terminal starting or running: a worktree is not removed under a shell. */
+  openIn(sessionIds: ReadonlySet<string>): boolean {
+    return [...this.terminals.values()].some(
+      terminal => sessionIds.has(terminal.sessionId) && (terminal.status === 'running' || terminal.status === 'starting'),
+    )
   }
 
   list(sessionId: string, requester: TerminalRequester): TerminalSummary[] {

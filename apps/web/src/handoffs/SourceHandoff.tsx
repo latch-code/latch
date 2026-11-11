@@ -4,7 +4,7 @@ import type { Handoff, HandoffCreate, HandoffList, HostCatalog, Message } from '
 import { Button, Hint, ICON_STROKE, IconButton, InlineNotice, SegmentedControl, StatusWord, TextAreaField, ValuePicker } from '@latch/ui'
 import { api, newRequestId } from '../core/api.ts'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
-import { FolderControl } from '../composer/FolderControl.tsx'
+import { FolderControl, HEAD_START } from '../composer/FolderControl.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { Menu } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -337,7 +337,14 @@ export function SourceHandoffDock({
                   <>
                     <dt>位置</dt>
                     <dd>
-                      <FolderControl project={worktreeOffer} worktree={worktree} onWorktree={setWorktree} disabled={locked} />
+                      <FolderControl
+                        project={worktreeOffer}
+                        worktree={worktree ? HEAD_START : undefined}
+                        onWorktree={start => {
+                          setWorktree(start !== undefined)
+                        }}
+                        disabled={locked}
+                      />
                     </dd>
                   </>
                 )}

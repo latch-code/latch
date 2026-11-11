@@ -147,9 +147,10 @@ export interface DriverTaskSummary {
   /**
    * The Host made `cwd` for this session as a Git worktree of the project's folder, on a branch of its own. Files are
    * separate from the project folder's; ports, processes and local permissions are not. `unfiltered`: tracked files left
-   * as Git stores them because their filter (Git LFS, for one) was not run.
+   * as Git stores them because their filter (Git LFS, for one) was not run. `removed`: the worktree was removed; the
+   * session stays readable, its files are gone.
    */
-  worktree?: { branch: string; unfiltered?: number }
+  worktree?: { branch: string; unfiltered?: number; removed?: true }
   /** The first start of this launch in this project, the one the system sheet asks about: the timeline says what it can do. */
   firstStart?: true
   /**

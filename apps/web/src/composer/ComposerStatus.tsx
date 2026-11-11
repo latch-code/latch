@@ -81,10 +81,25 @@ export function FolderSegment({ name, tip, worktree = false }: { name: string; t
  * The branch as the Host read it, cut with an ellipsis when the line is full; the tooltip has the whole name, the
  * only place a draft shows it. A session in a worktree says 工作树 · its branch.
  */
-export function BranchSegment({ branch, worktree = false, base = false }: { branch: string; worktree?: boolean; base?: boolean }) {
+export function BranchSegment({
+  branch,
+  worktree = false,
+  base = false,
+  removed = false,
+}: {
+  branch: string
+  worktree?: boolean
+  base?: boolean
+  /** The session's worktree was removed: the session only reads now. */
+  removed?: boolean
+}) {
   const name = breakable(escapeHiddenCharacters(branch))
+  const lead = removed ? '工作树已移除 · ' : '工作树 · '
   const tip = worktree ? (
-    <>工作树 · {name}</>
+    <>
+      {lead}
+      {name}
+    </>
   ) : (
     <>
       {base ? '新工作树 · ' : '分支 '}
@@ -97,7 +112,7 @@ export function BranchSegment({ branch, worktree = false, base = false }: { bran
         <span className="composer-status-cut composer-branch" tabIndex={0}>
           <GitBranch size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           <span className="composer-status-value composer-branch-name" data-worktree={worktree ? '' : undefined}>
-            {worktree && '工作树 · '}
+            {worktree && lead}
             <VisibleText text={branch} />
           </span>
         </span>

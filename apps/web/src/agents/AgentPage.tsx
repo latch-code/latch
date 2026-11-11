@@ -24,7 +24,7 @@ import {
 } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
-import { FolderControl } from '../composer/FolderControl.tsx'
+import { FolderControl, HEAD_START } from '../composer/FolderControl.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { SessionStatus, useLastConfirmed } from '../components/SessionStatus.tsx'
@@ -241,7 +241,16 @@ function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: Cust
                 setWorktree(false)
               }}
             />
-            {project && <FolderControl project={project} worktree={worktree} onWorktree={setWorktree} disabled={locked || offline} />}
+            {project && (
+              <FolderControl
+                project={project}
+                worktree={worktree ? HEAD_START : undefined}
+                onWorktree={start => {
+                  setWorktree(start !== undefined)
+                }}
+                disabled={locked || offline}
+              />
+            )}
             <span className="agent-form-spacer" />
             <CarryResults
               sessions={sessions}

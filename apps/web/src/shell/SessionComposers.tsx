@@ -255,6 +255,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           onWorktree={submission.setWorktree}
           disabled={newChoicesLocked}
           branch={project?.branch}
+          starts
         />
       ) : project && choice.mode !== 'chat' ? (
         <>
@@ -272,7 +273,11 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     const place = (
       <>
         {folder && <FolderSegment name={folder} tip={summary.cwd ? `文件夹 ${summary.cwd}` : `项目 ${folder}`} worktree={!!worktree} />}
-        {worktree ? <BranchSegment branch={worktree} worktree /> : summary.branch && <BranchSegment branch={summary.branch} />}
+        {worktree ? (
+          <BranchSegment branch={worktree} worktree removed={summary.worktree?.removed === true} />
+        ) : (
+          summary.branch && <BranchSegment branch={summary.branch} />
+        )}
       </>
     )
     return (

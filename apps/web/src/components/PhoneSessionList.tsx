@@ -143,7 +143,7 @@ const PhoneRow = memo(function PhoneRow({
               className="session-worktree"
               size={12}
               strokeWidth={ICON_STROKE[12]}
-              aria-label={`工作树 · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
+              aria-label={`${task.worktree.removed ? '工作树已移除' : '工作树'} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
             />
           )}
           <span className="phone-row-title">{title}</span>

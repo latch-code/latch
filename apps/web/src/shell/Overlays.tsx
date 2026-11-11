@@ -6,6 +6,7 @@ import { toolRowId } from '../conversation.ts'
 import { Button, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
+import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -78,6 +79,9 @@ export function Overlays({ shell }: { shell: ShellState }) {
     setRenaming,
     deleting,
     setDeleting,
+    removingWorktree,
+    setRemovingWorktree,
+    setToast,
     toast,
     setStopped,
     reading,
@@ -160,6 +164,19 @@ export function Overlays({ shell }: { shell: ShellState }) {
             })
             if (deleting.id === selectedId) choose(null)
             await refresh()
+          }}
+        />
+      )}
+      {removingWorktree && (
+        <RemoveWorktreeDialog
+          target={{ kind: 'session', sessionId: removingWorktree.id }}
+          title={removingWorktree.title || '未命名会话'}
+          onClose={() => {
+            setRemovingWorktree(null)
+          }}
+          onRemoved={result => {
+            setToast({ text: removalWords(result), tone: 'ok' })
+            void refresh()
           }}
         />
       )}

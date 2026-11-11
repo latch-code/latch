@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
+import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, FolderX, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
 import type { TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
@@ -15,6 +15,8 @@ export interface SessionActions {
   saveProject?: () => void
   unread?: () => void
   copy?: () => void
+  /** A session in a Latch worktree that is still there: 移除工作树…, which shows what it has first. */
+  removeWorktree?: () => void
   remove: () => void
 }
 
@@ -72,6 +74,19 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
           icon: task.archived ? ArchiveRestore : Archive,
           onSelect: actions.archive,
         },
+        // Archiving keeps the worktree; removing it is its own step.
+        ...(actions.removeWorktree
+          ? [
+              {
+                id: 'remove-worktree',
+                label: '移除工作树…',
+                icon: FolderX,
+                disabled: isActive(task.status),
+                disabledReason: '这一轮结束后才能移除工作树',
+                onSelect: actions.removeWorktree,
+              },
+            ]
+          : []),
       ],
     },
     {

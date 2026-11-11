@@ -172,6 +172,7 @@ function ProjectCrumb({
 }) {
   const context = contextWords(usage)
   const worktree = summary.worktree && (summary.branch ?? summary.worktree.branch)
+  const lead = summary.worktree?.removed ? '工作树已移除' : '工作树'
   return (
     <span className="topbar-crumb">
       <Popover
@@ -185,7 +186,7 @@ function ProjectCrumb({
             type="button"
             className="topbar-crumb-button"
             title={project ?? '会话的文件夹'}
-            aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，工作树 · ${escapeSecurityText(worktree)}` : ''}`}>
+            aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，${lead} · ${escapeSecurityText(worktree)}` : ''}`}>
             {worktree ? (
               <FolderGit2 size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             ) : (
@@ -198,7 +199,7 @@ function ProjectCrumb({
             )}
             {worktree && (
               <span className="topbar-crumb-worktree">
-                工作树 · <VisibleText text={worktree} />
+                {lead} · <VisibleText text={worktree} />
               </span>
             )}
           </button>

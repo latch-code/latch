@@ -25,9 +25,11 @@ import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
 import { AttachmentStore } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
+import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
+import { existsSync } from 'node:fs'
 import { lstat, mkdir, chmod, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -130,6 +132,7 @@ import {
   checkPrivateFile,
   checkProjectFolders,
   classifyDefaultWorkspace,
+  isInsidePath,
   isPrintableText,
   latchCodeRoot,
   prepareRuntimeDir,
@@ -185,7 +188,8 @@ import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleList
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
-import { Worktrees, type Worktree } from './worktrees.ts'
+import { WORKTREE_NAME, Worktrees, type Worktree } from './worktrees.ts'
+import { RepositoryHolds } from './git-delivery.ts'
 import { writeProjectContext } from './project-context.ts'
 import { AgentProbes } from './agent-probes.ts'
 import type { HostInfo } from './host-state.ts'
@@ -290,6 +294,17 @@ const queuedPromptSchema = promptSchema.extend({
   /** This turn starts a new context: the agent sees none of the earlier messages, which stay in the history. */
   freshContext: z.literal(true).optional(),
 })
+const removeWorktreeSchema = z.strictObject({
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  /** How many uncommitted files the person agreed to discard; required, and equal to the count now, when there are any. */
+  discard: z.number().int().min(1).max(10_000_000).optional(),
+  /** The inventory's digest the person confirmed: a removal that discards anything is refused when the listing moved. */
+  digest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .optional(),
+})
+
 const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
   forkOf: z
@@ -299,8 +314,20 @@ const createTaskSchema = promptSchema.extend({
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
-  /** Start in a new Git worktree of the project's folder, on a branch of its own. */
-  worktree: z.literal(true).optional(),
+  /**
+   * Start in a Git worktree of the project's folder: `true` (or `head`) on a new branch from its HEAD, `commit` on a new
+   * branch from another local branch or commit, `branch` on an existing local branch, `reuse` in an earlier Latch
+   * worktree of the project (docs/BRANCHES.md).
+   */
+  worktree: z
+    .union([
+      z.literal(true),
+      z.strictObject({ from: z.literal('head') }),
+      z.strictObject({ from: z.literal('commit'), ref: z.string().min(1).max(200) }),
+      z.strictObject({ from: z.literal('branch'), branch: z.string().min(1).max(200) }),
+      z.strictObject({ from: z.literal('reuse'), name: z.string().regex(WORKTREE_NAME) }),
+    ])
+    .optional(),
   customAgentId: z
     .string()
     .regex(/^agt_[a-f0-9-]{36}$/u)
@@ -1162,6 +1189,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     await ownFolders.start()
     const makeOwnFolders = options.sessionFolders === true
     const worktrees = new Worktrees({ root: worktreesDir, dataDir: realDataDir, avoid: [codeRoot, runtime.runtimeDir, agentsDir], log })
+    const repositoryHolds = new RepositoryHolds()
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
@@ -1450,7 +1478,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         await assertSessionWorkspace(sessionId)
       } catch (error) {
-        if (error instanceof AppError && ['workspace-changed', 'workspace-disabled'].includes(error.code)) return 'removed'
+        if (
+          error instanceof AppError
+          && ['workspace-changed', 'workspace-disabled', 'worktree-removed', 'worktree-removing'].includes(error.code)
+        )
+          return 'removed'
         throw error
       }
       const available = await canonicalSet(usablePrimaries())
@@ -1611,6 +1643,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       detail: id => harnessHub.detail(id),
       patch: (id, patch) => harnessHub.updateMeta(id, patch),
       remove: async id => {
+        await keepWorktreePrivacy(id)
         await harnessHub.remove(id)
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
@@ -1764,6 +1797,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let tlsOrigin: string | undefined
     const routeContext: RouteContext = {
       updateGate: { committed: () => updateWindow.isCommitted, deliveries },
+      repositoryHolds,
       hostId,
       hostId8,
       dataDir,
@@ -3315,7 +3349,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .workspaces.filter(record => lastSeenUsable(record))
           .flatMap(record => record.folders.map(folder => folder.path)),
         ...ownFolders.paths(hub?.sessionFolders() ?? []),
-        ...(hub?.worktrees() ?? []).filter(entry => lastSeenUsable(savedProject(entry.workspaceId))).map(entry => entry.path),
+        ...(hub?.worktrees() ?? [])
+          .filter(entry => !entry.removed && lastSeenUsable(savedProject(entry.workspaceId)))
+          .map(entry => entry.path),
         ...worktrees.starting(),
       ]
     }
@@ -3343,6 +3379,264 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function sessionTask(sessionId: string): Promise<TaskSummary | undefined> {
       return (await hub!.listTasks()).find(task => task.id === sessionId)
+    }
+
+    /** A saved project with one folder: the only kind a Latch worktree is made from. */
+    function worktreeProject(id: string): WorkspaceRecord {
+      const record = requireProject(id)
+      if (record.folders.length !== 1)
+        throw new AppError(409, 'worktree-project-folders', '这个项目有多个文件夹，新工作树只用于只有一个文件夹的项目。')
+      return record
+    }
+
+    /**
+     * Who a worktree's marker names, by the Host's own records (session metadata), not by what the Harnesses list now: a
+     * session whose metadata is gone was deleted, so its worktree is a leftover; one with metadata that no Harness lists
+     * (its Harness is off) still holds it. `reason`: why it can be neither reused nor removed as a leftover.
+     */
+    async function worktreeOwner(sessionId: string): Promise<{ state: LatchWorktree['state']; private: boolean; reason?: string }> {
+      const kept = hub!.sessionRecord(sessionId)
+      const task = await sessionTask(sessionId)
+      if (!kept && !task) return { state: 'leftover', private: false }
+      const secret = (kept?.private ?? false) || privateSession(task)
+      const archived = kept?.archived ?? task?.archived === true
+      const state = archived ? 'archived' : 'session'
+      if (!task) return { state, private: secret, reason: '这个工作树的会话现在没有列出（它的 Harness 未启用），不能沿用。' }
+      if (ACTIVE_STATUSES.has(task.status)) return { state, private: secret, reason: '这个工作树的会话正在运行，没有开始会话。' }
+      if (!archived) return { state, private: secret, reason: '这个工作树属于一个未归档的会话。归档那个会话后，才能在新会话里沿用它。' }
+      return { state, private: secret }
+    }
+
+    /**
+     * A private session's worktree stays private after the session is gone: its marker is marked before the session's
+     * records go (privacy can come after the start, so this is not only done when the worktree is bound).
+     */
+    async function keepWorktreePrivacy(sessionId: string): Promise<void> {
+      const worktree = harnessHub.worktreeOf(sessionId)
+      if (!worktree || worktree.removed || !harnessHub.sessionRecord(sessionId)?.private) return
+      await worktrees.markPrivate(worktree.path, sessionId).catch(() => {
+        throw new AppError(500, 'worktree-mark-failed', '没有记下这个会话的工作树是私有的，会话没有删除。请稍后再试。')
+      })
+    }
+
+    const fullData = (caller: Caller) => !!caller.device && devices.get(caller.device.id)?.dataScope === 'all'
+
+    /** Why this caller may not reuse the worktree a session holds, or undefined when it may. */
+    async function worktreeHolder(caller: Caller, sessionId: string | undefined, markedPrivate = false): Promise<string | undefined> {
+      const owner = sessionId ? await worktreeOwner(sessionId) : { state: 'leftover' as const, private: false, reason: undefined }
+      if (owner.reason) return owner.reason
+      if ((owner.private || markedPrivate) && !fullData(caller)) return '这个工作树的会话含有私有内容，只有数据范围为全部的设备能沿用它。'
+      return undefined
+    }
+
+    /** A turn runs or waits in this folder. */
+    async function turnIn(path: string): Promise<boolean> {
+      return (await hub!.listTasks()).some(
+        task => ACTIVE_STATUSES.has(task.status) && sessionFolders(task, workspaceRoot).some(folder => isInsidePath(folder, path)),
+      )
+    }
+
+    /**
+     * The Latch worktrees of a project, with whose they are and whether this caller may reuse them; a private session's
+     * id and branch are left out for a device without the full data scope.
+     */
+    async function latchWorktrees(record: WorkspaceRecord, caller: Caller): Promise<LatchWorktree[]> {
+      const listed: LatchWorktree[] = []
+      for (const entry of await worktrees.list(record.folders[0].path)) {
+        const owner = entry.sessionId ? await worktreeOwner(entry.sessionId) : { state: 'leftover' as const, private: false }
+        // The marker keeps a private session's mark after that session is deleted.
+        const secret = owner.private || entry.private
+        const hidden = secret && !fullData(caller)
+        const reason = worktrees.busy(entry.path)
+          ? '这个工作树正在开始会话或正在移除。'
+          : await worktreeHolder(caller, entry.sessionId, entry.private)
+        listed.push({
+          name: entry.name,
+          ...(entry.branch && !hidden ? { branch: entry.branch } : {}),
+          state: owner.state,
+          ...(entry.sessionId && owner.state !== 'leftover' && !hidden ? { sessionId: entry.sessionId } : {}),
+          reusable: reason === undefined,
+          ...(reason ? { reason } : {}),
+        })
+      }
+      return listed
+    }
+
+    /** The sessions whose folder a worktree is, by the Host's records and its marker. */
+    /** Every session with a folder that is the worktree or lies in it (a project inside it too), by records and listing. */
+    async function worktreeSessions(path: string): Promise<Set<string>> {
+      const owners = new Set(
+        hub!
+          .worktrees()
+          .filter(entry => isInsidePath(entry.path, path))
+          .map(entry => entry.sessionId),
+      )
+      for (const task of await hub!.listTasks())
+        if (sessionFolders(task, workspaceRoot).some(folder => isInsidePath(folder, path))) owners.add(task.id)
+      const marked = await worktrees.sessionOf(path)
+      if (marked) owners.add(marked)
+      return owners
+    }
+
+    /** What removing a worktree would lose (file names among it), and what keeps it from being removed now. */
+    async function worktreeFacts(caller: Caller, path: string): Promise<WorktreeInventory> {
+      if (!fullData(caller)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+      const facts = await worktrees.inventory(path)
+      const pending = worktrees.busy(path)
+      const common = await worktrees.common(path)
+      const busy =
+        pending
+        ?? (repositoryHolds.of(common)
+          ? 'delivery'
+          : (await turnIn(path))
+            ? 'turn'
+            : terminals.openIn(await worktreeSessions(path)) || terminals.openInside(path)
+              ? 'terminal'
+              : undefined)
+      return { ...facts, ...(busy ? { busy } : {}) }
+    }
+
+    /** A removal this Host already made, as its `worktree.result` record says: for a retry after a restart. */
+    function earlierRemoval(key: { requestHash: string; deviceId: string } | { worktreeHash: string }): WorktreeRemoval | undefined {
+      const found =
+        'requestHash' in key ? audit.worktreeRemoval(`request:${key.requestHash}`) : audit.worktreeRemoval(`tree:${key.worktreeHash}`)
+      if (!found || ('deviceId' in key && found.actor.deviceId !== key.deviceId)) return undefined
+      const branch = found.detail.branch
+      return {
+        removed: true,
+        discarded: typeof found.detail.discarded === 'number' ? found.detail.discarded : 0,
+        branch: branch === 'deleted' || branch === 'kept' ? branch : 'none',
+      }
+    }
+
+    const removals = new Map<string, Promise<WorktreeRemoval>>()
+
+    /**
+     * Removes a Latch worktree of `record` (the session's, or a leftover with no session): in the project's queue, with
+     * the repository held against delivery, refused while a turn runs there. The audit record comes before Git runs;
+     * the same request gets the same answer.
+     */
+    function removeWorktree(
+      caller: Caller,
+      res: ServerResponse,
+      record: WorkspaceRecord,
+      path: string,
+      sessionId: string | undefined,
+      body: z.infer<typeof removeWorktreeSchema>,
+    ): Promise<WorktreeRemoval> {
+      requireScope(caller, 'run')
+      if (devices.get(caller.device.id)?.dataScope !== 'all')
+        throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+      const key = `${caller.device.id}:${body.requestId}`
+      const known = removals.get(key)
+      if (known) return known
+      const requestHash = sha256Hex(body.requestId)
+      const target = { workspaceId: record.id, ...(sessionId ? { sessionId } : {}), worktreeHash: sha256Hex(path), requestHash }
+      const answer = projectOperation(record.id, caller, 'run', async () => {
+        if (devices.get(caller.device.id)?.dataScope !== 'all')
+          throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+        if (sessionId) {
+          checkPrivateSession(caller, sessionId)
+          // Git removed it before and only the session's record was left: finish that.
+          const done = !existsSync(path) && earlierRemoval({ worktreeHash: sha256Hex(path) })
+          if (done) {
+            await hub!.worktreeRemoved(sessionId)
+            refresh(sessionId)
+            return done
+          }
+          if ((await worktrees.sessionOf(path)) !== sessionId)
+            throw new AppError(409, 'worktree-owned', '这个工作树已不属于这个会话，没有改动。')
+        } else {
+          const owner = await worktrees.sessionOf(path)
+          if (owner && (await worktreeOwner(owner)).state !== 'leftover')
+            throw new AppError(409, 'worktree-owned', '这个工作树属于一个会话，请在那个会话的菜单里移除它。')
+        }
+        const release = repositoryHolds.take(await worktrees.common(path), 'worktree-remove')
+        if (!release) throw new AppError(409, 'worktree-busy', '这个仓库正在进行交付操作，等它结束后再试。')
+        try {
+          const refuseTurn = async () => {
+            if (await turnIn(path)) throw new AppError(409, 'worktree-turn-running', '这个工作树里有一轮正在运行，结束后再试。')
+          }
+          const owners = await worktreeSessions(path)
+          const refuseTerminal = () => {
+            if (terminals.openIn(owners) || terminals.openInside(path))
+              throw new AppError(409, 'worktree-terminal-open', '这个工作树还有打开的终端，关闭后再移除。')
+          }
+          await refuseTurn()
+          let recorded = false
+          // No await between this check and remove(), which marks the worktree as removing: no terminal opens after it.
+          refuseTerminal()
+          const removing = worktrees.remove(path, {
+            ...(body.discard !== undefined ? { discard: body.discard } : {}),
+            ...(body.digest !== undefined ? { digest: body.digest } : {}),
+            audit: async facts => {
+              await refuseTurn()
+              refuseTerminal()
+              recheck(caller, 'run')
+              recorded = true
+              await audited({
+                action: 'worktree.remove',
+                actor: actorOf(caller),
+                target: sessionId ?? record.id,
+                stepup: 'none',
+                detail: {
+                  ...target,
+                  staged: facts.staged,
+                  unstaged: facts.unstaged,
+                  untracked: facts.untracked,
+                  ignored: facts.ignored,
+                  forced: facts.files > 0,
+                  ownBranch: facts.ownBranch,
+                  ...(facts.ahead !== undefined ? { ahead: facts.ahead } : {}),
+                  ...(facts.unpushed !== undefined ? { unpushed: facts.unpushed } : {}),
+                },
+              })
+            },
+          })
+          const removed = await removing.catch(async (error: unknown) => {
+            if (recorded)
+              await audited(
+                {
+                  action: 'worktree.result',
+                  actor: actorOf(caller),
+                  target: sessionId ?? record.id,
+                  stepup: 'none',
+                  detail: { ...target, outcome: 'failed' },
+                },
+                res,
+              )
+            throw error
+          })
+          const discarded = removed.facts.files + removed.facts.ignored
+          // Recorded before the session is marked, so a retry can finish marking it if that fails.
+          await audited(
+            {
+              action: 'worktree.result',
+              actor: actorOf(caller),
+              target: sessionId ?? record.id,
+              stepup: 'none',
+              detail: { ...target, outcome: 'removed', branch: removed.branch, discarded },
+            },
+            res,
+          )
+          if (sessionId) await hub!.worktreeRemoved(sessionId)
+          refresh(sessionId)
+          return {
+            removed: true as const,
+            discarded,
+            branch: removed.branch,
+            ...(removed.branchName ? { branchName: removed.branchName } : {}),
+          }
+        } finally {
+          release()
+        }
+      })
+      removals.set(key, answer)
+      while (removals.size > 256) removals.delete(removals.keys().next().value!)
+      answer.catch(() => {
+        if (removals.get(key) === answer) removals.delete(key)
+      })
+      return answer
     }
 
     /** Where a session's terminals open: its primary folder, while the session may still use it. */
@@ -3383,6 +3677,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // A worktree session needs its project, and the worktree still Latch's and this session's, where it started.
       const worktree = task && hub!.worktreeOf(task.id)
       if (task && worktree) {
+        if (worktree.removed) throw new AppError(409, 'worktree-removed', '这个会话的工作树已经移除，会话只能查看。')
+        if (worktrees.busy(worktree.path) === 'removing') throw new AppError(409, 'worktree-removing', '正在移除这个会话的工作树。')
         const record = savedProject(task.workspaceId)
         if (!record || task.cwd !== worktree.path || (await worktrees.sessionOf(worktree.path)) !== task.id) throw workspaceChanged()
         const state = await projectState(record)
@@ -3810,6 +4106,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           configReceipts: true,
           runLiveness: true,
           pinnedDefaults: true,
+          worktreeLifecycle: true,
           ...routes.features(caller),
         },
         harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])],
@@ -4784,7 +5081,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         let startRefs = fileRefs
         if (input.worktree && chosen) {
-          made = await worktrees.create({ source: chosen.folders[0].path, requestId: folderRequest })
+          made = await worktrees.create({
+            source: chosen.folders[0].path,
+            requestId: folderRequest,
+            start: input.worktree === true ? { from: 'head' } : input.worktree,
+            held: (holder, secret) => worktreeHolder(caller, holder, secret),
+          })
           // The session reads them in the worktree, which has the committed files and none of the uncommitted ones.
           if (fileRefs.length)
             startRefs = await checkedFileMentions(
@@ -4849,7 +5151,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           startedIn = true
           if (made)
             await worktrees
-              .bind(made.path, folderRequest, created.sessionId)
+              .bind(made.path, folderRequest, created.sessionId, hub!.sessionRecord(created.sessionId)?.private === true)
               .catch(error =>
                 log(`会话 ${created.sessionId} 的工作树标记写入失败：${error instanceof Error ? error.message : String(error)}`),
               )
@@ -5313,6 +5615,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'run')
         await assertSessionAccess(caller, id)
         terminalRoutes.checkSessionEnd(caller, id)
+        await keepWorktreePrivacy(id)
         await hub!.remove(id)
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
@@ -6453,11 +6756,81 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const worktreeMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)\/worktree$/)
       if (worktreeMatch && method === 'GET') {
         requireScope(caller, 'run')
-        const record = requireProject(safeDecode(worktreeMatch[1]!))
-        if (record.folders.length !== 1)
-          throw new AppError(409, 'worktree-project-folders', '这个项目有多个文件夹，新工作树只用于只有一个文件夹的项目。')
-        json(res, await worktrees.base(record.folders[0].path))
+        const record = worktreeProject(safeDecode(worktreeMatch[1]!))
+        const base = await worktrees.base(record.folders[0].path)
+        const reusable = (await latchWorktrees(record, caller)).filter(entry => entry.reusable)
+        recheck(caller, 'run')
+        json(res, { ...base, ...(reusable.length ? { reusable } : {}) } satisfies WorktreeBase)
         return
+      }
+      const leftoversMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)\/worktrees(?:\/(\d{8}-[0-9a-f]{4})(\/remove)?)?$/)
+      if (leftoversMatch) {
+        requireScope(caller, 'run')
+        const record = worktreeProject(safeDecode(leftoversMatch[1]!))
+        const name = leftoversMatch[2]
+        if (method === 'GET' && name === undefined) {
+          json(res, { worktrees: await latchWorktrees(record, caller) })
+          return
+        }
+        if (name === undefined) throw new AppError(405, 'method-not-allowed', '不支持这个方法')
+        const body = method === 'POST' && leftoversMatch[3] ? removeWorktreeSchema.parse(await jsonBody(req)) : undefined
+        const known = body && caller.device && removals.get(`${caller.device.id}:${body.requestId}`)
+        if (known) {
+          json(res, await known)
+          return
+        }
+        const entry = (await latchWorktrees(record, caller)).find(item => item.name === name)
+        // After a restart a retry finds its removal on record.
+        const earlier =
+          !entry && body && caller.device
+            ? earlierRemoval({ requestHash: sha256Hex(body.requestId), deviceId: caller.device.id })
+            : undefined
+        if (earlier) {
+          json(res, earlier)
+          return
+        }
+        if (!entry) throw new AppError(404, 'worktree-not-found', '找不到这个工作树，或它不是 Latch 新建的。')
+        // A worktree a session owns is removed from that session's menu, where its record is.
+        if (entry.state !== 'leftover') throw new AppError(409, 'worktree-owned', '这个工作树属于一个会话，请在那个会话的菜单里移除它。')
+        const path = (await worktrees.list(record.folders[0].path)).find(item => item.name === name)!.path
+        if (method === 'GET' && !leftoversMatch[3]) {
+          json(res, await worktreeFacts(caller, path))
+          return
+        }
+        if (body) {
+          json(res, await removeWorktree(caller, res, record, path, undefined, body))
+          return
+        }
+        throw new AppError(405, 'method-not-allowed', '不支持这个方法')
+      }
+      const sessionWorktreeMatch = path.match(/^\/link\/api\/tasks\/([^/]+)\/worktree(\/remove)?$/)
+      if (sessionWorktreeMatch) {
+        requireScope(caller, 'run')
+        const sessionId = safeDecode(sessionWorktreeMatch[1]!)
+        checkPrivateSession(caller, sessionId)
+        const task = await sessionTask(sessionId)
+        const worktree = task && hub!.worktreeOf(sessionId)
+        if (!task || !worktree) throw new AppError(404, 'worktree-not-found', '这个会话不在 Latch 新建的工作树里。')
+        const body = method === 'POST' && sessionWorktreeMatch[2] ? removeWorktreeSchema.parse(await jsonBody(req)) : undefined
+        // A retry of a removal this Host answered gets the same answer.
+        const known = body && caller.device && removals.get(`${caller.device.id}:${body.requestId}`)
+        if (known) {
+          json(res, await known)
+          return
+        }
+        if (worktree.removed) throw new AppError(409, 'worktree-removed', '这个会话的工作树已经移除。')
+        const record = worktreeProject(task.workspaceId ?? 'default')
+        if (method === 'GET' && !sessionWorktreeMatch[2]) {
+          if ((await worktrees.sessionOf(worktree.path)) !== sessionId)
+            throw new AppError(409, 'worktree-owned', '这个工作树已不属于这个会话，没有改动。')
+          json(res, await worktreeFacts(caller, worktree.path))
+          return
+        }
+        if (body) {
+          json(res, await removeWorktree(caller, res, record, worktree.path, sessionId, body))
+          return
+        }
+        throw new AppError(405, 'method-not-allowed', '不支持这个方法')
       }
       if (path === '/link/api/policy') {
         requireDevice(caller)

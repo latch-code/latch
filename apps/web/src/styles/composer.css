@@ -1132,3 +1132,101 @@
 .composer-stop > svg {
   flex-shrink: 0;
 }
+
+/* 其他起点: the folder menu's panel. Rows of 32 with a check slot, the name, and the commit or why it cannot be picked. */
+.worktree-start {
+  width: 100%;
+}
+.worktree-start-list {
+  display: grid;
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.worktree-start-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  padding: var(--sp-4) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: start;
+}
+.worktree-start-row:hover {
+  background: var(--hover);
+}
+.worktree-start-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.worktree-start-row[aria-disabled='true'] {
+  color: var(--muted);
+  cursor: default;
+}
+.worktree-start-row[aria-disabled='true']:hover {
+  background: transparent;
+}
+.worktree-start-check {
+  display: inline-flex;
+  color: var(--accent);
+}
+.worktree-start-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-start-meta {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+@media (pointer: coarse) {
+  .worktree-start-row {
+    min-height: var(--touch);
+  }
+}
+
+/* 移除工作树: what is there, as label and value rows, then the discard box. */
+.worktree-remove {
+  display: grid;
+  gap: var(--sp-12);
+}
+.worktree-facts {
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+}
+.worktree-facts-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-8);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.worktree-facts-row dt {
+  color: var(--muted);
+}
+.worktree-facts-row dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.worktree-facts-stat {
+  margin-left: var(--sp-6);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+}

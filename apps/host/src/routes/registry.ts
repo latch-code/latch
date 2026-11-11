@@ -6,6 +6,7 @@ import type { BucketName, Presented, RateLimiter } from '../access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from '../audit.ts'
 import type { ConnectionContext, DeviceStore, EnrollmentService } from '../auth.ts'
 import type { HostConfig } from '../config.ts'
+import type { RepositoryHolds } from '../git-delivery.ts'
 import { KIB } from '../http-util.ts'
 import type { HarnessHub } from '../hub.ts'
 import type { ListenerContext } from '../listeners.ts'
@@ -42,6 +43,8 @@ export type AuditEvent = Parameters<AuditLog['append']>[0]
 export interface RouteContext {
   /** The install window (update-window.ts): Git delivery refuses new writes while it is committed and counts running ones. */
   updateGate: { committed(): boolean; deliveries: { running: number } }
+  /** Which Host write holds a repository now: delivery and worktree removal take turns. */
+  repositoryHolds: RepositoryHolds
   hostId: string
   hostId8: string
   dataDir: string

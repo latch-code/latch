@@ -3,18 +3,26 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { AppError } from '@latch/sdk'
-import { escapeSecurityText, type WorktreeBase } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  type WorktreeBase,
+  type WorktreeBranchChoice,
+  type WorktreeInventory,
+  type WorktreeStart,
+} from '@latch/protocol'
 import { redactSecrets, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import { z } from 'zod'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
 import { GitError, GitReader, findGit } from './changes/git.ts'
+import { commonDirOf as gitCommonDir } from './changes/git-status.ts'
 import { codeOf } from './http-util.ts'
 import { canonicalPath, isInsidePath } from './paths.ts'
 import { sessionFolderName } from './session-folders.ts'
 
 /**
  * Git worktrees the Host makes for sessions: `<root>/<repository>-<8 hex>/<yyyymmdd>-<4 hex>` on a new branch
- * `latch/<yyyymmdd>-<4 hex>` from the source folder's HEAD. Making one runs nothing the repository names: every Git
+ * `latch/<yyyymmdd>-<4 hex>` from the source folder's HEAD or another local branch or commit, or on an existing local
+ * branch checked out there; or an earlier one of the same project reused. Making one runs nothing the repository names: every Git
  * process gets a rebuilt environment with hooks, fsmonitor, attribute files and transports off and LFS smudging
  * skipped; the worktree is added without a checkout, every filter driver its configuration then names is emptied, and
  * only then does `reset --hard` write the files. Configuration Latch cannot reason about is refused instead. A marker
@@ -33,6 +41,15 @@ const INCLUDE_LIMIT = 10_000
 const ATTEMPTS = 16
 const REQUEST_LIMIT = 512
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
+/**
+ * A local branch name a person gives: Latch always prefixes `refs/heads/`, so it is never an option, a full ref, HEAD or
+ * a name Git's own rules forbid in any ref; `check-ref-format` then has the last word.
+ */
+export const BRANCH_NAME = /^(?!-)(?!refs\/)(?!HEAD$)(?!@$)[^\x00-\x20\x7f~^:?*[\\]{1,200}$/u
+/** An abbreviated or full commit ID a person types. */
+const COMMIT_REF = /^[0-9a-f]{7,64}$/u
+/** Local branches offered as start points. */
+const BRANCH_LIMIT = 200
 /** Long enough for a large checkout; a stopped one is rolled back. */
 const CHECKOUT_TIMEOUT_MS = 10 * 60_000
 
@@ -57,6 +74,10 @@ const markerSchema = z.strictObject({
   version: z.literal(1),
   request: z.string().regex(/^[a-f0-9]{64}$/u),
   sessionId: z.string().min(1).max(256).optional(),
+  /** Checked out an existing branch: Latch did not make it and never deletes it. */
+  existingBranch: z.literal(true).optional(),
+  /** A private session owned it: it stays private once that session is gone. */
+  private: z.literal(true).optional(),
 })
 
 export interface Worktree {
@@ -69,6 +90,22 @@ export interface Worktree {
   copied: number
   /** Tracked files left as Git stores them because their filter (Git LFS, for one) was not run; absent when uncounted. */
   unfiltered?: number
+  /** An existing local branch checked out here: Latch never deletes it. */
+  existingBranch?: true
+  /** An earlier worktree of the project, taken over by this start: never removed when the start fails. */
+  reused?: true
+}
+
+/** A worktree Latch made for a project, found under the root by its marker. */
+export interface MarkedWorktree {
+  name: string
+  path: string
+  /** Its current branch, as the branch reader shows names; absent when HEAD is detached. */
+  branch?: string
+  sessionId?: string
+  existingBranch: boolean
+  /** A private session owned it at some point. */
+  private: boolean
 }
 
 export interface WorktreeOptions {
@@ -83,12 +120,14 @@ export interface WorktreeOptions {
   /** Whose global Git configuration applies; the Host user's home by default. */
   home?: string
   clock?: () => number
+  /** Tests: entries the scan of untracked and ignored folders looks at (`SCAN_LIMIT` by default). */
+  scanLimit?: number
   /** Tests: the four hex characters; default random. */
   suffix?: () => string
   log: (text: string) => void
 }
 
-const refuse = (code: string, message: string) => new AppError(409, code, message)
+const refuse = (code: string, message: string, details?: Record<string, unknown>) => new AppError(409, code, message, details)
 /** A hook in the configuration whose name the restricted Git cannot switch off (`changes/git.ts`). */
 const hookRefusal = (error: unknown) =>
   error instanceof GitError && error.reason === 'unsafe-config'
@@ -97,6 +136,160 @@ const hookRefusal = (error: unknown) =>
         'Git 配置里有一个钩子（hook.*）的名字含「=」或换行，Latch 无法确保它不运行，没有新建工作树。请在 Git 配置里给它改名或删除它。',
       )
     : undefined
+/** Shown as the branch reader shows names: never a secret's shape, hidden characters made visible. */
+function shownName(name: string): string | undefined {
+  return name.length <= 256 && redactSecrets(name) === name ? escapeSecurityText(name) : undefined
+}
+
+/** `status --porcelain=v2 -z --branch`: counts by side, distinct files, the upstream and how far ahead. */
+function countStatus(out: Buffer) {
+  const counted = {
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+    files: 0,
+    /** Ignored files Git listed one by one; ignored folders are counted by the scan. */
+    ignoredFiles: 0,
+    ignoredExample: undefined as string | undefined,
+    /** Ignored entries Git listed as a whole folder (`dir/`): their files are counted and searched for a repository. */
+    ignoredDirs: [] as string[],
+    /** Untracked folders Git listed whole (another repository) and entries named `.git`. */
+    untrackedDirs: [] as string[],
+    /** Every record but the branch headers, for the digest the confirmation is bound to. */
+    listing: [] as string[],
+    ahead: 0,
+    upstream: undefined as string | undefined,
+    head: false,
+  }
+  for (const record of out.toString('utf8').split('\0')) {
+    const kind = record[0]
+    if (kind === '#') {
+      const [key, ...rest] = record.slice(2).split(' ')
+      const value = rest.join(' ')
+      if (key === 'branch.oid') counted.head = OID.test(value)
+      else if (key === 'branch.upstream') counted.upstream = shownName(value)
+      else if (key === 'branch.ab') counted.ahead = Number(/^\+(\d+) /u.exec(value)?.[1] ?? 0)
+      continue
+    }
+    if (record) counted.listing.push(record)
+    if (kind === '?' || kind === '!') {
+      const entry = record.slice(2)
+      const gitEntry = entry === '.git' || entry.endsWith('/.git')
+      if (kind === '!') {
+        if (entry.endsWith('/') && !gitEntry) counted.ignoredDirs.push(entry)
+        else counted.ignoredFiles++
+        if (gitEntry) counted.untrackedDirs.push(entry)
+        counted.ignoredExample ??= shownName(entry.length > 120 ? `${entry.slice(0, 120)}…` : entry)
+        continue
+      }
+      if (entry.endsWith('/') || gitEntry) counted.untrackedDirs.push(entry)
+      counted.untracked++
+      counted.files++
+    } else if (kind === '1' || kind === '2') {
+      counted.files++
+      if (record[2] !== '.') counted.staged++
+      if (record[3] !== '.') counted.unstaged++
+    } else if (kind === 'u') {
+      counted.files++
+      counted.unstaged++
+    }
+  }
+  return counted
+}
+
+/** Entries the scan of untracked and ignored folders looks at before it refuses the removal (`worktree-too-large`). */
+export const SCAN_LIMIT = 300_000
+
+interface FolderScan {
+  /** An untracked or ignored folder holding a `.git`: another repository, with history of its own. */
+  nested?: string
+  /** The folder the scan was in when it passed the limit: what it could not look through. */
+  tooLarge?: string
+  /** Files (anything but a folder) under each ignored folder. */
+  files: Map<string, number>
+}
+
+/**
+ * Looks through the untracked and ignored folders Git listed whole: removing the worktree deletes them, and Git does
+ * that even without `--force`, so Latch counts their files and refuses a nested repository itself. Links are never
+ * followed. Past `limit` entries it stops and names the folder, which refuses the removal: it never passes unchecked.
+ */
+async function scanFolders(root: string, untracked: readonly string[], ignored: readonly string[], limit: number): Promise<FolderScan> {
+  const scan: FolderScan = { files: new Map() }
+  let seen = 0
+  for (const entry of [...untracked, ...ignored]) {
+    const folder = entry.replace(/\/+$/u, '')
+    if (folder === '.git' || folder.endsWith('/.git')) {
+      scan.nested ??= folder
+      continue
+    }
+    let files = 0
+    const stack = [join(root, folder)]
+    while (stack.length) {
+      const dir = stack.pop()!
+      let children
+      try {
+        children = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const child of children) {
+        if (++seen > limit) {
+          scan.tooLarge = folder
+          return scan
+        }
+        if (child.name === '.git') scan.nested ??= relative(root, dir) || '.'
+        if (child.isDirectory() && !child.isSymbolicLink()) stack.push(join(dir, child.name))
+        else files++
+      }
+    }
+    if (ignored.includes(entry)) scan.files.set(entry, files)
+  }
+  return scan
+}
+
+/** Submodules checked out in the worktree: a gitlink in the index whose folder has anything in it. */
+async function populatedSubmodules(git: GitReader, layout: GitLayout, root: string): Promise<number> {
+  const out = await git.run(layout, [...WRITE_CONFIG, 'ls-files', '-z', '--stage'], { maxBytes: 64 * 1024 * 1024, env: WRITE_ENV })
+  const links = out
+    .toString('utf8')
+    .split('\0')
+    .filter(record => record.startsWith('160000 '))
+    .map(record => record.slice(record.indexOf('\t') + 1))
+  let populated = 0
+  for (const link of links) {
+    const info = await lstat(join(root, link)).catch(() => undefined)
+    if (info?.isDirectory() && !info.isSymbolicLink() && (await readdir(join(root, link))).length > 0) populated++
+  }
+  return populated
+}
+
+/**
+ * The worktree's own submodule clones (`<gitdir>/modules`, which `submodule deinit` keeps): removing the worktree
+ * deletes them with whatever only they hold (detached commits, reflogs, nested submodules). Latch never judges or
+ * deletes them; while anything is there, removal waits for the person.
+ */
+async function moduleData(gitdir: string): Promise<{ path: string } | undefined> {
+  const modules = join(gitdir, 'modules')
+  const info = await lstat(modules).catch(() => undefined)
+  if (!info) return undefined
+  if (info.isDirectory() && !info.isSymbolicLink() && (await readdir(modules)).length === 0) return undefined
+  return { path: modules }
+}
+
+/** `diff --numstat -z`: lines added and removed; a binary file counts as neither. */
+function numstat(out: Buffer): { insertions: number; deletions: number } {
+  let insertions = 0,
+    deletions = 0
+  for (const record of out.toString('utf8').split('\0')) {
+    const match = /^(\d+|-)\t(\d+|-)\t/u.exec(record)
+    if (!match) continue
+    if (match[1] !== '-') insertions += Number(match[1])
+    if (match[2] !== '-') deletions += Number(match[2])
+  }
+  return { insertions, deletions }
+}
+
 const failed = (step: string) => new AppError(500, 'worktree-failed', `新建工作树失败（${step}），已撤销，项目文件夹没有改变。`)
 
 /** Each component of an absolute path: a symlink or a non-directory anywhere along it is refused. */
@@ -117,8 +310,12 @@ async function realDirectories(path: string): Promise<void> {
   }
 }
 
-/** What a configuration listing says the Host must refuse, or the filter drivers it must empty. */
-function readConfig(listing: Buffer): string[] {
+/**
+ * What a configuration listing says the Host must refuse, or the filter drivers it must empty. Only making a worktree
+ * refuses `includeIf` and LFS programs (`creating`): reading or removing an existing one reads its configuration as it is
+ * and runs neither.
+ */
+function readConfig(listing: Buffer, creating = true): string[] {
   const drivers = new Set<string>()
   const fields = listing.toString('utf8').split('\0')
   // `--show-scope --name-only --null`: scope and name alternate.
@@ -126,12 +323,12 @@ function readConfig(listing: Buffer): string[] {
     const scope = fields[at]!,
       name = fields[at + 1]!
     const repository = scope === 'local' || scope === 'worktree'
-    if (repository && name.startsWith('includeif.'))
+    if (creating && repository && name.startsWith('includeif.'))
       throw refuse(
         'worktree-include-if',
         '仓库配置（.git/config）里有 includeIf，Latch 无法确定建工作树时 Git 会读到哪些设置，没有新建工作树。请把 includeIf 移到全局配置（~/.gitconfig）或删除后再试。',
       )
-    if (/^lfs\.customtransfer\..+\.path$/u.test(name) || /^lfs\.extension\..+\.(?:clean|smudge)$/u.test(name))
+    if (creating && (/^lfs\.customtransfer\..+\.path$/u.test(name) || /^lfs\.extension\..+\.(?:clean|smudge)$/u.test(name)))
       throw refuse(
         'worktree-lfs-program',
         'Git 配置里有指向程序的 LFS 设置（lfs.customtransfer.*.path 或 lfs.extension.*），没有新建工作树。请删除这项设置后再试。',
@@ -190,18 +387,38 @@ export class Worktrees {
   private readonly requests = new Map<string, Promise<Worktree>>()
   /** Made by this process for a start whose session does not own it yet. */
   private readonly unbound = new Set<string>()
+  /** Being removed now: no start reuses one, and no second removal begins. */
+  private readonly removing = new Set<string>()
+  /** The start request each worktree this process made or reused answers, by path. */
+  private readonly requestOf = new Map<string, string>()
 
   constructor(private readonly options: WorktreeOptions) {
     const binary = findGit(options.git ? [options.git] : undefined)
     this.git = binary ? new GitReader({ binary, timeoutMs: 30_000, ...(options.home ? { home: options.home } : {}) }) : undefined
   }
 
-  /** A new worktree and branch from `source`'s HEAD for one start request; the same request gets the same one. */
-  create(input: { source: string; requestId: string }): Promise<Worktree> {
+  /**
+   * A worktree for one start request, from `start` (`source`'s HEAD by default); the same request gets the same one.
+   * `held` says why the session that owns a worktree (and whether a private one ever did) keeps it from being reused
+   * (undefined: it may be).
+   */
+  create(input: {
+    source: string
+    requestId: string
+    start?: WorktreeStart
+    held?: (sessionId: string | undefined, secret: boolean) => Promise<string | undefined>
+  }): Promise<Worktree> {
     const known = this.requests.get(input.requestId)
     if (known) return known
-    const made = this.make(input.source, input.requestId).then(worktree => {
+    const start = input.start ?? { from: 'head' }
+    const made = (
+      start.from === 'reuse'
+        ? this.reuse(input.source, start.name, input.requestId, input.held)
+        : this.make(input.source, input.requestId, start)
+    ).then(worktree => {
       this.unbound.add(worktree.path)
+      this.requestOf.set(worktree.path, input.requestId)
+      while (this.requestOf.size > REQUEST_LIMIT) this.requestOf.delete(this.requestOf.keys().next().value!)
       return worktree
     })
     this.requests.set(input.requestId, made)
@@ -213,15 +430,23 @@ export class Worktrees {
   }
 
   /** The session created in a worktree made for `requestId` now owns it. */
-  async bind(path: string, requestId: string, sessionId: string): Promise<void> {
+  async bind(path: string, requestId: string, sessionId: string, secret = false): Promise<void> {
     const found = await this.marked(path)
     if (!found || (found.marker.request !== sha256Hex(requestId) && found.marker.sessionId !== sessionId))
       throw refuse('worktree-unmarked', '这个工作树不是 Latch 为这次开始新建的，没有记录到会话。')
-    if (found.marker.sessionId !== sessionId) {
-      if (found.marker.sessionId) throw refuse('worktree-owned', '这个工作树已属于另一个会话。')
-      await writeFileAtomic(join(found.layout.gitdir, MARKER_FILE), `${JSON.stringify({ ...found.marker, sessionId })}\n`)
+    if (found.marker.sessionId !== sessionId || (secret && !found.marker.private)) {
+      if (found.marker.sessionId && found.marker.sessionId !== sessionId) throw refuse('worktree-owned', '这个工作树已属于另一个会话。')
+      const marker = { ...found.marker, sessionId, ...(secret ? { private: true as const } : {}) }
+      await writeFileAtomic(join(found.layout.gitdir, MARKER_FILE), `${JSON.stringify(marker)}\n`)
     }
     this.unbound.delete(path)
+  }
+
+  /** The session that owns a worktree turned out private (or is about to be deleted as one): its marker keeps that. */
+  async markPrivate(path: string, sessionId: string): Promise<void> {
+    const found = await this.marked(path)
+    if (!found || found.marker.sessionId !== sessionId || found.marker.private) return
+    await writeFileAtomic(join(found.layout.gitdir, MARKER_FILE), `${JSON.stringify({ ...found.marker, private: true })}\n`)
   }
 
   /** Worktrees this process made for starts still under way: a session may be created in them before it owns one. */
@@ -261,15 +486,430 @@ export class Worktrees {
   }
 
   /**
-   * What a worktree from `source` would start from, after the same checks a start makes before it writes anything; the
-   * refusal a start would give otherwise. Runs Git only to read HEAD's commit and the configuration's key names.
+   * What a worktree from `source` would start from, after the same checks a start makes before it writes anything, and
+   * the local branches it could start from instead; the refusal a start would give otherwise. Runs Git only to read
+   * refs, the worktree list and the configuration's key names.
    */
   async base(sourcePath: string): Promise<WorktreeBase> {
-    const { source, base } = await this.prepare(sourcePath)
+    const { git, source, base } = await this.prepare(sourcePath)
     const branch = 'branch' in source.head ? source.head.branch : undefined
-    // Shown as the branch reader shows it: never a secret's shape, hidden characters made visible.
-    const shown = branch && branch.length <= 256 && redactSecrets(branch) === branch ? escapeSecurityText(branch) : undefined
-    return { ...(shown ? { branch: shown } : {}), commit: base }
+    const shown = branch && shownName(branch)
+    const [listing, checkedOut] = await Promise.all([
+      git
+        .run(
+          source,
+          [
+            'for-each-ref',
+            '--sort=-committerdate',
+            `--count=${BRANCH_LIMIT}`,
+            '--format=%(refname:strip=2)%00%(objectname)',
+            'refs/heads/',
+          ],
+          { maxBytes: 1024 * 1024 },
+        )
+        .catch(() => Buffer.alloc(0)),
+      this.checkedOut(git, source).catch(() => new Map<string, string>()),
+    ])
+    const branches: WorktreeBranchChoice[] = []
+    for (const line of listing.toString('utf8').split('\n')) {
+      const [name, commit] = line.split('\0')
+      // Only names a person can read and send back unchanged.
+      if (!name || !commit || !OID.test(commit) || !BRANCH_NAME.test(name) || shownName(name) !== name) continue
+      branches.push({ name, commit, ...(checkedOut.has(name) ? { checkedOut: true as const } : {}) })
+    }
+    return { ...(shown ? { branch: shown } : {}), commit: base, branches }
+  }
+
+  /** Local branches checked out in some worktree of the repository, by name, with where. */
+  private async checkedOut(git: GitReader, layout: GitLayout): Promise<Map<string, string>> {
+    const out = await git.run(layout, [...WRITE_CONFIG, 'worktree', 'list', '--porcelain', '-z'], {
+      maxBytes: 4 * 1024 * 1024,
+      env: WRITE_ENV,
+    })
+    const found = new Map<string, string>()
+    let path = ''
+    for (const field of out.toString('utf8').split('\0')) {
+      if (field.startsWith('worktree ')) path = field.slice('worktree '.length)
+      else if (field.startsWith('branch refs/heads/')) found.set(field.slice('branch refs/heads/'.length), path)
+    }
+    return found
+  }
+
+  /** A branch name as a person gave it: the fixed shape, then Git's own rules for `refs/heads/<name>`. */
+  private async validName(git: GitReader, layout: GitLayout, name: string): Promise<boolean> {
+    if (!BRANCH_NAME.test(name)) return false
+    return git.run(layout, ['check-ref-format', `refs/heads/${name}`], { maxBytes: 1024 }).then(
+      () => true,
+      () => false,
+    )
+  }
+
+  /** The commit a start point names, and the existing branch to check out when it names one. */
+  private async resolve(
+    git: GitReader,
+    source: GitLayout,
+    start: Exclude<WorktreeStart, { from: 'reuse' }>,
+    head: string,
+  ): Promise<{ commit: string; existing?: string }> {
+    if (start.from === 'head') return { commit: head }
+    const asked = start.from === 'commit' ? start.ref : start.branch
+    const shown = escapeSecurityText(asked.slice(0, 80))
+    const named = (await this.validName(git, source, asked)) ? await git.commit(source, `refs/heads/${asked}`) : undefined
+    if (start.from === 'commit') {
+      if (named) return { commit: named }
+      if (COMMIT_REF.test(asked)) {
+        const out = await git
+          .run(source, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${asked}^{commit}`], { maxBytes: 256 })
+          .then(
+            bytes => bytes.toString('utf8').trim(),
+            () => '',
+          )
+        if (OID.test(out)) return { commit: out }
+      }
+      if (!BRANCH_NAME.test(asked) && !COMMIT_REF.test(asked))
+        throw new AppError(400, 'worktree-branch-name', `「${shown}」不是可用的分支名或提交，没有新建工作树。`)
+      throw refuse('worktree-start-missing', `这个仓库里没有本地分支或提交「${shown}」，没有新建工作树。`)
+    }
+    if (!BRANCH_NAME.test(asked) || !(await this.validName(git, source, asked)))
+      throw new AppError(400, 'worktree-branch-name', `「${shown}」不是可用的分支名，没有新建工作树。`)
+    if (!named) throw refuse('worktree-branch-missing', `这个仓库里没有本地分支「${shown}」，没有新建工作树。`)
+    const elsewhere = (
+      await this.checkedOut(git, source).catch(() => {
+        throw failed('读取工作树列表')
+      })
+    ).get(asked)
+    if (elsewhere !== undefined)
+      throw refuse(
+        'worktree-branch-checked-out',
+        `分支「${shown}」已在 ${escapeSecurityText(elsewhere)} 检出，同一个分支不能同时在两个工作树里检出。请从它新建分支，或先在那里切换分支。`,
+      )
+    return { commit: named, existing: asked }
+  }
+
+  /**
+   * An earlier worktree of the same project, by its folder name, for a new session: Latch's marker, valid, not being
+   * made or removed, and not held by its session (`held`). Its marker then names this request, and the new session
+   * once it exists; files, branch and Git state stay as they are.
+   */
+  private async reuse(
+    sourcePath: string,
+    name: string,
+    requestId: string,
+    held: ((sessionId: string | undefined, secret: boolean) => Promise<string | undefined>) | undefined,
+  ): Promise<Worktree> {
+    const { source, common, root } = await this.prepare(sourcePath)
+    const unknown = () => refuse('worktree-reuse-unknown', '找不到这个项目里由 Latch 新建、标记有效的这个工作树，没有开始会话。')
+    if (!WORKTREE_NAME.test(name)) throw unknown()
+    const path = join(root, bucketName(source.root), name)
+    const found = await this.marked(path)
+    if (!found || commonDirOf(found.layout) !== common) throw unknown()
+    const request = sha256Hex(requestId)
+    if (found.marker.request !== request) {
+      if (this.unbound.has(path) || this.removing.has(path))
+        throw refuse('worktree-reuse-busy', '这个工作树正被另一次开始或移除使用，没有开始会话。')
+      const reason = await held?.(found.marker.sessionId, found.marker.private === true)
+      if (reason) throw refuse('worktree-reuse-held', reason)
+      // Private once, private for good: a reused worktree may still hold what that session left.
+      const marker = {
+        version: 1,
+        request,
+        ...(found.marker.existingBranch ? { existingBranch: true } : {}),
+        ...(found.marker.private ? { private: true } : {}),
+      }
+      await writeFileAtomic(join(found.layout.gitdir, MARKER_FILE), `${JSON.stringify(marker)}\n`).catch(() => {
+        throw failed('写入标记')
+      })
+    }
+    const head = 'branch' in found.layout.head && BRANCH_NAME.test(found.layout.head.branch) ? found.layout.head.branch : undefined
+    return {
+      path,
+      branch: head ?? `latch/${name}`,
+      base: '',
+      copied: 0,
+      reused: true,
+      ...(found.marker.existingBranch ? { existingBranch: true as const } : {}),
+    }
+  }
+
+  /** The source folder's repository and its shared Git directory, without the checks only making a worktree needs. */
+  private async repository(sourcePath: string): Promise<{ git: GitReader; source: GitLayout; common: string; bucket: string }> {
+    const git = this.git
+    if (!git) throw new AppError(409, 'worktree-no-git', '这台电脑上找不到 Git。安装 Git（或 Xcode 命令行工具）后再试。')
+    const source = await readGitLayout(sourcePath)
+    const common = source && commonDirOf(source)
+    if (!source || !common) throw refuse('worktree-not-repository', '这个文件夹不是 Git 仓库的顶层文件夹。')
+    const root = this.options.root
+    if (!isAbsolute(root) || resolve(root) !== root) throw refuse('worktree-location', '工作树的位置不是一个完整的路径。')
+    return { git, source, common, bucket: join(root, bucketName(source.root)) }
+  }
+
+  /** Every worktree Latch made from this source folder's repository, found under the root by its marker. */
+  async list(sourcePath: string): Promise<MarkedWorktree[]> {
+    const { common, bucket } = await this.repository(sourcePath)
+    let names: string[]
+    try {
+      await realDirectories(bucket)
+      names = await readdir(bucket)
+    } catch {
+      return []
+    }
+    const listed: MarkedWorktree[] = []
+    for (const name of names.toSorted().toReversed()) {
+      if (!WORKTREE_NAME.test(name)) continue
+      const path = join(bucket, name)
+      const found = await this.marked(path)
+      if (!found || commonDirOf(found.layout) !== common) continue
+      const branch = 'branch' in found.layout.head ? shownName(found.layout.head.branch) : undefined
+      listed.push({
+        name,
+        path,
+        ...(branch ? { branch } : {}),
+        ...(found.marker.sessionId ? { sessionId: found.marker.sessionId } : {}),
+        existingBranch: found.marker.existingBranch === true,
+        private: found.marker.private === true,
+      })
+    }
+    return listed
+  }
+
+  /** The shared Git directory of a Latch worktree, as Git names it: the key delivery holds a repository by. */
+  async common(path: string): Promise<string> {
+    const found = await this.marked(path)
+    if (!found || !this.git) throw new AppError(404, 'worktree-not-found', '找不到这个工作树，或它不是 Latch 新建的。')
+    return gitCommonDir(this.git, found.layout).catch(() => {
+      throw new AppError(500, 'worktree-read-failed', '没有读出这个工作树的状态，请稍后再试。')
+    })
+  }
+
+  /** Whether a start is being made in this worktree, or it is being removed. */
+  busy(path: string): 'starting' | 'removing' | undefined {
+    return this.removing.has(path) ? 'removing' : this.unbound.has(path) ? 'starting' : undefined
+  }
+
+  /**
+   * The branch Latch made goes only when every commit on it is on another branch, a remote ref or a tag (so nothing is
+   * left reachable from the reflog alone), it is checked out nowhere, and it still names the commit the inspection saw.
+   */
+  private async dropBranch(git: GitReader, source: GitLayout, own: { name: string; tip: string }): Promise<boolean> {
+    try {
+      if ((await this.checkedOut(git, source)).has(own.name)) return false
+      const unique = await git.run(
+        source,
+        ['rev-list', '--count', own.tip, '--not', `--exclude=${own.name}`, '--branches', '--remotes', '--tags'],
+        { maxBytes: 256, env: WRITE_ENV },
+      )
+      if (unique.toString('utf8').trim() !== '0') return false
+      await git.run(source, [...WRITE_CONFIG, 'update-ref', '-d', `refs/heads/${own.name}`, own.tip], {
+        maxBytes: 64 * 1024,
+        env: WRITE_ENV,
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * What removing a worktree would lose: uncommitted files (staged, unstaged, untracked), a short diffstat, and commits
+   * not pushed. Read with the restricted Git, every filter driver emptied, so nothing the repository names runs.
+   */
+  async inventory(path: string): Promise<WorktreeInventory> {
+    return (await this.inspect(path)).facts
+  }
+
+  private async inspect(path: string) {
+    const found = await this.marked(path)
+    if (!found) throw new AppError(404, 'worktree-not-found', '找不到这个工作树，或它不是 Latch 新建的。')
+    const git = this.git
+    if (!git) throw new AppError(409, 'worktree-no-git', '这台电脑上找不到 Git。安装 Git（或 Xcode 命令行工具）后再试。')
+    const common = commonDirOf(found.layout)
+    const source = common && (await readGitLayout(dirname(common)))
+    if (!common || !source || commonDirOf(source) !== common)
+      throw refuse('worktree-source-missing', '找不到这个工作树所属的项目仓库，没有改动。')
+    const unreadable = () => new AppError(500, 'worktree-read-failed', '没有读出这个工作树的状态，请稍后再试。')
+    const drivers = readConfig(await this.config(git, found.layout), false)
+    const env = { ...WRITE_ENV, ...filterOverrides(drivers) }
+    const status = await git
+      .run(
+        found.layout,
+        [
+          ...WRITE_CONFIG,
+          'status',
+          '--porcelain=v2',
+          '-z',
+          '--branch',
+          '--untracked-files=all',
+          // Removing the folder deletes ignored files too, so they are counted and confirmed like the rest.
+          '--ignored=matching',
+          '--no-renames',
+          '--ignore-submodules=all',
+        ],
+        { maxBytes: 64 * 1024 * 1024, env },
+      )
+      .catch(() => {
+        throw unreadable()
+      })
+    const counted = countStatus(status)
+    const scan = await scanFolders(path, counted.untrackedDirs, counted.ignoredDirs, this.options.scanLimit ?? SCAN_LIMIT)
+    const submodules = await populatedSubmodules(git, found.layout, path).catch(() => {
+      throw unreadable()
+    })
+    const modules = submodules
+      ? undefined
+      : await moduleData(found.layout.gitdir).catch(() => ({ path: join(found.layout.gitdir, 'modules') }))
+    const ignoredFolders = [...scan.files].toSorted((a, b) => b[1] - a[1])
+    const ignored = counted.ignoredFiles + ignoredFolders.reduce((sum, [, files]) => sum + files, 0)
+    // What the confirmation is bound to: every path with its status, ignored entries, and what is under ignored folders.
+    const digest = sha256Hex(
+      JSON.stringify([counted.listing.toSorted(), ignoredFolders.toSorted((a, b) => (a[0] < b[0] ? -1 : 1)), submodules, modules ?? null]),
+    )
+    const stat = await git
+      .run(
+        found.layout,
+        [
+          ...WRITE_CONFIG,
+          'diff',
+          '--numstat',
+          '-z',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--no-renames',
+          '--ignore-submodules=all',
+          'HEAD',
+          '--',
+        ],
+        { maxBytes: 16 * 1024 * 1024, env },
+      )
+      .then(numstat, () => undefined)
+    const name = basename(path)
+    const head = 'branch' in found.layout.head ? found.layout.head.branch : undefined
+    let unpushed: number | undefined
+    if (!counted.upstream && counted.head) {
+      // Commits only this branch has: not on another local branch or any remote ref.
+      const out = await git
+        .run(
+          found.layout,
+          [
+            'rev-list',
+            '--count',
+            'HEAD',
+            '--not',
+            ...(head && BRANCH_NAME.test(head) ? [`--exclude=${head}`] : []),
+            '--branches',
+            '--remotes',
+            '--tags',
+          ],
+          { maxBytes: 256 },
+        )
+        .then(
+          bytes => Number(bytes.toString('utf8').trim()),
+          () => undefined,
+        )
+      if (out !== undefined && Number.isSafeInteger(out)) unpushed = out
+    }
+    const own = found.marker.existingBranch ? undefined : `latch/${name}`
+    const ownTip = own === undefined ? undefined : await git.commit(source, `refs/heads/${own}`).catch(() => undefined)
+    const ownBranch = ownTip !== undefined
+    const shown = head ? shownName(head) : undefined
+    const facts: WorktreeInventory = {
+      name,
+      ...(shown ? { branch: shown } : {}),
+      staged: counted.staged,
+      unstaged: counted.unstaged,
+      untracked: counted.untracked,
+      files: counted.files,
+      ignored,
+      ...(counted.ignoredExample ? { ignoredExample: counted.ignoredExample } : {}),
+      ...(ignoredFolders.length
+        ? {
+            ignoredFolders: ignoredFolders
+              .slice(0, 3)
+              .flatMap(([folder, files]) => (shownName(folder) ? [{ path: shownName(folder)!, files }] : [])),
+          }
+        : {}),
+      ...(scan.nested !== undefined ? { nested: shownName(scan.nested) ?? '…' } : {}),
+      ...(scan.tooLarge !== undefined ? { tooLarge: shownName(scan.tooLarge) ?? '…' } : {}),
+      ...(submodules ? { submodules } : {}),
+      ...(modules ? { submoduleData: modules } : {}),
+      digest,
+      ...(stat ? { insertions: stat.insertions, deletions: stat.deletions } : {}),
+      ...(counted.upstream ? { upstream: counted.upstream, ahead: counted.ahead } : {}),
+      ...(unpushed !== undefined ? { unpushed } : {}),
+      ownBranch,
+    }
+    return { found, git, source, drivers, facts, own: ownBranch ? { name: own!, tip: ownTip! } : undefined }
+  }
+
+  /**
+   * Removes a Latch worktree: `git worktree remove` without `--force` while it is clean; with uncommitted files only
+   * when `discard` is exactly how many there are now, and then forced. `audit` is written first and nothing happens
+   * when it throws. Then the branch Latch made goes with `git branch -d` only, so Git keeps one that is not merged; an
+   * existing branch that was checked out is never touched. The caller has checked that no turn or delivery runs there.
+   */
+  async remove(
+    path: string,
+    input: { discard?: number; digest?: string; audit: (facts: WorktreeInventory) => Promise<void> },
+  ): Promise<{ facts: WorktreeInventory; branch: 'deleted' | 'kept' | 'none'; branchName?: string }> {
+    if (this.busy(path)) throw refuse('worktree-busy', '这个工作树正在开始会话或正在移除，等它结束后再试。')
+    this.removing.add(path)
+    try {
+      const { git, source, drivers, facts, own } = await this.inspect(path)
+      if (facts.tooLarge !== undefined)
+        throw refuse(
+          'worktree-too-large',
+          `工作树的 ${facts.tooLarge} 里文件太多，Latch 无法确认其中没有另一个 Git 仓库，没有移除。请先在终端里删除或移走这个文件夹。`,
+          { folder: facts.tooLarge },
+        )
+      if (facts.nested !== undefined)
+        throw refuse(
+          'worktree-nested-repository',
+          `工作树里的 ${facts.nested} 是另一个 Git 仓库，移除会删除它和它的提交，没有移除。请先在终端里移走或处理它。`,
+          { folder: facts.nested },
+        )
+      if (facts.submodules)
+        throw refuse(
+          'worktree-submodules',
+          `工作树里有 ${facts.submodules} 个已检出的子模块，移除会删除其中的改动，没有移除。请先在终端里，在工作树中运行 git submodule deinit --all。`,
+        )
+      if (facts.submoduleData)
+        throw refuse(
+          'worktree-submodule-data',
+          `工作树的 Git 数据里还留着子模块的仓库（${facts.submoduleData.path}），移除工作树会删除它们和只在其中的提交，Latch 不替你删除，没有移除。请在终端里进入每个子模块仓库（git --git-dir=<仓库> log --all --reflog）确认需要的提交已推送，再运行 rm -rf '${facts.submoduleData.path}'，然后再移除。`,
+          { folder: facts.submoduleData.path },
+        )
+      const discarded = facts.files + facts.ignored
+      if (discarded > 0 && input.discard !== discarded)
+        throw refuse('worktree-dirty', `工作树里有 ${discarded} 个未提交或被忽略的文件，确认丢弃后才能移除。`, {
+          files: discarded,
+        })
+      // The confirmation names what was shown: anything changed since, and it is asked again.
+      if (discarded > 0 && input.digest !== facts.digest)
+        throw refuse('worktree-changed', '工作树里的文件在确认之后变了，请重新查看后再移除。', { files: discarded })
+      await input.audit(facts)
+      try {
+        await git.run(source, [...WRITE_CONFIG, 'worktree', 'remove', ...(facts.files > 0 ? ['--force'] : []), path], {
+          maxBytes: 64 * 1024,
+          env: { ...WRITE_ENV, ...filterOverrides(drivers) },
+          timeoutMs: CHECKOUT_TIMEOUT_MS,
+        })
+      } catch {
+        throw new AppError(
+          409,
+          'worktree-remove-failed',
+          'Git 没有移除这个工作树：它可能被锁定（git worktree lock）或有子模块，或在检查之后又有了改动。文件保持原样。',
+        )
+      }
+      this.unbound.delete(path)
+      const request = this.requestOf.get(path)
+      if (request !== undefined) this.requests.delete(request)
+      this.requestOf.delete(path)
+      let branch: 'deleted' | 'kept' | 'none' = 'none'
+      if (own) branch = (await this.dropBranch(git, source, own)) ? 'deleted' : 'kept'
+      await rmdir(dirname(path)).catch(() => {})
+      return { facts, branch, ...(own ? { branchName: own.name } : {}) }
+    } finally {
+      this.removing.delete(path)
+    }
   }
 
   private config(git: GitReader, layout: GitLayout): Promise<Buffer> {
@@ -328,7 +968,11 @@ export class Worktrees {
     for (const name of names) {
       if (!WORKTREE_NAME.test(name)) continue
       const found = await this.marked(join(bucket, name))
-      if (found?.marker.request === request) return { path: join(bucket, name), branch: `latch/${name}`, base: '', copied: 0 }
+      if (found?.marker.request !== request) continue
+      const head = 'branch' in found.layout.head && BRANCH_NAME.test(found.layout.head.branch) ? found.layout.head.branch : undefined
+      return found.marker.existingBranch
+        ? { path: join(bucket, name), branch: head ?? `latch/${name}`, base: '', copied: 0, existingBranch: true }
+        : { path: join(bucket, name), branch: `latch/${name}`, base: '', copied: 0 }
     }
     return undefined
   }
@@ -339,6 +983,12 @@ export class Worktrees {
    * made at. A worktree a session owns, or one this request did not make, is never touched.
    */
   async discard(made: Worktree, requestId: string): Promise<boolean> {
+    // A reused one was there before this start: it stays, without an owner, for the next start or 移除.
+    if (made.reused) {
+      this.requests.delete(requestId)
+      this.unbound.delete(made.path)
+      return false
+    }
     const found = await this.marked(made.path)
     if (!found || found.marker.sessionId || found.marker.request !== sha256Hex(requestId) || !this.git) return false
     const common = commonDirOf(found.layout)
@@ -357,7 +1007,7 @@ export class Worktrees {
     }
     this.requests.delete(requestId)
     this.unbound.delete(made.path)
-    if (made.base && OID.test(made.base))
+    if (made.base && OID.test(made.base) && !made.existingBranch && !found.marker.existingBranch)
       await git
         .run(source, [...WRITE_CONFIG, 'update-ref', '-d', `refs/heads/${made.branch}`, made.base], { maxBytes: 64 * 1024, env: WRITE_ENV })
         .catch(() => this.options.log(`会话没有开始，工作树已移除，分支 ${made.branch} 保留。`))
@@ -365,8 +1015,9 @@ export class Worktrees {
     return true
   }
 
-  private async make(sourcePath: string, requestId: string): Promise<Worktree> {
-    const { git, source, common, base, drivers: sourceDrivers, root, placed } = await this.prepare(sourcePath)
+  private async make(sourcePath: string, requestId: string, start: Exclude<WorktreeStart, { from: 'reuse' }>): Promise<Worktree> {
+    const { git, source, common, base: head, drivers: sourceDrivers, root, placed } = await this.prepare(sourcePath)
+    const { commit: base, existing } = await this.resolve(git, source, start, head)
     const config = (layout: GitLayout) => this.config(git, layout)
     try {
       await mkdir(root, { recursive: true, mode: 0o700 })
@@ -411,7 +1062,7 @@ export class Worktrees {
         throw failed('新建工作树文件夹')
       }
       path = join(bucket, name)
-      branch = `latch/${name}`
+      branch = existing ?? `latch/${name}`
     }
     if (!path || !branch) {
       await rmdir(bucket).catch(() => {})
@@ -435,8 +1086,8 @@ export class Worktrees {
             () => (problems.push('worktree remove'), false),
           )
       if (!removed) await rm(path, { recursive: true, force: true }).catch(() => problems.push('folder'))
-      const tip = await git.commit(source, `refs/heads/${branch}`).catch(() => base)
-      // Only while it still names the commit it was made at: nothing else has used it.
+      const tip = existing ? undefined : await git.commit(source, `refs/heads/${branch}`).catch(() => base)
+      // Only a branch this start made, and only while it still names the commit it was made at: nothing else has used it.
       if (tip)
         await git
           .run(source, [...WRITE_CONFIG, 'update-ref', '-d', `refs/heads/${branch}`, base], { maxBytes: 64 * 1024, env: WRITE_ENV })
@@ -451,7 +1102,11 @@ export class Worktrees {
 
     try {
       try {
-        await git.run(source, [...WRITE_CONFIG, 'worktree', 'add', '--no-checkout', '-b', branch, path, base], {
+        // An existing branch is checked out by its name; Git itself refuses one checked out in another worktree.
+        const add = existing
+          ? ['worktree', 'add', '--no-checkout', path, existing]
+          : ['worktree', 'add', '--no-checkout', '-b', branch, path, base]
+        await git.run(source, [...WRITE_CONFIG, ...add], {
           maxBytes: 64 * 1024,
           env: { ...WRITE_ENV, ...filterOverrides(sourceDrivers) },
         })
@@ -469,7 +1124,8 @@ export class Worktrees {
       )
         throw failed('检查新工作树')
       try {
-        await writeFile(join(layout.gitdir, MARKER_FILE), `${JSON.stringify({ version: 1, request: sha256Hex(requestId) })}\n`, {
+        const marker = { version: 1, request: sha256Hex(requestId), ...(existing ? { existingBranch: true } : {}) }
+        await writeFile(join(layout.gitdir, MARKER_FILE), `${JSON.stringify(marker)}\n`, {
           flag: 'wx',
           mode: 0o600,
         })
@@ -490,7 +1146,14 @@ export class Worktrees {
       await realDirectories(path)
       const copied = await this.include(git, source, path)
       const unfiltered = drivers.length ? await this.unfiltered(git, layout, drivers) : 0
-      return { path, branch, base, copied, ...(unfiltered === undefined ? {} : { unfiltered }) }
+      return {
+        path,
+        branch,
+        base,
+        copied,
+        ...(unfiltered === undefined ? {} : { unfiltered }),
+        ...(existing ? { existingBranch: true as const } : {}),
+      }
     } catch (error) {
       const incomplete = await rollback()
       throw incomplete ?? error

@@ -534,9 +534,13 @@ describe.skipIf(!git)('worktrees', () => {
   it('says where a worktree would start, or refuses as a start would, without writing anything', async () => {
     const t = await setup()
     const head = t.run('rev-parse', 'HEAD').trim()
-    expect(await t.service().base(t.root)).toEqual({ branch: 'main', commit: head })
+    expect(await t.service().base(t.root)).toEqual({
+      branch: 'main',
+      commit: head,
+      branches: [{ name: 'main', commit: head, checkedOut: true }],
+    })
     t.run('checkout', '-q', '--detach')
-    expect(await t.service().base(t.root)).toEqual({ commit: head })
+    expect(await t.service().base(t.root)).toEqual({ commit: head, branches: [{ name: 'main', commit: head }] })
     t.run('config', 'includeIf.gitdir:/nowhere/.path', '/nowhere')
     await expect(t.service().base(t.root)).rejects.toMatchObject({ code: 'worktree-include-if' })
     await expect(t.service().base(join(t.base, 'home'))).rejects.toMatchObject({ code: 'worktree-not-repository' })
@@ -640,5 +644,454 @@ describe.skipIf(!hookGit)('hooks from configuration (Git 2.54 and later)', () =>
     })
     await nothingLeft(t)
     expect(await t.ran()).toEqual([])
+  })
+})
+
+describe.skipIf(!git)('worktree start points', () => {
+  /** A second branch one commit past main, and the commit IDs of both. */
+  async function branched(t: Awaited<ReturnType<typeof setup>>) {
+    const main = t.run('rev-parse', 'HEAD').trim()
+    t.run('checkout', '-q', '-b', 'feature/x')
+    await writeFile(join(t.root, 'b.txt'), 'two\n')
+    t.run('add', '-A')
+    t.run('commit', '-qm', 'two')
+    const feature = t.run('rev-parse', 'HEAD').trim()
+    t.run('checkout', '-q', 'main')
+    return { main, feature }
+  }
+
+  it('starts a new latch/ branch from another local branch or a commit, and lists the branches with the checked-out one marked', async () => {
+    const t = await setup()
+    const { main, feature } = await branched(t)
+    const worktrees = t.service()
+    const base = await worktrees.base(t.root)
+    expect(base.branches?.map(item => [item.name, item.checkedOut === true]).toSorted()).toEqual([
+      ['feature/x', false],
+      ['main', true],
+    ])
+    const fromBranch = await worktrees.create({ source: t.root, requestId: 'request-0001', start: { from: 'commit', ref: 'feature/x' } })
+    expect(fromBranch.base).toBe(feature)
+    expect(fromBranch.branch).toMatch(WORKTREE_BRANCH)
+    expect(await readFile(join(fromBranch.path, 'b.txt'), 'utf8')).toBe('two\n')
+    const fromCommit = await worktrees.create({
+      source: t.root,
+      requestId: 'request-0002',
+      start: { from: 'commit', ref: main.slice(0, 9) },
+    })
+    expect(fromCommit.base).toBe(main)
+    expect(existsSync(join(fromCommit.path, 'b.txt'))).toBe(false)
+    // The branches they came from are untouched.
+    expect(t.run('rev-parse', 'refs/heads/feature/x').trim()).toBe(feature)
+  })
+
+  it('refuses a name outside the fixed rule or Git’s, and a start point that is not there, writing nothing', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    for (const ref of ['-x', 'refs/heads/main', 'HEAD', 'a..b', 'a b', 'x.lock', 'origin/main~1'])
+      await expect(
+        worktrees.create({ source: t.root, requestId: `request-${ref.length}0000`, start: { from: 'branch', branch: ref } }),
+      ).rejects.toMatchObject({
+        code: 'worktree-branch-name',
+      })
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-1001', start: { from: 'commit', ref: 'nope' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-start-missing',
+    })
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-1002', start: { from: 'commit', ref: 'deadbeef00' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-start-missing',
+    })
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-1003', start: { from: 'branch', branch: 'gone' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-branch-missing',
+    })
+    await nothingLeft(t)
+  })
+
+  it('checks out an existing branch, refuses one checked out elsewhere, and never deletes it', async () => {
+    const t = await setup()
+    const { feature } = await branched(t)
+    const worktrees = t.service()
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-0001', start: { from: 'branch', branch: 'main' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-branch-checked-out',
+      message: expect.stringContaining(t.root),
+    })
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0002', start: { from: 'branch', branch: 'feature/x' } })
+    expect(made).toMatchObject({ branch: 'feature/x', base: feature, existingBranch: true })
+    expect(t.run('-C', made.path, 'symbolic-ref', 'HEAD').trim()).toBe('refs/heads/feature/x')
+    // The same request gets the same one, also from a new Host process.
+    expect(await worktrees.create({ source: t.root, requestId: 'request-0002', start: { from: 'branch', branch: 'feature/x' } })).toEqual(
+      made,
+    )
+    // A second checkout of it is refused while this one holds it.
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-0003', start: { from: 'branch', branch: 'feature/x' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-branch-checked-out',
+    })
+    // A start that did not happen removes the worktree and keeps the branch, though it still names the commit it started at.
+    expect(await worktrees.discard(made, 'request-0002')).toBe(true)
+    expect(t.run('rev-parse', 'refs/heads/feature/x').trim()).toBe(feature)
+    expect(existsSync(made.path)).toBe(false)
+  })
+
+  it('reuses a leftover worktree of the project, not one its session holds, with the same answer for a retry', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const first = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(first.path, 'request-0001', 'session-1')
+    await writeFile(join(first.path, 'work.txt'), 'in progress\n')
+    const name = basename(first.path)
+    const held = async (sessionId?: string) => (sessionId === 'session-1' ? 'held by session-1' : undefined)
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-0002', start: { from: 'reuse', name }, held }),
+    ).rejects.toMatchObject({ code: 'worktree-reuse-held', message: 'held by session-1' })
+    const reused = await worktrees.create({
+      source: t.root,
+      requestId: 'request-0003',
+      start: { from: 'reuse', name },
+      held: async () => undefined,
+    })
+    expect(reused).toMatchObject({ path: first.path, branch: first.branch, reused: true })
+    expect(await readFile(join(first.path, 'work.txt'), 'utf8')).toBe('in progress\n')
+    expect(await worktrees.sessionOf(first.path)).toBeUndefined()
+    expect(worktrees.starting()).toContain(first.path)
+    // A new Host process gets it again for the same request, and nobody else does.
+    expect(await t.service().create({ source: t.root, requestId: 'request-0003', start: { from: 'reuse', name } })).toMatchObject({
+      path: first.path,
+    })
+    await expect(worktrees.create({ source: t.root, requestId: 'request-0004', start: { from: 'reuse', name } })).rejects.toMatchObject({
+      code: 'worktree-reuse-busy',
+    })
+    await worktrees.bind(first.path, 'request-0003', 'session-2')
+    expect(await worktrees.sessionOf(first.path)).toBe('session-2')
+    // A failed start never removes a reused worktree.
+    expect(await worktrees.discard(reused, 'request-0003')).toBe(false)
+    expect(existsSync(first.path)).toBe(true)
+    // Only Latch's, of this project, with a valid marker.
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-0005', start: { from: 'reuse', name: '20200101-0000' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-reuse-unknown',
+    })
+    const other = join(dirname(first.path), '20200101-0000')
+    t.run('worktree', 'add', '-q', '-b', 'mine', other)
+    await expect(
+      worktrees.create({ source: t.root, requestId: 'request-0006', start: { from: 'reuse', name: '20200101-0000' } }),
+    ).rejects.toMatchObject({
+      code: 'worktree-reuse-unknown',
+    })
+    expect((await worktrees.list(t.root)).map(entry => [entry.name, entry.sessionId])).toEqual([[name, 'session-2']])
+  })
+})
+
+/** What the person confirms in the dialog: how many files go, and the digest of the listing they saw. */
+async function confirmed(worktrees: Worktrees, path: string) {
+  const facts = await worktrees.inventory(path)
+  return { discard: facts.files + facts.ignored, digest: facts.digest }
+}
+
+describe.skipIf(!git)('removing a worktree', () => {
+  const noAudit = async () => {}
+
+  it('removes a clean one without --force and deletes its merged branch with -d', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    expect(await worktrees.inventory(made.path)).toEqual({
+      digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      name: basename(made.path),
+      branch: made.branch,
+      staged: 0,
+      unstaged: 0,
+      untracked: 0,
+      files: 0,
+      ignored: 0,
+      insertions: 0,
+      deletions: 0,
+      unpushed: 0,
+      ownBranch: true,
+    })
+    const audits: unknown[] = []
+    const removed = await worktrees.remove(made.path, { audit: async facts => void audits.push(facts) })
+    expect(removed).toMatchObject({ branch: 'deleted', branchName: made.branch })
+    expect(audits).toHaveLength(1)
+    await nothingLeft(t)
+  })
+
+  it('refuses uncommitted files until the count is confirmed, then forces; an unmerged branch stays', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    const inside = (...args: string[]) => t.run('-C', made.path, ...args)
+    await writeFile(join(made.path, 'c.txt'), 'committed\n')
+    inside('add', 'c.txt')
+    inside('commit', '-qm', 'agent work')
+    await writeFile(join(made.path, 'a.txt'), 'one\nchanged\n')
+    await writeFile(join(made.path, 'staged.txt'), 'staged\n')
+    inside('add', 'staged.txt')
+    await writeFile(join(made.path, 'new.txt'), 'untracked\n')
+    const facts = await worktrees.inventory(made.path)
+    expect(facts).toMatchObject({
+      staged: 1,
+      unstaged: 1,
+      untracked: 1,
+      files: 3,
+      insertions: 2,
+      deletions: 0,
+      unpushed: 1,
+      ownBranch: true,
+    })
+    await expect(worktrees.remove(made.path, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-dirty', details: { files: 3 } })
+    await expect(worktrees.remove(made.path, { discard: 2, audit: noAudit })).rejects.toMatchObject({ code: 'worktree-dirty' })
+    expect(existsSync(join(made.path, 'new.txt'))).toBe(true)
+    const removed = await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    expect(removed).toMatchObject({ branch: 'kept', branchName: made.branch })
+    expect(existsSync(made.path)).toBe(false)
+    expect(t.branches()).toContain(`refs/heads/${made.branch}`)
+    expect(t.registered()).toEqual([`worktree ${t.root}`])
+  })
+
+  it('writes nothing when the audit record fails, and runs no hook or filter the repository names', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await writeFile(join(t.root, '.git', 'hooks', 'reference-transaction'), `#!/bin/sh\nexec '${await t.trap('hook')}'\n`)
+    await chmod(join(t.root, '.git', 'hooks', 'reference-transaction'), 0o755)
+    t.run('config', 'filter.local.clean', await t.trap('clean'))
+    t.run('config', 'filter.local.required', 'true')
+    t.run('config', 'core.fsmonitor', await t.trap('fsmonitor'))
+    await writeFile(join(made.path, '.gitattributes'), '*.txt filter=local\n')
+    await writeFile(join(made.path, 'a.txt'), 'changed\n')
+    await expect(
+      worktrees.remove(made.path, {
+        ...(await confirmed(worktrees, made.path)),
+        audit: async () => {
+          throw new Error('audit down')
+        },
+      }),
+    ).rejects.toThrow('audit down')
+    expect(existsSync(join(made.path, 'a.txt'))).toBe(true)
+    expect(t.registered()).toHaveLength(2)
+    await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    expect(existsSync(made.path)).toBe(false)
+    expect(await t.ran()).toEqual([])
+  })
+
+  it('never touches a worktree Latch did not make, an existing branch it checked out, or one being made', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    const other = join(dirname(made.path), '20200101-0000')
+    t.run('worktree', 'add', '-q', '-b', 'mine', other)
+    await expect(worktrees.inventory(other)).rejects.toMatchObject({ code: 'worktree-not-found' })
+    await expect(worktrees.remove(other, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-not-found' })
+    await expect(worktrees.remove(t.root, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-not-found' })
+    expect(existsSync(other)).toBe(true)
+    // Still being made into a session: refused.
+    await expect(worktrees.remove(made.path, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-busy' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await worktrees.remove(made.path, { audit: noAudit })
+
+    t.run('branch', 'kept-branch')
+    const checkedOut = await worktrees.create({
+      source: t.root,
+      requestId: 'request-0002',
+      start: { from: 'branch', branch: 'kept-branch' },
+    })
+    await worktrees.bind(checkedOut.path, 'request-0002', 'session-2')
+    expect((await worktrees.inventory(checkedOut.path)).ownBranch).toBe(false)
+    expect(await worktrees.remove(checkedOut.path, { audit: noAudit })).toMatchObject({ branch: 'none' })
+    expect(t.branches()).toContain('refs/heads/kept-branch')
+  })
+
+  it('counts ignored files into the confirmation, so an edited .env copied by .worktreeinclude is never deleted unasked', async () => {
+    const t = await setup()
+    await writeFile(join(t.root, '.gitignore'), '.env\n')
+    await writeFile(join(t.root, '.worktreeinclude'), '.env\n')
+    t.run('add', '.gitignore', '.worktreeinclude')
+    t.run('commit', '-qm', 'ignore')
+    await writeFile(join(t.root, '.env'), 'A=1\n')
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await writeFile(join(made.path, '.env'), 'A=edited\n')
+    expect(await worktrees.inventory(made.path)).toMatchObject({ files: 0, ignored: 1, ignoredExample: '.env' })
+    // Git would delete it without --force: Latch asks first.
+    await expect(worktrees.remove(made.path, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-dirty', details: { files: 1 } })
+    expect(await readFile(join(made.path, '.env'), 'utf8')).toBe('A=edited\n')
+    await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    expect(existsSync(made.path)).toBe(false)
+  })
+
+  it('refuses while an untracked or ignored folder is another repository, naming it', async () => {
+    const t = await setup()
+    await writeFile(join(t.root, '.gitignore'), 'vendor/\n')
+    t.run('add', '.gitignore')
+    t.run('commit', '-qm', 'ignore')
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    for (const folder of ['vendor/lib', 'tools/own']) {
+      await mkdir(join(made.path, folder), { recursive: true })
+      t.run('-C', join(made.path, folder), 'init', '-q')
+      await writeFile(join(made.path, folder, 'f'), 'x')
+      t.run('-C', join(made.path, folder), 'add', 'f')
+      t.run('-C', join(made.path, folder), 'commit', '-qm', 'nested work')
+    }
+    const facts = await worktrees.inventory(made.path)
+    expect(['vendor/lib', 'tools/own']).toContain(facts.nested)
+    await expect(worktrees.remove(made.path, { discard: facts.files + facts.ignored, audit: noAudit })).rejects.toMatchObject({
+      code: 'worktree-nested-repository',
+    })
+    expect(existsSync(join(made.path, 'vendor', 'lib', '.git'))).toBe(true)
+    await rm(join(made.path, 'tools'), { recursive: true })
+    expect((await worktrees.inventory(made.path)).nested).toBe('vendor/lib')
+    await rm(join(made.path, 'vendor'), { recursive: true })
+    await worktrees.remove(made.path, { audit: noAudit })
+  })
+
+  it('refuses while a submodule is checked out in it', async () => {
+    const t = await setup()
+    const sub = join(t.base, 'sub')
+    await mkdir(sub)
+    t.run('-C', sub, 'init', '-q')
+    await writeFile(join(sub, 's.txt'), 's\n')
+    t.run('-C', sub, 'add', 's.txt')
+    t.run('-C', sub, 'commit', '-qm', 'sub')
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'lib')
+    await writeFile(join(made.path, 'lib', 's.txt'), 'changed\n')
+    const facts = await worktrees.inventory(made.path)
+    expect(facts.submodules).toBe(1)
+    await expect(worktrees.remove(made.path, { discard: facts.files + facts.ignored, audit: noAudit })).rejects.toMatchObject({
+      code: 'worktree-submodules',
+    })
+    expect(await readFile(join(made.path, 'lib', 's.txt'), 'utf8')).toBe('changed\n')
+  })
+
+  it('keeps a branch whose commits only a detached HEAD in the project folder reaches', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await writeFile(join(made.path, 'c.txt'), 'work\n')
+    t.run('-C', made.path, 'add', 'c.txt')
+    t.run('-C', made.path, 'commit', '-qm', 'agent work')
+    const tip = t.run('-C', made.path, 'rev-parse', 'HEAD').trim()
+    // The project folder sits on that commit, detached: `branch -d` would call the branch merged.
+    t.run('checkout', '-q', '--detach', tip)
+    expect(await worktrees.remove(made.path, { audit: noAudit })).toMatchObject({ branch: 'kept' })
+    expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+  })
+
+  it('counts the files under an ignored folder and names it, and refuses, naming the folder, past the scan limit', async () => {
+    const t = await setup()
+    await writeFile(join(t.root, '.gitignore'), '.env\ndata/\nbig/\nvendor/\n')
+    t.run('add', '.gitignore')
+    t.run('commit', '-qm', 'ignore')
+    const worktrees = t.service({ scanLimit: 100 })
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await mkdir(join(made.path, 'data'))
+    for (let i = 0; i < 50; i++) await writeFile(join(made.path, 'data', `rec${i}.db`), 'user data')
+    await writeFile(join(made.path, '.env'), 'A=1\n')
+    expect(await worktrees.inventory(made.path)).toMatchObject({ ignored: 51, ignoredFolders: [{ path: 'data/', files: 50 }] })
+    // Past the limit, even with a repository further on, nothing goes unchecked.
+    await mkdir(join(made.path, 'big'))
+    for (let i = 0; i < 120; i++) await writeFile(join(made.path, 'big', `f${i}`), '')
+    await mkdir(join(made.path, 'vendor', 'lib'), { recursive: true })
+    t.run('-C', join(made.path, 'vendor', 'lib'), 'init', '-q')
+    const facts = await worktrees.inventory(made.path)
+    expect(facts.tooLarge).toBeDefined()
+    await expect(worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })).rejects.toMatchObject({
+      code: 'worktree-too-large',
+      details: { folder: facts.tooLarge },
+    })
+    expect(existsSync(join(made.path, 'vendor', 'lib', '.git'))).toBe(true)
+  })
+
+  it('binds the confirmation to the files shown: a swap with the same count is refused as changed', async () => {
+    const t = await setup()
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    await writeFile(join(made.path, 'notes.txt'), 'shown\n')
+    const shown = await confirmed(worktrees, made.path)
+    await rm(join(made.path, 'notes.txt'))
+    await writeFile(join(made.path, 'other.txt'), 'appeared after the dialog opened\n')
+    await expect(worktrees.remove(made.path, { ...shown, audit: noAudit })).rejects.toMatchObject({ code: 'worktree-changed' })
+    expect(existsSync(join(made.path, 'other.txt'))).toBe(true)
+    await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    expect(existsSync(made.path)).toBe(false)
+  })
+
+  /** A repository with one commit, to add as a submodule; `inner` makes it carry a submodule of its own. */
+  async function subRepository(t: Awaited<ReturnType<typeof setup>>, name: string, inner?: string) {
+    const sub = join(t.base, name)
+    await mkdir(sub)
+    t.run('-C', sub, 'init', '-q')
+    await writeFile(join(sub, 's.txt'), 's\n')
+    t.run('-C', sub, 'add', 's.txt')
+    if (inner) t.run('-C', sub, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'inner')
+    t.run('-C', sub, 'commit', '-qm', 'sub')
+    return sub
+  }
+
+  it('refuses while a deinitialised submodule’s clone holds a reflog-only commit, and never deletes it itself', async () => {
+    const t = await setup()
+    const sub = await subRepository(t, 'sub')
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'mod')
+    t.run('-C', made.path, 'commit', '-qm', 'add submodule')
+    const inside = join(made.path, 'mod')
+    t.run('-C', inside, 'commit', '-q', '--allow-empty', '-m', 'work only the reflog keeps')
+    const lost = t.run('-C', inside, 'rev-parse', 'HEAD').trim()
+    t.run('-C', inside, 'checkout', '-q', '--detach', 'HEAD~1')
+    t.run('-C', made.path, 'submodule', 'deinit', '-q', '--all', '-f')
+    const facts = await worktrees.inventory(made.path)
+    expect(facts.submodules).toBeUndefined()
+    const modules = facts.submoduleData!.path
+    await expect(worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })).rejects.toMatchObject({
+      code: 'worktree-submodule-data',
+      details: { folder: modules },
+    })
+    // The commit is still there to recover.
+    expect(t.run('--git-dir', join(modules, 'mod'), 'cat-file', '-t', lost).trim()).toBe('commit')
+    // Once the person has checked and deleted the clones, removal goes through.
+    await rm(modules, { recursive: true, force: true })
+    await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    expect(existsSync(made.path)).toBe(false)
+  })
+
+  it('refuses while a nested submodule’s clone remains', async () => {
+    const t = await setup()
+    const inner = await subRepository(t, 'inner')
+    const sub = await subRepository(t, 'outer', inner)
+    const worktrees = t.service()
+    const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+    await worktrees.bind(made.path, 'request-0001', 'session-1')
+    t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'mod')
+    t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init', '--recursive')
+    t.run('-C', made.path, 'commit', '-qm', 'add submodule')
+    t.run('-C', made.path, 'submodule', 'deinit', '-q', '--all', '-f')
+    const facts = await worktrees.inventory(made.path)
+    expect(existsSync(join(facts.submoduleData!.path, 'mod', 'modules', 'inner'))).toBe(true)
+    await expect(worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })).rejects.toMatchObject({
+      code: 'worktree-submodule-data',
+    })
+    expect(existsSync(join(facts.submoduleData!.path, 'mod', 'modules', 'inner'))).toBe(true)
   })
 })

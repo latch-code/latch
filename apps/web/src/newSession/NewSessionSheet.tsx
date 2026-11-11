@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
-import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo } from '@latch/protocol'
+import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo, type WorktreeStart } from '@latch/protocol'
 import { Badge, Button, Hint, ICON_STROKE, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
 import {
   draftConfig,
@@ -97,7 +97,9 @@ export function NewSessionSheet({
   onBrowseFiles?(): void
   focusComposer?: RefObject<HTMLTextAreaElement | null>
   /** A Git project's draft: 当前文件夹 or 新工作树. */
-  worktree?: { project: WorkspaceInfo; picked: boolean; onPick: (worktree: boolean) => void } | undefined
+  worktree?:
+    | { project: WorkspaceInfo; picked: WorktreeStart | undefined; onPick: (worktree: WorktreeStart | undefined) => void }
+    | undefined
 }) {
   const { present } = usePresence(open, MOTION.sheet)
   const [typing, setTyping] = useState(false)
@@ -229,6 +231,7 @@ export function NewSessionSheet({
               worktree={worktree.picked}
               onWorktree={worktree.onPick}
               disabled={disabled}
+              starts
             />
           )}
           <ValuePicker

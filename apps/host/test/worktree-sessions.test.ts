@@ -5,11 +5,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import type { TaskDetail, TaskSummary } from '@latch/protocol'
+import type { LatchWorktree, TaskDetail, TaskSummary, WorktreeBase, WorktreeInventory } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { findGit } from '../src/changes/git.ts'
 import { Worktrees } from '../src/worktrees.ts'
-import { startTestHost, type TestHost } from './helpers/host.ts'
+import type { LaunchTerminal } from '../src/terminal/helper.ts'
+import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
 const git = findGit()
 const hosts: TestHost[] = []
@@ -23,7 +24,7 @@ const SLOW = { timeout: 15_000 }
  * A Host whose only Qwen Code is the fake agent in its own directory, and a project that is a Git repository with a
  * committed `.qwen/settings.json`, an uncommitted change to it and an untracked file.
  */
-async function fixture(agentEnv: Record<string, string> = {}) {
+async function fixture(agentEnv: Record<string, string> = {}, hostOptions: TestHostOptions = {}) {
   const bin = await realpath(await mkdtemp(join(tmpdir(), 'latch-worktree-bin-')))
   onTestFinished(() => rm(bin, { recursive: true, force: true }))
   const log = join(bin, 'agent.log')
@@ -44,6 +45,7 @@ async function fixture(agentEnv: Record<string, string> = {}) {
     demo: false,
     commandDirectories: () => [bin],
     detectPreset: preset => (preset.id === 'qwen' ? { found: true, path: join(bin, 'qwen') } : { found: false }),
+    ...hostOptions,
   })
   hosts.push(t)
   const project = join(t.root, 'project')
@@ -113,7 +115,11 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
   it('starts in a worktree beside the start directory, fingerprinted on its own configuration, and keeps the project', async () => {
     const f = await fixture()
     const head = f.run('rev-parse', 'HEAD').trim()
-    expect(await f.owner.json(`workspaces/${f.workspaceId}/worktree`)).toEqual({ branch: 'main', commit: head })
+    expect(await f.owner.json(`workspaces/${f.workspaceId}/worktree`)).toEqual({
+      branch: 'main',
+      commit: head,
+      branches: [{ name: 'main', commit: head, checkedOut: true }],
+    })
 
     const requestId = randomUUID()
     const response = await f.start(f.owner, { requestId })
@@ -261,5 +267,292 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     const viewer = await f.t.enroll({ scopes: ['view'] })
     expect(await (await viewer.request(`workspaces/${f.workspaceId}/worktree`)).json()).toMatchObject({ error: 'scope-required' })
     expect(await f.leftovers()).toEqual({ buckets: [], branches: ['refs/heads/main'] })
+  })
+
+  it('starts from another branch or commit, checks out an existing branch, and reuses an archived session’s worktree', async () => {
+    const f = await fixture()
+    f.run('branch', 'feature')
+    const feature = f.run('rev-parse', 'refs/heads/feature').trim()
+    const base = await f.owner.json<WorktreeBase>(`workspaces/${f.workspaceId}/worktree`)
+    expect(base.branches?.map(item => item.name).toSorted()).toEqual(['feature', 'main'])
+    expect(base.reusable).toBeUndefined()
+
+    const fromBranch = await f.start(f.owner, { worktree: { from: 'commit', ref: 'feature' } })
+    expect(fromBranch.status).toBe(201)
+    const { sessionId: first } = (await fromBranch.json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, first)).status).toBe('idle'), SLOW)
+    expect((await summaryOf(f.owner, first)).worktree?.branch).toMatch(/^latch\//u)
+
+    const checkedOut = await f.start(f.owner, { worktree: { from: 'branch', branch: 'main' } })
+    expect(checkedOut.status).toBe(409)
+    expect(await checkedOut.json()).toMatchObject({ error: 'worktree-branch-checked-out' })
+    const badName = await f.start(f.owner, { worktree: { from: 'branch', branch: '--force' } })
+    expect(await badName.json()).toMatchObject({ error: 'worktree-branch-name' })
+    const onFeature = await f.start(f.owner, { worktree: { from: 'branch', branch: 'feature' } })
+    expect(onFeature.status).toBe(201)
+    const { sessionId: second } = (await onFeature.json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, second)).status).toBe('idle'), SLOW)
+    expect((await summaryOf(f.owner, second)).worktree?.branch).toBe('feature')
+    expect(f.run('-C', (await summaryOf(f.owner, second)).cwd!, 'rev-parse', 'HEAD').trim()).toBe(feature)
+
+    // The first session holds its worktree until it is archived.
+    const cwd = (await summaryOf(f.owner, first)).cwd!
+    const name = cwd.split('/').at(-1)!
+    const held = await f.start(f.owner, { worktree: { from: 'reuse', name } })
+    expect(await held.json()).toMatchObject({ error: 'worktree-reuse-held' })
+    await f.owner.json(`tasks/${first}`, { method: 'PATCH', body: { archived: true } })
+    const listed = await f.owner.json<{ worktrees: LatchWorktree[] }>(`workspaces/${f.workspaceId}/worktrees`)
+    expect(listed.worktrees.find(item => item.name === name)).toMatchObject({ state: 'archived', sessionId: first, reusable: true })
+    expect((await f.owner.json<WorktreeBase>(`workspaces/${f.workspaceId}/worktree`)).reusable?.map(item => item.name)).toEqual([name])
+    const requestId = randomUUID()
+    const reused = await f.start(f.owner, { requestId, worktree: { from: 'reuse', name } })
+    expect(reused.status).toBe(201)
+    const { sessionId: third } = (await reused.json()) as { sessionId: string }
+    expect(await (await f.start(f.owner, { requestId, worktree: { from: 'reuse', name } })).json()).toEqual({ sessionId: third })
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, third)).status).toBe('idle'), SLOW)
+    expect((await summaryOf(f.owner, third)).cwd).toBe(cwd)
+    // The archived session no longer owns it.
+    const late = await f.owner.request(`tasks/${first}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID() } })
+    expect(late.status).toBe(409)
+  })
+
+  it('removes a session’s worktree after the count of uncommitted files is confirmed, audits first, and keeps the session read-only', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const summary = await summaryOf(f.owner, sessionId)
+    const cwd = summary.cwd!
+    await writeFile(join(cwd, 'a.txt'), 'one\ntwo\n')
+    await writeFile(join(cwd, 'scratch.txt'), 'notes\n')
+    const path = `tasks/${sessionId}/worktree`
+    expect(await f.owner.json<WorktreeInventory>(path)).toMatchObject({ staged: 0, files: expect.any(Number), ownBranch: true })
+    const facts = await f.owner.json<WorktreeInventory>(path)
+    expect(facts.untracked).toBeGreaterThanOrEqual(1)
+    const viewer = await f.t.enroll({ scopes: ['view'] })
+    expect(await (await viewer.request(`${path}/remove`, { method: 'POST', body: { requestId: randomUUID() } })).json()).toMatchObject({
+      error: 'scope-required',
+    })
+    const dirty = await f.owner.request(`${path}/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(dirty.status).toBe(409)
+    expect(await dirty.json()).toMatchObject({ error: 'worktree-dirty', files: facts.files })
+    expect(existsSync(join(cwd, 'scratch.txt'))).toBe(true)
+    expect((await f.audits()).some(entry => entry.action === 'worktree.remove')).toBe(false)
+
+    const requestId = randomUUID()
+    const removed = await f.owner.json(`${path}/remove`, {
+      method: 'POST',
+      body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest },
+    })
+    expect(removed).toEqual({ removed: true, discarded: facts.files, branch: 'deleted', branchName: summary.worktree!.branch })
+    expect(
+      await f.owner.json(`${path}/remove`, {
+        method: 'POST',
+        body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest },
+      }),
+    ).toEqual(removed)
+    expect(existsSync(cwd)).toBe(false)
+    expect(f.run('for-each-ref', '--format=%(refname)', 'refs/heads').trim()).toBe('refs/heads/main')
+    const audits = (await f.audits()).filter(entry => entry.action.startsWith('worktree.'))
+    expect(audits.map(entry => entry.action)).toEqual(['worktree.remove', 'worktree.result'])
+    expect(audits[0]!.detail).toMatchObject({ sessionId, forced: true, ownBranch: true, untracked: facts.untracked })
+    expect(JSON.stringify(audits)).not.toContain('scratch')
+    expect(JSON.stringify(audits)).not.toContain(cwd)
+    expect(audits[1]!.detail).toMatchObject({ outcome: 'removed', branch: 'deleted' })
+
+    // The session stays, says so, and takes no new turn.
+    expect((await summaryOf(f.owner, sessionId)).worktree).toMatchObject({ removed: true })
+    const next = await f.owner.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID() } })
+    expect(await next.json()).toMatchObject({ error: 'worktree-removed' })
+    expect(await (await f.owner.request(path)).json()).toMatchObject({ error: 'worktree-removed' })
+  })
+
+  it('refuses to remove a worktree while a turn runs in it, and removes a leftover from the project', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner, { prompt: 'hang' })).json()) as { sessionId: string }
+    await expect.poll(async () => (await f.t.host.bridge.summary(sessionId)).status, SLOW).toBe('running')
+    expect((await f.owner.json<WorktreeInventory>(`tasks/${sessionId}/worktree`)).busy).toBe('turn')
+    const running = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(await running.json()).toMatchObject({ error: 'worktree-turn-running' })
+    expect(existsSync((await summaryOf(f.owner, sessionId)).cwd!)).toBe(true)
+
+    // A worktree whose session is gone is a leftover, removed from the project.
+    const { sessionId: gone } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, gone)).status).toBe('idle'), SLOW)
+    const cwd = (await summaryOf(f.owner, gone)).cwd!
+    const name = cwd.split('/').at(-1)!
+    expect(
+      (await f.owner.request(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, { method: 'POST', body: { requestId: randomUUID() } }))
+        .status,
+    ).toBe(409)
+    expect((await f.owner.request(`tasks/${gone}`, { method: 'DELETE' })).status).toBe(200)
+    const listed = await f.owner.json<{ worktrees: LatchWorktree[] }>(`workspaces/${f.workspaceId}/worktrees`)
+    expect(listed.worktrees.find(item => item.name === name)).toMatchObject({ state: 'leftover', reusable: true })
+    expect(await f.owner.json<WorktreeInventory>(`workspaces/${f.workspaceId}/worktrees/${name}`)).toMatchObject({ files: 0 })
+    expect(
+      await f.owner.json(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, { method: 'POST', body: { requestId: randomUUID() } }),
+    ).toMatchObject({ removed: true, branch: 'deleted' })
+    expect(existsSync(cwd)).toBe(false)
+    expect((await f.audits()).find(entry => entry.action === 'worktree.remove')?.detail).toMatchObject({
+      workspaceId: f.workspaceId,
+      forced: false,
+    })
+    expect((await f.audits()).find(entry => entry.action === 'worktree.remove')?.detail?.sessionId).toBeUndefined()
+  })
+
+  it('keeps a session’s worktree held while its Harness does not list it: neither reused nor removed as a leftover', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    await f.owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { archived: true } })
+    const cwd = (await summaryOf(f.owner, sessionId)).cwd!
+    const name = cwd.split('/').at(-1)!
+    const listTasks = f.t.host.bridge.listTasks.bind(f.t.host.bridge)
+    vi.spyOn(f.t.host.bridge, 'listTasks').mockImplementation(async () => (await listTasks()).filter(task => task.id !== sessionId))
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const listed = await f.owner.json<{ worktrees: LatchWorktree[] }>(`workspaces/${f.workspaceId}/worktrees`)
+    expect(listed.worktrees.find(item => item.name === name)).toMatchObject({ state: 'archived', reusable: false })
+    const reuse = await f.start(f.owner, { worktree: { from: 'reuse', name } })
+    expect(await reuse.json()).toMatchObject({ error: 'worktree-reuse-held' })
+    const removal = await f.owner.request(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, {
+      method: 'POST',
+      body: { requestId: randomUUID() },
+    })
+    expect(await removal.json()).toMatchObject({ error: 'worktree-owned' })
+    expect(existsSync(cwd)).toBe(true)
+  })
+
+  it('lets only a device with the full data scope reuse a private session’s worktree, and hides whose it is from others', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    await f.owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { archived: true } })
+    const name = (await summaryOf(f.owner, sessionId)).cwd!.split('/').at(-1)!
+    vi.spyOn(f.t.host.bridge, 'sessionRecord').mockImplementation(id => (id === sessionId ? { archived: true, private: true } : undefined))
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const work = await f.t.enroll({ scopes: ['view', 'run'] })
+    await f.owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    const seen = (await work.json<{ worktrees: LatchWorktree[] }>(`workspaces/${f.workspaceId}/worktrees`)).worktrees.find(
+      item => item.name === name,
+    )!
+    expect(seen).toMatchObject({ state: 'archived', reusable: false })
+    expect(seen.sessionId).toBeUndefined()
+    expect(seen.branch).toBeUndefined()
+    const refused = await f.start(work, { worktree: { from: 'reuse', name } })
+    expect(await refused.json()).toMatchObject({ error: 'worktree-reuse-held' })
+    expect((await f.start(f.owner, { worktree: { from: 'reuse', name } })).status).toBe(201)
+  })
+
+  it('refuses to remove a worktree while its session has a terminal open', async () => {
+    const launch: LaunchTerminal = (_spec, onEvent) => {
+      onEvent({ type: 'started', pid: 1 })
+      return {
+        pendingInput: 0,
+        input() {},
+        resize() {},
+        signal() {},
+        pauseOutput() {},
+        resumeOutput() {},
+        close() {
+          onEvent({ type: 'exit', signal: 1 })
+          onEvent({ type: 'gone' })
+          return Promise.resolve()
+        },
+      }
+    }
+    const f = await fixture({}, { terminal: { launch, shell: { file: '/bin/sh', argv: ['sh'] } } })
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const opened = await f.owner.request(`tasks/${sessionId}/terminals`, { body: { cols: 80, rows: 24 } })
+    expect(opened.status).toBe(201)
+    expect((await f.owner.json<WorktreeInventory>(`tasks/${sessionId}/worktree`)).busy).toBe('terminal')
+    const refused = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(await refused.json()).toMatchObject({ error: 'worktree-terminal-open' })
+    expect(existsSync((await summaryOf(f.owner, sessionId)).cwd!)).toBe(true)
+    expect((await f.audits()).some(entry => entry.action === 'worktree.remove')).toBe(false)
+  })
+
+  it('finishes marking the session on a retry when Git removed the worktree but the record was not written', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const cwd = (await summaryOf(f.owner, sessionId)).cwd!
+    vi.spyOn(f.t.host.bridge, 'worktreeRemoved').mockRejectedValueOnce(new Error('disk full'))
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const requestId = randomUUID()
+    const first = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId } })
+    expect(first.status).toBe(500)
+    expect(existsSync(cwd)).toBe(false)
+    expect((await summaryOf(f.owner, sessionId)).worktree?.removed).toBeUndefined()
+    expect(await f.owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId } })).toMatchObject({
+      removed: true,
+      branch: 'deleted',
+    })
+    expect((await summaryOf(f.owner, sessionId)).worktree?.removed).toBe(true)
+  })
+
+  it('keeps the worktree of a session that became private after its start private as a leftover once it is deleted', async () => {
+    const f = await fixture()
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const name = (await summaryOf(f.owner, sessionId)).cwd!.split('/').at(-1)!
+    // Private only now, after the worktree was bound.
+    const record = f.t.host.bridge.sessionRecord.bind(f.t.host.bridge)
+    const spy = vi.spyOn(f.t.host.bridge, 'sessionRecord').mockImplementation(id => {
+      const found = record(id)
+      return found && { ...found, private: true }
+    })
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    expect((await f.owner.request(`tasks/${sessionId}`, { method: 'DELETE' })).status).toBe(200)
+    spy.mockRestore()
+    const work = await f.t.enroll({ scopes: ['view', 'run'] })
+    await f.owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    const seen = (await work.json<{ worktrees: LatchWorktree[] }>(`workspaces/${f.workspaceId}/worktrees`)).worktrees.find(
+      item => item.name === name,
+    )!
+    expect(seen).toMatchObject({ state: 'leftover', reusable: false })
+    expect(seen.branch).toBeUndefined()
+    expect(await (await f.start(work, { worktree: { from: 'reuse', name } })).json()).toMatchObject({ error: 'worktree-reuse-held' })
+    expect((await f.start(f.owner, { worktree: { from: 'reuse', name } })).status).toBe(201)
+  })
+
+  it('refuses to remove a worktree while any session’s terminal works in a folder inside it', async () => {
+    const launch: LaunchTerminal = (_spec, onEvent) => {
+      onEvent({ type: 'started', pid: 1 })
+      return {
+        pendingInput: 0,
+        input() {},
+        resize() {},
+        signal() {},
+        pauseOutput() {},
+        resumeOutput() {},
+        close() {
+          onEvent({ type: 'exit', signal: 1 })
+          onEvent({ type: 'gone' })
+          return Promise.resolve()
+        },
+      }
+    }
+    const f = await fixture({}, { terminal: { launch, shell: { file: '/bin/sh', argv: ['sh'] } } })
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const cwd = (await summaryOf(f.owner, sessionId)).cwd!
+    // Another project whose folder lies inside the worktree, with a session and a terminal of its own.
+    const inner = join(cwd, 'pkg')
+    await mkdir(inner)
+    const { workspace } = (await (await f.owner.addFolders({ paths: [inner] })).json()) as { workspace: { id: string } }
+    const other = (await (await f.start(f.owner, { workspaceId: workspace.id, worktree: undefined })).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, other.sessionId)).status).toBe('idle'), SLOW)
+    expect((await f.owner.request(`tasks/${other.sessionId}/terminals`, { body: { cols: 80, rows: 24 } })).status).toBe(201)
+    const refused = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(await refused.json()).toMatchObject({ error: 'worktree-terminal-open' })
+    expect(existsSync(cwd)).toBe(true)
   })
 })

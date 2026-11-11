@@ -7,7 +7,7 @@ import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
 import { PR_URL } from './git-pr.ts'
-import { WORKTREE_BRANCH } from './worktrees.ts'
+import { BRANCH_NAME } from './worktrees.ts'
 
 export const SESSION_META_FILE = 'sessions-meta.json'
 /** A receipt answers retries for this long, and never longer than its session exists. */
@@ -149,8 +149,9 @@ const sessionEntrySchema = z.object({
   worktree: z
     .strictObject({
       path: z.string().min(2).max(4096).startsWith('/'),
-      branch: z.string().regex(WORKTREE_BRANCH),
+      branch: z.string().regex(BRANCH_NAME),
       unfiltered: z.number().int().min(1).max(10_000_000).optional(),
+      removed: z.literal(true).optional(),
     })
     .optional(),
   firstStart: z.literal(true).optional(),
@@ -212,9 +213,10 @@ export interface StoredMeta {
   sessionFolder?: string
   /**
    * The worktree the Host made for the session (its `cwd`), the branch it made with it, and how many tracked files were
-   * left as Git stores them because their filter did not run.
+   * left as Git stores them because their filter did not run; `removed` once the worktree was removed (the session stays,
+   * read-only).
    */
-  worktree?: { path: string; branch: string; unfiltered?: number }
+  worktree?: { path: string; branch: string; unfiltered?: number; removed?: true }
   firstStart?: true
   /** The pull request 交付 made or found for the session's branch. */
   pr?: GitPrBinding
@@ -352,9 +354,18 @@ export class SessionMetaStore implements SessionReceipts {
   }
 
   /** The worktrees the Host made for sessions, with the project each session started in. */
-  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string }> {
+  worktrees(): Array<{ sessionId: string; path: string; workspaceId?: string; removed?: true }> {
     return [...this.meta.entries()].flatMap(([sessionId, meta]) =>
-      meta.worktree ? [{ sessionId, path: meta.worktree.path, ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}) }] : [],
+      meta.worktree
+        ? [
+            {
+              sessionId,
+              path: meta.worktree.path,
+              ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
+              ...(meta.worktree.removed ? { removed: true as const } : {}),
+            },
+          ]
+        : [],
     )
   }
 

@@ -42,6 +42,7 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
   const requireScope: RouteContext['requireScope'] = context.requireScope
   const delivery = new GitDelivery({
     ...options,
+    holds: context.repositoryHolds,
     receipts: hub.receipts,
     prs: {
       get: sessionId => hub.prOf(sessionId),
