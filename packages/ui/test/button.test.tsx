@@ -118,7 +118,7 @@ describe('buttons', () => {
     // It fades in from a scale of .98 over --m-enter, inverted.
     const first = document.querySelector<HTMLElement>('.ui-tooltip:popover-open')!
     expect(first.getAnimations().map(item => (item as CSSAnimation).animationName)).toEqual(['ui-pop'])
-    expect([style(first).backgroundColor, style(first).color]).toEqual(['rgb(24, 24, 27)', 'rgb(250, 250, 250)'])
+    expect([style(first).backgroundColor, style(first).color]).toEqual(['rgb(23, 23, 26)', 'rgb(250, 250, 250)'])
     // The label already names the button, so the tooltip does not describe it a second time.
     expect(settings.element().hasAttribute('aria-describedby')).toBe(false)
     await userEvent.hover(screen.getByRole('button', { name: '添加' }))
@@ -136,8 +136,8 @@ describe('buttons', () => {
     const button = screen.getByRole('button', { name: '会话信息' })
     await expect.element(button).toHaveAttribute('aria-pressed', 'true')
     // On: the hover fill and ink, never the accent.
-    expect(style(button.element(), '::before').backgroundColor).toBe('rgba(0, 0, 0, 0.04)')
-    expect(style(button.element()).color).toBe('rgb(24, 24, 27)')
+    expect(style(button.element(), '::before').backgroundColor).toBe('rgba(18, 18, 28, 0.05)')
+    expect(style(button.element()).color).toBe('rgb(23, 23, 26)')
     expect(button.element().getBoundingClientRect().width).toBe(28)
     await onTouchScreen(async () => {
       const box = button.element().getBoundingClientRect()
@@ -156,7 +156,7 @@ describe('buttons', () => {
     )
     const open = screen.getByRole('button', { name: '更多' }).element()
     const closed = screen.getByRole('button', { name: '收起' }).element()
-    expect(style(open, '::before').backgroundColor).toBe('rgba(0, 0, 0, 0.04)')
+    expect(style(open, '::before').backgroundColor).toBe('rgba(18, 18, 28, 0.05)')
     expect(getComputedStyle(open).color).toBe(getComputedStyle(document.documentElement).color)
     expect(style(closed, '::before').backgroundColor).toBe('rgba(0, 0, 0, 0)')
   })
@@ -191,15 +191,15 @@ describe('buttons', () => {
       </div>,
     )
     const plain = style(screen.getByRole('button', { name: '稍后' }).element())
-    expect([plain.backgroundColor, plain.boxShadow]).toEqual(['rgba(0, 0, 0, 0.04)', 'none'])
+    expect([plain.backgroundColor, plain.boxShadow]).toEqual(['rgba(18, 18, 28, 0.05)', 'none'])
     for (const name of ['拒绝', '撤销此设备', '重试']) {
       const outlined = style(screen.getByRole('button', { name }).element())
-      expect([outlined.backgroundColor, outlined.boxShadow.startsWith('rgb(220, 220, 224) 0px 0px 0px 1px inset')], name).toEqual([
+      expect([outlined.backgroundColor, outlined.boxShadow.startsWith('rgba(18, 18, 28, 0.14) 0px 0px 0px 1px inset')], name).toEqual([
         'rgb(255, 255, 255)',
         true,
       ])
     }
-    expect(style(screen.getByRole('button', { name: '撤销此设备' }).element()).color).toBe('rgb(185, 28, 28)')
+    expect(style(screen.getByRole('button', { name: '撤销此设备' }).element()).color).toBe('rgb(180, 35, 31)')
   })
 
   it('presses a button to .97 over --m-micro, but not one that opens a menu, and rings the keyboard focus in the accent', async () => {

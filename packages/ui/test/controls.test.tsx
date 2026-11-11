@@ -154,17 +154,17 @@ describe('segmented control', () => {
   it('raises the selected 24px segment on its own face on a soft track, and never slides it', async () => {
     const screen = await render(<Modes />)
     const group = screen.getByRole('radiogroup').element()
-    expect([style(group).boxShadow, style(group).backgroundColor, style(group).padding]).toEqual(['none', 'rgba(0, 0, 0, 0.04)', '2px'])
+    expect([style(group).boxShadow, style(group).backgroundColor, style(group).padding]).toEqual(['none', 'rgba(18, 18, 28, 0.05)', '2px'])
     expect(group.querySelector('.ui-segmented-thumb')).toBeNull()
     const chosen = screen.getByRole('radio', { name: '对话' }).element()
     const other = screen.getByRole('radio', { name: 'Agent' }).element()
     expect([chosen.getBoundingClientRect().height, style(chosen).backgroundColor, style(chosen).color]).toEqual([
       24,
       'rgb(255, 255, 255)',
-      'rgb(24, 24, 27)',
+      'rgb(23, 23, 26)',
     ])
     expect(style(chosen).boxShadow).not.toBe('none')
-    expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(106, 106, 115)'])
+    expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(86, 86, 95)'])
     expect(style(chosen).transitionProperty).not.toMatch(/translate|transform|left/u)
   })
 })
@@ -214,8 +214,8 @@ describe('tabs and filter pills', () => {
     // The fill and the ink cross-fade in over --m-micro.
     await expect
       .poll(() => [tab.getBoundingClientRect().height, style(tab).backgroundColor, style(tab).color, style(tab).borderTopLeftRadius])
-      .toEqual([24, 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', '6px'])
-    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(106, 106, 115)')
+      .toEqual([24, 'rgba(18, 18, 28, 0.05)', 'rgb(23, 23, 26)', '6px'])
+    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(86, 86, 95)')
     expect(style(tab).textDecorationLine).toBe('none')
   })
 
@@ -349,7 +349,7 @@ describe('choice controls', () => {
     )
     const box = screen.getByRole('checkbox', { name: '管理此 Host' })
     // Unchecked: the raised surface inside a 1.5px line-strong ring.
-    expect(style(box.element()).boxShadow).toBe('rgb(220, 220, 224) 0px 0px 0px 1.5px inset')
+    expect(style(box.element()).boxShadow).toBe('rgba(18, 18, 28, 0.14) 0px 0px 0px 1.5px inset')
     await userEvent.click(screen.getByText('管理此 Host'))
     await expect.element(box).toBeChecked()
     await expect.poll(() => style(box.element()).backgroundColor).toBe('rgb(36, 97, 224)')

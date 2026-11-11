@@ -58,12 +58,12 @@ describe('notices and toasts', () => {
     const alert = screen.getByRole('alert')
     await expect.element(alert).toBeVisible()
     expect(alert.element().querySelector('.ui-notice-text')?.textContent).toBe('审计记录被回滚上次看到的记录不在了。')
-    expect(color(alert.element().querySelector('.ui-notice-title'))).toBe('rgb(185, 28, 28)')
-    expect(color(alert.element().querySelector('.ui-notice-text'))).toBe('rgb(63, 63, 70)')
+    expect(color(alert.element().querySelector('.ui-notice-title'))).toBe('rgb(180, 35, 31)')
+    expect(color(alert.element().querySelector('.ui-notice-text'))).toBe('rgb(52, 52, 59)')
     // The raised surface under a red tint and edge; the warning's glyph in the amber of icons.
     expect(getComputedStyle(alert.element()).backgroundImage).toMatch(/^linear-gradient/u)
-    expect(getComputedStyle(alert.element()).borderTopColor).toBe('rgba(220, 38, 38, 0.2)')
-    expect(color(screen.getByRole('status').element().querySelector('.ui-notice-glyph'))).toBe('rgb(212, 115, 6)')
+    expect(getComputedStyle(alert.element()).borderTopColor).toBe('rgba(213, 67, 61, 0.22)')
+    expect(color(screen.getByRole('status').element().querySelector('.ui-notice-glyph'))).toBe('rgb(196, 111, 6)')
     // A warning keeps the neutral surface; only its glyph and title are amber.
     expect(getComputedStyle(screen.getByRole('status').element()).backgroundImage).toBe('none')
     expect(getComputedStyle(screen.getByRole('status').element()).backgroundColor).toBe('rgb(255, 255, 255)')
@@ -94,14 +94,14 @@ describe('badges, counts and marks', () => {
       </div>,
     )
     const state = screen.getByText('原内容未知').element()
-    expect([getComputedStyle(state).backgroundColor, color(state)]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(180, 83, 9)'])
+    expect([getComputedStyle(state).backgroundColor, color(state)]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(136, 74, 6)'])
     await expect.element(screen.getByText('99+')).toBeVisible()
     const badge = getComputedStyle(screen.getByText('演示模型').element())
     expect([badge.height, badge.borderTopLeftRadius, badge.backgroundColor, badge.color]).toEqual([
       '18px',
       '4px',
-      'rgba(0, 0, 0, 0.04)',
-      'rgb(180, 83, 9)',
+      'rgba(18, 18, 28, 0.05)',
+      'rgb(136, 74, 6)',
     ])
   })
 
@@ -109,7 +109,7 @@ describe('badges, counts and marks', () => {
     const screen = await render(<DevMark description="开发模式：Host 代码可被本机修改" />)
     const mark = screen.getByRole('note', { name: '开发模式：Host 代码可被本机修改' })
     await expect.element(mark).toHaveTextContent('开发版')
-    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(106, 106, 115)', 'rgba(0, 0, 0, 0.04)'])
+    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(86, 86, 95)', 'rgba(18, 18, 28, 0.05)'])
   })
 
   it('hides a status dot from screen readers unless it is labelled', async () => {
@@ -153,7 +153,7 @@ describe('empty, loading and error states', () => {
     )
     const card = screen.getByRole('alert')
     await expect.element(screen.getByRole('heading', { name: '界面出错，当前内容无法显示。' })).toBeVisible()
-    expect(color(card.element().querySelector('.lucide-triangle-alert'))).toBe('rgb(185, 28, 28)')
+    expect(color(card.element().querySelector('.lucide-triangle-alert'))).toBe('rgb(180, 35, 31)')
     expect(card.element().querySelectorAll('button')).toHaveLength(2)
   })
 })
@@ -202,9 +202,9 @@ describe('tiles', () => {
       expect(ring.boxShadow).toBe(`${line} 0px 0px 0px 1px inset`)
       expect(contrast(ink, getComputedStyle(screen.container.querySelector('.canvas')!).backgroundColor)).toBeGreaterThanOrEqual(4.5)
     }
-    check('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', 'rgb(63, 63, 70)', 'rgb(235, 235, 237)')
+    check('rgb(255, 255, 255)', 'rgba(18, 18, 28, 0.05)', 'rgb(23, 23, 26)', 'rgb(52, 52, 59)', 'rgba(18, 18, 28, 0.075)')
     await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
-      check('rgb(24, 24, 27)', 'rgba(255, 255, 255, 0.05)', 'rgb(244, 244, 245)', 'rgb(212, 212, 216)', 'rgba(255, 255, 255, 0.08)')
+      check('rgb(27, 27, 31)', 'rgba(255, 255, 255, 0.05)', 'rgb(236, 236, 239)', 'rgb(201, 201, 208)', 'rgba(255, 255, 255, 0.06)')
     })
   })
 
@@ -285,7 +285,7 @@ describe('tiles', () => {
     expect(arriving).toBe('grayscale(1) opacity(0.7)')
     expect(screen.container.querySelector('.ui-tile-progress-arc')?.getAttribute('stroke-dasharray')).toBe('60 100')
     await expect.element(screen.getByRole('img', { name: 'goose：上次运行异常' })).toBeVisible()
-    expect(getComputedStyle(screen.container.querySelector('.ui-tile-dot')!).backgroundColor).toBe('rgb(185, 28, 28)')
+    expect(getComputedStyle(screen.container.querySelector('.ui-tile-dot')!).backgroundColor).toBe('rgb(180, 35, 31)')
   })
 
   it('pauses a skeleton and a tile arc out of view, and keeps them going in view', async () => {
@@ -365,9 +365,9 @@ describe('tiles', () => {
     expect(cutOuts()).toEqual([true, true, true, true])
     await emulateMedia({ 'prefers-color-scheme': 'dark' }, () => {
       expect(cutOuts()).toEqual([true, true, true, true])
-      // In the dark theme a raised layer (#18181b) is lighter than the canvas (#111113): the ring is not the canvas's.
+      // In the dark theme a raised layer (#1b1b1f) is lighter than the canvas (#131316): the ring is not the canvas's.
       const dot = screen.container.querySelector('.ui-popover .ui-tile-dot')!
-      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(24, 24, 27\) /u)
+      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(27, 27, 31\) /u)
     })
   })
 })

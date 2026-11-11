@@ -6,11 +6,13 @@
  * only for added lines and a short-lived success tick. Amber and red always come with words. Running work, counts,
  * selected rows and every resting icon are neutral.
  *
- * Surfaces: the canvas holds the work (conversation, panels); the sidebar and the settings navigation sit on a grey a
- * step darker; raised layers (menus, popovers, the composer, cards, dialogs) are white in the light theme and a step
- * lighter than the canvas in the dark one; sunken wells hold code and table headers. Hover and press are ink at a low
- * alpha, so they read the same on every surface. A selected row is a white card on the grey sidebar (a soft fill in
- * dark), never blue. No gradients, no tinted grounds.
+ * Surfaces are stepped, with almost no lines: sunken < sidebar < canvas < raised < card < pop. The sidebar grey is the
+ * ground of the window; the canvas holds the work (conversation, panels); raised layers (the composer, menus,
+ * popovers, dialogs) and cards sit over it; sunken wells (code, command output, table headers) go below the surface
+ * they sit in. In the light theme every layer above the ground is white and is told apart by its shadow; in the dark
+ * one each is a step lighter, on a near-black ground. Hover and press are ink at a low alpha, so they read the same on
+ * every surface. A selected row is a white card on the grey sidebar (a soft fill in dark), never blue. No gradients,
+ * no tinted grounds.
  *
  * Light values sit on :root; the dark theme redefines every token that holds a colour, both under the system
  * preference (unless the page chose light) and under data-theme="dark", and the two dark blocks stay identical.
@@ -35,26 +37,30 @@
 
     /* Ink. ink is the content, ink-2 prose at rest and secondary emphasis, muted secondary text and every resting icon,
      * faint placeholders, disabled words and rows already read. */
-    --ink: #18181b;
-    --ink-2: #3f3f46;
-    --muted: #6a6a73;
-    --faint: #a1a1aa;
+    --ink: #17171a;
+    --ink-2: #34343b;
+    --muted: #56565f;
+    --faint: #66666f;
 
-    /* Surfaces. canvas: the conversation and the panels; sidebar: the sidebar and the settings navigation; raised:
-     * menus, popovers, the composer, cards and dialogs; sunken: code, table headers and wells. */
+    /* Surfaces, from the deepest: sunken (the well: code, command output, table headers, the search field); sidebar
+     * (the ground of the window: the sidebar and the settings navigation, under the work panel); canvas (the work panel:
+     * the conversation and the panels); raised (the composer, menus, popovers and dialogs); card (a card on the panel,
+     * such as an approval); pop (the face of a control or a layer over a card). */
     --canvas: #ffffff;
-    --sidebar: #f7f7f8;
+    --sidebar: #ebebef;
     --raised: #ffffff;
-    --sunken: #f7f7f8;
-    --hover: rgba(0, 0, 0, 0.04);
-    --press: rgba(0, 0, 0, 0.07);
+    --sunken: #f3f3f6;
+    --card: #ffffff;
+    --pop: #ffffff;
+    --hover: rgba(18, 18, 28, 0.05);
+    --press: rgba(18, 18, 28, 0.09);
     /* A selected row: a white card with a hairline ring on the grey sidebar (a soft fill in the dark theme). */
     --selected: #ffffff;
-    --selected-ring: 0 0 0 1px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
-    --bubble: #f1f1f3;
+    --selected-ring: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.08);
+    --bubble: #f1f1f4;
     /* Glass, only for floating layers (menus, the composer): raised at 88% behind a blur. */
     --glass: rgba(255, 255, 255, 0.88);
-    --scrim: rgba(0, 0, 0, 0.24);
+    --scrim: rgba(18, 18, 28, 0.14);
     /* The surface under an element, for rings that cut a dot or a count out of what it sits on; a container on another
      * surface (a menu, a dialog, the sidebar) sets it to that surface. */
     --surface: var(--canvas);
@@ -66,12 +72,21 @@
     --app-ring: transparent;
 
     /* Lines, always 1px: line for hairlines and borders, line-strong for inputs and outlined controls. */
-    --line: #ebebed;
-    --line-strong: #dcdce0;
+    --line: rgba(18, 18, 28, 0.075);
+    --line-strong: rgba(18, 18, 28, 0.14);
+    /* The 3px joint where a card meets the composer under it. */
+    --joint: rgba(18, 18, 28, 0.1);
 
-    /* Shadows. sh-1: the composer and outlined controls at rest. sh-pop: menus, popovers, tooltips and toasts, with
-     * its own hairline ring. sh-dialog: dialogs, sheets and the palette, over the scrim. In the dark theme every
-     * floating layer adds an inset top line. Static rows and cards have none. */
+    /* Shadows. Depth is drawn with shadows, not lines: sh-panel lifts the work panel off the ground; sh-lift lifts
+     * the composer and a card off the panel; sh-well sinks a well into the surface it sits in. Each carries its own
+     * hairline ring, so an element that wears one draws no border. sh-1: outlined controls at rest. sh-pop: menus,
+     * popovers, tooltips and toasts, with its own hairline ring. sh-dialog: dialogs, sheets and the palette, over the
+     * scrim. In the dark theme every floating layer adds an inset top line. Rows have none. */
+    --sh-panel: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.04), 0 10px 28px -14px rgba(18, 18, 28, 0.12);
+    --sh-lift:
+      0 0 0 1px rgba(18, 18, 28, 0.07), 0 1px 2px rgba(18, 18, 28, 0.05), 0 6px 14px -6px rgba(18, 18, 28, 0.1),
+      0 20px 40px -20px rgba(18, 18, 28, 0.2);
+    --sh-well: inset 0 0 0 1px rgba(18, 18, 28, 0.045), inset 0 1px 2px rgba(18, 18, 28, 0.05);
     --sh-1: 0 1px 2px rgba(0, 0, 0, 0.05);
     --sh-pop: 0 12px 32px -12px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line);
     --sh-dialog: 0 24px 64px -24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line);
@@ -82,47 +97,58 @@
     --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
     --switch-off: rgba(0, 0, 0, 0.12);
     /* Tooltips are inverted: near-black in the light theme, a lifted grey in the dark one. */
-    --tip-bg: #18181b;
+    --tip-bg: #17171a;
     --tip-ink: #fafafa;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3);
     --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18);
+    /* A key cap looks like a key: its own face, an edge and a 2px lower lip. A tag is not a key: a quiet fill, no edge. */
+    --key: #fbfbfc;
+    --sh-key: inset 0 0 0 1px rgba(18, 18, 28, 0.16), inset 0 -2px 0 rgba(18, 18, 28, 0.13);
+    --tag: rgba(18, 18, 28, 0.065);
+    /* A meter is cells: the track holds them, a filled cell is meter ink. The status band is the faint strip under the
+     * composer's last row. */
+    --track: rgba(18, 18, 28, 0.11);
+    --meter: #45454e;
+    --band: rgba(18, 18, 28, 0.025);
 
     /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
      * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
      * accent-soft is the focus halo of a field and the tint of a text selection. */
     --accent: #2461e0;
-    --accent-hover: #1d53c8;
-    --accent-ink: #215bd5;
+    --accent-hover: #1d55cc;
+    --accent-ink: #1d52c4;
     --accent-soft: rgba(36, 97, 224, 0.1);
     --on-accent: #ffffff;
 
     /* Amber: 等你处理 and warnings, always on a neutral surface. amber is text, amber-icon a glyph or dot, amber-soft only an
      * amber control's hover fill, amber-line the outline of an inline mark. */
-    --amber: #b45309;
-    --amber-icon: #d47306;
-    --amber-soft: rgba(217, 119, 6, 0.08);
-    --amber-line: rgba(217, 119, 6, 0.24);
+    --amber: #884a06;
+    --amber-icon: #c46f06;
+    --amber-soft: rgba(217, 130, 9, 0.08);
+    --amber-line: rgba(217, 130, 9, 0.24);
     /* Red: a real failure or risk. red is text, glyphs and dots; red-solid fills the one destructive confirmation. */
-    --red: #b91c1c;
-    --red-solid: #b91c1c;
-    --red-soft: rgba(220, 38, 38, 0.07);
-    --red-line: rgba(220, 38, 38, 0.2);
+    --red: #b4231f;
+    --red-solid: #b4231f;
+    --red-soft: rgba(213, 67, 61, 0.09);
+    --red-line: rgba(213, 67, 61, 0.22);
     /* Green: added lines and a short-lived success tick. Diff rows are tinted and keep their ink; the word tint marks
-     * the changed part. */
-    --green: #15803d;
-    --diff-add: rgba(22, 163, 74, 0.09);
-    --diff-del: rgba(220, 38, 38, 0.07);
-    --diff-add-word: rgba(22, 163, 74, 0.22);
-    --diff-del-word: rgba(220, 38, 38, 0.17);
+     * the changed part; an edge of 2px marks an added or removed line at the row's start. */
+    --green: #166f3b;
+    --diff-add: rgba(25, 135, 70, 0.1);
+    --diff-del: rgba(213, 67, 61, 0.09);
+    --diff-add-word: rgba(25, 135, 70, 0.22);
+    --diff-del-word: rgba(213, 67, 61, 0.19);
+    --diff-add-edge: rgba(25, 135, 70, 0.55);
+    --diff-del-edge: rgba(213, 67, 61, 0.55);
 
     /* Syntax: quiet hues on the code ink, readable on the canvas and on sunken code. */
     --syn-plain: var(--ink-2);
     --syn-keyword: #7c3aa8;
     --syn-string: #9a5a16;
     --syn-comment: #8b8b94;
-    --syn-number: #b4541b;
+    --syn-number: #ad4f19;
     --syn-function: #0f6e78;
-    --syn-constant: #b4541b;
+    --syn-constant: #ad4f19;
     --syn-punctuation: var(--ink-2);
 
     /* Type: each role has a size and a line height, and a paragraph line height for text that can wrap. Weights are
@@ -133,12 +159,12 @@
     --fs-caption: 12px;
     --lh-caption: 16px;
     --lh-caption-para: 18px;
-    --fs-ui: 13px;
-    --lh-ui: 18px;
-    --lh-ui-para: 20px;
-    --fs-input: 13px;
-    --lh-input: 18px;
-    --fs-prose: 14px;
+    --fs-ui: 14px;
+    --lh-ui: 20px;
+    --lh-ui-para: 22px;
+    --fs-input: 14px;
+    --lh-input: 20px;
+    --fs-prose: 15px;
     --lh-prose: 24px;
     --fs-heading: 15px;
     --lh-heading: 22px;
@@ -148,7 +174,7 @@
     --lh-hero: 32px;
     --fs-question: 28px;
     --lh-question: 36px;
-    --fs-mono: 12px;
+    --fs-mono: 13px;
     --lh-mono: 18px;
     --fs-code: 12px;
     --lh-code: 20px;
@@ -212,7 +238,7 @@
     --sidebar-open-width: var(--sidebar-width);
     --inspector-width: 320px;
     --inspector-open-width: var(--inspector-width);
-    --content-width: 720px;
+    --content-width: 800px;
     --gutter: 32px;
     --topbar-height: 48px;
     --shell-inset: 8px;
@@ -284,58 +310,74 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
       color-scheme: dark;
-      --ink: #f4f4f5;
-      --ink-2: #d4d4d8;
-      --muted: #a1a1aa;
-      --faint: #71717a;
-      --canvas: #111113;
-      --sidebar: #0a0a0b;
-      --raised: #18181b;
-      --sunken: #0e0e10;
+      --ink: #ececef;
+      --ink-2: #c9c9d0;
+      --muted: #a3a3ad;
+      --faint: #8b8b95;
+      --canvas: #131316;
+      --sidebar: #09090b;
+      --raised: #1b1b1f;
+      --sunken: #0b0b0d;
+      --card: #212126;
+      --pop: #27272c;
       --hover: rgba(255, 255, 255, 0.05);
       --press: rgba(255, 255, 255, 0.09);
-      --selected: rgba(255, 255, 255, 0.08);
-      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-      --bubble: #1e1e21;
-      --glass: rgba(24, 24, 27, 0.88);
-      --scrim: rgba(0, 0, 0, 0.56);
+      --selected: rgba(255, 255, 255, 0.075);
+      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --bubble: #1e1e22;
+      --glass: rgba(27, 27, 31, 0.88);
+      --scrim: rgba(0, 0, 0, 0.44);
       --preview-light-a: #ffffff;
       --preview-light-b: #ededed;
       --preview-dark-a: #242424;
       --preview-dark-b: #303030;
-      --app-ring: rgba(255, 255, 255, 0.12);
-      --line: rgba(255, 255, 255, 0.08);
-      --line-strong: rgba(255, 255, 255, 0.14);
+      --app-ring: rgba(255, 255, 255, 0.16);
+      --line: rgba(255, 255, 255, 0.06);
+      --line-strong: rgba(255, 255, 255, 0.11);
+      --joint: rgba(0, 0, 0, 0.55);
+      --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7);
+      --sh-lift:
+        inset 0 1px 0 rgba(255, 255, 255, 0.075), inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 0 0 1px rgba(0, 0, 0, 0.6),
+        0 8px 18px -8px rgba(0, 0, 0, 0.6), 0 26px 50px -18px rgba(0, 0, 0, 0.7);
+      --sh-well: inset 0 1px 2px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
       --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05);
       --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4);
       --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
-      --seg-on: #2c2c31;
+      --seg-on: #2e2e34;
       --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --switch-off: rgba(255, 255, 255, 0.16);
-      --tip-bg: #2a2a2e;
-      --tip-ink: #f4f4f5;
+      --tip-bg: #2e2e34;
+      --tip-ink: #ececef;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      --accent: #2f6feb;
-      --accent-hover: #2a63d4;
+      --key: #2e2e34;
+      --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+      --tag: rgba(255, 255, 255, 0.08);
+      --track: rgba(255, 255, 255, 0.11);
+      --meter: #b6b6bf;
+      --band: rgba(0, 0, 0, 0.2);
+      --accent: #2f6be6;
+      --accent-hover: #2a62d6;
       --accent-ink: #6b9bfa;
       --accent-soft: rgba(59, 118, 246, 0.18);
       --on-accent: #ffffff;
-      --amber: #fbbf24;
-      --amber-icon: #fbbf24;
-      --amber-soft: rgba(251, 191, 36, 0.08);
-      --amber-line: rgba(251, 191, 36, 0.24);
-      --red: #f87171;
+      --amber: #f0aa45;
+      --amber-icon: #e89a2c;
+      --amber-soft: rgba(240, 170, 69, 0.08);
+      --amber-line: rgba(240, 170, 69, 0.24);
+      --red: #f47c75;
       --red-solid: #dc2626;
-      --red-soft: rgba(248, 113, 113, 0.12);
-      --red-line: rgba(248, 113, 113, 0.24);
-      --green: #4ade80;
-      --diff-add: rgba(74, 222, 128, 0.1);
-      --diff-del: rgba(248, 113, 113, 0.1);
-      --diff-add-word: rgba(74, 222, 128, 0.24);
-      --diff-del-word: rgba(248, 113, 113, 0.24);
+      --red-soft: rgba(244, 124, 117, 0.1);
+      --red-line: rgba(244, 124, 117, 0.24);
+      --green: #5ccc8e;
+      --diff-add: rgba(86, 196, 135, 0.12);
+      --diff-del: rgba(244, 124, 117, 0.1);
+      --diff-add-word: rgba(86, 196, 135, 0.26);
+      --diff-del-word: rgba(244, 124, 117, 0.24);
+      --diff-add-edge: rgba(86, 196, 135, 0.6);
+      --diff-del-edge: rgba(244, 124, 117, 0.6);
       --syn-keyword: #c8a2f0;
       --syn-string: #e6b47c;
       --syn-comment: #6e6e78;
@@ -347,58 +389,74 @@
 
   :root[data-theme='dark'] {
     color-scheme: dark;
-    --ink: #f4f4f5;
-    --ink-2: #d4d4d8;
-    --muted: #a1a1aa;
-    --faint: #71717a;
-    --canvas: #111113;
-    --sidebar: #0a0a0b;
-    --raised: #18181b;
-    --sunken: #0e0e10;
+    --ink: #ececef;
+    --ink-2: #c9c9d0;
+    --muted: #a3a3ad;
+    --faint: #8b8b95;
+    --canvas: #131316;
+    --sidebar: #09090b;
+    --raised: #1b1b1f;
+    --sunken: #0b0b0d;
+    --card: #212126;
+    --pop: #27272c;
     --hover: rgba(255, 255, 255, 0.05);
     --press: rgba(255, 255, 255, 0.09);
-    --selected: rgba(255, 255, 255, 0.08);
-    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    --bubble: #1e1e21;
-    --glass: rgba(24, 24, 27, 0.88);
-    --scrim: rgba(0, 0, 0, 0.56);
+    --selected: rgba(255, 255, 255, 0.075);
+    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --bubble: #1e1e22;
+    --glass: rgba(27, 27, 31, 0.88);
+    --scrim: rgba(0, 0, 0, 0.44);
     --preview-light-a: #ffffff;
     --preview-light-b: #ededed;
     --preview-dark-a: #242424;
     --preview-dark-b: #303030;
-    --app-ring: rgba(255, 255, 255, 0.12);
-    --line: rgba(255, 255, 255, 0.08);
-    --line-strong: rgba(255, 255, 255, 0.14);
+    --app-ring: rgba(255, 255, 255, 0.16);
+    --line: rgba(255, 255, 255, 0.06);
+    --line-strong: rgba(255, 255, 255, 0.11);
+    --joint: rgba(0, 0, 0, 0.55);
+    --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7);
+    --sh-lift:
+      inset 0 1px 0 rgba(255, 255, 255, 0.075), inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 8px 18px -8px rgba(0, 0, 0, 0.6), 0 26px 50px -18px rgba(0, 0, 0, 0.7);
+    --sh-well: inset 0 1px 2px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
     --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4);
     --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
-    --seg-on: #2c2c31;
+    --seg-on: #2e2e34;
     --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --switch-off: rgba(255, 255, 255, 0.16);
-    --tip-bg: #2a2a2e;
-    --tip-ink: #f4f4f5;
+    --tip-bg: #2e2e34;
+    --tip-ink: #ececef;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    --accent: #2f6feb;
-    --accent-hover: #2a63d4;
+    --key: #2e2e34;
+    --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+    --tag: rgba(255, 255, 255, 0.08);
+    --track: rgba(255, 255, 255, 0.11);
+    --meter: #b6b6bf;
+    --band: rgba(0, 0, 0, 0.2);
+    --accent: #2f6be6;
+    --accent-hover: #2a62d6;
     --accent-ink: #6b9bfa;
     --accent-soft: rgba(59, 118, 246, 0.18);
     --on-accent: #ffffff;
-    --amber: #fbbf24;
-    --amber-icon: #fbbf24;
-    --amber-soft: rgba(251, 191, 36, 0.08);
-    --amber-line: rgba(251, 191, 36, 0.24);
-    --red: #f87171;
+    --amber: #f0aa45;
+    --amber-icon: #e89a2c;
+    --amber-soft: rgba(240, 170, 69, 0.08);
+    --amber-line: rgba(240, 170, 69, 0.24);
+    --red: #f47c75;
     --red-solid: #dc2626;
-    --red-soft: rgba(248, 113, 113, 0.12);
-    --red-line: rgba(248, 113, 113, 0.24);
-    --green: #4ade80;
-    --diff-add: rgba(74, 222, 128, 0.1);
-    --diff-del: rgba(248, 113, 113, 0.1);
-    --diff-add-word: rgba(74, 222, 128, 0.24);
-    --diff-del-word: rgba(248, 113, 113, 0.24);
+    --red-soft: rgba(244, 124, 117, 0.1);
+    --red-line: rgba(244, 124, 117, 0.24);
+    --green: #5ccc8e;
+    --diff-add: rgba(86, 196, 135, 0.12);
+    --diff-del: rgba(244, 124, 117, 0.1);
+    --diff-add-word: rgba(86, 196, 135, 0.26);
+    --diff-del-word: rgba(244, 124, 117, 0.24);
+    --diff-add-edge: rgba(86, 196, 135, 0.6);
+    --diff-del-edge: rgba(244, 124, 117, 0.6);
     --syn-keyword: #c8a2f0;
     --syn-string: #e6b47c;
     --syn-comment: #6e6e78;
@@ -418,28 +476,36 @@
     --font:
       -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif !important;
     --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
-    --ink: #18181b !important;
-    --ink-2: #3f3f46 !important;
-    --muted: #6a6a73 !important;
-    --faint: #a1a1aa !important;
+    --ink: #17171a !important;
+    --ink-2: #34343b !important;
+    --muted: #56565f !important;
+    --faint: #66666f !important;
     --canvas: #ffffff !important;
-    --sidebar: #f7f7f8 !important;
+    --sidebar: #ebebef !important;
     --raised: #ffffff !important;
-    --sunken: #f7f7f8 !important;
-    --hover: rgba(0, 0, 0, 0.04) !important;
-    --press: rgba(0, 0, 0, 0.07) !important;
+    --sunken: #f3f3f6 !important;
+    --card: #ffffff !important;
+    --pop: #ffffff !important;
+    --hover: rgba(18, 18, 28, 0.05) !important;
+    --press: rgba(18, 18, 28, 0.09) !important;
     --selected: #ffffff !important;
-    --selected-ring: 0 0 0 1px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04) !important;
-    --bubble: #f1f1f3 !important;
+    --selected-ring: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.08) !important;
+    --bubble: #f1f1f4 !important;
     --glass: rgba(255, 255, 255, 0.88) !important;
-    --scrim: rgba(0, 0, 0, 0.24) !important;
+    --scrim: rgba(18, 18, 28, 0.14) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;
     --preview-dark-b: #303030 !important;
     --app-ring: transparent !important;
-    --line: #ebebed !important;
-    --line-strong: #dcdce0 !important;
+    --line: rgba(18, 18, 28, 0.075) !important;
+    --line-strong: rgba(18, 18, 28, 0.14) !important;
+    --joint: rgba(18, 18, 28, 0.1) !important;
+    --sh-panel: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.04), 0 10px 28px -14px rgba(18, 18, 28, 0.12) !important;
+    --sh-lift:
+      0 0 0 1px rgba(18, 18, 28, 0.07), 0 1px 2px rgba(18, 18, 28, 0.05), 0 6px 14px -6px rgba(18, 18, 28, 0.1),
+      0 20px 40px -20px rgba(18, 18, 28, 0.2) !important;
+    --sh-well: inset 0 0 0 1px rgba(18, 18, 28, 0.045), inset 0 1px 2px rgba(18, 18, 28, 0.05) !important;
     --sh-1: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
     --sh-pop: 0 12px 32px -12px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line) !important;
     --sh-dialog: 0 24px 64px -24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line) !important;
@@ -448,47 +514,55 @@
     --seg-on: #ffffff !important;
     --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.06) !important;
     --switch-off: rgba(0, 0, 0, 0.12) !important;
-    --tip-bg: #18181b !important;
+    --tip-bg: #17171a !important;
     --tip-ink: #fafafa !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3) !important;
     --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18) !important;
+    --key: #fbfbfc !important;
+    --sh-key: inset 0 0 0 1px rgba(18, 18, 28, 0.16), inset 0 -2px 0 rgba(18, 18, 28, 0.13) !important;
+    --tag: rgba(18, 18, 28, 0.065) !important;
+    --track: rgba(18, 18, 28, 0.11) !important;
+    --meter: #45454e !important;
+    --band: rgba(18, 18, 28, 0.025) !important;
     --accent: #2461e0 !important;
-    --accent-hover: #1d53c8 !important;
-    --accent-ink: #215bd5 !important;
+    --accent-hover: #1d55cc !important;
+    --accent-ink: #1d52c4 !important;
     --accent-soft: rgba(36, 97, 224, 0.1) !important;
     --on-accent: #ffffff !important;
-    --amber: #b45309 !important;
-    --amber-icon: #d47306 !important;
-    --amber-soft: rgba(217, 119, 6, 0.08) !important;
-    --amber-line: rgba(217, 119, 6, 0.24) !important;
-    --red: #b91c1c !important;
-    --red-solid: #b91c1c !important;
-    --red-soft: rgba(220, 38, 38, 0.07) !important;
-    --red-line: rgba(220, 38, 38, 0.2) !important;
-    --green: #15803d !important;
-    --diff-add: rgba(22, 163, 74, 0.09) !important;
-    --diff-del: rgba(220, 38, 38, 0.07) !important;
-    --diff-add-word: rgba(22, 163, 74, 0.22) !important;
-    --diff-del-word: rgba(220, 38, 38, 0.17) !important;
+    --amber: #884a06 !important;
+    --amber-icon: #c46f06 !important;
+    --amber-soft: rgba(217, 130, 9, 0.08) !important;
+    --amber-line: rgba(217, 130, 9, 0.24) !important;
+    --red: #b4231f !important;
+    --red-solid: #b4231f !important;
+    --red-soft: rgba(213, 67, 61, 0.09) !important;
+    --red-line: rgba(213, 67, 61, 0.22) !important;
+    --green: #166f3b !important;
+    --diff-add: rgba(25, 135, 70, 0.1) !important;
+    --diff-del: rgba(213, 67, 61, 0.09) !important;
+    --diff-add-word: rgba(25, 135, 70, 0.22) !important;
+    --diff-del-word: rgba(213, 67, 61, 0.19) !important;
+    --diff-add-edge: rgba(25, 135, 70, 0.55) !important;
+    --diff-del-edge: rgba(213, 67, 61, 0.55) !important;
     --syn-plain: var(--ink-2) !important;
     --syn-keyword: #7c3aa8 !important;
     --syn-string: #9a5a16 !important;
     --syn-comment: #8b8b94 !important;
-    --syn-number: #b4541b !important;
+    --syn-number: #ad4f19 !important;
     --syn-function: #0f6e78 !important;
-    --syn-constant: #b4541b !important;
+    --syn-constant: #ad4f19 !important;
     --syn-punctuation: var(--ink-2) !important;
     --fs-meta: 11px !important;
     --lh-meta: 14px !important;
     --fs-caption: 12px !important;
     --lh-caption: 16px !important;
     --lh-caption-para: 18px !important;
-    --fs-ui: 13px !important;
-    --lh-ui: 18px !important;
-    --lh-ui-para: 20px !important;
-    --fs-input: 13px !important;
-    --lh-input: 18px !important;
-    --fs-prose: 14px !important;
+    --fs-ui: 14px !important;
+    --lh-ui: 20px !important;
+    --lh-ui-para: 22px !important;
+    --fs-input: 14px !important;
+    --lh-input: 20px !important;
+    --fs-prose: 15px !important;
     --lh-prose: 24px !important;
     --fs-heading: 15px !important;
     --lh-heading: 22px !important;
@@ -498,7 +572,7 @@
     --lh-hero: 32px !important;
     --fs-question: 28px !important;
     --lh-question: 36px !important;
-    --fs-mono: 12px !important;
+    --fs-mono: 13px !important;
     --lh-mono: 18px !important;
     --fs-code: 12px !important;
     --lh-code: 20px !important;
@@ -555,58 +629,74 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
-      --ink: #f4f4f5 !important;
-      --ink-2: #d4d4d8 !important;
-      --muted: #a1a1aa !important;
-      --faint: #71717a !important;
-      --canvas: #111113 !important;
-      --sidebar: #0a0a0b !important;
-      --raised: #18181b !important;
-      --sunken: #0e0e10 !important;
+      --ink: #ececef !important;
+      --ink-2: #c9c9d0 !important;
+      --muted: #a3a3ad !important;
+      --faint: #8b8b95 !important;
+      --canvas: #131316 !important;
+      --sidebar: #09090b !important;
+      --raised: #1b1b1f !important;
+      --sunken: #0b0b0d !important;
+      --card: #212126 !important;
+      --pop: #27272c !important;
       --hover: rgba(255, 255, 255, 0.05) !important;
       --press: rgba(255, 255, 255, 0.09) !important;
-      --selected: rgba(255, 255, 255, 0.08) !important;
-      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
-      --bubble: #1e1e21 !important;
-      --glass: rgba(24, 24, 27, 0.88) !important;
-      --scrim: rgba(0, 0, 0, 0.56) !important;
+      --selected: rgba(255, 255, 255, 0.075) !important;
+      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --bubble: #1e1e22 !important;
+      --glass: rgba(27, 27, 31, 0.88) !important;
+      --scrim: rgba(0, 0, 0, 0.44) !important;
       --preview-light-a: #ffffff !important;
       --preview-light-b: #ededed !important;
       --preview-dark-a: #242424 !important;
       --preview-dark-b: #303030 !important;
-      --app-ring: rgba(255, 255, 255, 0.12) !important;
-      --line: rgba(255, 255, 255, 0.08) !important;
-      --line-strong: rgba(255, 255, 255, 0.14) !important;
+      --app-ring: rgba(255, 255, 255, 0.16) !important;
+      --line: rgba(255, 255, 255, 0.06) !important;
+      --line-strong: rgba(255, 255, 255, 0.11) !important;
+      --joint: rgba(0, 0, 0, 0.55) !important;
+      --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7) !important;
+      --sh-lift:
+        inset 0 1px 0 rgba(255, 255, 255, 0.075), inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 0 0 1px rgba(0, 0, 0, 0.6),
+        0 8px 18px -8px rgba(0, 0, 0, 0.6), 0 26px 50px -18px rgba(0, 0, 0, 0.7) !important;
+      --sh-well: inset 0 1px 2px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03) !important;
       --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
       --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4) !important;
       --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1) !important;
-      --seg-on: #2c2c31 !important;
+      --seg-on: #2e2e34 !important;
       --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --switch-off: rgba(255, 255, 255, 0.16) !important;
-      --tip-bg: #2a2a2e !important;
-      --tip-ink: #f4f4f5 !important;
+      --tip-bg: #2e2e34 !important;
+      --tip-ink: #ececef !important;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-      --accent: #2f6feb !important;
-      --accent-hover: #2a63d4 !important;
+      --key: #2e2e34 !important;
+      --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5) !important;
+      --tag: rgba(255, 255, 255, 0.08) !important;
+      --track: rgba(255, 255, 255, 0.11) !important;
+      --meter: #b6b6bf !important;
+      --band: rgba(0, 0, 0, 0.2) !important;
+      --accent: #2f6be6 !important;
+      --accent-hover: #2a62d6 !important;
       --accent-ink: #6b9bfa !important;
       --accent-soft: rgba(59, 118, 246, 0.18) !important;
       --on-accent: #ffffff !important;
-      --amber: #fbbf24 !important;
-      --amber-icon: #fbbf24 !important;
-      --amber-soft: rgba(251, 191, 36, 0.08) !important;
-      --amber-line: rgba(251, 191, 36, 0.24) !important;
-      --red: #f87171 !important;
+      --amber: #f0aa45 !important;
+      --amber-icon: #e89a2c !important;
+      --amber-soft: rgba(240, 170, 69, 0.08) !important;
+      --amber-line: rgba(240, 170, 69, 0.24) !important;
+      --red: #f47c75 !important;
       --red-solid: #dc2626 !important;
-      --red-soft: rgba(248, 113, 113, 0.12) !important;
-      --red-line: rgba(248, 113, 113, 0.24) !important;
-      --green: #4ade80 !important;
-      --diff-add: rgba(74, 222, 128, 0.1) !important;
-      --diff-del: rgba(248, 113, 113, 0.1) !important;
-      --diff-add-word: rgba(74, 222, 128, 0.24) !important;
-      --diff-del-word: rgba(248, 113, 113, 0.24) !important;
+      --red-soft: rgba(244, 124, 117, 0.1) !important;
+      --red-line: rgba(244, 124, 117, 0.24) !important;
+      --green: #5ccc8e !important;
+      --diff-add: rgba(86, 196, 135, 0.12) !important;
+      --diff-del: rgba(244, 124, 117, 0.1) !important;
+      --diff-add-word: rgba(86, 196, 135, 0.26) !important;
+      --diff-del-word: rgba(244, 124, 117, 0.24) !important;
+      --diff-add-edge: rgba(86, 196, 135, 0.6) !important;
+      --diff-del-edge: rgba(244, 124, 117, 0.6) !important;
       --syn-keyword: #c8a2f0 !important;
       --syn-string: #e6b47c !important;
       --syn-comment: #6e6e78 !important;
@@ -617,58 +707,74 @@
   }
 
   :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
-    --ink: #f4f4f5 !important;
-    --ink-2: #d4d4d8 !important;
-    --muted: #a1a1aa !important;
-    --faint: #71717a !important;
-    --canvas: #111113 !important;
-    --sidebar: #0a0a0b !important;
-    --raised: #18181b !important;
-    --sunken: #0e0e10 !important;
+    --ink: #ececef !important;
+    --ink-2: #c9c9d0 !important;
+    --muted: #a3a3ad !important;
+    --faint: #8b8b95 !important;
+    --canvas: #131316 !important;
+    --sidebar: #09090b !important;
+    --raised: #1b1b1f !important;
+    --sunken: #0b0b0d !important;
+    --card: #212126 !important;
+    --pop: #27272c !important;
     --hover: rgba(255, 255, 255, 0.05) !important;
     --press: rgba(255, 255, 255, 0.09) !important;
-    --selected: rgba(255, 255, 255, 0.08) !important;
-    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
-    --bubble: #1e1e21 !important;
-    --glass: rgba(24, 24, 27, 0.88) !important;
-    --scrim: rgba(0, 0, 0, 0.56) !important;
+    --selected: rgba(255, 255, 255, 0.075) !important;
+    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --bubble: #1e1e22 !important;
+    --glass: rgba(27, 27, 31, 0.88) !important;
+    --scrim: rgba(0, 0, 0, 0.44) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;
     --preview-dark-b: #303030 !important;
-    --app-ring: rgba(255, 255, 255, 0.12) !important;
-    --line: rgba(255, 255, 255, 0.08) !important;
-    --line-strong: rgba(255, 255, 255, 0.14) !important;
+    --app-ring: rgba(255, 255, 255, 0.16) !important;
+    --line: rgba(255, 255, 255, 0.06) !important;
+    --line-strong: rgba(255, 255, 255, 0.11) !important;
+    --joint: rgba(0, 0, 0, 0.55) !important;
+    --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7) !important;
+    --sh-lift:
+      inset 0 1px 0 rgba(255, 255, 255, 0.075), inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 8px 18px -8px rgba(0, 0, 0, 0.6), 0 26px 50px -18px rgba(0, 0, 0, 0.7) !important;
+    --sh-well: inset 0 1px 2px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03) !important;
     --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
     --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4) !important;
     --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1) !important;
-    --seg-on: #2c2c31 !important;
+    --seg-on: #2e2e34 !important;
     --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --switch-off: rgba(255, 255, 255, 0.16) !important;
-    --tip-bg: #2a2a2e !important;
-    --tip-ink: #f4f4f5 !important;
+    --tip-bg: #2e2e34 !important;
+    --tip-ink: #ececef !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-    --accent: #2f6feb !important;
-    --accent-hover: #2a63d4 !important;
+    --key: #2e2e34 !important;
+    --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5) !important;
+    --tag: rgba(255, 255, 255, 0.08) !important;
+    --track: rgba(255, 255, 255, 0.11) !important;
+    --meter: #b6b6bf !important;
+    --band: rgba(0, 0, 0, 0.2) !important;
+    --accent: #2f6be6 !important;
+    --accent-hover: #2a62d6 !important;
     --accent-ink: #6b9bfa !important;
     --accent-soft: rgba(59, 118, 246, 0.18) !important;
     --on-accent: #ffffff !important;
-    --amber: #fbbf24 !important;
-    --amber-icon: #fbbf24 !important;
-    --amber-soft: rgba(251, 191, 36, 0.08) !important;
-    --amber-line: rgba(251, 191, 36, 0.24) !important;
-    --red: #f87171 !important;
+    --amber: #f0aa45 !important;
+    --amber-icon: #e89a2c !important;
+    --amber-soft: rgba(240, 170, 69, 0.08) !important;
+    --amber-line: rgba(240, 170, 69, 0.24) !important;
+    --red: #f47c75 !important;
     --red-solid: #dc2626 !important;
-    --red-soft: rgba(248, 113, 113, 0.12) !important;
-    --red-line: rgba(248, 113, 113, 0.24) !important;
-    --green: #4ade80 !important;
-    --diff-add: rgba(74, 222, 128, 0.1) !important;
-    --diff-del: rgba(248, 113, 113, 0.1) !important;
-    --diff-add-word: rgba(74, 222, 128, 0.24) !important;
-    --diff-del-word: rgba(248, 113, 113, 0.24) !important;
+    --red-soft: rgba(244, 124, 117, 0.1) !important;
+    --red-line: rgba(244, 124, 117, 0.24) !important;
+    --green: #5ccc8e !important;
+    --diff-add: rgba(86, 196, 135, 0.12) !important;
+    --diff-del: rgba(244, 124, 117, 0.1) !important;
+    --diff-add-word: rgba(86, 196, 135, 0.26) !important;
+    --diff-del-word: rgba(244, 124, 117, 0.24) !important;
+    --diff-add-edge: rgba(86, 196, 135, 0.6) !important;
+    --diff-del-edge: rgba(244, 124, 117, 0.6) !important;
     --syn-keyword: #c8a2f0 !important;
     --syn-string: #e6b47c !important;
     --syn-comment: #6e6e78 !important;

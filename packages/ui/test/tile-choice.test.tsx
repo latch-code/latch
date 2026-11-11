@@ -84,7 +84,7 @@ describe('tile choice', () => {
     expect(getComputedStyle(chosen).backgroundColor).toBe(getComputedStyle(probe).backgroundColor)
     probe.remove()
     // White with a hairline ring on the canvas, never the accent.
-    expect(getComputedStyle(chosen).boxShadow).toBe('rgba(0, 0, 0, 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 1px 1px 0px')
+    expect(getComputedStyle(chosen).boxShadow).toBe('rgba(18, 18, 28, 0.05) 0px 0px 0px 1px, rgba(18, 18, 28, 0.08) 0px 1px 2px 0px')
     expect(getComputedStyle(chosen.querySelector('.ui-tile-choice-label')!).fontWeight).toBe('500')
     const codex = screen.getByRole('radio', { name: /Codex/ }).element()
     expect(getComputedStyle(codex.querySelector('.ui-tile-choice-tile')!).opacity).toBe('0.45')

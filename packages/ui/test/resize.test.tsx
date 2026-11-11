@@ -101,7 +101,7 @@ describe('resize handle', () => {
     const screen = await render(<Column />)
     const handle = screen.getByRole('separator', { name: '调整侧栏宽度' }).element()
     const line = () => getComputedStyle(handle, '::after')
-    expect([line().opacity, line().width, line().backgroundColor]).toEqual(['0', '1px', 'rgb(220, 220, 224)'])
+    expect([line().opacity, line().width, line().backgroundColor]).toEqual(['0', '1px', 'rgba(18, 18, 28, 0.14)'])
     expect(getComputedStyle(handle).position).toBe('absolute')
     expect(getComputedStyle(handle).cursor).toBe('col-resize')
     await userEvent.hover(handle)

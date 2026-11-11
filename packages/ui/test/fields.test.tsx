@@ -19,7 +19,7 @@ describe('text fields', () => {
     const address = screen.getByRole('textbox', { name: '地址' })
     await expect.element(address).toHaveAttribute('aria-invalid', 'true')
     await expect.element(address).toHaveAccessibleDescription('地址要以 https:// 开头。')
-    expect(getComputedStyle(address.element()).boxShadow).toBe('rgb(185, 28, 28) 0px 0px 0px 1px inset')
+    expect(getComputedStyle(address.element()).boxShadow).toBe('rgb(180, 35, 31) 0px 0px 0px 1px inset')
   })
 
   it('draws a field raised inside a line-strong ring that turns accent with a soft halo whenever it has focus', async () => {
@@ -28,11 +28,11 @@ describe('text fields', () => {
     const style = getComputedStyle(field.element())
     expect([style.backgroundColor, style.boxShadow, style.borderTopLeftRadius, field.element().getBoundingClientRect().height]).toEqual([
       'rgb(255, 255, 255)',
-      'rgb(220, 220, 224) 0px 0px 0px 1px inset',
+      'rgba(18, 18, 28, 0.14) 0px 0px 0px 1px inset',
       '8px',
       32,
     ])
-    expect(getComputedStyle(field.element(), '::placeholder').color).toBe('rgb(161, 161, 170)')
+    expect(getComputedStyle(field.element(), '::placeholder').color).toBe('rgb(102, 102, 111)')
     await userEvent.click(field)
     await expect
       .poll(() => getComputedStyle(field.element()).boxShadow)
@@ -51,7 +51,7 @@ describe('search field', () => {
     const input = screen.getByRole('searchbox', { name: '搜索会话' })
     // A soft fill without a ring at rest.
     const field = getComputedStyle(input.element().parentElement!)
-    expect([field.backgroundColor, field.boxShadow]).toEqual(['rgba(0, 0, 0, 0.04)', 'none'])
+    expect([field.backgroundColor, field.boxShadow]).toEqual(['rgba(18, 18, 28, 0.05)', 'none'])
     await expect.element(screen.getByText('⌘K')).toBeVisible()
     // The glyph sits 6 from the text, the gap between an icon and its text inside a control.
     const glyph = input.element().parentElement?.querySelector('.ui-search-glyph')?.getBoundingClientRect()

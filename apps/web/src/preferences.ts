@@ -121,7 +121,7 @@ export function usePreferences(): Preferences {
  * The browser bar takes the sidebar's grey (--sidebar), the window's own colour, at every width: from 768px the canvas
  * is inset on it, and a phone's pages put their headers on it.
  */
-const themeColors = { light: '#f7f7f8', dark: '#0a0a0b' }
+const themeColors = { light: '#ebebef', dark: '#09090b' }
 
 /** The colour for one theme-color meta, read from its media query (index.html qualifies each by scheme). */
 export function themeColorFor(media: string, theme: ThemePreference): string {

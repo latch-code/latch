@@ -20,6 +20,9 @@ const INJECTED_STYLES = `
   --ink: transparent !important; --ink-2: transparent !important; --muted: transparent !important;
   --canvas: rgb(255, 0, 0) !important; --raised: rgb(255, 0, 0) !important; --sunken: rgb(255, 0, 0) !important;
   --hover: rgb(0, 160, 0) !important; --line: transparent !important; --line-strong: transparent !important;
+  --card: rgb(255, 0, 0) !important; --pop: rgb(255, 0, 0) !important; --key: rgb(255, 0, 0) !important;
+  --sh-key: none !important; --sh-lift: none !important; --sh-panel: none !important; --sh-well: none !important;
+  --joint: rgb(255, 0, 0) !important; --tag: rgb(255, 0, 0) !important;
   --fs-ui: 1px !important; --fs-caption: 1px !important; --fs-heading: 1px !important; --fs-prose: 1px !important;
   --fs-title: 1px !important; --fs-hero: 1px !important; --fs-mono-display: 1px !important; --lh-ui: 1px !important;
   --mono: serif !important; --font: cursive !important;

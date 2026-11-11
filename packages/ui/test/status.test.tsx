@@ -90,12 +90,12 @@ describe('status words', () => {
     const words = Array.from(screen.container.querySelectorAll<HTMLElement>('.ui-status-word'))
     const style = (element: Element) => getComputedStyle(element)
     expect(words.map(item => [item.textContent, style(item).color])).toEqual([
-      ['等你处理', 'rgb(180, 83, 9)'],
-      ['运行中 1:12', 'rgb(24, 24, 27)'],
-      ['失败', 'rgb(185, 28, 28)'],
-      ['已完成', 'rgb(24, 24, 27)'],
-      ['不可用', 'rgb(180, 83, 9)'],
-      ['已取消', 'rgb(106, 106, 115)'],
+      ['等你处理', 'rgb(136, 74, 6)'],
+      ['运行中 1:12', 'rgb(23, 23, 26)'],
+      ['失败', 'rgb(180, 35, 31)'],
+      ['已完成', 'rgb(23, 23, 26)'],
+      ['不可用', 'rgb(136, 74, 6)'],
+      ['已取消', 'rgb(86, 86, 95)'],
     ])
     expect(
       words.every(item => style(item).fontSize === '12px' && style(item).lineHeight === '16px' && style(item).fontWeight === '500'),
@@ -104,7 +104,7 @@ describe('status words', () => {
     // Waiting has the shield in the amber of icons, running the spinner, failed circle-alert, done a check; the rest none.
     const glyph = (index: number) => words[index]!.querySelector('.ui-status-word-glyph')
     expect(glyph(0)?.classList.contains('lucide-shield')).toBe(true)
-    expect(style(glyph(0)!).color).toBe('rgb(212, 115, 6)')
+    expect(style(glyph(0)!).color).toBe('rgb(196, 111, 6)')
     expect(glyph(1)?.classList.contains('ui-spinner')).toBe(true)
     expect(glyph(1)?.getAttribute('data-size')).toBe('12')
     expect(glyph(2)?.classList.contains('lucide-circle-alert')).toBe(true)
@@ -133,7 +133,7 @@ describe('status words', () => {
 describe('the spinner', () => {
   it('is a ring of its colour at 22% with one full quarter, 12 to 20 wide, turning once every 800ms', async () => {
     const screen = await render(
-      <div style={{ color: 'rgb(24, 24, 27)' }}>
+      <div style={{ color: 'rgb(23, 23, 26)' }}>
         <Spinner size={12} />
         <Spinner size={14} />
         <Spinner size={16} />
@@ -144,7 +144,7 @@ describe('the spinner', () => {
     // The box, not its turning bounds.
     expect(spinners.map(item => item.offsetWidth)).toEqual([12, 14, 16, 20])
     const style = getComputedStyle(spinners[0]!)
-    expect([style.borderTopColor, style.borderRightColor]).toEqual(['rgb(24, 24, 27)', 'color(srgb 0.0941176 0.0941176 0.105882 / 0.22)'])
+    expect([style.borderTopColor, style.borderRightColor]).toEqual(['rgb(23, 23, 26)', 'color(srgb 0.0901961 0.0901961 0.101961 / 0.22)'])
     // 1.5px (whole device pixels at a ratio of 1), and 2px at 20.
     expect(parseFloat(style.borderTopWidth)).toBeGreaterThanOrEqual(1)
     expect(getComputedStyle(spinners[3]!).borderTopWidth).toBe('2px')
@@ -235,11 +235,11 @@ describe('the status slot', () => {
     // Unread is a 12px ink check; the time is faint, at the regular weight.
     const check = slots[3]?.querySelector('.ui-status-unread')
     expect(check?.classList.contains('lucide-check')).toBe(true)
-    expect(getComputedStyle(check!).color).toBe('rgb(24, 24, 27)')
+    expect(getComputedStyle(check!).color).toBe('rgb(23, 23, 26)')
     const time = slots[4]?.querySelector('time')
     expect([time?.getAttribute('dateTime'), getComputedStyle(time!).color, getComputedStyle(time!).fontWeight]).toEqual([
       '2026-10-21T09:15:00+08:00',
-      'rgb(161, 161, 170)',
+      'rgb(102, 102, 111)',
       '400',
     ])
   })
@@ -283,7 +283,7 @@ describe('counts', () => {
     )
     const counts = Array.from(screen.container.querySelectorAll<HTMLElement>('.ui-count'))
     expect(counts.map(item => item.textContent)).toEqual(['3', '12', '99+'])
-    expect(counts.map(item => getComputedStyle(item).color).slice(1)).toEqual(['rgb(24, 24, 27)', 'rgb(180, 83, 9)'])
+    expect(counts.map(item => getComputedStyle(item).color).slice(1)).toEqual(['rgb(23, 23, 26)', 'rgb(136, 74, 6)'])
     expect(getComputedStyle(counts[0]!).fontVariantNumeric).toBe('tabular-nums')
     expect(getComputedStyle(counts[0]!).backgroundColor).toBe('rgba(0, 0, 0, 0)')
   })

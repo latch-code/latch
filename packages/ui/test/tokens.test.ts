@@ -78,33 +78,43 @@ function simulatedLab(rgb: Rgba, matrix: number[][]): number[] {
 
 /** The colour tokens, light and dark. */
 const TOKENS: Record<string, [string, string]> = {
-  '--canvas': ['#ffffff', '#111113'],
-  '--sidebar': ['#f7f7f8', '#0a0a0b'],
-  '--raised': ['#ffffff', '#18181b'],
-  '--sunken': ['#f7f7f8', '#0e0e10'],
-  '--hover': ['rgba(0, 0, 0, 0.04)', 'rgba(255, 255, 255, 0.05)'],
-  '--press': ['rgba(0, 0, 0, 0.07)', 'rgba(255, 255, 255, 0.09)'],
-  '--selected': ['#ffffff', 'rgba(255, 255, 255, 0.08)'],
-  '--line': ['#ebebed', 'rgba(255, 255, 255, 0.08)'],
-  '--line-strong': ['#dcdce0', 'rgba(255, 255, 255, 0.14)'],
-  '--ink': ['#18181b', '#f4f4f5'],
-  '--ink-2': ['#3f3f46', '#d4d4d8'],
-  '--muted': ['#6a6a73', '#a1a1aa'],
-  '--faint': ['#a1a1aa', '#71717a'],
-  '--bubble': ['#f1f1f3', '#1e1e21'],
-  '--accent': ['#2461e0', '#2f6feb'],
-  '--accent-hover': ['#1d53c8', '#2a63d4'],
-  '--accent-ink': ['#215bd5', '#6b9bfa'],
+  '--sunken': ['#f3f3f6', '#0b0b0d'],
+  '--sidebar': ['#ebebef', '#09090b'],
+  '--canvas': ['#ffffff', '#131316'],
+  '--raised': ['#ffffff', '#1b1b1f'],
+  '--card': ['#ffffff', '#212126'],
+  '--pop': ['#ffffff', '#27272c'],
+  '--hover': ['rgba(18, 18, 28, 0.05)', 'rgba(255, 255, 255, 0.05)'],
+  '--press': ['rgba(18, 18, 28, 0.09)', 'rgba(255, 255, 255, 0.09)'],
+  '--selected': ['#ffffff', 'rgba(255, 255, 255, 0.075)'],
+  '--line': ['rgba(18, 18, 28, 0.075)', 'rgba(255, 255, 255, 0.06)'],
+  '--line-strong': ['rgba(18, 18, 28, 0.14)', 'rgba(255, 255, 255, 0.11)'],
+  '--joint': ['rgba(18, 18, 28, 0.1)', 'rgba(0, 0, 0, 0.55)'],
+  '--ink': ['#17171a', '#ececef'],
+  '--ink-2': ['#34343b', '#c9c9d0'],
+  '--muted': ['#56565f', '#a3a3ad'],
+  '--faint': ['#66666f', '#8b8b95'],
+  '--bubble': ['#f1f1f4', '#1e1e22'],
+  '--key': ['#fbfbfc', '#2e2e34'],
+  '--tag': ['rgba(18, 18, 28, 0.065)', 'rgba(255, 255, 255, 0.08)'],
+  '--track': ['rgba(18, 18, 28, 0.11)', 'rgba(255, 255, 255, 0.11)'],
+  '--meter': ['#45454e', '#b6b6bf'],
+  '--band': ['rgba(18, 18, 28, 0.025)', 'rgba(0, 0, 0, 0.2)'],
+  '--accent': ['#2461e0', '#2f6be6'],
+  '--accent-hover': ['#1d55cc', '#2a62d6'],
+  '--accent-ink': ['#1d52c4', '#6b9bfa'],
   '--accent-soft': ['rgba(36, 97, 224, 0.1)', 'rgba(59, 118, 246, 0.18)'],
-  '--amber': ['#b45309', '#fbbf24'],
-  '--amber-icon': ['#d47306', '#fbbf24'],
-  '--amber-soft': ['rgba(217, 119, 6, 0.08)', 'rgba(251, 191, 36, 0.08)'],
-  '--red': ['#b91c1c', '#f87171'],
-  '--red-soft': ['rgba(220, 38, 38, 0.07)', 'rgba(248, 113, 113, 0.12)'],
-  '--green': ['#15803d', '#4ade80'],
-  '--diff-add': ['rgba(22, 163, 74, 0.09)', 'rgba(74, 222, 128, 0.1)'],
-  '--diff-del': ['rgba(220, 38, 38, 0.07)', 'rgba(248, 113, 113, 0.1)'],
-  '--scrim': ['rgba(0, 0, 0, 0.24)', 'rgba(0, 0, 0, 0.56)'],
+  '--amber': ['#884a06', '#f0aa45'],
+  '--amber-icon': ['#c46f06', '#e89a2c'],
+  '--amber-soft': ['rgba(217, 130, 9, 0.08)', 'rgba(240, 170, 69, 0.08)'],
+  '--red': ['#b4231f', '#f47c75'],
+  '--red-soft': ['rgba(213, 67, 61, 0.09)', 'rgba(244, 124, 117, 0.1)'],
+  '--green': ['#166f3b', '#5ccc8e'],
+  '--diff-add': ['rgba(25, 135, 70, 0.1)', 'rgba(86, 196, 135, 0.12)'],
+  '--diff-del': ['rgba(213, 67, 61, 0.09)', 'rgba(244, 124, 117, 0.1)'],
+  '--diff-add-edge': ['rgba(25, 135, 70, 0.55)', 'rgba(86, 196, 135, 0.6)'],
+  '--diff-del-edge': ['rgba(213, 67, 61, 0.55)', 'rgba(244, 124, 117, 0.6)'],
+  '--scrim': ['rgba(18, 18, 28, 0.14)', 'rgba(0, 0, 0, 0.44)'],
 }
 
 describe('design tokens', () => {
@@ -164,7 +174,7 @@ describe('design tokens', () => {
     try {
       for (const element of [document.documentElement, document.body]) {
         const style = getComputedStyle(element)
-        expect([style.backgroundImage, style.backgroundColor]).toEqual(['none', 'rgb(247, 247, 248)'])
+        expect([style.backgroundImage, style.backgroundColor]).toEqual(['none', 'rgb(235, 235, 239)'])
       }
     } finally {
       if (previous === undefined) delete document.documentElement.dataset.theme
@@ -182,6 +192,8 @@ describe('design tokens', () => {
         ['--sidebar', get('--sidebar')],
         ['--raised', get('--raised')],
         ['--sunken', get('--sunken')],
+        ['--card', get('--card')],
+        ['--pop', get('--pop')],
         ['--bubble', get('--bubble')],
         ['--selected on --sidebar', over(get('--selected'), get('--sidebar'))],
       ]
@@ -227,6 +239,7 @@ describe('design tokens', () => {
       const rests: Array<[string, Rgba]> = [
         ['--canvas', get('--canvas')],
         ['--raised', get('--raised')],
+        ['--card', get('--card')],
         ['--sidebar', get('--sidebar')],
       ]
       const tint: [string, Rgba] = ['--amber-soft on --raised', over(get('--amber-soft'), get('--raised'))]
@@ -248,7 +261,7 @@ describe('design tokens', () => {
     const all = themes()
     for (const name of ['light', 'dark'] as const) {
       const get = (token: string) => colour(all[name].get(token))
-      for (const surface of ['--canvas', '--raised', '--sidebar'])
+      for (const surface of ['--canvas', '--raised', '--card', '--sidebar'])
         expect(contrast(get('--amber-icon'), get(surface)), `${name} --amber-icon on ${surface}`).toBeGreaterThanOrEqual(3)
     }
   })
@@ -260,7 +273,7 @@ describe('design tokens', () => {
         .slice(0, 3)
         .map(channel => Math.round(channel).toString(16).padStart(2, '0'))
         .join('')}`
-    expect([hex(light), hex(dark)]).toEqual(['#fcf4eb', '#2a251c'])
+    expect([hex(light), hex(dark)]).toEqual(['#fcf5eb', '#2c2622'])
   })
 
   it('keeps the semantic inks distinct under Chromium vision-deficiency simulations', () => {
@@ -278,6 +291,48 @@ describe('design tokens', () => {
       }
     // A 3-unit OKLab floor prevents near-identical state inks. Words and glyphs carry every meaning.
     expect(measurements.filter(item => item.deltaE < 3)).toEqual([])
+  })
+
+  it('steps the surfaces up from the well: sunken, sidebar, canvas, raised, card, pop, each a step lighter in the dark theme', () => {
+    const order = ['--sidebar', '--sunken', '--canvas', '--raised', '--card', '--pop']
+    for (const [name, theme] of Object.entries(themes())) {
+      const light = order.map(token => luminance(colour(theme.get(token))))
+      // The light theme paints every layer above the ground white and tells them apart by shadow; the dark one steps up.
+      const steps = light.slice(1).map((value, index) => value - light[index]!)
+      if (name === 'dark')
+        expect(
+          steps.every(step => step > 0),
+          `${name} ${order.join(' < ')}`,
+        ).toBe(true)
+      else
+        expect(
+          steps.every(step => step >= 0),
+          `${name} ${order.join(' ≤ ')}`,
+        ).toBe(true)
+    }
+  })
+
+  it('lifts the work panel and the floating layers and sinks the wells with their own shadows in both themes', () => {
+    const { light, dark } = themes()
+    for (const theme of [light, dark])
+      for (const token of ['--sh-panel', '--sh-lift', '--sh-well', '--sh-key']) expect(theme.get(token), token).toMatch(COLOUR)
+    // A well is inset; a panel and a float lie on top; the lip of a key is an inset line 2px high at its bottom.
+    expect(light.get('--sh-well')).toMatch(/^inset /u)
+    expect(dark.get('--sh-well')).toMatch(/^inset /u)
+    expect(light.get('--sh-key')).toContain('inset 0 -2px 0')
+    expect(dark.get('--sh-key')).toContain('inset 0 -2px 0')
+    // In the dark theme a lifted layer catches a light line at its top.
+    for (const token of ['--sh-panel', '--sh-lift']) expect(dark.get(token)).toMatch(/^inset 0 1px 0 rgba\(255, 255, 255, /u)
+    expect([light.get('--sh-panel'), light.get('--sh-lift')].some(value => value?.includes('inset'))).toBe(false)
+  })
+
+  it('keeps a key cap legible: muted words on the key face at 4.5:1, and a filled meter cell at 3:1 on the composer', () => {
+    const all = themes()
+    for (const name of ['light', 'dark'] as const) {
+      const get = (token: string) => colour(all[name].get(token))
+      expect(contrast(get('--muted'), get('--key')), `${name} --muted on --key`).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(get('--meter'), get('--raised')), `${name} --meter on --raised`).toBeGreaterThanOrEqual(3)
+    }
   })
 
   it('locks every themed token inside security surfaces to the value of its theme', () => {

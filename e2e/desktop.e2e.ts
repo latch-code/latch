@@ -1467,7 +1467,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         color: BrowserWindow.getAllWindows()[0]!.getBackgroundColor(),
         dark: nativeTheme.shouldUseDarkColors,
       }))
-      expect(ground.color.toUpperCase()).toBe(ground.dark ? '#0A0A0B' : '#F7F7F8')
+      expect(ground.color.toUpperCase()).toBe(ground.dark ? '#09090B' : '#EBEBEF')
 
       /** One `latchShell.browser` call from the page; image bytes come back described (size, PNG header), not copied. */
       const call = (method: string, ...args: unknown[]) =>

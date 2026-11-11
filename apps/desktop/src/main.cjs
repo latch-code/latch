@@ -142,7 +142,7 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
     minHeight: Math.min(height, 560),
     title: 'Latch',
     // The window's own colour (--sidebar in @latch/ui), so the window shows no flash before the first paint.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0b' : '#f7f7f8',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#09090b' : '#ebebef',
     icon,
     // The page's 52px title row holds the traffic lights in its 78px inset and moves the window; before the shell the
     // enrollment, connection and crash screens draw a strip of the same height. The local error page, which has neither,

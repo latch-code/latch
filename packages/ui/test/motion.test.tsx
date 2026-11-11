@@ -315,7 +315,7 @@ describe('the thinking shimmer', () => {
       await pause(50)
       expect(label.getAnimations()).toHaveLength(0)
       expect(getComputedStyle(label).backgroundImage).toBe('none')
-      expect(getComputedStyle(label).color).toBe('rgb(106, 106, 115)')
+      expect(getComputedStyle(label).color).toBe('rgb(86, 86, 95)')
     })
   })
 })
