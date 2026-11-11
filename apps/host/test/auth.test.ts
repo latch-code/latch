@@ -1836,6 +1836,10 @@ describe('device names', () => {
     expect(numbered).toBe('Windows 上的 Micro (2)')
     expect(Array.from(new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(numbered))).toHaveLength(20)
     expect(presenceReason('device.enroll', enrollmentSubject('loopback-tcp', numbered))).toContain('(2)」')
+    // Names that differ only past what the sheet shows read the same there, so the later one is numbered too.
+    const longer = 'Windows 上的 Microsoft Edge 浏览器'
+    expect(nameOf(await enroll(context, loopback, { name: longer }))).toBe('Windows 上的 Micro (3)')
+    expect(nameOf(await enroll(context, loopback, { name: `${longer} 2` }))).toBe('Windows 上的 Micro (4)')
 
     // A removed device frees its name.
     await context.devices.revoke(first.id, 'manual', actor)

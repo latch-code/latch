@@ -4516,6 +4516,22 @@ describe('ACP subagents', () => {
     expect(systemText(detail)).toContain('已拒绝：子 Agent「Test runner」请求「Edit a.txt」，这个会话是「只看不改」，Latch 没有交给你。')
     expect(refused(qwen, sessionId)).toEqual([{ type: 'approval-auto-rejected', sessionId, reason: 'subagent-wider' }])
     expect(subagents(detail)[0]!.subagent!.steps.find(step => step.tool?.title === 'Edit a.txt')?.tool?.decision).toBeUndefined()
+    // A tool whose kind says nothing, or that has none, may change something too: refused the same way. A read is offered.
+    for (const [argument, title] of [
+      ['other', 'Call mcp tool'],
+      ['bare', 'Call bare tool'],
+    ] as const) {
+      await bridge.prompt(sessionId, `delegate ${argument}`, rid())
+      detail = await settled(bridge, sessionId)
+      expect(detail.approvals).toEqual([])
+      expect(systemText(detail)).toContain(`请求「${title}」，这个会话是「只看不改」，Latch 没有交给你。`)
+    }
+    expect(refused(qwen, sessionId)).toHaveLength(3)
+    await bridge.prompt(sessionId, 'delegate read', rid())
+    const reading = await until(bridge, sessionId, item => item.approvals.length === 1)
+    expect(reading.approvals[0]).toMatchObject({ subagent: 'Test runner', reason: 'Read a.txt' })
+    expect(await bridge.decide(reading.approvals[0]!.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
     // The same request in 先问你 is the person's, as the session's own would be.
     await bridge.setConfig!(sessionId, 'mode', 'default')
     await bridge.prompt(sessionId, 'delegate ask', rid())
@@ -4523,7 +4539,7 @@ describe('ACP subagents', () => {
     expect(waiting.approvals[0]).toMatchObject({ subagent: 'Test runner', reason: 'Edit a.txt' })
     expect(await bridge.decide(waiting.approvals[0]!.id, 'reject')).toBe(true)
     await settled(bridge, sessionId)
-    expect(refused(qwen, sessionId)).toHaveLength(1)
+    expect(refused(qwen, sessionId)).toHaveLength(3)
 
     // An answer that would move the subagent to a wider mode is not offered; one that keeps it within the session's is.
     const claude = await preset('claude-agent', {

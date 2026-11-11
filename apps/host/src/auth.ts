@@ -935,8 +935,13 @@ export class DeviceStore {
    * devices apart while confirming. A name that is not taken is kept whole.
    */
   distinctName(name: string): string {
-    const taken = new Set(this.state.devices.filter(device => device.status !== 'revoked').map(device => device.name))
-    if (!taken.has(name)) return name
+    // Compared as the sheet shows them: two names alike in their first 19 graphemes read the same there.
+    const shown = (text: string) => {
+      const parts = Array.from(NAME_GRAPHEMES.segment(text), part => part.segment)
+      return parts.length <= SHEET_NAME_GRAPHEMES ? text : `${parts.slice(0, SHEET_NAME_GRAPHEMES - 1).join('')}…`
+    }
+    const taken = new Set(this.state.devices.filter(device => device.status !== 'revoked').map(device => shown(device.name)))
+    if (!taken.has(shown(name))) return name
     const clusters = Array.from(NAME_GRAPHEMES.segment(name), part => part.segment)
     for (let number = 2; number < 100; number++) {
       const suffix = ` (${number})`

@@ -1342,8 +1342,16 @@ const scenarios = {
           kind: 'read',
           status: 'completed',
         })
-    if (argument === 'ask' || argument === 'crowd' || argument === 'long') {
-      const edit = { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
+    // `other` is a tool whose kind says nothing (an MCP tool), `read` one that only reads, `bare` one with no kind at all.
+    if (['ask', 'crowd', 'long', 'other', 'read', 'bare'].includes(argument)) {
+      const edit =
+        argument === 'other'
+          ? { toolCallId: 'call_2', title: 'Call mcp tool', kind: 'other', status: 'pending', rawInput: { name: 'tool' } }
+          : argument === 'read'
+            ? { toolCallId: 'call_2', title: 'Read a.txt', kind: 'read', status: 'pending', rawInput: { path: 'a.txt' } }
+            : argument === 'bare'
+              ? { toolCallId: 'call_2', title: 'Call bare tool', status: 'pending', rawInput: {} }
+              : { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
       update(child, { sessionUpdate: 'tool_call', ...edit })
       report('requires_action')
       const { result } = await request('session/request_permission', { sessionId: child, toolCall: edit, options: ALLOW_OPTIONS })

@@ -321,8 +321,11 @@ interface ModeChange {
 
 /** Recorded, and shown, as the observed mode when the agent stops reporting a mode it reported before. */
 const UNREPORTED_MODE = '未报告'
-/** The ACP tool kinds that change files or run something; in 只看不改 the session's own agent does none of them. */
-const CHANGING_KINDS = new Set(['edit', 'delete', 'move', 'execute'])
+/**
+ * The ACP tool kinds that only look: in 只看不改 these are all a subagent may be allowed. Any other kind, `other`, a
+ * missing one or one Latch does not know may change something, so it is refused as edits and commands are.
+ */
+const LOOKING_KINDS = new Set(['read', 'search', 'think', 'fetch'])
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -4146,10 +4149,14 @@ export class AgentRuntime implements Bridge {
     this.drift(task, expected, value, child.title)
   }
 
-  /** In 只看不改, the session's own agent changes nothing; a subagent asking to is asking for more than the session has. */
+  /**
+   * In 只看不改, the session's own agent changes nothing; a subagent asking for anything but a look is asking for more
+   * than the session has. A mode switch is judged by the mode it switches to (`childOffer`).
+   */
   private childBlockedByPlan(task: AcpTask, kind: string | undefined): boolean {
     const expected = this.expectedMode(task)
-    return expected !== undefined && this.profile?.modeTiers?.[expected]?.tier === 'plan' && CHANGING_KINDS.has(kind ?? '')
+    if (expected === undefined || this.profile?.modeTiers?.[expected]?.tier !== 'plan') return false
+    return kind !== 'switch_mode' && !LOOKING_KINDS.has(kind ?? '')
   }
 
   /**
