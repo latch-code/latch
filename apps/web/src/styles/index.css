@@ -25,6 +25,7 @@
 @import './phone-new-session.css' layer(app);
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
+@import './agents.css' layer(app);
 @import './workflows.css' layer(app);
 @import './documents.css' layer(app);
 @import './questions.css' layer(app);

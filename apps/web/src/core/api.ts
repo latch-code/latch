@@ -311,6 +311,8 @@ export interface PendingSubmission {
   config?: Array<{ configId: string; value: string }>
   /** A new session starts in a new worktree of its project. */
   worktree?: true
+  /** A new session of one of 我的 Agent (a delegation); the Host fills what the request leaves out from the Agent. */
+  customAgentId?: string
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -333,7 +335,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (typeof item.requestId !== 'string' || typeof item.prompt !== 'string') return null
     // An assistant's message cannot be sent again: sent without it, it would start an ordinary session.
     if (item.assistantId !== undefined) return null
-    for (const field of ['sessionId', 'harnessId', 'workspaceId'] as const)
+    for (const field of ['sessionId', 'harnessId', 'workspaceId', 'customAgentId'] as const)
       if (item[field] !== undefined && typeof item[field] !== 'string') return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
@@ -373,6 +375,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
+      ...(typeof item.customAgentId === 'string' && item.sessionId === undefined ? { customAgentId: item.customAgentId } : {}),
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
@@ -429,6 +432,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
       ...(submission.config?.length ? { config: submission.config } : {}),
       ...(submission.worktree ? { worktree: true } : {}),
+      ...(submission.customAgentId ? { customAgentId: submission.customAgentId } : {}),
     },
   }
 }

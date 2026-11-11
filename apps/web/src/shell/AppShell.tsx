@@ -15,6 +15,7 @@ import { PhoneTabBar } from './PhoneTabBar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
+import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
@@ -366,7 +367,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 />
               )}
             </LiveChanges>
-            {route.entry !== 'sessions' && (
+            {route.entry === 'agents' && <AgentsPage shell={shell} />}
+            {route.entry === 'settings' && (
               <SettingsPage
                 snapshot={snapshot}
                 access={access}

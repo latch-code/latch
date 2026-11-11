@@ -1,0 +1,553 @@
+/*
+ * 我的 Agent: laid out as 设置 is (settings.css). On wide windows its list stands where the sidebar stands, under the
+ * same top rows; the work panel holds the list page or an Agent's page in one column. Rows are the raised list of the
+ * design system: a 40px glyph tile, the name, one line of duty and one line of how and where it runs.
+ */
+
+/* Code and 我的 Agent under 新会话 and 搜索: the place you are in is in ink; on 我的 Agent's own list it is selected. */
+.sidebar-entries {
+  display: grid;
+  gap: 1px;
+  margin-top: var(--sp-8);
+}
+.sidebar-entry[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 500;
+}
+.sidebar-entry[aria-current='page'] > svg {
+  color: var(--ink);
+}
+.agents-nav-top .sidebar-entry[aria-current='page'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+}
+
+.agents-nav-body {
+  width: var(--entry-nav-width);
+}
+@media (min-width: 1024px) {
+  .agents-nav-body {
+    width: var(--sidebar-open-width);
+  }
+}
+.agents-nav {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-12) 0 var(--sp-8);
+}
+.agents-nav-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: 0 10px var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.agents-nav-head > button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.agents-nav-head > button:hover {
+  color: var(--ink);
+}
+.agents-nav-head .ui-count {
+  margin-inline-start: auto;
+}
+.agents-nav ul {
+  display: grid;
+  gap: 1px;
+}
+.agents-nav-row {
+  display: grid;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-6) 10px;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.agents-nav-row:hover {
+  background: var(--hover);
+}
+.agents-nav-row[aria-current='page'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+  color: var(--ink);
+}
+.agents-nav-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agents-nav-meta,
+.agents-list-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.agents-nav-meta > span:last-child,
+.agents-list-meta > span:last-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agents-nav-meta > :not(:last-child),
+.agents-list-meta > :not(:last-child) {
+  flex-shrink: 0;
+}
+
+/* The title row's crumb: 我的 Agent / the Agent, and whether the Mac is reachable. */
+.agents-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  height: 100%;
+  padding-inline: var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agents-crumb-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+.agents-crumb-link:hover {
+  color: var(--ink);
+}
+.agents-crumb .titlebar-page-title {
+  color: var(--ink);
+}
+.agents-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-inline-start: var(--sp-8);
+  color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.agents-content {
+  max-width: calc(720px + 2 * var(--gutter));
+}
+
+/* The list page. */
+.agents-list-page {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.agents-list-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-16);
+}
+.agents-list-head > div {
+  display: grid;
+  gap: var(--sp-4);
+  flex: 1;
+  min-width: 0;
+}
+.agents-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agents-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.agents-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+button.agents-list-row:hover {
+  background: var(--hover);
+}
+button.agents-list-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.agents-list-row[aria-current='true'] {
+  background: var(--selected);
+}
+.agents-list-text {
+  display: grid;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+}
+.agents-list-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.agents-list-duty {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agents-new {
+  justify-self: start;
+}
+.agent-builtin {
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--tag);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+
+.agent-availability {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-availability[data-tone='warn'],
+.ui-hint.agent-availability .ui-hint-lead {
+  color: var(--amber);
+}
+.ui-hint.agent-availability {
+  max-width: 50%;
+}
+
+.agents-locked {
+  display: grid;
+  padding: var(--sp-8) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+}
+
+/* An Agent's page. */
+.agent-page {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+}
+.agent-head-text {
+  min-width: 0;
+}
+.agent-head h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.agent-head p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agent-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-6) var(--sp-16);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-facts dt {
+  color: var(--muted);
+}
+.agent-facts dd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--ink);
+}
+.agent-facts dd > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tab-panel {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+
+.agent-delegate {
+  display: grid;
+  gap: var(--sp-24);
+  min-width: 0;
+}
+.agent-delegate-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-top: var(--sp-8);
+}
+.agent-section {
+  display: grid;
+  gap: var(--sp-8);
+}
+.agent-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.agent-section-head h3,
+.agent-form-section h3 {
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.agent-recent,
+.agent-memory-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agent-recent > li + li,
+.agent-memory-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.agent-recent-row,
+.agent-schedule-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-16);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.agent-recent-row {
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.agent-recent-row:hover {
+  background: var(--hover);
+}
+.agent-recent-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.agent-recent-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.agent-recent-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+.agent-recent-text > time,
+.agent-schedule-meta {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.agent-memory,
+.agent-schedules {
+  display: grid;
+  gap: var(--sp-12);
+}
+.agent-memory-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+}
+.agent-memory-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-10) var(--sp-8) var(--sp-10) var(--sp-16);
+}
+.agent-memory-text {
+  display: grid;
+  gap: var(--sp-4);
+  flex: 1;
+  min-width: 0;
+}
+.agent-memory-text > p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.agent-memory-meta {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-memory-list .agent-memory-edit {
+  padding: var(--sp-12) var(--sp-16);
+}
+.agent-memory-edit {
+  display: grid;
+  gap: var(--sp-8);
+}
+
+/* The form. */
+.agent-form {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.agent-form-section {
+  display: grid;
+  gap: var(--sp-8);
+}
+.agent-form-section > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.agent-form-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.agent-form-empty {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-checks {
+  display: grid;
+  gap: var(--sp-8);
+}
+.agent-form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.agent-form-spacer {
+  flex: 1;
+}
+.agent-request-id {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* The conversation of a delegated session names its Agent before the title, as a way back to it. */
+.topbar-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.topbar-agent > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-agent:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+@media (max-width: 767.98px) {
+  .agents-list-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .agents-list-head .settings-title {
+    display: none;
+  }
+  .agents-list-row {
+    align-items: flex-start;
+  }
+  .ui-hint.agent-availability {
+    max-width: 40%;
+  }
+  .topbar-agent {
+    padding: 0;
+  }
+}
+
+/* A hint stands at its words' width, so its ⓘ stays beside them. */
+.agents-page .ui-hint {
+  justify-self: start;
+  max-width: 100%;
+}
+
+/* The list's intro has only the ⓘ that unfolds it. */
+.agents-intro.ui-hint {
+  grid-template-columns: minmax(0, auto) auto;
+}
+.agents-intro .ui-hint-lead {
+  display: none;
+}
+.agents-intro .ui-hint-detail {
+  grid-column: 1 / -1;
+}

@@ -30,7 +30,8 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { visibleEntries, type AgentPageTarget, type ShellEntry, type ShellRoute } from './routes.ts'
+import { visibleEntries, type AgentPageTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
+import { useDelegation } from '../agents/useAgentWrites.ts'
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
@@ -191,7 +192,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const contentSearch = useSessionSearch(search, snapshot.catalog?.features?.search === true)
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null)
   const [filter, setFilter] = useState<SessionFilter>('all')
-  const entries = visibleEntries(settingsSections(snapshot, access), phone)
+  const entries = visibleEntries(settingsSections(snapshot, access), phone, snapshot.catalog?.features?.customAgents === true)
+  /** The delegation this device sent from 我的 Agent and has no answer for; kept apart from the new session's draft. */
+  const delegation = useDelegation(snapshot, refresh)
   const entriesKey = entries.join()
   // An entry this device can no longer use closes at once.
   useLayoutEffect(() => {
@@ -396,6 +399,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry })
+  }
+  /** 我的 Agent, at an Agent's page (and tab) or at the list. */
+  const openMyAgent = (target?: MyAgentTarget) => {
+    drawer.setOpen(false)
+    setNewSheet(false)
+    setRoute({ entry: 'agents', ...(target ? { myAgent: target } : {}) })
   }
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
@@ -1085,6 +1094,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     back,
     openSettings,
     openAgentPage,
+    openMyAgent,
+    delegation,
     openProjectSettings,
     openSearch,
     searchShortcut,

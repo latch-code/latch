@@ -6,6 +6,7 @@ Host 在 `/link/` 提供的 React 页面，桌面端共用；构建到 `dist/web
 | --- | --- |
 | `src/core/` | 无布局的客户端核心：API、事件流、同步、阅读位置、凭据、设备登记、权限、确认与桌面桥接 |
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
+| `src/agents/` | 我的 Agent（docs/CUSTOM-AGENTS.md） |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；组件、设置与样式；品牌见 `brands.ts` |
 | `index.html`、`public/`、`vite.config.ts` | 页面入口；图标与 manifest；Vite 配置与 `pnpm dev:web` 的开发代理 |
 | `test/` | `pnpm test --project @latch/web` |

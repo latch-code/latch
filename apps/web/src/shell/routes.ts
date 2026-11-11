@@ -1,7 +1,7 @@
 export type SettingsSection = 'general' | 'providers' | 'engines' | 'workspaces' | 'plugins' | 'devices' | 'shortcuts' | 'about'
 
-/** Where the shell can be: the sessions, or 设置, which takes the panel's place and the main area. */
-export type ShellEntry = 'sessions' | 'settings'
+/** Where the shell can be: the sessions (Code), 我的 Agent, or 设置; a page takes the panel's place and the main area. */
+export type ShellEntry = 'sessions' | 'agents' | 'settings'
 export type PageEntry = Exclude<ShellEntry, 'sessions'>
 
 /** A page inside the Agent section that something else can open. */
@@ -15,6 +15,15 @@ export interface ShellRoute {
   projectId?: string
   /** The page an Agent section opens on. */
   agent?: AgentPageTarget
+  /** 我的 Agent: the Agent whose page is open, and its tab; absent, the list. */
+  myAgent?: MyAgentTarget
+}
+
+export type MyAgentTab = 'delegate' | 'memory' | 'schedules' | 'settings'
+export interface MyAgentTarget {
+  /** An Agent's ID, `general` for 通用, or `new` for the form that creates one. */
+  id: string
+  tab?: MyAgentTab
 }
 
 /** 设置's sections on wide windows, in their order; 设备 is one of them, its devices pages inside it. */
@@ -36,7 +45,14 @@ export function settingsSectionsAt(phone: boolean): readonly SettingsSection[] {
   return phone ? PHONE_SECTIONS : WIDE_SECTIONS
 }
 
-/** The entries this device can use: 设置 is drawn when at least one of its sections is open to it. */
-export function visibleEntries(allowed: readonly SettingsSection[], phone: boolean): ShellEntry[] {
-  return settingsSectionsAt(phone).some(section => allowed.includes(section)) ? ['sessions', 'settings'] : ['sessions']
+/**
+ * The entries this device can use: 我的 Agent where the Host has them, and 设置 when at least one of its sections is open
+ * to it.
+ */
+export function visibleEntries(allowed: readonly SettingsSection[], phone: boolean, agents = false): ShellEntry[] {
+  return [
+    'sessions',
+    ...(agents ? (['agents'] as const) : []),
+    ...(settingsSectionsAt(phone).some(section => allowed.includes(section)) ? (['settings'] as const) : []),
+  ]
 }

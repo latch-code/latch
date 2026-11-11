@@ -37,12 +37,15 @@ function Marked({ text, mark }: { text: string; mark: PaletteRow['mark'] }) {
   )
 }
 
+const NO_ENTRIES: readonly PaletteEntry[] = []
+
 /** Search and commands in one place. Esc steps back (what was typed, then a level) before it closes. */
 export function CommandPalette({
   level: firstLevel,
   recent,
   sessions,
   agents,
+  myAgents = NO_ENTRIES,
   settings,
   commands,
   searchMessages,
@@ -56,6 +59,7 @@ export function CommandPalette({
   recent: readonly PaletteEntry[]
   sessions: readonly PaletteEntry[]
   agents: readonly PaletteEntry[]
+  myAgents?: readonly PaletteEntry[]
   settings: readonly PaletteEntry[]
   commands: readonly PaletteEntry[]
   searchMessages: boolean
@@ -118,13 +122,14 @@ export function CommandPalette({
           truncated: message.truncated,
         }
       : undefined
-    return paletteGroups({ level, query, recent, sessions, files, agents, settings, commands, messages })
+    return paletteGroups({ level, query, recent, sessions, files, agents, myAgents, settings, commands, messages })
   }, [
     level,
     query,
     recent,
     sessions,
     agents,
+    myAgents,
     settings,
     commands,
     file,

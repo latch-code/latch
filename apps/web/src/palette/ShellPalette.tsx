@@ -27,6 +27,7 @@ import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
+import { AgentTile } from '../agents/parts.tsx'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
 
@@ -105,23 +106,36 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     [folders],
   )
 
+  const customAgents = snapshot.customAgents
+  const myAgents: PaletteEntry[] = (customAgents ?? []).map(agent => ({
+    id: `my-agent:${agent.id}`,
+    label: agent.name,
+    ...(agent.description ? { sub: agent.description } : {}),
+    icon: <AgentTile glyph={agent.glyph} size={16} />,
+    run: () => {
+      shell.openMyAgent({ id: agent.id })
+    },
+  }))
   const sessionEntry = useMemo(() => {
     const workspaces = catalog?.workspaces ?? []
     return (task: (typeof snapshot.tasks)[number]): PaletteEntry => {
       const project = projectOf(task, workspaces)
       const harness = catalog?.harnesses.find(item => item.id === task.harnessId)
-      const sub = [project?.name, task.archived ? '已归档' : ''].filter(Boolean).join(' · ')
+      // A delegated session is found by its Agent's name as well.
+      const agent = task.agent ? customAgents?.find(item => item.id === task.agent?.customAgentId)?.name : undefined
+      const sub = [agent && `为 ${agent} 委托`, project?.name, task.archived ? '已归档' : ''].filter(Boolean).join(' · ')
       return {
         id: `session:${task.id}`,
         label: task.title || '未命名会话',
         ...(sub ? { sub } : {}),
+        ...(agent ? { keywords: agent } : {}),
         icon: harness ? <HarnessTile harness={harness} size={16} /> : <MarkTile mark={presetOf(task.harnessId, HARNESS_MARKS)} size={16} />,
         run: () => {
           choose(task.id)
         },
       }
     }
-  }, [catalog?.workspaces, catalog?.harnesses, choose])
+  }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose])
   const recent = useMemo(() => recentSessions(snapshot.tasks).map(sessionEntry), [snapshot.tasks, sessionEntry])
   const sessions = useMemo(
     () => snapshot.tasks.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(sessionEntry),
@@ -283,6 +297,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       recent={recent}
       sessions={sessions}
       agents={agents}
+      myAgents={myAgents}
       settings={settings}
       commands={commands}
       searchMessages={catalog?.features?.search === true}

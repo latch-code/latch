@@ -1,5 +1,5 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Folder, FolderGit2, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
+import { Bot, ChevronDown, ChevronLeft, Ellipsis, Folder, FolderGit2, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
 import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -16,6 +16,7 @@ import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { sessionAgent } from '../agents/model.ts'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
 function sessionPill(summary: TaskSummary, cancelling: boolean) {
@@ -204,6 +205,22 @@ function ProjectCrumb({
   )
 }
 
+/** The Agent a session was delegated to, as 「为 <Agent> 委托」, which goes back to the Agent's page. */
+export interface HeaderAgent {
+  name: string
+  onOpen: () => void
+}
+function AgentLink({ agent }: { agent: HeaderAgent }) {
+  return (
+    <button type="button" className="topbar-agent" title={`回到 ${agent.name}`} onClick={agent.onOpen}>
+      <Bot size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      <span>
+        为 <VisibleText text={agent.name} /> 委托
+      </span>
+    </button>
+  )
+}
+
 /**
  * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
  * opens the session's menu, 同步最新状态 included) over where it runs, its branch and its states that are not the default,
@@ -223,8 +240,10 @@ function PhoneTopBar({
   connection,
   onRefresh,
   changes,
+  agent,
 }: {
   changes?: HeaderToggle | undefined
+  agent?: HeaderAgent | undefined
   summary?: TaskSummary
   source?: string
   cancelling: boolean
@@ -248,8 +267,9 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || connectionProblem(connection)) && (
+        {(where || state || branch || demo || agent || connectionProblem(connection)) && (
           <div className="topbar-subline">
+            {agent && <AgentLink agent={agent} />}
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
             {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
@@ -316,7 +336,10 @@ export function SessionHeader({
   slots = {},
   crumb,
   changesTotals,
+  agent,
 }: {
+  /** The session belongs to one of 我的 Agent. */
+  agent?: HeaderAgent | undefined
   /** The session's change totals, once the page has read them. */
   changesTotals?: ChangeTotals | undefined
   /** What the breadcrumb's popover says of this session, beyond its branch. */
@@ -364,6 +387,7 @@ export function SessionHeader({
         connection={connection}
         onRefresh={onRefresh}
         changes={slots.changes}
+        agent={agent}
       />
     )
   const desktop = currentShell() !== null
@@ -374,6 +398,14 @@ export function SessionHeader({
           <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
             {crumb?.folders}
           </ProjectCrumb>
+        )}
+        {summary && agent && (
+          <span className="topbar-crumb">
+            <AgentLink agent={agent} />
+            <span className="topbar-crumb-separator" aria-hidden="true">
+              /
+            </span>
+          </span>
         )}
         {summary && (
           <h1 title={title}>
@@ -451,8 +483,10 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     snapshot,
     owner,
     openSettings,
+    openMyAgent,
   } = shell
   const desktop = currentShell() !== null
+  const delegated = sessionAgent(snapshot, summary)
   // A dot while the newest turn changed files nobody has opened here yet.
   const seen = useRef<Map<string, string>>(new Map())
   const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
@@ -490,6 +524,16 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         : {})}
       panelOpen={columnOpen || (pageMode && infoPage)}
       changesTotals={shell.changesTotals}
+      {...(delegated
+        ? {
+            agent: {
+              name: delegated.name,
+              onOpen: () => {
+                openMyAgent({ id: delegated.id, tab: 'delegate' })
+              },
+            },
+          }
+        : {})}
       onPanel={togglePanel}
       sessionMenu={titleMenu}
       menu={topMenu}

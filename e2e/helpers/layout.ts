@@ -131,7 +131,7 @@ export async function openEntry(page: Page, name: string): Promise<void> {
 
 /** Back to the session list or conversation: the way back at the top of a page, the title row's while shut, or the tab. */
 export async function openSessions(page: Page): Promise<void> {
-  if (await isPhone(page)) await mainNavigation(page).getByRole('button', { name: '会话', exact: true }).click()
+  if (await isPhone(page)) await mainNavigation(page).getByRole('button', { name: 'Code', exact: true }).click()
   else
     await page
       .getByRole('button', { name: /^返回会话/u })

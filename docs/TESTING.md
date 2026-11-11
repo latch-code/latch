@@ -22,6 +22,7 @@ sources:
 `e2e/workflows.e2e.ts` 覆盖外观切换时保留草稿、输入聚焦与上一条消息、Host 分支投影、可操作首次引导及通知首次选择；通知 UI 使用有限壳夹具，真实主进程状态和 preload 过滤由 `apps/desktop/test/notifications.test.ts` 验证，Electron 用例核对实际公开接口。`e2e/file-tree.e2e.ts` 同时验证没有标签时的文件快捷键。
 `e2e/palette.e2e.ts` 在三种宽度与深浅色用真实 Host 走完命令面板的分组、搜索中与失败的文字、Esc 逐级退回、焦点回到输入框，查找条的位置（不挤压对话）、长回答内的定位、运行中不跳走与不丢步，迟到的结果不换回车打开的行，输入法组合键，Esc 不误停运行或误拒请求，以及只显示当前客户端按键的快捷键浮层与它链到的快捷键页；截图写入 `test-results/palette/`。
 `e2e/workbench-keyboard.e2e.ts` 在三种宽度驱动真实 Alt 按键，核对会话循环、数字跳到第 N 个会话（超出不动）、待处理审批卡的循环与焦点高亮、文件搜索及关闭；同时检查草稿、消息与审批身份保留，且导航不增加模型调用或执行提交。另在 Chromium 与 WebKit 的三宽里检查 Alt / 的快捷键浮层盖在运行中的会话上（焦点进搜索、Esc 回到输入框、再按关上、不导航）与 Alt Shift 1–4 在会话和新会话页各打开自己的控件菜单，手机宽度两者都没有，按键不离开页面、不打开新页。
+`e2e/my-agents.e2e.ts` 用真实 Host、假 ACP Agent 与本地模型服务新建 Agent，委托开始的会话用它的 Harness 与项目，回到 Agent 页时在「近期委托」里找到并打开，对话标题前的「为 <Agent> 委托」回到 Agent 页；添加与修改记忆以 Host 为准；被拒绝的委托保留文字，结果未知的委托重试沿用同一 `requestId` 且只开始一个会话；390 宽深色的标签与推入页不横向溢出，数据范围较小的设备看到锁定说明而不是空列表。纯逻辑在 `apps/web/test/my-agents.test.ts`。截图写入 `test-results/my-agents/`。
 `e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或 Agent 会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属。内存缓存的按会话隔离、私有清理、数量与字符上限由 `apps/web/test/session-drafts.test.ts` 覆盖。
 连接插件的定向回归包括 `tests/transport-registry.test.ts`、`packages/link-client/test/transport.test.ts`、`carrier-vector.test.ts` 与 Host 的 `native.test.ts`；`e2e/native-relay.e2e.ts` 另把官方 relay 通过注册 driver 真实消费。MessagePort 示例会实际加载并运行。它们是纯 Node/Go 与本机消息测试，不等同真实飞书、手机 connector、OS 通知或真机验收。
 

@@ -1,15 +1,16 @@
-import { MessagesSquare, Settings } from 'lucide-react'
+import { Bot, Code2, Settings } from 'lucide-react'
 import { Icon, type LucideIcon } from '@latch/ui'
 import { waitingCount } from '../sessions.ts'
 import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
 const TABS: Partial<Record<ShellEntry, { label: string; icon: LucideIcon }>> = {
-  sessions: { label: '会话', icon: MessagesSquare },
+  sessions: { label: 'Code', icon: Code2 },
+  agents: { label: '我的 Agent', icon: Bot },
   settings: { label: '设置', icon: Settings },
 }
 
-/** The root pages of a phone share a bottom bar of 会话 and 设置. A pushed page covers it. */
+/** The root pages of a phone share a bottom bar of Code, 我的 Agent (where the Host has it) and 设置. A pushed page covers it. */
 export function PhoneTabBar({ shell }: { shell: ShellState }) {
   const { entries, route, goEntry, snapshot } = shell
   return (

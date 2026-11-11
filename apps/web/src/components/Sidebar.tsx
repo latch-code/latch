@@ -32,6 +32,7 @@ import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './Sessi
 import { Button, Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
+import { EntryRows } from '../agents/parts.tsx'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -433,6 +434,7 @@ export function Sidebar({
           <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span>搜索</span>
         </Button>
+        {entries.includes('agents') && <EntryRows current="sessions" onEntry={onEntry} />}
       </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>

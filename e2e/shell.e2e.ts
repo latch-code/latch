@@ -105,11 +105,11 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('gives a phone a tab bar of 会话 and 设置', async () => {
+  it('gives a phone a tab bar of Code, 我的 Agent and 设置', async () => {
     const page = await open(390, 844, '壳层手机')
     expect(await page.locator('.titlebar').count()).toBe(0)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await tabs.getByRole('button').allTextContents()).toEqual(['会话', '设置'])
+    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置'])
     const bar = await box(page, '.phone-tabs')
     expect(bar.top + bar.height).toBe(844)
     await tabs.getByRole('button', { name: '设置', exact: true }).click()
