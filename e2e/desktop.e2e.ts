@@ -861,10 +861,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         '.inline-confirm',
         '.inline-confirm .ui-notice',
         '.inline-confirm .ui-button',
+        '.blocked-rows',
         '.blocked-row',
+        '.blocked-row-text',
         '.blocked-row-title',
         '.blocked-row-agent',
         '.blocked-row .ui-status-word',
+        '.blocked-row-actions',
       ])
       await blockedDock.getByRole('button', { name: '查看', exact: true }).click()
       await blockedDock.waitFor({ state: 'detached' })

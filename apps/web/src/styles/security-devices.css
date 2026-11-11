@@ -431,6 +431,15 @@
   align-items: center;
   column-gap: var(--sp-8);
   min-height: 32px;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+/* The row's wrappers take its colour and size; the title and the Harness pin their own. */
+[data-secure] :is(.blocked-row-text, .blocked-row-actions) {
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
 }
 [data-secure] .blocked-row-text {
   display: flex !important;

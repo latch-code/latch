@@ -345,7 +345,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
         <section className="composer-drawer clearing-drawer" aria-label="清空上下文">
           <Icon icon={Eraser} size={14} />
           <p role="status">
-            <strong>{hostCleared ? '上下文已清空' : '下一条消息开始新的上下文'}</strong>
+            <strong>下一条消息开始新的上下文</strong>
+            {hostCleared && <span>上下文已经清空</span>}
           </p>
           {!hostCleared && (
             <Button size="xs" onClick={() => shell.armClear(false)}>

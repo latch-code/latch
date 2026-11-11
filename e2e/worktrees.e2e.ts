@@ -143,7 +143,12 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     expect(await page.locator('.session-worktree').first().getAttribute('aria-label')).toBe(label)
     // The status line's branch segment says it, where the branch alone was.
     await expect.poll(() => row.locator('[data-seg="branch"]').innerText()).toBe(label)
-    await page.getByText('新工作树里有 1 个文件的 filter（例如 Git LFS）没有运行', { exact: false }).waitFor()
+    // The count is the label; that Git LFS files stay pointers and what to run stays behind its ⓘ.
+    const unfiltered = page.locator('.session-start-note .ui-hint', { hasText: '1 个文件的 filter 没有运行' })
+    await unfiltered.waitFor()
+    await unfiltered.getByRole('button', { name: '说明', exact: true }).click()
+    await unfiltered.getByText('新工作树里这些文件的 filter（例如 Git LFS）没有运行', { exact: false }).waitFor()
+    await unfiltered.getByText('在终端里运行 git lfs pull', { exact: false }).waitFor()
     expect(existsSync(join(directory, 'filter-ran'))).toBe(false)
     // The project folder is untouched: the agent's files are in the worktree.
     expect(existsSync(join(project, 'agent-edit.txt'))).toBe(false)

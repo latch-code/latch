@@ -100,7 +100,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       for (const text of ['六位', '核对码', '剩余', '复制配对信息', '重新生成']) expect(body.includes(text)).toBe(false)
       const before = host.presence.requests.length
       expect(host.host.security.enrollments.nativePairingStatus(value.invitation.id).state).toBe('ready')
-      await expectUnmovedByInjectedStyles(page, ['.pair-sheet .ui-modal-header h2', '.pair-foot-title', '.pair-foot-note'])
+      await expectUnmovedByInjectedStyles(page, [
+        '.pair-sheet .ui-modal-header h2',
+        '.pair-foot-title',
+        '.pair-foot-note',
+        '.pair-foot-wifi > span',
+      ])
       await page.getByRole('button', { name: '关闭', exact: true }).click()
       await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
       await expect.poll(() => host.host.security.enrollments.nativePairingOpen()).toBe(false)

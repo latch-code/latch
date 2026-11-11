@@ -1068,7 +1068,7 @@ describe('visual capture of the real product', () => {
         // A browser cannot set keys: the panel says where it can be done.
         await target
           .getByRole('region', { name: 'DeepSeek', exact: true })
-          .locator('.setup-panel-note', { hasText: '上的 Latch 里填写：设置 › 模型' })
+          .locator('.setup-panel-note', { hasText: '的 设置 › 模型 里填写' })
           .waitFor()
         await settleMotion(target)
         await recorder.capture(target, viewport, 'new-session-model-add-key', 'a service that needs a key, on a device that cannot set one')
