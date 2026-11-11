@@ -180,7 +180,10 @@ export type WriteOutcome =
   | { kind: 'refused'; message: string; code?: string }
 
 export function writeOutcome(error: unknown): WriteOutcome {
-  if (error instanceof ApiError && (error.code === 'agent-changed' || error.code === 'agent-memory-deleted'))
+  if (
+    error instanceof ApiError
+    && (error.code === 'agent-changed' || error.code === 'agent-memory-deleted' || error.code === 'automation-changed')
+  )
     return { kind: 'conflict', message: error.message }
   if (error instanceof ApiError && error.code === 'agent-write-unknown') return { kind: 'unknown', message: error.message }
   if (isUncertain(error))

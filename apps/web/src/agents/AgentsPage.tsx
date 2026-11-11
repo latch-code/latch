@@ -250,6 +250,8 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
     void shell.refresh()
   }, [reload, detail.reload, shell.refresh])
   const writes = useAgentWrites(settle)
+  const refreshShell = shell.refresh
+  const scheduleWrites = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
   // The Agent last opened is the list's selection, for its 委托 button.
   const [selected, setSelected] = useState<string | undefined>(id && id !== 'new' ? id : undefined)
   useEffect(() => {
@@ -338,6 +340,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           {...(detail.read.state === 'failed' ? { failed: detail.read.message } : {})}
           plugins={list?.plugins ?? NO_PLUGINS}
           writes={writes}
+          scheduleWrites={scheduleWrites}
           offline={offline}
           onTab={tab => {
             open(id, tab)

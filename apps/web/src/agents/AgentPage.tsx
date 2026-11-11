@@ -3,13 +3,13 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   GENERAL_AGENT_ID,
   type AgentMemory,
-  type AutomationSummary,
   type CustomAgentList,
   type CustomAgentSummary,
   type HostCatalog,
   type TaskSummary,
 } from '@latch/protocol'
 import {
+  Badge,
   Button,
   ConfirmDialog,
   EmptyState,
@@ -34,19 +34,11 @@ import { rowStatus } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { MyAgentTab } from '../shell/routes.ts'
 import { AgentForm, GeneralForm, TakesEffect, WriteNotice } from './AgentForm.tsx'
-import {
-  agentHarnesses,
-  agentSessions,
-  delegationMode,
-  dutyLine,
-  GENERAL_NAME,
-  RUN_WORDS,
-  runsWith,
-  scheduleWords,
-  usesHostModels,
-  worksIn,
-} from './model.ts'
+import { agentHarnesses, agentSessions, delegationMode, dutyLine, GENERAL_NAME, runsWith, usesHostModels, worksIn } from './model.ts'
 import { AgentTile, Availability } from './parts.tsx'
+import { CarryResults } from './CarryResults.tsx'
+import { SchedulesTab } from './Schedules.tsx'
+import { carriedText } from './scheduleModel.ts'
 import type { AgentDetailValue } from './useAgentData.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 
@@ -113,7 +105,10 @@ function RecentRow({ task, frozen, onOpen }: { task: TaskSummary; frozen: string
           onOpen(task.id)
         }}>
         <span className="agent-recent-text">
-          <span className="agent-recent-title">{task.title || '未命名会话'}</span>
+          <span className="agent-recent-title">
+            {task.automationId && <Badge className="agent-run-tag">定时</Badge>}
+            {task.title || '未命名会话'}
+          </span>
           <time dateTime={task.updatedAt}>{time}</time>
         </span>
         <SessionStatus status={status} live={task.live} inWaitingShelf={false} time={frozen ?? ''} dateTime={task.updatedAt} />
@@ -247,6 +242,22 @@ function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: Cust
               }}
             />
             {project && <FolderControl project={project} worktree={worktree} onWorktree={setWorktree} disabled={locked || offline} />}
+            <span className="agent-form-spacer" />
+            <CarryResults
+              sessions={sessions}
+              disabled={locked}
+              phone={shell.phone}
+              onCarry={results => {
+                setDraft(previous => carriedText(previous, results))
+                requestAnimationFrame(() => {
+                  input.current?.focus({ preventScroll: true })
+                })
+              }}
+            />
+            <Hint label="新会话" className="agent-delegate-new">
+              按 Agent
+              现在的定义开始一个新会话；带入的成果只是引用的文字，不接着原来的对话。要接着原来的对话，在近期委托里打开那个会话直接输入。
+            </Hint>
           </div>
         }
       />
@@ -483,46 +494,6 @@ function MemoryTab({
   )
 }
 
-/** 定时: this Agent's automations, read only, as the snapshot lists them. */
-function SchedulesTab({ automations }: { automations: AutomationSummary[] }) {
-  return (
-    <div className="agent-schedules">
-      <Hint label="只能查看">新建和修改定时任务尚未实现，这里只列出这个 Agent 已有的定时任务。</Hint>
-      {automations.length === 0 ? (
-        <EmptyState title="没有定时任务" />
-      ) : (
-        <ul className="agent-recent" aria-label="定时任务">
-          {automations.map(automation => (
-            <li key={automation.id} className="agent-schedule-row">
-              <span className="agent-recent-text">
-                <span className="agent-recent-title">{automation.name}</span>
-                <span className="agent-schedule-meta">
-                  {scheduleWords(automation.schedule)}
-                  {automation.nextRunAt && automation.enabled
-                    ? ` · 下次 ${new Date(automation.nextRunAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-                    : ''}
-                  {automation.lastRun ? ` · 上次${RUN_WORDS[automation.lastRun.state]}` : ''}
-                </span>
-              </span>
-              {automation.state === 'paused' ? (
-                automation.pause ? (
-                  <Hint label="已暂停">{automation.pause.message}</Hint>
-                ) : (
-                  <StatusWord tone="warn">已暂停</StatusWord>
-                )
-              ) : automation.state === 'running' ? (
-                <StatusWord tone="running">运行中</StatusWord>
-              ) : (
-                <StatusWord>{automation.state === 'ready' ? '已开启' : '已关闭'}</StatusWord>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
 /** An Agent's page: its name and duty, its facts, and the tabs 委托 · 记忆 · 定时 · 设置. */
 export function AgentPage({
   shell,
@@ -533,6 +504,7 @@ export function AgentPage({
   failed,
   plugins,
   writes,
+  scheduleWrites,
   offline,
   onTab,
   onReload,
@@ -546,6 +518,8 @@ export function AgentPage({
   failed?: string | undefined
   plugins: CustomAgentList['plugins']
   writes: AgentWrites
+  /** Kept above the tabs, so a schedule write whose result is unknown survives switching tabs. */
+  scheduleWrites: AgentWrites
   offline: boolean
   onTab: (tab: MyAgentTab) => void
   onReload: () => void
@@ -558,13 +532,13 @@ export function AgentPage({
     : value?.kind === 'custom'
       ? value.detail.agent
       : snapshot.customAgents?.find(agent => agent.id === id)
-  const automations = catalog?.features?.automations
-    ? (snapshot.automations ?? []).filter(item => (general ? item.customAgentId === undefined : item.customAgentId === id))
-    : undefined
+  const schedulesOn = catalog?.features?.automations === true
+  // Absent from the snapshot while the Host confirms a write: the tab says so rather than showing none.
+  const automations = snapshot.automations?.filter(item => (general ? item.customAgentId === undefined : item.customAgentId === id))
   const tabs: Array<TabOption<MyAgentTab>> = [
     ...(general ? [] : [{ value: 'delegate' as const, label: '委托', controls: 'agent-tab-panel' }]),
     { value: 'memory', label: '记忆', controls: 'agent-tab-panel' },
-    ...(automations ? [{ value: 'schedules' as const, label: '定时', controls: 'agent-tab-panel' }] : []),
+    ...(schedulesOn ? [{ value: 'schedules' as const, label: '定时', controls: 'agent-tab-panel' }] : []),
     { value: 'settings', label: '设置', controls: 'agent-tab-panel' },
   ]
   const tab = tabs.find(option => option.value === chosen)?.value ?? tabs[0]!.value
@@ -598,7 +572,19 @@ export function AgentPage({
         {tab === 'memory' && value && (
           <MemoryTab key={id} owner={id} memories={memories} writes={writes} disabled={held} onReload={onReload} />
         )}
-        {tab === 'schedules' && automations && <SchedulesTab automations={automations} />}
+        {tab === 'schedules' && schedulesOn && (
+          <SchedulesTab
+            catalog={catalog}
+            access={shell.access}
+            agentId={general ? undefined : id}
+            agent={summary}
+            automations={automations}
+            writes={scheduleWrites}
+            offline={offline}
+            onOpenSession={shell.choose}
+            onReload={onReload}
+          />
+        )}
         {tab === 'settings' && value && catalog && value.kind === 'custom' && (
           <AgentForm
             catalog={catalog}

@@ -551,3 +551,190 @@ button.agents-list-row:focus-visible {
 .agents-intro .ui-hint-detail {
   grid-column: 1 / -1;
 }
+
+/* 定时: one card per automation, its actions under it and its runs unfolding below. */
+.agent-schedule-list {
+  display: grid;
+  gap: var(--sp-12);
+}
+.agent-schedule {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agent-schedule-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+.agent-schedule-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  color: var(--ink-2);
+}
+.agent-schedule-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.agent-schedule-uses {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.agent-schedule-uses > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-schedule-uses > span:first-of-type {
+  flex: none;
+  max-width: 45%;
+}
+.agent-schedule-input {
+  font-family: var(--mono);
+}
+.agent-schedule-state {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  max-width: 45%;
+}
+.agent-schedule-missed > .ui-hint-lead,
+.agent-schedule-missed > .ui-hint-label,
+.agent-schedule-paused > .ui-hint-lead,
+.agent-schedule-paused > .ui-hint-label {
+  color: var(--amber);
+}
+.agent-schedule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.agent-schedule-runs {
+  display: grid;
+  gap: var(--sp-8);
+}
+.agent-schedule-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--sp-6);
+  padding: var(--sp-2) var(--sp-4);
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.agent-schedule-fold:hover {
+  background: var(--hover);
+}
+.agent-schedule-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.agent-schedule-count {
+  color: var(--muted);
+}
+.agent-schedule-chevron {
+  transition: transform var(--m-micro) var(--e-micro);
+}
+.agent-schedule-fold[aria-expanded='true'] .agent-schedule-chevron {
+  transform: rotate(180deg);
+}
+.agent-schedule-form {
+  display: grid;
+  gap: var(--sp-12);
+  min-width: 0;
+  padding: var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agent-schedule-when,
+.agent-schedule-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8) var(--sp-12);
+  min-width: 0;
+}
+.agent-schedule-where {
+  align-items: center;
+}
+.agent-schedule-time {
+  width: 128px;
+}
+.agent-schedule-label {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-form-problem {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+/* 带入上次成果: earlier delegations, and under each chosen one its last reply and files. */
+.agent-carry {
+  display: grid;
+  gap: var(--sp-12);
+}
+.agent-carry-item {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.agent-carry-parts {
+  display: grid;
+  gap: var(--sp-8);
+  padding-left: var(--sp-24);
+  min-width: 0;
+}
+.agent-carry-parts .ui-check-description {
+  overflow-wrap: anywhere;
+}
+
+.agent-carry-sheet {
+  padding: var(--sp-8) var(--sp-16) var(--sp-24);
+}
+
+/* A phone gives the state its own line under the schedule, so the times are not squeezed. */
+@media (max-width: 767.98px) {
+  .agent-schedule-main {
+    flex-wrap: wrap;
+  }
+  .agent-schedule-text {
+    flex-basis: calc(100% - 44px);
+  }
+  .agent-schedule-state {
+    justify-content: flex-start;
+    max-width: none;
+    width: 100%;
+    padding-left: 44px;
+  }
+}
+
+/* 定时 before the title of a session an automation started, among an Agent's delegations. */
+.agent-run-tag {
+  margin-right: var(--sp-6);
+  vertical-align: 1px;
+}

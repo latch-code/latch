@@ -18,6 +18,9 @@ sources:
   - apps/web/src/agents/AgentsPage.tsx
   - apps/web/src/agents/AgentPage.tsx
   - apps/web/src/agents/AgentForm.tsx
+  - apps/web/src/agents/Schedules.tsx
+  - apps/web/src/agents/CarryResults.tsx
+  - apps/web/src/agents/scheduleModel.ts
 ---
 # 我的 Agent
 
@@ -58,7 +61,7 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 
 ## 会话
 
-`POST /tasks` 接受 `customAgentId`。请求里同时给的 `harnessId`、`mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
+`POST /tasks` 接受 `customAgentId`。新会话的标题取第一条输入从第一行非 `>` 引用的文字起（内置与外部 Harness 相同，`promptTitle`），所以带入的成果不会成为标题；只有引用时取第一个「上次成果」的标题。请求里同时给的 `harnessId`、`mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
 
 会话开始后 Agent 与 Harness 不再变，归属记录在 `TaskSummary.agent`。Agent 的会话内容只对完整数据范围的设备开放。
 
@@ -79,6 +82,7 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 「我的 Agent」是侧栏里「Code」下面的第二个入口（手机是底部标签栏里的一个标签），只在 `catalog.features.customAgents` 存在时出现。宽窗口上，侧栏的位置换成「通用」与各个 Agent 的列表，工作面板是列表页或某个 Agent 的页面；手机上列表是根页，Agent 页推入在它之上。和设置一样，它盖在会话各栏上而不卸载会话。
 
 - **列表**：「通用」在最前并标「内置」，其余按 Host 的顺序；每行是图标、名称、一行职责（说明，没有时是指令的第一行）、Harness · 模型、默认项目与 `available`/`unavailableReason`。主按钮是「委托<名称>…」，还没有自己的 Agent 时是「新建 Agent」。
-- **Agent 页**：标签「委托 · 记忆 · 定时 · 设置」，「通用」没有「委托」。「委托」用会话的输入框经 `POST /tasks` 开始带 `customAgentId` 的会话，Agent 的 Harness、模型和默认项目预先选好，这一次可以换项目、文件夹、Harness 和模型（Harness 只列有 `agentContext` 的）；外部 Harness 的 `engineOptions` 尚未在开始时设置。下面的「近期委托」是 `TaskSummary.agent` 指向它的会话，打开的是普通对话，对话标题前写「为 <Agent> 委托」，点它回到 Agent 页。「定时」只读列出这个 Agent 的定时任务，新建和修改尚未实现。
+- **Agent 页**：标签「委托 · 记忆 · 定时 · 设置」，「通用」没有「委托」。「委托」用会话的输入框经 `POST /tasks` 开始带 `customAgentId` 的会话，Agent 的 Harness、模型和默认项目预先选好，这一次可以换项目、文件夹、Harness 和模型（Harness 只列有 `agentContext` 的）；外部 Harness 的 `engineOptions` 尚未在开始时设置。下面的「近期委托」是 `TaskSummary.agent` 指向它的会话，打开的是普通对话，对话标题前写「为 <Agent> 委托」，点它回到 Agent 页；定时任务开始的会话（`automationId`）在这里和「带入上次成果」里带「定时」标记。输入框下方的「带入上次成果」选这个 Agent 之前的一个或多个委托，从每个读出最后一条回复（默认勾选）和它提到的文件，作为引用文字（从「> 上次成果「标题」：」起每行都是 `>` 引用，文件只写路径）插在已写的文字后面；它不建交接记录，也不接着原来的上下文。旁边的「新会话」提示说明这里总按 Agent 现在的定义开始新会话，要接着原来的对话就在近期委托里打开那个会话直接输入。手机上选择在底部面板里。
+- **定时**：这个 Agent 的定时任务（「通用」的是不指定 Agent 的那些），界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
 - **写入**：新建、修改（带打开表单时的 `baseRevision`，只发改了的字段）、删除与记忆都带 `requestId`；结果未知时保留原请求，「重试同一请求」原样重发，`agent-changed` 显示为已在别处修改并可载入最新。委托的待确认请求单独存放，不占用新会话的草稿，重试同样沿用原 `requestId`。
 - **数据范围**：没有完整数据范围的设备看到「这台设备看不到 Agent」，不显示空列表；Host 返回 `agent-scope-required` 时同样处理，`agent-write-unknown` 时显示正在确认并稍后重读。

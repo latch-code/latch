@@ -7,6 +7,8 @@ sources:
   - apps/host/src/routes/automations.ts
   - apps/host/src/server.ts
   - packages/protocol/src/automations.ts
+  - apps/web/src/agents/Schedules.tsx
+  - apps/web/src/agents/scheduleModel.ts
 ---
 # 定时任务
 
@@ -46,3 +48,13 @@ sources:
 **没有人看着时**：运行照常在每个审批处停下，超过审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
 
 **同时最多两个运行**：到点时已有两个在运行，这一次排队，有位置时按到点先后开始，不算错过；排队期间 Host 重启则记为 `missed`。
+
+## 界面
+
+定时任务在「我的 Agent」的 Agent 页（和「通用」页）的「定时」标签里，只在 `catalog.features.automations` 存在时出现；手机上同样在推入的 Agent 页里。快照暂时没有 `automations`（另一项写入的结果在确认中）时显示正在确认，不显示空列表。
+
+- **每一项**：名称；「每天 / 工作日 / 每周几 HH:MM · 下次 · 上次 结果」，时间按这台设备的时钟写成「今天 / 明天 / 11月17日 09:00」；工作位置（项目，或「每次新的文件夹」）和每次输入的第一行（读自详情路由）；状态词「已开启 / 运行中 / 已关闭」，暂停时是琥珀色「已暂停」，ⓘ 里是 Host 给的 `pause.message`。上一次真实运行之后错过或跳过的时间合计为琥珀色「错过 N 次」，ⓘ 里逐条写时间和原因。
+- **运行记录**：详情路由的最近 50 条，第一项默认展开，先显示 5 条。有 `sessionId` 的一行打开那个会话；`missed` 与 `skipped` 写「没有运行」，ⓘ 里是原因（Mac 关机、睡眠或 Latch 没有运行 / 上一次运行还没结束，都不补跑）。
+- **新建 / 编辑**：名称、重复（每天、工作日、每周与星期）、几点、工作位置、每次的输入、「结果出来时通知我」。工作位置是一个项目，或「不选项目」（每次在启动目录下有自己的文件夹）：Agent 有默认项目时预填它，表单里看得见也能改，保存就是选择；没有默认项目时必须手动选。输入是每次运行的第一条消息，要用的文件写出它在工作位置里的路径；附加文件尚未实现。模型不在表单里，按「字段」的缺省取值。编辑带打开表单时的 `baseRevision`，只发改了的字段，清除项目发 `projectId: null`；运行中不能编辑或删除。
+- **操作**：「暂停」「继续」（暂停后是「重新开启」）经 `/enabled`；「立即运行」经 `/run`；「删除」先确认。每个写入都带 `requestId`，结果未知时保留原请求并显示「重试同一请求」，期间不能做别的修改；`automation-changed` 显示为已在别处修改并可载入最新；Host 的拒绝（如 `automation-owner`、`automation-limit-running`）原样显示。
+- **不能做时**：没有 `run` 的设备只看列表和记录，不显示任何操作，提示「只能查看」；Mac 离线时操作都不可用；Agent 的 `canAutomate` 为假时不能新建、继续或立即运行，提示里是 `unavailableReason`，暂停和删除仍可用。

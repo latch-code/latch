@@ -63,3 +63,24 @@ export function isAcceptableDeviceName(name: string): boolean {
   const length = name.trim().length
   return length >= 1 && length <= DEVICE_NAME_MAX && escapeSecurityText(name) === name
 }
+
+const CARRIED_HEADER = /^>\s*上次成果「(.+)」：\s*$/u
+
+/**
+ * A new session's title from its first prompt: the text from the first line that is not a Markdown quote, so quoted
+ * material put in front (an earlier result carried into a delegation) does not name it. A prompt of quotes only takes
+ * the first carried result's title, else the quoted text. Whitespace is collapsed; the caller applies its length cap.
+ */
+export function promptTitle(prompt: string): string {
+  const lines = prompt.split('\n')
+  const start = lines.findIndex(line => line.trim() !== '' && !line.trimStart().startsWith('>'))
+  if (start >= 0) return lines.slice(start).join(' ').trim().replace(/\s+/gu, ' ')
+  for (const line of lines) {
+    const carried = CARRIED_HEADER.exec(line.trim())
+    if (carried) return carried[1]!.trim()
+  }
+  return prompt
+    .replace(/^\s*>+/gmu, '')
+    .trim()
+    .replace(/\s+/gu, ' ')
+}

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import { MODEL_EFFORT, fileMentionContext, isAttachmentRef, escapeSecurityText, rejectionNote } from '@latch/protocol'
+import { MODEL_EFFORT, fileMentionContext, isAttachmentRef, escapeSecurityText, promptTitle, rejectionNote } from '@latch/protocol'
 import type {
   AttachmentRef,
   Approval,
@@ -777,7 +777,7 @@ class HarnessRuntime implements Bridge {
             ...(agentContext?.agent ? { agent: structuredClone(agentContext.agent) } : {}),
             ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
             ...(agentContext?.pluginIds ? { pluginIds: [...agentContext.pluginIds] } : {}),
-            title: (input.prompt.trim().replace(/\s+/g, ' ') || attachments[0]?.name || '附件').slice(0, 80),
+            title: (promptTitle(input.prompt) || attachments[0]?.name || '附件').slice(0, 80),
             status: 'running',
             updatedAt: at,
             createdAt: at,

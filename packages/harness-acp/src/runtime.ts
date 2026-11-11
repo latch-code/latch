@@ -1,5 +1,5 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
-import { fileMentionContext, modelIdKey, type FileMention } from '@latch/protocol'
+import { fileMentionContext, modelIdKey, promptTitle, type FileMention } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
 import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
@@ -1223,7 +1223,7 @@ export class AgentRuntime implements Bridge {
     this.state.tasks[sessionId] = {
       summary: {
         id: sessionId,
-        title: (prompt.trim().replace(/\s+/g, ' ') || attachments?.[0]?.name || '附件').slice(0, 80),
+        title: (promptTitle(prompt) || attachments?.[0]?.name || '附件').slice(0, 80),
         status: 'running',
         updatedAt: at,
         createdAt: at,
