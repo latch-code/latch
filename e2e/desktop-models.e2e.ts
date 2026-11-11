@@ -70,6 +70,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           .click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         const modelPicker = page.locator('button.model-picker')
+        const thinkingPicker = page.locator('button.thinking-picker')
         await input.fill('切换设置时保留这份草稿。')
         const beforePresence = host.presence.requests.length
         await page.evaluate(() => {
@@ -94,7 +95,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
         await modelPicker.click()
         await page.getByRole('button', { name: '刷新当前设置', exact: true }).click()
-        await page.getByRole('button', { name: /模型：Large · Low$/u }).waitFor()
+        await page.getByRole('button', { name: '模型：Large', exact: true }).waitFor()
+        await page.getByRole('button', { name: '思考：Low', exact: true }).waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)
         await page.keyboard.press('Escape')
         for (const width of [1440, 900, 390]) {
@@ -105,16 +107,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           }, width)
           await page.waitForFunction(value => innerWidth === value, width)
           await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light' })
-          await modelPicker.click()
+          // 思考 is its own control; a level is a row of its menu (a sheet on a phone), which closes on the choice.
+          await thinkingPicker.click()
           const effort = width === 900 ? 'Low' : 'High'
-          await page.getByRole('radio', { name: effort, exact: true }).click()
+          await page
+            .getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: new RegExp(`^${effort}`, 'u') })
+            .first()
+            .click()
           await expect
             .poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'effort')?.currentValue)
             .toBe(effort.toLowerCase())
-          await expect.poll(() => modelPicker.getAttribute('aria-busy')).not.toBe('true')
-          if (width === 390)
-            await page.getByRole('dialog', { name: '模型', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
-          else if ((await modelPicker.getAttribute('aria-expanded')) === 'true') await modelPicker.click()
+          await expect.poll(() => thinkingPicker.getAttribute('aria-busy')).not.toBe('true')
+          await expect.poll(() => thinkingPicker.getAttribute('aria-label')).toBe(`思考：${effort}`)
           expect(await input.inputValue()).toBe('切换设置时保留这份草稿。')
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           await mkdir('test-results/model-controls', { recursive: true })

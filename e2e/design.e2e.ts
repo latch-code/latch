@@ -112,7 +112,8 @@ describe('responsive workspace controls', () => {
           .waitFor()
         await noHorizontalOverflow(page, page.locator('.new-session-sheet > .ui-sheet-surface > .ui-sheet-body'))
       } else
-        for (const control of [/^Harness：/, /^模型：/, /^权限：/]) await reachable(page.getByRole('button', { name: control }).first())
+        for (const control of [/^Harness：/, /^模型：/, /^思考：/, /^权限：/])
+          await reachable(page.getByRole('button', { name: control }).first())
       await reachable(page.getByRole('button', { name: phone ? '开始' : '发送', exact: true }), { allowDisabled: phone })
       await composer.fill('')
       await capture(page, `${label}-new-session`)

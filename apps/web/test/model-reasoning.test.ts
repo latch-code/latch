@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
 import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
+import { DraftThinkingControl, SessionThinkingControl } from '../src/composer/ThinkingControl.tsx'
 import { draftConfig, harnessPicks, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
 import { contextUse, contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
@@ -13,10 +14,10 @@ import {
   agentConfigValues,
   agentModelControls,
   composerOptions,
-  modelChipText,
   modelWords,
   thinkingWord,
-  unreportedNote,
+  unreportedModelNote,
+  unreportedThinkingNote,
 } from '../src/composer/modelReasoning.ts'
 
 const model: SessionConfigOption = {
@@ -61,8 +62,15 @@ const props = () => ({
   permission: undefined,
   access: { local: true, legacy: false, admin: true },
 })
-const html = (value: ReturnType<typeof props> & { feedback?: { kind: 'failed' | 'unknown'; message: string }; onRefresh?: () => void }) =>
-  renderToStaticMarkup(createElement(SessionModelControl, value))
+type Props = ReturnType<typeof props> & {
+  feedback?: { kind: 'failed' | 'unknown'; message: string }
+  onRefresh?: () => void
+  locked?: string
+}
+const html = (value: Props) => renderToStaticMarkup(createElement(SessionModelControl, value))
+const thinkingHtml = (value: Props) => renderToStaticMarkup(createElement(SessionThinkingControl, value))
+/** A trigger's accessible name: what a screen reader and the e2e read. */
+const named = (markup: string, label: string) => markup.match(new RegExp(`aria-label="${label}：([^"]*)"`, 'u'))?.[1]
 
 describe('Agent model and reasoning controls', () => {
   it('uses only semantic categories, preserves priority and does not infer capabilities from familiar model or option names', () => {
@@ -72,13 +80,15 @@ describe('Agent model and reasoning controls', () => {
       currentValue: 'gpt-6-high-reasoning',
       options: [{ value: 'gpt-6-high-reasoning', name: 'GPT high reasoning' }],
     }
-    expect(agentModelControls([unclassified, context, guessed])).toEqual({ primary: guessed, related: [context] })
+    expect(agentModelControls([unclassified, context, guessed])).toEqual({ model: guessed, related: [context] })
     expect(agentModelControls([unclassified])).toEqual({ related: [] })
     const second = { ...reasoning, id: 'second-budget' }
     const state = agentModelControls([context, reasoning, model, second, { ...model, id: 'second-model' }])
-    expect(state.primary).toBe(model)
-    expect(state.related).toEqual([context, reasoning, second])
-    expect(agentModelControls([reasoning]).primary).toBe(reasoning)
+    expect(state.model).toBe(model)
+    expect(state.thinking).toBe(reasoning)
+    expect(state.related).toEqual([context])
+    // Thinking alone is the thinking control's, never the model's.
+    expect(agentModelControls([reasoning])).toEqual({ thinking: reasoning, related: [] })
   })
 
   it('offers only wire values actually reported by this Agent and keeps their order', () => {
@@ -95,25 +105,35 @@ describe('Agent model and reasoning controls', () => {
     expect(agentConfigChoice([changed], model.id, 'two', { busy: null })).toBeUndefined()
   })
 
-  it('does not expose a reasoning slot for model-only or uncategorized options', () => {
-    const modelOnly = html({ ...props(), config: [model] })
-    expect(modelOnly).toContain('First model')
-    expect(modelOnly).not.toContain('role="slider"')
-    expect(modelOnly).toContain('First model · 默认思考')
-    // Nothing reported: the control still names both facts, and says the Harness decides.
-    const silent = html({ ...props(), config: [] })
-    expect(silent).toContain('默认模型 · 默认思考')
-    expect(silent).toContain('Fake Agent 没有报告模型和思考深度')
+  it('does not invent a level for a model-only or uncategorized list: 思考 is 默认 and says why', () => {
+    const modelOnly = { ...props(), config: [model] }
+    expect(named(html(modelOnly), '模型')).toBe('First model')
+    expect(html(modelOnly)).not.toContain('role="slider"')
+    expect(named(thinkingHtml(modelOnly), '思考')).toBe('默认')
+    expect(thinkingHtml(modelOnly)).toContain('Fake Agent 没有报告思考，用它自己的默认值。')
+    // Nothing reported: each control names its own fact and says the Harness decides.
+    const silent = { ...props(), config: [] }
+    expect(named(html(silent), '模型')).toBe('默认模型')
+    expect(html(silent)).toContain('Fake Agent 没有报告可选的模型，由它自己决定。')
+    expect(html(silent)).not.toContain('思考')
+    expect(named(thinkingHtml(silent), '思考')).toBe('默认')
   })
 
-  it('holds model and thinking in one control, with every choice still reachable', () => {
+  it('keeps model and thinking apart: each control writes only its value, and every choice stays reachable', () => {
     const rendered = html(props())
-    expect(rendered).toContain('First model · 均衡')
-    expect(rendered).toContain('思考')
+    expect(named(rendered, '模型')).toBe('First model')
     expect(rendered).toContain('上下文窗口')
     expect(rendered).toContain('Agent description')
-    expect(rendered).toContain('aria-checked="true"')
-    expect(rendered).not.toContain('role="slider"')
+    expect(rendered).not.toContain('aria-label="思考"')
+    const thinking = thinkingHtml(props())
+    expect(named(thinking, '思考')).toBe('均衡')
+    // The Harness's own names, each a row of the menu, the current one checked.
+    for (const level of ['由模型决定', '均衡', '更详细']) expect(thinking).toContain(level)
+    expect(thinking).toContain('aria-checked="true"')
+    expect(thinking).not.toContain('First model')
+    expect(thinking).not.toContain('role="slider"')
+    expect(thinking).toContain('thinking-picker')
+    expect(thinking).not.toContain('is-fixed')
   })
 
   it('blocks pending, disabled and unknown writes while leaving failed choices authoritative and selectable', () => {
@@ -127,20 +147,43 @@ describe('Agent model and reasoning controls', () => {
       configId: model.id,
       value: 'two',
     })
-    const unknown = html({ ...props(), feedback: { kind: 'unknown', message: '保持原请求，结果未知' }, onRefresh() {} })
-    expect(unknown).toContain('First model · 均衡 · 结果未知')
-    expect(unknown).toContain('刷新当前设置')
-    expect(unknown).toContain('保持原请求，结果未知')
-    expect(unknown).toContain('aria-disabled="true"')
-    expect(html({ ...props(), busy: reasoning.id })).toContain('aria-busy="true"')
+    const unknown = { ...props(), feedback: { kind: 'unknown' as const, message: '保持原请求，结果未知' }, onRefresh() {} }
+    // Both controls are held back, and each says so in its menu with the way out.
+    for (const [markup, label, value] of [
+      [html(unknown), '模型', 'First model · 结果未知'],
+      [thinkingHtml(unknown), '思考', '均衡 · 结果未知'],
+    ] as const) {
+      expect(named(markup, label)).toBe(value)
+      expect(markup).toContain('刷新当前设置')
+      expect(markup).toContain('保持原请求，结果未知')
+      expect(markup).toContain('aria-disabled="true"')
+    }
+    // A write in flight turns the control it belongs to, not the other one.
+    expect(thinkingHtml({ ...props(), busy: reasoning.id })).toContain('aria-busy="true"')
+    expect(thinkingHtml({ ...props(), busy: reasoning.id })).toContain('正在切换…')
+    expect(html({ ...props(), busy: reasoning.id })).not.toContain('aria-busy="true"')
+    expect(html({ ...props(), busy: model.id })).toContain('aria-busy="true"')
+    expect(thinkingHtml({ ...props(), busy: model.id })).not.toContain('aria-busy="true"')
+  })
+
+  it('shows a device that may only watch both controls with the reason, and no way to change them', () => {
+    const watching = { ...props(), locked: '这台设备不能发送消息' }
+    for (const markup of [html(watching), thinkingHtml(watching)]) {
+      expect(markup).toMatch(/<button[^>]*aria-disabled="true"/u)
+      expect(markup).toContain('这台设备不能发送消息')
+    }
   })
 
   it('renders Agent text safely and visibly exposes direction controls', () => {
-    const rendered = html({ ...props(), config: [{ ...model, options: [{ value: 'one', name: '<script>\u202EModel' }] }] })
-    expect(rendered).not.toContain('<script>')
-    expect(rendered).not.toContain('\u202E')
-    expect(rendered).toContain('&lt;script&gt;')
-    expect(rendered).toContain('\\u{202E}')
+    for (const rendered of [
+      html({ ...props(), config: [{ ...model, options: [{ value: 'one', name: '<script>\u202EModel' }] }] }),
+      thinkingHtml({ ...props(), config: [{ ...reasoning, options: [{ value: 'balanced', name: '<script>\u202ELevel' }] }] }),
+    ]) {
+      expect(rendered).not.toContain('<script>')
+      expect(rendered).not.toContain('\u202E')
+      expect(rendered).toContain('&lt;script&gt;')
+      expect(rendered).toContain('\\u{202E}')
+    }
   })
 })
 
@@ -371,7 +414,7 @@ describe('options the composer has no control for', () => {
   })
 })
 
-describe('the model control label', () => {
+describe('what a Harness has not reported', () => {
   const option = (category: string) => ({
     id: category,
     name: category,
@@ -380,16 +423,15 @@ describe('the model control label', () => {
     currentValue: 'a',
     options: [{ value: 'a', name: 'A' }],
   })
-  it('always has both facts, with words for the one not known', () => {
-    expect(modelChipText('GPT-5.5', '高')).toBe('GPT-5.5 · 高')
-    expect(modelChipText(undefined, undefined)).toBe('默认模型 · 默认思考')
-  })
-  it('gives one sentence on what the Harness has not reported', () => {
-    expect(unreportedNote('pi', false, [])).toContain('开始后才报告')
-    expect(unreportedNote('pi', true, [])).toBe('pi 没有报告模型和思考深度，由它自己决定。')
-    expect(unreportedNote('pi', true, [option('model')])).toBe('pi 没有报告思考深度，用它自己的默认值。')
-    expect(unreportedNote('pi', true, [option('thought_level')])).toBe('pi 没有报告可选的模型，由它自己决定。')
-    expect(unreportedNote('pi', true, [option('model'), option('thought_level')])).toBeUndefined()
+  it('gives each control one sentence on its own fact', () => {
+    expect(unreportedModelNote('pi', false, [])).toBe('pi 开始后才报告可选的模型，发第一条消息后可以在这里换。')
+    expect(unreportedThinkingNote('pi', false, [])).toBe('pi 开始后才报告有哪些思考，发第一条消息后可以在这里换。')
+    expect(unreportedModelNote('pi', true, [])).toBe('pi 没有报告可选的模型，由它自己决定。')
+    expect(unreportedThinkingNote('pi', true, [])).toBe('pi 没有报告思考，用它自己的默认值。')
+    expect(unreportedModelNote('pi', true, [option('model')])).toBeUndefined()
+    expect(unreportedThinkingNote('pi', true, [option('model')])).toBe('pi 没有报告思考，用它自己的默认值。')
+    expect(unreportedModelNote('pi', true, [option('thought_level')])).toBe('pi 没有报告可选的模型，由它自己决定。')
+    expect(unreportedThinkingNote('pi', true, [option('thought_level')])).toBeUndefined()
   })
 })
 
@@ -532,17 +574,35 @@ describe("a draft's list of a Harness's own options", () => {
   })
 
   it('draws the draft from the list, says where it came from, and not that it is known only after the start', () => {
-    const markup = renderToStaticMarkup(
-      createElement(DraftModelControl, {
-        catalog: { ...catalog, harnesses: [listed] },
-        choice: { mode: 'agent', harnessId: 'codex', config: { model: 'large' } },
-        onChoice() {},
-        access: { local: true, legacy: false, admin: true, scopes: new Set(['view', 'run'] as const) },
-        disabled: false,
-      }),
-    )
-    expect(markup).toContain('LARGE · LOW')
+    const draft = {
+      catalog: { ...catalog, harnesses: [listed] },
+      choice: { mode: 'agent' as const, harnessId: 'codex', config: { model: 'large' } },
+      onChoice() {},
+      access: { local: true, legacy: false, admin: true, scopes: new Set(['view', 'run'] as const) },
+      disabled: false,
+    }
+    const markup = renderToStaticMarkup(createElement(DraftModelControl, draft))
+    expect(named(markup, '模型')).toBe('LARGE')
     expect(markup).not.toContain('开始后才报告')
+    // Large's own levels, as the list says, in the thinking control.
+    const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
+    expect(named(thinking, '思考')).toBe('LOW')
+    for (const level of ['LOW', 'HIGH', 'MAX']) expect(thinking).toContain(level)
+    expect(thinking).not.toContain('开始后才报告')
+    // A model no session ran on: its levels are not known yet, so 默认 and why.
+    const huge = renderToStaticMarkup(
+      createElement(DraftThinkingControl, { ...draft, choice: { ...draft.choice, config: { model: 'huge' } } }),
+    )
+    expect(named(huge, '思考')).toBe('默认')
+    expect(huge).toContain('这个模型有哪些思考，Codex 开始后才告诉 Latch。')
+    // Nothing read yet: each control says it comes with the start.
+    const unread = {
+      ...draft,
+      catalog: { ...catalog, harnesses: [testHarness('pi')] },
+      choice: { mode: 'agent' as const, harnessId: 'pi' },
+    }
+    expect(renderToStaticMarkup(createElement(DraftModelControl, unread))).toContain('pi 开始后才报告可选的模型')
+    expect(renderToStaticMarkup(createElement(DraftThinkingControl, unread))).toContain('pi 开始后才报告有哪些思考')
   })
 })
 
@@ -585,12 +645,45 @@ describe('thinking on the built-in Harness', () => {
     expect(thinkingWord('turbo')).toBe('turbo')
   })
 
-  it('shows the chosen level on the chip, the declared levels in the menu, and a level switch as the next message', () => {
+  const thinking = (model: ModelRef | undefined, current: ModelRef | undefined, locked?: string) =>
+    renderToStaticMarkup(
+      createElement(SessionThinkingControl, {
+        ...props(),
+        catalog: declared,
+        harness: builtin,
+        model,
+        current,
+        config: [],
+        ...(locked ? { locked } : {}),
+      }),
+    )
+
+  it('writes the model alone on its control and the level on 思考, each switch as the next message', () => {
     const current = { providerId: 'lab', model: 'alpha', effort: 'high' }
-    expect(session(current, current)).toContain('alpha · 高')
-    expect(session({ providerId: 'lab', model: 'alpha' }, current)).toContain('下一条：alpha')
-    expect(session({ providerId: 'lab', model: 'alpha', effort: 'low' }, current)).toContain('下一条：alpha · 低')
-    expect(session({ providerId: 'lab', model: 'gamma' }, { providerId: 'lab', model: 'gamma' })).toContain('gamma · 默认思考')
+    expect(named(session(current, current), '模型')).toBe('alpha')
+    expect(named(thinking(current, current), '思考')).toBe('高')
+    // The declared levels in the menu, 默认 first, in Latch's words.
+    for (const level of ['默认', '低', '中', '高']) expect(thinking(current, current)).toContain(`>${level}<`)
+    // A level switch is the thinking's; the model control stays as it is.
+    expect(named(session({ providerId: 'lab', model: 'alpha' }, current), '模型')).toBe('alpha')
+    expect(named(thinking({ providerId: 'lab', model: 'alpha' }, current), '思考')).toBe('下一条：默认')
+    expect(named(thinking({ providerId: 'lab', model: 'alpha', effort: 'low' }, current), '思考')).toBe('下一条：低')
+    expect(thinking({ providerId: 'lab', model: 'alpha', effort: 'low' }, current)).toContain('撤销切换，继续使用 alpha · 高')
+    expect(named(session({ providerId: 'lab', model: 'beta' }, current), '模型')).toBe('下一条：beta')
+    expect(session(current, current)).not.toContain('思考')
+  })
+
+  it('opens with the one row 默认 and why when the model declares no levels, and says a level taken away', () => {
+    const gamma = { providerId: 'lab', model: 'gamma' }
+    const none = thinking(gamma, gamma)
+    expect(named(none, '思考')).toBe('默认')
+    // Still a button that opens, without the arrow.
+    expect(none).toMatch(/<button[^>]*class="ui-value-picker thinking-picker is-fixed"[^>]*aria-haspopup="menu"/u)
+    expect(none).toContain('这个模型没有设置思考，用它自己的默认值。可以在 设置 › 模型 里为它选择。')
+    const gone = { providerId: 'lab', model: 'alpha', effort: 'max' }
+    expect(named(thinking(gone, gone), '思考')).toBe('最高')
+    expect(thinking(gone, gone)).toContain('这个模型不再设置「最高」，重新选一个后再发送。')
+    expect(thinking(gone, gone, '这台设备不能发送消息')).toContain('aria-disabled="true"')
   })
 
   it('drops a remembered level the owner has since taken away, and keeps one still declared', () => {

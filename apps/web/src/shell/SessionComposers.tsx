@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Eraser, Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
@@ -13,6 +14,7 @@ import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
 import { FolderControl, WorktreeLabel } from '../composer/FolderControl.tsx'
 import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
+import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
 import { contextUse, draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
@@ -73,6 +75,18 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
       <span>{question}</span>
       {picker}
     </span>
+  )
+}
+
+/**
+ * One of the composer's four controls, named for what a key that opens it looks for: the trigger is the button inside.
+ * The pickers come from `@latch/ui` and draw their own trigger, so the name sits on this wrapper.
+ */
+function ComposerControl({ name, children }: { name: 'harness' | 'model' | 'thinking' | 'permission'; children: ReactNode }) {
+  return (
+    <div className="composer-control" data-composer-control={name}>
+      {children}
+    </div>
   )
 }
 
@@ -173,6 +187,11 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     }
     if (configBusy.has(selectedId)) return
     void Promise.resolve(setConfig(option.id, value))
+  }
+  const switchSessionModel = (model: ModelRef | undefined) => {
+    if (!summary) return
+    submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
+    if (model) setToast({ text: `下一轮起用 ${modelWords(model)}`, tone: 'ok' })
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
   const use = selectedId === null ? undefined : contextUse(current?.usageReport)
@@ -415,84 +434,121 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               }}
             />
           ) : null
-        ) : (
+        ) : selectedId === null ? (
           <>
-            {selectedId === null ? (
-              <>
-                <DraftHarnessControl
-                  catalog={catalog}
-                  choice={choice}
-                  onChoice={submission.updateChoice}
-                  access={access}
-                  disabled={newChoicesLocked}
-                  onManage={manageEngines}
-                  onAdded={agent => {
-                    submission.updateChoice({ harnessId: agent.id })
-                    void refresh()
-                  }}
-                  onDefaultsChanged={async () => {
-                    await refresh()
-                    submission.forgetDraftPick()
-                  }}
-                  onRead={refresh}
-                />
-                <DraftModelControl
-                  catalog={catalog}
-                  choice={choice}
-                  onChoice={submission.updateChoice}
-                  access={access}
-                  disabled={newChoicesLocked}
-                  onManageModels={manageProviders}
-                  onProvidersChanged={() => {
-                    void refresh()
-                  }}
-                  onRead={refresh}
-                />
-              </>
-            ) : (
-              summary && (
-                <>
-                  {harnessInfo && <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} />}
-                  <SessionModelControl
-                    catalog={catalog}
-                    harness={harnessInfo}
-                    model={effectiveModel}
-                    current={currentModel}
-                    reported={summary.model}
-                    onModel={model => {
-                      submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
-                      if (model) setToast({ text: `下一轮起用 ${modelWords(model)}`, tone: 'ok' })
-                    }}
-                    config={current?.config ?? []}
-                    busy={configBusy.get(summary.id) ?? null}
-                    {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
-                    onRefresh={refreshConfig}
-                    onConfig={setConfig}
-                    onManageModels={manageProviders}
-                    locked={gate.kind === 'read-only' ? gate.text : undefined}
-                    route={summary.modelRoute}
-                  />
-                </>
-              )
-            )}
-            {permission ? (
-              <PermissionChip
-                view={permission}
-                onChoose={chooseOption}
-                // A draft's modes come from the same read as its model list, so opening this first asks as well.
-                {...(selectedId === null && !newChoicesLocked
-                  ? {
-                      onOpenChange: (open: boolean) => {
-                        if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
-                      },
-                    }
-                  : {})}
+            <ComposerControl name="harness">
+              <DraftHarnessControl
+                catalog={catalog}
+                choice={choice}
+                onChoice={submission.updateChoice}
+                access={access}
+                disabled={newChoicesLocked}
+                onManage={manageEngines}
+                onAdded={agent => {
+                  submission.updateChoice({ harnessId: agent.id })
+                  void refresh()
+                }}
+                onDefaultsChanged={async () => {
+                  await refresh()
+                  submission.forgetDraftPick()
+                }}
+                onRead={refresh}
               />
-            ) : (
-              <button type="button" className="chip chip-permission" disabled>
-                <span className="chip-text">权限</span>
-              </button>
-            )}
+            </ComposerControl>
+            <ComposerControl name="model">
+              <DraftModelControl
+                catalog={catalog}
+                choice={choice}
+                onChoice={submission.updateChoice}
+                access={access}
+                disabled={newChoicesLocked}
+                onManageModels={manageProviders}
+                onProvidersChanged={() => {
+                  void refresh()
+                }}
+                onRead={refresh}
+              />
+            </ComposerControl>
+          </>
+        ) : (
+          summary && (
+            <>
+              {harnessInfo && (
+                <ComposerControl name="harness">
+                  <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} />
+                </ComposerControl>
+              )}
+              <ComposerControl name="model">
+                <SessionModelControl
+                  catalog={catalog}
+                  harness={harnessInfo}
+                  model={effectiveModel}
+                  current={currentModel}
+                  reported={summary.model}
+                  onModel={switchSessionModel}
+                  config={current?.config ?? []}
+                  busy={configBusy.get(summary.id) ?? null}
+                  {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
+                  onRefresh={refreshConfig}
+                  onConfig={setConfig}
+                  onManageModels={manageProviders}
+                  locked={gate.kind === 'read-only' ? gate.text : undefined}
+                  route={summary.modelRoute}
+                />
+              </ComposerControl>
+            </>
+          )
+        )
+      }
+      trailing={
+        !showControls || !catalog || (selectedId !== null && !summary) ? null : (
+          <>
+            <ComposerControl name="thinking">
+              {selectedId === null ? (
+                <DraftThinkingControl
+                  catalog={catalog}
+                  choice={choice}
+                  onChoice={submission.updateChoice}
+                  access={access}
+                  disabled={newChoicesLocked}
+                  onRead={refresh}
+                />
+              ) : (
+                <SessionThinkingControl
+                  catalog={catalog}
+                  harness={harnessInfo}
+                  model={effectiveModel}
+                  current={currentModel}
+                  onModel={switchSessionModel}
+                  config={current?.config ?? []}
+                  busy={configBusy.get(selectedId) ?? null}
+                  {...(configFeedback.get(selectedId) ? { feedback: configFeedback.get(selectedId)! } : {})}
+                  onRefresh={refreshConfig}
+                  onConfig={setConfig}
+                  locked={gate.kind === 'read-only' ? gate.text : undefined}
+                />
+              )}
+            </ComposerControl>
+            <ComposerControl name="permission">
+              {permission ? (
+                <PermissionChip
+                  view={permission}
+                  onChoose={chooseOption}
+                  // A draft's modes come from the same read as its model list, so opening this first asks as well.
+                  {...(selectedId === null && !newChoicesLocked
+                    ? {
+                        onOpenChange: (open: boolean) => {
+                          if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+                        },
+                      }
+                    : {})}
+                />
+              ) : (
+                <button type="button" className="chip chip-permission" disabled>
+                  <span className="chip-text">权限</span>
+                </button>
+              )}
+            </ComposerControl>
             {phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
           </>
         )

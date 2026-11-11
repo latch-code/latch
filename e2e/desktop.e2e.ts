@@ -951,7 +951,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         testHost.presence.approveNext()
         await custom.waitFor({ state: 'detached' })
         expect(await page.locator('.settings-page').count()).toBe(0)
-        await page.getByRole('button', { name: '模型：local-custom · 默认思考', exact: true }).waitFor()
+        await page.getByRole('button', { name: '模型：local-custom', exact: true }).waitFor()
         expect(host.config.providers().find(provider => provider.name === '本机自定义模型')).toMatchObject({
           baseURL: customURL,
           models: ['local-custom'],

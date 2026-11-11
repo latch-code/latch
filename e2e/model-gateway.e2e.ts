@@ -136,7 +136,7 @@ describe('a Harness with its own models on a saved service', () => {
     // Opening the menu first reads Codex's own list.
     await page.getByText(/^读取于 /u).waitFor()
     await row(page, 'fake-model-large').click()
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model-large · OpenAI')
+    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
     await chip(page, '模型').click()
     await row(page, /GPT Own/u).click()
     await expect.poll(() => chip(page, '模型').innerText()).toContain('GPT Own')
@@ -179,7 +179,7 @@ describe('a Harness with its own models on a saved service', () => {
           )
           .toContain('fake-model · OpenAI')
         await shot(page, `sheet-picked-${width}-${theme}`)
-      } else await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model · OpenAI')
+      } else await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model')
       await page.context().close()
     }
   })
@@ -200,11 +200,11 @@ describe('a Harness with its own models on a saved service', () => {
       .waitFor()
     await shot(page, 'draft-menu-1440-light')
     await row(page, 'fake-model-large').click()
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model-large · OpenAI')
+    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
     await page.reload()
     await connected(page)
     // The pick is Codex's own and stays across a reload.
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model-large · OpenAI')
+    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
 
     await input(page).fill('model 你好')
     await sendDraft(page)
@@ -349,7 +349,7 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await page.getByText('MyGemini · 经 Latch', { exact: true }).waitFor()
     await row(page, 'fake-model').click()
     // The first time, this Harness's options are read by a process of its own; the chip says so until they are.
-    await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toContain('fake-model · MyGemini')
+    await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toBe('fake-model')
     await input(page).fill('model 你好')
     await sendDraft(page)
     await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).first().waitFor({ timeout: 20_000 })

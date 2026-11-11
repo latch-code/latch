@@ -120,7 +120,8 @@ describe('pi over its own RPC mode', () => {
 
     await start(page, 'say hello')
     await reply(page, 'echo: say hello').waitFor({ timeout: 20_000 })
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Claude Sonnet 4.5 · 中')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Claude Sonnet 4.5')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('中')
     const first = await latest()
     expect(first.summary.status).toBe('idle')
     expect(first.messages.filter(message => message.role === 'assistant').map(message => message.reasoning)).toEqual(['Thinking about it.'])
@@ -176,7 +177,7 @@ describe('pi over its own RPC mode', () => {
     expect((await received()).filter(entry => entry.type === 'steer').map(entry => entry.message)).toEqual(['also update the README'])
     await noHorizontalOverflow(page)
     await shot(page, 'steered-390-dark')
-    await chip(page, '模型').click()
+    await chip(page, '思考').click()
     await page.getByRole('radio', { name: '高', exact: true }).waitFor()
     await shot(page, 'model-menu-390-dark')
     await page.keyboard.press('Escape')

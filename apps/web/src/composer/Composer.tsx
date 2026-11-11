@@ -55,6 +55,7 @@ export function Composer({
   sendKey,
   coarse,
   controls,
+  trailing,
   run,
   readOnly,
   answer,
@@ -99,7 +100,10 @@ export function Composer({
   onSubmit: () => void
   sendKey: SendKey
   coarse: boolean
+  /** The toolbar's start, after 「+」: who does the work and with which model (Harness, 模型). */
   controls: ReactNode
+  /** The toolbar's end, before 「⋯」 and send: how hard and how careful (思考, 权限). */
+  trailing?: ReactNode
   run?: RunState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
   readOnly?: string
@@ -117,7 +121,10 @@ export function Composer({
   stepBack?: boolean
   /** Under the input, outside its frame: the context row and captions of a new session. */
   below?: ReactNode
-  /** Phone session: input and action share a row; options sit above it. */
+  /**
+   * Phone session: the toolbar takes two rows inside the frame, Harness and 模型 on the first, 「+」, 思考, 权限 and
+   * send on the second, so neither the Harness's name nor the model is cut.
+   */
   inline?: boolean
   /** Shown above the input. */
   confirmation?: ReactNode
@@ -366,28 +373,23 @@ export function Composer({
           <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
         )}
         <SlashCommands menu={slash} />
-        {inline ? (
-          <div className="composer-row">
-            {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
-            {input}
-            {action}
-          </div>
-        ) : (
-          input
-        )}
+        {input}
         {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
-        {!inline && variant !== 'sheet' && (
-          <div className="composer-toolbar">
+        {variant !== 'sheet' && (
+          <div className="composer-toolbar" data-rows={inline ? 'two' : undefined}>
             <div className="composer-controls">
-              {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
               {controls}
             </div>
-            {meta && <div className="composer-meta">{meta}</div>}
-            {action}
+            <div className="composer-end">
+              {inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {trailing}
+              {meta && <div className="composer-meta">{meta}</div>}
+              {action}
+            </div>
           </div>
         )}
       </form>
-      {inline && controls && <div className="composer-chips">{controls}</div>}
       {below}
     </div>
   )

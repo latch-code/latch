@@ -11,42 +11,47 @@ export interface AgentConfigState {
   feedback?: SessionConfigFeedback
 }
 
-/** Categories are Agent-provided semantic metadata; IDs and model names cannot establish a reasoning capability. */
+/**
+ * Categories are Agent-provided semantic metadata; IDs and model names cannot establish a reasoning capability. The model
+ * and thinking are separate controls, each taking the first option of its category; the model's menu holds the other
+ * model settings.
+ */
 export function agentModelControls(config: readonly SessionConfigOption[]): {
-  primary?: SessionConfigOption
+  model?: SessionConfigOption
+  thinking?: SessionConfigOption
   related: SessionConfigOption[]
 } {
-  const primary = config.find(option => option.category === 'model') ?? config.find(option => option.category === 'thought_level')
+  const model = config.find(option => option.category === 'model')
+  const thinking = config.find(option => option.category === 'thought_level')
   return {
-    ...(primary ? { primary } : {}),
-    related: primary
-      ? config.filter(option => option.id !== primary.id && (option.category === 'thought_level' || option.category === 'model_config'))
-      : [],
+    ...(model ? { model } : {}),
+    ...(thinking ? { thinking } : {}),
+    // With neither reported, the model's other settings stay under the composer's 「⋯」.
+    related: model || thinking ? config.filter(option => option.category === 'model_config') : [],
   }
 }
 
 export const DEFAULT_MODEL = '默认模型'
-export const DEFAULT_THINKING = '默认思考'
+/** The thinking control's value when no level is chosen or none was reported: the model's own default. */
+export const DEFAULT_LEVEL = '默认'
 
-/** The model control's label: both facts, always, with the words for a value the Harness has not told Latch. */
-export const modelChipText = (model: string | undefined, thinking: string | undefined): string =>
-  `${model ?? DEFAULT_MODEL} · ${thinking ?? DEFAULT_THINKING}`
+/** The model menu's one sentence on a model the Harness has not told Latch of. Nothing when it reported one. */
+export function unreportedModelNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
+  if (!started) return `${harness} 开始后才报告可选的模型，发第一条消息后可以在这里换。`
+  return config.some(option => option.category === 'model') ? undefined : `${harness} 没有报告可选的模型，由它自己决定。`
+}
 
-/** The model control's one sentence on a value the Harness has not told Latch. Nothing when it reported both. */
-export function unreportedNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
-  if (!started) return `${harness} 开始后才报告模型和思考深度，发第一条消息后可以在这里换。`
-  const model = config.some(option => option.category === 'model')
-  const thinking = config.some(option => option.category === 'thought_level')
-  if (model && thinking) return undefined
-  if (!model && !thinking) return `${harness} 没有报告模型和思考深度，由它自己决定。`
-  return model ? `${harness} 没有报告思考深度，用它自己的默认值。` : `${harness} 没有报告可选的模型，由它自己决定。`
+/** The thinking menu's one sentence on levels the Harness has not told Latch of. Nothing when it reported them. */
+export function unreportedThinkingNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
+  if (!started) return `${harness} 开始后才报告有哪些思考，发第一条消息后可以在这里换。`
+  return config.some(option => option.category === 'thought_level') ? undefined : `${harness} 没有报告思考，用它自己的默认值。`
 }
 
 /** A draft picked a model no session has run on yet, so what thinking it offers is not known. */
-export const THINKING_AFTER_START = (harness: string) => `这个模型有哪些思考深度，${harness} 开始后才告诉 Latch。`
+export const THINKING_AFTER_START = (harness: string) => `这个模型有哪些思考，${harness} 开始后才告诉 Latch。`
 
 /** On the built-in Harness, for a model with no thinking levels declared in settings. */
-export const BUILTIN_THINKING_NOTE = '这个模型没有设置思考深度，用它自己的默认值。可以在 设置 › 模型 里为它选择。'
+export const BUILTIN_THINKING_NOTE = '这个模型没有设置思考，用它自己的默认值。可以在 设置 › 模型 里为它选择。'
 
 const THINKING_WORDS: Readonly<Record<string, string>> = {
   none: '不思考',
@@ -86,14 +91,22 @@ export const THINKING_SETS: Readonly<Record<ProviderKind, ReadonlyArray<readonly
   ],
 }
 
-/** A built-in model with its thinking level, as the chip and the switch notice say it. */
+/** A built-in model with its thinking level, as the switch notice says it. */
 export const modelWords = (model: ModelRef): string => (model.effort ? `${model.model} · ${thinkingWord(model.effort)}` : model.model)
+
+/** The same model of the same service, whatever level of thinking goes with it. */
+export const sameModelId = (a: ModelRef | undefined, b: ModelRef | undefined): boolean =>
+  a?.providerId === b?.providerId && a?.model === b?.model
+
+/** Undoing a built-in switch that applies from the next message, in the model's and the thinking's menu alike. */
+export const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${modelWords(current)}` : '撤销切换')
 
 export const thinkingSetText = (levels: readonly string[]): string => levels.map(thinkingWord).join(' · ')
 
 /**
  * What the composer's 「⋯」 holds: every option no other control shows, so one the Latch does not recognise stays
- * reachable. An agent's model control already holds its related options, and the 权限 chip the mode.
+ * reachable. An agent's model control already holds its related options, the thinking control its level and the 权限
+ * chip the mode.
  */
 export function composerOptions(config: readonly SessionConfigOption[], hostModels: boolean): SessionConfigOption[] {
   const held = hostModels ? [] : agentModelControls(config).related

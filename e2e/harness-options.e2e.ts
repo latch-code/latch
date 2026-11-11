@@ -143,7 +143,16 @@ describe("choosing a Harness's own options before the first message", () => {
 
   it("reads Codex's own list when its menu first opens, then lists what a session offered, and starts on the picks", async () => {
     const page = await open(1440, 'light')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型 · 默认思考')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
+    await expect.poll(() => chip(page, '思考').getAttribute('aria-label')).toBe('思考：默认')
+    // The four controls carry their names for the keys that open them, in a draft as in a session.
+    await expect
+      .poll(() =>
+        page
+          .locator('.composer-stack [data-composer-control]')
+          .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
+      )
+      .toEqual(['harness', 'model', 'thinking', 'permission'])
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
     expect(await agent()).toEqual([])
     // Codex's own model list says nothing of its modes, so 权限 reads nothing and says they come with the session.
@@ -171,7 +180,8 @@ describe("choosing a Harness's own options before the first message", () => {
     await send(page, '第一轮')
     await startNew(page)
     // What the first session offered, before anything is sent.
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Small · Low')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Small')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
@@ -179,10 +189,11 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(await page.getByText('开始后才报告', { exact: false }).count()).toBe(0)
     await shot(page, 'listed-1440-light')
     await row(page, /Large/u).click()
-    // Codex's list said what thinking Large offers, so the chip says it before any session ran on Large.
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · Low')
-    await chip(page, '模型').click()
-    await page.getByRole('radio', { name: 'Max' }).waitFor()
+    // Codex's list said what thinking Large offers, so 思考 says it before any session ran on Large.
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
+    await chip(page, '思考').click()
+    await row(page, /^Max/u).waitFor()
     await shot(page, 'large-thinking-1440-light')
     await page.keyboard.press('Escape')
 
@@ -218,23 +229,20 @@ describe("choosing a Harness's own options before the first message", () => {
 
     // The model, its thinking and the mode the person picked stay picked for the next draft.
     await startNew(page)
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · Low')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
-    await chip(page, '模型').click()
-    // A session ran on Large, so its own levels are known now.
-    await page.getByRole('radio', { name: 'Max' }).waitFor()
-    // The chosen level's own words sit under the row, and follow the choice; each level also has them as its tooltip.
-    const note = (level: string) => page.locator('.model-note').getByText(LEVELS[level]!, { exact: true })
-    await note('low').waitFor()
-    await page.getByRole('radio', { name: 'High' }).click()
-    await note('high').waitFor()
-    expect(await note('low').count()).toBe(0)
+    await chip(page, '思考').click()
+    // A session ran on Large, so its own levels are known now, each with its own words under it.
+    for (const level of ['low', 'high', 'max']) await page.getByText(LEVELS[level]!, { exact: true }).waitFor()
     await shot(page, 'thinking-described-1440-light')
-    await page.keyboard.press('Escape')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · High')
+    await row(page, /^High/u).click()
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
+    expect(await chip(page, '模型').innerText()).toContain('Large')
     await page.reload()
     await connected(page)
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · High')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await noHorizontalOverflow(page)
     await page.context().close()
@@ -247,12 +255,11 @@ describe("choosing a Harness's own options before the first message", () => {
     await chip(page, '模型').click()
     await shot(page, 'listed-1440-dark')
     await row(page, /Large/u).click()
-    await page.keyboard.press('Escape')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · Low')
-    await chip(page, '模型').click()
-    await page.getByRole('radio', { name: 'High' }).click()
-    await page.keyboard.press('Escape')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large · High')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
+    await chip(page, '思考').click()
+    await row(page, /^High/u).click()
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await chip(page, '权限').click()
     await page.locator('.permission-list-more').click()
     await row(page, /按规则放行/u).click()
@@ -276,7 +283,8 @@ describe("choosing a Harness's own options before the first message", () => {
       .waitFor({ timeout: 20_000 })
     await shot(page, 'model-gone-1440-dark')
     // The session shows what it runs on now, the rest of the draft with it, and a retry runs on that.
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('Small · High')
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('Small')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await page.getByRole('button', { name: '重试', exact: true }).first().click()
     await page.locator('.transcript').getByText('echo: 第三轮', { exact: true }).first().waitFor({ timeout: 20_000 })
@@ -337,9 +345,14 @@ describe("choosing a Harness's own options before the first message", () => {
       await new Promise(resolve => setTimeout(resolve, 1500))
       await route.continue()
     })
-    await chip(page, '模型').click()
-    await page.getByRole('radio', { name: 'High' }).click()
-    await page.keyboard.press('Escape')
+    // In a session too, each control carries its name.
+    expect(
+      await page
+        .locator('.composer-stack [data-composer-control]')
+        .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
+    ).toEqual(['harness', 'model', 'thinking', 'permission'])
+    await chip(page, '思考').click()
+    await row(page, /^High/u).click()
     const next = page.getByRole('textbox', { name: '继续对话', exact: true })
     await next.fill('第六轮')
     await next.press('Meta+Enter')
@@ -349,7 +362,7 @@ describe("choosing a Harness's own options before the first message", () => {
     const after = await owner.json<TaskDetail>(`tasks/${session.summary.id}`)
     expect(current(after, 'reasoning_effort')).toBe('high')
     expect(await page.getByText('结果未知', { exact: false }).count()).toBe(0)
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('High')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await page.context().close()
   })
 
@@ -369,9 +382,8 @@ describe("choosing a Harness's own options before the first message", () => {
       await new Promise(resolve => setTimeout(resolve, 1500))
       await route.continue()
     })
-    await chip(page, '模型').click()
-    await page.getByRole('radio', { name: 'High' }).click()
-    await page.keyboard.press('Escape')
+    await chip(page, '思考').click()
+    await row(page, /^High/u).click()
     const transcript = page.locator('.transcript')
     await transcript.getByText('echo: 第七轮', { exact: true }).hover()
     await transcript.getByRole('button', { name: '重试', exact: true }).last().click()

@@ -1333,7 +1333,7 @@ describe('visual capture of the real product', () => {
         await settleMotion(target)
         await recorder.capture(target, viewport, 'session-model-switch', 'a model switch for the next message, with its undo')
         await undo.click()
-        await input.getByRole('button', { name: '模型：fixture-large · 默认思考', exact: true }).waitFor()
+        await input.getByRole('button', { name: '模型：fixture-large', exact: true }).waitFor()
       }
 
       // Opening the fold shows the rows as they were.

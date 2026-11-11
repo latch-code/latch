@@ -111,16 +111,39 @@ describe('the phone stack', () => {
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
-      // The input floats as one row, 52 high at rest, with send at its end.
+      // The four controls sit inside the input in two rows under the text: Harness and 模型, then 思考, 权限 and send at
+      // its end. Nothing of them is left outside the frame.
       const composer = page.locator('.composer-dock form.composer')
-      expect(await composer.locator('.composer-toolbar').count()).toBe(0)
-      const row = await composer.evaluate(form => {
-        const box = form.getBoundingClientRect()
-        const send = form.querySelector('.send-button')!.getBoundingClientRect()
-        const input = form.querySelector('textarea')!.getBoundingClientRect()
-        return { height: box.height, sendInside: send.top >= input.top && send.bottom <= input.bottom, sendAfter: send.left >= input.right }
+      expect(await composer.locator('.composer-toolbar[data-rows="two"]').count()).toBe(1)
+      expect(
+        await page.locator('.composer-dock [data-composer-control]').evaluateAll(nodes => nodes.every(node => node.closest('form'))),
+      ).toBe(true)
+      const rows = await composer.evaluate(form => {
+        const box = (selector: string) => form.querySelector(selector)?.getBoundingClientRect()
+        const control = (name: string) => box(`[data-composer-control="${name}"]`)
+        const [input, harness, model, thinking, permission, send] = [
+          box('textarea'),
+          control('harness'),
+          control('model'),
+          control('thinking'),
+          control('permission'),
+          box('.send-button'),
+        ]
+        const frame = form.getBoundingClientRect()
+        const row = (a?: DOMRect, b?: DOMRect) => !!a && !!b && Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 2
+        return {
+          found: [input, harness, model, thinking, permission, send].every(Boolean),
+          firstRow: row(harness, model) && harness!.top >= input!.bottom - 1,
+          secondRow: row(thinking, permission) && row(permission, send) && thinking!.top >= harness!.bottom,
+          sendAtEnd: frame.right - send!.right < 16,
+          inside: [harness, model, thinking, permission, send].every(item => item!.left >= frame.left && item!.right <= frame.right),
+        }
       })
-      expect(row).toEqual({ height: 52, sendInside: true, sendAfter: true })
+      expect(rows).toEqual({ found: true, firstRow: true, secondRow: true, sendAtEnd: true, inside: true })
+      // The Harness's name is never what gives way.
+      const harness = composer.locator('[data-composer-control="harness"] .chip-text')
+      expect(await harness.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await noHorizontalOverflow(page)
 
       // Back: the page slides away in 70% of the time on the exit curve, the list returns and focus lands on the row it
       // opened.

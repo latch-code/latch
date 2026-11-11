@@ -158,7 +158,8 @@ describe('conversation forks', () => {
       await notice.waitFor()
       // The same Harness: the source's row, model and thinking, with nothing to explain.
       expect(await label(/^权限：/u)).toContain('按规则放行')
-      expect(await page.locator('.composer').first().innerText()).toContain('Large · High')
+      expect(await label(/^模型：/u)).toBe('模型：Large')
+      expect(await label(/^思考：/u)).toBe('思考：High')
       expect(await notice.locator('.fork-missed').count()).toBe(0)
 
       // Another Harness: what maps is kept, the row is never wider than the source's, and the draft says what changed.

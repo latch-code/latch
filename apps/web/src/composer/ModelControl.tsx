@@ -13,18 +13,7 @@ import {
   type SessionConfigOption,
   type TaskSummary,
 } from '@latch/protocol'
-import {
-  Button,
-  IconButton,
-  InlineNotice,
-  MenuFooterLink,
-  MenuFooterNote,
-  Popover,
-  SegmentedControl,
-  ValuePicker,
-  useLayerClose,
-  type PickerGroup,
-} from '@latch/ui'
+import { IconButton, MenuFooterLink, MenuFooterNote, Popover, ValuePicker, useLayerClose, type PickerGroup } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { SETUP_COPY } from '../core/securityCopy.ts'
@@ -39,7 +28,6 @@ import {
   serviceModels,
   servicePick,
   switchModel,
-  thinkingLevels,
   withServicePick,
   withTypedModels,
   type ComposerChoice,
@@ -48,113 +36,23 @@ import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '.
 import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
-import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import {
   agentConfigBlocked,
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
-  BUILTIN_THINKING_NOTE,
   DEFAULT_MODEL,
-  modelChipText,
-  modelWords,
-  THINKING_AFTER_START,
-  thinkingWord,
-  unreportedNote,
+  resetModelLabel,
+  sameModelId,
+  unreportedModelNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
+import { ConfigFeedback } from './ThinkingControl.tsx'
 import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
-/** The most levels a segmented row holds in the popover's width; more go in a row that opens its own list. */
-const SEGMENTED_LEVELS = 5
 export const OWN_MODEL = 'own'
-
-const pendingModelText = (model: ModelRef) => `下一条：${modelWords(model)}`
-const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${modelWords(current)}` : '撤销切换')
-/** The built-in row's first value: no level sent, the model's own default. Not a valid wire level, so it never collides. */
-const MODEL_DEFAULT_LEVEL = '~default'
-
-/**
- * 思考: a segmented row of the levels on offer, or a list when there are too many; the menu stays open. A level the
- * Harness describes keeps its own words: on hover in the row, in the list, and under the row for the chosen one, so a
- * phone shows them too.
- */
-function LevelRow({
-  value,
-  options,
-  disabled,
-  onChoose,
-}: {
-  value: string
-  options: Array<{ value: string; label: string; description?: string }>
-  disabled: boolean
-  onChoose: (value: string) => void
-}) {
-  const chosen = options.find(option => option.value === value)?.description
-  return (
-    <>
-      <div className="model-setting">
-        <span className="model-setting-name">思考</span>
-        {options.length <= SEGMENTED_LEVELS ? (
-          <SegmentedControl
-            label="思考"
-            value={value}
-            disabled={disabled}
-            options={options.map(({ description, ...option }) => (description ? { ...option, title: description } : option))}
-            onValueChange={onChoose}
-          />
-        ) : (
-          <ValuePicker variant="row" label="思考" value={value} disabled={disabled} options={options} onValueChange={onChoose} />
-        )}
-      </div>
-      {chosen && <p className="model-note">{chosen}</p>}
-    </>
-  )
-}
-
-/** 思考 on the built-in Harness: 默认, then the levels declared for this model in settings. A pick goes with the model. */
-function BuiltinThinking({
-  model,
-  levels,
-  disabled,
-  onModel,
-}: {
-  model: ModelRef
-  levels: readonly string[]
-  disabled: boolean
-  onModel: (model: ModelRef) => void
-}) {
-  // A level taken away in settings since the session chose it: the row stays, so 默认 is one press away.
-  const withdrawn = model.effort !== undefined && !levels.includes(model.effort)
-  if (levels.length === 0 && !withdrawn) return <FixedThinking note={BUILTIN_THINKING_NOTE} />
-  return (
-    <>
-      <LevelRow
-        value={model.effort ?? MODEL_DEFAULT_LEVEL}
-        options={[{ value: MODEL_DEFAULT_LEVEL, label: '默认' }, ...levels.map(level => ({ value: level, label: thinkingWord(level) }))]}
-        disabled={disabled}
-        onChoose={value => {
-          onModel({ providerId: model.providerId, model: model.model, ...(value === MODEL_DEFAULT_LEVEL ? {} : { effort: value }) })
-        }}
-      />
-      {withdrawn && <p className="model-note">{`这个模型不再设置「${thinkingWord(model.effort!)}」，重新选一个后再发送。`}</p>}
-    </>
-  )
-}
-
-/** 思考 with nothing to choose from: the value in place, and the one sentence on why. */
-function FixedThinking({ note }: { note: string | undefined }) {
-  return (
-    <>
-      <div className="model-setting">
-        <span className="model-setting-name">思考</span>
-        <span className="model-setting-value">默认</span>
-      </div>
-      {note && <p className="model-note">{note}</p>}
-    </>
-  )
-}
 
 /** Models hidden in settings stay one press away, here where they are chosen. */
 function HiddenModelsLink({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
@@ -628,21 +526,19 @@ export function DraftModelControl({
       <HarnessModelPicker
         catalog={catalog}
         harness={harness}
-        // Thinking and the like are offered for the Harness's own models; on a service's model it reports them once started.
+        // The model's other settings are offered for the Harness's own models; on a service's model it reports them once started.
         config={service ? (known?.config.filter(option => option.category === 'model') ?? []) : (known?.config ?? [])}
         busy={null}
         disabled={disabled}
         service={{ picked: service, onPick: pickService }}
         note={
           service
-            ? THINKING_AFTER_START(name)
+            ? null
             : known
-              ? known.thinkingUnknown
-                ? THINKING_AFTER_START(name)
-                : unreportedNote(name, true, known.config)
+              ? (unreportedModelNote(name, true, known.config) ?? null)
               : harness.catalogueRead
                 ? null
-                : unreportedNote(name, false, [])
+                : unreportedModelNote(name, false, [])
         }
         onConfig={pick}
         rows={rows}
@@ -668,15 +564,13 @@ export function DraftModelControl({
       label="模型"
       placeholder="选择模型"
       value={choice.model ? modelKey(choice.model) : undefined}
-      {...(choice.model
-        ? { valueText: modelChipText(choice.model.model, choice.model.effort ? thinkingWord(choice.model.effort) : undefined) }
-        : {})}
+      {...(choice.model ? { valueText: choice.model.model } : {})}
       groups={groups}
       searchable={count >= 8 && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
       width={adding ? 360 : 320}
-      {...(provider ? { leading: <ProviderTile provider={provider} size={16} /> } : {})}
-      className="model-picker"
+      {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
+      className={choice.model ? 'model-picker is-id' : 'model-picker'}
       menuChevron
       disabled={disabled}
       onOpenChange={open => {
@@ -689,16 +583,6 @@ export function DraftModelControl({
       }}
       footer={
         <div className="model-footer">
-          {choice.model && (
-            <BuiltinThinking
-              model={choice.model}
-              levels={thinkingLevels(catalog, choice.model)}
-              disabled={disabled}
-              onModel={model => {
-                onChoice({ model })
-              }}
-            />
-          )}
           <HiddenModelsLink
             shown={showHidden}
             onToggle={() => {
@@ -795,17 +679,13 @@ export function SessionModelControl({
         label="模型"
         placeholder="选择模型"
         value={model ? modelKey(model) : undefined}
-        valueText={
-          !model || sameModel(model, current)
-            ? modelChipText(model?.model, model?.effort ? thinkingWord(model.effort) : undefined)
-            : pendingModelText(model)
-        }
+        valueText={!model ? DEFAULT_MODEL : sameModelId(model, current) ? model.model : `下一条：${model.model}`}
         groups={groups}
         searchable={count >= 8}
         searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
         width={320}
-        {...(provider ? { leading: <ProviderTile provider={provider} size={16} /> } : {})}
-        className="model-picker"
+        {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
+        className={model ? 'model-picker is-id' : 'model-picker'}
         menuChevron
         disabled={locked !== undefined}
         disabledReason={locked}
@@ -816,11 +696,6 @@ export function SessionModelControl({
         }}
         footer={
           <div className="model-footer">
-            {model ? (
-              <BuiltinThinking model={model} levels={thinkingLevels(catalog, model)} disabled={locked !== undefined} onModel={onModel} />
-            ) : (
-              <FixedThinking note={BUILTIN_THINKING_NOTE} />
-            )}
             {model && !sameModel(model, current) && (
               <MenuFooterLink
                 chevron={false}
@@ -915,7 +790,6 @@ function HarnessModelPicker({
     return undefined
   }
   const modelOption = config.find(option => option.category === 'model')
-  const thought = config.find(option => option.category === 'thought_level')
   const others = config.filter(option => option.category === 'model_config')
   const values = (option: SessionConfigOption) =>
     agentConfigValues(option).map(item => ({
@@ -930,11 +804,11 @@ function HarnessModelPicker({
   const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
   const picked = service && 'picked' in service ? service.picked : undefined
   const pickedProvider = findProvider(catalog, picked?.providerId)
-  // The same model can be listed by two services, so a service's model names its service.
-  const text = picked
-    ? `${picked.model} · ${pickedProvider?.name ?? picked.providerId}`
-    : modelChipText(reportedOr, thought ? agentConfigLabel(thought) : undefined)
-  const note = noteOverride === null ? undefined : (noteOverride ?? unreportedNote(name, true, config))
+  // The same model can be listed by two services, so a service's model carries its service's mark.
+  const text = picked ? picked.model : (reportedOr ?? DEFAULT_MODEL)
+  const note = noteOverride === null ? undefined : (noteOverride ?? unreportedModelNote(name, true, config))
+  // Writing the model or one of the settings in its menu; thinking and the mode say so on their own controls.
+  const writing = busy !== null && (busy === modelOption?.id || others.some(option => option.id === busy))
   const session = service && 'session' in service ? { route: service.route } : undefined
   const groups = ownModelGroups(
     catalog,
@@ -952,13 +826,13 @@ function HarnessModelPicker({
       label="模型"
       value={picked ? serviceValue(picked) : (modelOption?.currentValue ?? OWN_MODEL)}
       valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' ? `${text} · 结果未知` : text)}
-      {...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={16} /> } : {})}
+      {...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={14} /> } : {})}
       groups={groups}
-      className="model-picker"
+      className={picked || reportedOr !== undefined ? 'model-picker is-id' : 'model-picker'}
       menuChevron
       searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
       width={340}
-      pending={busy !== null || reading}
+      pending={writing || reading}
       pendingLabel={reading ? '正在读取…' : '正在切换…'}
       disabled={locked !== undefined || disabled === true}
       disabledReason={locked}
@@ -977,28 +851,7 @@ function HarnessModelPicker({
       }}
       footer={
         <div className="model-footer">
-          {thought ? (
-            <>
-              <LevelRow
-                value={thought.currentValue}
-                options={agentConfigValues(thought).map(item => ({
-                  value: item.value,
-                  label: escapeHiddenCharacters(item.name),
-                  // Some Harnesses repeat the level's name as its description, which says nothing more.
-                  ...(item.description && item.description.trim().toLowerCase() !== item.name.trim().toLowerCase()
-                    ? { description: escapeHiddenCharacters(item.description) }
-                    : {}),
-                }))}
-                disabled={blocked}
-                onChoose={value => {
-                  void choose(thought.id, value)
-                }}
-              />
-              {note && <p className="model-note">{note}</p>}
-            </>
-          ) : (
-            <FixedThinking note={note} />
-          )}
+          {note && <p className="model-note">{note}</p>}
           {others.map(option => (
             <ConfigRow
               key={option.id}
@@ -1011,13 +864,7 @@ function HarnessModelPicker({
           ))}
           {rows}
           {routeLine && <p className="model-note">{routeLine}</p>}
-          {feedback && (
-            <InlineNotice
-              tone={feedback.kind === 'unknown' ? 'warn' : 'error'}
-              action={feedback.kind === 'unknown' && onRefresh ? <RefreshConfig refresh={onRefresh} /> : undefined}>
-              <VisibleText text={feedback.message} />
-            </InlineNotice>
-          )}
+          {feedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
           {manage}
         </div>
       }
@@ -1036,20 +883,5 @@ function ConfigRow({ option, disabled, onChoose }: { option: SessionConfigOption
       searchable={option.options.length > 8}
       onValueChange={onChoose}
     />
-  )
-}
-
-function RefreshConfig({ refresh }: { refresh: () => void | Promise<void> }) {
-  const close = useLayerClose()
-  return (
-    <Button
-      size="xs"
-      onClick={() => {
-        void Promise.resolve(refresh())
-          .then(close)
-          .catch(() => {})
-      }}>
-      刷新当前设置
-    </Button>
   )
 }

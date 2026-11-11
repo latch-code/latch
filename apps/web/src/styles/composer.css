@@ -171,36 +171,99 @@
 
 .composer-toolbar {
   display: flex;
-  align-items: flex-end;
-  gap: var(--sp-8);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
   min-height: 44px;
   padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
 }
-/* All four facts stay readable at every width, so a narrow toolbar takes another row instead of hiding one. */
-.composer-controls {
+/*
+ * Who does the work and with which model at the start (「+」, Harness, 模型); how hard and how careful at the end, by
+ * send (思考, 权限, 「⋯」). All four stay readable at every width, so a narrow toolbar takes another row instead of
+ * hiding one, and the end keeps to the right on it.
+ */
+.composer-controls,
+.composer-end {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-4);
-  flex: 1 1 0;
   min-width: 0;
 }
-.composer-controls > * {
+.composer-controls {
+  flex: 0 1 auto;
+}
+.composer-controls:empty {
+  display: none;
+}
+.composer-end {
+  flex: 0 1 auto;
+  margin-inline-start: auto;
+}
+.composer-end > .composer-slot {
+  margin-inline-start: var(--sp-4);
+}
+:is(.composer-controls, .composer-end) > *,
+.composer-control {
   max-width: 100%;
   min-width: 0;
 }
-.composer-controls :is(.ui-value-picker, .chip) {
+.composer-control {
+  display: flex;
+}
+.composer-control :is(.ui-value-picker, .chip) {
   max-width: 100%;
 }
-.composer-controls .ui-value-picker-value {
+.composer-control .ui-value-picker-value {
   min-width: 0;
   overflow: hidden;
 }
-.composer-controls .ui-value-picker-text,
-.composer-controls .chip-text {
+.composer-control .ui-value-picker-text,
+.composer-control .chip-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A model's ID reads as one, in the mono face; the words for an unreported one stay in the UI face. */
+.model-picker.is-id .ui-value-picker-text:not([data-pending]) {
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+/* 思考 is a small muted word before the value, in the leading slot. With only 默认 there is no arrow: it still opens. */
+.thinking-label {
+  white-space: nowrap;
+}
+.thinking-picker.is-fixed > .ui-value-picker-chevron {
+  display: none;
+}
+/*
+ * A phone's session: two rows inside the frame. Harness and 模型 on the first, which they share so a long model ID is
+ * cut before the Harness's name; 「+」, 思考, 权限 and send on the second, send at its end.
+ */
+.composer-toolbar[data-rows='two'] {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: var(--sp-2);
+}
+.composer-toolbar[data-rows='two'] > .composer-controls,
+.composer-toolbar[data-rows='two'] > .composer-end {
+  flex-wrap: nowrap;
+  margin-inline-start: 0;
+}
+.composer-toolbar[data-rows='two'] .composer-control[data-composer-control='harness'] {
+  flex: 0 0 auto;
+}
+.composer-toolbar[data-rows='two'] .composer-control[data-composer-control='model'] {
+  flex: 0 1 auto;
+}
+.composer-toolbar[data-rows='two'] > .composer-end > * {
+  flex: 0 1 auto;
+}
+.composer-toolbar[data-rows='two'] > .composer-end > .composer-slot {
+  flex: none;
+  margin-inline-start: auto;
 }
 .composer-meta > * {
   flex-shrink: 0;
@@ -474,35 +537,6 @@
   }
 }
 
-/* A phone's session page: the input and send (or stop) on one row, 52 high at rest; the row grows by lines and send stays on the last one. */
-.composer-row {
-  display: flex;
-  align-items: flex-end;
-  min-width: 0;
-}
-.composer-row > textarea,
-.composer-row > .composer-readonly {
-  flex: 1;
-  min-width: 0;
-}
-/* The height the input is given is its content's plus 2, so the padding leaves 50 for one line. */
-.composer[data-inline] textarea {
-  padding: calc((50px - var(--lh-input)) / 2) var(--sp-4) calc((50px - var(--lh-input)) / 2) var(--sp-16);
-}
-/* The 「+」 sits inside the pill, on the input's first line. */
-.composer-row > :first-child:not(textarea, .composer-readonly) {
-  flex-shrink: 0;
-  margin: 0 0 var(--sp-8) var(--sp-8);
-}
-.composer-row > :first-child:not(textarea, .composer-readonly) ~ textarea {
-  padding-left: var(--sp-8);
-}
-.composer[data-inline] .composer-readonly {
-  padding: var(--sp-16) var(--sp-4) var(--sp-16) var(--sp-16);
-}
-.composer-row > .composer-slot {
-  margin: 0 var(--sp-8) var(--sp-8) 0;
-}
 @media (max-width: 767.98px) {
   .composer-dock .composer-stack {
     gap: var(--sp-6);
@@ -889,17 +923,6 @@
 }
 .composer-stop > svg {
   flex-shrink: 0;
-}
-/* A phone's chips under the card, wrapping for the same reason as the toolbar's. */
-.composer-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-4);
-  min-width: 0;
-}
-.composer-chips > * {
-  max-width: 100%;
-  min-width: 0;
 }
 /* The branch, under the card where the toolbar's first glyph starts. */
 .composer-context {

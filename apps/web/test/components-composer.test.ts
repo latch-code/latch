@@ -701,6 +701,31 @@ describe('composer', () => {
     expect(html).not.toContain('取消')
   })
 
+  it('puts Harness and 模型 at the start and 思考 and 权限 at the end, by send', () => {
+    const controls = createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5')
+    const trailing = createElement('span', { 'data-composer-control': 'thinking' }, '高')
+    const order = (markup: string) =>
+      [...markup.matchAll(/class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="发送"/gu)].map(
+        match => match[1] ?? match[2] ?? 'send',
+      )
+    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing })))).toEqual([
+      'controls',
+      'model',
+      'end',
+      'thinking',
+      'send',
+    ])
+    // A phone's session: the same two groups as two rows inside the frame, nothing outside it.
+    const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, trailing }))
+    expect(phone).toContain('data-rows="two"')
+    expect(phone.indexOf('data-composer-control="thinking"')).toBeLessThan(phone.indexOf('</form>'))
+    expect(order(phone)).toEqual(['controls', 'model', 'end', 'thinking', 'send'])
+    // The new-session sheet has its own rows and its 开始 in its header.
+    expect(renderToStaticMarkup(createElement(Composer, { ...base, variant: 'sheet', controls, trailing }))).not.toContain(
+      'composer-toolbar',
+    )
+  })
+
   it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {
     const html = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', readOnly: '这台设备不能发送消息' }))
     expect(html).toContain('data-variant="read-only"')
