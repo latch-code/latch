@@ -158,6 +158,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 阅读位置、用户意图、布局重排、`reveal` | `reading-position.test.ts`、`streaming-ui.e2e.ts` |
 | 高亮调度、流式代码块尾部与逐行着色、已结算轮次不重绘（预算是渲染次数与 span 数，不是耗时）、长行、查找跨 token | `highlight-scheduler.test.ts`、`streaming-render.e2e.ts` |
 | 读取输出按文件名着色、行号与外层标记、上限、着色不移动会话 | `tool-output-code.test.ts`、`tool-highlight.e2e.ts` |
+| 工具行与命令块：细轨、动词列、等宽路径（从会话文件夹写起，文件名不截断）、命令块只画协议里有的（命令、用时、工具报告的最后几行、调用自己的失败状态，没有退出码）、块状光标只在运行中、输出到达时阅读位置不动、子 Agent 行与「停止」列 | `components-conversation.test.ts` 的 `tool rows and command blocks`；真实 Host、本文件里的最小 ACP Agent 与假 ACP Agent 的三宽两色见 `e2e/transcript-rows.e2e.ts`（截图写入 `test-results/transcript-rows/`） |
 | Markdown/URL 安全、不加载图片、代码与表格、隐藏字符标记 | `message-content.test.ts`、`components-*.test.ts`、`streaming-ui.e2e.ts` |
 | 客户端安全逻辑：共享编码的浏览器实现、事件流解析与续期后重连、权限展示（`apps/web/src/core/permissions.ts`）、安全文案（`apps/web/src/core/securityCopy.ts`）、`api()` 与本机确认流程、凭据续期（Web Locks、应答丢失、退避、浏览器没有保存新 Cookie）、审批回执、停止请求的重用与回答、审计回滚提示 | `client-security.test.ts` |
 | 开发代理只对 `h-<hostId>.localhost` 转交凭据 Cookie | `client-devproxy.test.ts` |

@@ -21,8 +21,8 @@ const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTon
 export const SubagentStop = createContext<((subagentId: string) => Promise<void>) | undefined>(undefined)
 
 /**
- * A subagent the harness started for this turn: one row with its name and what it last said of itself, opening to what
- * it said and did, read only. Its requests for approval are in the approval drawer, under its name. One that can be
+ * A subagent the harness started for this turn: a row on the turn's rail, 「子 Agent」 in the verb column, its name and
+ * what it last said of itself, opening to what it said and did on a rail of its own, read only. Its requests for approval are in the approval drawer, under its name. One that can be
  * stopped alone offers 停止; it reads 正在停止… until it says it stopped.
  */
 export const SubagentRow = memo(function SubagentRow({ message, frozen }: { message: Message; frozen: boolean }) {
@@ -36,46 +36,50 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
   }, [agent.stopping, agent.stoppable])
   const stopping = agent.stopping === true || (requested && agent.stoppable === true)
   const status = stopping ? { tone: 'neutral' as const, words: '正在停止…' } : agent.status ? SUBAGENT_STATUS[agent.status] : undefined
+  const canStop = stop && agent.stoppable && !stopping && !frozen
   return (
     <div className="subagent-row" data-message-id={message.id} data-open={open ? '' : undefined}>
       <div className="subagent-head">
         <button
           type="button"
-          className="process-row"
+          className="process-row subagent-toggle"
           aria-expanded={open}
           onClick={() => {
             setOpen(!open)
           }}>
-          <span className="process-slot" aria-hidden="true">
+          <span className="process-verb">子 Agent</span>
+          <span className="subagent-icon" aria-hidden="true">
             <Bot size={16} strokeWidth={ICON_STROKE[16]} />
           </span>
-          <span className="process-label">
-            <span className="process-verb">子 Agent</span>
-            <span className="process-object">
-              <VisibleText text={agent.title} />
-            </span>
+          <span className="process-object subagent-name">
+            <VisibleText text={agent.title} />
           </span>
-          {status && (
+          {status ? (
             <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
               {status.words}
             </StatusWord>
+          ) : (
+            <span />
           )}
           <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         </button>
-        {stop && agent.stoppable && !stopping && !frozen && (
-          <Button
-            size="xs"
-            variant="ghost"
-            aria-label={`停止子 Agent ${agent.title}`}
-            onClick={() => {
-              setRequested(true)
-              stop(message.id).catch(() => {
-                setRequested(false)
-              })
-            }}>
-            停止
-          </Button>
-        )}
+        {/* The stop column keeps its width whether it holds 停止 or not, so every row's status lines up. */}
+        <span className="subagent-stop">
+          {canStop && (
+            <Button
+              size="xs"
+              variant="outline"
+              aria-label={`停止子 Agent ${agent.title}`}
+              onClick={() => {
+                setRequested(true)
+                stop(message.id).catch(() => {
+                  setRequested(false)
+                })
+              }}>
+              停止
+            </Button>
+          )}
+        </span>
       </div>
       <Collapse
         open={open}
@@ -92,7 +96,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
             step.subagent ? (
               <SubagentRow key={step.id} message={step} frozen={frozen} />
             ) : step.role === 'tool' ? (
-              <ToolCard key={step.id} message={step} frozen={frozen} />
+              <ToolCard key={step.id} message={step} frozen={frozen} inline />
             ) : (
               <div key={step.id} className="subagent-text" data-message-id={step.id}>
                 <MessageContent text={step.text} />

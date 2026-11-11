@@ -1,5 +1,5 @@
-import { Fragment, memo, useId, useMemo, useRef, useState } from 'react'
-import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, FilePlus, RotateCcw, Scale, TimerOff, X } from 'lucide-react'
+import { Fragment, memo, useContext, useId, useMemo, useRef, useState } from 'react'
+import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, RotateCcw, TimerOff, X } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
@@ -21,11 +21,11 @@ import {
 } from '../conversation.ts'
 import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
-import { argumentView, formatDuration } from '../format.ts'
-import { toolKind, toolKindIcons } from '../icons.tsx'
+import { argumentView, basename, formatDuration } from '../format.ts'
+import { toolKind } from '../icons.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
-import { FileChip, FileRootContext } from './FileChip.tsx'
+import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
 import { JUDGED_COPY } from '../core/securityCopy.ts'
@@ -76,6 +76,45 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && a.blocked?.by === b.blocked?.by
     && a.blocked?.source === b.blocked?.source
     && a.blocked?.reason === b.blocked?.reason)
+
+const PATH_KEYS = ['path', 'file', 'file_path', 'filePath']
+/** How many of a command's last lines its block shows while it is folded. */
+export const COMMAND_TAIL_LINES = 5
+
+/**
+ * The whole path behind a row whose object is a file's name, so the row can show where it is: the folder quieter than the
+ * name. Inside one of the session's folders it is written from there; a row whose object is not a file has none.
+ */
+export function rowPath(
+  tool: ToolDetail | undefined,
+  object: string,
+  session: Pick<FileSessionInfo, 'folder' | 'folders'> | undefined,
+): { folder: string; name: string } | undefined {
+  const diffs = tool?.diffs ?? []
+  let input: string | undefined
+  const view = argumentView(tool?.input)
+  if (view.kind === 'entries')
+    input = view.entries.find(([key, value]) => PATH_KEYS.includes(key) && value.trim() && !value.includes('\n'))?.[1]
+  const candidates = [diffs.length === 1 ? diffs[0]!.path : undefined, tool?.locations?.[0], input]
+  for (const path of candidates) {
+    if (!path) continue
+    const name = basename(path)
+    // A new file's object carries its length after its name: 「a.ts · 42 行」.
+    if (object !== name && !object.startsWith(`${name} · `)) continue
+    const roots = [session?.folder, ...(session?.folders ?? []).map(folder => folder.path)].filter((root): root is string => !!root)
+    const root = roots.find(root => path.startsWith(root.endsWith('/') ? root : `${root}/`))
+    const shown = root ? path.slice(root.length).replace(/^[\\/]+/u, '') : path
+    const cut = Math.max(shown.lastIndexOf('/'), shown.lastIndexOf('\\')) + 1
+    return { folder: shown.slice(0, cut), name: object }
+  }
+  return undefined
+}
+
+/** A command's last lines, as its folded block shows them; trailing blank lines say nothing. */
+export function commandTail(output: string, lines = COMMAND_TAIL_LINES): string {
+  const all = output.replace(/\s+$/u, '').split(/\r?\n/u)
+  return all.slice(-lines).join('\n')
+}
 
 /** How long the tool ran, ticking every second while it runs and frozen once it settles; nothing under a second. */
 function ToolTime({ message, frozen }: { message: Message; frozen: boolean }) {
@@ -137,11 +176,15 @@ function SourceOutput({ text, language, enabled }: { text: string; language: str
 }
 
 /**
- * One tool call as a work row: the kind's icon (a spinner while it runs, a red ✕ when it failed), what it does with its
- * object and the lines it changed, and its duration under the pointer. A failed row says why on one line, with 重试 when
- * this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's short preview
- * (never while the right panel is open: there the row stays one line and selects its file in 改动), otherwise its
- * arguments and output. A pending approval is decided in the drawer above the composer; here the row only says what it is.
+ * One tool call as a work row on the turn's rail: the verb in its column, the object (a file's path in mono with its
+ * folder quieter than its name), the lines it changed, and at the row's end its state (a spinner while it runs, a red ✕
+ * when it failed) and its duration under the pointer. A command whose command line is known is a block instead: a
+ * prompt glyph, the command once, how long it ran, and while folded the last lines of the output the tool reported, with
+ * a block caret only while it still runs; a failed one has a red rail on its left. A failed row says why on one line,
+ * with 重试 when this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's
+ * short preview (never while the right panel is open: there the row stays one line and selects its file in 改动),
+ * otherwise its arguments and whole output. A pending approval is decided in the drawer above the composer; here the
+ * row only says what it is.
  */
 export const ToolCard = memo(
   function ToolCard({
@@ -149,6 +192,7 @@ export const ToolCard = memo(
     approval,
     onRetry,
     frozen = false,
+    inline = false,
   }: {
     message: Message | null
     approval?: Approval
@@ -156,9 +200,12 @@ export const ToolCard = memo(
     onRetry?: () => void
     /** Nothing is known to move: the connection is down, so the row stops spinning and ticking. */
     frozen?: boolean
+    /** A step of a subagent: a command stays a row there, under its name, and is not a block of its own. */
+    inline?: boolean
   }) {
     const bodyId = useId()
     const link = useChangesLink()
+    const session = useContext(FileSession)
     const state: ToolState = message?.state ?? (approval ? 'awaiting-approval' : 'completed')
     const facts = message ? { ...message, state } : undefined
     // What the row says: a call its approval kept from running reads by how the approval ended. A call that started
@@ -183,8 +230,7 @@ export const ToolCard = memo(
     const newFile = applied && diffs.length === 1 && previousState(diffs[0]!) === 'none'
     // A new file says its length in its words; its added lines would only repeat that.
     const stat = useMemo(() => (applied && !newFile ? diffStat(tool) : undefined), [applied, newFile, tool])
-    // A command that streams output shows its tail while it runs and folds when it settles, unless the reader chose.
-    const open = approval ? false : (choice ?? (running && kind === 'execute' && output.length > 0))
+    const open = approval ? false : (choice ?? false)
     const panelEdit = applied && link?.panelOpen === true
     const selected = panelEdit && diffs.some(diff => diff.path === link.selected?.path)
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
@@ -198,23 +244,23 @@ export const ToolCard = memo(
     const wholeReason = block ? blockedReason(block) : undefined
     const judged = tool?.judged
     const review = isReview(tool)
+    // A command whose command line is known is drawn as a block, its last lines in view while it is folded.
+    const command = kind === 'execute' && label.mono && label.verb !== undefined && !review && !inline
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
     const judgedWords =
       judged && (state === 'completed' || state === 'failed') && !(state === 'failed' && judged.outcome === 'unasked')
         ? JUDGED_COPY[judged.outcome]
         : undefined
-    const KindIcon = newFile ? FilePlus : review ? Scale : toolKindIcons[kind]
+    // The verb says the kind; the glyph at the row's end says only a state the words do not already make plain.
     const glyph = failed ? (
       <X className="process-failed" size={12} strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'cancelled' || shown === 'rejected' || shown === 'blocked' ? (
-      <CircleSlash size={16} strokeWidth={ICON_STROKE[16]} />
+      <CircleSlash size={12} strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'expired' ? (
-      <TimerOff size={16} strokeWidth={ICON_STROKE[16]} />
+      <TimerOff size={12} strokeWidth={ICON_STROKE[12]} />
     ) : state === 'queued' ? (
-      <CircleDashed size={16} strokeWidth={ICON_STROKE[16]} />
-    ) : (
-      <KindIcon size={16} strokeWidth={ICON_STROKE[16]} />
-    )
+      <CircleDashed size={12} strokeWidth={ICON_STROKE[12]} />
+    ) : null
     const openInChanges = (diff: DiffViewFile) => {
       link?.open({ path: diff.path, ...(rootId ? { root: rootId } : {}) })
     }
@@ -235,17 +281,33 @@ export const ToolCard = memo(
     ]
       .filter(Boolean)
       .join('\n')
+    const path = label.mono ? undefined : rowPath(tool, label.object, session)
     // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
     const heading = (
       <>
-        <StatusGlyph className="tool-card-icon process-slot" running={running} state={shown}>
-          {glyph}
-        </StatusGlyph>
-        <StatusWords state={label.verb ? 'row' : 'title'} className="process-label">
-          {label.verb && <span className="process-verb">{label.verb}</span>}
-          <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
-            <VisibleText text={label.object} />
+        {command && (
+          <span className="command-prompt" aria-hidden="true">
+            $
           </span>
+        )}
+        <StatusWords state={label.verb ? 'row' : 'title'} className="process-label">
+          <span className={command ? 'process-verb sr-only' : 'process-verb'}>{label.verb}</span>
+          {path ? (
+            <span className="process-object is-path">
+              {path.folder && (
+                <span className="process-folder">
+                  <VisibleText text={path.folder} />
+                </span>
+              )}
+              <span className="process-name">
+                <VisibleText text={path.name} />
+              </span>
+            </span>
+          ) : (
+            <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
+              <VisibleText text={label.object} />
+            </span>
+          )}
         </StatusWords>
         {stat && (
           <span className="process-stat">
@@ -265,10 +327,12 @@ export const ToolCard = memo(
       </StatusWords>
     )
     const hasDetails = !panelEdit
+    // Only what the tool itself reported is output: a command's plain-text form is not.
+    const tail = command && !open && tool?.output ? commandTail(tool.output) : ''
     return (
       <FileRootContext.Provider value={rootId}>
         <article
-          className={`tool-card tool-${shown}`}
+          className={`tool-card tool-${shown}${command ? ' is-command' : ''}`}
           data-kind={newFile ? 'new' : kind}
           data-open={open && hasDetails ? '' : undefined}
           data-selected={selected ? '' : undefined}
@@ -288,18 +352,29 @@ export const ToolCard = memo(
               {hasDetails && <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
               <span className="process-fill" />
               <span className="process-end">
+                <StatusGlyph className="tool-card-icon" running={running} state={shown}>
+                  {glyph}
+                </StatusGlyph>
                 {stateSlot}
                 {message && <ToolTime message={message} frozen={frozen} />}
               </span>
             </button>
+            {/* The folded tail repeats the output the opened body holds whole, so find and readers take it from there. */}
+            {tail && (
+              <pre className="command-tail" aria-hidden="true">
+                <VisibleText text={tail} />
+                {running && <span className="command-caret" />}
+              </pre>
+            )}
             {block && (
               <p className="tool-block-line">
                 <VisibleText text={blockedLine(block)} />
               </p>
             )}
-            {failed && (
+            {/* A block's tail already shows what the command printed, so its failure line is only 重试. */}
+            {failed && !(tail && !onRetry) && (
               <p className="tool-failure">
-                <VisibleText text={failureReason(message ?? { text: '' })} />
+                {!tail && <VisibleText text={failureReason(message ?? { text: '' })} />}
                 {onRetry && (
                   <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
                     重试
@@ -373,6 +448,7 @@ export const ToolCard = memo(
     a.approval === b.approval
     && a.onRetry === b.onRetry
     && a.frozen === b.frozen
+    && a.inline === b.inline
     && (a.message === b.message
       || (a.message !== null
         && b.message !== null

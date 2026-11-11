@@ -1,7 +1,7 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, ChevronRight, Info, RotateCcw, Undo2, X } from 'lucide-react'
+import { ChevronRight, Info, RotateCcw, Undo2, X } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
@@ -71,9 +71,6 @@ export function ThinkingRow({
         onClick={() => {
           setChoice(!open)
         }}>
-        <span className="process-slot" aria-hidden="true">
-          <Brain size={16} strokeWidth={ICON_STROKE[16]} />
-        </span>
         {/* When the answer starts the label cross-fades from the live one to the time it took. */}
         <Swap value={live ? 'live' : 'settled'} effect="fade" className="thinking-label">
           {live ? frozen ? '思考中' : <Shimmer>思考中</Shimmer> : thought ? `思考了 ${thought}` : '思考过程'}

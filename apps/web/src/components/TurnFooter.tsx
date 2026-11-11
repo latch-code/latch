@@ -1,8 +1,7 @@
-import { useContext, type ReactNode } from 'react'
-import { Copy, Ellipsis, GitCompare, GitFork, RotateCcw } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { Copy, Ellipsis, GitFork, RotateCcw } from 'lucide-react'
 import { modelIdKey, type RoutedModel } from '@latch/protocol'
 import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
-import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { exactTokens, formatDuration, formatTokens, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
@@ -127,8 +126,6 @@ export function TurnFooter({
   actions?: { onFork?: () => void; onCopy: () => void }
 }) {
   const text = turnText(turn)
-  const changes = useContext(ChangesLinkContext)
-  const turnId = turn.user?.turnId
   return (
     <div className="turn-footer" data-pinned={pinned ? '' : undefined}>
       <div className="turn-footer-row">
@@ -145,21 +142,7 @@ export function TurnFooter({
             sections={[
               {
                 id: 'turn-actions',
-                items: [
-                  ...(changes?.turns && turnId
-                    ? [
-                        {
-                          id: 'changes',
-                          label: '查看这一轮的改动',
-                          leading: <GitCompare size={14} />,
-                          onSelect: () => {
-                            changes.open({ turnId })
-                          },
-                        },
-                      ]
-                    : []),
-                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
-                ],
+                items: [{ id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy }],
               },
             ]}
             trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}

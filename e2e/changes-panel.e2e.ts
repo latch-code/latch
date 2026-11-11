@@ -153,10 +153,8 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await panel.getByText('之后又改过这些文件，不能撤销').waitFor()
     await writeFile(join(host.workspaceRoot, 'report.txt'), 'first\nsecond\nchanged\n')
 
-    // The turn's footer reaches this turn through its opening message.
-    await page.locator('.turn-footer').last().hover()
-    await page.getByRole('button', { name: '这一轮的更多操作', exact: true }).last().click()
-    await page.getByRole('menuitem', { name: '查看这一轮的改动', exact: true }).click()
+    // The turn's card opens this turn: 打开改动 is the one way in from the conversation.
+    await page.locator('.changed-files').last().getByRole('button', { name: '打开改动', exact: true }).click()
     await expect.poll(() => panel.locator('.changes-scope-button').innerText()).toBe('第 1 轮')
 
     // A picked turn with no answer says so, without claiming it aged out while the record still holds it.
@@ -166,9 +164,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await panel.locator('.changes-scope-button').click()
     await page.getByRole('menuitemradio', { name: /这个会话/u }).click()
     await panel.getByText('只读', { exact: true }).waitFor()
-    await page.locator('.turn-footer').last().hover()
-    await page.getByRole('button', { name: '这一轮的更多操作', exact: true }).last().click()
-    await page.getByRole('menuitem', { name: '查看这一轮的改动', exact: true }).click()
+    await page.locator('.changed-files').last().getByRole('button', { name: '打开改动', exact: true }).click()
     await panel.getByText('这一轮没有记录到改动').waitFor()
     await page.unroute(/\/changes\?scope=turn&turn=/u)
 

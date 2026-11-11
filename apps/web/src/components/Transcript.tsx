@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Eraser, FileSearch, RotateCcw, X } from 'lucide-react'
+import { ChevronRight, Eraser, RotateCcw, X } from 'lucide-react'
 import {
   splitChangeNote,
   type Approval,
@@ -101,10 +101,9 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
         onClick={() => {
           setOpen(!open)
         }}>
-        <span className="process-slot" aria-hidden="true">
-          <FileSearch size={16} strokeWidth={ICON_STROKE[16]} />
+        <span className="process-label">
+          <span className="process-verb">读取</span> <span className="process-object">{messages.length} 个文件</span>
         </span>
-        <span className="process-label">读取 {messages.length} 个文件</span>
         <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
       <Collapse

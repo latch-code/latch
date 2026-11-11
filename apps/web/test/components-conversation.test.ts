@@ -11,7 +11,9 @@ import { DiffView } from '../src/components/DiffView.tsx'
 import { ApprovalDrawer } from '../src/composer/ApprovalDrawer.tsx'
 import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
 import { JUDGED_COPY } from '../src/core/securityCopy.ts'
-import { ToolCard } from '../src/components/ToolCard.tsx'
+import { ToolCard, commandTail, rowPath } from '../src/components/ToolCard.tsx'
+import { FileSession } from '../src/components/FileChip.tsx'
+import { TurnFooter } from '../src/components/TurnFooter.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
 import { StatusLine } from '../src/conversation/StatusLine.tsx'
@@ -434,6 +436,133 @@ describe("the person's message", () => {
     expect(going).not.toContain('message-meta')
     expect(renderToStaticMarkup(createElement(MessageRow, { message }))).not.toContain('从这里编辑')
     expect(renderToStaticMarkup(createElement(MessageRow, { message, onEdit: noop }))).toContain('从这里编辑')
+  })
+})
+
+describe('tool rows and command blocks', () => {
+  const run = (extra: Partial<Message>) =>
+    renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ toolName: 'bash', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' }, ...extra }),
+      }),
+    )
+  const tail = (html: string) => /<pre class="command-tail"[^>]*>(.*?)<\/pre>/su.exec(html)?.[1]
+
+  it('draws a command as a block: the prompt glyph and the command once, and nothing for an exit code', () => {
+    const html = run({})
+    expect(html).toContain('tool-card tool-running is-command')
+    expect(html).toContain('class="command-prompt" aria-hidden="true">$</span>')
+    expect(html.match(/pnpm test/gu)).toHaveLength(1)
+    // The verb stays for assistive technology; the glyph says it to the eye.
+    expect(html).toContain('class="process-verb sr-only">运行</span>')
+    expect(html).not.toContain('退出码')
+  })
+
+  it('shows the last lines of the output the tool reported while folded, with the block caret only while it runs', () => {
+    const output = Array.from({ length: 9 }, (_, index) => `line ${index + 1}`).join('\n') + '\n\n'
+    const running = run({ tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })
+    expect(tail(running)).toContain('line 5\nline 6\nline 7\nline 8\nline 9')
+    expect(tail(running)).not.toContain('line 4')
+    expect(running).toContain('command-caret')
+    // The tail repeats what the opened block holds whole, so it never auto-opens and is not read twice.
+    expect(running).toContain('aria-expanded="false"')
+    expect(running).not.toContain('tool-output')
+    const done = run({ state: 'completed', tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })
+    expect(tail(done)).toContain('line 9')
+    expect(done).not.toContain('command-caret')
+    expect(commandTail('a\nb\nc', 2)).toBe('b\nc')
+  })
+
+  it('draws no tail for a command without reported output, not even its plain-text form', () => {
+    const html = run({ state: 'completed', text: 'pnpm test', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } })
+    expect(html).toContain('is-command')
+    expect(html).not.toContain('command-tail')
+  })
+
+  it("marks a command the harness reported failed by the call's own state, with its reason under it", () => {
+    const html = run({
+      state: 'failed',
+      text: '2 个测试未通过',
+      tool: { kind: 'execute', input: '{"command":"pnpm test"}', output: ' × clears the key' },
+    })
+    expect(html).toContain('tool-card tool-failed is-command')
+    expect(html).toContain('process-failed')
+    // The tail shows what it printed; the reason line would only repeat its first line. 重试 stays.
+    expect(html).not.toContain('tool-failure')
+    const retry = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          toolName: 'bash',
+          state: 'failed',
+          text: '2 个测试未通过',
+          tool: { kind: 'execute', input: '{"command":"pnpm test"}', output: ' × clears the key' },
+        }),
+        onRetry: noop,
+      }),
+    )
+    expect(retry).toContain('tool-failure')
+    expect(retry).toContain('重试')
+    expect(retry).not.toContain('2 个测试未通过')
+    const silent = run({ state: 'failed', text: '2 个测试未通过', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } })
+    expect(silent).toContain('2 个测试未通过')
+  })
+
+  it("keeps a command a plain row where its command line is unknown, and among a subagent's steps", () => {
+    const html = run({ tool: { kind: 'execute', title: 'Run tests' } })
+    expect(html).not.toContain('is-command')
+    expect(html).not.toContain('command-prompt')
+    const step = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ toolName: 'bash', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}', output: 'ok' } }),
+        inline: true,
+      }),
+    )
+    expect(step).not.toContain('is-command')
+    expect(step).not.toContain('command-tail')
+    expect(step).toContain('<span class="process-verb">运行</span>')
+  })
+
+  it('writes a path in mono from the session folder, the folder apart from the name so the name never gives way', () => {
+    const long = '/work/latch/apps/web/src/components/deeply/nested/folder/with/a/very/long/name/ToolCard.tsx'
+    const html = renderToStaticMarkup(
+      createElement(
+        FileSession.Provider,
+        { value: { id: 's', folder: '/work/latch' } },
+        createElement(ToolCard, {
+          message: tool({ toolName: 'read_file', state: 'completed', tool: { kind: 'read', locations: [long] } }),
+        }),
+      ),
+    )
+    expect(html).toContain('class="process-object is-path"')
+    expect(html).toContain('<span class="process-folder">apps/web/src/components/deeply/nested/folder/with/a/very/long/name/</span>')
+    expect(html).toContain('<span class="process-name">ToolCard.tsx</span>')
+    expect(html).not.toContain('/work/latch/')
+    // A settled call draws no kind icon: the verb says what it was.
+    expect(html).toContain('<span class="ui-status-glyph-current"></span>')
+    expect(rowPath({ kind: 'read', input: '{"path":"README.md"}' }, 'README.md', undefined)).toEqual({ folder: '', name: 'README.md' })
+    expect(
+      rowPath({ kind: 'edit', diffs: [{ path: 'src/a.ts', oldText: '', newText: 'x\n', previous: 'none' }] }, 'a.ts · 1 行', undefined),
+    ).toEqual({
+      folder: 'src/',
+      name: 'a.ts · 1 行',
+    })
+    expect(rowPath({ kind: 'search', input: '{"query":"x"}' }, 'x', undefined)).toBeUndefined()
+  })
+})
+
+describe('the turn footer', () => {
+  it("leaves the turn's changes to its card: the menu has no entry for them", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ChangesLinkContext.Provider,
+        { value: { open: noop, panelOpen: false, turns: true } as ChangesLink },
+        createElement(TurnFooter, {
+          turn: { key: 'u', user: { id: 'u', role: 'user', text: 'hi', turnId: 't1' }, replies: [] },
+          actions: { onCopy: noop },
+        }),
+      ),
+    )
+    expect(html).not.toContain('查看这一轮的改动')
   })
 })
 

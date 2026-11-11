@@ -88,8 +88,9 @@
   flex-direction: column;
   align-items: flex-start;
   max-width: 80%;
-  padding: var(--sp-10) var(--sp-12);
-  border-radius: var(--r-16);
+  padding: var(--sp-8) var(--sp-16);
+  /* The corner nearest the reply is the tight one: the bubble points down the column. */
+  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
   background: var(--bubble);
   color: var(--ink);
   font-size: var(--fs-prose);
@@ -214,6 +215,7 @@
 }
 .assistant-meta-model {
   min-width: 0;
+  font-family: var(--mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -382,18 +384,35 @@
 }
 
 /*
- * A work row: 24 high (32 on phones), a 24 column for the 16px icon or the 12px spinner, the words in secondary ink (paths
- * in text, commands and queries in mono), the lines it changed and a chevron right after them; its duration shows at the
- * row's end under the pointer. No fill and no rail. Rows of one kind in a row show the icon once.
+ * The work rows hang on a thin rail under the sentence that caused them: 26 high (28 on phones), the verb in the muted
+ * ink in one column, the object after it (a file's path in mono with its folder quieter than its name, commands and
+ * queries in mono), the lines it changed right after, and at the row's end its state and, under the pointer, its
+ * duration. A row lights under the pointer; its chevron shows there, on focus, while open and on touch. A command is a
+ * block across the column, off the rail (tool-card.css).
  */
 .work-rows {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  padding-top: var(--sp-12);
+  margin-top: var(--sp-12);
+  padding-left: var(--sp-20);
 }
 .work-fold + .work-group > .ui-collapse-inner > .work-rows {
-  padding-top: var(--sp-8);
+  margin-top: var(--sp-8);
+}
+/* The rail is drawn by each row it carries, so a command block between rows breaks it. */
+.work-rows > :not(.is-command) {
+  position: relative;
+}
+.work-rows > :not(.is-command)::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: calc(var(--sp-12) * -1);
+  width: 1px;
+  background: var(--line-strong);
+  pointer-events: none;
 }
 .process-row,
 .tool-tray > .tool-card-header {
@@ -412,15 +431,30 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
+/* On the rail a row's light reaches 8 past its words on both sides. */
+.work-rows :is(.process-row, .tool-tray > .tool-card-header) {
+  width: calc(100% + var(--sp-16));
+  min-height: 26px;
+  margin: 0 calc(var(--sp-8) * -1);
+  padding: 0 var(--sp-8);
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.work-rows :is(.process-row, .tool-tray > .tool-card-header):hover {
+  background: var(--hover);
+}
+.work-rows :is(.process-row, .tool-tray > .tool-card-header):active {
+  background: var(--press);
+}
 .process-row:focus-visible,
 .tool-tray > .tool-card-header:focus-visible,
 .work-fold:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 @media (max-width: 767.98px) {
   .process-row,
-  .tool-tray > .tool-card-header {
+  .tool-tray > .tool-card-header,
+  .work-rows :is(.process-row, .tool-tray > .tool-card-header) {
     min-height: 28px;
   }
 }
@@ -431,33 +465,54 @@
   flex-shrink: 0;
   color: var(--muted);
 }
-.process-slot .ui-spinner {
+.process-slot .ui-spinner,
+.tool-card-icon .ui-spinner {
   color: var(--accent);
 }
 .process-label {
   display: inline-flex;
   align-items: baseline;
-  gap: var(--sp-4);
+  gap: var(--sp-8);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
+/* The verbs line up in one column; a row whose tool names no verb keeps the column empty. */
 .process-verb {
   flex-shrink: 0;
+  min-width: 40px;
+  color: var(--muted);
 }
 .process-object {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.process-object.is-mono {
+.process-object:is(.is-mono, .is-path) {
   font-family: var(--mono);
   font-size: var(--fs-mono);
   line-height: var(--lh-mono);
 }
+/* A path is read from its end: the name never gives way, the folder before it does, and is the quieter of the two. */
+.process-object.is-path {
+  display: inline-flex;
+  color: var(--ink);
+}
+.process-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+.process-name {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .process-stat {
   flex-shrink: 0;
-  margin-left: var(--sp-8);
+  margin-left: var(--sp-12);
   font-family: var(--mono);
   font-size: var(--fs-mono);
   line-height: var(--lh-mono);
@@ -474,12 +529,19 @@
   flex: 1;
   min-width: var(--sp-8);
 }
-/* What ends a row: a record that stays, and its duration under the pointer. */
+/* What ends a row: its state's glyph and words, a record that stays, and its duration under the pointer. */
 .process-end {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-6);
   flex-shrink: 0;
+}
+.process-end > .tool-card-icon {
+  color: var(--muted);
+}
+/* A settled call says nothing through a glyph: its verb already said what it was. */
+.process-end > .tool-card-icon:not([data-shift]):has(> .ui-status-glyph-current:empty) {
+  display: none;
 }
 .process-time {
   flex-shrink: 0;
@@ -515,56 +577,18 @@
   flex-shrink: 0;
   margin-left: var(--sp-6);
   color: var(--muted);
-  transition: transform var(--m-panel) var(--e-panel);
+  transition:
+    transform var(--m-panel) var(--e-panel),
+    opacity var(--m-micro) var(--e-micro);
 }
 :is(.process-row, .tool-card-header, .work-fold)[aria-expanded='true'] > .process-chevron {
   transform: rotate(90deg);
 }
-/* Rows of one kind in a row show the icon once, except right after an opened row, where the gap would read as a mistake,
- * and never on a row whose icon says more than its kind. */
-.tool-card[data-kind='read']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='read']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='edit']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='edit']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='new']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='new']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='search']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='search']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='execute']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='execute']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='fetch']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='fetch']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > *,
-.tool-card[data-kind='other']:not([data-open], .tool-failed, .tool-blocked, .tool-running)
-  + .tool-card[data-kind='other']:not(.tool-failed, .tool-blocked, .tool-running)
-  > .tool-tray
-  > .tool-card-header
-  > .process-slot
-  > * {
-  visibility: hidden;
+/* A tool row is read, not operated: its chevron waits for the pointer or the focus, unless the row is open. */
+@media (hover: hover) {
+  .tool-card-header[aria-expanded='false']:not(:hover, :focus-visible) > .process-chevron {
+    opacity: 0;
+  }
 }
 /* A file the right panel is showing. */
 .tool-card[data-selected] > .tool-tray > .tool-card-header {
@@ -580,7 +604,7 @@
   color: var(--ink-2);
 }
 .thinking-body {
-  padding: var(--sp-4) 0 var(--sp-4) 28px;
+  padding: var(--sp-4) 0 var(--sp-4) var(--sp-12);
 }
 .thinking-scroll {
   max-height: 320px;
@@ -600,41 +624,87 @@
   overflow-wrap: anywhere;
 }
 
-/* A subagent: its row, opening to what it said and did, set in under its icon. */
+/*
+ * A subagent: a row on the rail, 「子 Agent」 in the verb column, its icon, its name, what it last said of itself and the
+ * chevron, with 停止 in a column of its own at the end. Opened, what it said and did stands on a rail of its own, set in
+ * under its name.
+ */
 .subagent-head {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
   min-width: 0;
 }
-.subagent-head > .process-row {
+.work-rows .subagent-head > .subagent-toggle,
+.subagent-head > .subagent-toggle {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: max-content 16px minmax(0, max-content) max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--sp-8);
   width: auto;
   min-width: 0;
+  min-height: 30px;
+  margin-right: 0;
 }
-.subagent-head > .ui-button {
-  flex-shrink: 0;
+.subagent-toggle > .process-verb {
+  white-space: nowrap;
+}
+.subagent-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.subagent-name {
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.subagent-toggle > .process-chevron {
+  justify-self: end;
+  margin-left: 0;
+}
+.subagent-stop {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  width: 48px;
 }
 .subagent-status {
   flex-shrink: 0;
-  margin-left: var(--sp-8);
 }
 .subagent-steps {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  padding: var(--sp-2) 0 var(--sp-4) 24px;
+  /* Under the name: past the verb column, the gap, the icon and the gap again. */
+  margin: 0 0 var(--sp-6) calc(var(--sp-64) + var(--sp-20));
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  box-shadow: inset 1px 0 0 var(--line);
+}
+@media (max-width: 767.98px) {
+  .subagent-steps {
+    margin-left: var(--sp-24);
+  }
 }
 .subagent-note {
   color: var(--muted);
   font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  line-height: var(--lh-caption-para);
 }
 .subagent-text {
   color: var(--ink-2);
 }
 
-/* A settled turn's reads, as one row that opens to the rows they were. */
-.reads-rows,
+/* A settled turn's reads, as one row that opens to the rows they were, on a rail of their own. */
+.reads-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-4) calc(40px + var(--sp-8));
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  box-shadow: inset 1px 0 0 var(--line);
+}
 .plan-row-body {
   display: flex;
   flex-direction: column;

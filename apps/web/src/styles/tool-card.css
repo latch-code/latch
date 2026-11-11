@@ -1,5 +1,5 @@
 /*
- * A tool call is a work row (messages.css). Opened, what it did stands indented under its words: a file edit's short
+ * A tool call is a work row on the rail (messages.css). Opened, what it did stands under its words: a file edit's short
  * preview, or its arguments and output. Amber marks only what waits for the person, red only a failure or real risk.
  */
 .tool-card {
@@ -55,7 +55,7 @@
   align-items: center;
   gap: var(--sp-8);
   min-height: 24px;
-  padding-left: 24px;
+  padding-left: calc(40px + var(--sp-8));
   color: var(--red);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
@@ -67,7 +67,7 @@
 /* Who stopped a call the harness refused itself, and why in its own words: a record, not a failure. */
 .tool-block-line {
   margin: 0;
-  padding-left: 24px;
+  padding-left: calc(40px + var(--sp-8));
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
@@ -83,11 +83,106 @@
   white-space: pre-wrap;
 }
 
-/* What opens under a row: indented past its icon, at most 320 tall. */
+/* What opens under a row: set in under its object, at most 320 tall. */
 .tool-card-body {
   display: grid;
   gap: var(--sp-6);
-  padding: var(--sp-4) 0 var(--sp-6) 28px;
+  padding: var(--sp-4) 0 var(--sp-6) calc(40px + var(--sp-8));
+}
+
+/*
+ * A command is a well across the column, off the rail: the prompt glyph and the command once, in mono, and at its end
+ * how it stands and how long it ran. Folded, the last lines of the output the tool reported stand under it, with a block
+ * caret only while it still runs. A command the harness reported failed has a red rail down its left edge; how it ended
+ * is not drawn, because the protocol carries no exit code.
+ */
+.tool-card.is-command {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  box-shadow: var(--sh-well);
+}
+.work-rows > .tool-card.is-command {
+  margin: var(--sp-8) 0 var(--sp-8) calc(var(--sp-20) * -1);
+}
+.work-rows > .tool-card.is-command:first-child {
+  margin-top: 0;
+}
+.work-rows .tool-card.is-command > .tool-tray > .tool-card-header,
+.tool-card.is-command > .tool-tray > .tool-card-header {
+  gap: var(--sp-8);
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 var(--sp-12) 0 var(--sp-12);
+  border-radius: 0;
+}
+.tool-card.is-command > .tool-tray > .tool-card-header:hover {
+  background: var(--hover);
+}
+.command-prompt {
+  flex-shrink: 0;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  font-weight: 600;
+}
+.tool-card.is-command .process-object.is-mono {
+  color: var(--ink);
+  font-weight: 500;
+}
+.tool-card.is-command .process-chevron {
+  margin-left: var(--sp-4);
+}
+/* A block says how long it ran without the pointer: the duration is the block's own fact. */
+.tool-card.is-command .process-end > .process-time {
+  opacity: 1;
+}
+.command-tail {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-12) var(--sp-12) calc(var(--sp-12) + 1ch + var(--sp-8));
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.command-caret {
+  display: inline-block;
+  width: 1ch;
+  height: 1.1em;
+  margin-left: var(--sp-6);
+  vertical-align: -0.2em;
+  background: var(--ink-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .command-caret {
+    animation: caret 1.06s steps(1) infinite;
+  }
+}
+.tool-card.is-command.tool-failed::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--red-solid);
+}
+.tool-card.is-command :is(.tool-failure, .tool-block-line) {
+  padding: 0 var(--sp-12) var(--sp-8) calc(var(--sp-12) + 1ch + var(--sp-8));
+}
+.tool-card.is-command .tool-card-body {
+  padding: 0 var(--sp-12) var(--sp-12);
+}
+.tool-card.is-command .tool-output-scroll {
+  background: transparent;
+  box-shadow: inset 0 1px 0 var(--line);
+  border-radius: 0;
+}
+.tool-card.is-command .tool-decision {
+  padding: 0 var(--sp-12);
 }
 .tool-pre {
   max-height: 320px;
