@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
-import { Button, ChoiceList, ConfirmDialog, Dialog, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
+import { Button, ConfirmDialog, Dialog, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
@@ -9,7 +9,6 @@ import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { addPluginSource, editPluginSource, manifestReach, readPluginBundle, typedManifest, type PluginReach } from './pluginAssets.ts'
 
-type Template = 'skill' | 'tool' | 'react-ui'
 interface PendingChange {
   path: string
   options: ApiOptions
@@ -51,13 +50,14 @@ export function PluginReachGroup({ reach, onRetryRead }: { reach: PluginReach[];
 }
 
 /**
- * The custom plugins this device may edit, and the sheets that do it: 添加插件… (create or import) and the editor. Edits
+ * The custom plugins this device may edit, and the sheets that do it: 添加插件… (a new tool, or a file to import) and the
+ * editor. Edits
  * are inert until the exact saved revision is applied.
  */
 export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
   const [records, setRecords] = useState<PluginPackageSummary[] | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [template, setTemplate] = useState<Template | null>(null)
+  const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<PendingChange | null>(null)
   const [error, setError] = useState('')
@@ -80,7 +80,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
     if (!canEdit) {
       setRecords(null)
       setEditor(null)
-      setTemplate(null)
+      setAdding(false)
       setPending(null)
       setError('')
       setDeleting(false)
@@ -233,7 +233,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
             .then(text => {
               const bundle = readPluginBundle(text)
               if (alive.current) {
-                setTemplate(null)
+                setAdding(false)
                 open({ bundle })
               }
             })
@@ -243,37 +243,27 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         }}
       />
       <Dialog
-        open={template !== null}
+        open={adding}
         title="添加插件"
         size="sheet"
-        subtitle="选择一个起点，之后可以自由组合。"
-        note={
-          <Button variant="ghost" icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
-            导入文件…
-          </Button>
-        }
-        onClose={() => setTemplate(null)}
+        subtitle="新建一个工具，或导入插件文件。"
+        onClose={() => setAdding(false)}
         footer={
-          <Button
-            variant="primary"
-            onClick={() => {
-              if (!template) return
-              open({ bundle: createPluginPackageTemplate(template, 'my-plugin-' + newRequestId().slice(0, 8)) })
-              setTemplate(null)
-            }}>
-            继续
-          </Button>
+          <>
+            <Button icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
+              导入文件…
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                open({ bundle: createPluginPackageTemplate('tool', 'my-plugin-' + newRequestId().slice(0, 8)) })
+                setAdding(false)
+              }}>
+              新建工具
+            </Button>
+          </>
         }>
-        <ChoiceList
-          label="插件模板"
-          value={template ?? 'skill'}
-          onValueChange={value => setTemplate(value)}
-          options={[
-            { value: 'skill' as const, title: '技能', description: '用文字说明工作方法，不运行代码。' },
-            { value: 'tool' as const, title: '工具', description: '在这台 Mac 上运行的代码，权限和 Latch 相同。' },
-            { value: 'react-ui' as const, title: '界面', description: '会话里的面板；代码会发到每台能查看会话的设备，在那里运行。' },
-          ]}
-        />
+        <p className="plugin-add-note">工具是在这台 Mac 上运行的代码，权限和 Latch 相同。</p>
       </Dialog>
       <Dialog
         open={editor !== null}
@@ -508,7 +498,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
     locked,
     dialogs,
     add: () => {
-      setTemplate('skill')
+      setAdding(true)
       setError('')
     },
     open: (record: PluginPackageSummary) => {

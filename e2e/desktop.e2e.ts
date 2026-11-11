@@ -594,20 +594,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.screenshot({ path: 'test-results/native-desktop.png', animations: 'disabled' })
 
       // Settings › 通用: main keeps the Mac awake while the session runs (it reads host-info over host.sock every few
-      // seconds). The login item needs a packaged app, so a development run shows why it is off.
+      // seconds). The login item needs a packaged app, so a development run, which main reports as unavailable, has no row.
       const general = await openSettings(page, '设置')
       await openSection(general, '通用')
       const background = general.getByRole('region', { name: '这台 Mac', exact: true })
-      const loginItem = background.getByRole('switch', { name: '登录时打开 Latch', exact: true })
-      await loginItem.waitFor()
-      expect(await loginItem.getAttribute('aria-checked')).toBe('false')
-      expect(await loginItem.getAttribute('aria-disabled')).toBe('true')
-      await background
-        .getByText('只有打包后的 Latch 应用能设为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。', { exact: true })
-        .waitFor()
       const keepAwake = background.getByRole('switch', { name: '有任务时保持 Mac 唤醒', exact: true })
       expect(await keepAwake.getAttribute('aria-checked')).toBe('true')
       await background.getByText('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。', { exact: true }).waitFor({ timeout: 20_000 })
+      expect(await background.getByRole('switch', { name: '登录时打开 Latch', exact: true }).count()).toBe(0)
       expect(await general.getByRole('button', { name: '重新启动 Host', exact: true }).count()).toBe(0)
       await page.screenshot({ path: 'test-results/native-desktop-background.png', animations: 'disabled' })
       // The end of the section, in light and dark.

@@ -1,8 +1,9 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { AgentProbeResult, AgentSettings } from '@latch/protocol'
+import { AGENT_PRESETS, type AgentPresetSettings, type AgentProbeResult, type AgentSettings } from '@latch/protocol'
 import { AgentProbe, probeRowDescription } from '../src/settings/AgentProbe.tsx'
+import { presetGroups } from '../src/settings/AgentsSettings.tsx'
 const base: AgentProbeResult = {
   status: 'ready',
   checkedAt: '2026-10-25T06:00:00.000Z',
@@ -52,5 +53,22 @@ describe('Agent diagnostic presentation', () => {
     expect(html).not.toContain('<script>')
     expect(html).toContain('\\u{202E}')
     expect(html).toContain('复制诊断')
+  })
+})
+
+describe('Harness presets in settings', () => {
+  const preset = (id: string, found?: boolean) =>
+    ({ ...AGENT_PRESETS.find(item => item.id === id)!, ...(found === undefined ? {} : { detected: { found } }) }) as AgentPresetSettings
+
+  it('stands a found preset with what is installed, never under 可以安装', () => {
+    const { found, installable } = presetGroups([preset('codex', true), preset('pi', false), preset('gemini')], [])
+    expect(found.map(item => item.id)).toEqual(['codex'])
+    expect(installable.map(item => item.id)).toEqual(['pi', 'gemini'])
+  })
+
+  it('leaves out a preset that already has a definition, found or not', () => {
+    const { found, installable } = presetGroups([preset('codex', true), preset('pi', false)], [{ presetId: 'codex' }, { presetId: 'pi' }])
+    expect(found).toEqual([])
+    expect(installable).toEqual([])
   })
 })

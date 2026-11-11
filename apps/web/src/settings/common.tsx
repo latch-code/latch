@@ -4,8 +4,8 @@ import { usePresence } from '../hooks/useListMotion.ts'
 import { Button, Icon, IconButton, Loading as InlineLoading, type LucideIcon, type MenuTriggerProps } from '@latch/ui'
 
 /**
- * The page's own layout for settings: groups of rows on the canvas, divided by hairlines, with no card around them.
- * Controls inside are the design system's primitives; these only place them.
+ * The page's own layout for settings: groups of rows in a well sunk into the panel, divided by hairlines. Controls
+ * inside are the design system's primitives; these only place them.
  */
 
 /** The page head: an 18/26 title, one paragraph under it and at most one page action (a sm secondary button). */
@@ -45,7 +45,11 @@ export function SettingsGroup({
 }) {
   const id = useId()
   return (
-    <section className="settings-group" data-secure={secure ? '' : undefined} aria-labelledby={title ? id : undefined}>
+    <section
+      className="settings-group"
+      data-secure={secure ? '' : undefined}
+      data-bare={bare ? '' : undefined}
+      aria-labelledby={title ? id : undefined}>
       {(title || meta) && (
         <div className="settings-group-head">
           {title && <h3 id={id}>{title}</h3>}

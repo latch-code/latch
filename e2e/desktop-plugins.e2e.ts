@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { createPluginPackageTemplate } from '@latch/protocol'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
@@ -50,14 +51,26 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(20000)
+        // The file picker of 导入文件…, filled the way a person choosing a file would.
+        const importBundle = (kind: 'skill' | 'react-ui', id: string) =>
+          page.locator('input[type="file"][accept=".json,application/json"]').setInputFiles({
+            name: `${id}.latch-plugin.json`,
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify(createPluginPackageTemplate(kind, id))),
+          })
         // The first connection on a Host with no enrolled device takes no confirmation.
         await page.getByRole('button', { name: '继续', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         expect(host.presence.requests).toHaveLength(0)
         const settings = await openSettings(page)
         await openSection(settings, '插件')
+        // 添加插件 starts in one of two ways: a new tool, or a plugin file. Skills and panels come from files.
         await page.getByRole('button', { name: '添加插件…', exact: true }).click()
-        await page.getByRole('button', { name: '继续', exact: true }).click()
+        const adding = page.getByRole('dialog', { name: '添加插件', exact: true })
+        await adding.getByRole('button', { name: '新建工具', exact: true }).waitFor()
+        await adding.getByRole('button', { name: '导入文件…', exact: true }).waitFor()
+        expect(await adding.getByRole('radio').count()).toBe(0)
+        await importBundle('skill', 'my-plugin-skill')
         const editor = page.locator('dialog.ui-dialog:has(> .ui-dialog-surface .plugin-editor)')
         await editor.getByRole('textbox', { name: '插件名称' }).fill('我的研究方法')
         await editor.getByRole('textbox', { name: '工作方法', exact: true }).fill('# 研究方法\n先列证据，再写结论。')
@@ -123,8 +136,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await expect.poll(() => pageSwitch.isChecked()).toBe(true)
         await backToSection(settings)
         await page.getByRole('button', { name: '添加插件…', exact: true }).click()
-        await page.getByRole('radio', { name: '界面', exact: true }).click()
-        await page.getByRole('button', { name: '继续', exact: true }).click()
+        await importBundle('react-ui', 'my-plugin-panel')
         await editor.getByRole('textbox', { name: '插件名称' }).fill('我的工作笔记')
         // The form says where a panel's code runs and which devices receive it, before anything is applied.
         await editor.getByRole('heading', { name: '代码在哪里运行', exact: true }).waitFor()

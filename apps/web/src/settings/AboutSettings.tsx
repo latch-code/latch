@@ -4,7 +4,7 @@ import { Button, ButtonLink, DevMark, InlineNotice } from '@latch/ui'
 import { BrandMark } from '../components/ui.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { DEV_MODE_TEXT, hostView } from '../core/permissions.ts'
-import { presenceUnavailableText } from '../core/securityCopy.ts'
+import { computerName, presenceUnavailableText } from '../core/securityCopy.ts'
 import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages } from './navigation.tsx'
 
@@ -39,7 +39,13 @@ function Licences() {
   )
 }
 
-export function AboutSettings({ snapshot, access }: { snapshot: AppSnapshot; access: Pick<DeviceAccess, 'legacy'> }) {
+export function AboutSettings({
+  snapshot,
+  access,
+}: {
+  snapshot: AppSnapshot
+  access: Pick<DeviceAccess, 'legacy'> & Partial<Pick<DeviceAccess, 'local'>>
+}) {
   const [licences, setLicences] = useState(false)
   const host = access.legacy ? undefined : hostView(snapshot)
   const dev = host?.devMode === true
@@ -56,7 +62,9 @@ export function AboutSettings({ snapshot, access }: { snapshot: AppSnapshot; acc
         </div>
       </header>
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
-      <SettingsGroup caption="Harness 和插件以你的权限在这台电脑上运行。" captionIcon={null}>
+      <SettingsGroup
+        caption={`Harness 和插件以你的权限在${access.local ? '这台 Mac' : ` ${computerName(snapshot.hostName)}`} 上运行。`}
+        captionIcon={null}>
         <SettingsRow
           title="许可与条款"
           trailing={

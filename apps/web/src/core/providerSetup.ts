@@ -1,7 +1,7 @@
 import { escapeSecurityText, type HostCatalog, type ProviderKind, type ProviderPreset, type ProviderSettings } from '@latch/protocol'
 import { api, ApiError, ApiTimeoutError, errorMessage } from './api.ts'
 import { confirmationStore, withConfirmation, type ConfirmationPresenter } from './confirmations.ts'
-import { PROVIDER_COPY, safeTarget } from './securityCopy.ts'
+import { computerName, PROVIDER_COPY, safeTarget } from './securityCopy.ts'
 
 /**
  * Adding and checking a model service, without layout: the settings page and the composer's in-place 「添加模型服务」
@@ -111,13 +111,17 @@ export function destinationOf(
  * Why a session has no model although a service is configured: the first one the Host holds back, named, with what it
  * lacks and where that is done. Undefined when the Host holds none back (or is too old to say).
  */
-export function heldBackService(catalog: Pick<HostCatalog, 'unusableProviders'>): { message: string; hint: string } | undefined {
+export function heldBackService(
+  catalog: Pick<HostCatalog, 'unusableProviders'>,
+  hostName?: string,
+): { message: string; hint: string } | undefined {
   const first = catalog.unusableProviders?.[0]
   if (!first) return undefined
   const name = `「${escapeSecurityText(first.name)}」`
+  const where = `在 ${computerName(hostName)} 上，打开 设置 › 模型`
   return first.reason === 'key-missing'
-    ? { message: `${name}还没有填写密钥。`, hint: '在 Mac 上，打开 设置 › 模型 填写密钥后即可开始。' }
-    : { message: `${name}的地址还没有确认。`, hint: '在 Mac 上，打开 设置 › 模型 确认地址后即可开始。' }
+    ? { message: `${name}还没有填写密钥。`, hint: `${where} 填写密钥后即可开始。` }
+    : { message: `${name}的地址还没有确认。`, hint: `${where} 确认地址后即可开始。` }
 }
 
 /** A saved service's destination; older Hosts do not report it and enforce their own rules. */

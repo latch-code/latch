@@ -1744,7 +1744,7 @@ describe('visual capture of the real product', () => {
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
         ['settings-devices', '设备', target.getByRole('button', { name: '关于连接', exact: true })],
-        ['settings-about', '关于', settings.getByText('Harness 和插件以你的权限在这台电脑上运行。').first()],
+        ['settings-about', '关于', settings.getByText(/^Harness 和插件以你的权限在.+上运行。$/).first()],
       ] as const) {
         await openSection(settings, section)
         await ready.waitFor()

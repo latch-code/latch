@@ -122,7 +122,7 @@ export function HtmlPreview({
               }>
               {scriptsOff && (pages ? '页面脚本没有运行，动画和交互不可用。' : '页面脚本没有运行，动画、交互和翻页可能不可用。')}
               {externalLeftOut && '页面引用的脚本或样式文件没有加载，显示可能不完整。'}
-              {scriptsOff && !available && '只有 Mac 上的桌面端能运行脚本。'}
+              {scriptsOff && !available && (local ? '这个版本的 Latch 不能运行页面脚本。' : '只能在 Mac 上的 Latch 里运行页面脚本。')}
             </InlineNotice>
           )}
           <FileSandbox

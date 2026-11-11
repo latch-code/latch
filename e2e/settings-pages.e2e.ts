@@ -180,7 +180,14 @@ describe('settings pages', () => {
         await openSection(settings, 'Harness')
         await settings.getByRole('heading', { name: '已安装', exact: true }).waitFor()
         await settings.getByRole('heading', { name: '可以安装', exact: true }).waitFor()
+        // 「怎么装」 installs nothing: it opens the command, copying it, looking again and the way to the start form.
+        const how = settings.getByRole('button', { name: /^怎么装 / }).first()
+        await how.click()
+        await settings.getByRole('button', { name: '自定义启动方式…', exact: true }).waitFor()
+        await settings.getByRole('button', { name: '重新检测', exact: true }).waitFor()
+        expect(await how.getAttribute('aria-expanded')).toBe('true')
         await noHorizontalOverflow(page, settings)
+        await settle(page)
         await shot('engines')
 
         await openSection(settings, '项目')
@@ -196,7 +203,8 @@ describe('settings pages', () => {
         }
 
         await openSection(settings, '关于')
-        await settings.getByText('Harness 和插件以你的权限在这台电脑上运行。', { exact: true }).waitFor()
+        // A browser is another device: the sentence names the computer, never 「这台」.
+        await settings.getByText(/^Harness 和插件以你的权限在 .+ 上运行。$/).waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('about')
 
@@ -208,15 +216,15 @@ describe('settings pages', () => {
         await settle(page)
         await shot('plugins')
 
-        // Nothing in settings draws a box around rows.
-        const boxed = await settings.locator('.settings-card').evaluateAll(
+        // A group's rows sit in a well: sunk in with a shadow, rounded, never a bordered box.
+        const notWells = await settings.locator('.settings-card').evaluateAll(
           cards =>
             cards.filter(card => {
               const style = getComputedStyle(card)
-              return style.borderTopWidth !== '0px' || style.borderTopLeftRadius !== '0px'
+              return style.borderTopWidth !== '0px' || style.borderTopLeftRadius !== '12px' || !style.boxShadow.includes('inset')
             }).length,
         )
-        expect(boxed).toBe(0)
+        expect(notWells).toBe(0)
         await context.close()
       })
 
@@ -306,7 +314,7 @@ describe('settings pages', () => {
     const row = settings.locator('.provider-row', { hasText: '换协议的服务' })
     await row.getByText('Chat Completions · 1 个模型', { exact: true }).waitFor()
     await row.getByRole('button', { name: '编辑 换协议的服务' }).click()
-    const hint = settings.getByText('换协议会清除为模型设置的思考深度', { exact: true })
+    const hint = settings.getByText('换协议会清除为模型设置的思考', { exact: true })
     await hint.waitFor()
     await settings.getByRole('button', { name: '协议：Chat Completions', exact: true }).click()
     await page.getByRole('menuitemradio', { name: 'Responses', exact: true }).click()
@@ -324,7 +332,7 @@ describe('settings pages', () => {
     await after.getByText('Responses · 1 个模型', { exact: true }).waitFor()
     await after.getByRole('button', { name: '编辑 换协议的服务' }).click()
     await reloaded.getByRole('button', { name: '协议：Responses', exact: true }).waitFor()
-    expect(await reloaded.getByText('换协议会清除为模型设置的思考深度', { exact: true }).count()).toBe(0)
+    expect(await reloaded.getByText('换协议会清除为模型设置的思考', { exact: true }).count()).toBe(0)
     await settle(page)
     await page.screenshot({ path: `${OUTPUT}/service-protocol--desktop--light.png` })
     await context.close()

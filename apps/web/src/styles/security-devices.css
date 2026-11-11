@@ -15,7 +15,8 @@
   display: inline-flex !important;
 }
 [data-secure] .settings-card {
-  background-color: var(--canvas) !important;
+  background-color: var(--sunken) !important;
+  box-shadow: var(--sh-well) !important;
 }
 [data-secure] .settings-icon-tile {
   background-color: var(--hover) !important;

@@ -424,7 +424,7 @@ function ModelsGroups({
             获取模型
           </Button>
         }
-        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考深度按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考选「默认」时用模型自己的默认值。`}>
+        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考选「默认」时用模型自己的默认值。`}>
         {models.map(model => (
           <div key={model} className="settings-row model-row" data-leading="" data-check="">
             <span className="settings-row-lead">
@@ -988,15 +988,15 @@ function ThinkingPicker({
   const offered = levels?.length && !sets.some(set => set.join(' ') === current) ? [...sets, levels] : sets
   return (
     <ValuePicker
-      label={`${model} 的思考深度`}
+      label={`${model} 的思考`}
       size="xs"
       value={current}
       valueText={current === NO_THINKING ? '思考：默认' : `思考：${thinkingSetText(levels!)}`}
       options={[
-        { value: NO_THINKING, label: '默认', description: '不发送思考深度，用模型自己的默认值' },
+        { value: NO_THINKING, label: '默认', description: '不发送思考设置，用模型自己的默认值' },
         ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) })),
       ]}
-      header={{ title: '这个模型接受的思考深度' }}
+      header={{ title: '这个模型接受的思考' }}
       width={300}
       disabled={disabled}
       onValueChange={value => {
@@ -1238,7 +1238,7 @@ function ProviderPage({
         {protocols.length > 1 && (
           <SettingsRow
             title="协议"
-            description={declaresThinking ? '换协议会清除为模型设置的思考深度' : undefined}
+            description={declaresThinking ? '换协议会清除为模型设置的思考' : undefined}
             trailing={
               <ValuePicker
                 label="协议"

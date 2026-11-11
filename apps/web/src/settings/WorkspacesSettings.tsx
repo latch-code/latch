@@ -3,7 +3,7 @@ import { Folder, FolderOpen, FolderPlus, Pencil, Trash } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type WorkspaceInfo } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage } from '../core/api.ts'
-import { describeFailure } from '../core/securityCopy.ts'
+import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename } from '../format.ts'
 import { ProjectIcon, projectFolders } from '../projects.tsx'
@@ -14,8 +14,10 @@ import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, Set
 import { ProjectEditor } from './ProjectEditor.tsx'
 import { SettingsPages } from './navigation.tsx'
 
-const LOCKED_CAPTION = '添加项目要在 Mac 上用桌面端完成。'
-const RESTART_CAPTION = '重新启动 Latch 桌面端后，可以在这里添加项目。'
+/** On another device: where projects are added, by the computer's name. */
+const lockedCaption = (hostName?: string) => `${SETUP_COPY.addProjectElsewhere(computerName(hostName))}。`
+/** In the Latch app on this Mac, when it is too old to sign the request. */
+const RESTART_CAPTION = '重新启动 Latch 后，可以在这里添加项目。'
 
 /** Where a project's history stops, as the Host keeps it: the limits are the Host's own, not a setting. */
 const HISTORY_CAP = '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。'
@@ -220,7 +222,7 @@ export function WorkspacesSettings({
         if (snapshot.catalog?.projectFolders) setEditing(result.added[0]!.workspaceId)
       }
       setRefused(result.refused.length > 0 ? result : null)
-    } else if (result.status === 'failed') setError('没有添加项目：桌面端无法完成这次操作，请重试。')
+    } else if (result.status === 'failed') setError('没有添加项目：这次操作没有完成，请重试。')
   }
   const pick = async () => {
     if (!folders || picking) return
@@ -273,7 +275,7 @@ export function WorkspacesSettings({
   const defaultId = snapshot.catalog?.defaults.workspaceId
   const start = workspaces?.find(workspace => workspace.id === 'default')
   const projects = workspaces?.filter(workspace => workspace.id !== 'default') ?? []
-  const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : LOCKED_CAPTION
+  const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : lockedCaption(snapshot.hostName)
   const addAction = folders ? (
     <Button variant="outline" icon={FolderPlus} loading={picking} onClick={() => void pick()}>
       {picking ? '选择中…' : '添加项目'}

@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
-import type { AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
+import type { AgentPresetSettings, AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
-import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
+import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
+import { computerName, SETUP_COPY } from '../core/securityCopy.ts'
+import { currentShell } from '../core/shell.ts'
 import type { AgentPageTarget } from '../shell/routes.ts'
 import { builtinHarness, harnessName } from '../composerChoice.ts'
-import { missingText } from '../core/agentDetection.ts'
+import { foundWithoutAdapter, missingText } from '../core/agentDetection.ts'
 export { missingText } from '../core/agentDetection.ts'
 import { hostOf } from '../format.ts'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import {
   Button,
   ButtonLink,
+  Collapse,
   Dialog,
   Icon,
   IconButton,
@@ -23,7 +26,7 @@ import {
   CopyButton,
 } from '@latch/ui'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
-import { IconTile, Loading, MiddleEllipsis, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, Loading, MiddleEllipsis, NavRow, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
 import { LoginGroup } from './LoginGroup.tsx'
@@ -31,13 +34,17 @@ import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 
 interface AgentsResponse {
   agents: AgentSettings[]
-  presets: AgentPreset[]
+  presets: AgentPresetSettings[]
 }
 type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPreset } | null
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
-const ENGINES_CAPTION = 'Harness 是这台 Mac 上已安装的程序，以你的权限运行。Latch 不会替你安装它们。'
-const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Harness 自己决定执行范围，Latch 不隔离它。'
+/** Where the Harnesses run, as a person on this device names that computer: 「这台 Mac」 in its own app, else its name. */
+const onComputer = (local: boolean, hostName?: string) => (local ? '这台 Mac 上' : ` ${computerName(hostName)} 上`)
+const enginesCaption = (on: string) => `Harness 是${on}已安装的程序，以你的权限运行。Latch 不会替你安装它们。`
+/** A session started with a definition is an external Harness's session: it decides its own reach, Latch does not isolate it. */
+const FULL_ACCESS_NOTE = SETUP_COPY.externalNote
+const CUSTOM_START = '自定义启动方式'
 const SAVE_NOTE = '保存后就能用它开始会话，每次启动都留有记录。'
 /** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
 const NOT_STARTED = '还没有开启过会话'
@@ -204,8 +211,8 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         void save(event)
       }}>
       <SectionHeading
-        title={preset ? `添加 ${preset.name}` : '自定义 Harness'}
-        description={preset?.description ?? '在这台 Mac 上运行的程序'}
+        title={preset ? CUSTOM_START : '自定义 Harness'}
+        description={preset ? `${preset.name}：${preset.description}` : '在这台 Mac 上运行的程序'}
       />
       {preset && (
         <SettingsGroup title="安装">
@@ -467,6 +474,7 @@ function AgentPage({
   onRecheck,
   onSaved,
   onDeleted,
+  on,
 }: {
   agent: AgentSettings
   preset?: AgentPreset
@@ -480,6 +488,8 @@ function AgentPage({
   onRecheck: () => void
   onSaved: () => void
   onDeleted: () => void
+  /** 「这台 Mac 上」 or 「 <name> 上」: where the definition starts. */
+  on: string
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -512,7 +522,7 @@ function AgentPage({
     <>
       <SectionHeading
         title={agent.name}
-        description={`在这台 Mac 上启动 · ${LEVEL_LABELS.L3}`}
+        description={`在${on}启动 · 外部 Harness`}
         action={
           <Button
             disabled={busy}
@@ -723,6 +733,18 @@ export const engineGroups = (agents: readonly AgentSettings[]) => ({
   missing: agents.filter(agent => missingText(agent) !== undefined),
 })
 
+/**
+ * The presets with no saved definition: found on the computer (an executable with the command's name is there), which
+ * stand with what is installed, and the rest, which can be installed. A Host that sends no detection finds none.
+ */
+export function presetGroups(presets: readonly AgentPresetSettings[], agents: readonly Pick<AgentSettings, 'presetId'>[]) {
+  const unsaved = presets.filter(preset => !agents.some(agent => agent.presetId === preset.id))
+  return {
+    found: unsaved.filter(preset => preset.detected?.found === true),
+    installable: unsaved.filter(preset => preset.detected?.found !== true),
+  }
+}
+
 /** 可以安装 stands on the section's own page, so asking for the presets is asking for that page. */
 const editingOf = (target: AgentPageTarget): Editing => (target.kind === 'presets' ? null : target)
 
@@ -766,6 +788,92 @@ export function AgentRow({
         </>
       }
     />
+  )
+}
+
+/**
+ * A preset found on this computer with no definition yet: 「已找到」 says only that an executable with that name is there,
+ * so it is not drawn as ready. The row opens its start form, for a person who wants to change how it starts.
+ */
+function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () => void }) {
+  return (
+    <NavRow
+      className="agent-row"
+      leading={<MarkTile mark={preset.id} size={24} />}
+      record
+      title={preset.name}
+      description={<MiddleEllipsis text={preset.detected?.path ?? preset.command} className="settings-mono" />}
+      value="已找到"
+      label={`${preset.name}，已找到，${CUSTOM_START}`}
+      onClick={onOpen}
+    />
+  )
+}
+
+/**
+ * A preset that is not on this computer. 「怎么装」 opens the command, copying it and looking again; Latch installs
+ * nothing. The start form stays one step further, under 「自定义启动方式」, for a program that is somewhere else.
+ */
+function InstallRow({
+  preset,
+  checking,
+  onRecheck,
+  onCustom,
+}: {
+  preset: AgentPresetSettings
+  checking: boolean
+  onRecheck: () => void
+  onCustom: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const program = foundWithoutAdapter(preset.detected)
+  return (
+    <div className="agent-install">
+      <SettingsRow
+        className="agent-preset"
+        leading={<MarkTile mark={preset.id} size={24} />}
+        record
+        title={preset.name}
+        description={program ? `找到了 ${program}，还差让 Latch 连接它的适配器` : preset.description}
+        trailing={
+          <Button
+            variant="outline"
+            aria-expanded={open}
+            aria-label={`怎么装 ${preset.name}`}
+            onClick={() => {
+              setOpen(!open)
+            }}>
+            怎么装
+          </Button>
+        }
+      />
+      <Collapse open={open} lazy>
+        <div className="agent-how">
+          <div className="agent-how-command">
+            {preset.install && (
+              <>
+                <span className="agent-how-prompt" aria-hidden="true">
+                  $
+                </span>
+                <code>{preset.install}</code>
+              </>
+            )}
+            <span className="agent-how-actions">
+              {preset.install && <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />}
+              <Button size="xs" variant="ghost" icon={RefreshCw} loading={checking} onClick={onRecheck}>
+                重新检测
+              </Button>
+            </span>
+          </div>
+          {preset.installNote && <p className="agent-how-note">{preset.installNote}</p>}
+          <span className="agent-how-custom">
+            <Button variant="link" size="xs" onClick={onCustom}>
+              {CUSTOM_START}…
+            </Button>
+          </span>
+        </div>
+      </Collapse>
+    </div>
   )
 }
 
@@ -838,8 +946,12 @@ export function AgentsSettings({
   if (data === null) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />
 
   const builtin = builtinHarness(snapshot.catalog)
-  const installable = data.presets.filter(preset => !data.agents.some(agent => agent.presetId === preset.id))
+  const on = onComputer(deviceAccess(snapshot, currentShell()).local, snapshot.hostName)
+  const { found, installable } = presetGroups(data.presets, data.agents)
   const { installed, missing } = engineGroups(data.agents)
+  const custom = (preset: AgentPreset) => {
+    setEditing({ kind: 'new', preset })
+  }
   const engineRow = (agent: AgentSettings) => (
     <AgentRow
       key={agent.id}
@@ -870,7 +982,7 @@ export function AgentsSettings({
             自定义 Harness
           </Button>
         }
-        caption={ENGINES_CAPTION}
+        caption={enginesCaption(on)}
         captionIcon={null}>
         {builtin && (
           <SettingsRow
@@ -883,28 +995,20 @@ export function AgentsSettings({
           />
         )}
         {installed.map(engineRow)}
+        {found.map(preset => (
+          <FoundRow key={preset.id} preset={preset} onOpen={() => custom(preset)} />
+        ))}
       </SettingsGroup>
       {(missing.length > 0 || installable.length > 0) && (
         <SettingsGroup title="可以安装">
           {missing.map(engineRow)}
           {installable.map(preset => (
-            <ObjectRow
+            <InstallRow
               key={preset.id}
-              className="agent-preset"
-              label={`安装 ${preset.name}`}
-              leading={<MarkTile mark={preset.id} size={24} />}
-              title={preset.name}
-              description={preset.description}
-              trailing={
-                <Button
-                  variant="outline"
-                  aria-label={`安装 ${preset.name}`}
-                  onClick={() => {
-                    setEditing({ kind: 'new', preset })
-                  }}>
-                  安装…
-                </Button>
-              }
+              preset={preset}
+              checking={checking}
+              onRecheck={() => void recheck()}
+              onCustom={() => custom(preset)}
             />
           ))}
         </SettingsGroup>
@@ -916,7 +1020,7 @@ export function AgentsSettings({
   if (editing?.kind === 'new')
     levels.push({
       key: `new:${editing.preset?.id ?? 'custom'}`,
-      title: editing.preset ? `添加 ${editing.preset.name}` : '自定义 Harness',
+      title: editing.preset ? CUSTOM_START : '自定义 Harness',
       onBack: () => {
         setEditing(null)
       },
@@ -963,6 +1067,7 @@ export function AgentsSettings({
           }}
           onSaved={refreshed}
           onDeleted={done}
+          on={on}
         />
       ),
     })

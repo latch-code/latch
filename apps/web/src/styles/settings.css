@@ -437,12 +437,14 @@
   justify-content: space-between;
   gap: var(--sp-12);
   min-height: 28px;
+  padding-inline-start: var(--sp-16);
 }
+/* A group's name is a quiet label over its well, on the rows' 16 inset; the section's name above is the heading. */
 .settings-group-head h3 {
-  color: var(--ink);
-  font-size: var(--fs-heading);
-  line-height: var(--lh-heading);
-  font-weight: 600;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
 }
 .settings-group-meta {
   display: inline-flex;
@@ -460,9 +462,14 @@
   display: flex;
   align-items: flex-start;
   gap: var(--sp-6);
+  padding-inline: var(--sp-16);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
+}
+/* A group whose children lay out themselves (the look tiles) has no well, so its words stand on the panel's edge too. */
+.settings-group[data-bare] > :is(.settings-group-head, .settings-caption) {
+  padding-inline: 0;
 }
 .settings-caption > .ui-icon {
   flex-shrink: 0;
@@ -476,10 +483,18 @@
   line-height: var(--lh-caption-para);
 }
 
-/* A group's rows stand on the canvas: no box around them, so a sheet or a list inside is never a box in a box. */
+/*
+ * A group's rows sit in a well: sunk into the panel (--sunken, --sh-well), 12 corners, the rows on a 16 inset with a
+ * hairline between them. Counts and tiles inside are cut out of the well.
+ */
 .settings-card {
+  --surface: var(--sunken);
   display: grid;
   min-width: 0;
+  padding-inline: var(--sp-16);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  box-shadow: var(--sh-well);
 }
 .settings-card-body {
   display: grid;
@@ -924,6 +939,70 @@
 .agent-preset .settings-row-text {
   gap: var(--sp-2);
 }
+/*
+ * A preset to install: its row, and under it what 「怎么装」 opens, on the row's text line (past the 24 tile and its 12):
+ * the command in a well with copy and 重新检测, the preset's note, then one quiet line to the start form.
+ */
+.agent-install {
+  display: grid;
+  min-width: 0;
+}
+.settings-card > :is(.settings-row, .agent-install) + .agent-install > .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line);
+}
+.agent-how {
+  display: grid;
+  gap: var(--sp-6);
+  padding: 0 0 var(--sp-12) calc(24px + var(--sp-12));
+}
+.agent-how-command {
+  display: flex;
+  /* A command that wraps keeps its prompt and copy button on its first line. */
+  align-items: flex-start;
+  gap: var(--sp-8);
+  min-height: 36px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  box-shadow: var(--sh-well);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+.agent-how-prompt {
+  padding-block: var(--sp-4);
+  color: var(--muted);
+  font-weight: 600;
+}
+.agent-how-command > code {
+  padding-block: var(--sp-4);
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+.agent-how-note {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.agent-how-custom {
+  display: flex;
+}
+.agent-how-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+  font-family: var(--font);
+}
 .agent-command {
   display: block;
   overflow: hidden;
@@ -1063,6 +1142,12 @@
   align-items: center;
   gap: var(--sp-8);
   flex-wrap: wrap;
+}
+/* 添加插件: one sentence on what a tool is, above the two ways to start. */
+.plugin-add-note {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .plugin-asset-spacer {
   flex: 1;

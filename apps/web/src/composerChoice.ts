@@ -459,7 +459,7 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
       return { kind: 'harness-unavailable', message: `这个项目有 ${count} 个文件夹，${harnessName(harness)} 最多使用 ${max} 个。` }
   }
   if (harness.capabilities.models.owner === 'latch' && !choice.model) {
-    const held = heldBackService(catalog)
+    const held = heldBackService(catalog, snapshot.hostName)
     return held
       ? { kind: 'model-required', message: `还没有可用的模型服务。${held.message}`, hint: held.hint, action: '打开模型服务' }
       : { kind: 'model-required', message: '还没有模型服务。' }

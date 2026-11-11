@@ -10,7 +10,7 @@ import {
 } from '@latch/protocol'
 import { Badge, Button, Icon, IconButton, InlineNotice, Menu, ValuePicker, useCopy } from '@latch/ui'
 import { api, errorMessage, isUncertain } from '../core/api.ts'
-import { describeFailure } from '../core/securityCopy.ts'
+import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename, relativeTime, statusLabels } from '../format.ts'
 import { recentProjectSessions } from '../sessions.ts'
@@ -422,12 +422,12 @@ export function ProjectEditor({
       {!shell && (
         <p className="settings-caption">
           {currentShell() && owner
-            ? '重新启动 Latch 桌面端后，可以在这里添加和重新选择文件夹。'
-            : '添加项目和添加文件夹要在 Mac 上用桌面端完成。'}
+            ? '重新启动 Latch 后，可以在这里添加和重新选择文件夹。'
+            : `添加项目和添加文件夹要在 ${computerName(snapshot.hostName)} 上的 Latch 里完成。`}
         </p>
       )}
       {folders.length > 1 && (
-        <SettingsGroup title="各 Harness 使用的文件夹" caption="Harness 以完全访问运行时，文件夹范围由 Harness 自己执行，不是隔离。">
+        <SettingsGroup title="各 Harness 使用的文件夹" caption={SETUP_COPY.externalFolders}>
           {snapshot.catalog?.harnesses
             .filter(harness => harness.status === 'ready')
             .map(harness => (

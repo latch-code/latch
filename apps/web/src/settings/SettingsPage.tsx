@@ -49,9 +49,9 @@ const WorkspacesSettings = deferredComponent(
 
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
-  general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 登录时打开 唤醒 名称',
+  general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
   providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
-  engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
+  engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
   workspaces: '文件夹 添加项目 新建项目 快照',
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',

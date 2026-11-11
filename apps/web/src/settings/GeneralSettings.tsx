@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
 import { InlineNotice, SegmentedControl, SwitchRow } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
+import { deviceAccess } from '../core/permissions.ts'
+import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
@@ -60,8 +62,13 @@ function ThemeTiles({ value, onValueChange }: { value: ThemePreference; onValueC
   )
 }
 
-/** The name of the computer and, in the desktop app, how it starts and stays awake. Main owns the state; the page asks. */
-function ThisMac({ hostName }: { hostName: string }) {
+/**
+ * The computer's name and, in the Latch app on it, how it starts and stays awake. The group is titled 「这台 Mac」 there
+ * and with the computer's name on other devices. Opening at login needs a packaged app, so the row is left out while the
+ * shell reports it unavailable (a development run, another platform) and comes back with an installer. Main owns the
+ * state; the page asks.
+ */
+function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
   const lifecycle = useShellLifecycle()
   const [busy, setBusy] = useState<'login' | 'awake' | null>(null)
   const [error, setError] = useState('')
@@ -72,33 +79,32 @@ function ThisMac({ hostName }: { hostName: string }) {
     setBusy(null)
   }
   const view = lifecycle.view
-  const note = view ? loginItemNote(view.loginItem) : ''
   return (
-    <SettingsGroup title={currentShell() ? '这台 Mac' : 'Mac'}>
+    <SettingsGroup title={computerLabel(local, hostName)}>
       <SettingsRow title="名称" trailing={<span className="settings-row-value">{hostName || '这台 Mac'}</span>} />
+      {view?.loginItem.available && (
+        <SwitchRow
+          className="settings-row"
+          title="登录时打开 Latch"
+          description={loginItemNote(view.loginItem) || undefined}
+          checked={view.loginItem.enabled}
+          disabled={busy !== null}
+          onCheckedChange={enabled => {
+            void act('login', () => lifecycle.setLoginItem(enabled))
+          }}
+        />
+      )}
       {view && (
-        <>
-          <SwitchRow
-            className="settings-row"
-            title="登录时打开 Latch"
-            description={note || undefined}
-            checked={view.loginItem.enabled}
-            disabled={!view.loginItem.available || busy !== null}
-            onCheckedChange={enabled => {
-              void act('login', () => lifecycle.setLoginItem(enabled))
-            }}
-          />
-          <SwitchRow
-            className="settings-row"
-            title="有任务时保持 Mac 唤醒"
-            description={keepAwakeLine(view.keepAwake)}
-            checked={view.keepAwake.enabled}
-            disabled={busy !== null}
-            onCheckedChange={enabled => {
-              void act('awake', () => lifecycle.setKeepAwake(enabled))
-            }}
-          />
-        </>
+        <SwitchRow
+          className="settings-row"
+          title="有任务时保持 Mac 唤醒"
+          description={keepAwakeLine(view.keepAwake)}
+          checked={view.keepAwake.enabled}
+          disabled={busy !== null}
+          onCheckedChange={enabled => {
+            void act('awake', () => lifecycle.setKeepAwake(enabled))
+          }}
+        />
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </SettingsGroup>
@@ -149,7 +155,7 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
         </SettingsGroup>
       )}
       <NotificationSettings />
-      <ThisMac hostName={snapshot.hostName} />
+      <ThisMac hostName={snapshot.hostName} local={deviceAccess(snapshot, currentShell()).local} />
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
     </>
   )

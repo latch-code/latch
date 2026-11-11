@@ -14,7 +14,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 
 界面提供流式回复、思考过程、工具卡片（参数、输出、文件差异）、计划进度与 token 用量；审批紧挨对应的工具；会话支持搜索、按项目分组、置顶、归档、重命名、导出 Markdown 与删除；桌面三栏（侧栏可拖动调宽或收起）、平板的图标栏与滑出的会话列表、手机以会话列表为首页并推入会话页，浅色、深色与跟随系统。
 
-> 当前是开发版：没有签名安装包，从源码运行，所有客户端常驻显示「开发版」标记。
+> 当前是开发版：没有签名安装包，从源码运行；「设置 › 关于」里 Latch 的名字旁标着「开发版」。
 
 ## 先装好一个 Harness
 
@@ -65,7 +65,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 
 设备凭据每 24 小时自动续期，从连接起 30 天后失效，届时需要重新连接确认。
 
-连接完成后桌面端打开新会话：找到的 Harness 已经选好，标题里选项目，直接输入。什么都没找到时页面列出安装命令；要用 Latch 内置，在那里或「设置 → 模型」添加服务。密钥、Agent 定义与需要本机确认的设置只能在桌面端完成（见「桌面端」）。
+连接完成后桌面端打开新会话：找到的 Harness 已经选好，标题里选项目，直接输入。什么都没找到时页面列出安装命令；要用 Latch 内置，在那里或「设置 → 模型」添加模型服务。密钥与需要本机确认的设置只能在桌面端完成（见「桌面端」）；Harness 的定义在任何有「管理这台 Mac」权限的设备上都能保存。
 
 **本机确认组件。** Touch ID 与登录密码确认由 `dist/native/latch-presence` 完成：
 
@@ -91,42 +91,14 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 关闭窗口不会停止 Host，用 `pnpm stop` 停止。在 macOS 上关闭窗口后 Latch 仍在后台运行，继续在 Host 崩溃后重启它、有任务时保持唤醒；点 Dock 图标重新打开窗口，退出 Latch（⌘Q）后这两项停止，Host 继续运行。
 - 桌面端开着时，由 `pnpm desktop` 启动的 Host 意外退出后会被重新启动（1、2、4……秒后，10 分钟内第 5 次时停止并在窗口顶部说明）。用环境变量（如 `LATCH_MODEL`、`LATCH_TLS_*`）配置的 Host 不会被自动重启。
 - 有会话在运行或有审批在等时，桌面端阻止 Mac 自动休眠（显示器照常熄灭；用电池时只在会话运行时，每次最长 1 小时），可在「设置 → 通用」关闭。合上盖子（没有外接显示器）时 Mac 仍会休眠；休眠前与 Host 停止前，手机与浏览器会看到原因（「电脑已休眠」「电脑上的 Latch 正在重启」等），并按 Host 给出的时间重新连接。
-- 「登录时打开 Latch」的登录项只能由打包后的 Latch 应用设置；`pnpm desktop` 是开发运行，这个开关不可用。
+- 「登录时打开 Latch」的登录项只能由打包后的 Latch 应用设置；`pnpm desktop` 是开发运行，「设置 → 通用」里没有这一行。
 - 不进入时间机器备份的是：数据目录的 `auth/`（已连接的设备）、`identity/`（Host 身份）、`providers.json`（模型密钥）与 `settings.json`（Agent 定义及其环境变量，以及项目列表与默认值，从备份恢复后需要重新添加），桌面端的 `latch-devices/`。会话、审计记录、安全策略与日志照常备份，建议加密备份盘。
 
 信任在连接设备时建立一次：连上的设备凭自己的权限范围正常工作，开始会话、放宽权限、批准操作、改 Harness 都不再确认，每一步都有记录。只有这些还要在这台 Mac 上用 Touch ID 确认：连接新设备（手机另要扫码），为设备增加权限，第一次使用一个自定义或本机模型服务地址（地址、密钥与出站许可一次确认；预置服务商的地址不需要），把地址加入出站白名单，应用含代码的自定义插件。代价只说一次：拿着解锁手机的人可以操作这台 Mac 上的 Agent，直到你移除这台设备。
 
-## 手机接入（HTTPS）
-
-手机只通过 HTTPS 接入，证书由你提供，Latch 不生成自签名证书。以 Tailscale 为例（需要在 Tailscale 中启用 MagicDNS 与 HTTPS 证书）：
-
-```sh
-mkdir -p ~/latch-tls && cd ~/latch-tls
-tailscale cert my-mac.example.ts.net          # 生成 my-mac.example.ts.net.crt 与 .key
-chmod 600 my-mac.example.ts.net.key
-pnpm desktop -- --tailnet \
-  --tls-cert ~/latch-tls/my-mac.example.ts.net.crt \
-  --tls-key  ~/latch-tls/my-mac.example.ts.net.key \
-  --public-origin https://my-mac.example.ts.net:4318
-```
-
-- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN`）。没有明文局域网接入：`--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 缺少其中任何一项时 Host 拒绝启动。
-- 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`LATCH_TLS_PORT`）。
-- 启动前检查：私钥是你拥有的 0600 普通文件，且不在数据目录或任何项目目录内；证书未过期并与公开地址的主机名匹配。证书剩余不足 14 天时告警，过期后 HTTPS 入口关闭；Latch 不会续签证书。续签后（例如重新运行 `tailscale cert`）直接覆盖证书与私钥文件即可，Host 会自动重新加载，不需要重启；新文件不通过检查时继续使用原证书，并在 `host.log` 中写明原因。
-- HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接，请用手机测试（手机也需加入同一 tailnet）。
-- 该数据目录的 Host 已在运行时，`pnpm desktop` 会复用它而忽略这些参数，请先 `pnpm stop`。
-
-**配对手机：**
-
-1. 在 Host 运行时执行 `pnpm latch device invite`（终端显示二维码）。邀请 10 分钟内有效、只能使用一次，Host 重启后失效。
-2. 手机扫码打开页面并提交连接。
-3. 电脑上弹出 Touch ID 表单，写出设备自报的名称，确认是你正在连接的设备后允许。
-
-邀请默认授予查看、发起会话与批准操作；`pnpm latch device invite --scopes view,run,approve:standard,approve:elevated,admin` 可以加入管理权限。撤销某台设备时，由它邀请配对的设备降为仅查看，等待在桌面端复核。
-
 ## 模型服务
 
-在「设置 → 模型」添加服务：预置常用服务地址（OpenAI、Anthropic、DeepSeek、OpenRouter、Ollama、LM Studio 等），可获取模型列表、检测连接、设置默认模型。
+在「设置 → 模型」添加模型服务：预置常用服务地址（OpenAI、Anthropic、DeepSeek、OpenRouter、Ollama、LM Studio 等），可获取模型列表、检测连接、设置默认模型。
 
 - **协议**：Latch 内置用服务自己的协议发请求。OpenAI 默认 Responses，也可以选 Chat Completions；Anthropic 用 Messages；Google Gemini 用原生的 generateContent；其他预置服务用 Chat Completions；自定义服务四种都可选。保存后可以在服务页改协议，地址和密钥不变，为模型设置的思考深度会清除，因为各协议的档位不同。
 
@@ -202,6 +174,34 @@ pnpm desktop -- --tailnet \
 - 目标已存在（包括符号链接）时拒绝，不跟随、不覆盖。
 - 所在目录必须属于当前用户，或属于 root 且带粘滞位（如 `/tmp`）；没有粘滞位时其他用户不能写入。
 - macOS 上目录不能带访问控制列表（ACL）。主目录 `~` 及其下的常用文件夹通常默认带有一条，因此会被拒绝；请改用例如 `mktemp -d` 新建的目录。
+
+## 手机接入（HTTPS）
+
+手机只通过 HTTPS 接入，证书由你提供，Latch 不生成自签名证书。以 Tailscale 为例（需要在 Tailscale 中启用 MagicDNS 与 HTTPS 证书）：
+
+```sh
+mkdir -p ~/latch-tls && cd ~/latch-tls
+tailscale cert my-mac.example.ts.net          # 生成 my-mac.example.ts.net.crt 与 .key
+chmod 600 my-mac.example.ts.net.key
+pnpm desktop -- --tailnet \
+  --tls-cert ~/latch-tls/my-mac.example.ts.net.crt \
+  --tls-key  ~/latch-tls/my-mac.example.ts.net.key \
+  --public-origin https://my-mac.example.ts.net:4318
+```
+
+- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN`）。没有明文局域网接入：`--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 缺少其中任何一项时 Host 拒绝启动。
+- 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`LATCH_TLS_PORT`）。
+- 启动前检查：私钥是你拥有的 0600 普通文件，且不在数据目录或任何项目目录内；证书未过期并与公开地址的主机名匹配。证书剩余不足 14 天时告警，过期后 HTTPS 入口关闭；Latch 不会续签证书。续签后（例如重新运行 `tailscale cert`）直接覆盖证书与私钥文件即可，Host 会自动重新加载，不需要重启；新文件不通过检查时继续使用原证书，并在 `host.log` 中写明原因。
+- HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接，请用手机测试（手机也需加入同一 tailnet）。
+- 该数据目录的 Host 已在运行时，`pnpm desktop` 会复用它而忽略这些参数，请先 `pnpm stop`。
+
+**配对手机：**
+
+1. 在 Host 运行时执行 `pnpm latch device invite`（终端显示二维码）。邀请 10 分钟内有效、只能使用一次，Host 重启后失效。
+2. 手机扫码打开页面并提交连接。
+3. 电脑上弹出 Touch ID 表单，写出设备自报的名称，确认是你正在连接的设备后允许。
+
+邀请默认授予查看、发起会话与批准操作；`pnpm latch device invite --scopes view,run,approve:standard,approve:elevated,admin` 可以加入管理权限。撤销某台设备时，由它邀请配对的设备降为仅查看，等待在桌面端复核。
 
 ## 启动参数与环境变量
 

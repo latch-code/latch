@@ -365,7 +365,7 @@ describe('composer choice', () => {
     ).toMatchObject({
       kind: 'model-required',
     })
-    // A configured service the Host holds back is named, with what it lacks, instead of asking for another service.
+    // A configured service the Host holds back is named, with what it lacks and the computer to do it on.
     const held = catalog({
       providers: [],
       unusableProviders: [
@@ -376,13 +376,13 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: held }), resolveChoice(held, standard))).toEqual({
       kind: 'model-required',
       message: '还没有可用的模型服务。「Ollama\\u{202E}」的地址还没有确认。',
-      hint: '在 Mac 上，打开 设置 › 模型 确认地址后即可开始。',
+      hint: '在 host 上，打开 设置 › 模型 确认地址后即可开始。',
       action: '打开模型服务',
     })
     const keyless = catalog({ providers: [], unusableProviders: [{ id: 'deepseek', name: 'DeepSeek', reason: 'key-missing' }] })
     expect(startBlock(snapshot({ catalog: keyless }), resolveChoice(keyless, standard))).toMatchObject({
       message: '还没有可用的模型服务。「DeepSeek」还没有填写密钥。',
-      hint: '在 Mac 上，打开 设置 › 模型 填写密钥后即可开始。',
+      hint: '在 host 上，打开 设置 › 模型 填写密钥后即可开始。',
     })
     // Agent harnesses bring their own models.
     expect(
