@@ -330,7 +330,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(page.url()).toBe('latch://app/link/')
       // The traffic lights sit inside the page's 52px title row, in its 78px inset, which no control overlaps.
       const lights = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getWindowButtonPosition())
-      expect(lights).toEqual({ x: 16, y: 18 })
+      expect(lights).toEqual({ x: 16, y: 27 })
       // The shell's facts and its actions (functions, so only their names or types cross back here); nothing else.
       expect(
         await page.evaluate(() => {

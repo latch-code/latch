@@ -149,10 +149,11 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
     // The window's own colour (--sidebar in @latch/ui), so the window shows no flash before the first paint.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#09090b' : '#ebebef',
     icon,
-    // The page's 52px title row holds the traffic lights in its 78px inset and moves the window; before the shell the
+    // The page's title row holds the traffic lights in its 78px inset and moves the window. Their centre is the work
+    // panel's title row's (8px inset + half of 52px), where the lead's buttons stand too; before the shell the
     // enrollment, connection and crash screens draw a strip of the same height. The local error page, which has neither,
     // keeps the standard bar.
-    ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 } } : {}),
+    ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 27 } } : {}),
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
       sandbox: true,

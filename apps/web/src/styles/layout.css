@@ -133,6 +133,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   --lead-inset: 78px;
 }
 /*
+ * The lights' centre is the panel's title row's (main.cjs), so beside them the lead's buttons stand on that line with the
+ * sidebar open too, as they do shut: twice the inset above leaves the rest of the 52px centred there.
+ */
+.titlebar[data-lights]:not([data-shut]) .titlebar-lead {
+  padding-top: calc(var(--shell-inset) * 2);
+}
+/*
  * Shut, the lead moves into the panel's title row and holds only ◧ and what the sidebar would otherwise offer, clear of
  * the panel's edge (or of the traffic lights, which float over its corner).
  */
