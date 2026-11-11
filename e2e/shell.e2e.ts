@@ -1,11 +1,13 @@
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { DeviceScope } from '@latch/protocol'
+import type { DeviceScope, TaskDetail } from '@latch/protocol'
+import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
 
 /** The frame of the shell at each width: the title row, the sidebar or the tab bar, and what moving to a page keeps. */
 describe('the shell', () => {
@@ -282,4 +284,167 @@ describe('the shell', () => {
     expect((await box(page, '.inspector-column')).width).toBeGreaterThanOrEqual(399)
     await page.context().close()
   })
+})
+
+/**
+ * The title row's ⋯ (and its title), a sidebar row's ⋯ and a phone row held down draw one menu: eight items for the open
+ * session, seven for any other row. While a turn runs, 清空上下文 and 删除 stay, greyed, with today's reasons.
+ */
+describe('the session menu', () => {
+  const OUTPUT = 'test-results/session-menu'
+  const OPEN = ['重命名', '置顶', '标为未读', '复制为 Markdown', '导出 Markdown', '清空上下文', '归档', '删除']
+  const OTHER = OPEN.filter(name => name !== '清空上下文')
+  let host: TestHost
+  let owner: TestDevice
+  let browser: Browser
+
+  beforeAll(async () => {
+    host = await startTestHost({ uiDir: resolve('dist/web') })
+    owner = await host.enroll({ listener: 'unix' })
+    await owner.json('agents', {
+      method: 'POST',
+      body: {
+        id: 'fake-agent',
+        name: 'Fake Agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume,close' },
+      },
+    })
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(OUTPUT, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+  })
+
+  const status = async (id: string) => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status
+  async function session(title: string): Promise<string> {
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'fake-agent', prompt: `echo ${title}`, requestId: randomUUID() },
+    })
+    await expect.poll(() => status(sessionId), { timeout: 15_000 }).toBe('idle')
+    await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title } })
+    return sessionId
+  }
+  /** Each item's name, and the reason under it when it is greyed. */
+  const items = (menu: Locator) =>
+    menu
+      .locator('[role="menuitem"]')
+      .evaluateAll(elements =>
+        elements.map(element =>
+          element.getAttribute('aria-disabled') === 'true'
+            ? `${element.getAttribute('data-label')}（${element.querySelector('.ui-menu-item-reason')?.textContent ?? ''}）`
+            : element.getAttribute('data-label'),
+        ),
+      )
+  const greyed = (names: string[]) =>
+    names.map(name =>
+      name === '清空上下文' ? `${name}（这一轮结束后才能清空上下文）` : name === '删除' ? `${name}（运行中的会话需要先停止）` : name,
+    )
+
+  for (const [width, height, theme] of [
+    [1440, 900, 'light'],
+    [768, 1024, 'dark'],
+    [390, 844, 'light'],
+  ] as const) {
+    it(`draws the same menu from the title row, the sidebar row and a phone row held down at ${width} ${theme}`, async () => {
+      const phone = width < 600
+      const tablet = !phone && width < 1024
+      const shown = `菜单 ${width} 打开的`
+      const other = `菜单 ${width} 另一个`
+      const shownId = await session(shown)
+      const otherId = await session(other)
+      const context = await browser.newContext({
+        viewport: { width, height },
+        colorScheme: theme,
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+        ...(phone ? { isMobile: true, hasTouch: true } : {}),
+      })
+      context.setDefaultTimeout(15_000)
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: `会话菜单 ${width}` })
+      await connected(page)
+      const list = async () => {
+        if (!tablet) return page.locator('#session-navigation')
+        const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
+        if ((await drawer.getAttribute('aria-expanded')) !== 'true') await drawer.click()
+        await page.locator('#session-navigation.is-open').waitFor()
+        await settleShell(page)
+        return page.locator('#session-navigation')
+      }
+      const shot = async (state: string) => {
+        await settleShell(page)
+        await page.screenshot({ path: `${OUTPUT}/${state}--${width}--${theme}.png` })
+      }
+      /** Opens a menu, reads it, shoots it and closes it again. */
+      const read = async (trigger: Locator, name: string, state: string) => {
+        await trigger.click()
+        const menu = page.getByRole('menu', { name, exact: true })
+        await menu.waitFor()
+        const names = await items(menu)
+        await shot(state)
+        await page.keyboard.press('Escape')
+        await menu.waitFor({ state: 'hidden' })
+        return names
+      }
+      const menus = async (running: boolean) => {
+        const state = running ? 'running' : 'idle'
+        const open = running ? greyed(OPEN) : OPEN
+        const rest = running ? greyed(OTHER) : OTHER
+        expect(await read(page.locator('.topbar .topbar-title-button'), `会话：${shown}`, `title-${state}`)).toEqual(open)
+        if (phone) {
+          await backToPhoneSessions(page)
+          // A row held down: the context-menu gesture is the hold's stand-in here.
+          const held = async (id: string, title: string) => {
+            await page.locator(`.phone-row[data-task-id="${id}"]`).click({ button: 'right' })
+            const sheet = page.getByRole('menu', { name: title, exact: true })
+            await sheet.waitFor()
+            const names = await items(sheet)
+            await shot(`held-${id === shownId ? 'open' : 'other'}-${state}`)
+            await page.keyboard.press('Escape')
+            await sheet.waitFor({ state: 'hidden' })
+            return names
+          }
+          // Back on the list no session is open, so its own row has seven items too.
+          expect(await page.locator(`.phone-row[data-task-id="${shownId}"]`).getAttribute('aria-current')).toBeNull()
+          expect(await held(shownId, shown)).toEqual(rest)
+          expect(await held(otherId, other)).toEqual(OTHER)
+          await page.locator(`.phone-row[data-task-id="${shownId}"]`).click()
+          await page.locator('.topbar[data-phone] .topbar-title-button').waitFor()
+          return
+        }
+        expect(
+          await read(page.locator('.topbar').getByRole('button', { name: '会话操作', exact: true }), '会话操作', `more-${state}`),
+        ).toEqual(open)
+        const row = async (title: string) => (await list()).getByRole('button', { name: `更多操作：${title}`, exact: true })
+        expect(await read(await row(shown), `会话操作：${shown}`, `row-open-${state}`)).toEqual(open)
+        expect(await read(await row(other), `会话操作：${other}`, `row-other-${state}`)).toEqual(OTHER)
+        if (tablet) {
+          await page.keyboard.press('Escape')
+          await page.locator('#session-navigation.is-open').waitFor({ state: 'detached' })
+        }
+      }
+
+      if (phone) await page.locator(`.phone-row[data-task-id="${shownId}"]`).click()
+      else await (await list()).locator(`[data-task-id="${shownId}"]`).click()
+      await page.locator('.transcript').getByText(`echo: echo ${shown}`).waitFor()
+      await menus(false)
+      // The menu never had 同步最新状态: a healthy connection has nothing to retry.
+      expect(await page.getByRole('menuitem', { name: '同步最新状态' }).count()).toBe(0)
+
+      await owner.json(`tasks/${shownId}/prompt`, { method: 'POST', body: { prompt: 'count 3000', requestId: randomUUID() } })
+      await expect.poll(() => status(shownId)).toBe('running')
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor()
+      await menus(true)
+      // Reading the menus left the session where it was: its transcript is the same element.
+      await page.locator('.transcript').getByText(`echo: echo ${shown}`).waitFor()
+      await owner.json(`tasks/${shownId}/cancel`, { method: 'POST', body: {} })
+      await expect.poll(() => status(shownId), { timeout: 15_000 }).not.toBe('running')
+      await context.close()
+    })
+  }
 })

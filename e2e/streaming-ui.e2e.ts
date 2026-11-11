@@ -535,13 +535,20 @@ describe('streamed messages in the real workspace', () => {
       expect(await renderedIds()).toEqual(expectedIds)
       expect(await originalRow!.evaluate(element => element.isConnected)).toBe(true)
 
-      // A manual resync from the session menu (the title's menu on a phone) must not duplicate committed rows.
+      // A manual resync must not duplicate committed rows. It is the connection's 重试, shown while the event stream
+      // cannot reconnect (it is held off here; the other requests still reach the Host).
+      await page.route('**/link/api/events**', route => route.abort())
+      await context.setOffline(true)
+      await context.setOffline(false)
+      const retry = page.locator('.topbar[data-phone] .connection-pill')
+      await retry.waitFor()
       const refreshed = page.waitForResponse(
         response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/link/api/tasks/${id}`,
       )
-      await page.locator('.topbar[data-phone] .topbar-title-button').click()
-      await page.getByRole('menuitem', { name: '同步最新状态', exact: true }).click()
+      await retry.click()
       await refreshed
+      await page.unroute('**/link/api/events**')
+      await connected(page)
       expect(await renderedIds()).toEqual(expectedIds)
       expect(new Set(await renderedIds()).size).toBe(expectedIds.length)
       expect((await host.bridge.detail(id)).messages).toEqual(authoritative.messages)

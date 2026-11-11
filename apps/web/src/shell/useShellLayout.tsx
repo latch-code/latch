@@ -10,7 +10,6 @@ import { fileContextKey } from '../preview/fileContext.ts'
 import { useAutoOpenOutputs } from '../hooks/useAutoOpenOutputs.ts'
 import type { ContextFileOpenTarget, FileContext } from '@latch/protocol'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { RefreshCw } from 'lucide-react'
 import type { SearchHit } from '@latch/protocol'
 import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from '../breakpoints.ts'
@@ -46,7 +45,6 @@ import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
-import { type MenuSection } from '../components/overlays.tsx'
 import { MOTION, usePresence, type ResizePhase } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController } from './useSessionController.ts'
@@ -816,21 +814,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         : null,
     [catalog?.features?.filePreview, changesTabReads, openChanges, columnOpen, shownChanges, tabFile],
   )
-  const syncSection: MenuSection = {
-    id: 'sync',
-    items: [
-      {
-        id: 'refresh',
-        label: '同步最新状态',
-        icon: RefreshCw,
-        onSelect: () => {
-          void resync()
-        },
-      },
-    ],
-  }
+  // The title, its ⋯ and the sidebar row draw the one session menu; 同步最新状态 lives in the connection's notice.
   const titleMenu = summary ? sessionMenu(summary) : []
-  const topMenu: MenuSection[] = summary ? [...titleMenu, syncSection] : [syncSection]
+  const topMenu = titleMenu
   const canStart = catalog !== undefined && (access.legacy || access.scopes.has('run'))
   const startIn = canStart
     ? (workspaceId: string) => {
@@ -1120,7 +1106,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     savedProject,
     project,
     demo,
-    syncSection,
     titleMenu,
     topMenu,
     canStart,

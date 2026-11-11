@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, GitFork, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
+import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
 import type { TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
@@ -8,7 +8,6 @@ export interface SessionActions {
   pin: () => void
   archive: () => void
   export: () => void
-  fork?: () => void
   /** The open session: its next prompt starts a new context, or (`clearing`) no longer does. */
   clear?: () => void
   clearing?: boolean
@@ -19,7 +18,13 @@ export interface SessionActions {
   remove: () => void
 }
 
-/** A Host without a catalog predates rename, pin, archive and delete, so only export remains there. */
+/**
+ * The one session menu: the title row's ⋯ (and its title), a sidebar row's ⋯ and a phone row held down all draw this.
+ * The open session has eight items; any other row seven, since only the open one can clear its context. While a turn
+ * runs or waits, 清空上下文 and 删除 stay in place, greyed, each with the reason under it. 同步最新状态 is not here: the
+ * connection's own notice retries. A Host without a catalog predates rename, pin, archive and delete, so only export
+ * remains there.
+ */
 export function sessionMenuSections(task: TaskSummary, actions: SessionActions, manage: boolean): MenuSection[] {
   const exportItem = { id: 'export', label: '导出 Markdown', icon: Download, onSelect: actions.export }
   if (!manage) return [{ id: 'manage', items: [exportItem] }]
@@ -36,10 +41,10 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: Copy, onSelect: actions.copy }] : []), exportItem],
     },
-    ...(actions.fork || actions.saveProject || actions.clear
+    ...(actions.saveProject || actions.clear
       ? [
           {
-            id: 'fork',
+            id: 'context',
             items: [
               ...(actions.clear
                 ? [
@@ -53,7 +58,6 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
                     },
                   ]
                 : []),
-              ...(actions.fork ? [{ id: 'fork', label: '从这里分叉', icon: GitFork, onSelect: actions.fork }] : []),
               ...(actions.saveProject ? [{ id: 'save-project', label: '存为项目…', icon: FolderPlus, onSelect: actions.saveProject }] : []),
             ],
           },

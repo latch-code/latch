@@ -1601,7 +1601,7 @@ describe('visual capture of the real product', () => {
       // Navigation on a phone: the session list is the root page.
       if (viewport.name === 'phone') await capturePhoneSessions(target, viewport)
 
-      // On a phone the title's menu holds the session's actions and 同步最新状态, as a sheet.
+      // On a phone the title's menu holds the session's actions, as a sheet; 同步最新状态 is the connection's 重试.
       if (viewport.name === 'phone') {
         await openSession(target, viewport, sessions.done)
         const title = target.locator('.topbar .topbar-title-button')
@@ -1609,8 +1609,9 @@ describe('visual capture of the real product', () => {
         await title.click()
         const menu = target.getByRole('menu', { name: /^会话：/ })
         await menu.waitFor()
-        for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除', '同步最新状态'])
+        for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
           await reachable(menu.getByRole('menuitem', { name, exact: true }))
+        expect(await menu.getByRole('menuitem', { name: '同步最新状态', exact: true }).count()).toBe(0)
         await settleMotion(target)
         await recorder.capture(target, viewport, 'session-menu', "the title's menu as a sheet")
         await target.keyboard.press('Escape')
@@ -1632,11 +1633,12 @@ describe('visual capture of the real product', () => {
         await target.keyboard.press('Escape')
         await menu.waitFor({ state: 'detached' })
         if (viewport.name === 'desktop') {
-          // ⋯ holds the same actions and 同步最新状态.
+          // ⋯ holds the same actions as the title.
           await target.locator('.topbar').getByRole('button', { name: '会话操作', exact: true }).click()
           const more = target.getByRole('menu', { name: '会话操作', exact: true })
-          for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除', '同步最新状态'])
+          for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
             await reachable(more.getByRole('menuitem', { name, exact: true }))
+          expect(await more.getByRole('menuitem', { name: '同步最新状态', exact: true }).count()).toBe(0)
           await recorder.capture(target, viewport, 'session-more-menu', "the top bar's ⋯ menu open")
           await target.keyboard.press('Escape')
           await more.waitFor({ state: 'detached' })

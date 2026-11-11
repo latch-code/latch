@@ -102,7 +102,7 @@ describe('top bar', () => {
   })
 
   it('heads a phone session page with the way back, the title over where it runs, and the panel toggle', () => {
-    const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
+    const menu = [{ id: 'manage', items: [{ id: 'rename', label: '重命名', onSelect: noop }] }]
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
         ...topBar,
@@ -115,7 +115,7 @@ describe('top bar', () => {
       }),
     )
     expect(html).toMatch(/^<header class="topbar" data-phone=""><button[^>]*aria-label="返回会话列表"/)
-    // The title opens the session's menu (a sheet on a phone), 同步最新状态 included.
+    // The title opens the session's menu (a sheet on a phone); 同步最新状态 is the connection notice's 重试, not an item.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
     expect(html).toMatch(
       /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span>/u,
@@ -126,7 +126,7 @@ describe('top bar', () => {
   })
 
   it('keeps a phone page header for a session the Host has not listed yet, with no menu or panel until it does', () => {
-    const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
+    const menu = [{ id: 'manage', items: [{ id: 'rename', label: '重命名', onSelect: noop }] }]
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
         ...topBar,

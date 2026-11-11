@@ -19,6 +19,7 @@ import { Icon, type LucideIcon } from '@latch/ui'
 import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
+import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { setPreference } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
@@ -167,7 +168,16 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     { id: 'new', label: '新会话', icon: glyph(SquarePen), root: true, ...keys('new'), run: startNew },
     ...(canViewChanges
-      ? [{ id: 'changes', label: '打开改动', icon: glyph(FileDiff), root: true, ...keys('changes'), run: inSession(openChangesTab) }]
+      ? [
+          {
+            id: 'changes',
+            label: APPROVAL_COPY.openChanges,
+            icon: glyph(FileDiff),
+            root: true,
+            ...keys('changes'),
+            run: inSession(openChangesTab),
+          },
+        ]
       : []),
     ...(drawerMode && route.entry !== 'sessions'
       ? []
