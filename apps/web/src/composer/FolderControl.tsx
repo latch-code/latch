@@ -50,11 +50,14 @@ function useWorktreeBase(projectId: string) {
   return { base, read }
 }
 
-/** Where it starts and what stays behind; a refusal says only why, as the item's reason. */
+/**
+ * What stays behind, then where it starts; a refusal says only why, as the item's reason. The line is one line
+ * that ends in an ellipsis, so the warning goes first and a long branch name is what gets cut.
+ */
 function worktreeLine(base: BaseState | undefined): string | undefined {
   if (base?.state === 'refused') return undefined
-  if (base?.state === 'ready') return `${baseWords(base.base)}。${WORKTREE_COPY.uncommitted}`
-  return `正在读取分支…${WORKTREE_COPY.uncommitted}`
+  if (base?.state === 'ready') return `${WORKTREE_COPY.uncommitted}${baseWords(base.base)}`
+  return `${WORKTREE_COPY.uncommitted}正在读取分支…`
 }
 
 /**

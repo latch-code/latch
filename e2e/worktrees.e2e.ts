@@ -17,6 +17,42 @@ const OUT = 'test-results/worktrees'
 const choice = (page: Page, name: RegExp): Locator =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
 
+const UNCOMMITTED = '未提交的改动不会带过去。'
+
+/**
+ * Opens the folder menu on the desktop and tablet, light and dark: 新工作树's one line starts with what stays behind,
+ * shown in full up to where the branch begins, so a long branch name is what the ellipsis cuts. Leaves it at 1280, light.
+ */
+async function warningInFull(page: Page, folder: Locator, worktree: Locator, from: string, long: boolean) {
+  for (const [width, height] of [
+    [1440, 900],
+    [768, 1024],
+  ] as const) {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme })
+      await folder.click()
+      const line = worktree.locator('.ui-menu-item-description')
+      await expect.poll(() => line.textContent()).toBe(`${UNCOMMITTED}${from}`)
+      const [shown, right, scrollWidth, clientWidth] = await line.evaluate((element, length) => {
+        const text = element.firstChild!
+        const range = document.createRange()
+        range.setStart(text, 0)
+        // The warning, 「从 」 and the branch's first letter: the ellipsis can only fall after them.
+        range.setEnd(text, length + 3)
+        return [range.getBoundingClientRect().right, element.getBoundingClientRect().right, element.scrollWidth, element.clientWidth]
+      }, UNCOMMITTED.length)
+      expect(shown).toBeLessThanOrEqual(right)
+      // The long name is in fact cut, and the short one is not.
+      expect(scrollWidth > clientWidth).toBe(long)
+      await page.screenshot({ path: `${OUT}/folder-menu-${long ? 'long' : 'short'}-branch--${width}--${colorScheme}.png` })
+      await page.keyboard.press('Escape')
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light' })
+}
+
 it('starts a session in a new worktree from the draft, keeps showing it, and says why when none can be made', async () => {
   await mkdir(OUT, { recursive: true })
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'latch-e2e-worktrees-')))
@@ -82,12 +118,13 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
       .click()
     await choice(page, /Qwen Code/u).click()
 
-    // The draft offers both places, the second with where it starts and what stays behind.
+    // The draft offers both places, the second with what stays behind and where it starts.
     const folder = page.getByRole('button', { name: /^文件夹：/u }).first()
     expect(await folder.getAttribute('aria-label')).toBe('文件夹：当前文件夹')
-    await folder.click()
     const worktree = choice(page, /新工作树/u)
-    await expect.poll(() => worktree.innerText()).toContain(`从 main 的 ${head}。未提交的改动不会带过去。`)
+    await warningInFull(page, folder, worktree, `从 main 的 ${head}`, false)
+    await folder.click()
+    await expect.poll(() => worktree.innerText()).toContain(`${UNCOMMITTED}从 main 的 ${head}`)
     await worktree.click()
     const row = page.locator('.composer-context').first()
     await expect.poll(() => row.innerText()).toContain(`从 main 的 ${head}`)
@@ -133,6 +170,14 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await expect.poll(() => worktree.getAttribute('aria-disabled')).toBe('true')
     expect(await worktree.innerText()).toContain('请把 includeIf 移到全局配置')
     await page.keyboard.press('Escape')
+
+    // Fixed, and on a long branch: the menu offers it again, and what stays behind still shows in full.
+    git('config', '--unset', 'includeIf.gitdir:/nowhere/.path')
+    const branch = 'feature/very-long-branch-name-for-the-folder-menu-layout-check'
+    // Without touching the working tree, where the configured filter would run.
+    git('branch', branch)
+    git('symbolic-ref', 'HEAD', `refs/heads/${branch}`)
+    await warningInFull(page, folder, worktree, `从 ${branch} 的 ${head}`, true)
     expect((await readdir(join(host.root, 'worktrees'))).filter(name => name !== '.metadata_never_index')).toHaveLength(1)
     expect(found).toEqual(found.map(() => 'qwen'))
     await context.close()
