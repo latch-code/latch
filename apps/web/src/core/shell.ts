@@ -126,6 +126,12 @@ export interface LatchShell {
    * the invitation. Absent in shells from before this action.
    */
   openInBrowser?: () => Promise<OpenInBrowserResult>
+  /**
+   * 「复制链接」 for another computer: main makes a one-time link on the HTTPS entry and puts it on the clipboard, which
+   * main clears after 10 minutes if it still holds it; the page never sees the link. Refusals include
+   * `tls-not-configured`. Absent in shells from before this action.
+   */
+  copyComputerLink?: () => Promise<OpenInBrowserResult>
   /** Absent in shells from before the desktop app ran the Host's lifecycle. */
   lifecycle?: {
     get(): Promise<ShellLifecycleResult>

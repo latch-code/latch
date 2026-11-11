@@ -56,6 +56,7 @@ interface ShellProxy {
   shellRequest(method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }>
   renew(): Promise<boolean>
   browserInvitation(): Promise<InvitationResult>
+  computerInvitation(): Promise<InvitationResult>
   startRenewalTimer(timers?: { setTimer?(callback: () => void, ms: number): unknown; clearTimer?(timer: unknown): void }): () => void
   state(): { renewAfter: number; retryAt: number; pendingEnrollments: number }
 }
@@ -93,14 +94,25 @@ const proxy = require('../src/proxy.cjs') as {
     log?(text: string): void
   }): (url: string, parent?: unknown, options?: { userGesture?: boolean }) => Promise<boolean>
   BROWSER_INVITATION: { target: string; scopes: string[] }
+  COMPUTER_INVITATION: { target: string; scopes: string[] }
+  COPIED_LINK_MS: number
   browserInvitationUrl(url: unknown, hostId: string): string | undefined
-  isRendererPairing(body: Buffer | undefined): boolean
+  computerInvitationUrl(url: unknown, origin: string): string | undefined
   isAppSender(event: unknown): boolean
   createBrowserOpener(options: {
     invite(): Promise<InvitationResult>
     open(url: string): Promise<unknown>
     platform: string
     log?(text: string): void
+  }): () => Promise<{ ok: true } | Exclude<InvitationResult, { ok: true }>>
+  concealedClipboardEntry(text: string): Record<string, string>
+  createLinkCopier(options: {
+    invite(): Promise<InvitationResult>
+    clipboard: { writeConcealed(text: string): Promise<void>; readText(): Promise<string>; clear(): void | Promise<void> }
+    platform: string
+    log?(text: string): void
+    setTimer?(callback: () => void, ms: number): unknown
+    clearTimer?(timer: unknown): void
   }): () => Promise<{ ok: true } | Exclude<InvitationResult, { ok: true }>>
   debugFlagProblems(argv: string[], env: Record<string, string | undefined>): string[]
   unexpectedArguments(args: string[]): string[]
@@ -230,6 +242,9 @@ async function fakeHost(now: () => number = Date.now) {
     onRenew: undefined as (() => void) | undefined,
     streamClosed: false,
     invitationUrl: `http://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
+    /** The HTTPS entry host-info reports, and the link a `tls` invitation answers with. */
+    tlsOrigin: null as string | null,
+    computerUrl: `https://latch.example.com:8443/link/#pair=lpi1-${'B'.repeat(26)}`,
   }
   const sendJson = (res: ServerResponse, status: number, value: unknown, headers: Record<string, string | string[]> = {}) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers })
@@ -381,7 +396,17 @@ async function fakeHost(now: () => number = Date.now) {
           sendJson(res, 401, { error: 'renewal-required', message: '设备凭据需要续期' })
           return
         }
-        sendJson(res, 201, { invitation: { url: state.invitationUrl } })
+        const tls = (JSON.parse(body || '{}') as { target?: string }).target === 'tls'
+        sendJson(res, 201, { invitation: { url: tls ? state.computerUrl : state.invitationUrl } })
+        return
+      }
+      if (req.method === 'GET' && url === '/link/api/host-info') {
+        const auth = authenticate(req)
+        if ('error' in auth) {
+          sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' })
+          return
+        }
+        sendJson(res, 200, { hostId: HOST_ID, tlsOrigin: state.tlsOrigin })
         return
       }
       if (url.startsWith('/link/api/')) {
@@ -677,6 +702,130 @@ describe('desktop shell policy', () => {
     })
     expect(await failing()).toMatchObject({ ok: false, error: 'browser-open-failed' })
     expect(logs.join('\n')).not.toContain('lpi1-')
+  })
+
+  it("accepts another computer's link only on the Host's HTTPS origin", () => {
+    const origin = 'https://latch.example.com:8443'
+    const valid = `${origin}/link/#pair=lpi1-${'A'.repeat(26)}`
+    expect(proxy.computerInvitationUrl(valid, origin)).toBe(valid)
+    expect(
+      proxy.computerInvitationUrl(`https://latch.example.com/link/#pair=lpi1-${'A'.repeat(26)}`, 'https://latch.example.com:443'),
+    ).toBe(`https://latch.example.com/link/#pair=lpi1-${'A'.repeat(26)}`)
+    for (const [raw, expected] of [
+      [`http://latch.example.com:8443/link/#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [valid, 'http://latch.example.com:8443'],
+      [`https://latch.example.com:9443/link/#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`https://evil.example.com:8443/link/#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`https://user@latch.example.com:8443/link/#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`${origin}/link/?pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`${origin}/link/?x=1#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`${origin}/link/api/#pair=lpi1-${'A'.repeat(26)}`, origin],
+      [`${origin}/link/#pair=lpo1-${'A'.repeat(26)}`, origin],
+      [`${origin}/link/#pair=lpi1-${'A'.repeat(26)}&x=1`, origin],
+      ['not a url', origin],
+      [valid, 'not a url'],
+      [undefined, origin],
+    ] as const) {
+      expect(proxy.computerInvitationUrl(raw, expected), `${String(raw)} ${expected}`).toBeUndefined()
+    }
+  })
+
+  it('copies the link as one concealed entry on macOS, one attempt at a time, and clears it after 10 minutes only if it is still there', async () => {
+    const url = `https://latch.example.com:8443/link/#pair=lpi1-${'A'.repeat(26)}`
+    expect(proxy.concealedClipboardEntry(url)).toEqual({
+      'text/plain': url,
+      'electron application/osclipboard;format="org.nspasteboard.ConcealedType"': '',
+    })
+    let board = 'before'
+    let clears = 0
+    const clipboard = {
+      writeConcealed: async (text: string) => {
+        board = text
+      },
+      readText: async () => board,
+      clear: () => {
+        clears++
+        board = ''
+      },
+    }
+    const timers: { callback: () => void; ms: number; cleared: boolean }[] = []
+    const setTimer = (callback: () => void, ms: number) => {
+      const timer = { callback, ms, cleared: false }
+      timers.push(timer)
+      return timer
+    }
+    const clearTimer = (timer: unknown) => {
+      ;(timer as { cleared: boolean }).cleared = true
+    }
+    let invitations = 0
+    let release: (() => void) | undefined
+    const invite = async () => {
+      invitations++
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return { ok: true as const, url }
+    }
+    const other = proxy.createLinkCopier({ invite, clipboard, platform: 'linux', setTimer, clearTimer })
+    expect(await other()).toMatchObject({ ok: false, error: 'copy-link-unsupported' })
+    expect(invitations).toBe(0)
+
+    const copy = proxy.createLinkCopier({ invite, clipboard, platform: 'darwin', setTimer, clearTimer })
+    const first = copy()
+    const second = copy()
+    await vi.waitFor(() => expect(invitations).toBe(1))
+    release?.()
+    expect(await first).toEqual({ ok: true })
+    expect(await second).toEqual({ ok: true })
+    expect(board).toBe(url)
+    expect(timers).toHaveLength(1)
+    expect(timers[0]!.ms).toBe(10 * 60 * 1000)
+    expect(proxy.COPIED_LINK_MS).toBe(10 * 60 * 1000)
+
+    // Something else copied since: the clipboard is left alone.
+    board = 'the owner copied this'
+    timers[0]!.callback()
+    await Promise.resolve()
+    await vi.waitFor(() => expect(board).toBe('the owner copied this'))
+    expect(clears).toBe(0)
+
+    // A second press restarts the wait; the clipboard still holds the link when it ends, so it is cleared.
+    const again = copy()
+    await vi.waitFor(() => expect(invitations).toBe(2))
+    release?.()
+    expect(await again).toEqual({ ok: true })
+    const third = copy()
+    await vi.waitFor(() => expect(invitations).toBe(3))
+    release?.()
+    expect(await third).toEqual({ ok: true })
+    expect(timers).toHaveLength(3)
+    expect(timers[1]!.cleared).toBe(true)
+    timers[2]!.callback()
+    await vi.waitFor(() => expect(clears).toBe(1))
+    expect(board).toBe('')
+
+    const refused = { ok: false as const, status: 409, error: 'tls-not-configured', message: 'x' }
+    const notConfigured = proxy.createLinkCopier({ invite: async () => refused, clipboard, platform: 'darwin', setTimer, clearTimer })
+    expect(await notConfigured()).toEqual(refused)
+    expect(board).toBe('')
+
+    const logs: string[] = []
+    const failing = proxy.createLinkCopier({
+      invite: async () => ({ ok: true as const, url }),
+      clipboard: {
+        ...clipboard,
+        writeConcealed: async text => {
+          throw new Error(`cannot write ${text}`)
+        },
+      },
+      platform: 'darwin',
+      log: text => logs.push(text),
+      setTimer,
+      clearTimer,
+    })
+    expect(await failing()).toEqual({ ok: false, status: 502, error: 'copy-link-failed', message: '无法复制链接，请重试。' })
+    expect(logs.join('\n')).not.toContain('lpi1-')
+    expect(timers).toHaveLength(3)
   })
 
   it('reports debugging switches from argv, NODE_OPTIONS and ELECTRON_RUN_AS_NODE', () => {
@@ -1406,10 +1555,10 @@ describe('desktop shell proxy', () => {
     context.host.state.revoked.add(context.store.current()!.deviceId)
     time += 25 * HOUR
     const before = context.host.seen.length
-    const response = await context.request('/link/api/pairings', {
+    const response = await context.request('/link/api/tasks', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{"scopes":["admin"]}',
+      body: '{}',
     })
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual(NOT_ENROLLED)
@@ -1665,34 +1814,60 @@ describe('desktop shell proxy', () => {
     expect(context.store.current()).toBeUndefined()
   })
 
-  it("forwards the page's request for a phone invitation, never one for this computer's browser", async () => {
+  it("never forwards the page's own request for a device link, whatever it asks for", async () => {
     const context = await shell()
     await enroll(context)
     const post = (path: string, body?: string) =>
       context.request(path, { method: 'POST', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body }) })
     const before = context.host.seen.length
     for (const [path, body] of [
+      ['/link/api/pairings', undefined],
+      ['/link/api/pairings', '{}'],
+      ['/link/api/pairings', '{"target":"tls"}'],
+      ['/link/api/pairings', '{"target":"tls","scopes":["view","run"]}'],
       ['/link/api/pairings', '{"target":"loopback"}'],
-      ['/link/api/pairings', '{"target":"loopback","scopes":["view"]}'],
-      // JSON.parse keeps the last duplicate, as the Host's parser does.
-      ['/link/api/pairings', '{"target":"tls","target":"loopback"}'],
-      ['/link/api//pairings/', '{"target":"loopback"}'],
-      ['/link/api/%70airings', '{"target":"loopback"}'],
-      ['/link/api/pairings', '{"target":"Loopback"}'],
-      ['/link/api/pairings', '{"target":null}'],
-      ['/link/api/pairings', '[]'],
+      ['/link/api/pairings', '{"target":"loopback","target":"tls"}'],
+      ['/link/api//pairings/', '{"target":"tls"}'],
+      ['/link/api/%70airings', '{}'],
       ['/link/api/pairings', 'not json'],
     ] as const) {
       const response = await post(path, body)
       expect(response.status, `${path} ${body}`).toBe(403)
-      expect(await response.json()).toEqual({ error: 'shell-managed', message: '这台电脑上浏览器的链接由 Latch 桌面端直接交给浏览器' })
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '设备链接只由 Latch 桌面端申请' })
     }
     expect(context.host.seen).toHaveLength(before)
-    for (const body of [undefined, '{}', '{"target":"tls","scopes":["view","run"]}'])
-      expect((await post('/link/api/pairings', body)).status).toBe(201)
-    expect(context.host.seen.slice(before).map(item => item.body)).toEqual(['', '{}', '{"target":"tls","scopes":["view","run"]}'])
-    expect(proxy.isRendererPairing(undefined)).toBe(true)
-    expect(proxy.isRendererPairing(Buffer.from('{"target":"loopback"}'))).toBe(false)
+  })
+
+  it("makes another computer's link only on the Host's HTTPS entry, and refuses a Host without one", async () => {
+    const context = await shell()
+    expect(await context.handler.computerInvitation()).toMatchObject({ ok: false, status: 401, error: 'unauthorized' })
+    await enroll(context)
+    const before = context.host.seen.length
+    expect(await context.handler.computerInvitation()).toEqual({
+      ok: false,
+      status: 409,
+      error: 'tls-not-configured',
+      message: '尚未配置 HTTPS 入口，无法生成链接',
+    })
+    // No invitation is spent on a Host that cannot be reached over HTTPS.
+    expect(context.host.seen.slice(before).map(item => item.url)).toEqual(['/link/api/host-info'])
+
+    context.host.state.tlsOrigin = 'https://latch.example.com:8443'
+    expect(await context.handler.computerInvitation()).toEqual({ ok: true, url: context.host.state.computerUrl })
+    const pairing = context.host.seen.filter(item => item.url === '/link/api/pairings').at(-1)!
+    expect(pairing.headers.authorization).toBe(`Latch-Device ${context.store.current()!.credential}`)
+    expect(JSON.parse(pairing.body)).toEqual({ target: 'tls', scopes: proxy.BROWSER_INVITATION.scopes })
+    expect(proxy.COMPUTER_INVITATION.scopes).not.toContain('admin')
+
+    context.host.state.computerUrl = `https://other.example.com:8443/link/#pair=lpi1-${'B'.repeat(26)}`
+    expect(await context.handler.computerInvitation()).toMatchObject({ ok: false, error: 'copy-link-failed' })
+    context.host.state.renewalRequired.add(context.store.current()!.deviceId)
+    context.host.state.computerUrl = `https://latch.example.com:8443/link/#pair=lpi1-${'C'.repeat(26)}`
+    expect(await context.handler.computerInvitation()).toEqual({ ok: true, url: context.host.state.computerUrl })
+    context.host.state.revoked.add(context.store.current()!.deviceId)
+    expect(await context.handler.computerInvitation()).toMatchObject({ ok: false, status: 401, error: 'device-revoked' })
+    expect(context.store.current()).toBeUndefined()
+    expect(context.logs.join('\n')).not.toContain('lpi1-')
   })
 
   it('forgets the device when the Host reports it revoked, then passes the 401 through', async () => {
@@ -1828,6 +2003,57 @@ describe('desktop shell against the Host', () => {
     const browser = await testHost.enroll({ invitation, scopes: ['view', 'run'] })
     expect(browser.device).toMatchObject({ listener: 'loopback-tcp', pairedBy: { method: 'invitation', deviceId: desktop.deviceId } })
     expect(testHost.presence.requests.at(-1)!.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面端' })
+  })
+})
+
+describe("desktop shell's link for another computer against the Host", () => {
+  async function enrolledShell(tls: boolean) {
+    const testHost = await startTestHost({ tls })
+    cleanups.push(() => testHost.close())
+    const { host } = testHost
+    const store = await credentials.openCredentialStore({
+      directory: join(await directory(), 'latch-devices'),
+      hostId: host.hostId,
+      safeStorage: fakeSafeStorage(),
+    })
+    const handler = proxy.createShellProxy({ hostId: host.hostId, store, log: () => {}, resolveSocket: async () => host.socketPath })
+    const request = (path: string, init: RequestInit = {}) => handler.handle(new Request(`latch://app${path}`, init))
+    const created = await request('/link/api/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '桌面端' }),
+    })
+    const { enrollment } = (await created.json()) as { enrollment: { id: string } }
+    await vi.waitFor(async () => {
+      const status = await request(`/link/api/enrollments/${enrollment.id}`)
+      expect(((await status.json()) as { enrollment: { status: string } }).enrollment.status).toBe('approved')
+    })
+    expect((await request(`/link/api/enrollments/${enrollment.id}/complete`, { method: 'POST', body: '{}' })).status).toBe(200)
+    return { testHost, host, store, handler, request }
+  }
+
+  it('gets a one-time link on the HTTPS entry over host.sock that enrolls a browser on that entry', async () => {
+    const { testHost, host, store, handler, request } = await enrolledShell(true)
+    const result = await handler.computerInvitation()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.url).toMatch(new RegExp(`^${host.tlsOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
+    expect(host.security.audit.lastOf('pairing.invited')).toMatchObject({
+      actor: { deviceId: store.current()!.deviceId, listener: 'unix' },
+      detail: { scopes: ['view', 'run', 'approve:standard', 'approve:elevated'], listener: 'lan-tls' },
+    })
+    const invitation = new URL(result.url).hash.slice('#pair='.length)
+    const browser = await testHost.enroll({ listener: 'tls', invitation, scopes: ['view', 'run'] })
+    expect(browser.device).toMatchObject({ listener: 'lan-tls' })
+    // The page cannot ask for one itself.
+    const own = await request('/link/api/pairings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    expect(own.status).toBe(403)
+  })
+
+  it('refuses before making an invitation when the Host has no HTTPS entry', async () => {
+    const { host, handler } = await enrolledShell(false)
+    const before = host.security.audit.lastOf('pairing.invited')
+    expect(await handler.computerInvitation()).toMatchObject({ ok: false, status: 409, error: 'tls-not-configured' })
+    expect(host.security.audit.lastOf('pairing.invited')).toEqual(before)
   })
 })
 

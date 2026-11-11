@@ -158,7 +158,7 @@ function diskPaths(files) {
   return paths
 }
 
-// The channels are OPEN_IN_BROWSER in proxy.cjs, LIFECYCLE_CHANNELS in lifecycle.cjs and CHANNELS in browser.cjs, which
+// The channels are OPEN_IN_BROWSER and COPY_COMPUTER_LINK in proxy.cjs, LIFECYCLE_CHANNELS in lifecycle.cjs and CHANNELS in browser.cjs, which
 // a sandboxed preload cannot load, and the latch:folders:* handlers in main.cjs; main accepts each only from the
 // latch://app/ page in a window's top frame.
 contextBridge.exposeInMainWorld(
@@ -199,6 +199,8 @@ contextBridge.exposeInMainWorld(
     }),
     // Main makes a one-time invitation and opens the browser with it; the renderer only learns whether that worked.
     openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),
+    // Main makes a one-time link for another computer and puts it on the clipboard; the renderer never sees the link.
+    copyComputerLink: () => ipcRenderer.invoke('latch:copy-computer-link'),
     // Login item, keeping the Mac awake and the Host's restarts (Settings › 通用); main owns all of them.
     lifecycle: Object.freeze({
       get: () => ipcRenderer.invoke('latch:lifecycle'),

@@ -343,6 +343,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             notifications: Object.keys(shell.notifications as object),
             browser: Object.keys(shell.browser as object),
             openInBrowser: typeof shell.openInBrowser,
+            copyComputerLink: typeof shell.copyComputerLink,
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
           }
         }),
@@ -353,6 +354,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         previews: { protocolVersion: 1, htmlScripts: true },
         folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'saveSessionFolder'],
         openInBrowser: 'function',
+        copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
         files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
@@ -508,6 +510,38 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect((await externalLinks()).asked).toHaveLength(2)
       expect(application.windows()).toHaveLength(1)
       expect(counter.connections()).toBe(0)
+
+      // 「复制链接」 for another computer: main gets a one-time invitation on the HTTPS entry and writes the link as one
+      // concealed clipboard entry (recorded here instead of the real clipboard); the page learns only the outcome.
+      await application.evaluate(({ clipboard }) => {
+        const copied: { types: string[]; text: string }[] = []
+        Object.assign(globalThis, { copied })
+        clipboard.write = async items => {
+          for (const item of items) copied.push({ types: [...item.types], text: await ((await item.getType('text/plain')) as Blob).text() })
+        }
+        clipboard.readText = async () => ''
+        clipboard.clear = () => {}
+      })
+      const copyResult = await page.evaluate(() =>
+        (globalThis as unknown as { latchShell: { copyComputerLink(): Promise<unknown> } }).latchShell.copyComputerLink(),
+      )
+      expect(copyResult).toEqual({ ok: true })
+      const copied = await application.evaluate(() => (globalThis as unknown as { copied: { types: string[]; text: string }[] }).copied)
+      expect(copied).toHaveLength(1)
+      expect(copied[0]!.types).toEqual(['text/plain', 'electron application/osclipboard;format="org.nspasteboard.ConcealedType"'])
+      expect(copied[0]!.text).toMatch(new RegExp(`^${host.tlsOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
+      expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain('lpi1-')
+      // The page cannot ask the Host for a link of its own, for any target.
+      const ownLink = await page.evaluate(async () => {
+        const response = await fetch('/link/api/pairings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{"target":"tls"}',
+        })
+        return { status: response.status, body: await response.text() }
+      })
+      expect(ownLink.status).toBe(403)
+      expect(ownLink.body).not.toContain('lpi1-')
 
       // 「在浏览器中打开」: main gets a one-time loopback invitation with the shell's credential and gives the
       // link to the default browser (recorded instead of opened) without a dialog; the page never sees the invitation.

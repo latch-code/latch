@@ -13,6 +13,8 @@ if (typeof electron === 'string' || !electron.app) {
 const {
   app,
   BrowserWindow,
+  clipboard,
+  ClipboardItem,
   dialog,
   ipcMain,
   nativeImage,
@@ -58,7 +60,10 @@ const {
   HTML_CSP,
   createDialogGate,
   OPEN_IN_BROWSER,
+  COPY_COMPUTER_LINK,
   createBrowserOpener,
+  createLinkCopier,
+  concealedClipboardEntry,
   createExternalGesture,
   createExternalOpener,
   createShellProxy,
@@ -557,6 +562,20 @@ async function start() {
     isAppSender(event)
       ? openInBrowser()
       : { ok: false, status: 403, error: 'browser-open-failed', message: '无法在浏览器中打开 Latch，请重试。' },
+  )
+  // 「复制链接」 for another computer: main makes the invitation and puts the link on the clipboard, concealed.
+  const copyComputerLink = createLinkCopier({
+    invite: () => proxy.computerInvitation(),
+    clipboard: {
+      writeConcealed: text => clipboard.write([new ClipboardItem(concealedClipboardEntry(text))]),
+      readText: () => clipboard.readText(),
+      clear: () => clipboard.clear(),
+    },
+    platform: process.platform,
+    log,
+  })
+  ipcMain.handle(COPY_COMPUTER_LINK, event =>
+    isAppSender(event) ? copyComputerLink() : { ok: false, status: 403, error: 'copy-link-failed', message: '无法复制链接，请重试。' },
   )
   handleFiles(proxy)
   handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })

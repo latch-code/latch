@@ -1,7 +1,8 @@
 'use strict'
 // The `latch://app/` scheme handler. Every renderer request is forwarded to the Host over host.sock;
 // main adds the device credential and keeps keys, signatures and credentials out of the renderer. The credential
-// routes and the file routes (which answer with real paths) are main's own: the renderer gets 403 shell-managed.
+// routes, device links (POST /link/api/pairings) and the file routes (which answer with real paths) are main's own:
+// the renderer gets 403 shell-managed.
 // The exported helpers are pure so they can be unit-tested without Electron.
 const { createHash } = require('node:crypto')
 const { socketRequest, readBody } = require('./host.cjs')
@@ -32,9 +33,11 @@ const NOT_ENROLLED = '请先在本机确认这台设备'
 const EXTERNAL_URL_LIMIT = 2048
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304])
 const CLEARING_CODES = new Set(['device-revoked', 'credential-expired', 'listener-mismatch'])
-/** The one message the renderer may send to main: open this Host's page in the default browser. */
+/** The messages for links: open this Host's page in the default browser; copy a link for another computer. */
 const OPEN_IN_BROWSER = 'latch:open-in-browser'
+const COPY_COMPUTER_LINK = 'latch:copy-computer-link'
 const PAIRINGS_PATH = '/link/api/pairings'
+const HOST_INFO_PATH = '/link/api/host-info'
 /**
  * What a browser on this computer may ask for at enrollment; the Host confirms whatever it does ask for. It starts without
  * 管理此 Host because the loopback port may be forwarded and the desktop app can raise it later on the 手机 page.
@@ -44,9 +47,16 @@ const BROWSER_INVITATION = Object.freeze({
   target: 'loopback',
   scopes: Object.freeze(['view', 'run', 'approve:standard', 'approve:elevated']),
 })
+/** What another computer's browser may ask for: the same scopes, through the Host's HTTPS entry. */
+const COMPUTER_INVITATION = Object.freeze({ target: 'tls', scopes: BROWSER_INVITATION.scopes })
 const INVITATION_FRAGMENT = /^#pair=lpi1-[A-Z2-7]{26}$/
+/** The Host's invitation lifetime (INVITATION_LIFETIME in apps/host/src/auth.ts): the copied link is dead by then. */
+const COPIED_LINK_MS = 10 * 60 * 1000
+/** The nspasteboard.org convention: clipboard managers and history tools do not keep an entry carrying this type. */
+const CONCEALED_FORMAT = 'electron application/osclipboard;format="org.nspasteboard.ConcealedType"'
 const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
-const BROWSER_LINK_MANAGED = '这台电脑上浏览器的链接由 Latch 桌面端直接交给浏览器'
+const LINK_MANAGED = '设备链接只由 Latch 桌面端申请'
+const COPY_FAILED = '无法复制链接，请重试。'
 const DROPPED_REQUEST_HEADERS = new Set([
   'cookie',
   'authorization',
@@ -233,6 +243,24 @@ function browserInvitationUrl(raw, hostId) {
   return url.href
 }
 
+/**
+ * A link for another computer, accepted only as the Host's HTTPS origin (as host-info reports it) with path `/link/`
+ * and an invitation fragment of the form `browserInvitationUrl` accepts.
+ */
+function computerInvitationUrl(raw, origin) {
+  let url
+  let expected
+  try {
+    url = new URL(raw)
+    expected = new URL(origin)
+  } catch {
+    return undefined
+  }
+  if (expected.protocol !== 'https:' || url.protocol !== 'https:' || url.origin !== expected.origin) return undefined
+  if (url.username || url.password || url.pathname !== '/link/' || url.search || !INVITATION_FRAGMENT.test(url.hash)) return undefined
+  return url.href
+}
+
 /** An IPC message counts only from the app page in a window's top frame, never from a subframe or another origin. */
 function isAppSender(event) {
   const frame = event?.senderFrame
@@ -272,6 +300,63 @@ function createBrowserOpener({ invite, open, platform, log = () => {} }) {
       opening = undefined
     })
     return opening
+  }
+}
+
+/** One clipboard entry: the link as plain text, marked concealed. Main passes it to `new ClipboardItem()`. */
+function concealedClipboardEntry(text) {
+  return { 'text/plain': text, [CONCEALED_FORMAT]: '' }
+}
+
+/**
+ * 「复制链接」 for another computer. Main asks the Host for a one-time invitation on its HTTPS entry and writes the link
+ * to the clipboard as one concealed entry; the renderer only learns the outcome. When the invitation has expired, main
+ * clears the clipboard if it still holds exactly that link: only the link's SHA-256 is kept for that check. macOS only,
+ * like the browser opener, since the concealed type is a macOS convention. Concurrent calls share one attempt.
+ * @param {object} options
+ * @param {() => Promise<{ ok: true, url: string } | { ok: false, status: number, error: string, message: string }>} options.invite
+ * @param {{ writeConcealed(text: string): Promise<void>, readText(): Promise<string>, clear(): void | Promise<void> }} options.clipboard
+ * @param {string} options.platform
+ * @param {(message: string) => void} [options.log]
+ * @param {(callback: () => void, ms: number) => any} [options.setTimer]  a fake clock in tests
+ * @param {(timer: any) => void} [options.clearTimer]
+ */
+function createLinkCopier({ invite, clipboard, platform, log = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let copying
+  let clearing
+  const digest = text => createHash('sha256').update(text).digest('hex')
+  async function clearIfStill(expected) {
+    try {
+      const text = await clipboard.readText()
+      if (typeof text === 'string' && digest(text) === expected) await clipboard.clear()
+    } catch {
+      log('无法清除剪贴板中的设备链接')
+    }
+  }
+  return function copyLink() {
+    if (platform !== 'darwin')
+      return Promise.resolve(refusal(409, 'copy-link-unsupported', '此系统上不能从桌面端复制链接，请运行 pnpm latch device invite。'))
+    copying ??= (async () => {
+      try {
+        const result = await invite()
+        if (!result.ok) return result
+        await clipboard.writeConcealed(result.url)
+        const expected = digest(result.url)
+        if (clearing !== undefined) clearTimer(clearing)
+        clearing = setTimer(() => {
+          clearing = undefined
+          void clearIfStill(expected)
+        }, COPIED_LINK_MS)
+        return { ok: /** @type {true} */ (true) }
+      } catch {
+        // The error could repeat the link, so only a fixed line is logged.
+        log('无法复制设备链接')
+        return refusal(502, 'copy-link-failed', COPY_FAILED)
+      }
+    })().finally(() => {
+      copying = undefined
+    })
+    return copying
   }
 }
 
@@ -423,24 +508,6 @@ function classifyRoute(method, pathname) {
   return route
 }
 
-/**
- * Whether main forwards the renderer's request for an invitation. The page shows a phone's invitation as a QR code, so
- * it may ask for one; an invitation for this computer's browser is main's alone (「在这台电脑的浏览器中打开」), and the
- * page never holds one. A body main cannot read as a JSON object is refused rather than guessed at.
- * @param {Buffer | undefined} body
- */
-function isRendererPairing(body) {
-  if (!body || body.length === 0) return true
-  let value
-  try {
-    value = JSON.parse(body.toString('utf8'))
-  } catch {
-    return false
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return value.target === undefined || value.target === 'tls'
-}
-
 function forwardRequestHeaders(headers, credential) {
   const result = {}
   for (const [name, value] of new Headers(headers)) {
@@ -522,7 +589,7 @@ function escapeHtml(text) {
 }
 
 function htmlErrorPage(message) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#18181b;background:#f7f7f8}@media (prefers-color-scheme:dark){body{color:#f4f4f5;background:#0a0a0b}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#18181b;background:#EBEBEF}@media (prefers-color-scheme:dark){body{color:#f4f4f5;background:#09090B}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
 }
 
 function unavailableResponse(pathname) {
@@ -738,37 +805,71 @@ function createShellProxy(options) {
   }
 
   /**
-   * A one-time invitation for a browser on this computer, made over host.sock with the shell's own credential. Renews
-   * once on renewal-required, and forgets a credential the Host reports revoked or expired, as forwarding does.
+   * One of main's own Host calls with the shell's credential (`send(credential)` answers buffered). Renews once on
+   * renewal-required, and forgets a credential the Host reports revoked or expired, as forwarding does. Anything but
+   * `status` comes back as a refusal carrying the Host's code and message.
    */
-  async function browserInvitation() {
-    try {
-      if (!store.current()) return refusal(401, 'unauthorized', NOT_ENROLLED)
-      if (renewAfter !== 0 && renewDue()) await renew()
-      for (let attempt = 0; ; attempt++) {
-        const used = store.current()?.credential
-        if (used === undefined) return refusal(401, 'unauthorized', NOT_ENROLLED)
-        const result = await control(PAIRINGS_PATH, used, BROWSER_INVITATION)
-        if (result.status === 201) {
-          const url = browserInvitationUrl(result.json?.invitation?.url, hostId)
-          return url ? { ok: /** @type {true} */ (true), url } : refusal(502, 'browser-open-failed', '无法在浏览器中打开 Latch，请重试。')
-        }
-        const action = authFailureAction(result.status, result.json)
-        if (action === 'renew' && attempt === 0) {
-          const latest = store.current()?.credential
-          if ((latest !== undefined && latest !== used) || (await renewUnlessWaiting())) continue
-        }
-        if (action === 'clear') await forget(used)
-        const body = result.json && typeof result.json === 'object' ? result.json : {}
-        return refusal(
+  async function shellCall(send, status) {
+    if (!store.current()) return { refused: refusal(401, 'unauthorized', NOT_ENROLLED) }
+    if (renewAfter !== 0 && renewDue()) await renew()
+    for (let attempt = 0; ; attempt++) {
+      const used = store.current()?.credential
+      if (used === undefined) return { refused: refusal(401, 'unauthorized', NOT_ENROLLED) }
+      const result = await send(used)
+      if (result.status === status) return { result }
+      const action = authFailureAction(result.status, result.json)
+      if (action === 'renew' && attempt === 0) {
+        const latest = store.current()?.credential
+        if ((latest !== undefined && latest !== used) || (await renewUnlessWaiting())) continue
+      }
+      if (action === 'clear') await forget(used)
+      const body = result.json && typeof result.json === 'object' ? result.json : {}
+      return {
+        refused: refusal(
           result.status,
           typeof body.error === 'string' ? body.error : 'request-failed',
           typeof body.message === 'string' ? body.message : '',
           typeof body.retryAfter === 'number' ? { retryAfter: body.retryAfter } : {},
-        )
+        ),
       }
+    }
+  }
+
+  /** A one-time invitation for a browser on this computer, made over host.sock with the shell's own credential. */
+  async function browserInvitation() {
+    try {
+      const { result, refused } = await shellCall(used => control(PAIRINGS_PATH, used, BROWSER_INVITATION), 201)
+      if (refused) return refused
+      const url = browserInvitationUrl(result.json?.invitation?.url, hostId)
+      return url ? { ok: /** @type {true} */ (true), url } : refusal(502, 'browser-open-failed', '无法在浏览器中打开 Latch，请重试。')
     } catch (error) {
       log(`生成浏览器链接失败：${error instanceof Error ? error.message : '未知错误'}`)
+      return refusal(502, 'host-unavailable', HOST_UNAVAILABLE)
+    }
+  }
+
+  /**
+   * A one-time invitation for another computer's browser, on the Host's HTTPS entry: main first reads that entry's
+   * origin from host-info, and accepts only a link on it. A Host without the entry is refused before any invitation.
+   */
+  async function computerInvitation() {
+    try {
+      const headers = { accept: 'application/json' }
+      const info = await shellCall(
+        async used =>
+          bufferUpstream(await upstream('GET', HOST_INFO_PATH, forwardRequestHeaders(headers, used), undefined, CONTROL_TIMEOUT_MS)),
+        200,
+      )
+      if (info.refused) return info.refused
+      const origin = info.result.json?.hostId === hostId ? info.result.json.tlsOrigin : undefined
+      if (typeof origin !== 'string') return refusal(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成链接')
+      const { result, refused } = await shellCall(used => control(PAIRINGS_PATH, used, COMPUTER_INVITATION), 201)
+      if (refused) return refused
+      const url = computerInvitationUrl(result.json?.invitation?.url, origin)
+      return url ? { ok: /** @type {true} */ (true), url } : refusal(502, 'copy-link-failed', COPY_FAILED)
+    } catch {
+      // A fixed line: nothing from the answer, which may carry the link.
+      log('生成另一台电脑的链接失败')
       return refusal(502, 'host-unavailable', HOST_UNAVAILABLE)
     }
   }
@@ -887,8 +988,12 @@ function createShellProxy(options) {
     const pluginDraft =
       (request.method === 'POST' && target.pathname === '/link/api/plugin-packages')
       || (request.method === 'PUT' && /^\/link\/api\/plugin-packages\/[A-Za-z0-9_-]{1,64}$/u.test(target.pathname))
+    // Every link to connect a device is main's: the phone sheet asks native/pairings, and main asks this route itself.
+    if (route.pairing) {
+      await discardRequestBody(request)
+      return errorResponse(403, 'shell-managed', LINK_MANAGED)
+    }
     const body = await readRequestBody(request, pluginDraft ? PLUGIN_DRAFT_BODY_LIMIT : REQUEST_BODY_LIMIT)
-    if (route.pairing && !isRendererPairing(body)) return errorResponse(403, 'shell-managed', BROWSER_LINK_MANAGED)
     if (renewAfter !== 0 && renewDue()) await renew()
     let used = store.current()?.credential
     const send = () => {
@@ -1059,6 +1164,7 @@ function createShellProxy(options) {
     shellRequest,
     renew,
     browserInvitation,
+    computerInvitation,
     startRenewalTimer,
     /** Test and diagnostics view; never contains keys or credentials. */
     state() {
@@ -1071,7 +1177,10 @@ module.exports = {
   APP_ORIGIN,
   HTML_CSP,
   OPEN_IN_BROWSER,
+  COPY_COMPUTER_LINK,
   BROWSER_INVITATION,
+  COMPUTER_INVITATION,
+  COPIED_LINK_MS,
   REQUEST_BODY_LIMIT,
   UPLOAD_BODY_LIMIT,
   RENEW_INTERVAL_MS,
@@ -1090,9 +1199,11 @@ module.exports = {
   createExternalGesture,
   createExternalOpener,
   browserInvitationUrl,
-  isRendererPairing,
+  computerInvitationUrl,
   isAppSender,
   createBrowserOpener,
+  concealedClipboardEntry,
+  createLinkCopier,
   debugFlagProblems,
   unexpectedArguments,
   upstreamTarget,

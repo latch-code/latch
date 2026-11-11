@@ -42,7 +42,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 层 | 职责 | 源码 |
 | --- | --- | --- |
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
-| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
+| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
@@ -401,7 +401,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `PATCH /devices/:id` | `admin`；授予需桌面端 + 本机确认 | 调整权限与数据范围 |
 | `POST /native/pairings`、`GET`/`DELETE /native/pairings/:id` | 本机 `host.sock` 的 `admin` 设备 | 手机配对二维码：打开局域网入口后签发（无网络时 409 `native-no-lan`，完全访问时 409 `presence-blocked`）、跟随状态、撤销；`DELETE /native/pairings/:id/device` 移除确认后被否认的设备 |
 | `PATCH /devices/:id/name` | 桌面端 `admin` | 重命名任一设备 |
-| `POST /pairings` | 桌面端 `admin` 或匿名 `host.sock` | 生成配对邀请 `{ scopes?, target? }`：`target` 为 `tls`（默认，手机；未配置 HTTPS 入口时 409 `tls-not-configured`）或 `loopback`（这台电脑上的浏览器） |
+| `POST /pairings` | 桌面端 `admin` 或匿名 `host.sock` | 生成配对邀请 `{ scopes?, target? }`：`target` 为 `tls`（默认，另一台电脑或手机；未配置 HTTPS 入口时 409 `tls-not-configured`）或 `loopback`（这台电脑上的浏览器）。桌面端只由主进程调用，页面经转发一律 403 `shell-managed` |
 | `GET/POST /providers`、`PUT/DELETE /providers/:id`、`GET/PUT /provider` | `admin`；填写密钥另需 `secrets`（只在桌面端）；确认地址（`confirmOrigin`）只在桌面端，经本机确认 | 模型服务；`GET /providers` 另返回 `confirmedAddresses` 与本次运行放行的源 `runOrigins`，每个服务带 `destination` |
 | `POST /provider-origins` | `admin`，只在桌面端；尚未确认的地址经本机确认 | 保存服务之前确认一个模型服务地址 |
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
