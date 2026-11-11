@@ -15,12 +15,21 @@ import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
-import { agentConfigValues, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
-import { OWN_MODEL, ownModelGroups, ROUTE_NOTE, serviceRef, serviceValue } from '../composer/ModelControl.tsx'
+import { agentConfigValues, DEFAULT_LEVEL, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
+import {
+  onComputer,
+  OWN_MODEL,
+  ownModelGroups,
+  ROUTE_NOTE,
+  serviceRef,
+  serviceValue,
+  unusableServices,
+  UnusableServices,
+} from '../composer/ModelControl.tsx'
 import { draftPermission, draftRead } from '../composer/permission.ts'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { MODE_ICONS } from '../composer/PermissionList.tsx'
-import { MODE_COPY } from '../core/securityCopy.ts'
+import { computerName, MODE_COPY } from '../core/securityCopy.ts'
 import {
   CatalogueRows,
   readOnSelect,
@@ -99,6 +108,7 @@ export function NewSessionSheet({
     return () => cancelAnimationFrame(frame)
   }, [open, present, focusComposer])
   const catalog = snapshot.catalog
+  const computer = access.local ? undefined : computerName(snapshot.hostName)
   const entries = catalog ? engineEntries(catalog, choice.workspaceId) : []
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const known = harness?.capabilities.models.owner === 'latch' ? undefined : draftConfig(harness, choice.config)
@@ -231,7 +241,7 @@ export function NewSessionSheet({
             options={entries.map(entry => ({
               value: entry.harness.id,
               label: entry.label,
-              description: entry.line,
+              description: onComputer(entry.line, computer),
               media: <HarnessTile harness={entry.harness} size={20} />,
               ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
             }))}
@@ -253,7 +263,7 @@ export function NewSessionSheet({
                 onManage={onManageProviders}
                 onAdded={onProvidersChanged}
               />
-              <StaticRow label="思考" value="模型默认" />
+              <StaticRow label="思考" value={DEFAULT_LEVEL} />
             </>
           ) : services ? (
             <>
@@ -275,11 +285,14 @@ export function NewSessionSheet({
                   modelOption
                     ? agentConfigValues(modelOption).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))
                     : [{ value: OWN_MODEL, label: DEFAULT_MODEL }],
+                  undefined,
+                  computer,
                 )}
                 footer={
                   <div className="model-footer">
+                    <UnusableServices services={unusableServices(catalog, harness, computer)} />
                     {rows(modelOption !== undefined)}
-                    {forwards && <p className="model-note">{ROUTE_NOTE(harnessName(harness))}</p>}
+                    {forwards && <p className="model-note">{ROUTE_NOTE(harnessName(harness), computer)}</p>}
                   </div>
                 }
                 onOpenChange={opened}
@@ -298,7 +311,13 @@ export function NewSessionSheet({
               ) : (
                 <StaticRow
                   label="思考"
-                  value={known?.thinkingUnknown ? '开始后才知道' : known || harness.catalogueRead ? '默认' : '默认 · 开始后可以换'}
+                  value={
+                    known?.thinkingUnknown
+                      ? '开始后才知道'
+                      : known || harness.catalogueRead
+                        ? DEFAULT_LEVEL
+                        : `${DEFAULT_LEVEL} · 开始后可以换`
+                  }
                 />
               )}
             </>
@@ -309,7 +328,11 @@ export function NewSessionSheet({
               ) : (
                 <StaticRow label="模型" value={DEFAULT_MODEL} />
               )}
-              {thought ? optionRow('思考', thought) : <StaticRow label="思考" value={known.thinkingUnknown ? '开始后才知道' : '默认'} />}
+              {thought ? (
+                optionRow('思考', thought)
+              ) : (
+                <StaticRow label="思考" value={known.thinkingUnknown ? '开始后才知道' : DEFAULT_LEVEL} />
+              )}
             </>
           ) : (
             harness
@@ -328,12 +351,12 @@ export function NewSessionSheet({
                   onOpenChange={opened}
                   onValueChange={() => {}}
                 />
-                <StaticRow label="思考" value="默认" />
+                <StaticRow label="思考" value={DEFAULT_LEVEL} />
               </>
             ) : (
               <>
                 <StaticRow label="模型" value={`${DEFAULT_MODEL} · 开始后可以换`} />
-                <StaticRow label="思考" value="默认 · 开始后可以换" />
+                <StaticRow label="思考" value={`${DEFAULT_LEVEL} · 开始后可以换`} />
               </>
             ))
           )}

@@ -155,7 +155,9 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
   const from = source.mode
   const was = from && (from.tier ? MODE_COPY.tierTitles[from.tier] : from.name)
   const rows = base.mode !== 'chat' && harness.level === 'L3'
-  if (rows && unread && was !== undefined) pending.push(`权限「${was}」`)
+  // A Harness whose profile lists no rows (pi, one Latch cannot read back) has none to carry the source's onto.
+  const hasRows = harness.permission === undefined || harness.permission.modeTiers !== undefined
+  if (rows && unread && hasRows && was !== undefined) pending.push(`权限「${was}」`)
   const option = rows ? find('mode', from) : undefined
   if (option) {
     const exact = same && from && offers(option, from.value) ? from.value : undefined

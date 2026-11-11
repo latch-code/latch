@@ -435,6 +435,78 @@
 .model-note[data-tone='error'] {
   color: var(--red);
 }
+/*
+ * The services this Harness cannot use: one row, then, opened, each service with its reason under its name. Muted: they
+ * are facts, not choices.
+ */
+.model-unusable-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.model-unusable-head > .ui-icon {
+  flex: none;
+}
+.model-unusable-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0 0 var(--sp-4);
+  list-style: none;
+}
+.model-unusable-list > li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: var(--sp-8);
+  align-items: center;
+  padding: var(--sp-4) var(--sp-10);
+}
+.model-unusable-blank {
+  width: 16px;
+}
+.model-unusable-name {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.model-unusable-why {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+/* 分叉 in the session's Harness popover: a title and one line; while the latest turn runs it dims and says why. */
+.harness-fork {
+  align-items: start;
+  padding-block: var(--sp-6);
+}
+.harness-fork > .ui-menu-item-lead {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--sp-2);
+  color: var(--muted);
+}
+.harness-fork-text {
+  display: grid;
+  min-width: 0;
+}
+.harness-fork-line {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.harness-fork[aria-disabled='true'] {
+  cursor: default;
+}
+.harness-fork[aria-disabled='true']:is(:hover, :active) {
+  background: transparent;
+}
+.harness-fork[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text > span:first-child) {
+  color: var(--faint);
+}
 .model-setting {
   display: flex;
   align-items: center;
@@ -484,6 +556,17 @@
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
+}
+/* The title and, in the desktop app, the keys that open the menu at its end, as a picker's header draws them. */
+.permission-list-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.menu-title-keys {
+  display: inline-flex;
+  gap: var(--sp-2);
 }
 .permission-list-more {
   justify-self: start;

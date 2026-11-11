@@ -10,6 +10,7 @@ import {
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
+  controlKeyText,
   BUILTIN_THINKING_NOTE,
   DEFAULT_LEVEL,
   resetModelLabel,
@@ -56,6 +57,7 @@ function ThinkingPicker({
   onOpenChange?: ((open: boolean) => void) | undefined
 }) {
   const fixed = options.length <= 1
+  const keys = controlKeyText('thinking')
   const content =
     note || footer ? (
       <div className="model-footer">
@@ -75,6 +77,7 @@ function ThinkingPicker({
         </span>
       }
       className={fixed ? 'thinking-picker is-fixed' : 'thinking-picker'}
+      header={{ title: '思考', ...(keys ? { meta: keys } : {}) }}
       menuChevron
       align="end"
       // A Harness's own line under each of its levels needs the room; Latch's words do not.

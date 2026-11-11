@@ -62,6 +62,114 @@ describe('conversation forks', () => {
     }
   })
 
+  it('forks the latest turn from the Harness popover onto another Harness, taking the stricter row, and not while it runs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-forks-popover-'))
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    for (const [name, env] of [
+      ['qwen', 'FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default'],
+      ['goose', 'FAKE_ACP_MODES=chat,approve,smart_approve,auto FAKE_ACP_INITIAL_MODE=approve'],
+    ] as const) {
+      await writeFile(
+        join(bin, name),
+        [
+          '#!/bin/sh',
+          `export FAKE_ACP_STATE='${join(directory, `${name}.json`)}' FAKE_ACP_LOG='${join(directory, `${name}.log`)}'`,
+          `export FAKE_ACP_CONFIG=options ${env}`,
+          `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+        ].join('\n'),
+      )
+      await chmod(join(bin, name), 0o755)
+    }
+    const host = await startTestHost({
+      uiDir: resolve('dist/web'),
+      sessionFolders: true,
+      detectPreset: preset =>
+        preset.id === 'qwen' || preset.id === 'goose' ? { found: true, path: join(bin, preset.id) } : { found: false },
+      commandDirectories: () => [bin],
+    })
+    const browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      for (const id of ['qwen', 'goose']) {
+        const preset = AGENT_PRESETS.find(item => item.id === id)!
+        await owner.json('agents', {
+          method: 'POST',
+          body: { id, name: preset.name, presetId: id, command: preset.command, args: preset.args, env: {}, enabled: true },
+        })
+      }
+      const source = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          prompt: '从弹层分叉',
+          requestId: randomUUID(),
+          harnessId: 'qwen',
+          workspaceId: 'default',
+          config: [{ configId: 'mode', value: 'auto-edit' }],
+        },
+      })
+      const status = async () => (await owner.json<TaskDetail>(`tasks/${source.sessionId}`)).summary.status
+      await expect.poll(status, { timeout: 30_000 }).toBe('idle')
+
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '弹层分叉' })
+      await connected(page)
+      await page.keyboard.press('Meta+k')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.getByRole('searchbox').fill('从弹层分叉')
+      await palette.getByRole('option').filter({ hasText: '从弹层分叉' }).first().click()
+      await palette.waitFor({ state: 'hidden' })
+      const popover = page.getByRole('dialog', { name: 'Harness', exact: true })
+      const forkRow = popover.locator('.harness-fork')
+      await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
+      await forkRow.getByText('从最后一轮分叉，可以换 Harness；文件不会复制或回滚。', { exact: true }).waitFor()
+      expect(await forkRow.getAttribute('aria-disabled')).toBeNull()
+      await forkRow.click()
+
+      // The new-session page: one notice, the sentence in the input, and the Harness menu open on the source's Harness.
+      const notice = page.locator('.ui-notice', { hasText: '正在从' }).first()
+      await notice.getByText('正在从「从弹层分叉」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。', { exact: false }).waitFor()
+      expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('请接着这个会话继续。')
+      const menu = page.getByRole('menu', { name: /^Harness/u })
+      await menu.waitFor()
+      await menu.getByRole('menuitemradio', { name: /goose/u }).click()
+      await expect
+        .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
+        .toContain('来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。')
+      await expect
+        .poll(async () =>
+          page
+            .getByRole('button', { name: /^权限：/u })
+            .first()
+            .getAttribute('aria-label'),
+        )
+        .toContain('先问你')
+      await page.screenshot({ path: 'test-results/fork-popover-1440.png' })
+      await notice.getByRole('button', { name: '取消分叉', exact: true }).click()
+
+      // While the latest turn runs the Host would refuse the fork: the row stays, off, with why.
+      await owner.json(`tasks/${source.sessionId}/prompt`, { method: 'POST', body: { prompt: 'hang', requestId: randomUUID() } })
+      await expect.poll(status, { timeout: 20_000 }).toBe('running')
+      await page.keyboard.press('Meta+k')
+      await palette.getByRole('searchbox').fill('从弹层分叉')
+      await palette.getByRole('option').filter({ hasText: '从弹层分叉' }).first().click()
+      await palette.waitFor({ state: 'hidden' })
+      await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
+      await forkRow.getByText('请等这一轮结束后再从这里分叉', { exact: true }).waitFor()
+      expect(await forkRow.getAttribute('aria-disabled')).toBe('true')
+      await forkRow.dispatchEvent('click')
+      expect(await page.locator('.ui-notice', { hasText: '正在从' }).count()).toBe(0)
+      await page.screenshot({ path: 'test-results/fork-popover-running-1440.png' })
+      await owner.request(`tasks/${source.sessionId}/cancel`, { method: 'POST', body: { requestId: randomUUID() } }).catch(() => {})
+      await context.close()
+    } finally {
+      await browser.close()
+      await host.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("keeps the source's model, thinking and row over what the device remembers, and maps them onto another Harness", async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-forks-'))
     const bin = join(directory, 'bin')

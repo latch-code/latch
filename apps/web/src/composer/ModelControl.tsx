@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Box, ChevronLeft, Cpu, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
+import { Box, ChevronDown, ChevronLeft, ChevronRight, Cpu, GitFork, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
 import {
   modelIdKey,
   pairRoute,
@@ -13,10 +13,10 @@ import {
   type SessionConfigOption,
   type TaskSummary,
 } from '@latch/protocol'
-import { IconButton, MenuFooterLink, MenuFooterNote, Popover, ValuePicker, useLayerClose, type PickerGroup } from '@latch/ui'
+import { Icon, IconButton, MenuFooterLink, MenuFooterNote, Popover, ValuePicker, useLayerClose, type PickerGroup } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { SETUP_COPY } from '../core/securityCopy.ts'
+import { MODEL_MENU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import {
   draftConfig,
   engineEntries,
@@ -42,6 +42,7 @@ import {
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
+  controlKeyText,
   DEFAULT_MODEL,
   resetModelLabel,
   sameModelId,
@@ -53,6 +54,19 @@ import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReadin
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 export const OWN_MODEL = 'own'
+
+const HERE = '这台 Mac'
+
+/**
+ * One of Latch's own sentences as a page shows it: 「这台 Mac」 in the Latch app on that Mac (`computer` undefined), the
+ * computer's name on any other page (`computerName`). A Harness's own words never pass through here.
+ */
+export function onComputer(text: string, computer: string | undefined): string {
+  if (computer === undefined) return text
+  return text.replace(/(\S)?这台 Mac/gu, (_, before: string | undefined) =>
+    before === undefined ? computer : /\p{Script=Han}/u.test(before) ? `${before} ${computer}` : `${before}${computer}`,
+  )
+}
 
 /** Models hidden in settings stay one press away, here where they are chosen. */
 function HiddenModelsLink({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
@@ -191,6 +205,7 @@ export function DraftHarnessControl({
   onAdded,
   onDefaultsChanged,
   onRead,
+  computer,
 }: {
   catalog: HostCatalog
   choice: ComposerChoice
@@ -202,7 +217,10 @@ export function DraftHarnessControl({
   onDefaultsChanged?: (() => void | Promise<void>) | undefined
   /** A read of a Harness's lists that a selection started has ended. */
   onRead?: (() => void) | undefined
+  /** The Host computer's name on a page that is not the Latch app on it; see `onComputer`. */
+  computer?: string | undefined
 }) {
+  const keys = controlKeyText('harness')
   const [adding, setAdding] = useState(false)
   const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
@@ -219,11 +237,11 @@ export function DraftHarnessControl({
       options={entries.map(entry => ({
         value: entry.harness.id,
         label: entry.label,
-        description: entry.line,
+        description: onComputer(entry.line, computer),
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
-      header={{ title: '开始后这个会话不能换 Harness。' }}
+      header={{ title: '开始后这个会话不能换 Harness。', ...(keys ? { meta: keys } : {}) }}
       width={adding ? 360 : 340}
       leading={harness ? <HarnessTile harness={harness} size={16} /> : Sparkles}
       className="harness-picker"
@@ -276,13 +294,34 @@ export function DraftHarnessControl({
   )
 }
 
-/** The Harness of a running session: its mark and name, locked, and why. The chip still opens, since a tooltip never reaches touch. */
-export function SessionHarnessControl({ harness, onNewSession }: { harness: HarnessInfo; onNewSession: () => void }) {
+/** Why 分叉 is off while the latest turn runs: the Host refuses a fork from a turn that has not ended. */
+export const FORK_BUSY = '请等这一轮结束后再从这里分叉'
+
+/** 分叉 in the session's Harness popover: the latest turn into a new session, which may pick another Harness. */
+export interface SessionFork {
+  onFork: () => void
+  /** Why it cannot fork now; the row stays, dimmed, with this under it. */
+  blocked?: string | undefined
+}
+
+/**
+ * The Harness of a running session: its mark and name, locked, and why. The chip still opens, since a tooltip never
+ * reaches touch. It offers a fork of the latest turn, where the Host can make one, and a new session.
+ */
+export function SessionHarnessControl({
+  harness,
+  onNewSession,
+  fork,
+}: {
+  harness: HarnessInfo
+  onNewSession: () => void
+  fork?: SessionFork | undefined
+}) {
   const name = harnessName(harness)
   return (
     <Popover
       label="Harness"
-      width={300}
+      width={320}
       side="top"
       trigger={props => (
         <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
@@ -292,6 +331,7 @@ export function SessionHarnessControl({ harness, onNewSession }: { harness: Harn
       )}>
       <div className="model-footer">
         <p className="model-note">会话开始后不能换 Harness。要换就新开一个会话，或从某一轮分叉。</p>
+        {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={Plus} chevron={false} closes onClick={onNewSession}>
           新会话
         </MenuFooterLink>
@@ -300,18 +340,101 @@ export function SessionHarnessControl({ harness, onNewSession }: { harness: Harn
   )
 }
 
-const UNUSABLE_WORDS = {
-  'key-missing': '没有密钥 · 在设置 › 模型里添加',
-  'origin-unconfirmed': '地址还没确认 · 在这台 Mac 上确认',
-} as const
+/** A row of the popover rather than a menu item, so it stays readable while it is off. */
+function ForkRow({ fork }: { fork: SessionFork }) {
+  const close = useLayerClose()
+  const off = fork.blocked !== undefined
+  return (
+    <button
+      type="button"
+      className="ui-menu-footer-link harness-fork"
+      aria-disabled={off || undefined}
+      onClick={() => {
+        if (off) return
+        close()
+        fork.onFork()
+      }}>
+      <span className="ui-menu-item-lead">
+        <Icon icon={GitFork} size={14} />
+      </span>
+      <span className="harness-fork-text">
+        <span>分叉</span>
+        <span className="harness-fork-line">{fork.blocked ?? '从最后一轮分叉，可以换 Harness；文件不会复制或回滚。'}</span>
+      </span>
+    </button>
+  )
+}
 
-/** Saved services the built-in Harness cannot use yet, each saying what is missing. */
-function unusableGroups(catalog: HostCatalog): Array<PickerGroup<string>> {
-  return (catalog.unusableProviders ?? []).map(provider => ({
-    id: `~unusable-${provider.id}`,
-    label: provider.name,
-    options: [{ value: `~unusable-${provider.id}`, label: provider.name, disabledReason: UNUSABLE_WORDS[provider.reason] }],
-  }))
+/** A saved service a Harness cannot use, and why, under the model menu's one folded row. */
+export interface UnusableService {
+  id: string
+  name: string
+  provider?: ProviderSummary
+  reason: string
+}
+
+/** The words for a saved service the built-in Harness cannot use yet. The app on that Mac keeps its own sentence. */
+function heldReason(reason: 'key-missing' | 'origin-unconfirmed', computer: string | undefined): string {
+  if (reason === 'key-missing') return MODEL_MENU_COPY.missingKey
+  return computer === undefined ? `地址还没确认 · 在${HERE} 上确认` : MODEL_MENU_COPY.unconfirmed(computer)
+}
+
+/**
+ * The saved services `harness` cannot use, each with why: for the built-in Harness the ones missing a key or a
+ * confirmed address; for another Harness the ones Latch cannot forward its requests to. A session's own service is not
+ * among them, and one the Harness could use but this session did not start on stays listed with the models.
+ */
+export function unusableServices(
+  catalog: HostCatalog,
+  harness: HarnessInfo | undefined,
+  computer?: string,
+  session?: { route?: TaskSummary['modelRoute'] },
+): UnusableService[] {
+  if (harness?.capabilities.models.owner === 'latch')
+    return (catalog.unusableProviders ?? []).map(provider => ({
+      id: provider.id,
+      name: provider.name,
+      reason: heldReason(provider.reason, computer),
+    }))
+  return catalog.providers.flatMap(provider => {
+    if (provider.kind === 'demo' || provider.id === session?.route?.providerId) return []
+    const reason = harness ? serviceReason(harness, provider) : MODEL_MENU_COPY.notRouted('Harness')
+    return reason === undefined ? [] : [{ id: provider.id, name: provider.name, provider, reason }]
+  })
+}
+
+/**
+ * The services a Harness cannot use, folded into one row at the foot of the model menu; opening it shows each with its
+ * reason. Folded again each time the menu opens, since the menu mounts its footer then.
+ */
+export function UnusableServices({ services }: { services: readonly UnusableService[] }) {
+  const [open, setOpen] = useState(false)
+  if (services.length === 0) return null
+  return (
+    <div className="model-unusable" data-open={open ? '' : undefined}>
+      <MenuFooterLink
+        chevron={false}
+        onClick={() => {
+          setOpen(!open)
+        }}>
+        <span className="model-unusable-head">
+          {MODEL_MENU_COPY.unusable(services.length)}
+          <Icon icon={open ? ChevronDown : ChevronRight} size={12} />
+        </span>
+      </MenuFooterLink>
+      {open && (
+        <ul className="model-unusable-list" aria-label="这个 Harness 用不了的模型服务">
+          {services.map(service => (
+            <li key={service.id}>
+              {service.provider ? <ProviderTile provider={service.provider} size={16} /> : <span className="model-unusable-blank" />}
+              <span className="model-unusable-name">{service.name}</span>
+              <span className="model-unusable-why">{service.reason}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /** A model of a service as the picker's value: never an agent's own option value, which has no NUL in it. */
@@ -328,14 +451,16 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
   const name = harnessName(harness)
   const route = pairRoute(harness.capabilities, provider)
   if (route.kind === 'passthrough') return undefined
-  if (route.kind === 'translate')
-    return `${name} 只说 ${route.speaks.map(wire => WIRE_NAMES[wire]).join('、')} 协议，转换 ${WIRE_NAMES[route.from]} 尚未实现`
-  return `让 Latch 把 ${name} 的请求转给它，尚未实现`
+  if (route.kind === 'translate') return MODEL_MENU_COPY.wrongProtocol(name)
+  return MODEL_MENU_COPY.notRouted(name)
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
-export const ROUTE_NOTE = (name: string) =>
-  `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`
+export const ROUTE_NOTE = (name: string, computer?: string) =>
+  onComputer(
+    `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
+    computer,
+  )
 const ROUTE_LOCKED = '换服务要新开会话：开始时确认的是这个服务。'
 
 /**
@@ -345,6 +470,7 @@ const ROUTE_LOCKED = '换服务要新开会话：开始时确认的是这个服�
 export function routeService(
   catalog: HostCatalog,
   route: NonNullable<TaskSummary['modelRoute']>,
+  computer?: string,
 ): { name: string; unusable?: { words: string; note: string } } {
   const listed = findProvider(catalog, route.providerId)
   if (listed) return { name: listed.name }
@@ -359,7 +485,7 @@ export function routeService(
     held?.reason === 'key-missing'
       ? ['没有密钥', '在设置 › 模型里添加密钥']
       : held?.reason === 'origin-unconfirmed'
-        ? ['地址还没确认', '在这台 Mac 上确认它的地址']
+        ? ['地址还没确认', onComputer('在这台 Mac 上确认它的地址', computer)]
         : route.off
           ? ['已停用', '在设置 › 模型里重新打开它']
           : ['现在不能用', '在设置 › 模型里看看它']
@@ -367,25 +493,27 @@ export function routeService(
 }
 
 /** What a session on a route says of it in its model menu. */
-function routeNote(catalog: HostCatalog, name: string, route: NonNullable<TaskSummary['modelRoute']>): string {
-  const service = routeService(catalog, route)
+function routeNote(catalog: HostCatalog, name: string, route: NonNullable<TaskSummary['modelRoute']>, computer?: string): string {
+  const service = routeService(catalog, route, computer)
   if (service.unusable) return service.unusable.note
   return route.bypassed
     ? `这个会话有一轮没有经过 Latch：那一轮可能用了 ${name} 自己的登录或配置。`
-    : `这个会话经 Latch 用「${service.name}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`
+    : onComputer(`这个会话经 Latch 用「${service.name}」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。`, computer)
 }
 
 /**
- * A Harness with its own models lists them first, then each saved service. In a draft, a service Latch can forward the
- * Harness's requests to lists its models under 「经 Latch」; the others say why they cannot be chosen. A Harness that
- * uses only models it knows is offered only those its own list names, once read. In a session the service is the one it
- * started with, so every service is listed without a choice.
+ * A Harness with its own models lists them first, then each saved service it can use. In a draft, a service Latch can
+ * forward the Harness's requests to lists its models under 「经 Latch」; the ones it cannot use are not groups here but
+ * `unusableServices`, folded into one row. A Harness that uses only models it knows is offered only those its own list
+ * names, once read. In a session the service is the one it started with, so every other service it could use is listed
+ * without a choice, with the rule that keeps it: a session's service is fixed when it starts.
  */
 export function ownModelGroups(
   catalog: HostCatalog,
   harness: HarnessInfo | undefined,
   own: Array<PickerGroup<string>['options'][number]>,
   session?: { route?: TaskSummary['modelRoute'] },
+  computer?: string,
 ): Array<PickerGroup<string>> {
   const name = harness ? harnessName(harness) : 'Harness'
   // What it read of its own models, without the IDs a person typed for it.
@@ -394,7 +522,7 @@ export function ownModelGroups(
     harness?.capabilities.models.knownOnly && known?.length
       ? new Set(known.flatMap(item => [modelIdKey(item.value), modelIdKey(item.name)]))
       : undefined
-  const routed = session?.route ? routeService(catalog, session.route) : undefined
+  const routed = session?.route ? routeService(catalog, session.route, computer) : undefined
   const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
   // On a route, the Host offers only the service's models, the ones the gateway forwards.
   const ownLabel = routed ? `${routed.name} · ${routed.unusable?.words ?? '经 Latch'}` : `${name} 自己的模型`
@@ -404,14 +532,15 @@ export function ownModelGroups(
   const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, options: ownOptions }]
   const disabled: Array<PickerGroup<string>['options'][number]> = []
   for (const provider of services) {
-    const reason = harness ? serviceReason(harness, provider) : `让 Latch 把 ${name} 的请求转给它，尚未实现`
+    // Without a Harness nothing can be forwarded; `unusableServices` says so.
+    if (!harness || serviceReason(harness, provider) !== undefined) continue
     const media = <ProviderTile provider={provider} size={16} />
-    if (session || reason !== undefined) {
+    if (session) {
       disabled.push({
         value: `~service-${provider.id}`,
         label: provider.name,
         media,
-        disabledReason: reason ?? (session?.route ? ROUTE_LOCKED : '要经 Latch 用它，新开一个会话。'),
+        disabledReason: session.route ? ROUTE_LOCKED : '要经 Latch 用它，新开一个会话。',
       })
       continue
     }
@@ -431,6 +560,12 @@ export function ownModelGroups(
   return groups
 }
 
+/** The model menu's title, with the keys that open it where they are drawn. */
+const modelHeader = () => {
+  const keys = controlKeyText('model')
+  return { title: '模型', ...(keys ? { meta: keys } : {}) }
+}
+
 /** The model and thinking of a new session. A Harness with its own models tells Latch nothing before it starts, and this says so in place. */
 export function DraftModelControl({
   catalog,
@@ -441,6 +576,7 @@ export function DraftModelControl({
   onManageModels,
   onProvidersChanged,
   onRead,
+  computer,
 }: {
   catalog: HostCatalog
   choice: ComposerChoice
@@ -451,6 +587,8 @@ export function DraftModelControl({
   onProvidersChanged?: (() => void) | undefined
   /** A read of the Harness's lists, or the IDs typed for it, changed. */
   onRead?: (() => void | Promise<void>) | undefined
+  /** The Host computer's name on a page that is not the Latch app on it; see `onComputer`. */
+  computer?: string | undefined
 }) {
   const [adding, setAdding] = useState(false)
   const [typing, setTyping] = useState(false)
@@ -546,17 +684,15 @@ export function DraftModelControl({
         reading={readingNow}
         onOpenChange={opened}
         manage={manage}
+        computer={computer}
       />
     )
   }
   const noService = !choice.model
-  const groups = [
-    ...modelGroups(catalog, preferences, choice.model, showHidden, access).map(group => ({
-      ...group,
-      options: group.options.map(option => ({ ...option, description: undefined })),
-    })),
-    ...unusableGroups(catalog),
-  ]
+  const groups = modelGroups(catalog, preferences, choice.model, showHidden, access).map(group => ({
+    ...group,
+    options: group.options.map(option => ({ ...option, description: undefined })),
+  }))
   const count = groups.reduce((sum, group) => sum + group.options.length, 0)
   const provider = findProvider(catalog, choice.model?.providerId)
   return (
@@ -571,6 +707,7 @@ export function DraftModelControl({
       width={adding ? 360 : 320}
       {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
       className={choice.model ? 'model-picker is-id' : 'model-picker'}
+      header={modelHeader()}
       menuChevron
       disabled={disabled}
       onOpenChange={open => {
@@ -583,6 +720,7 @@ export function DraftModelControl({
       }}
       footer={
         <div className="model-footer">
+          <UnusableServices services={unusableServices(catalog, harness, computer)} />
           <HiddenModelsLink
             shown={showHidden}
             onToggle={() => {
@@ -643,7 +781,10 @@ export function SessionModelControl({
   onManageModels,
   locked,
   route,
+  computer,
 }: AgentConfigState & {
+  /** The Host computer's name on a page that is not the Latch app on it; see `onComputer`. */
+  computer?: string | undefined
   /** This device may read the session but not change it: why, as the picker's tooltip. */
   locked?: string | undefined
   /** The service the session's requests go to through Latch, fixed when it started. */
@@ -686,6 +827,7 @@ export function SessionModelControl({
         width={320}
         {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
         className={model ? 'model-picker is-id' : 'model-picker'}
+        header={modelHeader()}
         menuChevron
         disabled={locked !== undefined}
         disabledReason={locked}
@@ -696,6 +838,7 @@ export function SessionModelControl({
         }}
         footer={
           <div className="model-footer">
+            <UnusableServices services={unusableServices(catalog, harness, computer)} />
             {model && !sameModel(model, current) && (
               <MenuFooterLink
                 chevron={false}
@@ -731,6 +874,7 @@ export function SessionModelControl({
       manage={manage}
       locked={locked}
       service={{ session: true, route }}
+      computer={computer}
     />
   )
 }
@@ -757,7 +901,9 @@ function HarnessModelPicker({
   reading = false,
   onOpenChange,
   service,
+  computer,
 }: AgentConfigState & {
+  computer?: string | undefined
   catalog: HostCatalog
   harness: HarnessInfo | undefined
   config: readonly SessionConfigOption[]
@@ -815,11 +961,13 @@ function HarnessModelPicker({
     harness,
     modelOption ? values(modelOption) : [{ value: OWN_MODEL, label: reportedOr ?? DEFAULT_MODEL }],
     session,
+    computer,
   )
+  const unusable = unusableServices(catalog, harness, computer, session)
   const routeLine = session?.route
-    ? routeNote(catalog, name, session.route)
+    ? routeNote(catalog, name, session.route, computer)
     : groups.some(group => group.id.startsWith('~service-'))
-      ? ROUTE_NOTE(name)
+      ? ROUTE_NOTE(name, computer)
       : undefined
   return (
     <ValuePicker
@@ -829,9 +977,10 @@ function HarnessModelPicker({
       {...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={14} /> } : {})}
       groups={groups}
       className={picked || reportedOr !== undefined ? 'model-picker is-id' : 'model-picker'}
+      header={modelHeader()}
       menuChevron
       searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
-      width={340}
+      width={360}
       pending={writing || reading}
       pendingLabel={reading ? '正在读取…' : '正在切换…'}
       disabled={locked !== undefined || disabled === true}
@@ -851,6 +1000,7 @@ function HarnessModelPicker({
       }}
       footer={
         <div className="model-footer">
+          <UnusableServices services={unusable} />
           {note && <p className="model-note">{note}</p>}
           {others.map(option => (
             <ConfigRow

@@ -190,16 +190,23 @@ describe('a Harness with its own models on a saved service', () => {
     const page = await open(1440, 'light')
     await chip(page, '模型').click()
     await page.getByText('OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
-    // A service Codex does not speak is listed with why, not offered; nor is a model it does not know.
-    await page.getByText(/^Codex 只说 Responses 协议，转换 Chat Completions 尚未实现$/u).waitFor()
+    // A service Codex does not speak is not offered: one folded row counts it, and opening it says why; nor is a model it
+    // does not know offered.
+    const unusable = menuText(page, '另有 1 个模型服务，这个 Harness 用不了')
+    await unusable.waitFor()
+    expect(await page.getByText('DeepSeek', { exact: true }).count()).toBe(0)
+    await unusable.click()
+    await menuText(page, 'Codex 不说这个服务的协议').waitFor()
+    await menuText(page, 'DeepSeek').waitFor()
+    expect(await page.getByText(/尚未实现/u).count()).toBe(0)
     await page.getByText('Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
     await page.getByText('Codex 不认识这个模型', { exact: true }).waitFor()
     // What it promises is what the Host checks: a whole turn that did not reach Latch.
-    await menuText(
-      page,
-      '「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
-    ).waitFor()
+    // A browser names the computer where the Latch app on it says 这台 Mac.
+    await page
+      .getByText(/^「经 Latch」表示请求由 Latch 在 \S+ 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。$/u)
+      .waitFor()
     await shot(page, 'draft-menu-1440-light')
     await row(page, 'fake-model-large').click()
     await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
@@ -235,11 +242,13 @@ describe('a Harness with its own models on a saved service', () => {
 
     // In the session the service is fixed; the menu says where its requests go.
     await chip(page, '模型').click()
-    await menuText(page, '这个会话经 Latch 用「OpenAI」：请求由 Latch 在这台 Mac 上转发，用设置里的密钥。').waitFor()
+    await page.getByText(/^这个会话经 Latch 用「OpenAI」：请求由 Latch 在 \S+ 上转发，用设置里的密钥。$/u).waitFor()
     // What Codex lists now is that service's; another service it speaks needs a new session.
     await menuText(page, 'OpenAI · 经 Latch').waitFor()
     await page.getByText('换服务要新开会话：开始时确认的是这个服务。', { exact: true }).waitFor()
     expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
+    // The service it cannot use stays folded in the session too.
+    await menuText(page, '另有 1 个模型服务，这个 Harness 用不了').waitFor()
     // The status line says the same way, in the same words.
     expect(await page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 经 Latch')
     await shot(page, 'session-menu-1440-light')

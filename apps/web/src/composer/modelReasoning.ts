@@ -1,4 +1,6 @@
 import type { ModelRef, ProviderKind, SessionConfigOption } from '@latch/protocol'
+import { currentShell } from '../core/shell.ts'
+import { COMPOSER_CONTROLS, shortcutCaps, shortcutKeys, type ComposerControl } from '../workbenchShortcuts.ts'
 
 export interface SessionConfigFeedback {
   kind: 'failed' | 'unknown'
@@ -149,3 +151,18 @@ export function agentConfigChoice(
   const option = config.find(item => item.id === configId)
   return option && option.currentValue !== value && option.options.some(item => item.value === value) ? { configId, value } : undefined
 }
+
+/**
+ * The keys that open one of the composer's four controls, as its menu's title shows them: only in the desktop app,
+ * whose keys are settled; a browser's are not drawn (J14).
+ */
+export function controlKeyCaps(control: ComposerControl): string[] | undefined {
+  if (currentShell() === null) return undefined
+  const keys = shortcutKeys('controls', true)
+  const first = keys === null ? undefined : shortcutCaps(keys)[0]
+  if (!first?.caps.length) return undefined
+  return [...first.caps.slice(0, -1), String(COMPOSER_CONTROLS.indexOf(control) + 1)]
+}
+
+/** The same keys as a menu header's trailing text. */
+export const controlKeyText = (control: ComposerControl): string | undefined => controlKeyCaps(control)?.join('')

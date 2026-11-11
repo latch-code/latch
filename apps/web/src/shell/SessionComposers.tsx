@@ -3,9 +3,9 @@ import { Eraser, Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { draftConfig, harnessName, nothingInstalled, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
+import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
-import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
+import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
@@ -15,7 +15,14 @@ import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
 import { sessionTotals } from '../composer/sessionTotals.ts'
-import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
+import {
+  DraftHarnessControl,
+  DraftModelControl,
+  FORK_BUSY,
+  SessionHarnessControl,
+  SessionModelControl,
+  type SessionFork,
+} from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
@@ -65,6 +72,23 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
       onClosed={projectAsk.clearNotice}
     />
   )
+}
+
+/** The sentence a fork's input starts with, as a fork from a turn's footer does. */
+const FORK_PROMPT = '请接着这个会话继续。'
+
+/**
+ * Opens one of the four controls once the page that holds it is drawn, as its key would: the new-session page mounts
+ * its own composer after the session's goes, so the trigger is looked for over the next frames.
+ */
+function openControlWhenShown(name: 'harness' | 'model' | 'thinking' | 'permission', frames = 10) {
+  requestAnimationFrame(() => {
+    const trigger = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${name}"]`)]
+      .find(control => control.getClientRects().length > 0 && !control.closest('[inert]') && control.closest('.workspace.is-new'))
+      ?.querySelector<HTMLButtonElement>('button')
+    if (trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') trigger.click()
+    else if (frames > 1) openControlWhenShown(name, frames - 1)
+  })
 }
 
 /**
@@ -142,6 +166,40 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     sheetComposerRef,
   } = shell
   const manageEngines = owner ? () => openSettings('engines') : undefined
+  // Latch's own sentences name the computer on any page but the Latch app on it.
+  const computer = access.local ? undefined : computerName(shell.snapshot.hostName)
+  const lastMessage = current?.summary.id === selectedId ? current?.messages.at(-1) : undefined
+  // The latest turn into a new session, where the Host can fork and this device may start one. The Host refuses a turn
+  // that has not ended, so the row says to wait instead.
+  const fork: SessionFork | undefined =
+    current && lastMessage && catalog?.features?.fork === true && access.scopes.has('run')
+      ? {
+          ...(shell.active ? { blocked: FORK_BUSY } : {}),
+          onFork: () => {
+            const draft = submission.draft.trim() ? submission.draft : FORK_PROMPT
+            choose(null)
+            submission.setFork({
+              taskId: current.summary.id,
+              upToMessageId: lastMessage.id,
+              title: current.summary.title,
+              choice: {
+                harnessId: current.summary.harnessId,
+                workspaceId: projectFor(catalog, current.summary),
+                mode: current.summary.mode ?? 'agent',
+              },
+              source: forkSource(current, harnessInfo),
+            })
+            submission.setDraft(draft)
+            if (phone) {
+              setNewSheet(true)
+              requestAnimationFrame(() => sheetComposerRef.current?.focus())
+              return
+            }
+            // The next press is the other Harness: its menu opens on the new-session page.
+            openControlWhenShown('harness')
+          },
+        }
+      : undefined
   const questionActions = {
     deviceId: shell.snapshot.device.id,
     canAnswer: gate.kind === 'open' && sessionBlock === undefined,
@@ -451,6 +509,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                   submission.forgetDraftPick()
                 }}
                 onRead={refresh}
+                computer={computer}
               />
             </ComposerControl>
             <ComposerControl name="model">
@@ -465,6 +524,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                   void refresh()
                 }}
                 onRead={refresh}
+                computer={computer}
               />
             </ComposerControl>
           </>
@@ -473,7 +533,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             <>
               {harnessInfo && (
                 <ComposerControl name="harness">
-                  <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} />
+                  <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} fork={fork} />
                 </ComposerControl>
               )}
               <ComposerControl name="model">
@@ -492,6 +552,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                   onManageModels={manageProviders}
                   locked={gate.kind === 'read-only' ? gate.text : undefined}
                   route={summary.modelRoute}
+                  computer={computer}
                 />
               </ComposerControl>
             </>
@@ -623,7 +684,14 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
         terminal={catalog?.features?.loginTerminal === true}
       />
       {submission.fork && (
-        <InlineNotice tone="neutral">
+        <InlineNotice
+          tone="neutral"
+          className="fork-notice"
+          action={
+            <Button size="xs" variant="ghost" onClick={() => submission.setFork(null)}>
+              取消分叉
+            </Button>
+          }>
           正在从「{submission.fork.title ?? submission.fork.taskId}」分叉。文件不会复制或回滚；同一项目中的会话共用项目文件夹。
           {chosenHarness?.capabilities.fork === 'native' && submission.fork.source?.harnessId === chosenHarness.id && (
             <span className="fork-own">
@@ -636,9 +704,6 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
               {line}
             </span>
           ))}
-          <Button size="xs" variant="ghost" onClick={() => submission.setFork(null)}>
-            取消分叉
-          </Button>
         </InlineNotice>
       )}
       {nothingInstalled(block, catalog, access) ? (

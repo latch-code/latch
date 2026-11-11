@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, ListChecks, Scale, Shield, ShieldAlert } from 'lucide-react'
-import { Button, ChoiceList, useLayerClose } from '@latch/ui'
+import { Button, ChoiceList, Kbd, useLayerClose } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
+import { controlKeyCaps } from './modelReasoning.ts'
 import type { ModeIcon, PermissionRow, PermissionView } from './permission.ts'
 
 export const MODE_ICONS: Record<ModeIcon, typeof Shield> = {
@@ -31,9 +32,21 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
   const hidden = rows.filter(row => row.more)
   const [more, setMore] = useState(false)
   const shown = more ? rows : rows.filter(row => !row.more)
+  const keys = controlKeyCaps('permission')
   return (
     <div className="permission-list">
-      {!view.asksNothing && <p className="permission-list-title">{MODE_COPY.menuTitle}</p>}
+      {!view.asksNothing && (
+        <p className="permission-list-title">
+          <span>{MODE_COPY.menuTitle}</span>
+          {keys && (
+            <span className="menu-title-keys" aria-hidden="true">
+              {keys.map(key => (
+                <Kbd key={key}>{key}</Kbd>
+              ))}
+            </span>
+          )}
+        </p>
+      )}
       <ChoiceList
         label="权限"
         value={current}
