@@ -41,7 +41,7 @@ sources:
 
 **运行记录**的 `state` 是 `running`、`waiting`（在等审批）、`completed`、`failed`、`cancelled`、`interrupted`、`unknown`、`missed`、`skipped`。运行是一个会话，`TaskSummary.automationId` 指向定时任务，标题是它的名字；它显示保存的提示，所以读取要完整数据范围，与定时任务本身相同。
 
-**错过的时间**：Mac 关机、睡眠或 Host 没有运行时错过，记一条 `missed`，定时任务保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。
+**错过的时间**：Mac 关机、睡眠、Host 没有运行或正在安装更新（启动得到 409 `host-updating`）时错过，记一条 `missed`，定时任务保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。
 
 **运行期间经过的时间**：上一次运行还没结束时到了下一个时间，结束时补记一条 `skipped`，同样不补跑。`lastRun` 仍是那次真实运行的结果。
 

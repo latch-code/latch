@@ -9,7 +9,7 @@ import {
   updateWindowInputSchema,
 } from './update-window.ts'
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
-import { Automations, automationSummary } from './automations.ts'
+import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans } from './agent-plans.ts'
@@ -1191,7 +1191,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     await ownFolders.start()
     const makeOwnFolders = options.sessionFolders === true
     const worktrees = new Worktrees({ root: worktreesDir, dataDir: realDataDir, avoid: [codeRoot, runtime.runtimeDir, agentsDir], log })
-    const repositoryHolds = new RepositoryHolds()
+    const updateWindow = new UpdateWindow(now)
+    /** Host writes that run the user's Git (delivery, pull request, worktree removal): the install waits for them. */
+    const repositoryHolds = new RepositoryHolds({ closed: () => updateWindow.isCommitted })
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
@@ -1747,7 +1749,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     startupCleanup.push(() => promptQueues.close())
     const configRequests = new ConfigRequests(harnessHub.receipts, now)
-    const updateWindow = new UpdateWindow(now)
     let commitTimer: ReturnType<typeof setTimeout> | undefined
     /** A window that ran out (unrenewed, or committed and not followed by a stop): starts and terminals open again, the plugin plan goes, on record. */
     const expireCommit = async () => {
@@ -1779,8 +1780,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw error
       }
     }
-    /** Git delivery writes running now: they run the user's own git, so the install waits for them. */
-    const deliveries = { running: 0 }
     /** While the desktop app installs an update that changes the Host, nothing new starts; what runs settles. */
     const refuseWhileUpdating = (what: 'session' | 'turn') => {
       if (updateWindow.isOpen())
@@ -1798,7 +1797,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let loopbackOrigin = ''
     let tlsOrigin: string | undefined
     const routeContext: RouteContext = {
-      updateGate: { committed: () => updateWindow.isCommitted, deliveries },
       repositoryHolds,
       hostId,
       hostId8,
@@ -2090,67 +2088,74 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
       async start({ requestId, automationId, title, prompt, projectId, plan, authorize }) {
         authorize()
-        return projectQueue(projectId ?? 'default', async () => {
-          authorize()
-          refuseWhileUpdating('session')
-          const chosen = projectId ? savedProject(projectId) : undefined
-          if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
-          if (chosen) await assertWorkspaceUsable(chosen)
-          const task: HubCreateInput = {
-            requestId,
-            prompt,
-            harnessId: plan.harnessId,
-            workspaceId: projectId ?? 'default',
-            mode: plan.mode,
-            ...(plan.model ? { model: plan.model } : {}),
-            automationId,
-            initialTitle: title,
-            ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
-          }
-          const folders = chosen?.folders.map(({ id, path }) => ({ id, path }))
-          const own = !chosen && makeOwnFolders && plan.mode === 'agent' ? await ownFolders.allocate(requestId) : undefined
-          const cwd = chosen?.folders[0].path ?? own?.path
-          /** A run nobody started by hand is still on record as a start, with what it runs. */
-          const onRecord = async (): Promise<Pick<HubCreateInput, 'expectedLaunchHash'>> => {
-            if (hub!.levelOf(plan.harnessId) !== 'L3') return {}
-            const root = await realpath(cwd ?? workspaceRoot)
-            const preview = await hub!.launchPreviewOf(plan.harnessId, root, folders ? { workspaceId: projectId!, folders } : undefined)
-            const launchHash = preview?.launchHash ?? sha256Hex(canonicalJson({ harnessId: plan.harnessId, automationId }))
-            await audited({
-              action: 'task.l3.start-requested',
-              actor: { listener: 'host', via: 'startup' },
-              stepup: 'none',
-              detail: { harnessId: plan.harnessId, launchHash, promptHash: sha256Hex(prompt) },
-            })
-            return { expectedLaunchHash: launchHash }
-          }
-          const started = await onRecord()
-          const created = await (async () => {
-            if (chosen) {
-              authorize()
-              return hub!.createTask({ ...task, ...started, cwd: chosen.folders[0].path, folders: folders! })
-            }
-            if (own) return createInOwnFolder({ ...task, ...started, cwd: own.path, sessionFolder: own.name }, requestId, authorize)
-            authorize()
-            return hub!.createTask({ ...task, ...started })
-          })()
-          if (started.expectedLaunchHash)
-            await audited({
-              action: 'task.l3.started',
-              actor: { listener: 'host', via: 'startup' },
-              target: created.sessionId,
-              stepup: 'none',
-              detail: {
-                sessionId: created.sessionId,
-                harnessId: plan.harnessId,
-                launchHash: started.expectedLaunchHash,
-                promptHash: sha256Hex(prompt),
-              },
-            }).catch(() => {})
-          return created
-        })
+        // In flight like any other start until it settles, so the install waits for it.
+        refuseWhileUpdating('session')
+        return tracked(startRequests, `automation:${automationId}:${requestId}`, () =>
+          automationStart({ requestId, automationId, title, prompt, projectId, plan, authorize }),
+        )
       },
     })
+    async function automationStart({ requestId, automationId, title, prompt, projectId, plan, authorize }: AutomationStartInput) {
+      return projectQueue(projectId ?? 'default', async () => {
+        authorize()
+        refuseWhileUpdating('session')
+        const chosen = projectId ? savedProject(projectId) : undefined
+        if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
+        if (chosen) await assertWorkspaceUsable(chosen)
+        const task: HubCreateInput = {
+          requestId,
+          prompt,
+          harnessId: plan.harnessId,
+          workspaceId: projectId ?? 'default',
+          mode: plan.mode,
+          ...(plan.model ? { model: plan.model } : {}),
+          automationId,
+          initialTitle: title,
+          ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
+        }
+        const folders = chosen?.folders.map(({ id, path }) => ({ id, path }))
+        const own = !chosen && makeOwnFolders && plan.mode === 'agent' ? await ownFolders.allocate(requestId) : undefined
+        const cwd = chosen?.folders[0].path ?? own?.path
+        /** A run nobody started by hand is still on record as a start, with what it runs. */
+        const onRecord = async (): Promise<Pick<HubCreateInput, 'expectedLaunchHash'>> => {
+          if (hub!.levelOf(plan.harnessId) !== 'L3') return {}
+          const root = await realpath(cwd ?? workspaceRoot)
+          const preview = await hub!.launchPreviewOf(plan.harnessId, root, folders ? { workspaceId: projectId!, folders } : undefined)
+          const launchHash = preview?.launchHash ?? sha256Hex(canonicalJson({ harnessId: plan.harnessId, automationId }))
+          await audited({
+            action: 'task.l3.start-requested',
+            actor: { listener: 'host', via: 'startup' },
+            stepup: 'none',
+            detail: { harnessId: plan.harnessId, launchHash, promptHash: sha256Hex(prompt) },
+          })
+          return { expectedLaunchHash: launchHash }
+        }
+        const started = await onRecord()
+        const created = await (async () => {
+          if (chosen) {
+            authorize()
+            return hub!.createTask({ ...task, ...started, cwd: chosen.folders[0].path, folders: folders! })
+          }
+          if (own) return createInOwnFolder({ ...task, ...started, cwd: own.path, sessionFolder: own.name }, requestId, authorize)
+          authorize()
+          return hub!.createTask({ ...task, ...started })
+        })()
+        if (started.expectedLaunchHash)
+          await audited({
+            action: 'task.l3.started',
+            actor: { listener: 'host', via: 'startup' },
+            target: created.sessionId,
+            stepup: 'none',
+            detail: {
+              sessionId: created.sessionId,
+              harnessId: plan.harnessId,
+              launchHash: started.expectedLaunchHash,
+              promptHash: sha256Hex(prompt),
+            },
+          }).catch(() => {})
+        return created
+      })
+    }
     startupCleanup.push(() => automations.close())
     const handoffs = await Handoffs.open({
       dataDir,
@@ -3545,107 +3550,136 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const key = `${caller.device.id}:${body.requestId}`
       const known = removals.get(key)
       if (known) return known
+      // Counted as a Git write from here, so the install waits for it; refused once the install window is committed.
+      const leave = repositoryHolds.enter()
       const requestHash = sha256Hex(body.requestId)
       const target = { workspaceId: record.id, ...(sessionId ? { sessionId } : {}), worktreeHash: sha256Hex(path), requestHash }
-      const answer = projectOperation(record.id, caller, 'run', async () => {
-        if (devices.get(caller.device.id)?.dataScope !== 'all')
-          throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
-        if (sessionId) {
-          checkPrivateSession(caller, sessionId)
-          // Git removed it before and only the session's record was left: finish that.
-          const done = !existsSync(path) && earlierRemoval({ worktreeHash: sha256Hex(path) })
-          if (done) {
-            await hub!.worktreeRemoved(sessionId)
-            refresh(sessionId)
-            return done
-          }
-          if ((await worktrees.sessionOf(path)) !== sessionId)
-            throw new AppError(409, 'worktree-owned', '这个工作树已不属于这个会话，没有改动。')
-        } else {
-          const owner = await worktrees.sessionOf(path)
-          if (owner && (await worktreeOwner(owner)).state !== 'leftover')
-            throw new AppError(409, 'worktree-owned', '这个工作树属于一个会话，请在那个会话的菜单里移除它。')
-        }
-        const release = repositoryHolds.take(await worktrees.common(path), 'worktree-remove')
-        if (!release) throw new AppError(409, 'worktree-busy', '这个仓库正在进行交付操作，等它结束后再试。')
-        try {
-          const refuseTurn = async () => {
-            if (await turnIn(path)) throw new AppError(409, 'worktree-turn-running', '这个工作树里有一轮正在运行，结束后再试。')
-          }
-          const owners = await worktreeSessions(path)
-          const refuseTerminal = () => {
-            if (terminals.openIn(owners) || terminals.openInside(path))
-              throw new AppError(409, 'worktree-terminal-open', '这个工作树还有打开的终端，关闭后再移除。')
-          }
-          await refuseTurn()
-          let recorded = false
-          // No await between this check and remove(), which marks the worktree as removing: no terminal opens after it.
-          refuseTerminal()
-          const removing = worktrees.remove(path, {
-            ...(body.discard !== undefined ? { discard: body.discard } : {}),
-            ...(body.digest !== undefined ? { digest: body.digest } : {}),
-            audit: async facts => {
-              await refuseTurn()
-              refuseTerminal()
-              recheck(caller, 'run')
-              recorded = true
-              await audited({
-                action: 'worktree.remove',
-                actor: actorOf(caller),
-                target: sessionId ?? record.id,
-                stepup: 'none',
-                detail: {
-                  ...target,
-                  staged: facts.staged,
-                  unstaged: facts.unstaged,
-                  untracked: facts.untracked,
-                  ignored: facts.ignored,
-                  forced: facts.files > 0,
-                  ownBranch: facts.ownBranch,
-                  ...(facts.ahead !== undefined ? { ahead: facts.ahead } : {}),
-                  ...(facts.unpushed !== undefined ? { unpushed: facts.unpushed } : {}),
-                },
-              })
-            },
-          })
-          const removed = await removing.catch(async (error: unknown) => {
-            if (recorded)
+      const removal = (): Promise<WorktreeRemoval> =>
+        projectOperation(record.id, caller, 'run', async () => {
+          if (devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+          if (sessionId) {
+            checkPrivateSession(caller, sessionId)
+            // Git removed it before and only the session's record was left: finish that.
+            const done = !existsSync(path) && earlierRemoval({ worktreeHash: sha256Hex(path) })
+            if (done) {
+              await hub!.worktreeRemoved(sessionId)
+              refresh(sessionId)
+              return done
+            }
+            // Git removed it but the Host stopped before the result was recorded (the marker went with the folder):
+            // finish from the record written before Git ran. Latch deleted no branch, so its own one is kept.
+            const begun = !existsSync(path) && audit.worktreeRemovalBegun(sha256Hex(path))
+            if (begun && begun.detail.sessionId === sessionId) {
+              const branch = begun.detail.ownBranch === true ? ('kept' as const) : ('none' as const)
               await audited(
                 {
                   action: 'worktree.result',
                   actor: actorOf(caller),
-                  target: sessionId ?? record.id,
+                  target: sessionId,
                   stepup: 'none',
-                  detail: { ...target, outcome: 'failed' },
+                  detail: { ...target, outcome: 'removed', branch },
                 },
                 res,
               )
-            throw error
-          })
-          const discarded = removed.facts.files + removed.facts.ignored
-          // Recorded before the session is marked, so a retry can finish marking it if that fails.
-          await audited(
-            {
-              action: 'worktree.result',
-              actor: actorOf(caller),
-              target: sessionId ?? record.id,
-              stepup: 'none',
-              detail: { ...target, outcome: 'removed', branch: removed.branch, discarded },
-            },
-            res,
-          )
-          if (sessionId) await hub!.worktreeRemoved(sessionId)
-          refresh(sessionId)
-          return {
-            removed: true as const,
-            discarded,
-            branch: removed.branch,
-            ...(removed.branchName ? { branchName: removed.branchName } : {}),
+              await hub!.worktreeRemoved(sessionId)
+              refresh(sessionId)
+              return { removed: true as const, discarded: 0, branch }
+            }
+            if ((await worktrees.sessionOf(path)) !== sessionId)
+              throw new AppError(409, 'worktree-owned', '这个工作树已不属于这个会话，没有改动。')
+          } else {
+            const owner = await worktrees.sessionOf(path)
+            if (owner && (await worktreeOwner(owner)).state !== 'leftover')
+              throw new AppError(409, 'worktree-owned', '这个工作树属于一个会话，请在那个会话的菜单里移除它。')
           }
+          const release = repositoryHolds.take(await worktrees.common(path), 'worktree-remove')
+          if (!release) throw new AppError(409, 'worktree-busy', '这个仓库正在进行交付操作，等它结束后再试。')
+          try {
+            const refuseTurn = async () => {
+              if (await turnIn(path)) throw new AppError(409, 'worktree-turn-running', '这个工作树里有一轮正在运行，结束后再试。')
+            }
+            const owners = await worktreeSessions(path)
+            const refuseTerminal = () => {
+              if (terminals.openIn(owners) || terminals.openInside(path))
+                throw new AppError(409, 'worktree-terminal-open', '这个工作树还有打开的终端，关闭后再移除。')
+            }
+            await refuseTurn()
+            let recorded = false
+            // No await between this check and remove(), which marks the worktree as removing: no terminal opens after it.
+            refuseTerminal()
+            const removing = worktrees.remove(path, {
+              ...(body.discard !== undefined ? { discard: body.discard } : {}),
+              ...(body.digest !== undefined ? { digest: body.digest } : {}),
+              audit: async facts => {
+                await refuseTurn()
+                refuseTerminal()
+                recheck(caller, 'run')
+                recorded = true
+                await audited({
+                  action: 'worktree.remove',
+                  actor: actorOf(caller),
+                  target: sessionId ?? record.id,
+                  stepup: 'none',
+                  detail: {
+                    ...target,
+                    staged: facts.staged,
+                    unstaged: facts.unstaged,
+                    untracked: facts.untracked,
+                    ignored: facts.ignored,
+                    forced: facts.files > 0,
+                    ownBranch: facts.ownBranch,
+                    ...(facts.ahead !== undefined ? { ahead: facts.ahead } : {}),
+                    ...(facts.unpushed !== undefined ? { unpushed: facts.unpushed } : {}),
+                  },
+                })
+              },
+            })
+            const removed = await removing.catch(async (error: unknown) => {
+              if (recorded)
+                await audited(
+                  {
+                    action: 'worktree.result',
+                    actor: actorOf(caller),
+                    target: sessionId ?? record.id,
+                    stepup: 'none',
+                    detail: { ...target, outcome: 'failed' },
+                  },
+                  res,
+                )
+              throw error
+            })
+            const discarded = removed.facts.files + removed.facts.ignored
+            // Recorded before the session is marked, so a retry can finish marking it if that fails.
+            await audited(
+              {
+                action: 'worktree.result',
+                actor: actorOf(caller),
+                target: sessionId ?? record.id,
+                stepup: 'none',
+                detail: { ...target, outcome: 'removed', branch: removed.branch, discarded },
+              },
+              res,
+            )
+            if (sessionId) await hub!.worktreeRemoved(sessionId)
+            refresh(sessionId)
+            return {
+              removed: true as const,
+              discarded,
+              branch: removed.branch,
+              ...(removed.branchName ? { branchName: removed.branchName } : {}),
+            }
+          } finally {
+            release()
+          }
+        })
+      const answer = (async () => {
+        try {
+          return await removal()
         } finally {
-          release()
+          leave()
         }
-      })
+      })()
       removals.set(key, answer)
       while (removals.size > 256) removals.delete(removals.keys().next().value!)
       answer.catch(() => {
@@ -6327,7 +6361,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return {
             running: tasks.filter(task => task.status === 'running').length,
             waiting: tasks.filter(task => task.status === 'waiting-approval').length,
-            unknown: configRequests.pending() + startRequests.inFlight() + turnRequests.inFlight() + deliveries.running,
+            unknown: configRequests.pending() + startRequests.inFlight() + turnRequests.inFlight() + repositoryHolds.running,
             queued: promptQueues.pending(),
             ...terminals.activity(),
           }

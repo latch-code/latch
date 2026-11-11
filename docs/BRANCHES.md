@@ -68,7 +68,7 @@ Host 写 Git 只在两处：`apps/host/src/worktrees.ts` 新建、沿用与移�
 - 只动根下、带有效标记、属于这个会话（残留则没有存在的会话）的工作树；别人建的、标记坏的、`worktrees.ts` 之外的路径都是 404 `worktree-not-found`。
 - 先写审计 `worktree.remove`（项目、会话、路径的哈希、请求的哈希、三种数目、是否强制、是否 Latch 建的分支、领先或未推送的提交数；不写路径与文件名），写不进去就不执行；然后 `git worktree remove`，干净时不带 `--force`，有未提交的文件时带一个 `--force`（锁定的工作树仍被拒绝，409 `worktree-remove-failed`）。Git 删除目录时不跟随符号链接。
 - 分支从不强制删除：只删 Latch 建的 `latch/<名字>`，而且只在它没有在任何工作树检出、`rev-list --count <检查时的提交> --not --exclude=<名字> --branches --remotes --tags` 为 0（每个提交都在别的分支、远端引用或标签上，不会只剩 reflog）时，用 `update-ref -d refs/heads/<名字> <检查时的提交>` 删除，检查之后又前进的分支因此保留。结果的 `branch` 是 `deleted`、`kept` 或 `none`（检出的已有分支），界面写「分支 … 有未合并的提交，已保留」。之后记 `worktree.result`（`removed` 带删除的文件数；Git 在 `worktree.remove` 之后失败时记 `failed`）。
-- 会话保留，元数据记 `removed`：摘要带 `worktree.removed`，状态行、顶栏与侧栏写「工作树已移除」，输入框停用（「工作树已移除 · 只能查看」），新一轮、终端、文件与交付得到 409 `worktree-removed`。同一 `requestId` 的重试在这个 Host 进程里得到同一个回答；Host 重启后，会话的重试得到 `worktree-removed`（界面把它当作已完成），残留的重试按审计里的 `worktree.result` 得到原来的回答。`worktree.result` 在标记会话之前写入：标记失败时，重试看到文件夹已不在、审计记着移除，就补上标记。
+- 会话保留，元数据记 `removed`：摘要带 `worktree.removed`，状态行、顶栏与侧栏写「工作树已移除」，输入框停用（「工作树已移除 · 只能查看」），新一轮、终端、文件与交付得到 409 `worktree-removed`。同一 `requestId` 的重试在这个 Host 进程里得到同一个回答；Host 重启后，会话的重试得到 `worktree-removed`（界面把它当作已完成），残留的重试按审计里的 `worktree.result` 得到原来的回答。`worktree.result` 在标记会话之前写入：标记失败时，重试看到文件夹已不在、审计记着移除，就补上标记。Git 已删除文件夹、Host 却在写 `worktree.result` 之前停止时（标记随文件夹一起没了），重启后会话的重试按这个工作树的 `worktree.remove` 记录补记 `worktree.result`（`branch` 为 `kept` 或 `none`，Latch 没有删分支）并标记会话。移除计入安装窗口的忙碌计数，窗口提交后 409 `host-updating`（[UPDATES.md](./UPDATES.md)）。
 - 不做快照：改动记录的快照按回合与会话文件夹保存，恢复写回会话的文件夹，而文件夹已不存在，能恢复就要重建工作树，不便宜。所以确认里直接写「这些文件会被删除，无法恢复」。
 
 # 在工作树里开始会话

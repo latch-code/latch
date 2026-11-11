@@ -157,13 +157,40 @@ export interface DeliveryCaller {
 
 /**
  * Which Host write holds a repository (its shared Git directory): a delivery write or a worktree removal. One at a time,
- * so a removal never runs while a delivery does, and the other way round.
+ * so a removal never runs while a delivery does, and the other way round. Every Host write that runs the user's Git
+ * (delivery, pull request, worktree removal) also enters here: refused once the install window is committed, and
+ * counted while it runs, so the install waits for it.
  */
 export class RepositoryHolds {
   private readonly held = new Map<string, 'delivery' | 'worktree-remove'>()
+  private writes = 0
+  private readonly closed: () => boolean
+
+  /** `closed`: the install window is committed (update-window.ts). */
+  constructor(options: { closed?: () => boolean } = {}) {
+    this.closed = options.closed ?? (() => false)
+  }
+
+  /** Git writes running now. */
+  get running(): number {
+    return this.writes
+  }
+
+  /** Starts a Host Git write: refused while the Host is about to stop for an update; the returned call ends it. */
+  enter(): () => void {
+    this.refuseWhileUpdating()
+    this.writes++
+    let left = false
+    return () => {
+      if (left) return
+      left = true
+      this.writes--
+    }
+  }
 
   /** Takes the repository, or undefined when something holds it already. */
   take(common: string, kind: 'delivery' | 'worktree-remove'): (() => void) | undefined {
+    this.refuseWhileUpdating()
     if (this.held.has(common)) return undefined
     this.held.set(common, kind)
     return () => {
@@ -173,6 +200,10 @@ export class RepositoryHolds {
 
   of(common: string): 'delivery' | 'worktree-remove' | undefined {
     return this.held.get(common)
+  }
+
+  private refuseWhileUpdating(): void {
+    if (this.closed()) throw new AppError(409, 'host-updating', '这台电脑正在安装更新，暂时不能写入 Git。安装完成后再试。')
   }
 }
 

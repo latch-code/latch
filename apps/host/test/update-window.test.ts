@@ -256,6 +256,39 @@ describe('install window', () => {
     spy.mockRestore()
   })
 
+  it('keeps a scheduled run that is starting busy until it settles', async () => {
+    const model = heldModel()
+    const t = await testHost(model.plugin, model.providerId)
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { id } = await desktop.json<{ id: string }>('automations', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: 'Nightly',
+        model: { providerId: model.providerId, model: 'fake' },
+        prompt: 'Now',
+        schedule: { kind: 'daily', time: '09:00' },
+        notify: false,
+      },
+    })
+    const create = t.host.bridge.createTask.bind(t.host.bridge)
+    let release!: () => void
+    const spy = vi.spyOn(t.host.bridge, 'createTask').mockImplementation(
+      input =>
+        new Promise(done => {
+          release = () => done(create(input))
+        }),
+    )
+    const running = desktop.request(`automations/${id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+    await expect.poll(() => spy.mock.calls.length, { timeout: 10_000 }).toBe(1)
+    expect((await windowStatus(desktop, { open: true })).body.busy.unknown).toBe(1)
+    expect(await errorOf(await desktop.request('host/update-window/commit', { method: 'POST', body: {} }))).toBe('host-busy')
+    release()
+    expect((await running).status).toBe(202)
+    await expect.poll(async () => (await windowStatus(desktop)).body.busy.unknown).toBe(0)
+    spy.mockRestore()
+  })
+
   it('ends a committed window that no stop followed after two minutes, on record', async () => {
     let offset = 0
     const model = heldModel()

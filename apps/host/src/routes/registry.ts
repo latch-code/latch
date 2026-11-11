@@ -41,9 +41,7 @@ export type AuditEvent = Parameters<AuditLog['append']>[0]
  * the rest of the Host only through this.
  */
 export interface RouteContext {
-  /** The install window (update-window.ts): Git delivery refuses new writes while it is committed and counts running ones. */
-  updateGate: { committed(): boolean; deliveries: { running: number } }
-  /** Which Host write holds a repository now: delivery and worktree removal take turns. */
+  /** Which Host write holds a repository now (delivery and worktree removal take turns); every Git write enters it, refused once the install window is committed. */
   repositoryHolds: RepositoryHolds
   hostId: string
   hostId8: string

@@ -7,6 +7,7 @@ import {
   agentHarnesses,
   agentSessions,
   delegationMode,
+  delegationSubmission,
   draftOf,
   draftProblem,
   dutyLine,
@@ -196,6 +197,28 @@ describe('a delegation request', () => {
     // A prompt to an existing session never carries an Agent.
     writePending('delegation', { ...submission, sessionId: 's1' })
     expect(readPending('delegation')).not.toHaveProperty('customAgentId')
+  })
+})
+
+describe('a delegation start', () => {
+  it('sends the worktree start point as picked, and none outside a project', () => {
+    const harness = catalog().harnesses[0]!
+    const base = { agent: summary(), harness, choice: { mode: 'agent' as const, workspaceId: 'notes' }, prompt: '比较三家' }
+    const branch = { from: 'branch' as const, branch: 'release' }
+    expect(delegationSubmission({ ...base, worktree: branch, inProject: true })).toEqual({
+      customAgentId: 'agt_1',
+      prompt: '比较三家',
+      mode: 'agent',
+      harnessId: 'standard',
+      workspaceId: 'notes',
+      worktree: branch,
+    })
+    expect(delegationSubmission({ ...base, worktree: { from: 'commit', ref: 'abc1234' }, inProject: true }).worktree).toEqual({
+      from: 'commit',
+      ref: 'abc1234',
+    })
+    expect(delegationSubmission({ ...base, worktree: branch, inProject: false })).not.toHaveProperty('worktree')
+    expect(delegationSubmission({ ...base, worktree: undefined, inProject: true })).not.toHaveProperty('worktree')
   })
 })
 

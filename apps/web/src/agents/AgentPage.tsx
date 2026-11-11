@@ -7,6 +7,7 @@ import {
   type CustomAgentSummary,
   type HostCatalog,
   type TaskSummary,
+  type WorktreeStart,
 } from '@latch/protocol'
 import {
   Badge,
@@ -24,7 +25,7 @@ import {
 } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
-import { FolderControl, HEAD_START } from '../composer/FolderControl.tsx'
+import { FolderControl } from '../composer/FolderControl.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { SessionStatus, useLastConfirmed } from '../components/SessionStatus.tsx'
@@ -34,7 +35,7 @@ import { rowStatus } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { MyAgentTab } from '../shell/routes.ts'
 import { AgentForm, GeneralForm, TakesEffect, WriteNotice } from './AgentForm.tsx'
-import { agentHarnesses, agentSessions, delegationMode, dutyLine, GENERAL_NAME, runsWith, usesHostModels, worksIn } from './model.ts'
+import { agentHarnesses, agentSessions, delegationSubmission, dutyLine, GENERAL_NAME, runsWith, usesHostModels, worksIn } from './model.ts'
 import { AgentTile, Availability } from './parts.tsx'
 import { CarryResults } from './CarryResults.tsx'
 import { SchedulesTab } from './Schedules.tsx'
@@ -125,7 +126,8 @@ function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: Cust
   const { snapshot, delegation, access, preferences, coarse, catalog } = shell
   const [draft, setDraft] = useState('')
   const [choice, setChoice] = useState<ComposerChoice>(() => initialChoice(agent))
-  const [worktree, setWorktree] = useState(false)
+  // The start point picked in 新工作树 (HEAD or another one), sent as picked.
+  const [worktree, setWorktree] = useState<WorktreeStart | undefined>(undefined)
   const [all, setAll] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   // A new definition from the Host starts the picks again from its defaults.
@@ -159,18 +161,12 @@ function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: Cust
           : undefined
   const send = async () => {
     if (!harness || !canStart) return
-    const sessionId = await delegation.start({
-      customAgentId: agent.id,
-      prompt: draft.trim(),
-      mode: delegationMode(harness, agent.mode),
-      harnessId: harness.id,
-      ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
-      ...(usesHostModels(harness) && choice.model ? { model: { providerId: choice.model.providerId, model: choice.model.model } } : {}),
-      ...(worktree && project ? { worktree: true as const } : {}),
-    })
+    const sessionId = await delegation.start(
+      delegationSubmission({ agent, harness, choice, prompt: draft.trim(), worktree, inProject: project !== undefined }),
+    )
     if (sessionId) {
       setDraft('')
-      setWorktree(false)
+      setWorktree(undefined)
     }
   }
   const locked = delegation.sending || pending !== null
@@ -238,19 +234,10 @@ function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: Cust
               disabled={locked || offline}
               onChange={workspaceId => {
                 setChoice(previous => ({ ...previous, workspaceId }))
-                setWorktree(false)
+                setWorktree(undefined)
               }}
             />
-            {project && (
-              <FolderControl
-                project={project}
-                worktree={worktree ? HEAD_START : undefined}
-                onWorktree={start => {
-                  setWorktree(start !== undefined)
-                }}
-                disabled={locked || offline}
-              />
-            )}
+            {project && <FolderControl project={project} worktree={worktree} onWorktree={setWorktree} disabled={locked || offline} />}
             <span className="agent-form-spacer" />
             <CarryResults
               sessions={sessions}

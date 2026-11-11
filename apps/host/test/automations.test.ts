@@ -450,6 +450,24 @@ test('a plugin mid-update or a write being confirmed does not pause it, at the c
   })
 })
 
+test('a time that falls in the install window is missed, and the automation stays on', async () => {
+  const { f, service, start } = await fixture()
+  const { value } = await service.create(definition(), actor)
+  start.mockRejectedValueOnce(new AppError(409, 'host-updating', '这台电脑正在安装更新，暂时不能开始新会话。安装完成后再试。'))
+  f.clock = Date.parse('2026-11-02T09:00:00Z')
+  await service.tick()
+  expect(service.get(value.id)).toMatchObject({
+    enabled: true,
+    state: 'ready',
+    nextRunAt: '2026-11-03T09:00:00.000Z',
+    lastRun: { state: 'missed', at: '2026-11-02T09:00:00.000Z' },
+  })
+  expect(service.get(value.id)).not.toHaveProperty('pause')
+  f.clock = Date.parse('2026-11-03T09:00:00Z')
+  await service.tick()
+  expect(start).toHaveBeenCalledTimes(2)
+})
+
 test('a cancel that fails stays with its row, and the others still run', async () => {
   const { f, service, cancel, detail, start } = await fixture()
   const a = (await service.create(definition({ name: 'a' }), actor)).value

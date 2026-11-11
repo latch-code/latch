@@ -214,8 +214,24 @@ export class AuditLog {
     return found && structuredClone(found)
   }
 
+  /** Worktree removals that began (`worktree.remove`, written before Git runs), by worktree hash (bounded). */
+  private readonly worktreeRemovalsBegun = new Map<string, AuditRecord>()
+
+  /** The `worktree.remove` record of the last removal that began for this worktree hash. */
+  worktreeRemovalBegun(worktreeHash: string): AuditRecord | undefined {
+    const found = this.worktreeRemovalsBegun.get(worktreeHash)
+    return found && structuredClone(found)
+  }
+
   private index(record: AuditRecord): void {
     this.latestByAction.set(record.action, record)
+    if (record.action === 'worktree.remove') {
+      const key = String(record.detail.worktreeHash)
+      this.worktreeRemovalsBegun.delete(key)
+      this.worktreeRemovalsBegun.set(key, record)
+      while (this.worktreeRemovalsBegun.size > 2048) this.worktreeRemovalsBegun.delete(this.worktreeRemovalsBegun.keys().next().value!)
+      return
+    }
     if (record.action === 'worktree.result' && record.detail.outcome === 'removed') {
       for (const key of [`request:${String(record.detail.requestHash)}`, `tree:${String(record.detail.worktreeHash)}`]) {
         this.worktreeRemovals.delete(key)

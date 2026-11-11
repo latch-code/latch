@@ -11,9 +11,10 @@ import {
   type ModelRef,
   type TaskMode,
   type TaskSummary,
+  type WorktreeStart,
 } from '@latch/protocol'
-import { ApiError, ApiTimeoutError, ClientError, isUncertain } from '../core/api.ts'
-import { findProvider, harnessName } from '../composerChoice.ts'
+import { ApiError, ApiTimeoutError, ClientError, isUncertain, type PendingSubmission } from '../core/api.ts'
+import { findProvider, harnessName, type ComposerChoice } from '../composerChoice.ts'
 import { projectName } from '../projects.tsx'
 
 /** One entry of 我的 Agent's list: 通用 first, then the Host's own order. */
@@ -202,6 +203,27 @@ export const lockedRead = (error: unknown) => error instanceof ApiError && error
 /** The mode a delegation asks for: the Agent's own, where the chosen Harness has it. */
 export function delegationMode(harness: Pick<HarnessInfo, 'modes'> | undefined, mode: TaskMode): TaskMode {
   return !harness || harness.modes.includes(mode) ? mode : (harness.modes[0] ?? mode)
+}
+
+/** 委托's start request: the Agent, the picks, and the worktree start point as picked (only for a project that has one). */
+export function delegationSubmission(input: {
+  agent: Pick<CustomAgentSummary, 'id' | 'mode'>
+  harness: Pick<HarnessInfo, 'id' | 'modes' | 'capabilities'>
+  choice: ComposerChoice
+  prompt: string
+  worktree: WorktreeStart | undefined
+  inProject: boolean
+}): Omit<PendingSubmission, 'requestId'> & { customAgentId: string } {
+  const { agent, harness, choice, worktree } = input
+  return {
+    customAgentId: agent.id,
+    prompt: input.prompt,
+    mode: delegationMode(harness, agent.mode),
+    harnessId: harness.id,
+    ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
+    ...(usesHostModels(harness) && choice.model ? { model: { providerId: choice.model.providerId, model: choice.model.model } } : {}),
+    ...(worktree && input.inProject ? { worktree } : {}),
+  }
 }
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']

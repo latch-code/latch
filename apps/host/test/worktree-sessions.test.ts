@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { LatchWorktree, TaskDetail, TaskSummary, WorktreeBase, WorktreeInventory } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
-import { findGit } from '../src/changes/git.ts'
+import { findGit, GitReader } from '../src/changes/git.ts'
 import { Worktrees } from '../src/worktrees.ts'
 import type { LaunchTerminal } from '../src/terminal/helper.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
@@ -41,12 +41,12 @@ async function fixture(agentEnv: Record<string, string> = {}, hostOptions: TestH
   )
   await chmod(join(bin, 'qwen'), 0o755)
   // Only this directory: no agent installed on the computer running the test is ever found or run.
-  const t = await startTestHost({
+  const agentOnly: TestHostOptions = {
     demo: false,
     commandDirectories: () => [bin],
     detectPreset: preset => (preset.id === 'qwen' ? { found: true, path: join(bin, 'qwen') } : { found: false }),
-    ...hostOptions,
-  })
+  }
+  const t = await startTestHost({ ...agentOnly, ...hostOptions })
   hosts.push(t)
   const project = join(t.root, 'project')
   await mkdir(project)
@@ -106,6 +106,7 @@ async function fixture(agentEnv: Record<string, string> = {}, hostOptions: TestH
     worktreeRoot,
     leftovers,
     log,
+    agentOnly,
   }
 }
 
@@ -494,6 +495,92 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
       branch: 'deleted',
     })
     expect((await summaryOf(f.owner, sessionId)).worktree?.removed).toBe(true)
+  })
+
+  it('counts a removal running Git as busy for the install window, and refuses one after the commit', async () => {
+    const f = await fixture()
+    const ids: string[] = []
+    for (let i = 0; i < 2; i++) ids.push(((await (await f.start(f.owner)).json()) as { sessionId: string }).sessionId)
+    for (const id of ids) await vi.waitFor(async () => expect((await summaryOf(f.owner, id)).status).toBe('idle'), SLOW)
+    const [first, second] = ids as [string, string]
+    let atGit!: () => void
+    const reached = new Promise<void>(done => (atGit = done))
+    let letGo!: () => void
+    const held = new Promise<void>(done => (letGo = done))
+    const run = GitReader.prototype.run
+    vi.spyOn(GitReader.prototype, 'run').mockImplementation(async function (this: GitReader, layout, args, options) {
+      if (args.includes('worktree') && args.includes('remove')) {
+        atGit()
+        await held
+      }
+      return run.call(this, layout, args, options)
+    })
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    expect((await f.owner.request('host/update-window', { method: 'POST', body: { open: true } })).status).toBe(200)
+    const removing = f.owner.request(`tasks/${first}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    await reached
+    expect((await f.owner.json<{ busy: { unknown: number } }>('host/update-window')).busy.unknown).toBe(1)
+    const busy = await f.owner.request('host/update-window/commit', { method: 'POST', body: {} })
+    expect(busy.status).toBe(409)
+    expect(await busy.json()).toMatchObject({ error: 'host-busy' })
+    letGo()
+    expect((await removing).status).toBe(200)
+    expect((await f.owner.request('host/update-window/commit', { method: 'POST', body: {} })).status).toBe(200)
+    const cwd = (await summaryOf(f.owner, second)).cwd!
+    const refused = await f.owner.request(`tasks/${second}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: 'host-updating' })
+    expect(existsSync(cwd)).toBe(true)
+    expect((await f.audits()).filter(entry => entry.action === 'worktree.remove')).toHaveLength(1)
+  })
+
+  it('finishes a removal Git completed before the Host stopped, on a retry after the restart', async () => {
+    const dirs = await realpath(await mkdtemp(join(tmpdir(), 'latch-worktree-restart-')))
+    onTestFinished(() => rm(dirs, { recursive: true, force: true }))
+    const dataDir = join(dirs, 'data'),
+      workspaceRoot = join(dirs, 'workspace')
+    await mkdir(workspaceRoot)
+    const f = await fixture({}, { dataDir, workspaceRoot })
+    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+    const cwd = (await summaryOf(f.owner, sessionId)).cwd!
+    // Git removes the folder; the Host stops before it records the result or deletes the branch.
+    let removed!: () => void
+    const gitDone = new Promise<void>(done => (removed = done))
+    const run = GitReader.prototype.run
+    vi.spyOn(GitReader.prototype, 'run').mockImplementation(async function (this: GitReader, layout, args, options) {
+      if (!(args.includes('worktree') && args.includes('remove'))) return run.call(this, layout, args, options)
+      await run.call(this, layout, args, options)
+      removed()
+      return new Promise<Buffer>(() => {})
+    })
+    const abort = new AbortController()
+    const first = f.owner
+      .request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() }, signal: abort.signal })
+      .catch(() => undefined)
+    await gitDone
+    vi.restoreAllMocks()
+    expect(existsSync(cwd)).toBe(false)
+    abort.abort()
+    await first
+    // Only the Host stops: the project and the worktrees stay where they are.
+    await f.t.host.close()
+    expect((await f.audits()).map(entry => entry.action).filter(action => action.startsWith('worktree.'))).toEqual(['worktree.remove'])
+
+    const again = await startTestHost({ ...f.agentOnly, dataDir, workspaceRoot })
+    hosts.push(again)
+    const owner = await again.enroll({ listener: 'unix' })
+    expect(await owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })).toEqual({
+      removed: true,
+      discarded: 0,
+      branch: 'kept',
+    })
+    expect((await summaryOf(owner, sessionId)).worktree?.removed).toBe(true)
+    const results = (await f.audits()).filter(entry => entry.action === 'worktree.result')
+    expect(results).toHaveLength(1)
+    expect(results[0]!.detail).toMatchObject({ sessionId, outcome: 'removed', branch: 'kept' })
   })
 
   it('keeps the worktree of a session that became private after its start private as a leftover once it is deleted', async () => {

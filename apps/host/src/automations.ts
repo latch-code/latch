@@ -30,8 +30,11 @@ const MAX_RECEIPTS = 4096
 const MAX_ATTEMPTS = 2
 /** A scheduled time counts as met only this soon after it; later than that the Mac was off or asleep. */
 const MISSED_AFTER_MS = 60_000
-/** Says nothing about the automation: a plugin mid-update, an edit that landed first, or a write still being confirmed. */
-const PASSING = new Set(['plugin-busy', 'automation-changed', 'agent-write-unknown'])
+/**
+ * Says nothing about the automation: a plugin mid-update, an edit that landed first, a write still being confirmed, or
+ * the Host about to stop for an update (that run is missed; the automation stays on).
+ */
+const PASSING = new Set(['plugin-busy', 'automation-changed', 'agent-write-unknown', 'host-updating'])
 const passing = (error: unknown) => error instanceof AppError && PASSING.has(error.code)
 
 const rid = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
@@ -151,6 +154,16 @@ export interface AutomationPlan {
   model?: ModelRef
   agentContext?: AgentExecutionContext
 }
+/** A scheduled run the Host starts as a session. */
+export interface AutomationStartInput {
+  requestId: string
+  automationId: string
+  title: string
+  prompt: string
+  projectId?: string
+  plan: AutomationPlan
+  authorize: () => void
+}
 interface Options {
   dataDir: string
   audit: Pick<AuditLog, 'append'>
@@ -161,15 +174,7 @@ interface Options {
   plan(config: AutomationConfig): AutomationPlan
   /** Whether this device may have such a run start while nobody is looking. */
   authorize(deviceId: string, config: AutomationConfig): void
-  start(input: {
-    requestId: string
-    automationId: string
-    title: string
-    prompt: string
-    projectId?: string
-    plan: AutomationPlan
-    authorize: () => void
-  }): Promise<{ sessionId: string }>
+  start(input: AutomationStartInput): Promise<{ sessionId: string }>
   detail(sessionId: string): Promise<TaskDetail>
   cancel(sessionId: string, runId?: string): Promise<unknown>
   approvalTtlMs(): number
@@ -614,7 +619,7 @@ export class Automations {
           await this.journal.change(requestId, 'refused', state => {
             const target = this.find(state, key)
             if (target.attempt?.requestId !== requestId) return { value: false, changed: false }
-            this.update(target, { state: 'failed' })
+            this.update(target, { state: error instanceof AppError && error.code === 'host-updating' ? 'missed' : 'failed' })
             delete target.attempt
             if (passing(error)) this.rest(target)
             else this.pause(target, error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable')
