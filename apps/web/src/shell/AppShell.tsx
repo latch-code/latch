@@ -19,6 +19,7 @@ import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
+import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { RightPanel } from './RightPanel.tsx'
 import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
@@ -441,6 +442,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               />
             )}
             <Overlays shell={shell} />
+            <EditLeaveGuard />
           </div>
         </LiveChanges>
       </LayerHistory>

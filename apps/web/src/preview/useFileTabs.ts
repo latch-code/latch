@@ -3,6 +3,7 @@ import type { FileContext, FileMetadata } from '@latch/protocol'
 import { storageGet, storageSet } from '../preferences.ts'
 import { contextOf, fileContextKey, targetIn, type PreviewTarget } from './fileContext.ts'
 import type { FileTreeView } from './treeFiles.ts'
+import { draftKey, editDraft, requestDrop } from './editDrafts.ts'
 
 export interface FileTab {
   id: string
@@ -26,6 +27,19 @@ export function offerTab(tabs: FileTab[], tab: FileTab): FileTab[] {
   )
     return tabs
   return [...tabs, tab]
+}
+
+/** A tab's draft key: the file it shows, once resolved. */
+export const tabDraftKey = (tab: FileTab) => draftKey(tab.file?.root ?? tab.target.rootId, tab.file?.path ?? tab.target.reference)
+
+/**
+ * The tab that makes room for a new one in a full strip: the oldest without an editor open. `undefined` when there is
+ * room; `ask` with the oldest when every tab holds an editor, so the person decides.
+ */
+export function eviction(tabs: readonly FileTab[], hasDraft: (tab: FileTab) => boolean): { id: string; ask: boolean } | undefined {
+  if (tabs.length < MAX_TABS) return undefined
+  const clean = tabs.find(tab => !hasDraft(tab))
+  return clean ? { id: clean.id, ask: false } : { id: tabs[0]!.id, ask: true }
 }
 
 /** The tab that takes over is being looked at now, so it loses its dot as if it had been picked. */
@@ -182,18 +196,29 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
       if (context) update(context, state => ({ ...state, treeView }))
     },
     open(target: PreviewTarget) {
-      update(contextOf(target), state => {
-        const existing = state.tabs.find(
-          tab =>
-            (tab.target.reference === target.reference
-              && tab.target.rootId === target.rootId
-              && tab.target.attachmentId === target.attachmentId)
-            || (tab.file?.path === target.reference && tab.file.root === target.rootId && tab.file.attachmentId === target.attachmentId),
-        )
-        const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
-        const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
-        return { ...state, tabs: [...state.tabs.filter(item => item.id !== tab.id), tab].slice(-MAX_TABS), selected: tab.id }
-      })
+      const targetContext = contextOf(target)
+      const matches = (tab: FileTab) =>
+        (tab.target.reference === target.reference
+          && tab.target.rootId === target.rootId
+          && tab.target.attachmentId === target.attachmentId)
+        || (tab.file?.path === target.reference && tab.file.root === target.rootId && tab.file.attachmentId === target.attachmentId)
+      const sessionId = targetContext.kind === 'session' ? targetContext.sessionId : undefined
+      const current = contexts[fileContextKey(targetContext)]?.tabs ?? []
+      // A full strip lets go of a tab with no editor open; an open editor is never closed without asking.
+      const room = current.some(matches)
+        ? undefined
+        : eviction(current, tab => sessionId !== undefined && editDraft(sessionId, tabDraftKey(tab)) !== undefined)
+      const go = () =>
+        update(targetContext, state => {
+          const existing = state.tabs.find(matches)
+          const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
+          const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
+          const kept = state.tabs.filter(item => item.id !== tab.id && (existing || item.id !== room?.id))
+          return { ...state, tabs: [...kept, tab].slice(-MAX_TABS), selected: tab.id }
+        })
+      const leaving = room && current.find(tab => tab.id === room.id)
+      if (room?.ask && sessionId && leaving && requestDrop(sessionId, [tabDraftKey(leaving)], go)) return
+      go()
     },
     /** A second document from the same turn: its tab waits with a dot, behind the one that opened. */
     offer(target: PreviewTarget) {
@@ -218,8 +243,16 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
           tabs: state.tabs.map(tab => (tab.id === id && 'sessionId' in tab.target ? { ...tab, target: { ...tab.target, view } } : tab)),
         }))
     },
-    close(id: string) {
-      if (context) update(context, state => ({ ...state, ...closeTab(state.tabs, state.selected, id) }))
+    /** Closes the tab; one with unsaved text asks first. `then` runs once it is closed. */
+    close(id: string, then?: () => void) {
+      if (!context) return
+      const tab = tabs.find(item => item.id === id)
+      const go = () => {
+        update(context, state => ({ ...state, ...closeTab(state.tabs, state.selected, id) }))
+        then?.()
+      }
+      if (context.kind === 'session' && tab && requestDrop(context.sessionId, [tabDraftKey(tab)], go)) return
+      go()
     },
     resolved(id: string, file: FileMetadata) {
       if (context)

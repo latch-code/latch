@@ -2,7 +2,7 @@ import { createAgentLoginRoutes, type AgentLoginDeps, type AgentLoginRoutes } fr
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAppRoutes, type AppRouteDeps, type AppRoutes } from './apps.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
-import { createChangeRoutes } from './changes.ts'
+import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
@@ -30,20 +30,29 @@ export interface RouteDeps {
 export function createRoutes(
   context: RouteContext,
   deps: RouteDeps,
-): { native: NativeRoutes; terminal: TerminalRoutes; agentLogin: AgentLoginRoutes; apps: AppRoutes; routes: RouteRegistry } {
+): {
+  native: NativeRoutes
+  terminal: TerminalRoutes
+  agentLogin: AgentLoginRoutes
+  apps: AppRoutes
+  changes: ChangeRoutes
+  routes: RouteRegistry
+} {
   const native = createNativeRoutes(context, deps.native)
   const apps = createAppRoutes(context, deps.apps)
   const terminal = createTerminalRoutes(context, deps.terminals)
   const agentLogin = createAgentLoginRoutes(context, deps.agentLogin)
+  const changes = createChangeRoutes(context)
   return {
     native,
     terminal,
     agentLogin,
     apps,
+    changes,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
-      createChangeRoutes(context),
+      changes,
       createGitRoutes(context, deps.git),
       terminal,
       createAgentRoutes(context, deps.agents),

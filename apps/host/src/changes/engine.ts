@@ -45,6 +45,8 @@ import {
   type Change,
   type FileState,
   type Manifest,
+  type PersonEdit,
+  PERSON_EDIT_LIMIT,
   type Receipt,
   type TurnNote,
   type TurnRecord,
@@ -126,6 +128,8 @@ interface SessionState {
   turns: TurnRecord[]
   /** A note owed while the session had no turn to hold it. */
   note?: TurnNote
+  /** Files the person saved with Latch's editor, oldest first. */
+  edits: PersonEdit[]
   /** The turn this process saw start and not yet settle. */
   running?: string
 }
@@ -222,9 +226,13 @@ const notesOf = (state: Pick<SessionState, 'turns' | 'note'>): TurnNote[] => [
 
 const reasonOf = (state: FileState): NotRestoredFile['reason'] => (state.kept === 'secret' ? 'secret' : 'not-retained')
 
-/** The note's words, from the notes of the turns it covers. */
-function noteText(notes: readonly TurnNote[]): string {
+/** How many edited files a note names; the rest are counted. */
+const NAMED_EDITS = 5
+
+/** The note's words, from the notes of the turns it covers and the files the person edited. */
+function noteText(notes: readonly TurnNote[], edits: readonly PersonEdit[] = []): string {
   const of = (kind: TurnNote['kind']) => notes.filter(note => note.kind === kind)
+  const edited = [...new Set(edits.map(edit => edit.display))]
   const undone = of('undo').length,
     redone = of('redo').length,
     files = notes.reduce((sum, note) => sum + (note.kind === 'files' ? note.files : (note.discarded ?? 0)), 0),
@@ -234,6 +242,9 @@ function noteText(notes: readonly TurnNote[]): string {
     ...(redone ? [`用户恢复了之前撤销的 ${redone} 轮改动，相关文件已回到${redone > 1 ? '那些轮次' : '那一轮'}结束时的内容`] : []),
     ...(files ? [`用户撤销了 ${files} 个文件的改动`] : []),
     ...(skipped ? [`有 ${skipped} 个文件没有留存或可能含密钥，没有改动`] : []),
+    ...(edited.length
+      ? [`用户编辑了 ${edited.slice(0, NAMED_EDITS).join('、')}${edited.length > NAMED_EDITS ? ` 等 ${edited.length} 个文件` : ''}`]
+      : []),
   ]
   return `${CHANGE_NOTE_PREFIX}在这条消息之前，${parts.join('；')}。不要假定文件还是你上次看到的样子，需要时重新读取。`
 }
@@ -346,8 +357,8 @@ export class ChangesEngine {
     if (!state) {
       state = (async (): Promise<SessionState> => {
         const files = new SessionFiles(join(project.directory, 'sessions', directoryKey(sessionId)), sessionId, project.id)
-        const [head, turns, note] = await Promise.all([files.readHead(), files.readTurns(), files.readNote()])
-        return { id: sessionId, files, ...(head ? { head } : {}), turns, ...(note ? { note } : {}) }
+        const [head, turns, note, edits] = await Promise.all([files.readHead(), files.readTurns(), files.readNote(), files.readEdits()])
+        return { id: sessionId, files, ...(head ? { head } : {}), turns, ...(note ? { note } : {}), edits }
       })()
       state.catch(() => project.sessions.delete(sessionId))
       project.sessions.set(sessionId, state)
@@ -372,7 +383,7 @@ export class ChangesEngine {
   private async save(project: ProjectState, state: SessionState): Promise<void> {
     await privateDirectory(state.files.directory)
     await state.files.writeHead(state.head)
-    await state.files.writeTurns(state.turns, state.note)
+    await state.files.writeTurns(state.turns, state.note, state.edits)
     project.index?.set(state.id, this.indexOf(state))
   }
 
@@ -518,6 +529,7 @@ export class ChangesEngine {
       const told = <T extends { note?: TurnNote }>(holder: T): T =>
         holder.note?.requestId && !holder.note.told ? { ...holder, note: { ...holder.note, told: true as const } } : holder
       if (state.note) state.note = told({ note: state.note }).note!
+      state.edits = state.edits.map(edit => (edit.requestId && !edit.told ? { ...edit, told: true as const } : edit))
       state.turns = [
         ...state.turns.map(told),
         {
@@ -770,9 +782,20 @@ export class ChangesEngine {
         const bytes = await readWorkFile(pair.after)
         if (bytes && sha256(bytes) === pair.before.state.hash && pair.before.state.mode === pair.after.mode) continue
       }
+      if (pair.byUser && pair.after && (await this.personMade(state, pair.root, pair.path, pair.after))) pair.byPerson = true
       pairs.push(pair)
     }
     return { pairs: renames(pairs), partial }
+  }
+
+  /** The file holds what the person last saved with Latch's editor. */
+  private async personMade(state: SessionState, root: string, path: string, after: Side): Promise<boolean> {
+    const edit = state.edits.findLast(item => item.root === root && item.path === path)
+    if (!edit) return false
+    if (after.from === 'record') return after.state.hash === edit.hash
+    if (after.from !== 'work' || after.size > TEXT_LIMIT) return false
+    const bytes = await readWorkFile(after)
+    return !!bytes && sha256(bytes) === edit.hash
   }
 
   private async scoped(session: ChangesSession, scope: ChangeScope, turnId: string | undefined): Promise<Scoped> {
@@ -967,6 +990,36 @@ export class ChangesEngine {
   }
 
   /**
+   * Saves the person's edit of one file through `write`, under the project's lock so no snapshot, undo or discard runs
+   * meanwhile, then records it: 「你的修改」 in the session scope and a note for the Agent's next turn. `write` answers
+   * the content's hash, or undefined when it wrote nothing.
+   */
+  async personEdit(input: {
+    session: Pick<ChangesSession, 'id' | 'projectId'>
+    file: { root: string; path: string; display: string }
+    write: () => Promise<string | undefined>
+  }): Promise<{ noteNextTurn: boolean }> {
+    const { session, file, write } = input
+    if (!PROJECT_ID.test(session.projectId)) throw new AppError(400, 'change-session-invalid', '会话信息无效。')
+    return this.mutate(session.projectId, async project => {
+      const state = await this.session(project, session.id)
+      const hash = await write()
+      if (hash === undefined) return { noteNextTurn: false }
+      const key = fileKey(file.root, file.path)
+      // An earlier edit of the file no message has carried yet is the same news; one a message carries keeps its words.
+      const edits = state.edits.filter(edit => !(fileKey(edit.root, edit.path) === key && !edit.told && !edit.requestId))
+      edits.push({ root: file.root, path: file.path, display: file.display, hash, at: iso(this.now()) })
+      while (edits.length > PERSON_EDIT_LIMIT) {
+        const told = edits.findIndex(edit => edit.told)
+        edits.splice(told < 0 ? 0 : told, 1)
+      }
+      state.edits = edits
+      await this.save(project, state)
+      return { noteNextTurn: true }
+    })
+  }
+
+  /**
    * The note for this message (`requestId`), when files were written back behind the engine's memory since it last
    * heard. A retry of the message gets the same words, because a driver refuses a request ID with different text; the
    * note counts as told once a turn begins.
@@ -978,7 +1031,7 @@ export class ChangesEngine {
     signal?: AbortSignal
   }): Promise<string | undefined> {
     const { session, requestId, signal } = input
-    const due = (state: SessionState) => notesOf(state).some(note => !note.told || note.requestId === requestId)
+    const due = (state: SessionState) => [...notesOf(state), ...state.edits].some(note => !note.told || note.requestId === requestId)
     return this.track(async () => {
       const project = await this.project(session.projectId)
       // Every message asks, so one with no note due does not queue behind a snapshot of the project.
@@ -986,15 +1039,20 @@ export class ChangesEngine {
       return this.locked(project, async () => {
         if (signal?.aborted) return undefined
         const state = await this.session(project, session.id)
-        const carried = notesOf(state).filter(note => note.requestId === requestId)
-        if (carried.length) return noteText(carried)
+        const carried = notesOf(state).filter(note => note.requestId === requestId),
+          carriedEdits = state.edits.filter(edit => edit.requestId === requestId)
+        if (carried.length || carriedEdits.length) return noteText(carried, carriedEdits)
         if (!due(state)) return undefined
         const carrying = <T extends { note?: TurnNote }>(holder: T): T =>
           holder.note && !holder.note.told ? { ...holder, note: { ...holder.note, requestId } } : holder
         state.turns = state.turns.map(carrying)
         if (state.note) state.note = carrying({ note: state.note }).note!
+        state.edits = state.edits.map(edit => (edit.told ? edit : { ...edit, requestId }))
         await this.save(project, state)
-        return noteText(notesOf(state).filter(note => note.requestId === requestId))
+        return noteText(
+          notesOf(state).filter(note => note.requestId === requestId),
+          state.edits.filter(edit => edit.requestId === requestId),
+        )
       })
     })
   }

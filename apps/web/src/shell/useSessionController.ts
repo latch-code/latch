@@ -27,6 +27,7 @@ import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.
 import { isActive } from '../format.ts'
 import { approvalActions, composerGate, deviceAccess, hostView } from '../core/permissions.ts'
 import { setPreference } from '../preferences.ts'
+import { requestLeave } from '../preview/editDrafts.ts'
 import {
   CONFIG_UNVERIFIED_TEXT,
   isSessionStopCode,
@@ -384,7 +385,9 @@ export function useSessionController({
     })
   }, [snapshot])
 
-  const choose = useStableCallback((id: string | null) => {
+  const choose = useStableCallback((id: string | null): void => {
+    // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
+    if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id))) return
     if (id !== selectedId || id === null) {
       if (selectedId !== null) {
         const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === selectedId

@@ -85,6 +85,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'file.quicklook': fileAction,
   'file.open': fileAction,
   'file.view': { ...fileAction, bytes: 2048 },
+  'file.edit': { sessionId, pathHash: hex, type: 'other', protection: 'none', before: 10, after: 12 },
   'file.list': { workspaceId: 'ws-1', rootHash: hex, dirHash: hex, hidden: false, count: 3, truncated: false },
   'action.failed': { refSeq: 7 },
   'task.question.answered': { sessionId, questionId: 'q-1' },

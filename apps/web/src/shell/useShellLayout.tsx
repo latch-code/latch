@@ -693,8 +693,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (action === 'close-file') {
       if (fileTabs.active) {
         event.preventDefault()
-        fileTabs.close(fileTabs.active.id)
-        setFileExpanded(false)
+        fileTabs.close(fileTabs.active.id, () => setFileExpanded(false))
       }
       return
     }

@@ -295,6 +295,7 @@ export function SessionPanels({
             onResolved={file => onFileResolved?.(activeFile.id, file)}
             onMention={onMention}
             onQuote={canCompose ? onQuote : undefined}
+            running={summary?.status === 'running' || summary?.status === 'waiting-approval'}
           />
         ) : active?.moduleHash && summary ? (
           <section className="plugin-panel" aria-label={active.title}>

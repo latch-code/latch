@@ -7,6 +7,7 @@ import { stat, realpath } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { z } from 'zod'
 import {
+  FILE_EDIT_LIMIT,
   isLocalListener,
   type Device,
   type DeviceScope,
@@ -14,6 +15,7 @@ import {
   type TaskDetail,
   type FileContext,
   type FileDirectoryListing,
+  type FileEditResult,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
@@ -23,6 +25,8 @@ import { KIB, json, jsonBody, safeDecode } from '../http-util.ts'
 import { FileHandles, HANDLE, type HandleEntry } from './handles.ts'
 import { type FileDirectoryReader, validDirectory } from './directory.ts'
 import { auditType } from './kinds.ts'
+import { mixedLineEndings, readCurrent, replaceFile, shapeContent, sha256, fileChanged, validContent } from './edit.ts'
+import { isInsidePath, isProtectedWorkspacePath } from '../paths.ts'
 import { canTruncate, contentLimit, fileEtag, fileFormat, imageDimensions } from './metadata.ts'
 import { isReferenced, isReferenceListed, sessionReferences } from './references.ts'
 import { openContent, sendContent } from './read.ts'
@@ -52,6 +56,16 @@ const resolveSchema = z.strictObject({
   showSecret: z.boolean().optional(),
 })
 const searchSchema = z.strictObject({ q: z.string().max(512), limit: z.number().int().min(1).max(100).default(100) })
+const editSchema = z.strictObject({
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  baseHash: z.string().regex(/^[0-9a-f]{64}$/u),
+  content: z.string().max(FILE_EDIT_LIMIT),
+})
+/** JSON escapes at most six bytes for one, and the rest of the body is small. */
+const EDIT_BODY_LIMIT = 6 * FILE_EDIT_LIMIT + 4 * KIB
+const EDIT_KINDS = new Set(['text', 'code', 'markdown'])
+const EDIT_RECEIPTS = 512
+const EDIT_RECEIPT_MS = 60 * 60 * 1000
 const workspaceResolveSchema = resolveSchema.extend({ harnessId: z.string().min(1).max(128) })
 const workspaceSearchSchema = searchSchema.extend({ harnessId: z.string().min(1).max(128) })
 const actSchema = z
@@ -87,7 +101,33 @@ interface FileCaller {
   device?: Device
 }
 
+/** What a person's edit of a session file needs from the rest of the Host. */
+export interface FileEditHooks {
+  /** What sending input to the session needs: the run scope, the session's access, not archived, its folders there. */
+  assertInput(caller: FileCaller, sessionId: string): Promise<void>
+  /**
+   * A turn runs in a folder that holds `realPath`: this session's, or another session's in the same folder. `wait`:
+   * a turn of the session still being recorded is waited for; without it (under the changes lock) it counts as running.
+   */
+  turnRunning(sessionId: string, realPath: string, wait: boolean): Promise<boolean>
+  /** The session takes input: false for a read-only one (from a removed Agent), which offers no editing. */
+  writable(sessionId: string): boolean
+  /**
+   * Runs `write` under the changes engine's lock, then records the edit for 「你的修改」 and the next turn's note.
+   * `write` answers the new content's hash, or undefined when it wrote nothing.
+   */
+  record(
+    sessionId: string,
+    file: { root: string; path: string; display: string },
+    write: () => Promise<string | undefined>,
+  ): Promise<{ noteNextTurn: boolean }>
+}
+
 export interface FileRoutesOptions {
+  /** The person's text edits (`PUT tasks/:id/files/:handle`); without them the route does not exist. */
+  edits?: FileEditHooks
+  /** The Latch program folder (canonical): its files are never edited here. */
+  codeRoot?: string
   requestSignal?(caller: FileCaller): AbortSignal | undefined
   contentChunkBytes?(caller: FileCaller): 65_536 | undefined
   /** Latch's private paths: the same list the built-in file tools refuse. */
@@ -115,6 +155,8 @@ export interface FileRoutesOptions {
   referencePaths?(sessionId: string, roots: readonly FileRoot[]): Promise<ReadonlySet<string>>
   /** Test seam only; the Host never sets it. */
   hooks?: ResolveOptions['hooks']
+  /** Test seam only: runs after an edit's temporary file is written, before the final check and the rename. */
+  editHooks?: { beforeRename?(): Promise<void> }
 }
 
 /** Desktop app on host.sock, a device with the scope and the data scope `all` (the whole of the session's folders). */
@@ -132,12 +174,41 @@ function admitRead(caller: FileCaller): asserts caller is FileCaller & { device:
 
 const scopeOf = (action: FileAction): DeviceScope => (action === 'open' ? 'run' : 'view')
 
+const EDIT_REFUSALS = {
+  'file-code-root': { status: 403, message: 'Latch 程序目录里的文件不能在这里编辑。' },
+  'file-edit-elevated': { status: 403, message: '这个文件需要能批准高风险操作的设备。' },
+  'file-mixed-eol': { status: 409, message: '混用换行符的文件不能在这里编辑。' },
+} as const
+type EditRefusal = keyof typeof EDIT_REFUSALS
+
+/**
+ * Where an edit stands beyond the read rules: never in the program folder; on a path whose writes Latch treats as R2
+ * (hooks, manifests, CI, agent settings, environment files), only from a device that may approve R2.
+ */
+export function editProtection(
+  device: Device,
+  file: Pick<ResolvedFile, 'realPath' | 'relativePath'>,
+  root: FileRoot,
+  codeRoot: string | undefined,
+): { protection: 'none' | 'protected-path' } | { refusal: EditRefusal } {
+  if (
+    codeRoot !== undefined
+    && (isInsidePath(file.realPath, codeRoot) || isInsidePath(root.path, codeRoot) || isInsidePath(codeRoot, root.path))
+  )
+    return { refusal: 'file-code-root' }
+  if (!isProtectedWorkspacePath(file.relativePath, root.path)) return { protection: 'none' }
+  return device.scopes.includes('approve:elevated') ? { protection: 'protected-path' } : { refusal: 'file-edit-elevated' }
+}
+const refuseEdit = (code: EditRefusal) => new AppError(EDIT_REFUSALS[code].status, code, EDIT_REFUSALS[code].message)
+
 export function createFileRoutes(options: FileRoutesOptions) {
   const handles = new FileHandles(options.now)
   const guard = new ProtectedPaths(options.protectedPaths)
   const searchIndex = new FileSearchIndex()
   const quota = new FileReadQuota(options.now)
   const audited = new Map<string, number>()
+  /** Answers to edits by device, session and request ID, so a retry gets the same answer instead of a conflict. */
+  const editReceipts = new Map<string, { fingerprint: string; until: number; answer: Promise<FileEditResult> }>()
   const pendingListAudits = new Map<string, Promise<void>>()
   let activeEnumerations = 0
   const enumeratingDevices = new Map<string, number>()
@@ -384,11 +455,26 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const dimensions = format.kind === 'image' ? imageDimensions(file.head, format.mime) : undefined
       const imageTooLarge = !!dimensions && dimensions.width * dimensions.height > (local ? 100_000_000 : 50_000_000)
       const imageUnknown = format.kind === 'image' && !dimensions
+      const offered =
+        !!options.edits
+        && context.kind === 'session'
+        && options.edits.writable(context.sessionId)
+        && caller.device.scopes.includes('run')
+        && caller.device.dataScope === 'all'
+        && !file.secret
+        && EDIT_KINDS.has(format.kind)
+        && file.size <= FILE_EDIT_LIMIT
+      const editRoot = access.roots.find(root => root.id === file.rootId)
+      const gate = offered && editRoot ? editProtection(caller.device, file, editRoot, options.codeRoot) : undefined
+      const editRefusal: EditRefusal | undefined =
+        gate && 'refusal' in gate ? gate.refusal : offered && mixedLineEndings(file.head) ? 'file-mixed-eol' : undefined
+      const editable = offered && !!gate && !editRefusal
       if (options.sessionDetail && canRead) await auditRead(caller, context, file, limit)
       const refused: Record<string, string> = Object.fromEntries(
         Object.entries(verdicts).flatMap(([action, verdict]) => (verdict.ok ? [] : [[action, verdict.code]])),
       )
       if (imageTooLarge || imageUnknown) refused.preview = imageTooLarge ? 'file-too-large' : 'file-image-dimensions'
+      if (editRefusal) refused.edit = editRefusal
       files.push({
         input: path,
         status: 'ok',
@@ -429,6 +515,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
               ? {
                   download: canRead && file.size <= limit && !imageTooLarge,
                   preview: canRead && !imageTooLarge && !imageUnknown && format.kind !== 'binary',
+                  ...(options.edits ? { edit: editable } : {}),
                 }
               : {}),
           },
@@ -529,7 +616,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const limit = contentLimit(format.kind, local)
     options.recheck(caller, 'view')
     await access.recheck()
-    return { file, context, access, local, allowSecret, format, limit }
+    return { file, entry, context, access, local, allowSecret, format, limit }
   }
 
   async function read(req: IncomingMessage, res: ServerResponse, caller: FileCaller, handle: string, meta: boolean): Promise<void> {
@@ -579,6 +666,132 @@ export function createFileRoutes(options: FileRoutesOptions) {
       })
     } finally {
       lease.release()
+    }
+  }
+
+  /**
+   * `PUT /tasks/:id/files/:handle { requestId, baseHash, content }`: the person's edit of a text file they opened. The
+   * file must still be the version they read (`baseHash`), or nothing is written (409 `file-changed` with the current
+   * hash). The audit record comes first; the write replaces the file through a temporary file and a rename.
+   */
+  async function edit(req: IncomingMessage, res: ServerResponse, caller: FileCaller, sessionId: string, handle: string): Promise<void> {
+    admitRead(caller)
+    if (!caller.device.scopes.includes('run')) throw scopeRequired('run')
+    if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+    const input = editSchema.parse(await jsonBody(req, EDIT_BODY_LIMIT))
+    options.limiter.take(caller.device.id)
+    const key = JSON.stringify([caller.device.id, sessionId, input.requestId])
+    const fingerprint = sha256Hex(JSON.stringify([handle, input.baseHash, sha256Hex(input.content)]))
+    const time = options.now()
+    for (const [id, receipt] of editReceipts) if (receipt.until <= time) editReceipts.delete(id)
+    const known = editReceipts.get(key)
+    if (known) {
+      if (known.fingerprint !== fingerprint) throw new AppError(409, 'request-id-reused', '这个请求标识已用于另一次保存。')
+      const answer = await known.answer
+      options.recheck(caller, 'run')
+      json(res, { ...answer, replay: true } satisfies FileEditResult)
+      return
+    }
+    const answer = saveEdit(caller as FileCaller & { device: Device }, sessionId, handle, input)
+    if (editReceipts.size >= EDIT_RECEIPTS) editReceipts.delete(editReceipts.keys().next().value!)
+    editReceipts.set(key, { fingerprint, until: time + EDIT_RECEIPT_MS, answer })
+    // Only a save that happened is replayed; a refusal is decided afresh on a retry.
+    answer.catch(() => {
+      if (editReceipts.get(key)?.answer === answer) editReceipts.delete(key)
+    })
+    json(res, await answer)
+  }
+
+  async function saveEdit(
+    caller: FileCaller & { device: Device },
+    sessionId: string,
+    handle: string,
+    input: z.infer<typeof editSchema>,
+  ): Promise<FileEditResult> {
+    const hooks = options.edits!
+    if (!validContent(input.content)) throw new AppError(400, 'file-edit-invalid', '内容含有无法保存的字符。')
+    await hooks.assertInput(caller, sessionId)
+    const { file, entry, context, access } = await authorizedFile(caller, handle)
+    if (context.kind !== 'session' || context.sessionId !== sessionId)
+      throw new AppError(403, 'file-handle-foreign', '这个文件句柄不属于这个会话')
+    // The path opened now leads somewhere else (a symlink took its place): never write through it.
+    if (file.rootId !== entry.rootId || file.relativePath !== entry.relativePath)
+      throw new AppError(409, 'file-not-regular', '这个文件已被替换为链接，没有保存。')
+    if (file.secret) throw new AppError(403, 'file-secret', '这个文件可能含密钥，不能在这里编辑。')
+    if (!EDIT_KINDS.has(fileFormat(file).kind)) throw new AppError(409, 'file-not-text', '这种文件不能在这里编辑。')
+    if (file.size > FILE_EDIT_LIMIT)
+      throw new AppError(413, 'file-edit-too-large', `超过 ${FILE_EDIT_LIMIT / 1024 / 1024} MiB 的文件不能在这里编辑。`)
+    const root = access.roots.find(item => item.id === file.rootId)
+    if (!root) throw new AppError(409, 'file-roots-changed', '文件夹已变化，请重新打开')
+    const gate = editProtection(caller.device, file, root, options.codeRoot)
+    if ('refusal' in gate) throw refuseEdit(gate.refusal)
+    // Outside the changes lock a turn still being recorded is waited for; under it, it only refuses.
+    const refuseRunning = async (wait: boolean) => {
+      if (await hooks.turnRunning(sessionId, file.realPath, wait))
+        throw new AppError(409, 'file-turn-running', '这个文件夹里有一轮正在运行，结束后再保存。')
+    }
+    await refuseRunning(true)
+    const display = root === access.roots[0] ? file.relativePath : file.realPath
+    // The device as it is now: a scope lowered while the request waited stops the write, R2 rights included.
+    const rights = () => {
+      options.recheck(caller, 'run')
+      if (gate.protection === 'protected-path') options.recheck(caller, 'approve:elevated')
+    }
+    let result: { hash: string; size: number; unchanged?: true } | undefined
+    const { noteNextTurn } = await hooks.record(sessionId, { root: file.rootId, path: file.relativePath, display }, async () => {
+      await access.recheck()
+      rights()
+      await refuseRunning(false)
+      const current = await readCurrent(file.realPath)
+      if (!current.shape) throw new AppError(409, 'file-not-text', '这个文件不是 UTF-8 文本，不能在这里编辑。')
+      if (current.shape.mixed) throw refuseEdit('file-mixed-eol')
+      const bytes = shapeContent(input.content, current.shape)
+      if (bytes.length > FILE_EDIT_LIMIT)
+        throw new AppError(413, 'file-edit-too-large', `超过 ${FILE_EDIT_LIMIT / 1024 / 1024} MiB 的文件不能在这里编辑。`)
+      const hash = sha256(bytes)
+      // Already this text (an earlier save whose answer was lost, or no change at all): nothing to write.
+      if (hash === current.hash) {
+        result = { hash, size: bytes.length, unchanged: true }
+        return undefined
+      }
+      if (current.hash !== input.baseHash) throw fileChanged(current.hash)
+      await access.recheck()
+      rights()
+      const { seq } = await options.audit.append({
+        action: 'file.edit',
+        actor: options.actorOf(caller),
+        target: sessionId,
+        detail: {
+          sessionId,
+          pathHash: sha256Hex(file.realPath),
+          type: auditType(file.ext),
+          protection: gate.protection,
+          before: current.bytes.length,
+          after: bytes.length,
+        },
+      })
+      try {
+        rights()
+        await replaceFile(file.realPath, bytes, current, {
+          beforeRename: async () => {
+            await options.editHooks?.beforeRename?.()
+            rights()
+          },
+        })
+      } catch (error) {
+        await options.audit.append({ action: 'action.failed', actor: options.actorOf(caller), detail: { refSeq: seq } }).catch(() => {})
+        throw error
+      }
+      result = { hash, size: bytes.length }
+      return hash
+    })
+    return {
+      requestId: input.requestId,
+      hash: result!.hash,
+      size: result!.size,
+      ...(result!.unchanged ? { unchanged: true as const } : {}),
+      noteNextTurn,
+      at: new Date(options.now()).toISOString(),
     }
   }
 
@@ -751,6 +964,15 @@ export function createFileRoutes(options: FileRoutesOptions) {
         const sessionId = safeDecode(resolveRoute[1]!)
         if (sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
         await resolveFiles(req, res, caller, sessionContext(sessionId))
+        return true
+      }
+      const editRoute = options.edits && options.sessionDetail ? /^\/link\/api\/tasks\/([^/]+)\/files\/([^/]+)$/u.exec(path) : null
+      if (editRoute && method === 'PUT') {
+        const sessionId = safeDecode(editRoute[1]!),
+          handle = safeDecode(editRoute[2]!)
+        if (sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
+        if (!HANDLE.test(handle)) throw new AppError(400, 'file-invalid', '这不是有效的文件句柄')
+        await edit(req, res, caller, sessionId, handle)
         return true
       }
       const actRoute = /^\/link\/api\/files\/([^/]+)\/local$/u.exec(path)

@@ -228,7 +228,7 @@ export const statusLetter = (file: Pick<ChangedFile, 'status' | 'conflicted'>) =
 
 /** The one short note on a file's row: why its content is absent if it is, otherwise who changed it. */
 export function fileNote(file: ChangedFile): { text: string; title?: string } | undefined {
-  const by = file.byCommand ? '由命令修改' : file.byUser ? '两轮之间改动' : undefined
+  const by = file.byCommand ? '由命令修改' : file.byPerson ? '你的修改' : file.byUser ? '两轮之间改动' : undefined
   const absent = file.secret
     ? '可能含密钥，只列路径'
     : file.notRetained
@@ -240,7 +240,14 @@ export function fileNote(file: ChangedFile): { text: string; title?: string } | 
           : undefined
   if (absent) return { text: absent, ...(by ? { title: by } : {}) }
   if (!by) return undefined
-  return { text: by, ...(file.byUser ? { title: '在两轮之间改动的：可能是你，也可能是别的程序' } : {}) }
+  return {
+    text: by,
+    ...(file.byPerson
+      ? { title: '你在 Latch 里编辑并保存的内容' }
+      : file.byUser
+        ? { title: '在两轮之间改动的：可能是你，也可能是别的程序' }
+        : {}),
+  }
 }
 
 export const contentHidden = (file: ChangedFile) => Boolean(file.secret || file.notRetained || file.large || file.binary)

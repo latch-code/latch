@@ -35,7 +35,10 @@ export interface UnknownWrite {
   body: Record<string, unknown>
 }
 
-export type DeliveryOutcome = { kind: 'committed'; result: GitCommitResult } | { kind: 'pushed'; result: GitPushResult }
+/** `at`: when the answer came, so a later edit of a file can mark it 「需要复验」. */
+export type DeliveryOutcome =
+  | { kind: 'committed'; result: GitCommitResult; at: number }
+  | { kind: 'pushed'; result: GitPushResult; at: number }
 
 export interface DeliveryWrites {
   stage(paths: string[]): void
@@ -189,8 +192,8 @@ export function useDelivery(input: {
         setUnknown(previous => unknownAfter(previous, write, 'done'))
         setOutcome(
           write.kind === 'commit'
-            ? { kind: 'committed', result: result as GitCommitResult }
-            : { kind: 'pushed', result: result as GitPushResult },
+            ? { kind: 'committed', result: result as GitCommitResult, at: Date.now() }
+            : { kind: 'pushed', result: result as GitPushResult, at: Date.now() },
         )
         return 'done' as const
       } catch (cause) {

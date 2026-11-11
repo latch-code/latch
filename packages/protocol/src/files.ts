@@ -129,8 +129,38 @@ export interface FileMetadata {
   secret: boolean
   width?: number
   height?: number
-  actions: { reveal: boolean; quicklook: boolean; open: boolean; download: boolean; preview: boolean }
+  /**
+   * `edit`: the Host takes a small text edit of this file from this device (`PUT tasks/:id/files/:handle`); absent from
+   * older Hosts and outside a session.
+   */
+  actions: { reveal: boolean; quicklook: boolean; open: boolean; download: boolean; preview: boolean; edit?: boolean }
   refused?: Record<string, string>
+}
+
+/** The largest text file the editor takes, before and after the edit (UTF-8 bytes). */
+export const FILE_EDIT_LIMIT = 1024 * 1024
+
+/** `PUT /link/api/tasks/:id/files/:handle`: the person's edit of a file they opened, checked against the version they opened. */
+export interface FileEditRequest {
+  requestId: string
+  /** SHA-256 (hex) of the file's bytes as the editor read them. */
+  baseHash: string
+  /** The new text; the Host keeps the file's line endings, final newline and byte-order mark. */
+  content: string
+}
+
+/** What a save did; a retry with the same `requestId` gets the same answer with `replay`. */
+export interface FileEditResult {
+  requestId: string
+  /** SHA-256 of the file's bytes now: the base of the next save. */
+  hash: string
+  size: number
+  /** The file already held exactly this text, so nothing was written. */
+  unchanged?: true
+  /** The Agent's next turn is told that the person edited this file. */
+  noteNextTurn: boolean
+  at: string
+  replay?: true
 }
 
 export interface FileChange {
@@ -189,6 +219,7 @@ export function isFileMetadata(value: unknown): value is FileMetadata {
     if (typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || (key !== 'mtime' && value[key] < 0)) return false
   for (const key of ['reveal', 'quicklook', 'open', 'download', 'preview'] as const)
     if (typeof value.actions[key] !== 'boolean') return false
+  if (value.actions.edit !== undefined && typeof value.actions.edit !== 'boolean') return false
   for (const key of ['width', 'height'] as const)
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isInteger(value[key]) || value[key] < 1)) return false
   return true

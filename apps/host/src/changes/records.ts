@@ -91,6 +91,22 @@ export interface TurnNote {
   /** A turn began with that message. */
   told?: true
 }
+/**
+ * A file the person saved with Latch's editor: its content then, for 「你的修改」, and the note the Agent's next turn
+ * carries, told once like a turn's note.
+ */
+export interface PersonEdit {
+  root: string
+  path: string
+  /** How the note names the file: the relative path in the primary folder, else the full path. */
+  display: string
+  hash: string
+  at: string
+  requestId?: string
+  told?: true
+}
+export const PERSON_EDIT_LIMIT = 100
+
 export interface TurnRecord {
   turnId: string
   startedAt: string
@@ -197,7 +213,21 @@ const turnSchema = z.strictObject({
 })
 const ownerShape = { v: z.literal(1), sessionId: z.string().min(1).max(256), projectId: z.string().min(1).max(256) }
 const headSchema = z.strictObject({ ...ownerShape, manifest: manifestSchema })
-const turnsSchema = z.strictObject({ ...ownerShape, turns: z.array(turnSchema).max(64), note: noteSchema.optional() })
+const personEditSchema = z.strictObject({
+  root: folderId,
+  path: z.string().min(1).max(4096),
+  display: z.string().min(1).max(4096),
+  hash: digest,
+  at: isoTime,
+  requestId: z.string().min(1).max(256).optional(),
+  told: z.literal(true).optional(),
+})
+const turnsSchema = z.strictObject({
+  ...ownerShape,
+  turns: z.array(turnSchema).max(64),
+  note: noteSchema.optional(),
+  edits: z.array(personEditSchema).max(PERSON_EDIT_LIMIT).optional(),
+})
 
 /** A directory name for an ID; IDs can hold any character or differ only in case, so they never become a path. */
 export const directoryKey = (id: string) => sha256Hex(id).slice(0, 32)
@@ -287,16 +317,29 @@ export class SessionFiles {
     return this.owns(file) ? (file!.note as TurnNote | undefined) : undefined
   }
 
+  /** Files the person saved with Latch's editor. */
+  async readEdits(): Promise<PersonEdit[]> {
+    const file = await load(join(this.directory, 'turns.json'), turnsSchema)
+    return this.owns(file) ? ((file!.edits ?? []) as PersonEdit[]) : []
+  }
+
   async writeHead(head: Manifest | undefined): Promise<void> {
     const path = join(this.directory, 'head.json')
     if (!head) await rm(path, { force: true })
     else await writeFileAtomic(path, JSON.stringify({ v: 1, sessionId: this.sessionId, projectId: this.projectId, manifest: head }))
   }
 
-  async writeTurns(turns: readonly TurnRecord[], note?: TurnNote): Promise<void> {
+  async writeTurns(turns: readonly TurnRecord[], note?: TurnNote, edits?: readonly PersonEdit[]): Promise<void> {
     await writeFileAtomic(
       join(this.directory, 'turns.json'),
-      JSON.stringify({ v: 1, sessionId: this.sessionId, projectId: this.projectId, turns, ...(note ? { note } : {}) }),
+      JSON.stringify({
+        v: 1,
+        sessionId: this.sessionId,
+        projectId: this.projectId,
+        turns,
+        ...(note ? { note } : {}),
+        ...(edits?.length ? { edits } : {}),
+      }),
     )
   }
 

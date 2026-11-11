@@ -270,4 +270,6 @@ export interface ApiFailure {
   action?: PresenceAction
   /** `presence-blocked`: the sessions holding it back, only for a requester that may view sessions. Older Hosts omit both. */
   blockingTasks?: BlockingTask[]
+  /** `file-changed` from a file edit: SHA-256 of the file as it is now. */
+  currentHash?: string
 }

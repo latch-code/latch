@@ -26,6 +26,8 @@ export interface ChangedFile {
   byCommand?: true
   /** Session scope: changed between turns, by the person or another program. */
   byUser?: true
+  /** Session scope: the file holds what the person saved with 编辑 in Latch (「你的修改」). */
+  byPerson?: true
   binary?: true
   /** Over 1 MB on a side: shown as one line with 打开文件. */
   large?: true

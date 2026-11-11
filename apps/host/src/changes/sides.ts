@@ -45,6 +45,8 @@ export interface Pair {
   after?: Side
   byCommand?: true
   byUser?: true
+  /** Session scope: the file holds what the person saved with Latch's editor. */
+  byPerson?: true
   conflicted?: true
   /** Turn scope: whose change it was, to mark a command's lines. */
   attribution?: Pick<Change, 'by' | 'agentLines'>
@@ -156,6 +158,7 @@ export function describe(pair: Pair, compared: Compared): ChangedFile {
     ...(ops ? countChanges(ops) : {}),
     ...(pair.byCommand ? { byCommand: true as const } : {}),
     ...(pair.byUser ? { byUser: true as const } : {}),
+    ...(pair.byPerson ? { byPerson: true as const } : {}),
     ...(hidden === 'binary' ? { binary: true as const } : {}),
     ...(hidden === 'large' ? { large: true as const } : {}),
     ...(hidden === 'secret' ? { secret: true as const } : {}),

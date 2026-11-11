@@ -42,6 +42,7 @@ import { Line, Output } from './parts.tsx'
 import { PullRequestSection, prInput, type PrForm } from './PullRequestSection.tsx'
 import { usePullRequest } from './usePullRequest.ts'
 import { useDelivery, type DeliveryFailure, type UnknownWrite } from './useDelivery.ts'
+import { needsRecheck, usePersonEditAt } from '../../preview/personEdits.ts'
 
 const ACTIVE = new Set(['running', 'waiting-approval'])
 const GROUPS: readonly FileGroup[] = ['staged', 'unstaged', 'untracked', 'conflicted']
@@ -255,6 +256,11 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       创建 PR
     </Button>
   )
+  // A file saved from the preview after the commit: what its hooks checked is not what is there now.
+  const recheck = needsRecheck(outcome?.at, usePersonEditAt(summary.id))
+  const recheckMark = recheck ? (
+    <Hint label={<StatusWord tone="warn">需要复验</StatusWord>}>之后你编辑过文件，这次的结果不包括那些修改。</Hint>
+  ) : null
 
   const commit = async () => {
     const end = await writes.commit(message.trim(), skipHooks)
@@ -318,6 +324,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
             ) : undefined
           }>
           已提交 <code className="delivery-sha">{shortSha(outcome.result.commit)}</code>
+          {recheckMark}
         </Line>
       )}
       {outcome?.kind === 'committed' && showOutput && outcome.result.hookOutput && (
@@ -331,6 +338,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           </code>{' '}
           · <code className="delivery-sha">{shortSha(outcome.result.sha)}</code>
           {outcome.result.setUpstream ? ' · 已设为上游' : ''}
+          {recheckMark}
         </Line>
       )}
     </>

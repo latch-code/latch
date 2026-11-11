@@ -1,5 +1,17 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { Code, Copy, Download, Ellipsis, ExternalLink, Eye, FolderOpen, GitCompare, MessageSquareQuote, RefreshCw } from 'lucide-react'
+import {
+  Code,
+  Copy,
+  Download,
+  Ellipsis,
+  ExternalLink,
+  Eye,
+  FolderOpen,
+  GitCompare,
+  MessageSquareQuote,
+  Pencil,
+  RefreshCw,
+} from 'lucide-react'
 import { isFileMetadata, type FileMetadata, type FileMention } from '@latch/protocol'
 import { Button, IconButton, InlineNotice, Loading, Menu, useCopy, type MenuItem } from '@latch/ui'
 import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
@@ -19,6 +31,11 @@ import type { FileTab } from './useFileTabs.ts'
 import { selectedQuote, type FileQuote, type PreviewQuote } from './quote.ts'
 import { FileBreadcrumb } from './FileBreadcrumb.tsx'
 import { ViewerActionsProvider, useViewerActionsHost } from './viewerActions.tsx'
+import { FileEditor } from './FileEditor.tsx'
+import { decodeEditable, editHash, mixedLineEndings } from './editText.ts'
+import { notePersonEdit } from './personEdits.ts'
+import { draftKey, editDraft, setEditDraft } from './editDrafts.ts'
+import { useViewport } from '../breakpoints.ts'
 
 interface ResolveResult {
   files: Array<{ status: string; code?: string; line?: number; file?: unknown }>
@@ -34,7 +51,10 @@ export function FilePreview({
   onMention,
   onQuote,
   browsable = false,
+  running = false,
 }: {
+  /** A turn runs in the session: editing waits for it. */
+  running?: boolean
   /** This device may list the session's folders. */
   browsable?: boolean
   tab: FileTab
@@ -62,6 +82,29 @@ export function FilePreview({
   const openFile = useContext(FileOpenContext)
   const [text, setText] = useState<string>(),
     [downloading, setDownloading] = useState(false)
+  /** The text as the editor would take it and the hash of its bytes, for the version on screen. */
+  const [editBase, setEditBase] = useState<{ text: string; hash: string }>()
+  /** The whole file uses more than one line ending, which the Host refuses: said here before anyone tries. */
+  const [mixedEol, setMixedEol] = useState(false)
+  /** Open editor: the version it started from stays fixed while the preview follows the file; kept per tab. */
+  const editSession = contextOf(tab.target).kind === 'session' ? (contextOf(tab.target) as { sessionId: string }).sessionId : undefined
+  const tabKey = draftKey(tab.file?.root ?? tab.target.rootId, tab.file?.path ?? tab.target.reference)
+  const [editing, setEditingState] = useState(() => (editSession ? editDraft(editSession, tabKey) : undefined))
+  const editKey = editing ? draftKey(editing.file.root, editing.file.path) : tabKey
+  // A tab restored before its file resolved finds its editor once the folder ID is known.
+  useEffect(() => {
+    if (!editing && editSession) {
+      const stored = editDraft(editSession, tabKey)
+      if (stored) setEditingState(stored)
+    }
+  }, [tabKey])
+  const setEditing = (next: { file: FileMetadata; text: string; hash: string } | undefined) => {
+    const draft = next ? { ...next, state: { draft: next.text, phase: 'editing' as const } } : undefined
+    if (editSession) setEditDraft(editSession, next ? draftKey(next.file.root, next.file.path) : editKey, draft)
+    setEditingState(draft)
+  }
+  const [saved, setSaved] = useState(false)
+  const phone = useViewport() === 'phone'
   const copied = useCopy()
   const viewer = useViewerActionsHost()
   const downloadController = useRef<AbortController | undefined>(undefined)
@@ -185,6 +228,11 @@ export function FilePreview({
     const timer = setTimeout(() => setUpdated(false), 6000)
     return () => clearTimeout(timer)
   }, [updated, file?.etag])
+  useEffect(() => {
+    if (!saved) return
+    const timer = setTimeout(() => setSaved(false), 6000)
+    return () => clearTimeout(timer)
+  }, [saved])
   const quote = (excerpt: PreviewQuote) => {
     if (!file || file.secret || !onQuote || current.current?.etag !== file.etag || !excerpt.text.trim()) return
     onQuote({
@@ -237,6 +285,14 @@ export function FilePreview({
         setSelection(undefined)
         setError('')
         setUpdatingText(false)
+        setEditBase(undefined)
+        const mixed = !!file.actions.edit && mixedLineEndings(head)
+        setMixedEol(mixed)
+        const editable = file.actions.edit && !file.truncated && !mixed ? decodeEditable(head) : undefined
+        if (editable !== undefined)
+          void editHash(head).then(hash => {
+            if (!controller.signal.aborted && hash) setEditBase({ text: editable, hash })
+          })
       },
       cause => {
         if (!controller.signal.aborted) {
@@ -341,6 +397,35 @@ export function FilePreview({
             }
           : null
   const canToggleSource = !!file && !file.secret && (viewer.source !== null || ['markdown', 'svg'].includes(file.kind))
+  const canEdit = context.kind === 'session' && !!file?.actions.edit && !file.secret && !file.truncated && !!editBase && !updatingText
+  // The Host says why a text file is not editable here: shown as the disabled button's name, nothing more.
+  const editRefusal =
+    context.kind === 'session' && file ? (!file.actions.edit ? file.refused?.edit : mixedEol ? 'file-mixed-eol' : undefined) : undefined
+  if (editing && context.kind === 'session')
+    return (
+      <FileEditor
+        sessionId={context.sessionId}
+        file={editing.file}
+        text={editing.text}
+        baseHash={editing.hash}
+        running={running}
+        phone={phone}
+        initial={editing.state}
+        onState={state => {
+          if (editDraft(context.sessionId, editKey)) setEditDraft(context.sessionId, editKey, { ...editing, state })
+        }}
+        onSaved={() => {
+          notePersonEdit(context.sessionId)
+          setEditing(undefined)
+          setSaved(true)
+          refresh()
+        }}
+        onClose={reread => {
+          setEditing(undefined)
+          if (reread) refresh()
+        }}
+      />
+    )
   return (
     <section
       className="file-preview"
@@ -378,12 +463,31 @@ export function FilePreview({
           browsable={browsable}
           onOpen={path => openFile?.(targetIn(context, path, file?.root))}
         />
-        {updated && (
+        {updated && !saved && (
           <span className="file-preview-updated" role="status">
             已更新
           </span>
         )}
+        {saved && (
+          <span className="file-preview-updated" role="status">
+            已保存
+          </span>
+        )}
         <span className="file-preview-actions">
+          {editRefusal && (
+            <IconButton size="xs" label={describeFailure(403, editRefusal, '不能在这里编辑这个文件')} icon={Pencil} disabled />
+          )}
+          {canEdit && (
+            <IconButton
+              size="xs"
+              label={running ? 'Agent 运行中，不能编辑' : '编辑'}
+              icon={Pencil}
+              disabled={running}
+              onClick={() => {
+                if (file && editBase) setEditing({ file, text: editBase.text, hash: editBase.hash })
+              }}
+            />
+          )}
           {canToggleSource && (
             <IconButton
               size="xs"

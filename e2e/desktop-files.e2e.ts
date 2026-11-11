@@ -1,7 +1,7 @@
 import { strToU8, zipSync } from 'fflate'
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -253,6 +253,18 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect((await record()).previewed).toHaveLength(1)
       await closeActiveFile(page)
 
+      // A small edit goes through main's proxy to the Host, which checks and audits it as for any device.
+      await chip('slow.md').dblclick()
+      const edited = page.getByRole('region', { name: '文件预览', exact: true })
+      await edited.getByRole('button', { name: '编辑', exact: true }).click()
+      await page.getByLabel('slow.md 的内容', { exact: true }).fill('# slow\n\nedited on the desktop\n')
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await edited.getByRole('status').filter({ hasText: '已保存' }).waitFor()
+      // The file had no final newline, and still has none.
+      expect(await readFile(join(workspace, 'slow.md'), 'utf8')).toBe('# slow\n\nedited on the desktop')
+      expect(host.security.audit.lastOf('file.edit')).toMatchObject({ target: sessionId, actor: { listener: 'unix' } })
+      await closeActiveFile(page)
+
       // So does a Word document.
       await open('letter.docx')
       expect(await items()).toEqual(['用默认应用打开', '在访达中显示', '复制路径'])
@@ -446,6 +458,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await tree.getByRole('treeitem', { name: 'notes.txt', exact: true }).click()
       const preview = page.getByRole('region', { name: '文件预览', exact: true })
       await preview.getByText('Workspace preview before the first message.', { exact: true }).waitFor()
+      // A project's file before any session has no session to record an edit in.
+      expect(await preview.getByRole('button', { name: '编辑', exact: true }).count()).toBe(0)
       // Native actions are rate limited, and the checks above just used the bridge.
       await new Promise(done => setTimeout(done, 600))
       await preview.getByRole('button', { name: '在访达中显示', exact: true }).click()

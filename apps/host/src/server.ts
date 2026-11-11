@@ -543,6 +543,8 @@ export interface ServerOptions {
   rateLimits?: 'default' | 'relaxed'
   /** Tests: runs after a file reference was resolved and checked, before the file is opened. Production never sets it. */
   fileHooks?: { afterResolve?(realPath: string): Promise<void> }
+  /** Tests: runs after a file edit's temporary file is written, before the final check and the rename. Production never sets it. */
+  fileEditHooks?: { beforeRename?(): Promise<void> }
   /** Tests: the terminal component (`binary`, default `dist/native/latch-pty`) or a stand-in for it. Production never sets it. */
   terminal?: Pick<TerminalServiceOptions, 'launch' | 'shell' | 'hostEnv'> & { binary?: string }
   /** Tests: the Git, home, environment, shell and time limits of 交付 (`routes/git.ts`). Production never sets it. */
@@ -1505,7 +1507,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       sessionDetail: id => harnessHub.detail(id),
       referencePaths: async (id, roots) => fileReferences.references(id, await harnessHub.detail(id), roots, home),
       actorOf: caller => actorOf(caller as Caller),
+      edits: {
+        assertInput: (caller, id) => routeContext.assertSessionInput(caller as DeviceCaller, id),
+        turnRunning: (id, realPath, wait) => changeRoutes.edits.turnRunning(id, realPath, wait),
+        writable: id => !harnessHub.personalOf(id),
+        record: (id, file, write) => changeRoutes.edits.record(id, file, write),
+      },
       ...(options.fileHooks ? { hooks: options.fileHooks } : {}),
+      ...(options.fileEditHooks ? { editHooks: options.fileEditHooks } : {}),
+      codeRoot: canonicalCodeRoot,
     })
     startupCleanup.push(() => fileRoutes.close())
     async function attachmentCapabilities(
@@ -1810,6 +1820,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       terminal: terminalRoutes,
       agentLogin: agentLoginRoutes,
       apps: appRoutes,
+      changes: changeRoutes,
       routes,
     } = createRoutes(routeContext, {
       native: {

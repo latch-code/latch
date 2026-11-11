@@ -952,8 +952,17 @@ describe('desktop shell policy', () => {
       ['POST', '/link/api/workspaces/project-1/files/search'],
       ['GET', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA'],
       ['HEAD', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/meta'],
+      ['PUT', '/link/api/tasks/task-1/files/AAAAAAAAAAAAAAAAAAAAAA'],
     ])
       expect(proxy.classifyRoute(method, path), path).toEqual({ kind: 'forward' })
+    // Only a PUT of one handle in a session is an edit; nothing else under files/ is written from the page.
+    for (const [method, path] of [
+      ['POST', '/link/api/tasks/task-1/files/AAAAAAAAAAAAAAAAAAAAAA'],
+      ['PUT', '/link/api/tasks/task-1/files/AAAAAAAAAAAAAAAAAAAAAA/local'],
+      ['PUT', '/link/api/workspaces/project-1/files/AAAAAAAAAAAAAAAAAAAAAA'],
+      ['PUT', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA'],
+    ])
+      expect(proxy.classifyRoute(method, path), path).toEqual({ kind: 'shell-files' })
     expect(proxy.classifyRoute('POST', '/link/api/tasks/task-1/prompt')).toEqual({ kind: 'forward' })
     expect(proxy.classifyRoute('GET', '/link/api/tasks/files')).toEqual({ kind: 'forward' })
   })
@@ -1398,6 +1407,22 @@ describe('desktop shell proxy', () => {
     const before = context.host.seen.length
     const response = await context.request('/link/api/plugin-packages', { method: 'POST', body: 'x'.repeat(8 * 1024 * 1024 + 65537) })
     expect(response.status).toBe(413)
+    expect(context.host.seen).toHaveLength(before)
+  })
+
+  it("forwards a file edit's larger body to its own route only", async () => {
+    const context = await shell()
+    await enroll(context)
+    const body = JSON.stringify({ content: 'x'.repeat(proxy.REQUEST_BODY_LIMIT) })
+    const path = '/link/api/tasks/task-1/files/AAAAAAAAAAAAAAAAAAAAAA'
+    const response = await context.request(path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body })
+    expect(response.status).toBe(200)
+    expect(context.host.seen.at(-1)?.body).toBe(body)
+    let before = context.host.seen.length
+    expect((await context.request('/link/api/tasks/task-1/prompt', { method: 'POST', body })).status).toBe(413)
+    expect(context.host.seen).toHaveLength(before)
+    before = context.host.seen.length
+    expect((await context.request(path, { method: 'PUT', body: 'x'.repeat(6 * 1024 * 1024 + 4097) })).status).toBe(413)
     expect(context.host.seen).toHaveLength(before)
   })
 

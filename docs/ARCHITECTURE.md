@@ -385,6 +385,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /workspaces/:id/worktree` | `run` | 新工作树会从哪里开始：`{ branch?, commit }`，或 Host 不能在这个项目里新建工作树的 409 与原因；不写任何东西 |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
+| `PUT /tasks/:id/files/:handle` | 句柄所属的设备 + `run` + 数据范围 `all`；能向会话输入（私有会话、只读会话照常拒绝）；受保护的工作区路径另需 `approve:elevated`，程序目录里的文件一律拒绝 | 人在预览里编辑并保存一个 UTF-8 文本文件：`{ requestId, baseHash, content }`，文件不再是 `baseHash` 时 409 `file-changed`（带 `currentHash`），会话或同一文件夹里有一轮在运行时 409 `file-turn-running`；先审计 `file.edit` 再写，见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md#编辑) |
 | `POST /tasks` | `run` | L3 写两条启动审计，不弹确认；带 `via` 时是插件页面开始会话，先按已应用清单核对页面与能力，见 [APP-PAGES.md](APP-PAGES.md#会话) |
 | `GET /apps/:pluginId/data…`、`PUT/DELETE /apps/:pluginId/data/:scope/:key`、`POST /apps/:pluginId/data/migrate[/lease]`、`GET/POST /apps/:pluginId/diagnostics`、`GET /apps/:pluginId/pages/:appId/lookup/:requestId`、`GET /apps/:pluginId/pages/:appId/sessions/:id/last-reply` | 读与诊断：`view`；写与迁移：`run`；都先核对页面的修订与能力，会话与私有会话的数据照常要求能读 | 插件页面的数据、迁移、诊断与它开始的会话，见 [APP-PAGES.md](APP-PAGES.md) |
 | `GET /handoffs?sessionId=`、`GET /handoffs/:id`；`POST /handoffs`、`POST /handoffs/:id/return`、`POST /handoffs/:id/withdraw` | 读：`view`；新建、交回、撤回：`run`；都要能读相关的会话 | 交接，先写审计再新建或交回，见 [HANDOFFS.md](HANDOFFS.md) |

@@ -147,6 +147,16 @@ export const HOST_ACTIONS = {
   'file.quicklook': fileAction,
   'file.open': fileAction,
   'file.view': fileAction.extend({ bytes: count }),
+  /** Written before the person's edit of a session file replaces it; sizes only, never the content. */
+  'file.edit': z.strictObject({
+    sessionId: opaqueId,
+    pathHash: hex64,
+    type: z.enum(AUDIT_FILE_TYPES),
+    /** `protected-path`: a path Latch writes only at R2 (hooks, manifests, CI, agent settings), by an approve:elevated device. */
+    protection: z.enum(['none', 'protected-path']),
+    before: count,
+    after: count,
+  }),
   'file.list': z.strictObject({ ...fileContext, rootHash: hex64, dirHash: hex64, hidden: z.boolean(), count, truncated: z.boolean() }),
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),

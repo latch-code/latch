@@ -202,12 +202,14 @@ export function RightPanel({ shell }: { shell: ShellState }) {
       detail={current}
       onFileView={fileTabs.view}
       onCloseFile={id => {
-        fileTabs.close(id)
-        setFileExpanded(false)
-        if (fileTabs.tabs.length === 1) {
-          setInfoPage(false)
-          requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
-        }
+        const last = fileTabs.tabs.length === 1
+        fileTabs.close(id, () => {
+          setFileExpanded(false)
+          if (last) {
+            setInfoPage(false)
+            requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
+          }
+        })
       }}
       onFileResolved={(id, file) => {
         fileTabs.resolved(id, file)

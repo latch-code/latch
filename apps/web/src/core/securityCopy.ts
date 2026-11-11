@@ -864,6 +864,9 @@ export const RECOVERY_COPY = {
 const FIXED: Record<string, string> = {
   'file-image-dimensions': fileNote('file-image-dimensions').text,
   'file-too-large': '文件或图片超过这台设备的预览上限，请在 Mac 上查看。',
+  'file-edit-elevated': '这个文件需要能批准高风险操作的设备',
+  'file-code-root': 'Latch 程序目录里的文件不能在这里编辑',
+  'file-mixed-eol': '混用换行符的文件不能在这里编辑',
   unauthorized: '这台设备还没有连接到这台 Mac',
   'renewal-required': '这台设备需要重新连接',
   'credential-expired': ENROLLMENT_REASON_TEXT['credential-expired']!,

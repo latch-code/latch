@@ -338,6 +338,7 @@ describe('the tree and the list', () => {
     expect(fileNote(file('a'))).toBeUndefined()
     expect(fileNote(file('a', { byCommand: true }))?.text).toBe('由命令修改')
     expect(fileNote(file('a', { byUser: true }))).toEqual({ text: '两轮之间改动', title: '在两轮之间改动的：可能是你，也可能是别的程序' })
+    expect(fileNote(file('a', { byUser: true, byPerson: true }))).toEqual({ text: '你的修改', title: '你在 Latch 里编辑并保存的内容' })
     expect(fileNote(file('a', { secret: true, byCommand: true }))).toEqual({ text: '可能含密钥，只列路径', title: '由命令修改' })
     expect(fileNote(file('a', { notRetained: true }))?.text).toBe('内容没有留存')
     expect(fileNote(file('a', { large: true }))?.text).toBe('超过 1 MB，打开文件查看')

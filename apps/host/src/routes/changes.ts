@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http'
+import { realpath } from 'node:fs/promises'
 import { z } from 'zod'
 import {
   CHANGE_SCOPES,
@@ -11,7 +12,9 @@ import {
 } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { ChangesEngine, type BeforeWrite, type ChangesSession } from '../changes/engine.ts'
+import type { FileEditHooks } from '../files/index.ts'
 import { errorText, json, jsonBody, safeDecode } from '../http-util.ts'
+import { isInsidePath } from '../paths.ts'
 import { projectIdOf } from '../session-lifecycle.ts'
 import type { Caller, CallerRequest, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
@@ -79,7 +82,10 @@ function queryOf(url: string | undefined): { scope: ChangeScope; turnId?: string
   return { scope: scope as ChangeScope, ...(turnId ? { turnId } : {}), params }
 }
 
-export function createChangeRoutes(context: RouteContext): RouteModule {
+/** The changes routes, and what the person's file edits need from the engine and the open runs. */
+export type ChangeRoutes = RouteModule & { edits: Pick<FileEditHooks, 'turnRunning' | 'record'> }
+
+export function createChangeRoutes(context: RouteContext): ChangeRoutes {
   const { audited, actorOf, devices, hub, lifecycle, limits, log, recheck, refresh, requireLocal, sessionRoots } = context
   const requireScope: RouteContext['requireScope'] = context.requireScope
   const opened = (async () => {
@@ -287,5 +293,35 @@ export function createChangeRoutes(context: RouteContext): RouteModule {
     return false
   }
 
-  return { route, features: () => ({ changes: true }) }
+  /** A folder of a run holds the file; folders compare by their real paths, as the file's is. */
+  async function runsIn(run: OpenRun, realPath: string): Promise<boolean> {
+    for (const folder of run.session.folders) {
+      const real = await realpath(folder.path).catch(() => folder.path)
+      if (isInsidePath(realPath, real)) return true
+    }
+    return false
+  }
+
+  const edits: ChangeRoutes['edits'] = {
+    async turnRunning(sessionId, realPath, wait) {
+      if (ACTIVE_STATUSES.has((await hub.summary(sessionId)).status)) return true
+      for (const run of open.values()) if (run.session.id === sessionId || (await runsIn(run, realPath))) return true
+      // A turn that just ended is still being recorded; the edit waits for it, so it lands after the turn's end.
+      const recording = settling.get(sessionId)
+      if (recording && wait) {
+        let timer: NodeJS.Timeout | undefined
+        await Promise.race([recording, new Promise(done => (timer = setTimeout(done, 15_000)))])
+        clearTimeout(timer)
+      }
+      return settling.has(sessionId)
+    },
+    async record(sessionId, file, write) {
+      const summary = await hub.summary(sessionId)
+      const result = await (await engine()).personEdit({ session: { id: sessionId, projectId: projectIdOf(summary) }, file, write })
+      refresh(sessionId)
+      return result
+    },
+  }
+
+  return { route, features: () => ({ changes: true }), edits }
 }

@@ -14,6 +14,9 @@ const HTML_CSP =
 /** Buffering bounded JSON lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
 const PLUGIN_DRAFT_BODY_LIMIT = 8 * 1024 * 1024 + 65536
+/** A 1 MiB text file in JSON, every character escaped at worst: the Host's own limit for an edit. */
+const FILE_EDIT_BODY_LIMIT = 6 * 1024 * 1024 + 4096
+const FILE_EDIT_PATH = /^\/link\/api\/tasks\/[^/]+\/files\/[A-Za-z0-9_-]{22}$/
 const UPLOAD_BODY_LIMIT = 25 * 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
 const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -496,7 +499,9 @@ function classifyRoute(method, pathname) {
     const content = (method === 'GET' || method === 'HEAD') && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}(?:\/meta)?$/.test(decoded)
     const reference = method === 'POST' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/(?:resolve|search)$/.test(decoded)
     const listing = method === 'GET' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/list$/.test(decoded)
-    if (!content && !reference && !listing) return { kind: 'shell-files' }
+    // The person's edit of a file they opened: the Host checks the handle, the version and the audit as for any device.
+    const edit = method === 'PUT' && FILE_EDIT_PATH.test(decoded)
+    if (!content && !reference && !listing && !edit) return { kind: 'shell-files' }
   }
   if (lower === '/link/api/enrollments' && method === 'POST') return { kind: 'enroll' }
   const complete = /^\/link\/api\/enrollments\/([^/]+)\/complete$/i.exec(decoded)
@@ -995,7 +1000,11 @@ function createShellProxy(options) {
       await discardRequestBody(request)
       return errorResponse(403, 'shell-managed', LINK_MANAGED)
     }
-    const body = await readRequestBody(request, pluginDraft ? PLUGIN_DRAFT_BODY_LIMIT : REQUEST_BODY_LIMIT)
+    const fileEdit = request.method === 'PUT' && FILE_EDIT_PATH.test(target.pathname)
+    const body = await readRequestBody(
+      request,
+      pluginDraft ? PLUGIN_DRAFT_BODY_LIMIT : fileEdit ? FILE_EDIT_BODY_LIMIT : REQUEST_BODY_LIMIT,
+    )
     if (renewAfter !== 0 && renewDue()) await renew()
     let used = store.current()?.credential
     const send = () => {
