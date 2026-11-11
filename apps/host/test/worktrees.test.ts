@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { sha256Hex } from '@latch/core/node-kit'
 import { findGit } from '../src/changes/git.ts'
 import { WORKTREE_BRANCH, WORKTREE_NAME, Worktrees, type WorktreeOptions } from '../src/worktrees.ts'
+import { configHookGit } from './helpers/config-hooks.ts'
 
 const git = findGit()
 const cleanup: Array<() => Promise<void>> = []
@@ -605,5 +606,39 @@ describe.skipIf(!git)('worktrees', () => {
       expect(existsSync(made.path)).toBe(false)
       expect(t.branches()).toContain(`refs/heads/${made.branch}`)
     })
+  })
+})
+
+const hookGit = configHookGit()
+describe.skipIf(!hookGit)('hooks from configuration (Git 2.54 and later)', () => {
+  it('never runs one, including one only configuration seen from the new branch names', async () => {
+    const t = await setup()
+    t.run('config', 'hook.refs.event', 'reference-transaction')
+    t.run('config', 'hook.refs.command', await t.trap('refs-hook'))
+    t.run('config', 'hook.index.event', 'post-index-change')
+    t.run('config', 'hook.index.command', await t.trap('index-hook'))
+    const included = join(t.base, 'branch.gitconfig')
+    await writeFile(
+      included,
+      `[hook "branch"]\n\tevent = post-checkout\n\tevent = post-index-change\n\tcommand = ${await t.trap('branch-hook')}\n`,
+    )
+    await writeFile(join(t.home, '.gitconfig'), `[includeIf "onbranch:latch/**"]\n\tpath = ${included}\n`)
+    const made = await t.service({ git: hookGit! }).create({ source: t.root, requestId: 'request-0001' })
+    expect(await readFile(join(made.path, 'a.txt'), 'utf8')).toBe('one\n')
+    expect(await t.ran()).toEqual([])
+  })
+
+  it('refuses a hook whose name has = in it, and writes nothing', async () => {
+    const t = await setup()
+    await writeFile(
+      join(t.root, '.git', 'config'),
+      `${await readFile(join(t.root, '.git', 'config'), 'utf8')}[hook "a=b"]\n\tevent = reference-transaction\n\tcommand = ${await t.trap('equals-hook')}\n`,
+    )
+    await expect(t.service({ git: hookGit! }).create({ source: t.root, requestId: 'request-0001' })).rejects.toMatchObject({
+      status: 409,
+      code: 'worktree-hook-name',
+    })
+    await nothingLeft(t)
+    expect(await t.ran()).toEqual([])
   })
 })

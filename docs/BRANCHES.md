@@ -28,15 +28,15 @@ sources:
 
 Host 写 Git 只在两处：`apps/host/src/worktrees.ts` 新建工作树，交付（[GIT-DELIVERY.md](GIT-DELIVERY.md)）暂存、提交与推送。交付的提交、推送与有 filter 时的暂存是「不运行仓库里的程序」唯一具名的例外：由人按下、先写审计，以你的账户运行你的 Git；Host 自己做的其他事，包括这里新建工作树，仍不运行仓库里的程序。`worktrees.ts` 为一次开始请求从项目文件夹当前 `HEAD` 的提交新建一个 Git 工作树（worktree）和分支 `latch/<yyyymmdd>-<4 位十六进制>`，位置是 `<根>/<仓库名>-<源路径哈希前 8 位>/<yyyymmdd>-<4 位十六进制>`。根是启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`，`LATCH_WORKTREES_DIR` 可以换），不能在仓库、Host 数据目录或 Latch 自己的目录（程序目录、运行目录、Agent 安装目录）里或包含它们；测试传入自己的临时目录。未提交与未跟踪的改动不会带过去。工作树只分开文件：它与项目文件夹共用同一个仓库的 Git 配置、钩子与分支，端口、进程与本机权限仍与这台电脑上的其他会话共用，它不是隔离。会话元数据记下它（`sessions-meta.json` 的 `worktree: { path, branch, unfiltered? }`，摘要只给 `worktree: { branch, unfiltered? }`，Driver 自报的值被丢弃，也不会交给 Driver）。
 
-**不运行仓库里的程序。** 每个 Git 进程都用重建的环境（不继承 Host 的任何 `GIT_*` 变量），带上只读 Git 的固定选项（钩子目录 `/dev/null`、`core.fsmonitor=`、`protocol.allow=never` 等），再加 `core.attributesFile=`、`attr.tree=`、`safe.bareRepository=explicit`、`submodule.recurse=false`、关掉自动 gc，以及 `GIT_LFS_SKIP_SMUDGE=1`、`GIT_NO_REPLACE_OBJECTS=1`。步骤：
+**不运行仓库里的程序。** 每个 Git 进程都用重建的环境（不继承 Host 的任何 `GIT_*` 变量），带上只读 Git 的固定选项（钩子目录 `/dev/null`、`core.fsmonitor=`、`diff.external=`、`protocol.allow=never`、`core.untrackedCache=false`、`core.alternateRefsCommand=`、`commit.gpgSign=false`、`tag.gpgSign=false`、`core.editor=:`，不用分页器），并在每次运行前读出全部配置（含全局、系统与 include）里的配置钩子（Git 2.54 起的 `hook.<名字>.command` 与 `.event`，`core.hooksPath` 关不掉它们），逐个加 `-c hook.<名字>.enabled=false`；名字含 `=` 或换行时不运行，再加 `core.attributesFile=`、`attr.tree=`、`safe.bareRepository=explicit`、`submodule.recurse=false`、关掉自动 gc，以及 `GIT_LFS_SKIP_SMUDGE=1`、`GIT_NO_REPLACE_OBJECTS=1`。步骤：
 
 1. 在项目文件夹读出全部 Git 配置（含 include 与全局配置），找出每个 filter 驱动；
 2. `git worktree add --no-checkout -b <分支> <位置> <提交>`，不检出文件；
 3. 在新工作树的 Git 元数据里写标记 `latch-session.json`（这次请求的哈希）；
-4. 在新工作树里再读一次配置（配置可能随工作树与分支变化），把读到的每个 filter 驱动的 `clean`、`smudge`、`process` 置空、`required` 设为 false（经命令行配置，不改任何配置文件）；
+4. 在新工作树里再读一次配置（配置可能随工作树与分支变化；配置钩子每个 Git 进程都按它所在的工作树重读），把读到的每个 filter 驱动的 `clean`、`smudge`、`process` 置空、`required` 设为 false（经命令行配置，不改任何配置文件）；
 5. `git reset --hard --no-recurse-submodules <提交>` 写出文件。被跳过 filter 的文件保持 Git 里存的样子，Git LFS 文件因此留为指针，结果里的 `unfiltered` 是这类文件的数目；子模块不检出。
 
-**拒绝。** 下列情况返回 409 并写明原因与怎么改，不建工作树，也不建分支：项目文件夹不是仓库顶层（`worktree-not-repository`）、仓库还没有提交（`worktree-no-commit`）、找不到 Git（`worktree-no-git`）；某个 filter 驱动名含 `=` 或换行（`worktree-filter-name`）；仓库配置（`local` 与 `worktree` 范围）里有 `includeIf`（`worktree-include-if`）；有 `lfs.customtransfer.*.path` 或 `lfs.extension.*.clean/smudge` 这类指向程序的 LFS 设置（`worktree-lfs-program`）；位置或它的任何一级父目录是符号链接（`worktree-symlink`），位置不是完整路径或不是文件夹、在这个仓库里面或与 Host 数据目录重叠（`worktree-location`）。全局配置里的 `includeIf` 是允许的，它在新工作树里带进来的配置同样经过第 4 步检查。
+**拒绝。** 下列情况返回 409 并写明原因与怎么改，不建工作树，也不建分支：项目文件夹不是仓库顶层（`worktree-not-repository`）、仓库还没有提交（`worktree-no-commit`）、找不到 Git（`worktree-no-git`）；某个 filter 驱动名含 `=` 或换行（`worktree-filter-name`）；某个配置钩子的名字含 `=` 或换行（`worktree-hook-name`）；仓库配置（`local` 与 `worktree` 范围）里有 `includeIf`（`worktree-include-if`）；有 `lfs.customtransfer.*.path` 或 `lfs.extension.*.clean/smudge` 这类指向程序的 LFS 设置（`worktree-lfs-program`）；位置或它的任何一级父目录是符号链接（`worktree-symlink`），位置不是完整路径或不是文件夹、在这个仓库里面或与 Host 数据目录重叠（`worktree-location`）。全局配置里的 `includeIf` 是允许的，它在新工作树里带进来的配置同样经过第 4 步检查。
 
 **回滚。** 任何一步失败（含超时，检出最多等 10 分钟）都撤销这次做过的事：`git worktree remove --force` 移除工作树（失败时直接删除这个目录），分支只在仍指向起点时删除，空的仓库目录一并删除，返回 500 `worktree-failed`；撤销本身没完成时返回 500 `worktree-rollback-failed` 并写出剩下的位置与分支。
 

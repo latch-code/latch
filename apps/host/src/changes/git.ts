@@ -25,7 +25,21 @@ const HARDENED = [
   'protocol.allow=never',
   '-c',
   'core.untrackedCache=false',
+  // Not reached by the commands the Host runs; emptied so a later command cannot pick them up by accident.
+  '-c',
+  'core.alternateRefsCommand=',
+  '-c',
+  'commit.gpgSign=false',
+  '-c',
+  'tag.gpgSign=false',
+  '-c',
+  'core.editor=:',
 ]
+/**
+ * Hooks Git 2.54 and later run from configuration (`hook.<name>.command` with `hook.<name>.event`), which
+ * `core.hooksPath` does not turn off. Every name any configuration scope gives is switched off for each process.
+ */
+const CONFIG_HOOK = /^hook\.([\s\S]*)\.[a-z][a-z0-9-]*$/u
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 /**
  * Where the Host looks for Git, in order. Not /usr/bin/git on macOS: without the developer tools that stub opens a
@@ -43,7 +57,8 @@ const CANDIDATES =
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 
 export class GitError extends Error {
-  constructor(readonly reason: 'failed' | 'timeout' | 'output-limit') {
+  /** `unsafe-config`: a hook in the configuration whose name cannot be switched off from the command line. */
+  constructor(readonly reason: 'failed' | 'timeout' | 'output-limit' | 'unsafe-config') {
     super(`git-${reason}`)
   }
 }
@@ -86,6 +101,14 @@ export interface GitReaderOptions {
   home?: string
 }
 
+interface RunOptions {
+  input?: string
+  maxBytes: number
+  env?: Readonly<Record<string, string>>
+  exitCodes?: readonly number[]
+  timeoutMs?: number
+}
+
 /** Runs fixed Git commands in a work tree whose metadata `readGitLayout` checked, with a scrubbed environment. */
 export class GitReader {
   private readonly timeoutMs: number
@@ -97,17 +120,34 @@ export class GitReader {
    * `env` adds variables to the fixed environment, never the Host's own; `exitCodes` lists the statuses that count as
    * success (0 alone by default).
    */
-  run(
-    layout: GitLayout,
-    args: readonly string[],
-    options: {
-      input?: string
-      maxBytes: number
-      env?: Readonly<Record<string, string>>
-      exitCodes?: readonly number[]
-      timeoutMs?: number
-    },
-  ): Promise<Buffer> {
+  async run(layout: GitLayout, args: readonly string[], options: RunOptions): Promise<Buffer> {
+    const disabled = await this.configHooks(layout, options.env)
+    return this.spawn(layout, [...disabled, ...args], options)
+  }
+
+  /**
+   * `-c hook.<name>.enabled=false` for each configured hook, read from every scope and include as the command will read
+   * them. A name with `=` or a line break cannot be passed that way, so nothing runs.
+   */
+  private async configHooks(layout: GitLayout, env: Readonly<Record<string, string>> | undefined): Promise<string[]> {
+    const listing = await this.spawn(layout, ['config', '--null', '--name-only', '--list'], {
+      maxBytes: 4 * 1024 * 1024,
+      ...(env ? { env } : {}),
+      timeoutMs: this.timeoutMs,
+    })
+    const names = new Set<string>()
+    for (const key of listing.toString('utf8').split('\0')) {
+      if (!key.toLowerCase().startsWith('hook.')) continue
+      const name = CONFIG_HOOK.exec(key)?.[1]
+      // Any other shape under `hook.` is one this code does not understand, so nothing runs.
+      if (name === undefined || /[=\r\n\0]/u.test(name)) throw new GitError('unsafe-config')
+      // The empty name too: `-c hook..enabled=false` switches off `[hook ""]`.
+      names.add(name)
+    }
+    return [...names].flatMap(name => ['-c', `hook.${name}.enabled=false`])
+  }
+
+  private spawn(layout: GitLayout, args: readonly string[], options: RunOptions): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.options.binary, [...HARDENED, ...args], {
         cwd: layout.root,

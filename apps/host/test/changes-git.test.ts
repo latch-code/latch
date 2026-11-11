@@ -11,6 +11,7 @@ import { BlobIdCache, gitPairs } from '../src/changes/git-scope.ts'
 import { GitError, GitReader, findGit } from '../src/changes/git.ts'
 import { Contents, compareSides, describe as describePair, patchOf } from '../src/changes/sides.ts'
 import { fileKey } from '../src/changes/walk.ts'
+import { configHookGit } from './helpers/config-hooks.ts'
 
 const git = findGit()
 const cleanup: Array<() => Promise<void>> = []
@@ -244,6 +245,14 @@ describe('the Git process', () => {
       'protocol.allow=never',
       '-c',
       'core.untrackedCache=false',
+      '-c',
+      'core.alternateRefsCommand=',
+      '-c',
+      'commit.gpgSign=false',
+      '-c',
+      'tag.gpgSign=false',
+      '-c',
+      'core.editor=:',
       'ls-files',
       '-z',
     ])
@@ -319,5 +328,67 @@ describe('listing a pair', () => {
     expect(patchOf(renamed, await compareSides(renamed, reading), '')).toBe(
       'diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n',
     )
+  })
+})
+
+const hookGit = configHookGit()
+describe.skipIf(!hookGit)('hooks from configuration (Git 2.54 and later)', () => {
+  it('switches off every configured hook, from any scope, for every restricted Git process', async () => {
+    const root = await directory()
+    const repo = join(root, 'repo'),
+      home = join(root, 'home'),
+      marker = join(root, 'marker')
+    await Promise.all([mkdir(repo), mkdir(home)])
+    const run = (...args: string[]) =>
+      execFileSync(hookGit!, args, { cwd: repo, env: { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1' }, stdio: 'pipe' })
+    run('init', '-q', '-b', 'main')
+    await writeFile(join(repo, 'a.txt'), 'a\n')
+    run('-c', 'user.name=T', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'first')
+    for (const [name, event] of [
+      ['index', 'post-index-change'],
+      ['refs', 'reference-transaction'],
+    ])
+      run('config', `hook.${name}.event`, event!, '--add')
+    run('config', 'hook.index.command', `echo index >> '${marker}'`)
+    run('config', 'hook.refs.command', `echo refs >> '${marker}'`)
+    // The global scope too, where an `include` could bring one in.
+    await writeFile(join(home, '.gitconfig'), `[hook "global"]\n\tevent = post-index-change\n\tcommand = echo global >> '${marker}'\n`)
+    // Precondition: this Git does run them.
+    run('add', 'a.txt')
+    expect(existsSync(marker)).toBe(true)
+    run('reset', '-q')
+    await rm(marker)
+
+    const layout = (await readGitLayout(repo))!
+    const reader = new GitReader({ binary: hookGit!, home })
+    await reader.run(layout, ['add', '--', 'a.txt'], { maxBytes: 1024 })
+    await reader.run(layout, ['write-tree'], { maxBytes: 1024 })
+    await reader.run(layout, ['update-ref', 'refs/heads/other', 'HEAD'], { maxBytes: 1024 })
+    await reader.run(layout, ['reset', '-q', 'HEAD', '--', 'a.txt'], { maxBytes: 1024 })
+    await reader.index(layout, 100)
+    expect(existsSync(marker) ? await readFile(marker, 'utf8') : '').toBe('')
+
+    // Odd names are switched off as well: empty, with quotes, spaces or dots.
+    for (const section of ['[hook ""]', `[hook "a b'c\\"d"]`, '[hook "x.y"]', '[hook "UPPER"]']) {
+      await writeFile(
+        join(repo, '.git', 'config'),
+        `${await readFile(join(repo, '.git', 'config'), 'utf8')}${section}\n\tevent = post-index-change\n\tcommand = echo odd >> '${marker}'\n`,
+      )
+      await reader.run(layout, ['add', '--', 'a.txt'], { maxBytes: 1024 })
+      expect(existsSync(marker) ? await readFile(marker, 'utf8') : '', section).toBe('')
+    }
+    // A key under `hook.` of a shape the reader does not know refuses.
+    const plain = await readFile(join(repo, '.git', 'config'), 'utf8')
+    await writeFile(join(repo, '.git', 'config'), `${plain}[hook]\n\tcommand = echo bare >> '${marker}'\n`)
+    await expect(reader.run(layout, ['add', '--', 'a.txt'], { maxBytes: 1024 })).rejects.toEqual(new GitError('unsafe-config'))
+    await writeFile(join(repo, '.git', 'config'), plain)
+
+    // A name the command line cannot carry stops the process before Git runs anything.
+    await writeFile(
+      join(repo, '.git', 'config'),
+      `${await readFile(join(repo, '.git', 'config'), 'utf8')}[hook "a=b"]\n\tevent = post-index-change\n\tcommand = echo bad >> '${marker}'\n`,
+    )
+    await expect(reader.run(layout, ['add', '--', 'a.txt'], { maxBytes: 1024 })).rejects.toEqual(new GitError('unsafe-config'))
+    expect(existsSync(marker)).toBe(false)
   })
 })

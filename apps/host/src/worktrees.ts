@@ -89,6 +89,14 @@ export interface WorktreeOptions {
 }
 
 const refuse = (code: string, message: string) => new AppError(409, code, message)
+/** A hook in the configuration whose name the restricted Git cannot switch off (`changes/git.ts`). */
+const hookRefusal = (error: unknown) =>
+  error instanceof GitError && error.reason === 'unsafe-config'
+    ? refuse(
+        'worktree-hook-name',
+        'Git 配置里有一个钩子（hook.*）的名字含「=」或换行，Latch 无法确保它不运行，没有新建工作树。请在 Git 配置里给它改名或删除它。',
+      )
+    : undefined
 const failed = (step: string) => new AppError(500, 'worktree-failed', `新建工作树失败（${step}），已撤销，项目文件夹没有改变。`)
 
 /** Each component of an absolute path: a symlink or a non-directory anywhere along it is refused. */
@@ -270,8 +278,8 @@ export class Worktrees {
         maxBytes: 4 * 1024 * 1024,
         env: WRITE_ENV,
       })
-      .catch(() => {
-        throw failed('读取 Git 配置')
+      .catch((error: unknown) => {
+        throw hookRefusal(error) ?? failed('读取 Git 配置')
       })
   }
 
@@ -283,7 +291,9 @@ export class Worktrees {
     const common = source && commonDirOf(source)
     if (!source || !common)
       throw refuse('worktree-not-repository', '这个文件夹不是 Git 仓库的顶层文件夹，没有新建工作树。请选仓库的顶层文件夹再试。')
-    const base = await git.commit(source, 'HEAD')
+    const base = await git.commit(source, 'HEAD').catch((error: unknown) => {
+      throw hookRefusal(error) ?? error
+    })
     if (!base || !OID.test(base)) throw refuse('worktree-no-commit', '这个仓库还没有提交，没有新建工作树。先提交一次再试。')
     const drivers = readConfig(await this.config(git, source))
 
