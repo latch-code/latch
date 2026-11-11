@@ -869,8 +869,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       try {
         const asked = testHost.presence.requests.length
         await openSection(computer, '模型')
-        const addService = computer.getByRole('button', { name: '添加服务', exact: true })
-        const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+        const addService = computer.getByRole('button', { name: '添加模型服务', exact: true })
+        const sheet = page.getByRole('dialog', { name: '添加模型服务', exact: true })
         await addService.click()
         await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
         await sheet.getByLabel('密钥', { exact: true }).fill('sk-e2e-preset-key')
@@ -931,9 +931,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.getByRole('menuitem', { name: '添加模型服务…', exact: true }).click()
         await page
           .getByRole('region', { name: '添加模型服务', exact: true })
-          .getByRole('button', { name: '其他服务…', exact: true })
+          .getByRole('button', { name: '自定义地址…', exact: true })
           .click()
-        const custom = page.getByRole('region', { name: '自定义服务', exact: true })
+        const custom = page.getByRole('region', { name: '自定义地址', exact: true })
         const customURL = `${models.origin}/custom/v1`
         await custom.getByLabel('名称', { exact: true }).fill('本机自定义模型')
         await custom.getByLabel('地址', { exact: true }).fill(customURL)
@@ -942,7 +942,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await customModel.press('Enter')
         await layersInWindow(page)
         await captureThemes(page, 'native-desktop-composer-provider-custom')
-        await custom.getByRole('button', { name: '用 Touch ID 保存并使用', exact: true }).click()
+        await custom.getByRole('button', { name: '用 Touch ID 保存', exact: true }).click()
         const customConfirmation = await testHost.presence.waitForRequest(15_000)
         expect(customConfirmation.preview).toMatchObject({ action: 'provider.confirm-origin', subject: { form: 'origin.confirm' } })
         expect(customConfirmation.preview.reason).toContain(customURL)

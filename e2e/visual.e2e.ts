@@ -1771,8 +1771,8 @@ describe('visual capture of the real product', () => {
           await recorder.capture(target, viewport, 'settings-provider', 'a saved model service')
           await backToSection(settings)
           // Every model-service preset with its brand's icon (a custom service has the plug glyph).
-          await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-          const sheet = target.getByRole('dialog', { name: '添加服务', exact: true })
+          await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
+          const sheet = target.getByRole('dialog', { name: '添加模型服务', exact: true })
           const presets = sheet.locator('.preset-card')
           await expect.poll(() => presets.count()).toBe(13)
           expect(await presets.locator('.ui-tile').count()).toBe(13)
@@ -1786,7 +1786,7 @@ describe('visual capture of the real product', () => {
             sheet.getByRole('button', { name: '保存', exact: true }),
           ])
             await reachable(control, { allowDisabled: true })
-          await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+          await sheet.getByText(`这个服务需要密钥：保存后，在 ${HOST_NAME} 上的 Latch 里填写密钥，它才能使用。`, { exact: true }).waitFor()
           await recorder.capture(target, viewport, 'settings-provider-add', 'adding a model service from a preset')
           await sheet.getByRole('button', { name: '取消', exact: true }).click()
           await sheet.waitFor({ state: 'hidden' })

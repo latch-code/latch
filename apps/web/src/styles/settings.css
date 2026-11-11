@@ -1347,7 +1347,8 @@
   line-height: var(--lh-ui);
 }
 
-/* The 添加服务 sheet: the brand grid, then the chosen service's fields and what they found, with no box around either. */
+/* The 添加模型服务 sheet: the brand grid ending in 自定义地址…, then the chosen service's fields and what they found,
+   with no box around either. */
 .provider-sheet {
   display: grid;
   gap: var(--sp-16);

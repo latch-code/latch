@@ -6,7 +6,9 @@ import { DEVICES_COPY, ENROLLMENT_COPY, NATIVE_LINK_COPY } from '../src/core/sec
 import { PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot } from '@latch/protocol'
 import { AboutSettings } from '../src/settings/AboutSettings.tsx'
 import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
-import { protocolChoices } from '../src/settings/ProvidersSettings.tsx'
+import { PresetGrid, protocolChoices, ProviderAddForm } from '../src/settings/ProvidersSettings.tsx'
+import { ProviderSetupPanel } from '../src/components/SetupPanels.tsx'
+import { SERVICE_FORM } from '../src/core/providerSetup.ts'
 import { usageTotal } from '../src/settings/UsageSettings.tsx'
 import { ProjectRow } from '../src/settings/WorkspacesSettings.tsx'
 
@@ -134,6 +136,64 @@ describe('service protocols', () => {
   it('keeps a saved protocol its preset no longer lists, first, so the page never shows another', () => {
     expect(protocolChoices(preset('deepseek'), 'gemini')).toEqual(['gemini', 'openai-compatible'])
     expect(protocolChoices(preset('openai'), 'openai-compatible')).toEqual(['openai-responses', 'openai-compatible'])
+  })
+})
+
+describe('the add-service form', () => {
+  const preset = (id: string) => PROVIDER_PRESETS.find(item => item.id === id)!
+  const data = { providers: [], presets: PROVIDER_PRESETS, confirmedAddresses: [] }
+  const thisMac = { keys: true, confirm: true, offline: false }
+  const visible = (html: string) => html.replace(/<[^>]+>/gu, '').trim()
+  const buttons = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/gsu)].map(match => visible(match[1]!))
+  /** Each field's label: the first text in its `<label>`, before the hint or the options. */
+  const labels = (html: string) => [...html.matchAll(/<label[^>]*>(?:<[^>]+>)*([^<]+)/gsu)].map(match => match[1]!.trim())
+  /** The form as the settings dialog draws it (`compact` false) and as the in-place panels do. */
+  const form = (id: string, compact: boolean, abilities = thisMac, computer?: string) =>
+    renderToStaticMarkup(
+      createElement(ProviderAddForm, {
+        preset: preset(id),
+        data,
+        abilities,
+        compact,
+        ...(computer ? { computer } : {}),
+        onConfirmed: noop,
+        onSaved: noop,
+        onCancel: noop,
+      }),
+    )
+
+  it('ends both service grids with the same custom choice, and names the panel as the dialog', () => {
+    const grid = buttons(renderToStaticMarkup(createElement(PresetGrid, { presets: PROVIDER_PRESETS, onPick: noop })))
+    // The custom preset sits anywhere in the Host's list; the grid still ends with it.
+    const shuffled = [preset('custom'), ...PROVIDER_PRESETS.filter(item => item.id !== 'custom')]
+    const panelHtml = renderToStaticMarkup(
+      createElement(ProviderSetupPanel, { access: { legacy: false, local: true, admin: true }, onSaved: noop }),
+    )
+    expect(grid.at(-1)).toBe(SERVICE_FORM.custom)
+    expect(buttons(renderToStaticMarkup(createElement(PresetGrid, { presets: shuffled, onPick: noop }))).at(-1)).toBe(SERVICE_FORM.custom)
+    expect(buttons(panelHtml).at(-1)).toBe(SERVICE_FORM.custom)
+    expect(panelHtml).toContain(`<h3>${SERVICE_FORM.title}</h3>`)
+    expect(SERVICE_FORM).toMatchObject({ title: '添加模型服务', custom: '自定义地址…' })
+    expect(panelHtml).not.toContain('其他服务')
+  })
+
+  it('draws the same fields and save word in every frame', () => {
+    for (const id of ['deepseek', 'custom']) expect(labels(form(id, true))).toEqual(labels(form(id, false)))
+    expect(labels(form('deepseek', false))).toEqual(['地址', '密钥'])
+    expect(labels(form('custom', false))).toEqual(['名称', '协议', '地址', '密钥'])
+    // A known service's address saves its key directly; a local or custom address is confirmed with the save.
+    expect(buttons(form('deepseek', true)).slice(-2)).toEqual(['取消', '保存'])
+    expect(buttons(form('deepseek', false)).slice(-2)).toEqual(['取消', '保存'])
+    expect(buttons(form('ollama', true)).slice(-2)).toEqual(['取消', '用 Touch ID 保存'])
+    expect(buttons(form('ollama', false)).slice(-2)).toEqual(['取消', '用 Touch ID 保存'])
+    expect(form('ollama', true) + form('deepseek', true)).not.toContain('保存并使用')
+  })
+
+  it('names the computer where another device types the key, and draws no key field there', () => {
+    const remote = form('deepseek', false, { keys: false, confirm: false, offline: false }, 'Studio')
+    expect(remote).toContain('保存后，在 Studio 上的 Latch 里填写密钥')
+    expect(remote).not.toContain('type="password"')
+    expect(labels(remote)).toEqual(['地址'])
   })
 })
 

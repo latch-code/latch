@@ -217,6 +217,8 @@ describe('adding a model service', () => {
     const testHost = await startTestHost({
       uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       egressAllow: [service.allow],
+      // Every line that sends this browser to the Mac names it.
+      hostName: '工作室',
     })
     const browser = await chromium.launch(browserLaunchOptions())
     try {
@@ -226,13 +228,13 @@ describe('adding a model service', () => {
       await enrollBrowser(page, testHost, { name: '模型服务电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
       const settings = await openSettings(page, '设置')
       await openSection(settings, '模型')
-      const addService = settings.getByRole('button', { name: '添加服务', exact: true })
-      const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+      const addService = settings.getByRole('button', { name: '添加模型服务', exact: true })
+      const sheet = page.getByRole('dialog', { name: '添加模型服务', exact: true })
       await addService.click()
-      await sheet.getByRole('button', { name: '自定义', exact: true }).click()
+      await sheet.getByRole('button', { name: '自定义地址…', exact: true }).click()
       await sheet.getByLabel('名称', { exact: true }).fill('实验室模型')
       await sheet.getByLabel('地址', { exact: true }).fill(service.baseURL)
-      await sheet.getByText('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
+      await sheet.getByText('密钥只能在 工作室 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
 
       await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
       await sheet.getByText('模型服务返回了错误（HTTP 500）。', { exact: false }).waitFor()
@@ -272,7 +274,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '模型', exact: true }).click()
       await addService.click()
       await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
-      await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+      await sheet.getByText('这个服务需要密钥：保存后，在 工作室 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).fill('deepseek-chat')
       await sheet.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
       await sheet.getByRole('button', { name: '保存', exact: true }).click()
@@ -283,7 +285,7 @@ describe('adding a model service', () => {
       expect(await deepseek.getByRole('button', { name: '设置密钥', exact: true }).getAttribute('aria-disabled')).toBe('true')
       await settings.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
       await settings.getByText('还没有填写密钥，Latch 不会使用它。', { exact: true }).waitFor()
-      await settings.getByText('在 Mac 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
+      await settings.getByText('在 工作室 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
       await settings.getByText('填写密钥后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
@@ -295,7 +297,7 @@ describe('adding a model service', () => {
       await addService.click()
       await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
       await sheet
-        .getByText('这个地址要在 Mac 上确认后才能使用。保存后它会显示在列表里，等你在 Mac 上确认地址。', {
+        .getByText('这个地址要在 工作室 上确认后才能使用。保存后它会显示在列表里，等你在 工作室 上确认地址。', {
           exact: true,
         })
         .waitFor()
@@ -313,7 +315,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '编辑 Ollama', exact: true }).click()
       await settings.getByText('这个服务的地址还没有确认，Latch 不会使用它。', { exact: true }).waitFor()
       // The notice's sentence follows its title in the same element.
-      await settings.getByText('需要在 Mac 上确认这个地址：设置 › 模型 › Ollama。').waitFor()
+      await settings.getByText('需要在 工作室 上确认这个地址：设置 › 模型 › Ollama。').waitFor()
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       // The switch says what the address still needs, the check says why it cannot run, and no command for the
       // computer running Latch is offered on this device.

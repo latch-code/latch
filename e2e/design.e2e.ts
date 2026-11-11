@@ -147,16 +147,16 @@ describe('responsive workspace controls', () => {
       const settings = await openSettings(page, '设置')
       await noHorizontalOverflow(page, settings)
       await openSection(settings, '模型')
-      await reachable(settings.getByRole('button', { name: '添加服务', exact: true }))
-      await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-      const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+      await reachable(settings.getByRole('button', { name: '添加模型服务', exact: true }))
+      await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
+      const sheet = page.getByRole('dialog', { name: '添加模型服务', exact: true })
       await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
       // Unsaved form input only; nothing is submitted, checked or persisted. A browser cannot set keys.
       for (const input of [sheet.getByLabel('地址', { exact: true }), sheet.getByLabel('手动添加模型 ID', { exact: true })]) {
         await reachable(input)
       }
       // OpenAI needs a key: the form says before saving where it is typed and that the service waits for it.
-      await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+      await sheet.getByText(/^这个服务需要密钥：保存后，在 .+ 上的 Latch 里填写密钥，它才能使用。$/u).waitFor()
       await reachable(sheet.getByRole('button', { name: '检测连接', exact: true }))
       await reachable(sheet.getByRole('button', { name: '保存', exact: true }))
       await capture(page, `${label}-model-settings`)

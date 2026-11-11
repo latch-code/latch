@@ -27,6 +27,8 @@ import {
   listModels,
   missingKey,
   modelIdProblem,
+  servicesToPick,
+  SERVICE_FORM,
   shownAddress,
   trackedPresenter,
   updateProvider,
@@ -35,7 +37,7 @@ import {
   type ServiceHealth,
   type ProvidersResponse,
 } from '../core/providerSetup.ts'
-import { PROVIDER_COPY } from '../core/securityCopy.ts'
+import { computerName, PROVIDER_COPY } from '../core/securityCopy.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import {
@@ -89,8 +91,11 @@ export function protocolChoices(preset: ProviderPreset | undefined, current?: Pr
   return current && !offered.includes(current) ? [current, ...offered] : offered
 }
 
-/** The services one can add, as a grid of brand tiles; the chosen one stays marked while its form shows below. */
-function PresetGrid({
+/**
+ * The services one can add, as a grid of brand tiles ending in 「自定义地址…」; the chosen one stays marked while its form
+ * shows below.
+ */
+export function PresetGrid({
   presets,
   chosen,
   disabled = false,
@@ -103,7 +108,7 @@ function PresetGrid({
 }) {
   return (
     <div className="preset-grid">
-      {presets.map(preset => (
+      {servicesToPick(presets).map(preset => (
         <button
           key={preset.id}
           type="button"
@@ -114,7 +119,7 @@ function PresetGrid({
             onPick(preset)
           }}>
           <ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />
-          <span className="preset-card-name">{preset.id === 'custom' || !preset.baseURL ? '自定义' : preset.name}</span>
+          <span className="preset-card-name">{preset.id === 'custom' || !preset.baseURL ? SERVICE_FORM.custom : preset.name}</span>
         </button>
       ))}
     </div>
@@ -419,7 +424,7 @@ function ModelsGroups({
             获取模型
           </Button>
         }
-        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考深度按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考不设置时用模型自己的默认值。`}>
+        caption={`${caption ?? ''}${caption ? ' ' : ''}${onVision ? '图片开关与' : ''}思考深度按模型服务的文档设置${onVision ? '：图片未开启时只发送文字，' : '，'}思考选「默认」时用模型自己的默认值。`}>
         {models.map(model => (
           <div key={model} className="settings-row model-row" data-leading="" data-check="">
             <span className="settings-row-lead">
@@ -561,16 +566,22 @@ function FoundModels({
 }
 
 /** The address's state under the add form's fields: confirmed once on first use, and where that happens. */
-function addressNote(destination: Destination, abilities: ProviderAbilities, localTarget: string | undefined): ReactNode {
+function addressNote(destination: Destination, abilities: ProviderAbilities, localTarget: string | undefined, computer: string): ReactNode {
   if (destination !== 'unconfirmed') return null
   if (abilities.confirm) return localTarget ? PROVIDER_COPY.localAddressAtSave(localTarget) : PROVIDER_COPY.firstUse
   if (abilities.offline) return offlineText(abilities)
-  return `这个地址要在 Mac 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed()}`
+  return `这个地址要在 ${computer} 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed(computer)}`
 }
 
 /**
- * The add form of a new service: fields in cards, the models it will offer, and 保存服务 at the end. A preset's HTTPS
- * address saves at once; any other address is confirmed once, on the desktop, with its key and its allowance.
+ * The add form of a new service: fields in cards, the models it will offer, and 保存 at the end. A preset's HTTPS
+ * address saves at once; any other address is confirmed once, on the desktop, with its key and its allowance, and the
+ * button says so (「用 Touch ID 保存」). It is the one form of every frame (the settings dialog, the in-place panel), with
+ * the same labels and save words; only the frame differs.
+ *
+ * On a device with 管理 that is not this Mac, a service that needs a key saves here without it (the key is typed later on
+ * the Mac); the in-place panel does not open the form for such a service and sends the person to the Mac instead
+ * (`ProviderSetupPanel`), because a session cannot use the service before the key is there.
  */
 export function ProviderAddForm({
   preset,
@@ -580,12 +591,13 @@ export function ProviderAddForm({
   onSaved,
   onCancel,
   compact = false,
-  saveLabel,
+  computer = 'Mac',
   footer,
   onBusy,
 }: {
   compact?: boolean
-  saveLabel?: string
+  /** The Host computer's name, for the lines that send another device there (`computerName`). */
+  computer?: string
   /** Where the sheet wants 取消 and 保存, in its own footer. */
   footer?: HTMLElement | null
   /** A save is on its way: closing the form now would hide its failure, or its success after the person thought it cancelled. */
@@ -646,7 +658,7 @@ export function ProviderAddForm({
   const localTarget = local?.kind === 'local' ? local.target : undefined
   const needsAddress = (run: () => Promise<unknown>) => () => {
     if (!baseURL.trim()) {
-      setError('请先填写 API 地址。')
+      setError(SERVICE_FORM.needAddress)
       return
     }
     setError('')
@@ -697,11 +709,11 @@ export function ProviderAddForm({
 
   const submit = async () => {
     if (!name.trim() || !baseURL.trim()) {
-      setError('请填写名称和 API 地址。')
+      setError(customKind ? SERVICE_FORM.needNameAndAddress : SERVICE_FORM.needAddress)
       return
     }
     if (requiresKey && !typedKey && keyEditable) {
-      setError('这个服务需要 API Key。')
+      setError(SERVICE_FORM.needKey)
       return
     }
     setError('')
@@ -787,15 +799,19 @@ export function ProviderAddForm({
     }
   }, [committing, onBusy])
   const locked = destination === 'unconfirmed' && abilities.confirm
-  const note = addressNote(destination, abilities, localTarget)
+  const note = addressNote(destination, abilities, localTarget, computer)
   const failure = probe.failure
   const listingFailed =
     failure === null || failure.kind === 'local'
       ? undefined
       : failure.kind === 'key' && !keyEditable && requiresKey
-        ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere()}`
+        ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere(computer)}`
         : failure.text
-  const keyElsewhere = abilities.keys ? offlineText(abilities) : requiresKey ? PROVIDER_COPY.keyAfterSave() : PROVIDER_COPY.keyElsewhere()
+  const keyElsewhere = abilities.keys
+    ? offlineText(abilities)
+    : requiresKey
+      ? PROVIDER_COPY.keyAfterSave(computer)
+      : PROVIDER_COPY.keyElsewhere(computer)
   // The picker can live inside the composer's form. Its compact panel must not nest another native form there.
   const Form = compact ? 'div' : 'form'
   const formId = useId()
@@ -820,7 +836,7 @@ export function ProviderAddForm({
         disabled={busy}
         loading={saving}
         loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '保存中…'}>
-        {saveLabel ? (locked ? `用 Touch ID ${saveLabel}` : saveLabel) : locked ? PROVIDER_COPY.saveWithTouchID : PROVIDER_COPY.save}
+        {locked ? PROVIDER_COPY.saveWithTouchID : PROVIDER_COPY.save}
       </Button>
     </>
   )
@@ -869,7 +885,7 @@ export function ProviderAddForm({
           </label>
         )}
         <TextField
-          label="地址"
+          label={SERVICE_FORM.address}
           type="url"
           value={baseURL}
           placeholder="https://api.example.com/v1"
@@ -883,7 +899,7 @@ export function ProviderAddForm({
         />
         {keyEditable ? (
           <TextField
-            label="密钥"
+            label={SERVICE_FORM.key}
             type="password"
             value={apiKey}
             placeholder={requiresKey ? '输入密钥' : '本地服务通常无需密钥'}
@@ -918,7 +934,7 @@ export function ProviderAddForm({
           busy={busy}
           waiting={confirming && waiting}
           actionLabel={PROVIDER_COPY.allowAndFetch}
-          elsewhere={abilities.offline ? offlineText(abilities) : '可以先手动输入模型 ID 保存，再在 Mac 上确认这个地址。'}
+          elsewhere={abilities.offline ? offlineText(abilities) : `可以先手动输入模型 ID 保存，再在 ${computer} 上确认这个地址。`}
           atSave={locked}
           onAllow={() => {
             void allowAndFetch()
@@ -975,9 +991,9 @@ function ThinkingPicker({
       label={`${model} 的思考深度`}
       size="xs"
       value={current}
-      valueText={current === NO_THINKING ? '思考：不设置' : `思考：${thinkingSetText(levels!)}`}
+      valueText={current === NO_THINKING ? '思考：默认' : `思考：${thinkingSetText(levels!)}`}
       options={[
-        { value: NO_THINKING, label: '不设置', description: '不发送思考深度，用模型自己的默认值' },
+        { value: NO_THINKING, label: '默认', description: '不发送思考深度，用模型自己的默认值' },
         ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) })),
       ]}
       header={{ title: '这个模型接受的思考深度' }}
@@ -1004,11 +1020,14 @@ function ProviderPage({
   isDefault,
   checkOnOpen,
   fetchOnOpen,
+  computer,
   onProbed,
   onSaved,
   onDeleted,
 }: {
   supportsAttachments?: boolean
+  /** The Host computer's name, for the lines that send another device there. */
+  computer: string
   provider: ProviderSettings
   data: ProvidersResponse
   abilities: ProviderAbilities
@@ -1115,7 +1134,7 @@ function ProviderPage({
     : abilities.offline
       ? PROVIDER_COPY.keyOffline(provider.id)
       : requiresKey || provider.hasKey
-        ? PROVIDER_COPY.keyElsewhere()
+        ? PROVIDER_COPY.keyElsewhere(computer)
         : undefined
   return (
     <>
@@ -1153,7 +1172,7 @@ function ProviderPage({
             ? '确认后 Latch 才会向它发送请求；localhost 或局域网地址同时允许 Latch 访问。'
             : abilities.offline
               ? offlineText(abilities, provider.id)
-              : PROVIDER_COPY.confirmElsewhere(provider.name)}
+              : PROVIDER_COPY.confirmElsewhere(provider.name, computer)}
         </InlineNotice>
       )}
       {!unconfirmed && keyless && (
@@ -1172,7 +1191,7 @@ function ProviderPage({
               </Button>
             ) : undefined
           }>
-          {keyEditable ? PROVIDER_COPY.missingKeyHere : PROVIDER_COPY.missingKeyElsewhere(provider.name)}
+          {keyEditable ? PROVIDER_COPY.missingKeyHere : PROVIDER_COPY.missingKeyElsewhere(provider.name, computer)}
         </InlineNotice>
       )}
       <InlineConfirm active={saving} rank={1} />
@@ -1203,7 +1222,7 @@ function ProviderPage({
           }}
         />
         <SettingsRow
-          title="API 地址"
+          title={SERVICE_FORM.address}
           description={<MiddleEllipsis text={provider.baseURL} className="settings-mono" />}
           trailing={
             <Button
@@ -1256,7 +1275,7 @@ function ProviderPage({
           busy={busy}
           waiting={saving && waiting}
           actionLabel={PROVIDER_COPY.allowAgain(localTarget)}
-          elsewhere={abilities.offline ? offlineText(abilities, provider.id) : PROVIDER_COPY.allowElsewhere()}
+          elsewhere={abilities.offline ? offlineText(abilities, provider.id) : PROVIDER_COPY.allowElsewhere(computer)}
           onAllow={confirmHere}
         />
       )}
@@ -1379,8 +1398,8 @@ function ProviderPage({
       />
       <FieldDialog
         open={dialog === 'address'}
-        title="修改 API 地址"
-        label="API 地址"
+        title="修改地址"
+        label={SERVICE_FORM.address}
         type="url"
         initial={provider.baseURL}
         placeholder="https://api.example.com/v1"
@@ -1405,7 +1424,7 @@ function ProviderPage({
         title={provider.hasKey ? '替换密钥' : '设置密钥'}
         subtitle={scope ? `密钥只发往 ${scope}` : undefined}
         note={unconfirmed && abilities.confirm ? '保存时要用 Touch ID 确认这个地址' : undefined}
-        label="API Key"
+        label={SERVICE_FORM.key}
         type="password"
         placeholder="输入密钥"
         hint={PROVIDER_COPY.keyHeld}
@@ -1516,12 +1535,14 @@ function ServiceStatus({
   presets,
   health,
   abilities,
+  computer,
   onUpdateKey,
 }: {
   provider: ProviderSettings
   presets: readonly ProviderPreset[]
   health: Health | undefined
   abilities: ProviderAbilities
+  computer: string
   onUpdateKey: () => void
 }) {
   const word = (text: string, tone?: 'err' | 'warn', reason?: string) => (
@@ -1530,12 +1551,12 @@ function ServiceStatus({
     </span>
   )
   if (!provider.enabled) return word('已停用')
-  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow())
+  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow(computer))
   const keyAction = (label: string) => (
     <Button
       variant="outline"
       disabled={!abilities.keys}
-      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere()}
+      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere(computer)}
       onClick={onUpdateKey}>
       {label}
     </Button>
@@ -1597,6 +1618,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
   const { health, recheck, report } = useServiceHealth(data?.providers ?? EMPTY_PROVIDERS, data?.presets ?? EMPTY_PRESETS)
 
   const abilities = providerAbilities(access, hostView(snapshot)?.presence)
+  const computer = computerName(snapshot.hostName)
   const external = snapshot.catalog?.providers.filter(provider => provider.kind === 'demo' || provider.kind === 'plugin') ?? []
   const defaultProvider = snapshot.catalog?.defaults.model?.providerId
   const selected = selection?.kind === 'provider' ? data?.providers.find(provider => provider.id === selection.id) : undefined
@@ -1645,10 +1667,10 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
     <>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <SettingsGroup
-        title="服务"
+        title="模型服务"
         meta={
           <Button variant="outline" icon={Plus} onClick={addService}>
-            添加服务
+            {SERVICE_FORM.title}
           </Button>
         }>
         {data.providers.length === 0 ? (
@@ -1679,6 +1701,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                     presets={data.presets}
                     health={health[provider.id]}
                     abilities={abilities}
+                    computer={computer}
                     onUpdateKey={() => {
                       setKeyFor(provider)
                     }}
@@ -1702,7 +1725,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                             id: 'key',
                             label: '更新密钥…',
                             icon: KeyRound,
-                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere() }),
+                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere(computer) }),
                             onSelect: () => {
                               setKeyFor(provider)
                             },
@@ -1774,7 +1797,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
       <Dialog
         open={adding !== null}
         size="sheet"
-        title="添加服务"
+        title={SERVICE_FORM.title}
         onClose={() => {
           if (!addCommitting) setAdding(null)
         }}
@@ -1807,6 +1830,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                 preset={adding.preset}
                 data={data}
                 abilities={abilities}
+                computer={computer}
                 footer={sheetFooter}
                 onBusy={setAddCommitting}
                 onConfirmed={confirmed}
@@ -1828,7 +1852,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
         title={keyFor?.hasKey ? '更新密钥' : '设置密钥'}
         subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? `密钥只发往 ${shownAddress(keyScopeOf(keyFor.baseURL)!)}` : undefined}
         note={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '保存时要用 Touch ID 确认这个地址' : undefined}
-        label="API Key"
+        label={SERVICE_FORM.key}
         type="password"
         placeholder="输入密钥"
         hint={PROVIDER_COPY.keyHeld}
@@ -1895,6 +1919,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
             isDefault={defaultProvider === selected.id}
             checkOnOpen={selection?.kind === 'provider' && selection.check === true}
             fetchOnOpen={selection?.kind === 'provider' && selection.fetch === true}
+            computer={computer}
             onProbed={failure => {
               report(selected.id, failure)
             }}

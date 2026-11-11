@@ -120,6 +120,10 @@ describe('model-service addresses', () => {
     expect(failure('http-error', { upstreamStatus: 500 }).kind).toBe('listing')
     expect(failure('http-error', { upstreamStatus: 429 }).kind).toBe('other')
     expect(failure('redirect').kind).toBe('address')
+    // The form's own words: 地址 and 密钥, never API 地址 or API Key.
+    expect(failure('redirect').text).toBe('服务返回了重定向。请填写最终的地址。')
+    for (const code of ['redirect', 'invalid-response', 'invalid-key', 'http-error'])
+      expect(failure(code, { upstreamStatus: 404 }).text).not.toMatch(/API (地址|Key)/u)
     for (const kind of ['key', 'network'] as const) expect(isConnectionFailure({ kind, text: '' }), kind).toBe(true)
     for (const kind of ['listing', 'address', 'other'] as const) expect(isConnectionFailure({ kind, text: '' }), kind).toBe(false)
     expect(failure('key-origin-mismatch').text).toBe('已保存的密钥只发往原来的地址。请重新输入密钥。')

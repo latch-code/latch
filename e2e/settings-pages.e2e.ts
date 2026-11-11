@@ -111,7 +111,7 @@ describe('settings pages', () => {
         await shot('general')
 
         await openSection(settings, '模型')
-        await settings.getByRole('heading', { name: '服务', exact: true }).waitFor()
+        await settings.getByRole('heading', { name: '模型服务', exact: true }).waitFor()
         await settings.getByText('检测中', { exact: true }).waitFor()
         await settings.getByText('已连接', { exact: true }).waitFor()
         await settings.getByText('密钥无效', { exact: true }).waitFor()
@@ -169,8 +169,8 @@ describe('settings pages', () => {
         await shot('usage-failed')
         await page.unroute('**/link/api/usage')
 
-        await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-        const sheet = page.getByRole('dialog', { name: '添加服务' })
+        await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
+        const sheet = page.getByRole('dialog', { name: '添加模型服务' })
         await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
         await sheet.getByLabel('地址', { exact: true }).waitFor()
         await shot('models-add')
@@ -248,9 +248,9 @@ describe('settings pages', () => {
       if (route.request().method() === 'POST') await holding
       await route.continue()
     })
-    await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-    const sheet = page.getByRole('dialog', { name: '添加服务' })
-    await sheet.getByRole('button', { name: '自定义', exact: true }).click()
+    await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: '添加模型服务' })
+    await sheet.getByRole('button', { name: '自定义地址…', exact: true }).click()
     await sheet.getByLabel('名称', { exact: true }).fill('保存中的服务')
     await sheet.getByLabel('地址', { exact: true }).fill('https://models.example.test/v1')
     const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
@@ -277,8 +277,8 @@ describe('settings pages', () => {
     await openSection(settings, '模型')
 
     // OpenAI starts on Responses and still offers Chat Completions; a preset that speaks one protocol has no choice.
-    await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-    const sheet = page.getByRole('dialog', { name: '添加服务' })
+    await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: '添加模型服务' })
     await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
     // The select's name carries its value too, so it is found by the start of its name.
     const protocol = sheet.getByRole('combobox', { name: /^协议/u })
@@ -289,7 +289,7 @@ describe('settings pages', () => {
     expect(await protocol.count()).toBe(0)
 
     // A custom service offers all four, and is saved on the one picked.
-    await sheet.getByRole('button', { name: '自定义', exact: true }).click()
+    await sheet.getByRole('button', { name: '自定义地址…', exact: true }).click()
     expect(await protocol.locator('option').allTextContents()).toEqual(['Chat Completions', 'Responses', 'Anthropic Messages', 'Gemini'])
     await protocol.selectOption({ label: 'Gemini' })
     await sheet.getByLabel('名称', { exact: true }).fill('原生 Gemini 服务')

@@ -227,7 +227,7 @@ describe('what this computer can take back', () => {
     await enrollBrowser(elsewhere, host, { name: 'elsewhere', scopes: ['view', 'run', 'approve:standard', 'admin'] })
     const there = await openSettings(elsewhere)
     await openSection(there, '模型')
-    await there.getByRole('heading', { name: '服务', exact: true }).waitFor()
+    await there.getByRole('heading', { name: '模型服务', exact: true }).waitFor()
     await elsewhere.waitForTimeout(300)
     expect(await there.getByRole('heading', { name: '已确认的地址', exact: true }).count()).toBe(0)
     await remote.close()

@@ -16,7 +16,7 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { hostOf } from '../format.ts'
 import { providerAbilities } from '../core/providerAbilities.ts'
 import { deferredComponent } from './DeferredContent.tsx'
-import { destinationOf, type ProvidersResponse } from '../core/providerSetup.ts'
+import { destinationOf, SERVICE_FORM, servicesToPick, type ProvidersResponse } from '../core/providerSetup.ts'
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
@@ -69,6 +69,30 @@ function SetupPanel({
   )
 }
 
+/**
+ * The Host computer's name for a line that sends this device there, read from the snapshot only while such a line shows;
+ * 「Mac」 until it arrives or when it cannot be read.
+ */
+function useComputerName(needed: boolean): string {
+  const [hostName, setHostName] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!needed) return undefined
+    let active = true
+    api<AppSnapshot>('snapshot').then(
+      current => {
+        if (active) setHostName(current.hostName)
+      },
+      () => {
+        // The line still reads 「Mac」.
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [needed])
+  return computerName(hostName)
+}
+
 /** A line that says why this device cannot do it here, and where it can. */
 function Elsewhere({ children }: { children: ReactNode }) {
   return (
@@ -118,7 +142,7 @@ export function AgentPresetList({
     <div className="setup-list" role="group" aria-label="添加 Harness">
       <p className="setup-list-head">
         <span className="setup-list-title">添加 Harness</span>
-        <span className="setup-list-meta">在这台电脑上运行</span>
+        <span className="setup-list-meta">在这台 Mac 上运行</span>
       </p>
       {presets.map(preset => (
         <button
@@ -168,6 +192,7 @@ export function AgentSetupPanel({
 }) {
   const [busy, setBusy] = useState<'add' | 'check' | null>(null)
   const [error, setError] = useState('')
+  const computer = useComputerName(!canAdd)
   const missing = preset.detected ? missingText({ command: preset.command, detected: preset.detected }) : undefined
   const add = async () => {
     setBusy('add')
@@ -207,7 +232,7 @@ export function AgentSetupPanel({
             </Button>
           </>
         ) : (
-          <Elsewhere>{SETUP_COPY.addAgentElsewhere()}</Elsewhere>
+          <Elsewhere>{SETUP_COPY.addAgentElsewhere(computer)}</Elsewhere>
         )
       }>
       <p className="setup-panel-text">{preset.description}</p>
@@ -244,7 +269,15 @@ export function AgentSetupPanel({
 
 // ---- Model services -------------------------------------------------------------------------------------------
 
-/** The same service form as settings, opened where a model is chosen. */
+/**
+ * The same service form as settings, opened where a model is chosen (the new-session card, the composer's model menu,
+ * the phone's model sheet): the same title, the same grid ending in 「自定义地址…」, the same fields and save words.
+ * Saving here also chooses the service's default model, so the button needs no word of its own.
+ *
+ * On a device with 管理 that is not this Mac, a service that needs a key, or a keyless one at an address not confirmed
+ * yet, does not open the form: a session started from here could not use it, so the panel says where to go. The
+ * settings dialog lets the same device save it and finish on the Mac (`ProviderAddForm`).
+ */
 export function ProviderSetupPanel({
   access,
   onSaved,
@@ -260,6 +293,7 @@ export function ProviderSetupPanel({
   const [data, setData] = useState<ProvidersResponse | null>(null)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [error, setError] = useState('')
+  const remoteName = useComputerName(!access.admin)
   useEffect(() => {
     if (!access.admin) return undefined
     let active = true
@@ -279,58 +313,48 @@ export function ProviderSetupPanel({
   }, [access.admin])
   if (!access.admin)
     return (
-      <SetupPanel title="添加模型服务" onBack={onCancel}>
-        <Elsewhere>{SETUP_COPY.addProviderElsewhere()}</Elsewhere>
+      <SetupPanel title={SERVICE_FORM.title} onBack={onCancel}>
+        <Elsewhere>{SETUP_COPY.addProviderElsewhere(remoteName)}</Elsewhere>
       </SetupPanel>
     )
   const presets = data?.presets ?? PROVIDER_PRESETS
   if (!preset)
     return (
       <SetupPanel
-        title="添加模型服务"
+        title={SERVICE_FORM.title}
         onBack={onCancel}
         footer={
-          <>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                setPreset(presets.find(item => item.id === 'custom') ?? PROVIDER_PRESETS.find(item => item.id === 'custom')!)
-              }}>
-              其他服务…
+          onSettings && (
+            <Button variant="ghost" size="xs" onClick={onSettings}>
+              管理模型服务…
             </Button>
-            {onSettings && (
-              <Button variant="ghost" size="xs" onClick={onSettings}>
-                管理模型服务…
-              </Button>
-            )}
-          </>
+          )
         }>
         <div className="setup-grid" role="group" aria-label="选择服务">
-          {presets
-            .filter(item => item.baseURL !== '')
-            .map(item => (
-              <button key={item.id} type="button" className="setup-grid-item" onClick={() => setPreset(item)}>
-                <ProviderTile provider={{ id: item.id, kind: item.kind, presetId: item.id }} size={24} />
-                <span>{item.name}</span>
-              </button>
-            ))}
+          {servicesToPick(presets).map(item => (
+            <button key={item.id} type="button" className="setup-grid-item" onClick={() => setPreset(item)}>
+              <ProviderTile provider={{ id: item.id, kind: item.kind, presetId: item.id }} size={24} />
+              <span>{item.id === 'custom' || !item.baseURL ? SERVICE_FORM.custom : item.name}</span>
+            </button>
+          ))}
         </div>
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </SetupPanel>
     )
+  const title = preset.id === 'custom' || !preset.baseURL ? SERVICE_FORM.customTitle : preset.name
+  const computer = computerName(snapshot?.hostName)
   const elsewhere =
     !access.legacy
     && !access.local
     && (preset.requiresKey
-      ? SETUP_COPY.keyElsewhere(computerName(snapshot?.hostName))
+      ? SETUP_COPY.keyElsewhere(computer)
       : data && destinationOf(preset.baseURL, data) === 'unconfirmed'
-        ? SETUP_COPY.confirmAddressElsewhere(computerName(snapshot?.hostName))
+        ? SETUP_COPY.confirmAddressElsewhere(computer)
         : undefined)
   if (elsewhere)
     return (
       <SetupPanel
-        title={preset.name}
+        title={title}
         tile={<ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />}
         onBack={() => setPreset(null)}
         footer={
@@ -345,14 +369,14 @@ export function ProviderSetupPanel({
     )
   return (
     <SetupPanel
-      title={preset.name}
+      title={title}
       tile={<ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />}
       onBack={() => setPreset(null)}>
       {data && snapshot ? (
         <ProviderAddForm
           key={preset.id}
           compact
-          saveLabel="保存并使用"
+          computer={computer}
           preset={preset}
           data={data}
           abilities={providerAbilities(access, hostView(snapshot)?.presence)}

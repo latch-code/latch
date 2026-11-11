@@ -14,6 +14,29 @@ import { PROVIDER_COPY, safeTarget } from './securityCopy.ts'
  * `runOrigins`: origins the Host was started with, every path counting as confirmed. Hosts before confirmed addresses
  * send neither.
  */
+/**
+ * The words of the one add-service form, the same in each frame it opens in (the settings dialog, the in-place panel of
+ * the new-session card and of the composer's model menu): its title, the last choice of the service grid, the field
+ * labels and the save words.
+ */
+export const SERVICE_FORM = {
+  title: '添加模型服务',
+  custom: '自定义地址…',
+  /** The custom choice once picked: the preset's own name (「自定义服务」) stays the editable name. */
+  customTitle: '自定义地址',
+  address: '地址',
+  key: '密钥',
+  needAddress: '请先填写地址。',
+  needNameAndAddress: '请填写名称和地址。',
+  needKey: '这个模型服务需要密钥。',
+} as const
+
+/** The grid's order: the presets as the Host lists them, the custom address always last. */
+export function servicesToPick(presets: readonly ProviderPreset[]): ProviderPreset[] {
+  const isCustom = (preset: ProviderPreset) => preset.id === 'custom' || !preset.baseURL
+  return [...presets.filter(preset => !isCustom(preset)), ...presets.filter(isCustom).slice(0, 1)]
+}
+
 export interface ProvidersResponse {
   providers: ProviderSettings[]
   presets: ProviderPreset[]
@@ -194,7 +217,7 @@ export function describeProbeFailure(error: unknown): ProbeFailure {
       if (status === 403)
         return { kind: 'listing', text: '服务拒绝列出模型（HTTP 403）。可能是密钥不对，也可能是它没有列表权限；可以手动添加模型 ID。' }
       if (status === 404)
-        return { kind: 'listing', text: '这个地址没有模型列表。检查 API 地址是否完整（常见的以 /v1 结尾），也可以手动添加模型 ID。' }
+        return { kind: 'listing', text: '这个地址没有模型列表。检查地址是否完整（常见的以 /v1 结尾），也可以手动添加模型 ID。' }
       if (status === 429) return { kind: 'other', text: '服务拒绝了请求：太频繁，或账户额度不足。' }
       return { kind: 'listing', text: status === undefined ? '模型服务返回了错误。' : `模型服务返回了错误（HTTP ${status}）。` }
     }
@@ -206,11 +229,11 @@ export function describeProbeFailure(error: unknown): ProbeFailure {
     case 'timeout':
       return { kind: 'network', text: 'Latch 连不上这个地址：10 秒内没有响应。' }
     case 'redirect':
-      return { kind: 'address', text: '服务返回了重定向。请填写最终的 API 地址。' }
+      return { kind: 'address', text: '服务返回了重定向。请填写最终的地址。' }
     case 'invalid-response':
     case 'response-too-large':
     case 'empty-response':
-      return { kind: 'listing', text: '这个地址返回的不是模型列表。检查 API 地址是否正确。' }
+      return { kind: 'listing', text: '这个地址返回的不是模型列表。检查地址是否正确。' }
     case 'invalid-url':
       return { kind: 'address', text: '地址要以 http:// 或 https:// 开头，不能带用户名、密码、? 或 #。' }
     case 'invalid-key':
