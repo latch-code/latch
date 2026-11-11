@@ -11,6 +11,27 @@ const attachmentEvent = z.strictObject({
 
 /** Sessions: prompts, queue, questions, attachments, approvals, cancels and full-access starts. */
 export const SESSION_ACTIONS = {
+  /** A handoff is on record before its target starts; the materials and requirements are only counted and hashed. */
+  'handoff.created': z.strictObject({
+    handoffId: opaqueId,
+    sourceSessionId: opaqueId,
+    target: z.enum(['new-session', 'session']),
+    targetSessionId: opaqueId.optional(),
+    materials: count,
+    files: count,
+    decisions: count,
+    returnScope: z.enum(['none', 'summary', 'summary-and-evidence']),
+    promptHash: hex64,
+  }),
+  'handoff.returned': z.strictObject({
+    handoffId: opaqueId,
+    sourceSessionId: opaqueId,
+    targetSessionId: opaqueId,
+    evidence: count,
+    summaryHash: hex64,
+  }),
+  /** Withdrawn before a target existed, or closed once it had (`started`). */
+  'handoff.withdrawn': z.strictObject({ handoffId: opaqueId, from: z.enum(['start-failed', 'start-unknown', 'started']) }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
   'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),

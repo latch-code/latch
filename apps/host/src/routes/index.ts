@@ -3,6 +3,7 @@ import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
 import { createChangeRoutes } from './changes.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
+import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createTerminalRoutes, type TerminalRoutes } from './terminal.ts'
@@ -15,6 +16,7 @@ export interface RouteDeps {
   agents: AgentRouteDeps
   agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
+  handoffs: HandoffRouteDeps
 }
 
 /**
@@ -40,6 +42,7 @@ export function createRoutes(
       createAgentRoutes(context, deps.agents),
       agentLogin,
       createAutomationRoutes(context, deps.automations),
+      createHandoffRoutes(context, deps.handoffs),
     ]),
   }
 }

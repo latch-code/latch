@@ -132,6 +132,18 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },
   'automation.changed': { operation: 'create', before: hex, after: hex },
   'automation.ran': { trigger: 'schedule', attempt: hex },
+  'handoff.created': {
+    handoffId: 'hof_1',
+    sourceSessionId: sessionId,
+    target: 'new-session',
+    materials: 2,
+    files: 1,
+    decisions: 0,
+    returnScope: 'summary',
+    promptHash: hex,
+  },
+  'handoff.returned': { handoffId: 'hof_1', sourceSessionId: sessionId, targetSessionId: 'session-2', evidence: 1, summaryHash: hex },
+  'handoff.withdrawn': { handoffId: 'hof_1', from: 'started' },
 }
 
 describe('audit actions', () => {

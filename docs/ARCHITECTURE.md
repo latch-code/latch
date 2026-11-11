@@ -330,6 +330,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及审批决定与取消回执 |
+| `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
@@ -384,6 +385,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
 | `POST /tasks` | `run` | L3 写两条启动审计，不弹确认 |
+| `GET /handoffs?sessionId=`、`GET /handoffs/:id`；`POST /handoffs`、`POST /handoffs/:id/return`、`POST /handoffs/:id/withdraw` | 读：`view`；新建、交回、撤回：`run`；都要能读相关的会话 | 交接，先写审计再新建或交回，见 [HANDOFFS.md](HANDOFFS.md) |
 | `POST /tasks/:id/prompt` | `run` | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
 | `POST /tasks/:id/config` | `run` | 放宽权限模式写 `task.mode.widened`；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |
@@ -523,7 +525,7 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 
 ## Agent 领域
 
-我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)。内置 Harness 每轮以一段简短的基础提示开始，默认最多 50 步。
+我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)，交接见 [HANDOFFS.md](HANDOFFS.md)。内置 Harness 每轮以一段简短的基础提示开始，默认最多 50 步。
 
 一条消息在多个 Agent 之间依次回答的规则在 `apps/host/src/agent-relay.ts`（`test/agent-relay.test.ts`），尚未接入任何路由：第一个回答之后最多转交 3 次，Agent 写的内容不能增加次数；一轮没有完成就不再交给下一个；任何一个 Agent 的说明、Harness、模式、模型或插件代码与收下消息时不同，下一个不开始；停止要等正在运行的那一轮真实结算后才确认。
 

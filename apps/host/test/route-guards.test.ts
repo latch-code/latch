@@ -352,6 +352,54 @@ describe('route guards', () => {
     expect(results).toEqual(expected)
   })
 
+  it('keeps every handoff route to its scopes: reading takes view, every change run', async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const viewer = await t.enroll({ name: 'Viewer', scopes: ['view'] })
+    const member = await t.enroll({ listener: 'unix', name: 'Member', scopes: ['view', 'run'] })
+    const devices: Record<string, TestDevice> = { viewer, member }
+    type Caller = 'anonymous' | 'viewer' | 'member'
+    const call = (caller: Caller, method: Method, path: string, body: unknown): Promise<Response> => {
+      const init = { method, ...(body === undefined ? {} : { body }) }
+      return caller === 'anonymous' ? t.raw('unix', `api/${path}`, init) : devices[caller]!.request(path, init)
+    }
+    const unknown = `handoffs/hof_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`
+    const rows: Array<Row<Caller>> = [
+      [
+        'GET',
+        'handoffs?sessionId=none',
+        undefined,
+        { anonymous: [401, 'unauthorized'], viewer: [404, 'task-not-found'], member: [404, 'task-not-found'] },
+      ],
+      ['GET', 'handoffs', undefined, { viewer: [400, 'invalid-input'] }],
+      ['POST', 'handoffs', {}, { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [400, 'invalid-input'] }],
+      ['PUT', 'handoffs', {}, { member: [404, 'not-found'] }],
+      ['GET', unknown, undefined, { anonymous: [401, 'unauthorized'], viewer: [404, 'handoff-not-found'] }],
+      ['GET', 'handoffs/hof_bad', undefined, { viewer: [404, 'not-found'] }],
+      [
+        'POST',
+        `${unknown}/return`,
+        { requestId: 'return-request-01', summary: 'x', evidence: [] },
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [404, 'handoff-not-found'] },
+      ],
+      [
+        'POST',
+        `${unknown}/withdraw`,
+        { requestId: 'withdraw-request' },
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [404, 'handoff-not-found'] },
+      ],
+    ]
+    const results: Record<string, Outcome> = {}
+    const expected: Record<string, Outcome> = {}
+    for (const [method, path, body, outcomes] of rows)
+      for (const [caller, outcome] of Object.entries(outcomes) as Array<[Caller, Outcome]>) {
+        const key = `${caller} ${method} /link/api/${path}`
+        expected[key] = outcome
+        results[key] = await responseOutcome(await call(caller, method, path, body))
+      }
+    expect(results).toEqual(expected)
+  })
+
   it('keeps native openings to pairing, their verification window and the routes a phone may use', async () => {
     const t = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanups.push(() => t.close())
@@ -389,6 +437,8 @@ describe('route guards', () => {
       ['POST', 'pairings', {}, { phone: [403, 'native-verification-required'] }],
       ['GET', 'custom-agents', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
+      ['GET', 'handoffs?sessionId=s', undefined, { phone: [403, 'native-verification-required'] }],
+      ['POST', 'handoffs', {}, { phone: [403, 'native-verification-required'] }],
     ])
     const locked = await phone.request('GET', '/link/api/snapshot')
     expect(locked.status).toBe(200)

@@ -1,6 +1,7 @@
 import { ConfigRequests } from './config-requests.ts'
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary } from './automations.ts'
+import { Handoffs } from './handoffs.ts'
 import { AgentPlans } from './agent-plans.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
@@ -1768,6 +1769,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         plugins: enabledPluginInfo,
       },
       automations: { automations: () => automations, access: agentAccess },
+      handoffs: { handoffs: () => handoffs },
       agentLogin: {
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)
@@ -1988,6 +1990,71 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => automations.close())
+    const handoffs = await Handoffs.open({
+      dataDir,
+      audit,
+      now,
+      guardedPaths,
+      home,
+      log,
+      actor: actorOf,
+      recheck: (caller, scope) => recheck(caller, scope),
+      dataScope: caller => devices.get(caller.device.id)?.dataScope,
+      isPrivate: id => hub!.agentPrivate(id),
+      async readSession(caller, id) {
+        requireScope(caller, 'view')
+        checkPrivateSession(caller, id)
+        const detail = await hub!.detail(id)
+        recheck(caller, 'view')
+        privateAccess(caller, detail.summary)
+        return detail
+      },
+      assertSessionInput: (caller, id) => routeContext.assertSessionInput(caller, id),
+      sessionRoots,
+      defaultHarnessId: () => defaultHarnessId(),
+      checkNewTarget(target) {
+        const harnessId = target.harnessId ?? defaultHarnessId(),
+          harness = hub!.info(harnessId)
+        if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
+        if (harness.status !== 'ready')
+          throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
+        if (target.projectId && target.projectId !== 'default' && !savedProject(target.projectId))
+          throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
+        if (target.worktree && (!target.projectId || target.projectId === 'default'))
+          throw new AppError(400, 'worktree-project', '新工作树要从一个项目开始，请先选项目。')
+      },
+      newTargetRoots(target) {
+        const chosen = target.projectId && target.projectId !== 'default' ? savedProject(target.projectId) : undefined
+        if (!chosen) return [{ id: 'default', path: workspaceRoot }]
+        return hub!.info(target.harnessId ?? defaultHarnessId())?.projectFolders?.access === 'all'
+          ? chosen.folders.map(({ id, path }) => ({ id, path }))
+          : [{ id: 'default', path: chosen.folders[0].path }]
+      },
+      start: (caller, { requestId, prompt, fileRefs, target, privateFrom }, res) =>
+        startSession(
+          caller,
+          {
+            requestId,
+            prompt,
+            ...(fileRefs.length ? { fileRefs } : {}),
+            ...(target.harnessId ? { harnessId: target.harnessId } : {}),
+            ...(target.projectId ? { workspaceId: target.projectId } : {}),
+            ...(target.mode ? { mode: target.mode } : {}),
+            ...(target.model ? { model: target.model } : {}),
+            ...(target.worktree ? { worktree: true as const } : {}),
+            ...(privateFrom ? { privateFrom } : {}),
+          },
+          res,
+        ),
+      async send(caller, id, { requestId, prompt, fileRefs }) {
+        await sendPrompt(caller, id, { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) })
+      },
+      listTasks: () => hub!.listTasks(),
+      detail: id => hub!.detail(id),
+      changed: () => refresh(),
+    })
+    startupCleanup.push(() => handoffs.close())
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
     /**
      * One queue per project ID (`'default'` for the start directory): a start cannot enter a project between a removal's
      * in-use check and its committed settings write, and a start in a new worktree holds its project until the session
@@ -4343,9 +4410,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // An earlier build's phone may still hold a message for an assistant; without the field it would start an ordinary session.
       if (typeof body === 'object' && body !== null && 'assistantId' in body)
         throw new AppError(409, 'assistant-removed', '这条消息是发给已移除的 Agent 的，没有发出。')
-      let input = createTaskSchema.parse(body)
+      const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      json(res, await startSession(caller, input, res), 201)
+    }
+
+    /**
+     * Every start of a session, from `POST /tasks` and from a handoff: queues, project checks, worktrees, receipts and
+     * the start audits are the same. `privateFrom`: the session carries private material from that session, so it is as
+     * private as its source. `res` only marks a missing post-start audit record.
+     */
+    async function startSession(
+      caller: DeviceCaller,
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string },
+      res: ServerResponse,
+    ): Promise<{ sessionId: string }> {
+      const { privateFrom, ...requested } = start
+      let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
       let made: Worktree | undefined
@@ -4388,7 +4470,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       }
       // The queue of the project the session starts in; a fork's source session does not choose it.
-      await projectOperation(input.workspaceId ?? 'default', caller, 'run', async () => {
+      return await projectOperation(input.workspaceId ?? 'default', caller, 'run', async () => {
         recheck(caller, 'run')
         const fork = input.forkOf
           ? await (async () => {
@@ -4409,6 +4491,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ?? (fork && privateSession(fork.source)
             ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
             : undefined)
+          ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready')
@@ -4492,7 +4575,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               .catch(() => {
                 throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
               })
-          json(res, created, 201)
+          return created
         }
         if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
           throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
@@ -4570,20 +4653,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (hub!.levelOf(harnessId) === 'L1') {
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
-            await respondCreated(
+            return await respondCreated(
               await acceptCreate(() => createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart)),
             )
-            return
           }
           const folders =
             task.cwd === undefined || forkFolder || made ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
           checkStart()
-          await respondCreated(
+          return await respondCreated(
             await acceptCreate(() =>
               createInWorktree(() => hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task)),
             ),
           )
-          return
         }
         if (workspaceId === 'default' && defaultFlags.insideData)
           throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
@@ -4702,13 +4783,100 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res,
         )
         await noteAgentStarted(caller, harnessId)
-        await respondCreated(created)
+        return await respondCreated(created)
       }).catch(async (error: unknown) => {
         // A start that definitively did not happen leaves no worktree behind, unless something was already done in it.
         if (made && !startedIn && error instanceof AppError && error.status >= 400 && error.status < 500 && error.status !== 408)
           await worktrees.discard(made, folderRequest).catch(() => false)
         throw error
       })
+    }
+
+    /**
+     * Every new input to a session, from `POST /tasks/:id/prompt` and from a handoff: access, workspace, private-context,
+     * file-reference and attachment checks are the same, and the driver's receipt answers a retry of the same `requestId`.
+     */
+    async function sendPrompt(
+      caller: DeviceCaller,
+      id: string,
+      input: z.infer<typeof queuedPromptSchema>,
+    ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+      recheck(caller, 'run')
+      await assertSessionAccess(caller, id)
+      await assertSessionWorkspace(id)
+      if (input.model) {
+        const harness = hub!.info(await hub!.harnessOf(id))
+        if (harness?.capabilities.models.owner !== 'latch')
+          throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
+        assertModel(input.model)
+      }
+      if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      recheck(caller, 'run')
+      checkPrivateSession(caller, id, true)
+      assertWritable(id)
+      if (input.freshContext && !(await hub!.detail(id)).clearContext)
+        throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
+      if (input.queue || input.steer) await assertQueueable(id, input.prompt)
+      if (input.steer && !input.model && input.prompt) {
+        recheck(caller, 'run')
+        if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') return 'steered'
+      }
+      if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, input) }
+      const harnessId = await hub!.harnessOf(id),
+        agentTurn = turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
+        attachments = await promptAttachments(
+          caller,
+          input.attachmentIds,
+          { harnessId, ...(input.model ? { model: input.model } : {}) },
+          id,
+          input.requestId,
+        )
+      const mentionTask = input.fileRefs?.length ? await hub!.detail(id) : undefined
+      if (
+        input.fileRefs?.length
+        && (caller.device.dataScope !== 'all'
+          || !hub!.info(harnessId)?.capabilities.tools.fileMentions
+          || mentionTask?.summary.mode === 'chat')
+      )
+        throw new AppError(403, 'file-references-unavailable', '当前设备或会话不能引用项目文件。')
+      const fileRefs = await checkedFileMentions(
+        input.fileRefs,
+        mentionTask ? scopeFolders(mentionTask.summary, workspaceRoot) : [],
+        guardedPaths,
+        home,
+      )
+      recheck(caller, 'run')
+      if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+        throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+      if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
+      try {
+        recheck(caller, 'run')
+        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        if (agentTurn) agentAccess(caller, true)
+        await hub!.prompt(id, input.prompt, input.requestId, {
+          ...(agentTurn ? { agentContext: agentTurn } : {}),
+          ...(fileRefs.length ? { fileRefs } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(attachments.length ? { attachments } : {}),
+          ...(input.freshContext ? { freshContext: true as const } : {}),
+        })
+      } catch (cause) {
+        if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
+          await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)
+        throw cause
+      }
+      if (attachments.length)
+        await attachmentStore
+          .bind(
+            caller.device.id,
+            attachments.map(ref => ref.id),
+            id,
+          )
+          .catch(() => {
+            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
+          })
+      return 'accepted'
     }
 
     function queueActor(caller: DeviceCaller): QueueActor {
@@ -4934,89 +5102,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         if (input.freshContext && (input.queue || input.steer))
           throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
-        recheck(caller, 'run')
-        await assertSessionAccess(caller, id)
-        await assertSessionWorkspace(id)
-        if (input.model) {
-          const harness = hub!.info(await hub!.harnessOf(id))
-          if (harness?.capabilities.models.owner !== 'latch')
-            throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
-          assertModel(input.model)
-        }
-        if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
-        recheck(caller, 'run')
-        checkPrivateSession(caller, id, true)
-        assertWritable(id)
-        if (input.freshContext && !(await hub!.detail(id)).clearContext)
-          throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
-        if (input.queue || input.steer) await assertQueueable(id, input.prompt)
-        if (input.steer && !input.model && input.prompt) {
-          recheck(caller, 'run')
-          if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') {
-            json(res, { steered: true })
-            return true
-          }
-        }
-        if (input.queue || input.steer) {
-          const result = await promptQueues.submit(queueActor(caller), id, input)
-          json(res, result, 'queued' in result ? 202 : 200)
-          return true
-        }
-        const harnessId = await hub!.harnessOf(id),
-          agentTurn = turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
-          attachments = await promptAttachments(
-            caller,
-            input.attachmentIds,
-            { harnessId, ...(input.model ? { model: input.model } : {}) },
-            id,
-            input.requestId,
-          )
-        const mentionTask = input.fileRefs?.length ? await hub!.detail(id) : undefined
-        if (
-          input.fileRefs?.length
-          && (caller.device.dataScope !== 'all'
-            || !hub!.info(harnessId)?.capabilities.tools.fileMentions
-            || mentionTask?.summary.mode === 'chat')
-        )
-          throw new AppError(403, 'file-references-unavailable', '当前设备或会话不能引用项目文件。')
-        const fileRefs = await checkedFileMentions(
-          input.fileRefs,
-          mentionTask ? scopeFolders(mentionTask.summary, workspaceRoot) : [],
-          guardedPaths,
-          home,
-        )
-        recheck(caller, 'run')
-        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
-        if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
-        try {
-          recheck(caller, 'run')
-          if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-            throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
-          if (agentTurn) agentAccess(caller, true)
-          await hub!.prompt(id, input.prompt, input.requestId, {
-            ...(agentTurn ? { agentContext: agentTurn } : {}),
-            ...(fileRefs.length ? { fileRefs } : {}),
-            ...(input.model ? { model: input.model } : {}),
-            ...(attachments.length ? { attachments } : {}),
-            ...(input.freshContext ? { freshContext: true as const } : {}),
-          })
-        } catch (cause) {
-          if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
-            await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)
-          throw cause
-        }
-        if (attachments.length)
-          await attachmentStore
-            .bind(
-              caller.device.id,
-              attachments.map(ref => ref.id),
-              id,
-            )
-            .catch(() => {
-              throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
-            })
-        json(res, { accepted: true })
+        const sent = await sendPrompt(caller, id, input)
+        if (sent === 'steered') json(res, { steered: true })
+        else if (sent === 'accepted') json(res, { accepted: true })
+        else json(res, sent.queued, 'queued' in sent.queued ? 202 : 200)
         return true
       }
       if (method === 'POST' && action === 'cancel') {
@@ -5839,6 +5928,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'view')
         snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
+        const handoffSummaries = handoffs.summaries(new Set(snapshot.tasks.map(task => task.id)))
+        if (handoffSummaries?.length) snapshot.handoffs = handoffSummaries
         traffic.response('snapshot', json(res, snapshot))
         return
       }
@@ -6233,6 +6324,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           closing = true
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
           await automations.close()
+          await handoffs.close()
           await sessionLifecycle.hostStopping()
           await nativeRoutes.close()
           clearInterval(heartbeat)

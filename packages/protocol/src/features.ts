@@ -30,6 +30,8 @@ export interface HostFeatures {
   previewBrowser?: true
   customAgents?: true
   automations?: true
+  /** `/handoffs` exists: hand chosen material to a code session and take its result back. */
+  handoffs?: true
   mentions?: true
   pairingV3?: true
   nativeElevation?: true

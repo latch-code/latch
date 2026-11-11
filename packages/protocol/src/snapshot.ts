@@ -2,6 +2,7 @@ import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
 import type { CustomAgentSummary } from './custom-agents.ts'
 import type { AutomationSummary } from './automations.ts'
+import type { HandoffSummary } from './handoffs.ts'
 import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
@@ -61,6 +62,8 @@ export interface AppSnapshot {
   customAgents?: CustomAgentSummary[]
   /** 定时任务, under the same condition. */
   automations?: AutomationSummary[]
+  /** Handoffs whose source or target is among `tasks`; absent on older Hosts. */
+  handoffs?: HandoffSummary[]
   version?: string
   /** The Host's clock when it answered. */
   hostTime?: string
