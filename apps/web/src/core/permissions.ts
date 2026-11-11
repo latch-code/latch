@@ -11,7 +11,7 @@ import {
   type SessionPermission,
   type TaskSummary,
 } from '@latch/protocol'
-import { APPROVAL_COPY, highRiskLabel, MODE_COPY } from './securityCopy.ts'
+import { APPROVAL_COPY, highRiskLabel, MODE_COPY, type Brief } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -71,8 +71,8 @@ export interface ApprovalGate {
   kind: 'R1' | 'R2' | 'advisory' | 'legacy'
   /** The card's state pill: amber while it waits, red for a high-risk request. */
   badge?: { label: string; tone: 'warn' | 'err' }
-  /** Explanation shown on advisory (L3) prompts. */
-  note?: string
+  /** On advisory (L3) prompts: that rejecting cannot stop the agent, with the sentence behind ⓘ. */
+  note?: Brief
   /** Buttons to show; reject options are always present. */
   options: ApprovalOption[]
   /** Whether the chosen option id is sent (drivers without options take plain allow/reject). */

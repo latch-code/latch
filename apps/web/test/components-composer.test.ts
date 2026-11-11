@@ -164,7 +164,7 @@ describe('decided approvals', () => {
     expect(html).toContain('lucide-circle-slash')
     expect(html).not.toMatch(/state-failed|process-failed|tool-failure|失败/u)
     // One place says it: no second record line under the row.
-    expect(html).not.toContain('class="tool-decision"')
+    expect(html).not.toContain(' tool-decision"')
     expect(html.match(/已拒绝/gu)).toHaveLength(1)
     // Folded, not opened by itself like a failure with output, and the proposed diff is no evidence of a change.
     expect(html).not.toContain('data-open=""')
@@ -175,10 +175,12 @@ describe('decided approvals', () => {
   it('records an allowance on its row, and says nobody’s answer without claiming the call did not run', () => {
     const allowed = decided({ outcome: 'allowed', at, via: 'this-mac' }, 'completed', { startedAt: at, completedAt: at })
     expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在这台 Mac 上决定"/u)
-    expect(allowed).not.toContain('class="tool-decision"')
+    expect(allowed).not.toContain(' tool-decision"')
     expect(stateSlot(allowed)).toMatch(/data-outcome="allowed">已允许 · \d{2}:\d{2}$/u)
     const cancelled = decided({ outcome: 'cancelled', at }, 'cancelled')
-    expect(stateSlot(cancelled)).toMatch(/title="[^"]*会话停止时还没有人回答" data-outcome="cancelled">已取消（会话停止）$/u)
+    // The words say nobody answered; the tooltip adds only when.
+    expect(stateSlot(cancelled)).toMatch(/data-outcome="cancelled">已取消（会话停止）$/u)
+    expect(cancelled).not.toContain('还没有人回答')
     const expired = decided({ outcome: 'expired', at }, 'cancelled')
     expect(stateSlot(expired)).toMatch(/data-outcome="expired">已过期$/u)
     for (const html of [cancelled, expired]) expect(html).not.toMatch(/已拒绝|决定"|失败|没有执行/u)
@@ -192,8 +194,9 @@ describe('decided approvals', () => {
     })
     expect(html).not.toContain('state-rejected')
     expect(stateSlot(html)).toBe('')
+    // A Hint: the record and that the Harness reports it ran in view, where it was decided on the glyph, why behind ⓘ.
     expect(html).toMatch(
-      /<p class="tool-decision" title="[^"]*在其他设备上决定\nHarness 的询问只是提示[^"]*" data-outcome="rejected">.*已拒绝 · \d{2}:\d{2} · Harness 报告仍执行了这次调用<\/p>/u,
+      /<div class="ui-hint tool-decision">.*title="[^"]*在其他设备上决定".*<span class="ui-hint-label">已拒绝 · \d{2}:\d{2} · Harness 报告仍执行了<\/span><button[^>]*aria-label="说明"/u,
     )
   })
 

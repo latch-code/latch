@@ -38,7 +38,7 @@ describe('fork presentation and retries', () => {
       }),
     )
     expect(html).toContain('<details class="fork-context">')
-    expect(html).toContain('第 2 轮为止的记录')
+    expect(html).toContain('的前 2 轮')
     expect(html).toContain('&lt;script&gt;host context&lt;/script&gt;')
     expect(html).not.toContain('<script>')
     expect(html).toContain('Try a different approach')
@@ -59,8 +59,8 @@ describe('fork presentation and retries', () => {
     )
     expect(html).not.toContain('<details')
     expect(html).not.toContain('host context')
-    expect(html).toContain('pi 自己带着会话「')
-    expect(html).toContain('第 2 轮为止的记录')
+    expect(html).toContain('pi 带着「')
+    expect(html).toContain('的前 2 轮')
     expect(html).toContain('Try a different approach')
   })
   it("resends a native fork's first words alone, and a text fork's with the record it sent", () => {

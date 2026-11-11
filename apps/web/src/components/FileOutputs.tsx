@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { FileAudio, FileImage, FileText, FileVideo, Globe, Presentation, Sheet } from 'lucide-react'
+import { FileAudio, FileImage, FileText, FileVideo, Globe, Presentation, Sheet, TriangleAlert } from 'lucide-react'
 import type { FileChange } from '@latch/protocol'
-import { Button, Icon, Tooltip, type LucideIcon } from '@latch/ui'
+import { Button, Hint, ICON_STROKE, Icon, Tooltip, type LucideIcon } from '@latch/ui'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
 import { FileSession } from './FileChip.tsx'
@@ -76,8 +76,12 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
   if (!truncated && !unavailable) return null
   return (
     <div className="output-notes">
-      {truncated && <p>只记录了部分变化；目录过大、观察中断或部分路径无法读取。</p>}
-      {unavailable && <p>本轮未能完整观察文件变化，请在项目目录中核对结果。</p>}
+      <Hint lead={<TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
+        {[
+          truncated ? '只记录了部分变化；目录过大、观察中断或部分路径无法读取。' : '',
+          unavailable ? '本轮未能完整观察文件变化，请在项目目录中核对结果。' : '',
+        ].join('')}
+      </Hint>
     </div>
   )
 }

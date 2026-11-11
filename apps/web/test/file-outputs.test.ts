@@ -7,8 +7,9 @@ describe('produced files', () => {
     expect(renderToStaticMarkup(createElement(ProducedFiles, { files: [] }))).toBe('')
     expect(renderToStaticMarkup(createElement(OutputNotes, {}))).toBe('')
     const html = renderToStaticMarkup(createElement(OutputNotes, { unavailable: true, truncated: true }))
-    expect(html).toContain('未能完整观察')
-    expect(html).toContain('只记录了部分变化')
+    // A short label in view; what could not be vouched for is behind its ⓘ.
+    expect(html).toContain('记录不完整')
+    expect(html).toContain('aria-label="说明"')
   })
   it('names each document by its file name, escapes it, and has no link', () => {
     const html = renderToStaticMarkup(

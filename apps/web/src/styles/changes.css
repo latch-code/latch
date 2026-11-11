@@ -671,3 +671,19 @@
   display: inline-flex;
   align-items: center;
 }
+
+/* A line with its fine print behind ⓘ: the Hint fills the line and takes its tone. */
+.changes-line > .ui-hint {
+  min-width: 0;
+  color: inherit;
+}
+.changes-line > .ui-hint > .ui-hint-lead {
+  color: inherit;
+}
+.changes-line[data-tone='amber'] > .ui-hint > .ui-hint-lead {
+  color: var(--amber-icon);
+}
+.changes-receipt > .ui-hint {
+  width: fit-content;
+  max-width: 100%;
+}

@@ -50,15 +50,14 @@ function clock(at: string): string {
  * `computerLabel`: 「这台 Mac」 in the Latch app there, the computer's name on any other device.
  */
 export function hostNoticeCopy(notice: HostNotice, computer = 'Mac'): { title: string; body: string } {
-  if (notice.state === 'sleeping')
-    return { title: `${computer} 已休眠（${clock(notice.at)} 起）`, body: `${computer} 唤醒后会自动重新连接。` }
+  if (notice.state === 'sleeping') return { title: `${computer} 已休眠（${clock(notice.at)} 起）`, body: '唤醒后自动重连' }
   switch (notice.reason) {
     case 'restart':
-      return { title: `${computer} 上的 Latch 正在重启`, body: '几秒后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 正在重启`, body: '几秒后自动重连' }
     case 'update':
-      return { title: `${computer} 上的 Latch 正在更新`, body: '更新完成后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 正在更新`, body: '更新完成后自动重连' }
     case 'sleep':
     case 'shutdown':
-      return { title: `${computer} 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 再次启动后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 启动后自动重连' }
   }
 }

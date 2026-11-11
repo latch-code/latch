@@ -451,7 +451,6 @@ export function Sidebar({
         {groups.length === 0 ? (
           <div className="list-empty">
             <p>{snapshot.tasks.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
-            {snapshot.tasks.length === 0 && <span>在任何已连接设备上继续。</span>}
           </div>
         ) : (
           groups.map(group => (

@@ -408,7 +408,7 @@ it('tells the truth at both ends of a turn, whatever the turn record has reached
     const panel = page.locator('.changes-panel')
     const undoTurn = panel.getByRole('button', { name: '撤销本轮', exact: true })
     await undoTurn.waitFor()
-    const runningLine = panel.getByText('运行中 · 列表停在上次刷新，这一轮结束后更新')
+    const runningLine = panel.getByText('运行中 · 点按刷新')
 
     // The status moves first: the record still shows the last turn settled, and the panel goes by the status.
     let openModel = () => {}
@@ -582,7 +582,6 @@ it('keeps a very long list quick: a window of tree rows, a page of file rows, ea
       expect(await panel.locator('.changes-file').count()).toBeLessThanOrEqual(150)
       expect(treeRows).toBeLessThanOrEqual(400)
       expect(detailReads).toBeLessThanOrEqual(1)
-      if (size >= 1000) await panel.getByText('文件很多：先显示列表，点开再读单个文件').waitFor()
       if (size >= 1000) expect(detailReads).toBe(0)
       await panel.getByRole('button', { name: '文件树', exact: true }).click()
     }

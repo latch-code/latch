@@ -369,7 +369,11 @@ describe('permission states in a browser', () => {
     await card.waitFor()
     // The first start of a launch says once what it can do, in the timeline.
     await page.locator('.session-start-note').waitFor()
-    await card.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
+    // The fact in view on the card, the sentence behind its ⓘ.
+    const advisory = card.locator('.approval-note')
+    await advisory.getByText('拒绝只会转达，拦不住它', { exact: true }).waitFor()
+    await advisory.getByRole('button', { name: '说明', exact: true }).click()
+    await advisory.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
     // An agent's ask: Esc refuses, but ⌘⏎ never allows it, so 允许 has no cap even with focus in the card.
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
     await card.getByRole('button', { name: '拒绝', exact: true }).focus()
@@ -405,7 +409,7 @@ describe('permission states in a browser', () => {
       body: { prompt: 'drift plan', requestId: randomUUID() },
     })
     await expect.poll(async () => (await detail(sessionId)).summary.permissionDrift, { timeout: 15_000 }).toBe(true)
-    await page.getByText('这个 Harness 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
+    await page.locator('.composer-stop').getByText('Harness 的设置变了', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-drift-desktop.png`, fullPage: true, animations: 'disabled' })
     // The banner that stops the session is a security surface too.

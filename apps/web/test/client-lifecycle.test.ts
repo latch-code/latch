@@ -37,13 +37,13 @@ describe('host state announcements', () => {
     expect(noticeOf(parseHostState(frame({ state: 'awake' }))!)).toBeNull()
     expect(hostNoticeCopy(notice({ state: 'sleeping', reason: 'sleep', retryAfter: 10 }))).toEqual({
       title: `Mac 已休眠（${localTime} 起）`,
-      body: 'Mac 唤醒后会自动重新连接。',
+      body: '唤醒后自动重连',
     })
     expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).title).toBe('Mac 上的 Latch 正在重启')
     expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'update', retryAfter: 10 })).title).toBe('Mac 上的 Latch 正在更新')
     expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'shutdown', retryAfter: 15 }))).toEqual({
       title: `Mac 上的 Latch 已停止（${localTime} 起）`,
-      body: 'Latch 再次启动后会自动重新连接。',
+      body: 'Latch 启动后自动重连',
     })
     // Another device names the computer; the Latch app on it says 这台 Mac.
     const restart = notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })
@@ -52,7 +52,7 @@ describe('host state announcements', () => {
     expect(hostNoticeCopy(restart, computerLabel(true, 'studio-mini')).title).toBe('这台 Mac 上的 Latch 正在重启')
     expect(hostNoticeCopy(notice({ state: 'sleeping', reason: 'sleep', retryAfter: 10 }), 'studio-mini')).toEqual({
       title: `studio-mini 已休眠（${localTime} 起）`,
-      body: 'studio-mini 唤醒后会自动重新连接。',
+      body: '唤醒后自动重连',
     })
     expect(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).toEqual({
       state: 'stopping',

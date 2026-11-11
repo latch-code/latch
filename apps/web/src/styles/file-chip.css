@@ -86,3 +86,8 @@
   gap: var(--sp-6);
   margin: 0;
 }
+
+/* A refusal at the foot of a file menu: the note's glyph and a few words, why behind ⓘ, at the footer's inset. */
+.file-chip-note {
+  padding: 0 var(--sp-4) 0 var(--sp-10);
+}

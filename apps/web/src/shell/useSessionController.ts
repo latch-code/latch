@@ -27,7 +27,13 @@ import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.
 import { isActive } from '../format.ts'
 import { approvalActions, composerGate, deviceAccess, hostView } from '../core/permissions.ts'
 import { setPreference } from '../preferences.ts'
-import { CONFIG_UNVERIFIED_TEXT, isSessionStopCode, SESSION_STOP_TEXT, stopLocksInput, type SessionStopCode } from '../core/securityCopy.ts'
+import {
+  CONFIG_UNVERIFIED_TEXT,
+  isSessionStopCode,
+  SESSION_STOP_LABEL,
+  stopLocksInput,
+  type SessionStopCode,
+} from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
 import { sessionMenuSections } from '../sessionMenu.ts'
 import {
@@ -585,7 +591,7 @@ export function useSessionController({
       cancels.current.settle(id)
       if (answer === 'ended' || answer === 'newer') {
         setCancelling(previous => without(previous, id))
-        setToast({ text: answer === 'newer' ? '要停止的那一轮已经结束，新的一轮仍在运行' : '这一轮已经结束，无需停止', tone: 'ok' })
+        setToast({ text: answer === 'newer' ? '那一轮已经结束，新的一轮仍在运行' : '这一轮已经结束，无需停止', tone: 'ok' })
       }
       await refresh()
     } catch (cause) {
@@ -809,7 +815,7 @@ export function useSessionController({
   const stopText =
     stopCode === 'permission-unverified' && refusedInput?.from === 'config'
       ? CONFIG_UNVERIFIED_TEXT
-      : stopCode && SESSION_STOP_TEXT[stopCode]
+      : stopCode && SESSION_STOP_LABEL[stopCode]
   const stopRetry =
     stopCode === undefined || stopLocksInput(stopCode)
       ? undefined

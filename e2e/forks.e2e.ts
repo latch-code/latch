@@ -335,7 +335,7 @@ describe('conversation forks', () => {
       await palette.getByRole('searchbox').fill('先问一下')
       await palette.getByRole('option').filter({ hasText: '先问一下' }).first().click()
       await palette.waitFor({ state: 'hidden' })
-      await page.getByText('这个 Harness 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
+      await page.locator('.composer-stop').getByText('Harness 的设置变了', { exact: true }).waitFor()
       await page.getByRole('button', { name: '在新会话中继续', exact: true }).click()
       await notice.waitFor()
       await expect.poll(() => label(/^权限：/u)).toContain('先问你')

@@ -304,11 +304,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
         expect(await found.count()).toBe(0)
-        // The first start of this launch in this project says what the Harness can do, and it stays.
+        // The first start of this launch in this project says Latch does not isolate the Harness, and it stays; what it can
+        // do is behind its ⓘ.
         const startNote = page.locator('.session-start-note')
-        await startNote
-          .getByText('Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。', { exact: true })
-          .waitFor()
+        await startNote.getByText('Latch 不隔离 Codex', { exact: true }).waitFor()
+        await startNote.getByRole('button', { name: '说明', exact: true }).click()
+        await startNote.getByText('Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。', { exact: true }).waitFor()
 
         // The next start of the same launch here does not repeat it.
         await application.evaluate(({ dialog }) => {

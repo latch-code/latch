@@ -79,7 +79,7 @@ describe('the Host announcing it stops answering', () => {
     expect((await report({ state: 'sleeping' })).status).toBe(200)
     const asleep = banner.getByText(/^studio-mini 已休眠（\d{2}:\d{2} 起）$/u)
     await asleep.waitFor()
-    await banner.getByText('studio-mini 唤醒后会自动重新连接。').waitFor()
+    await banner.getByText('唤醒后自动重连').waitFor()
     expect(await page.locator('.app-shell').getAttribute('data-connection')).toBe('reconnecting')
     await page.screenshot({ path: 'test-results/host-state-sleeping.png', animations: 'disabled' })
     // This Host never slept, so the first attempt after the wait connects and the line goes away.
@@ -111,7 +111,7 @@ describe('the Host announcing it stops answering', () => {
     expect((await report({ state: 'stopping', reason: 'restart' })).status).toBe(200)
     await testHost.host.close()
     await banner.getByText('studio-mini 上的 Latch 正在重启', { exact: true }).waitFor()
-    await banner.getByText('几秒后会自动重新连接。').waitFor()
+    await banner.getByText('几秒后自动重连').waitFor()
     expect(await banner.getByText('连接已中断，正在重连…', { exact: true }).count()).toBe(0)
     await page.screenshot({ path: 'test-results/host-state-restarting.png', animations: 'disabled' })
     // This Host does not come back, so the line stays while each page is captured.

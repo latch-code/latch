@@ -3,7 +3,7 @@ import { Copy, Ellipsis, ExternalLink, Eye, Folder, FolderOpen, Link2, MessageSq
 import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
 import { Button, Icon, IconButton, InlineNotice, Kbd, Loading, Menu, Tooltip, useCopy, type MenuItem } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
-import { fileNote } from '../core/securityCopy.ts'
+import { fileRefusalText } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -262,7 +262,7 @@ export function FileTree({
           { handle: file.handle },
         )
         if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
-        if (result.status === 'refused' || result.status === 'failed') throw new Error(fileNote(result.code).text)
+        if (result.status === 'refused' || result.status === 'failed') throw new Error(fileRefusalText(result.code))
       }
     } catch (cause) {
       if (!controller.signal.aborted) setNotice(errorMessage(cause))

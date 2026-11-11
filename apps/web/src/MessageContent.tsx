@@ -482,7 +482,7 @@ export const MessageContent = memo(function MessageContent({
   )
 })
 
-export const PLAIN_TEXT_NOTE = '内容结构过深，已按纯文本显示。'
+export const PLAIN_TEXT_NOTE = '结构过深，按纯文本显示'
 
 function PlainText({ text }: { text: string }) {
   return (

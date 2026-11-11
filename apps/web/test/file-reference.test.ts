@@ -178,7 +178,7 @@ describe('path chips', () => {
     for (const code of ['file-folder', 'host-outdated']) expect(fileNote(code).tone, code).toBe('info')
     expect(fileNote('file-folder', { platform: 'darwin' }).text).toBe('这是文件夹；Latch 只在访达中显示项目的文件夹。')
     expect(fileRefusalText('file-type-refused', { name: 'slides.html', platform: 'darwin' })).toBe(
-      '网页和 SVG 用浏览器打开时可以联网，Latch 不直接打开；可以在访达中显示后自己打开。',
+      'Latch 不直接打开：网页和 SVG 用浏览器打开时可以联网；可以在访达中显示后自己打开。',
     )
     expect(fileRefusalText('file-type-refused', { name: 'logo.SVG', platform: 'darwin' })).toContain('可以联网')
     expect(fileRefusalText('file-type-refused', { name: 'old.ppt', platform: 'darwin' })).toContain('宏')

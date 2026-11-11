@@ -288,7 +288,9 @@ describe('approval gating', () => {
   })
 
   it('explains advisory prompts', () => {
-    expect(approvalActions(approval({ advisory: true }), device()).note).toContain('拒绝会转达给它，但不能阻止它执行其他操作')
+    const advisory = approvalActions(approval({ advisory: true }), device()).note
+    expect(advisory?.label).toBe('拒绝只会转达，拦不住它')
+    expect(advisory?.detail).toContain('拒绝会转达给它，但不能阻止它执行其他操作')
   })
 })
 

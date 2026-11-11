@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ChevronLeft, ChevronRight, LockKeyhole } from 'lucide-react'
+import { ChevronLeft, ChevronRight, LockKeyhole, TriangleAlert } from 'lucide-react'
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
-import { Button, ICON_STROKE, IconButton, InlineNotice, Menu, type MenuItem, type MenuTriggerProps } from '@latch/ui'
+import { Button, Hint, ICON_STROKE, Icon, IconButton, InlineNotice, Menu, type MenuItem, type MenuTriggerProps } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
@@ -455,7 +455,11 @@ function ApprovalPanel({
               )}
             </p>
           )}
-          {gate.note && <p className="approval-note">{gate.note}</p>}
+          {gate.note && (
+            <Hint className="approval-note" lead={<Icon icon={TriangleAlert} size={12} />} label={gate.note.label}>
+              {gate.note.detail}
+            </Hint>
+          )}
           {hidden && (
             <p className="approval-warning" role="note">
               {APPROVAL_COPY.hiddenCharacters}
@@ -505,9 +509,8 @@ function ApprovalPanel({
               }}>
               {APPROVAL_COPY.retry}
             </Button>
-          }>
-          {APPROVAL_COPY.uncertain}
-        </InlineNotice>
+          }
+        />
       )}
     </section>
   )

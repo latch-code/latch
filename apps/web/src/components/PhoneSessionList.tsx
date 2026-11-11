@@ -388,7 +388,6 @@ export function PhoneSessionList({
               <p>{search ? '没有匹配的会话' : empty ? '还没有会话' : archived ? '没有已归档的会话' : '暂无会话'}</p>
               {empty && !search && (
                 <>
-                  <span>会话会保存在这里，在任何已连接设备上继续。</span>
                   <Button size="xs" onClick={onNew}>
                     新建会话
                   </Button>

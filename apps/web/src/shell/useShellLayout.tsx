@@ -849,10 +849,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const hostProblem = shellHost && shellHost.status !== 'running' ? hostLine(shellHost) : null
   const notice = harness.hostNotice ? hostNoticeCopy(harness.hostNotice, computerLabel(access.local, snapshot.hostName)) : null
   const connectionTitle = connection === 'offline' ? '当前设备已离线' : (hostProblem?.text ?? notice?.title ?? '连接已中断，正在重连…')
-  const connectionText =
-    connection === 'offline'
-      ? '已读内容仍可查看；恢复连接后会同步最新状态。'
-      : (notice?.body ?? (hostProblem ? '恢复后会同步最新状态。' : harness.error || '恢复后会同步最新状态。'))
+  // The title and 重试 say it; only a reason of the Host's own, or how it comes back, adds a line.
+  const connectionText = connection === 'offline' ? '' : (notice?.body ?? (hostProblem ? '' : harness.error || ''))
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 

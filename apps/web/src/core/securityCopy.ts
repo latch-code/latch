@@ -69,7 +69,7 @@ export const computerLabel = (local: boolean, hostName?: string): string => (loc
 export const SETUP_COPY = {
   modelNeedsAdmin: (computer = 'Mac') => `这台设备不能添加模型。在 ${computer} 上的 Latch 里添加：设置 › 模型。`,
   /** A device whose data scope leaves out the session's folders: where its 「可以看项目文件」 is turned on. */
-  filesNeedScope: (computer = 'Mac') => `这台设备没有查看项目文件的权限，所以读不到改动。在 ${computer} 上的 Latch 里打开：设置 › 设备。`,
+  filesNeedScope: (computer = 'Mac') => `在 ${computer} 上开启：设置 › 设备`,
   harnessNeedsAdmin: (computer = 'Mac') => `这台设备不能管理 Harness。在 ${computer} 上的 Latch 里查看：设置 › Harness。`,
   addAgentElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › Harness`,
   addProviderElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里添加：设置 › 模型`,
@@ -97,7 +97,11 @@ export const APPROVAL_COPY = {
   highRisk: '高风险',
   advisory: '仅提示',
   check: '需要核对',
-  advisoryNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
+  /** On an agent's ask: the fact in a few words, why one press away. */
+  advisoryNote: {
+    label: '拒绝只会转达，拦不住它',
+    detail: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
+  },
   hiddenCharacters: '含有不可见字符，已标出',
   /** One name for the card's other choices at every width. */
   moreChoices: '更多',
@@ -108,7 +112,6 @@ export const APPROVAL_COPY = {
   noRun: '这台设备不能允许这一步',
   /** The choice whose outcome is unknown, by the label of its button. */
   uncertainTitle: (choice: string) => `「${choice}」的结果未知`,
-  uncertain: '可重试同一选择，不会重复提交。',
   retry: '重试',
   /** The drawer above the composer. */
   drawerCount: (index: number, total: number) => `${index}/${total}`,
@@ -144,9 +147,9 @@ export const DECISION_COPY = {
   viaThisMac: '在这台 Mac 上决定',
   viaOtherDevice: '在其他设备上决定',
   expiredNote: '没有人在时限内回答',
-  cancelledNote: '会话停止时还没有人回答',
-  cancelledSubagentNote: '这个子 Agent 被单独停止时还没有人回答',
   ranDespite: 'Harness 报告仍执行了这次调用',
+  /** The same on the row's own line, where the call is the row. */
+  ranDespiteLabel: 'Harness 报告仍执行了',
   ranDespiteNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行。这一行显示的是 Harness 自己的报告。',
   /** Why what was typed cannot go with a rejection. */
   noteInvalid: '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符',
@@ -189,16 +192,17 @@ export const CONFIRMATION_COPY = {
   label: '在 Mac 上确认',
   /** Either window: the helper's Touch ID sheet, or the desktop's own 取消/允许 sheet. */
   waiting: '在系统窗口中确认',
-  waitingShort: '等待确认',
   waitingTouchId: '等待 Touch ID',
   /** Above what a system form's sentence leaves out. */
   details: '确认详情',
   confirmed: '已确认，正在',
-  cooldown: '连续取消了 3 次，暂时不再询问。',
-  /** How long the pause still lasts, 「4:05 后可以再试。」. */
-  cooldownWait: (wait: string) => `${wait} 后可以再试。`,
-  cooldownOver: '现在可以再试。',
+  cooldown: '连续取消 3 次，暂停询问',
+  /** How long the pause still lasts, 「4:05 后再试」. */
+  cooldownWait: (wait: string) => `${wait} 后再试`,
+  cooldownOver: '现在可以再试',
   busy: '另一个确认还没完成，先完成或取消它。',
+  /** The same, as the line where a confirmation would start. */
+  busyShort: '另一个确认进行中',
   blocked: '有外部 Harness 的会话正在运行或等你处理，结束后才能确认。',
   untitled: '未命名会话',
   openSession: '查看',
@@ -523,8 +527,11 @@ export const FILE_COPY = {
  */
 export type FileNoteTone = 'lock' | 'info' | 'alert'
 export interface FileNote {
+  /** A few words, always in view. */
   text: string
   tone: FileNoteTone
+  /** Why, and the way left to the reader, behind ⓘ. */
+  detail?: string
 }
 interface FileNoteContext {
   /** The file's name, for reasons that depend on its type. */
@@ -546,23 +553,29 @@ const MACRO_TYPES = new Set(['doc', 'xls', 'ppt', 'docm', 'xlsm', 'pptm', 'potm'
 function typeRefusal({ name, platform }: FileNoteContext): string {
   const ext = extensionOf(name)
   const reveal = revealWords(platform)
-  if (WEB_TYPES.has(ext)) return `网页和 SVG 用浏览器打开时可以联网，Latch 不直接打开；可以${reveal}后自己打开。`
-  if (MACRO_TYPES.has(ext)) return `这种 Office 文件可以带宏或嵌入的对象，Latch 不直接打开；可以${reveal}后自己打开。`
+  if (WEB_TYPES.has(ext)) return `网页和 SVG 用浏览器打开时可以联网；可以${reveal}后自己打开。`
+  if (MACRO_TYPES.has(ext)) return `这种 Office 文件可以带宏或嵌入的对象；可以${reveal}后自己打开。`
   return `Latch 只直接打开常见的文档、图片和音视频，不打开程序、脚本或没有扩展名的文件；可以${reveal}后自己决定。`
 }
 
 /** The note for each code the Host or the shell gave; anything else is a plain failure. */
 const FILE_NOTES: Record<string, (context: FileNoteContext) => FileNote> = {
   'file-outside-folders': ({ platform }) => ({
-    text: `这个文件不在会话的文件夹里，Latch 不替你打开它。${platform === 'darwin' ? '复制路径后，可以在访达中按 ⇧⌘G 前往。' : '复制路径后，可以在文件管理器中前往。'}`,
+    text: '不在会话的文件夹里',
+    detail: `Latch 不替你打开它。${platform === 'darwin' ? '复制路径后，可以在访达中按 ⇧⌘G 前往。' : '复制路径后，可以在文件管理器中前往。'}`,
     tone: 'lock',
   }),
-  'file-folder-removed': () => ({ text: '这个会话的文件夹已不在项目里，Latch 不再替你打开其中的文件。', tone: 'lock' }),
+  'file-folder-removed': () => ({
+    text: '文件夹已不在项目里',
+    detail: 'Latch 不再替你打开这个会话文件夹中的文件。',
+    tone: 'lock',
+  }),
   'file-protected': () => ({ text: '这是 Latch 的私有数据。', tone: 'lock' }),
   'file-secret': () => ({ text: '这个文件可能含密钥，不提供快速查看和打开。', tone: 'lock' }),
-  'file-type-refused': context => ({ text: typeRefusal(context), tone: 'lock' }),
+  'file-type-refused': context => ({ text: 'Latch 不直接打开', detail: typeRefusal(context), tone: 'lock' }),
   'file-preview-unverified': () => ({
-    text: '快速查看暂不用于这种文件：还没有确认系统的预览不会加载文件里引用的网络资源。',
+    text: '暂不快速查看这种文件',
+    detail: '还没有确认系统的预览不会加载文件里引用的网络资源。',
     tone: 'lock',
   }),
   'file-content-mismatch': () => ({ text: '文件内容与扩展名不符，Latch 不直接打开它。', tone: 'lock' }),
@@ -591,8 +604,10 @@ export function fileNote(code: string, context: FileNoteContext = {}): FileNote 
   return Object.hasOwn(FILE_NOTES, code) ? FILE_NOTES[code]!(context) : { text: '没有完成，请重试。', tone: 'alert' }
 }
 
+/** The note as one sentence, where there is no ⓘ to hold its detail (a preview's error). */
 export function fileRefusalText(code: string, context: FileNoteContext = {}): string {
-  return fileNote(code, context).text
+  const { text, detail } = fileNote(code, context)
+  return detail ? `${text}：${detail}` : text
 }
 
 /**
@@ -698,7 +713,7 @@ export const RUNS_AS_YOU_COPY = {
   devMode: { label: '其他程序可以修改 Latch 的代码' } satisfies Brief,
 } as const
 
-/** Why a session no longer accepts input: one line, with 「在新会话中继续」 beside it. */
+/** Why a session no longer accepts input, as an error elsewhere (`describeFailure`). */
 export const SESSION_STOP_TEXT = {
   'permission-drift': '这个 Harness 的设置变了，为了安全换个新会话继续',
   'agent-definition-changed': '这个 Harness 的设置变了，为了安全换个新会话继续',
@@ -712,8 +727,16 @@ export const DOCUMENT_PREVIEW_ERRORS = {
   fallback: '无法显示这个文档，请下载或在 Mac 上打开。',
 } as const
 export type SessionStopCode = keyof typeof SESSION_STOP_TEXT
+/** The same as the line above the input: a few words beside the shield, with 「在新会话中继续」 after them. */
+export const SESSION_STOP_LABEL: Record<SessionStopCode, string> = {
+  'permission-drift': 'Harness 的设置变了',
+  'agent-definition-changed': 'Harness 的设置变了',
+  'project-config-changed': '项目的 Harness 配置变了',
+  'l3-confirmation-missing': '会话缺少启动记录',
+  'permission-unverified': '没能确认权限，这一轮没发送',
+}
 /** The same stop after a mode change, where no message was on its way. */
-export const CONFIG_UNVERIFIED_TEXT = '确认不了 Harness 是否切换到了所选的权限'
+export const CONFIG_UNVERIFIED_TEXT = '没能确认权限已经切换'
 export const isSessionStopCode = (code: string): code is SessionStopCode => code in SESSION_STOP_TEXT
 /** A mode that could not be read back this once: nothing went out, the session may read true on the next try. */
 export const stopLocksInput = (code: SessionStopCode) => code !== 'permission-unverified'
@@ -741,8 +764,19 @@ export const MODE_COPY = {
   agentDecides: (agent: string) => `不询问 · 由 ${agent} 决定`,
   /** Only pi declares this: its tools never ask, but an extension's confirmation reaches the person. */
   agentDecidesLine: (agent: string) => `${agent} 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它`,
-  /** The timeline's first row, once per launch in a project: the 权限 chip and the heading must not read as a limit. */
-  firstStart: (agent: string) => `${agent} 能读写这台 Mac 上的文件并运行命令。权限是 ${agent} 自己的设置，Latch 不隔离它。`,
+  /**
+   * The timeline's first row, once per launch in a project: the 权限 chip and the heading must not read as a limit, so
+   * the label itself says 不隔离; what it can do stays one press away.
+   */
+  firstStart: (agent: string): Brief => ({
+    label: `Latch 不隔离 ${agent}`,
+    detail: `${agent} 能读写这台 Mac 上的文件并运行命令。权限是 ${agent} 自己的设置。`,
+  }),
+  /** The same for a Harness that never asks (pi). */
+  firstStartUnasked: (agent: string): Brief => ({
+    label: `${agent} 不询问，Latch 不隔离它`,
+    detail: `${MODE_COPY.agentDecidesLine(agent)}。`,
+  }),
   unverifiable: '权限无法确认',
   unverifiableLine: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
   afterStart: '开始后可以选',
@@ -810,6 +844,10 @@ export const JUDGED_COPY = {
   reviewNote: (agent: string) => `这是 ${agent} 自己的模型代你做的判断，不是你的批准；它拦下的在这里不能改为允许。`,
   unasked: '没有问你',
   unaskedNote: (agent: string) => `${agent} 当时由它的模型代你决定，没有问你就运行了；Latch 不知道是它的规则还是模型放行的。`,
+  /** The opened row's line: who decided in a few words, the note behind ⓘ. */
+  reviewBrief: (agent: string): Brief => ({ label: '模型的判断，不是你的批准', detail: JUDGED_COPY.reviewNote(agent) }),
+  unaskedBrief: (agent: string): Brief => ({ label: '由模型代你决定', detail: JUDGED_COPY.unaskedNote(agent) }),
+  ruleBrief: (agent: string): Brief => ({ label: '要放行，换权限或改规则', detail: JUDGED_COPY.ruleNote(agent) }),
   /** The line under a call the Harness refused itself before it ran, with its own words for why. */
   blockedByModel: (agent: string, reason?: string) => `${agent} 的模型审阅${reason ? `：${reason}` : '拦下了这次调用'}`,
   blockedByRule: (agent: string, reason?: string) => `被 ${agent} 自己的规则或当前模式拦下${reason ? `：${reason}` : ''}`,

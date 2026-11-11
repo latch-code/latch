@@ -204,8 +204,8 @@ describe('the lines above the list', () => {
     ])
   })
 
-  it('says a very long list reads files only on demand', () => {
-    expect(kinds({ files: Array.from({ length: 1000 }, (_, at) => file(`f${at}`)) })).toEqual(['large'])
+  it('adds no line for a very long list: it reads files only on demand without saying so', () => {
+    expect(kinds({ files: Array.from({ length: 1000 }, (_, at) => file(`f${at}`)) })).toEqual([])
   })
 })
 

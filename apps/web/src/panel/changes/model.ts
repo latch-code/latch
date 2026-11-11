@@ -354,9 +354,8 @@ export type ChangeLine =
   | { kind: 'interrupted' }
   | { kind: 'not-git'; names: string[] }
   | { kind: 'base'; branch?: string; base?: string }
-  | { kind: 'large' }
 
-/** From this many files the list says it reads each file only when opened. */
+/** From this many files the panel reads each file only when it is opened. */
 export const LARGE_LIST = 1000
 
 export function changeLines(
@@ -378,7 +377,6 @@ export function changeLines(
   if (list.notGit?.length) lines.push({ kind: 'not-git', names: list.notGit.map(rootName) })
   if (list.scope === 'base' && !list.unavailable)
     lines.push({ kind: 'base', ...(branch ? { branch } : {}), ...(list.base ? { base: list.base } : {}) })
-  if (list.files.length >= LARGE_LIST) lines.push({ kind: 'large' })
   return lines
 }
 
@@ -398,7 +396,7 @@ export function emptyState(list: ChangeList | undefined): EmptyState | undefined
     case 'no-turns':
       return { title: '这个会话还没有记录到改动' }
     case 'not-git':
-      return { title: '这个文件夹不是 Git 仓库的顶层', detail: '没有未提交和比较可看。本轮和这个会话照常。' }
+      return { title: '这个文件夹不是 Git 仓库的顶层' }
     case 'git-missing':
       return { title: '找不到 Git', detail: GIT_SIDE }
     case 'git-failed':
@@ -406,7 +404,7 @@ export function emptyState(list: ChangeList | undefined): EmptyState | undefined
     case 'no-head':
       return { title: '还没有提交' }
     case 'no-base':
-      return { title: '没有可比较的主分支', detail: 'HEAD 在主分支上、分离，或者没有 main 和 master。' }
+      return { title: '没有可比较的主分支' }
     case undefined:
       break
   }

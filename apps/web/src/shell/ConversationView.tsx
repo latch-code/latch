@@ -1,4 +1,5 @@
 import { ShieldAlert } from 'lucide-react'
+import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
@@ -9,9 +10,10 @@ import { recentProjectSessions } from '../sessions.ts'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
-import { isLive, renderedMessages } from '../conversation.ts'
+import { renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
-import { Button, InlineNotice, Loading } from '@latch/ui'
+import { Button, Hint, InlineNotice, Loading } from '@latch/ui'
+import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { NewSessionTitle, SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -148,18 +150,14 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   </>
                 ) : (
                   <ChangesLinkContext.Provider value={changesLink}>
-                    {current.summary.firstStart && harnessInfo && (
-                      <p className="session-start-note" role="note">
-                        {harnessInfo.permission?.approvals === 'none'
-                          ? `${MODE_COPY.agentDecidesLine(harnessInfo.capabilities.display.label)}。`
-                          : MODE_COPY.firstStart(harnessInfo.capabilities.display.label)}
-                      </p>
-                    )}
+                    {current.summary.firstStart && harnessInfo && <FirstStartNote harness={harnessInfo} />}
                     {current.summary.worktree?.unfiltered !== undefined && (
-                      <p className="session-start-note" role="note">
-                        新工作树里有 {current.summary.worktree.unfiltered} 个文件的 filter（例如 Git LFS）没有运行，留成了 Git
-                        里存的样子；要用 Git LFS 文件时，在终端里运行 git lfs pull。
-                      </p>
+                      <div className="session-start-note" role="note">
+                        <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
+                          新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行 git
+                          lfs pull。
+                        </Hint>
+                      </div>
                     )}
                     <Transcript
                       detail={current}
@@ -226,9 +224,6 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     <SendingBubble shell={shell} />
                   </ChangesLinkContext.Provider>
                 )}
-                {current !== null && current.messages.length === 0 && !isLive(current) && approvals.length === 0 && !active && (
-                  <p className="transcript-empty">会话记录会显示在这里。</p>
-                )}
               </div>
             </div>
             {/* Keyed by session: another session's block count is not news here. */}
@@ -262,6 +257,22 @@ export function ConversationView({ shell }: { shell: ShellState }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * The timeline's first row in an external Harness's session, once per launch in a project: the Harness's mark and that
+ * Latch does not isolate it, always in view; what it can do behind ⓘ.
+ */
+function FirstStartNote({ harness }: { harness: HarnessInfo }) {
+  const name = harness.capabilities.display.label
+  const note = harness.permission?.approvals === 'none' ? MODE_COPY.firstStartUnasked(name) : MODE_COPY.firstStart(name)
+  return (
+    <div className="session-start-note" role="note">
+      <Hint lead={<MarkTile mark={harness.capabilities.display.mark} size={14} />} label={note.label}>
+        {note.detail}
+      </Hint>
     </div>
   )
 }

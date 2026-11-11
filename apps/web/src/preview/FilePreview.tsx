@@ -4,7 +4,7 @@ import { isFileMetadata, type FileMetadata, type FileMention } from '@latch/prot
 import { Button, IconButton, InlineNotice, Loading, Menu, useCopy, type MenuItem } from '@latch/ui'
 import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
-import { describeFailure, fileNote } from '../core/securityCopy.ts'
+import { describeFailure, fileRefusalText } from '../core/securityCopy.ts'
 import { basename } from '../format.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { DocumentPreview } from './DocumentPreview.tsx'
@@ -285,7 +285,7 @@ export function FilePreview({
         context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId },
         { handle: file.handle },
       )
-      if (result.status === 'refused' || result.status === 'failed') setError(fileNote(result.code).text)
+      if (result.status === 'refused' || result.status === 'failed') setError(fileRefusalText(result.code))
       if (result.status === 'busy') setError('上一个操作还没有完成，请稍后再试。')
     } catch (cause) {
       setError(errorMessage(cause))

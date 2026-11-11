@@ -162,7 +162,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
         if (!fileContext) return
         const quote = quoteSnapshots.current.get(fileContextKey(fileContext) + '\n' + file.root + '\n' + file.path)
         if (quote && quote.etag !== file.etag && submission.draft.includes(quote.marker)) {
-          setToast({ text: file.name + ' 已更新，草稿中的引用保留原内容，可能已过时。', tone: 'ok' })
+          setToast({ text: file.name + ' 已更新，引用可能过时', tone: 'ok' })
           quote.etag = file.etag
         }
       }}

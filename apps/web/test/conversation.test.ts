@@ -450,7 +450,7 @@ describe('decided approvals', () => {
     })
     expect(decisionLine({ ...decision('cancelled'), subagentStopped: true }, now)).toMatchObject({
       text: '已取消（子 Agent 停止）',
-      title: expect.stringContaining('这个子 Agent 被单独停止时还没有人回答'),
+      title: expect.not.stringContaining('还没有人回答'),
     })
     expect(decisionLine(decision('expired'), now).text).toBe('已过期')
     expect(decisionLine({ outcome: 'rejected', at: 'not a time' }, now)).toMatchObject({ text: '已拒绝', title: '已拒绝' })
@@ -564,7 +564,7 @@ describe('the live run', () => {
     expect(phase({ liveText: '好' })).toBe('正在回复')
     expect(phase({ liveReasoning: '想' })).toBe('正在思考')
     expect(phase({ activity: { phase: 'starting', since: at(5000) } })).toBe('正在启动 Codex…')
-    expect(phase({ activity: { phase: 'starting', since: at(0) } })).toBe('Codex 启动较慢，仍在等待进程就绪…')
+    expect(phase({ activity: { phase: 'starting', since: at(0) } })).toBe('Codex 启动较慢…')
     expect(phase({ activity: { phase: 'model' } })).toBe('等待模型…')
   })
 

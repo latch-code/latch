@@ -301,10 +301,10 @@ export function ConfirmationContent({
       )
     return (
       <InlineNotice tone={view.reason === 'cooldown' ? 'warn' : 'neutral'} secure onClose={actions.dismiss} closeLabel={COPY.close}>
-        {view.reason === 'cooldown' ? COPY.cooldown : COPY.busy}
+        {view.reason === 'cooldown' ? COPY.cooldown : COPY.busyShort}
         {view.until !== undefined && (
           <>
-            {' '}
+            {' · '}
             <CooldownWait until={view.until} />
           </>
         )}

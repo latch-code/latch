@@ -29,7 +29,7 @@ import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
 import { JUDGED_COPY } from '../core/securityCopy.ts'
-import { Button, Collapse, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
+import { Button, Collapse, Hint, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
 import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
 import { useSeen } from '../preview/viewportGate.ts'
 import { colouredRowCount, outputGrammar, readOutputLanguage, sourceView } from './toolOutputCode.ts'
@@ -269,18 +269,19 @@ export const ToolCard = memo(
       title !== label.object ? title : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
-      block
-        ? block.source === 'model'
-          ? JUDGED_COPY.reviewNote(block.by)
-          : JUDGED_COPY.ruleNote(block.by)
-        : judged
-          ? review
-            ? JUDGED_COPY.reviewNote(judged.by)
-            : JUDGED_COPY.unaskedNote(judged.by)
-          : undefined,
     ]
       .filter(Boolean)
       .join('\n')
+    // Who decided a call no person was asked about: a few words in the opened row, the whole note behind ⓘ.
+    const judgedNote = block
+      ? block.source === 'model'
+        ? JUDGED_COPY.reviewBrief(block.by)
+        : JUDGED_COPY.ruleBrief(block.by)
+      : judged && (review || judgedWords)
+        ? review
+          ? JUDGED_COPY.reviewBrief(judged.by)
+          : JUDGED_COPY.unaskedBrief(judged.by)
+        : undefined
     const path = label.mono ? undefined : rowPath(tool, label.object, session)
     // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
     const heading = (
@@ -424,12 +425,13 @@ export const ToolCard = memo(
                       <VisibleText text={wholeReason} />
                     </p>
                   )}
-                  {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
-                  {review ? (
-                    <p className="muted-line">{JUDGED_COPY.reviewNote(judged!.by)}</p>
-                  ) : (
-                    !applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />
+                  {judgedNote && (
+                    <Hint className="tool-judged-note" label={judgedNote.label}>
+                      {judgedNote.detail}
+                    </Hint>
                   )}
+                  {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
+                  {!review && !applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
                   {showOutput
                     && !applied
                     && (output ? (

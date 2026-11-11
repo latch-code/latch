@@ -383,7 +383,7 @@ describe('what this computer can take back', () => {
         body: { prompt: '要等批准', requestId: randomUUID(), mode: 'agent', model: { providerId: 'limit-models', model: 'model-a' } },
       })
       await expect.poll(async () => (await local.json<TaskDetail>(`tasks/${waiting.sessionId}`)).approvals.length).toBe(1)
-      await page.getByText('另一个会话有请求等你处理', { exact: false }).waitFor()
+      await page.getByText('另一个会话等你处理', { exact: false }).waitFor()
       await clearOfComposer('toast-approval')
       await context.close()
     })

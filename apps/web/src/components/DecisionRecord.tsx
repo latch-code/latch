@@ -1,6 +1,6 @@
 import { CircleSlash, TimerOff } from 'lucide-react'
 import type { ToolDecision } from '@latch/protocol'
-import { Icon, type LucideIcon } from '@latch/ui'
+import { Hint, Icon, type LucideIcon } from '@latch/ui'
 import { decisionLine } from '../conversation.ts'
 import { useTicker } from '../core/hostClock.ts'
 import { DECISION_COPY } from '../core/securityCopy.ts'
@@ -28,16 +28,22 @@ const ICONS: Record<Exclude<ToolDecision['outcome'], 'allowed'>, LucideIcon> = {
 
 /**
  * The one line under a row whose call an agent reports as run although its approval was not given (an agent's ask in
- * a full-access session is advisory): the record, then that the agent ran it anyway, in the icon ink and hint text.
+ * a full-access session is advisory): the record, then that the agent reports it ran anyway, why one press away.
  */
 export function DecisionRecord({ decision }: { decision: ToolDecision }) {
   const now = useTicker('minute')
   if (decision.outcome === 'allowed') return null
   const { text, title } = decisionLine(decision, now)
   return (
-    <p className="tool-decision" title={`${title}\n${DECISION_COPY.ranDespiteNote}`} data-outcome={decision.outcome}>
-      <Icon icon={ICONS[decision.outcome]} size={14} />
-      {`${text} · ${DECISION_COPY.ranDespite}`}
-    </p>
+    <Hint
+      className="tool-decision"
+      lead={
+        <span title={title}>
+          <Icon icon={ICONS[decision.outcome]} size={14} />
+        </span>
+      }
+      label={`${text} · ${DECISION_COPY.ranDespiteLabel}`}>
+      {DECISION_COPY.ranDespiteNote}
+    </Hint>
   )
 }

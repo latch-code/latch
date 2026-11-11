@@ -2,6 +2,7 @@ import { FileOpenContext } from '../preview/fileContext.ts'
 import { createContext, useContext, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { AppWindow, Check, CircleAlert, Copy, Eye, FolderOpen, Info, Lock } from 'lucide-react'
 import {
+  Hint,
   Icon,
   Menu,
   MenuFooterNote,
@@ -163,7 +164,15 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
       label="文件"
       header={{ title: name, ...(checking ? { meta: FILE_COPY.checking } : {}) }}
       sections={sections}
-      footer={note ? <MenuFooterNote icon={TONE_ICON[note.tone]}>{note.text}</MenuFooterNote> : undefined}
+      footer={
+        note?.detail ? (
+          <Hint className="file-chip-note" lead={<Icon icon={TONE_ICON[note.tone]} size={12} />} label={note.text}>
+            {note.detail}
+          </Hint>
+        ) : note ? (
+          <MenuFooterNote icon={TONE_ICON[note.tone]}>{note.text}</MenuFooterNote>
+        ) : undefined
+      }
       width={260}
       trigger={menu => {
         if (triggerRef) triggerRef.current = menu

@@ -1,7 +1,7 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Info, RotateCcw, Undo2, X } from 'lucide-react'
+import { ChevronRight, GitFork, Info, RotateCcw, Undo2, X } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
@@ -211,17 +211,18 @@ function UserMessage({
             {message.forkContext && message.nativeFork && (
               // The harness forked its own record: the text record was not sent, so there is none to show.
               <p className="fork-context">
-                {harness ?? 'Harness'} 自己带着会话「
+                <GitFork size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                {harness ?? 'Harness'} 带着「
                 <VisibleText text={message.forkContext.title} />
-                」到第 {message.forkContext.turn} 轮为止的记录
+                」的前 {message.forkContext.turn} 轮
               </p>
             )}
             {message.forkContext && !message.nativeFork && (
               <details className="fork-context">
                 <summary>
-                  以下是会话「
-                  <VisibleText text={message.forkContext.title} />
-                  」到第 {message.forkContext.turn} 轮为止的记录
+                  <GitFork size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                  「<VisibleText text={message.forkContext.title} />
+                  」的前 {message.forkContext.turn} 轮
                 </summary>
                 <pre>
                   <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />

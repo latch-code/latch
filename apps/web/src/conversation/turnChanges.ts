@@ -175,6 +175,12 @@ export function undoExceptions(list: ChangeList): string[] {
   ]
 }
 
+/** A record that stopped at the walk's limits: the title in view wherever the turn's files are shown, why behind ⓘ. */
+export const PARTIAL_NOTE = {
+  label: '记录不完整：文件夹太大',
+  detail: '超过 5 万项、32 层或 10 秒。可能还有没列出的文件，撤销也碰不到它们。',
+} as const
+
 /** How many files a receipt left as they were; it names only the first of them. */
 export function notRestoredLine(receipt: Pick<ChangeReceipt, 'skipped' | 'notRestored'>): string | undefined {
   if (receipt.skipped === 0) return undefined

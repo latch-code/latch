@@ -344,21 +344,16 @@
 }
 
 /*
- * The line under a row whose call an agent reports as run although its approval was not given: 28 high, the outcome's
- * icon (14, centred in the row's 16 slot) in the icon ink and the words in the hint ink. Nothing here is red.
+ * The line under a row whose call an agent reports as run although its approval was not given: a Hint, the outcome's
+ * icon (14, centred in the lead's 16 slot) in the icon ink and the words in the hint ink, why behind ⓘ. Nothing here is red.
  */
-.tool-decision {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  min-height: 28px;
+.tool-decision,
+.tool-judged-note {
+  width: fit-content;
+  max-width: 100%;
   margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
 }
-.tool-decision .ui-icon {
-  flex-shrink: 0;
-  margin: 0 1px;
+.tool-decision .ui-hint-lead .ui-icon {
+  display: block;
   color: var(--muted);
 }

@@ -374,7 +374,7 @@ describe('HTML presentations', () => {
           expect(shown.y + shown.height).toBeLessThanOrEqual(panel.y + panel.height + 1)
           expect(shown.width / shown.height).toBeCloseTo(16 / 9, 1)
           // No desktop app here, so the notice says where scripts can run and offers nothing it cannot do.
-          await preview.getByText('页面脚本没有运行，动画和交互不可用。', { exact: false }).waitFor()
+          await preview.getByText('页面脚本没有运行。', { exact: false }).waitFor()
           expect(await preview.getByRole('button', { name: '运行页面脚本', exact: true }).count()).toBe(0)
           await page.screenshot({ path: `test-results/html/deck-${width}-${theme}.png`, animations: 'disabled' })
           // Every slide can be reached without scripts, on a phone too.

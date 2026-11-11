@@ -166,7 +166,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
       {(approvalToast || toast) && <ToastClearance />}
       {approvalToast && (
         <Toast className="toast" duration={null}>
-          <span>另一个会话有请求等你处理。</span>
+          <span>另一个会话等你处理</span>
           <Button
             variant="ghost"
             onClick={() => {

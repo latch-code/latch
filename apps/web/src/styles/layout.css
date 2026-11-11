@@ -626,16 +626,14 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   margin: 0 auto;
   padding: var(--sp-16) var(--gutter) var(--sp-32);
 }
+/* The timeline's first rows: a Hint, centred, its detail unfolding under the label. */
 .session-start-note {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  text-align: center;
+  display: flex;
+  justify-content: center;
   margin: 0 0 var(--sp-16);
 }
-.transcript-empty {
-  color: var(--muted);
-  text-align: center;
-  padding: var(--sp-48) 0;
+.session-start-note > .ui-hint {
+  max-width: 100%;
 }
 /*
  * 「回到最新」: a 32 round button 16 above the input, with how many blocks arrived while the reader was away. It rises as it

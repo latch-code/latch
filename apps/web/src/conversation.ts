@@ -479,9 +479,7 @@ export function decisionLine(decision: ToolDecision, now: number): { text: strin
         : undefined
     : decision.outcome === 'expired'
       ? DECISION_COPY.expiredNote
-      : decision.subagentStopped
-        ? DECISION_COPY.cancelledSubagentNote
-        : DECISION_COPY.cancelledNote
+      : undefined
   const title = [when, about].filter(Boolean).join(' · ')
   return {
     text: chosen && at !== undefined ? `${words} · ${messageTime(at, now)}` : words,
@@ -775,7 +773,7 @@ const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, strin
 /** A phase in words. */
 export function phaseText(phase: LivePhase, harness: string): string {
   if (phase.kind === 'tool') return phase.text
-  if (phase.kind === 'starting') return phase.slow ? `${harness} 启动较慢，仍在等待进程就绪…` : `正在启动 ${harness}…`
+  if (phase.kind === 'starting') return phase.slow ? `${harness} 启动较慢…` : `正在启动 ${harness}…`
   return PHASE_WORDS[phase.kind]
 }
 

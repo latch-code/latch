@@ -29,7 +29,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 2. 新会话直接列出命令已经装好的预设（`catalog.harnesses` 中带 `offer` 的项，只发给有 `admin` 的设备），不用先添加；第一次发送时页面先保存它的定义，再开始会话，保存不运行任何东西。`startServer` 只有收到 `detectPreset`（启动脚本传入）才找命令，测试不传，所以运行测试的电脑上装的 Agent 不会被选中。也可以在「设置 → Harness」选择预设或填写自定义命令（可执行文件名或绝对路径、参数、环境变量）；有 `admin` 的设备都能改，每次改动都有 `agent.defined` 审计，变量的值不返回。可以先「测试启动」，不发送内容地核对程序能否运行。
 3. 新建会话时默认用这台设备上次的 Harness，否则按预设顺序用第一个能开始的，Latch 内置最后，不提问。项目在标题里选；Harness 没有项目、启动目录又是 Host 自己选的（`catalog.sessionFolders`）时，按发送打开项目列表、保留草稿、不开始；选「不选项目」就在新的空文件夹里开始。 发送就开始，没有确认。
 
-   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行：「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。」；执行工具前不询问的 Harness 写「pi 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它。」。Driver 不会收到这一项。
+   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行，带 Harness 的标记：「Latch 不隔离 Codex」，ⓘ 后是「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。」；执行工具前不询问的 Harness 写「pi 不询问，Latch 不隔离它」，ⓘ 后是「pi 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它。」。Driver 不会收到这一项。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。权限菜单的写法见「权限菜单」。
 
 预设收录开源 Agent，以及厂商官方文档支持的已安装命令（Claude Agent、Cursor）；都只使用本机已安装的命令，不使用 `npx` 等运行时下载，不捆绑、不修改它们：

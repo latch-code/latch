@@ -17,6 +17,7 @@ import type { ChangedFile, ChangeList, FileMention, Message, NotRestoredFile, Ta
 import {
   Button,
   ConfirmDialog,
+  Hint,
   ICON_STROKE,
   IconButton,
   Menu,
@@ -66,6 +67,7 @@ import {
   type ScopeChoice,
 } from './model.ts'
 import { useChanges, type ChangesActions, type ChangesResult } from './useChanges.ts'
+import { PARTIAL_NOTE } from '../../conversation/turnChanges.ts'
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
@@ -105,14 +107,27 @@ function Line({
   icon: Glyph,
   children,
   sub,
+  detail,
   action,
 }: {
   tone?: 'plain' | 'muted' | 'amber'
   icon?: LucideIcon
   children: ReactNode
+  /** A list under the line. */
   sub?: ReactNode
+  /** The fine print, behind ⓘ: the line becomes a Hint. */
+  detail?: string
   action?: ReactNode
 }) {
+  if (detail)
+    return (
+      <div className="changes-line" data-tone={tone}>
+        <Hint {...(Glyph ? { lead: <Glyph size={14} strokeWidth={ICON_STROKE[14]} /> } : {})} label={children}>
+          {detail}
+        </Hint>
+        {action}
+      </div>
+    )
   return (
     <div className="changes-line" data-tone={tone}>
       {Glyph && <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
@@ -186,7 +201,7 @@ function UndoWarning({ warning, onUndo }: { warning: ReturnType<typeof undoWarni
   return (
     <div className="changes-warning">
       <p className="changes-warning-title">撤销本轮</p>
-      <p>{writtenWords(warning.restore, warning.remove)}这些文件没再改动时可以恢复。</p>
+      <p>{writtenWords(warning.restore, warning.remove)}</p>
       <p className="changes-warning-miss">
         <TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         不会恢复 {warning.missed.length} 个文件
@@ -262,7 +277,7 @@ function ScopeOptions({
 /** Reads like the warning did: what was written, then one list with each reason beside its path. */
 function Receipt({ result, engine }: { result: ChangesResult; engine: string }) {
   const [more, setMore] = useState(false)
-  const note = (next: boolean) => (next ? `下一条消息会告诉 ${engine}，它的记忆不会被撤销。` : '')
+  let told = false
   let title: string,
     words: string,
     notRestored: readonly NotRestoredFile[],
@@ -271,14 +286,16 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
   if (result.kind === 'turn') {
     const { receipt } = result
     title = receipt.action === 'undo' ? '已撤销本轮改动' : '已恢复本轮改动'
-    words = writtenWords(receipt.restored, receipt.removed) + note(receipt.noteNextTurn)
+    words = writtenWords(receipt.restored, receipt.removed)
+    told = receipt.noteNextTurn
     ;({ notRestored, skipped } = receipt)
     notCovered = receipt.notCovered
   } else {
     const { restored, removed } = result.result
     ;({ notRestored, skipped } = result.result)
     title = result.kind === 'uncommitted' ? '已撤销未提交的改动' : `已撤销 ${result.path}`
-    words = restored + removed ? writtenWords(restored, removed) + note(result.result.noteNextTurn) : '这个文件已经是这一轮开始时的内容。'
+    words = restored + removed ? writtenWords(restored, removed) : '这个文件已经是这一轮开始时的内容。'
+    told = restored + removed > 0 && result.result.noteNextTurn
   }
   const missed = missedFiles(notRestored, notCovered, skipped)
   const Glyph = result.kind === 'turn' && result.receipt.action === 'redo' ? Redo2 : Undo2
@@ -291,6 +308,7 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
         </span>
       </p>
       <p>{words}</p>
+      {told && <Hint label={`下一条消息会告诉 ${engine}`}>{`${engine} 的记忆不会被撤销。`}</Hint>}
       {missed.files.length + missed.more > 0 && (
         <>
           <p className="changes-receipt-key">没有恢复 {missed.files.length + missed.more} 个文件</p>
@@ -426,19 +444,19 @@ function LineFor({
       return (
         <button type="button" className="changes-line changes-line-button" data-tone="muted" title="点按刷新" onClick={onRefresh}>
           <Spinner size={12} />
-          <span className="changes-line-text">运行中 · 列表停在上次刷新，这一轮结束后更新</span>
+          <span className="changes-line-text">运行中 · 点按刷新</span>
         </button>
       )
     case 'interrupted':
       return (
         <Line tone="muted" icon={CircleAlert}>
-          这一轮中断了 · 列表是它开始时和此刻的比较
+          这一轮中断了 · 对比到此刻
         </Line>
       )
     case 'partial':
       return (
-        <Line tone="amber" icon={TriangleAlert} sub="超过 5 万项、32 层或 10 秒。可能还有没列出的文件，撤销也碰不到它们。">
-          记录不完整：文件夹太大
+        <Line tone="amber" icon={TriangleAlert} detail={PARTIAL_NOTE.detail}>
+          {PARTIAL_NOTE.label}
         </Line>
       )
     case 'conflict':
@@ -465,14 +483,14 @@ function LineFor({
               </Button>
             ) : undefined
           }>
-          这期间另一个会话也在这个文件夹工作，归属可能不准
+          另一个会话也在改这里
         </Line>
       )
     }
     case 'not-git':
       return (
         <Line tone="muted" icon={Info}>
-          <VisibleText text={line.names.join('、')} /> 不是 Git 仓库的顶层，这里没有列出它的未提交改动
+          <VisibleText text={line.names.join('、')} /> 不是仓库顶层，未提交的不列出
         </Line>
       )
     case 'base':
@@ -487,8 +505,6 @@ function LineFor({
           )}
         </Line>
       )
-    case 'large':
-      return <Line tone="muted">文件很多：先显示列表，点开再读单个文件</Line>
   }
 }
 
@@ -799,7 +815,7 @@ function ReadableChanges({
           <Line icon={Undo2}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
           {!!list.notCovered?.length && (
             <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: NOT_COVERED_WHY }))} />}>
-              不在撤销范围内 {list.notCovered.length} 个文件
+              {list.notCovered.length} 个文件不在撤销范围
             </Line>
           )}
         </>

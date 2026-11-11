@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, TriangleAlert, Undo2 } from 'lucide-react'
 import type { ChangeList, ChangeReceipt, Message, TurnChanges } from '@latch/protocol'
-import { Button, Collapse, ICON_STROKE, Tooltip } from '@latch/ui'
+import { Button, Collapse, Hint, ICON_STROKE } from '@latch/ui'
 import { OutputNotes, ProducedFiles } from '../components/FileOutputs.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { Turn } from '../conversation.ts'
@@ -11,6 +11,7 @@ import { TurnSummaryOptions } from './summaryOptions.ts'
 import {
   firstOpenable,
   notRestoredLine,
+  PARTIAL_NOTE,
   changedOutputs,
   producedFiles,
   turnSummary,
@@ -115,11 +116,9 @@ function PartialNote({ list }: { list: ChangeList | undefined }) {
   if (!list?.partial) return null
   return (
     <div className="changed-files-partial">
-      <p className="changed-files-warning">
-        <TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        记录不完整：文件夹太大
-      </p>
-      <p>超过 5 万项、32 层或 10 秒。可能还有没列出的文件，撤销也碰不到它们。</p>
+      <Hint lead={<TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
+        {PARTIAL_NOTE.detail}
+      </Hint>
     </div>
   )
 }
@@ -277,7 +276,7 @@ export function TurnCards({
             {undoReceipt && <NotRestored receipt={undoReceipt} />}
             {notCovered.length > 0 && (
               <>
-                <p>不在撤销范围内 {notCovered.length} 个文件（在文件夹之外或被忽略）</p>
+                <Hint label={`${notCovered.length} 个文件不在撤销范围`}>它们在文件夹之外或被忽略。</Hint>
                 <ul>
                   {notCovered.map(path => (
                     <li key={path}>
@@ -318,19 +317,17 @@ export function TurnCards({
       {why && <span className="changed-files-why">{why}</span>}
       {unknown && !canUndo && <span className="changed-files-why">撤销结果未知</span>}
       {canUndo && (
-        <Tooltip content="恢复留存的文件；恢复不了的会列出来" describe={false}>
-          <Button
-            size="xs"
-            variant="ghost"
-            icon={Undo2}
-            loading={phase === 'running'}
-            onClick={() => {
-              if (exceptions.length > 0 && phase === 'idle') setPhase('confirm')
-              else act('undo')
-            }}>
-            {unknown ? '结果未知 · 重试' : '撤销本轮'}
-          </Button>
-        </Tooltip>
+        <Button
+          size="xs"
+          variant="ghost"
+          icon={Undo2}
+          loading={phase === 'running'}
+          onClick={() => {
+            if (exceptions.length > 0 && phase === 'idle') setPhase('confirm')
+            else act('undo')
+          }}>
+          {unknown ? '结果未知 · 重试' : '撤销本轮'}
+        </Button>
       )}
     </>
   )

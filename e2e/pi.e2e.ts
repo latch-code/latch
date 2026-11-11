@@ -269,7 +269,7 @@ describe('pi over its own RPC mode', () => {
     await draft(page).press('Meta+Enter')
     // The fork holds pi's record up to the first turn and no further.
     await reply(page, 'remembers: first idea').waitFor({ timeout: 20_000 })
-    await page.getByText('pi 自己带着会话「', { exact: false }).waitFor()
+    await page.getByText('pi 带着「', { exact: false }).waitFor()
     expect(await page.locator('details.fork-context').count()).toBe(0)
     const forked = await latest()
     expect(forked.messages.find(message => message.role === 'user')?.nativeFork).toBe(true)
@@ -297,7 +297,7 @@ describe('pi over its own RPC mode', () => {
     expect((await received()).filter(entry => entry.type === 'prompt').at(-1)?.message).toBe('recall what came before')
     // pi's own record now holds the first turn and the words sent before, and nothing else.
     await reply(page, 'remembers: first idea | recall what came before').waitFor({ timeout: 20_000 })
-    expect(await transcript.getByText('到第 1 轮为止的记录', { exact: false }).count()).toBe(1)
+    expect(await transcript.getByText('的前 1 轮', { exact: false }).count()).toBe(1)
     await shot(page, 'fork-retried-1440-light')
     await page.context().close()
   })

@@ -924,14 +924,19 @@ button.summary-file:hover {
   font-size: var(--fs-caption);
   color: var(--muted);
 }
-.changed-files-partial p {
-  margin: 0;
-}
-.changed-files-partial .changed-files-warning {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
+/* The amber title with its glyph stays in view; why unfolds under it in the reading ink. */
+.changed-files-partial > .ui-hint,
+.changed-files-partial > .ui-hint > .ui-hint-lead {
   color: var(--amber);
+}
+.changed-files-partial > .ui-hint,
+.output-notes > .ui-hint,
+.undo-record-missing > .ui-hint {
+  width: fit-content;
+  max-width: 100%;
+}
+.changed-files-partial > .ui-hint > .ui-hint-lead {
+  color: var(--amber-icon);
 }
 .changed-files-confirm ul,
 .undo-record-missing ul {
@@ -1232,6 +1237,12 @@ button.summary-file:hover {
 .fork-context summary {
   cursor: pointer;
 }
+.fork-context > svg,
+.fork-context summary > svg {
+  margin-inline-end: var(--sp-4);
+  vertical-align: -2px;
+  color: var(--muted);
+}
 .fork-context pre {
   max-height: 240px;
   overflow: auto;
@@ -1306,9 +1317,13 @@ button.summary-file:hover {
 .output-notes {
   display: grid;
   gap: var(--sp-4);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
+}
+.output-notes > .ui-hint,
+.output-notes > .ui-hint > .ui-hint-lead {
+  color: var(--amber);
+}
+.output-notes > .ui-hint > .ui-hint-lead {
+  color: var(--amber-icon);
 }
 .file-output-picture {
   flex: none;
