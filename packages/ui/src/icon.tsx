@@ -43,15 +43,30 @@ export type SpinnerSize = Exclude<IconSize, 24>
 /**
  * The spinner: a ring of its colour at 22% with one quarter in full, turning once every 800ms. It takes the colour of
  * the text around it (ink beside 运行中, muted in a loading line, the button's text inside a button), never blue.
- * Every spinner on the page turns in step: the delay set after mount puts it at the document timeline's phase, so two
- * spinners side by side never drift apart. It pauses out of view; reduced motion stops it on its still frame, which
- * still reads as waiting.
+ * Every spinner on the page turns in step: once its turn has started, its start time is moved back to a whole number
+ * of turns on the document timeline, so two spinners side by side share one phase however many frames each took to
+ * start. It pauses out of view; reduced motion stops it on its still frame, which still reads as waiting.
  */
 export function Spinner({ size = 14, label, className }: { size?: SpinnerSize; label?: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
-    const now = document.timeline.currentTime
-    if (ref.current && typeof now === 'number') ref.current.style.animationDelay = `${-(now % TURN)}ms`
+    const turn = ref.current
+      ?.getAnimations()
+      .find((item): item is CSSAnimation => item instanceof CSSAnimation && item.animationName === 'ui-spin')
+    if (!turn) return undefined
+    let mounted = true
+    // The start time is only known once the turn is ready, a frame or more after mount (more on a busy page); a turn
+    // already paused out of view is left alone, since giving it a start time would set it running.
+    turn.ready.then(
+      started => {
+        const start = started.startTime
+        if (mounted && started.playState === 'running' && typeof start === 'number') started.startTime = Math.floor(start / TURN) * TURN
+      },
+      () => undefined,
+    )
+    return () => {
+      mounted = false
+    }
   }, [])
   usePausedOffscreen(ref)
   return (

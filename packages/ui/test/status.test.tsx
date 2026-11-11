@@ -157,15 +157,26 @@ describe('the spinner', () => {
     expect(spinners.every(item => item.getAttribute('aria-hidden') === 'true')).toBe(true)
   })
 
-  it('turns every spinner on the page in one phase, whenever it mounted', async () => {
+  it('turns every spinner on the page in one phase, whenever it mounted and however long its first frame took', async () => {
     const first = await render(<Spinner size={12} />)
     await pause(130)
     const second = await render(<Spinner size={12} />)
-    await frames()
-    const progress = (element: Element) => animation(element)?.effect?.getComputedTiming().progress ?? Number.NaN
-    const [a, b] = [first, second].map(screen => progress(screen.container.querySelector('.ui-spinner')!))
-    const apart = Math.min(Math.abs(a! - b!), 1 - Math.abs(a! - b!))
-    expect(apart).toBeLessThan(0.05)
+    // A busy page: the second spinner's turn starts several frames after it mounted.
+    const busy = performance.now() + 120
+    while (performance.now() < busy);
+    const turns = [first, second].map(screen => animation(screen.container.querySelector('.ui-spinner')!)!)
+    await Promise.all(turns.map(turn => turn.ready))
+    // Pinned to whole turns on the document timeline, so the phase does not depend on when either frame came.
+    await expect.poll(() => turns.map(turn => (turn.startTime as number) % 800)).toEqual([0, 0])
+    const [a, b] = turns.map(turn => turn.effect!.getComputedTiming().progress!)
+    expect(a).toBeCloseTo(b!, 6)
+    expect(turns.map(turn => turn.playState)).toEqual(['running', 'running'])
+    // The pinned turn still pauses out of view and runs again in view.
+    const element = second.container.querySelector('.ui-spinner')!
+    element.setAttribute('data-offscreen', '')
+    await expect.poll(() => turns[1]!.playState).toBe('paused')
+    element.removeAttribute('data-offscreen')
+    await expect.poll(() => turns[1]!.playState).toBe('running')
   })
 
   it('pauses out of view and stops on its still frame under reduced motion', async () => {
