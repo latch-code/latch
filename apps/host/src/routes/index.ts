@@ -2,12 +2,8 @@ import { createAgentLoginRoutes, type AgentLoginDeps, type AgentLoginRoutes } fr
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
 import { createChangeRoutes } from './changes.ts'
-import { createConversationRoutes } from './conversation.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
-import { createGitRoutes } from './git.ts'
-import { createNativeApprovalRoutes } from './native-approvals.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
-import { createPushRoutes } from './push.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createTerminalRoutes, type TerminalRoutes } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
@@ -40,14 +36,10 @@ export function createRoutes(
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
       createChangeRoutes(context),
-      createGitRoutes(context),
       terminal,
       createAgentRoutes(context, deps.agents),
       agentLogin,
       createAutomationRoutes(context, deps.automations),
-      createConversationRoutes(context),
-      createNativeApprovalRoutes(context),
-      createPushRoutes(context),
     ]),
   }
 }

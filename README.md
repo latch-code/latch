@@ -12,8 +12,6 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 - **模型**：用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务，会话中可切换。
 - **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
-需求包可组合技能、工具、React 会话界面、Provider 与完整 Harness，由 [Cordis](https://github.com/cordiverse/cordis) 统一管理生命周期；既可加载本地目录，也兼容原有模块插件。
-
 界面提供流式回复、思考过程、工具卡片（参数、输出、文件差异）、计划进度与 token 用量；审批紧挨对应的工具；会话支持搜索、按项目分组、置顶、归档、重命名、导出 Markdown 与删除；桌面三栏（侧栏可拖动调宽或收起）、平板的图标栏与滑出的会话列表、手机以会话列表为首页并推入会话页，浅色、深色与跟随系统。
 
 > 当前是开发版：没有签名安装包，从源码运行，所有客户端常驻显示「开发版」标记。
@@ -88,7 +86,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 页面从 `latch://app/link/` 加载，所有请求由 Electron 主进程经 `host.sock` 转发；页面本身不能建立网络连接，也接触不到设备密钥与凭据。
 - 设备密钥与凭据由主进程用系统安全存储加密，保存在 `<userData>/latch-devices/<hostId>.json`（macOS 为 `~/Library/Application Support/Latch/Desktop/latch-devices/`）。没有可用的安全存储时桌面端拒绝启动。
 - 页面里的外部链接只有在原生对话框中确认完整地址后，才交给系统浏览器打开。
-- 「设置 → 项目」用系统的文件夹选择器添加项目（可以一次选几个文件夹），也可以从访达拖入文件夹，再在系统对话框中确认；页面不发送路径，由桌面端用设备密钥签名后提交。「在访达中显示」只在访达中选中已添加的文件夹，不打开它。桌面端项目行的菜单可以向已有项目添加文件夹；调整顺序、重新选择与「存为项目」的页面尚未实现（客户端界面正在改版）。
+- 「设置 → 项目」用系统的文件夹选择器添加项目（可以一次选几个文件夹），也可以从访达拖入文件夹，再在系统对话框中确认；页面不发送路径，由桌面端用设备密钥签名后提交。只有 Host 所在的电脑能添加项目与文件夹：本机浏览器、手机与其他电脑得到 403 `local-only`，改用桌面端或 Host 停止时的 `pnpm latch project`。「在访达中显示」只在访达中选中已添加的文件夹，不打开它。桌面端项目行的菜单可以向已有项目添加文件夹；调整顺序、重新选择与「存为项目」的页面尚未实现（客户端界面正在改版）。
 - 「手机」页的「在浏览器中打开」由主进程生成一次性邀请，并把带邀请的回环地址交给默认浏览器；页面看不到邀请码。只在 macOS 上提供，其他系统请用 `pnpm latch device invite --loopback`。
 - 关闭窗口不会停止 Host，用 `pnpm stop` 停止。在 macOS 上关闭窗口后 Latch 仍在后台运行，继续在 Host 崩溃后重启它、有任务时保持唤醒；点 Dock 图标重新打开窗口，退出 Latch（⌘Q）后这两项停止，Host 继续运行。
 - 桌面端开着时，由 `pnpm desktop` 启动的 Host 意外退出后会被重新启动（1、2、4……秒后，10 分钟内第 5 次时停止并在窗口顶部说明）。用环境变量（如 `LATCH_MODEL`、`LATCH_TLS_*`）配置的 Host 不会被自动重启。
@@ -112,7 +110,7 @@ pnpm desktop -- --tailnet \
   --public-origin https://my-mac.example.ts.net:4318
 ```
 
-- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN`）。
+- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN`）。没有明文局域网接入：`--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 缺少其中任何一项时 Host 拒绝启动。
 - 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`LATCH_TLS_PORT`）。
 - 启动前检查：私钥是你拥有的 0600 普通文件，且不在数据目录或任何项目目录内；证书未过期并与公开地址的主机名匹配。证书剩余不足 14 天时告警，过期后 HTTPS 入口关闭；Latch 不会续签证书。续签后（例如重新运行 `tailscale cert`）直接覆盖证书与私钥文件即可，Host 会自动重新加载，不需要重启；新文件不通过检查时继续使用原证书，并在 `host.log` 中写明原因。
 - HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接，请用手机测试（手机也需加入同一 tailnet）。
@@ -170,7 +168,7 @@ pnpm desktop -- --tailnet \
 
 安装方式、各预设的权限模式与已知限制见 [docs/HARNESSES.md](docs/HARNESSES.md)。
 
-**需求包与插件。** `--plugin ./examples/release-review` 加载包含 `latch-plugin.json` 的本地需求包，组合发布检查技能、工具与可编辑的 React 清单；`--plugin ./examples/text-statistics.mjs` 继续加载原有模块，两种参数都可重复。用 `pnpm start -- --data-dir <数据目录> --workspace <项目目录> --port 0 --plugin <目录或模块>` 启动；`--harness <id>` 选择默认 Harness。设置中的「插件」统一启停整个包。Host 模块具有 Host 权限，客户端模块具有页面权限，只加载可信代码；第三方工具在 Latch 内置中按 R2 处理，包提供的 Harness 为 L3。当前不下载或构建插件，在线安装与可视化包编辑器尚未实现。编写方式见 [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md)。
+**插件。** `--plugin ./examples/release-review` 加载包含 `latch-plugin.json` 的插件包目录，组合发布检查技能、工具与可编辑的 React 清单；`--plugin ./examples/text-statistics.mjs` 继续加载原有模块，两种参数都可重复。用 `pnpm start -- --data-dir <数据目录> --workspace <项目目录> --port 0 --plugin <目录或模块>` 启动；`--harness <id>` 选择默认 Harness。设置中的「插件」统一启停整个包。Host 模块具有 Host 权限，客户端模块具有页面权限，只加载可信代码；第三方工具在 Latch 内置中按 R2 处理，包提供的 Harness 为 L3。当前不下载或构建插件，在线安装与可视化包编辑器尚未实现。编写方式见 [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md)。
 
 ## 命令行 `pnpm latch`
 
@@ -275,25 +273,6 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 - **Linux**：没有本机确认（尚未实现 polkit 等系统确认）。桌面端第一次连接不需要确认，之后用离线连接码；浏览器与手机无法连接；需要本机确认的操作都不可用，包括确认自定义或本机模型服务地址、授予设备权限与加入出站白名单。
 - **Windows**：Host 依赖 `host.sock` 所在的每用户运行目录，Windows 上尚未实现，Host 无法启动。
 
-## 与上一版本不兼容的变化
-
-- **启动令牌与旧链接失效。** 不再打印带一次性令牌的「管理入口」；旧的 `#token=` 链接被页面丢弃，旧的登录与配对接口返回 410 `login-removed`。所有设备改为本机确认连接。
-- **所有设备需要重新连接确认。** 旧版浏览器的登录状态不再有效，需要在本机重新连接；旧的配对设备（手机）在升级时被撤销，需要通过 HTTPS 重新邀请。旧版 Latch 无法读取新的已连接的设备文件，回退旧版需要手动恢复备份。
-- **浏览器连接需要一次性邀请，离线连接码只在桌面端接受。** 回环端口可能被转发，不再算作这台电脑：新浏览器从桌面端「在浏览器中打开」或 `pnpm latch device invite --loopback` 获得邀请后连接。已经连接的浏览器照常使用，它们本来就按远程设备的规则运行。`pnpm latch device enroll --offline` 不再接受 `--port`。
-- **明文局域网接入已移除。** `--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 都必须同时提供证书、私钥与公开地址，否则拒绝启动。
-- **`GET /link/api/health` 只返回 `{"ok":true}`。** Host 实例信息只在 `host.sock` 上提供。
-- **桌面端的地址变量已移除。** 桌面端只通过 `host.json` 与 `host.sock` 连接 Host，启动器丢弃这个变量（见「启动参数与环境变量」）。
-- **环境变量改名为 `LATCH_*`。** 改名前的名称仍然有效（见「启动参数与环境变量」）；Agent 定义不能再设置 `LATCH_*` 变量，已保存的定义设置了它们时显示问题且不加载，删除这些变量后恢复。
-- **默认位置变化。** 新安装的数据目录与启动目录使用上文的平台默认位置；当前目录已有的 `.runtime` 仍会被使用，其中的 `workspace` 只在不位于 Latch 程序目录内时仍作为启动目录，否则启动目录改为 `~/Latch/workspace`（原目录中的文件不移动，启动时打印提示）。
-- **会话有自己的文件夹。** 使用默认启动目录时，不在项目中的 Agent 会话不再共用启动目录，而是各自使用其中新建的文件夹；已有会话不受影响。
-- **只能在 Host 电脑上添加项目。** 本机浏览器、手机与其他电脑不能再添加项目或添加文件夹（403 `local-only`），旧页面的路径输入框随之失效；改用 Latch 桌面端或 Host 停止时的 `pnpm latch project`。「默认工作区」改称「启动目录」。
-- **回退到旧版本 Host** 时，它只读取每个项目的主文件夹，并在下一次写入设置时丢弃其他文件夹与图标；在自己文件夹中工作的会话不能继续；它也无法打开记录了新审计动作（如 `workspace.folder-added`）的审计记录。
-- **很早以前创建的 ACP 会话只能查看和删除**，因为它们没有启动指纹的记录；请新建会话。
-- **自定义与本机模型服务的地址要确认一次。** 不带密钥、地址既不是预置服务商、也不在出站白名单里的服务，升级后显示「未确认」，不再出现在模型选择里，直到在运行 Latch 的电脑上确认它的地址（「设置 › 模型服务」，Linux 与 Windows 用 `pnpm latch provider confirm`）。用它继续会话时提示地址还没有确认；带密钥的服务与已在白名单里的地址在升级时视为已确认。
-- **预置服务商的服务没有密钥时不再出现在模型选择里**，选择它时提示要在运行 Latch 的电脑上填写密钥。
-- **密钥绑定到地址加路径。** 已保存的密钥在升级时绑定到当前的服务地址（源与路径）；之后把地址改到另一个路径（同一网关的另一个租户）也会移除密钥，与改到另一个源相同。
-- 执行 `pnpm build` 后，仍在运行的旧 Host 会直接提供新页面，页面提示「此 Host 仍是旧版本，重启 Host 后启用设备确认。」，重启 Host 即可。
-
 ## 安全边界
 
 - Latch 约束的是「谁能让 Host 做什么」，不隔离执行的代码。插件、ACP Agent 与第三方 Harness 是可信的本机代码；工具审批、路径检查与出站策略是应用层约束，不是操作系统沙箱。L3 会话可以读写 Latch 的数据与 Host 身份私钥。
@@ -327,7 +306,7 @@ Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一
 | [AGENTS.md](AGENTS.md) | 给 AI 编码助手的工作约定与入口 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、Harness 路由、持久化、HTTP API |
 | [docs/HARNESSES.md](docs/HARNESSES.md) | ACP Agent 接入、权限模式、项目配置与限制 |
-| [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) | 组合技能、工具、React 界面与 Harness 需求包 |
+| [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) | 插件：技能、工具、React 界面、Provider 与 Harness |
 | [docs/STREAMING.md](docs/STREAMING.md) | 流式同步、消息身份、重连与阅读位置 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 界面结构、设计令牌与交互规则 |
 | [docs/TESTING.md](docs/TESTING.md) | 测试命令与按改动选择回归 |
