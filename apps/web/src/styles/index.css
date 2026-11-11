@@ -9,6 +9,7 @@
 @import '@latch/ui/ui.css';
 @import './ui.css' layer(ui);
 @import './layout.css' layer(app);
+@import './particles.css' layer(app);
 @import './sidebar.css' layer(app);
 @import './messages.css' layer(app);
 @import './panels.css' layer(app);

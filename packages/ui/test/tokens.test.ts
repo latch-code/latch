@@ -100,6 +100,8 @@ const TOKENS: Record<string, [string, string]> = {
   '--track': ['rgba(18, 18, 28, 0.11)', 'rgba(255, 255, 255, 0.11)'],
   '--meter': ['#45454e', '#b6b6bf'],
   '--band': ['rgba(18, 18, 28, 0.025)', 'rgba(0, 0, 0, 0.2)'],
+  '--particle': ['#5d6b86', '#e8e8ee'],
+  '--particle-accent': ['#2461e0', '#e8e8ee'],
   '--accent': ['#2461e0', '#2f6be6'],
   '--accent-hover': ['#1d55cc', '#2a62d6'],
   '--accent-ink': ['#1d52c4', '#6b9bfa'],
@@ -333,6 +335,16 @@ describe('design tokens', () => {
       expect(contrast(get('--muted'), get('--key')), `${name} --muted on --key`).toBeGreaterThanOrEqual(4.5)
       expect(contrast(get('--meter'), get('--raised')), `${name} --meter on --raised`).toBeGreaterThanOrEqual(3)
     }
+  })
+
+  it('draws the field behind the panel in white in the dark theme and in slate with the execute blue in the light one', () => {
+    const { light, dark } = themes()
+    // Light: every seventh point is the execute blue, and the field is a little stronger so it reads on white.
+    expect(light.get('--particle-accent')).toBe(light.get('--accent'))
+    expect(Number(light.get('--particle-strength'))).toBeGreaterThan(Number(dark.get('--particle-strength')))
+    // Dark: every point is white, the seventh too.
+    expect(dark.get('--particle-accent')).toBe(dark.get('--particle'))
+    expect(luminance(colour(dark.get('--particle')))).toBeGreaterThan(0.75)
   })
 
   it('locks every themed token inside security surfaces to the value of its theme', () => {

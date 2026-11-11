@@ -237,7 +237,7 @@ describe('the work panel on the ground', () => {
         }
         const title = page.locator('.titlebar .topbar')
         await choose(page, sessions.running)
-        await title.locator('.ui-status-word[data-tone="running"]', { hasText: /^运行中/u }).waitFor()
+        await title.locator('.ui-status-word[data-tone="running"]', { hasText: /[0-9]+:[0-9]{2}$/u }).waitFor()
         await choose(page, sessions.waiting)
         await title.locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
         await choose(page, sessions.failed)

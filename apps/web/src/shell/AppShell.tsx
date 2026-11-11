@@ -21,6 +21,7 @@ import { Overlays } from './Overlays.tsx'
 import { RightPanel } from './RightPanel.tsx'
 import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
+import { ParticleField } from './ParticleField.tsx'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 
@@ -147,6 +148,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               '--inspector-width': columnOpen && placement?.kind === 'column' ? `${inspectorWidth}px` : '0px',
               '--inspector-open-width': `${inspectorWidth}px`,
             }}>
+            {!phone && <ParticleField />}
             {!phone && <TitleBar shell={shell} />}
             <Scrim
               open={drawerMode && drawer.open}

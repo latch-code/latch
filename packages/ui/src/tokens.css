@@ -2,7 +2,8 @@
  * Latch design tokens: every colour, shadow, type size, space, radius and duration the browser client uses.
  *
  * Colour is restrained: neutral ink on near-white or near-black. Blue (accent) is only for the primary action, focus,
- * links and checked controls; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
+ * links and checked controls, and, as the one decorative exception, every seventh point of the light theme's field
+ * behind the work panel; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
  * only for added lines and a short-lived success tick. Amber and red always come with words. Running work, counts,
  * selected rows and every resting icon are neutral.
  *
@@ -110,6 +111,11 @@
     --track: rgba(18, 18, 28, 0.11);
     --meter: #45454e;
     --band: rgba(18, 18, 28, 0.025);
+    /* The field behind the work panel (ParticleField in apps/web): slate points, every seventh in the execute blue, and
+     * the whole field a little stronger so it reads on white; in the dark theme every point is white. Decoration only. */
+    --particle: #5d6b86;
+    --particle-accent: #2461e0;
+    --particle-strength: 1.25;
 
     /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
      * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
@@ -213,11 +219,12 @@
     --r-16: 16px;
     --r-full: 999px;
 
-    /* Motion: short, calm and physical; it confirms a cause and its effect, never idles. micro: hover and press fills,
-     * icon swaps and cross-fades of status words and tab content. enter: menus, popovers and tooltips (scale .98 → 1
-     * and a fade), rows and messages arriving (a fade and a 4px rise). panel: side panels, collapsing columns and
-     * disclosures (grid rows). sheet: dialogs and phone sheets (scale .985 → 1 and a fade). push: phone pages pushed
-     * and popped. Leaving takes 70% of the time on the exit curve. Scripts read the same values from MOTION
+    /* Motion: short, calm and physical; it confirms a cause and its effect, and never idles, with one exception: the
+     * quiet field of points behind the work panel (--particle*), still under reduced motion. micro: hover and press
+     * fills, icon swaps and cross-fades of status words and tab content. enter: menus, popovers and tooltips (scale
+     * .98 → 1 and a fade), rows and messages arriving (a fade and a 4px rise). panel: side panels, collapsing columns
+     * and disclosures (grid rows). sheet: dialogs and phone sheets (scale .985 → 1 and a fade). push: phone pages
+     * pushed and popped. Leaving takes 70% of the time on the exit curve. Scripts read the same values from MOTION
      * (motion.tsx), which a test keeps equal to these. */
     --m-micro: 120ms;
     --m-enter: 160ms;
@@ -358,6 +365,9 @@
       --track: rgba(255, 255, 255, 0.11);
       --meter: #b6b6bf;
       --band: rgba(0, 0, 0, 0.2);
+      --particle: #e8e8ee;
+      --particle-accent: #e8e8ee;
+      --particle-strength: 1;
       --accent: #2f6be6;
       --accent-hover: #2a62d6;
       --accent-ink: #6b9bfa;
@@ -437,6 +447,9 @@
     --track: rgba(255, 255, 255, 0.11);
     --meter: #b6b6bf;
     --band: rgba(0, 0, 0, 0.2);
+    --particle: #e8e8ee;
+    --particle-accent: #e8e8ee;
+    --particle-strength: 1;
     --accent: #2f6be6;
     --accent-hover: #2a62d6;
     --accent-ink: #6b9bfa;
@@ -524,6 +537,9 @@
     --track: rgba(18, 18, 28, 0.11) !important;
     --meter: #45454e !important;
     --band: rgba(18, 18, 28, 0.025) !important;
+    --particle: #5d6b86 !important;
+    --particle-accent: #2461e0 !important;
+    --particle-strength: 1.25 !important;
     --accent: #2461e0 !important;
     --accent-hover: #1d55cc !important;
     --accent-ink: #1d52c4 !important;
@@ -677,6 +693,9 @@
       --track: rgba(255, 255, 255, 0.11) !important;
       --meter: #b6b6bf !important;
       --band: rgba(0, 0, 0, 0.2) !important;
+      --particle: #e8e8ee !important;
+      --particle-accent: #e8e8ee !important;
+      --particle-strength: 1 !important;
       --accent: #2f6be6 !important;
       --accent-hover: #2a62d6 !important;
       --accent-ink: #6b9bfa !important;
@@ -755,6 +774,9 @@
     --track: rgba(255, 255, 255, 0.11) !important;
     --meter: #b6b6bf !important;
     --band: rgba(0, 0, 0, 0.2) !important;
+    --particle: #e8e8ee !important;
+    --particle-accent: #e8e8ee !important;
+    --particle-strength: 1 !important;
     --accent: #2f6be6 !important;
     --accent-hover: #2a62d6 !important;
     --accent-ink: #6b9bfa !important;
