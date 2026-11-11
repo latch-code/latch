@@ -251,8 +251,9 @@
 .ui-menu-item[aria-disabled='true'] :is(.ui-menu-item-lead, .ui-menu-item-media, .ui-menu-item-label, .ui-menu-item-description) {
   opacity: 0.45;
 }
+/* Muted, not faint: on the menu's surface faint falls under 4.5:1 in the dark theme, and this is text to read. */
 .ui-menu-item-meta {
-  color: var(--faint);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;

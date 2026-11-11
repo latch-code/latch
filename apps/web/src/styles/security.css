@@ -265,7 +265,7 @@
   [data-secure] .ui-button:is([data-variant='outline'], [data-variant='danger']),
   :is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary']
 ) {
-  background: var(--raised) !important;
+  background: var(--pop) !important;
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
     var(--sh-1) !important;
@@ -274,7 +274,16 @@
     [data-secure] .ui-button:is([data-variant='outline'], [data-variant='danger']),
     :is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary']
   ):hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--hover), var(--hover)) var(--raised) !important;
+  background: linear-gradient(var(--hover), var(--hover)) var(--pop) !important;
+}
+/* A key cap keeps its own face, as in the primitive; on a filled button it is the button's colour, lifted. */
+[data-secure] kbd {
+  background-color: var(--key) !important;
+  box-shadow: var(--sh-key) !important;
+}
+[data-secure] .ui-button:is([data-variant='primary'], [data-variant='destroy']) .ui-kbd {
+  background-color: color-mix(in srgb, var(--tip-bg) 22%, transparent) !important;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--tip-bg) 20%, transparent) !important;
 }
 [data-secure] .ui-button[data-variant='ghost'] {
   background: transparent !important;
@@ -390,11 +399,11 @@
 }
 [data-secure] .ui-input {
   display: block !important;
-  background-color: var(--raised) !important;
+  background-color: var(--sunken) !important;
   color: var(--ink) !important;
   font-size: var(--fs-input) !important;
   line-height: var(--lh-input) !important;
-  box-shadow: inset 0 0 0 1px var(--line-strong) !important;
+  box-shadow: var(--sh-well) !important;
 }
 [data-secure] .ui-input:focus {
   box-shadow:

@@ -531,7 +531,7 @@ export function Transcript({
   /** Brings a row into view, for what the status line points at. */
   onReveal?: (messageId: string) => void
   /** The Host's per-turn records and what this device may do with them. */
-  changes?: Pick<TurnSummaryOptionsValue, 'undo'> & { enabled: boolean }
+  changes?: Pick<TurnSummaryOptionsValue, 'undo' | 'offline'> & { enabled: boolean }
 }) {
   const messages = renderedMessages(detail)
   // Kept from the previous render even if React discards it: a turn only ever stands in for one with the same data.
@@ -584,12 +584,13 @@ export function Transcript({
   const summaryOptions = useMemo<TurnSummaryOptionsValue>(
     () => ({
       undo: changes?.undo ?? 'read-only',
+      offline: changes?.offline === true,
       refresh: () => {
         refreshChanges()
         announceChangesWrite(sessionId, 'conversation')
       },
     }),
-    [changes?.undo, refreshChanges, sessionId],
+    [changes?.undo, changes?.offline, refreshChanges, sessionId],
   )
   const frozen = frozenAt !== undefined
   const engine = demo ? '演示' : undefined

@@ -329,6 +329,9 @@ export const ToolCard = memo(
     const hasDetails = !panelEdit
     // Only what the tool itself reported is output: a command's plain-text form is not.
     const tail = command && !open && tool?.output ? commandTail(tool.output) : ''
+    // The tail shows the last lines; the reason is the first one that says something, which a long output scrolls off.
+    const reason = failed ? failureReason(message ?? { text: '' }) : ''
+    const reasonInTail = tail !== '' && reason !== '' && tail.includes(reason)
     return (
       <FileRootContext.Provider value={rootId}>
         <article
@@ -371,10 +374,10 @@ export const ToolCard = memo(
                 <VisibleText text={blockedLine(block)} />
               </p>
             )}
-            {/* A block's tail already shows what the command printed, so its failure line is only 重试. */}
-            {failed && !(tail && !onRetry) && (
+            {/* Where the tail already shows the reason, the failure line is only 重试. */}
+            {failed && !(reasonInTail && !onRetry) && (
               <p className="tool-failure">
-                {!tail && <VisibleText text={failureReason(message ?? { text: '' })} />}
+                {!reasonInTail && <VisibleText text={reason} />}
                 {onRetry && (
                   <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
                     重试

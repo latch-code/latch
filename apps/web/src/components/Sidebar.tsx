@@ -173,7 +173,7 @@ const SessionItem = memo(function SessionItem({
             {note && <span className="session-meta-rest">{`· ${note}`}</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
-          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${time ? `，${time}` : ''}`}</span>
+          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
         </button>
         <span className="session-actions">
           {archive && (

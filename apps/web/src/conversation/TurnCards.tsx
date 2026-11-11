@@ -170,7 +170,7 @@ export function TurnCards({
   outputs: Pick<Message, 'outputs' | 'outputsTruncated' | 'outputsUnavailable'> | undefined
   onError?: ((error: unknown) => void) | undefined
 }) {
-  const { undo: undoGate, refresh } = useContext(TurnSummaryOptions)
+  const { undo: undoGate, offline = false, refresh } = useContext(TurnSummaryOptions)
   const link = useChangesLink()
   const usable = enabled ? record : undefined
   const { list, cardRef } = useTurnList(sessionId, usable, revision)
@@ -238,7 +238,7 @@ export function TurnCards({
   // The same judgement and words as the 改动 tab. A device or session that only reads is said so at the composer, and
   // the card cannot tell which of the two it is, so it offers nothing and says nothing more.
   const decision: TurnUndo =
-    list && record && undoGate !== 'read-only' ? turnUndo(list, record, { canRun: true, active, offline: false }) : { kind: 'none' }
+    list && record && undoGate !== 'read-only' ? turnUndo(list, record, { canRun: true, active, offline }) : { kind: 'none' }
   const why = decision.kind === 'why' ? decision.text : undefined
   if (undone) {
     const undoReceipt = receipt?.action === 'undo' ? receipt : undefined

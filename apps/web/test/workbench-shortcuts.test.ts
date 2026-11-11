@@ -9,6 +9,20 @@ import {
 } from '../src/workbenchShortcuts.ts'
 const key = (code: string, extra = {}) => ({ code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra })
 describe('workbench key routing', () => {
+  it("lets a browser's Alt chord type in a field when the layout makes a character of it", () => {
+    const alt = (code: string, keyText: string, typing = true) => key(code, { altKey: true, key: keyText, typing })
+    // A German Mac's ⌥5 is [, a French one's ⌥( (Digit5) is {, a US one's ⌥1 is ¡, ⌥E starts an accent.
+    expect(workbenchShortcut(alt('Digit5', '['), false)).toBe(null)
+    expect(workbenchShortcut(alt('Digit1', '¡'), false)).toBe(null)
+    expect(workbenchShortcut(alt('KeyE', 'Dead'), false)).toBe(null)
+    // Outside a field, or where Alt leaves the key as it is (Windows, Linux), it is the shortcut.
+    expect(workbenchShortcut(alt('Digit5', '[', false), false)).toEqual({ kind: 'session', index: 5 })
+    expect(workbenchShortcut(alt('Digit5', '5'), false)).toEqual({ kind: 'session', index: 5 })
+    expect(workbenchShortcut(alt('KeyN', 'n'), false)).toBe('new')
+    // The desktop app's chords use ⌘, which types nothing.
+    expect(workbenchShortcut(key('Digit5', { metaKey: true, key: '5', typing: true }), true)).toEqual({ kind: 'session', index: 5 })
+  })
+
   it('reserves browser shortcuts and handles the documented alternate bindings', () => {
     for (const [code, action] of [
       ['KeyN', 'new'],

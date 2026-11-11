@@ -53,6 +53,17 @@ import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 
 type Harness = ReturnType<typeof useHarness>
 
+/** What the workbench keys read of a key press. */
+const stroke = (event: KeyboardEvent) => ({
+  code: event.code,
+  key: event.key,
+  metaKey: event.metaKey,
+  ctrlKey: event.ctrlKey,
+  altKey: event.altKey,
+  shiftKey: event.shiftKey,
+  isComposing: event.isComposing,
+})
+
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
@@ -606,7 +617,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   const workbenchKeys = useStableCallback((event: KeyboardEvent) => {
     if (event.defaultPrevented) return
-    const action = workbenchShortcut(event, currentShell() !== null)
+    const focused = event.target instanceof Element ? event.target : null
+    const typing = focused?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') != null
+    const action = workbenchShortcut({ ...stroke(event), typing }, currentShell() !== null)
     if (!action) return
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
@@ -617,7 +630,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (dialogs.length && !passes) return
     if (route.entry !== 'sessions' && !shortcutWorksOnPage(action)) return
     if (typeof action === 'object') {
-      // Held, the digits would type into the draft (a Mac's ⌥1 is ¡), so the key is the app's even where it finds nothing.
+      // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
       if (action.kind === 'session') {
         const folded = readFolded(shelvesKey(snapshot.device.id))

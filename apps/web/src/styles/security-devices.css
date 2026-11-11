@@ -118,7 +118,7 @@
 }
 .pair-sheet .ui-modal-surface {
   display: flex !important;
-  background-color: var(--raised) !important;
+  background-color: var(--pop) !important;
 }
 .pair-sheet .ui-modal-header {
   display: flex !important;

@@ -62,6 +62,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     demo,
     selectedId,
     refresh,
+    connection,
   } = shell
   const forkChoice = () => ({
     harnessId: current?.summary.harnessId,
@@ -195,6 +196,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                         // The Host shows a session's files only to a device whose data scope covers them.
                         enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
                         undo: current.summary.personal || !access.scopes.has('run') ? 'read-only' : 'open',
+                        // As the 改动 tab reads it: nothing can be written until the connection is back.
+                        offline: connection === 'reconnecting' || connection === 'offline',
                       }}
                       {...(run ? { onStop: run.onCancel } : {})}
                       {...(current.summary.personal

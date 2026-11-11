@@ -27,6 +27,25 @@ interface KeyStroke {
   altKey: boolean
   shiftKey: boolean
   isComposing?: boolean
+  /** The character the layout made of it (`KeyboardEvent.key`). */
+  key?: string
+  /** Focus is in a field that takes text. */
+  typing?: boolean
+}
+
+const PLAIN_KEYS: Partial<Record<string, string>> = { BracketLeft: '[', BracketRight: ']', Slash: '/' }
+
+/**
+ * Whether a browser's Alt chord is typing: in a field, the layout made a character of it other than the key's own (a
+ * German Mac's ⌥5 is [, a French one's ⌥( is {, a US one's ⌥1 is ¡), or a dead key that starts one (⌥E). Elsewhere the
+ * same chord is the shortcut.
+ */
+function typesCharacter(event: KeyStroke): boolean {
+  if (!event.typing || event.key === undefined) return false
+  if (event.key === 'Dead') return true
+  if ([...event.key].length !== 1) return false
+  const own = /^Digit(\d)$/u.exec(event.code)?.[1] ?? /^Key([A-Z])$/u.exec(event.code)?.[1]?.toLowerCase() ?? PLAIN_KEYS[event.code]
+  return own === undefined || event.key.toLowerCase() !== own
 }
 
 /**
@@ -107,6 +126,7 @@ export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
 }
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {
   if (event.isComposing) return null
+  if (!desktop && event.altKey && typesCharacter(event)) return null
   // The digits come first: their ⌥ (the desktop app's) or Shift (a browser's) picks a control instead of a session.
   const digit = /^Digit([1-9])$/u.exec(event.code)?.[1]
   if (digit !== undefined) {
