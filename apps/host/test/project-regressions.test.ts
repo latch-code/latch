@@ -246,6 +246,77 @@ describe('project lifecycle regressions', () => {
     expect(await readFile(file, 'utf8')).not.toContain(input.requestId)
   })
 
+  it("keeps another project's starts and changes from waiting for this project's slow start, and this project's removal waiting", async () => {
+    const root = await directory()
+    const [slowPath, otherPath] = ['slow', 'other'].map(name => join(root, name))
+    await Promise.all([slowPath, otherPath].map(path => mkdir(path!)))
+    let enter!: () => void
+    let release!: () => void
+    const entered = new Promise<void>(done => {
+      enter = done
+    })
+    const held = new Promise<void>(done => {
+      release = done
+    })
+    cleanups.push(async () => {
+      release()
+    })
+    const plugin: HarnessPlugin = {
+      ...primaryPlugin,
+      activate(ctx) {
+        ctx.registerHarness({
+          id: 'primary-test',
+          name: 'Primary only',
+          version: '1',
+          create(options) {
+            const bridge = createRuntime(options)
+            const create = bridge.createTask.bind(bridge)
+            bridge.createTask = async input => {
+              if (input.prompt === 'Slow') {
+                enter()
+                await held
+              }
+              return create(input)
+            }
+            return bridge
+          },
+        })
+      },
+    }
+    const t = await fixture({ plugins: [plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const add = async (path: string) =>
+      ((await (await desktop.addFolders({ paths: [path] })).json()) as { workspace: WorkspaceInfo }).workspace
+    const slow = await add(slowPath!)
+    const other = await add(otherPath!)
+    const start = (prompt: string, workspaceId: string) =>
+      desktop.confirmed('tasks', {
+        method: 'POST',
+        body: { prompt, requestId: randomUUID(), harnessId: 'primary-test', workspaceId, mode: 'chat' },
+      })
+    const settledOrder: string[] = []
+    const creating = start('Slow', slow.id).then(response => {
+      settledOrder.push('start')
+      return response
+    })
+    await entered
+    const removing = desktop.request(`workspaces/${slow.id}`, { method: 'DELETE' }).then(response => {
+      settledOrder.push('remove')
+      return response
+    })
+    try {
+      // Another project starts and changes while this one's start is held in the driver.
+      expect((await start('Elsewhere', other.id)).status).toBe(201)
+      expect((await desktop.request(`workspaces/${other.id}`, { method: 'PATCH', body: { name: 'Renamed' } })).status).toBe(200)
+      expect(settledOrder).toEqual([])
+    } finally {
+      release()
+    }
+    expect((await creating).status).toBe(201)
+    await removing
+    expect(settledOrder).toEqual(['start', 'remove'])
+  })
+
   it('does not block policy reductions behind a project edit waiting for a slow driver start', async () => {
     const root = await directory()
     const path = join(root, 'project')

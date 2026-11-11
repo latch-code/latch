@@ -14,6 +14,8 @@ export async function checkedFileMentions(
   roots: readonly FileRoot[],
   paths: readonly string[],
   home: string,
+  /** Said instead when a file is simply not in these roots, where the caller knows why. */
+  missing?: string,
 ): Promise<FileMention[]> {
   if (!refs?.length) return []
   if (refs.length > 32 || new Set(refs.map(ref => JSON.stringify(ref))).size !== refs.length)
@@ -23,6 +25,7 @@ export async function checkedFileMentions(
   for (const ref of refs) {
     if (!isFileMention(ref)) throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
     const resolved = await resolveRecorded(ref.root, ref.path, { roots, protectedPaths: guard, home })
+    if (resolved.status === 'missing' && missing) throw new AppError(403, 'file-reference-refused', missing)
     if (resolved.status !== 'ok' || resolved.file.secret)
       throw new AppError(403, 'file-reference-refused', '引用文件已不存在、不在当前会话文件夹内，或可能包含密钥。请重新选择。')
     result.push({ root: resolved.file.rootId, path: resolved.file.relativePath })

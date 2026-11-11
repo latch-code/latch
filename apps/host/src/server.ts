@@ -1893,14 +1893,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const { name: _, ...execution } = record
       return executionBuildRevision(execution)
     }
-    function unattendedProjectOperation<T>(operation: () => Promise<T>): Promise<T> {
-      const result = projectChanges.then(operation)
-      projectChanges = result.then(
-        () => {},
-        () => {},
-      )
-      return result
-    }
     function checkPrivateSession(caller: Caller, id: string, write = false): void {
       recheck(caller)
       if (hub!.agentPrivate(id)) agentAccess(caller, write)
@@ -1935,7 +1927,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
       async start({ requestId, automationId, title, prompt, projectId, plan, authorize }) {
         authorize()
-        return unattendedProjectOperation(async () => {
+        return projectQueue(projectId ?? 'default', async () => {
           authorize()
           const chosen = projectId ? savedProject(projectId) : undefined
           if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
@@ -1996,18 +1988,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => automations.close())
-    let projectChanges = Promise.resolve()
-    /** A start cannot enter a project between a removal's in-use check and its committed settings write. */
-    function projectOperation<T>(caller: Caller, scope: DeviceScope, operation: () => Promise<T>): Promise<T> {
-      const result = projectChanges.then(() => {
-        recheck(caller, scope)
-        return operation()
-      })
-      projectChanges = result.then(
+    /**
+     * One queue per project ID (`'default'` for the start directory): a start cannot enter a project between a removal's
+     * in-use check and its committed settings write, and a start in a new worktree holds its project until the session
+     * exists there. Another project's starts and changes never wait. A change takes its project's queue, then `serial`;
+     * a start never takes `serial`, so the two never wait on each other in a cycle.
+     */
+    const projectChanges = new Map<string, Promise<void>>()
+    function projectQueue<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+      const result = (projectChanges.get(projectId) ?? Promise.resolve()).then(operation)
+      const tail = result.then(
         () => {},
         () => {},
       )
+      projectChanges.set(projectId, tail)
+      void tail.then(() => {
+        if (projectChanges.get(projectId) === tail) projectChanges.delete(projectId)
+      })
       return result
+    }
+    function projectOperation<T>(projectId: string, caller: Caller, scope: DeviceScope, operation: () => Promise<T>): Promise<T> {
+      return projectQueue(projectId, () => {
+        recheck(caller, scope)
+        return operation()
+      })
     }
 
     /** Serializes configuration changes; each re-checks the caller first. */
@@ -4346,44 +4350,46 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const folderRequest = `${caller.device.id}:${input.requestId}`
       let made: Worktree | undefined
       let startedIn = false
-      await projectOperation(caller, 'run', async () => {
-        recheck(caller, 'run')
-        const customAgentId = input.customAgentId
-        let selected: ReturnType<typeof customAgents.get> | undefined
-        if (customAgentId) {
-          const actor = agentAccess(caller, true)
-          const saved = customAgents.get(customAgentId)
-          const { harnessId, workspaceId, mode, model } = input
-          const start = await customAgents.reserveStart(
-            customAgentId,
-            input.requestId,
-            () =>
-              agentPlans.selection(saved, {
-                ...(harnessId ? { harnessId } : {}),
-                ...(workspaceId ? { workspaceId } : {}),
-                ...(mode ? { mode } : {}),
-                ...(model ? { model } : {}),
-              }),
-            actor,
-          )
-          const { model: startModel, workspaceId: startWorkspace, ...choice } = start
-          // Judged on what this start uses, not on defaults it replaced.
-          const { defaultProjectId: _project, ...savedRest } = saved
-          const reason = agentPlans.unavailable({
-            ...savedRest,
-            harnessId: start.harnessId,
-            ...(startModel ? { model: startModel } : {}),
-            ...(startWorkspace ? { defaultProjectId: startWorkspace } : {}),
-          })
-          if (reason) throw new AppError(409, 'agent-unavailable', reason)
-          selected = saved
-          input = {
-            ...input,
-            ...choice,
-            ...(startModel ? { model: startModel } : {}),
-            ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
-          }
+      recheck(caller, 'run')
+      const customAgentId = input.customAgentId
+      // A custom Agent's start fixes its project before it queues: the journal keeps one answer per request, so the
+      // project's queue is known before entering it. The project itself is checked again inside.
+      if (customAgentId) {
+        const actor = agentAccess(caller, true)
+        const saved = customAgents.get(customAgentId)
+        const { harnessId, workspaceId, mode, model } = input
+        const start = await customAgents.reserveStart(
+          customAgentId,
+          input.requestId,
+          () =>
+            agentPlans.selection(saved, {
+              ...(harnessId ? { harnessId } : {}),
+              ...(workspaceId ? { workspaceId } : {}),
+              ...(mode ? { mode } : {}),
+              ...(model ? { model } : {}),
+            }),
+          actor,
+        )
+        const { model: startModel, workspaceId: startWorkspace, ...choice } = start
+        // Judged on what this start uses, not on defaults it replaced.
+        const { defaultProjectId: _project, ...savedRest } = saved
+        const reason = agentPlans.unavailable({
+          ...savedRest,
+          harnessId: start.harnessId,
+          ...(startModel ? { model: startModel } : {}),
+          ...(startWorkspace ? { defaultProjectId: startWorkspace } : {}),
+        })
+        if (reason) throw new AppError(409, 'agent-unavailable', reason)
+        input = {
+          ...input,
+          ...choice,
+          ...(startModel ? { model: startModel } : {}),
+          ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
         }
+      }
+      // The queue of the project the session starts in; a fork's source session does not choose it.
+      await projectOperation(input.workspaceId ?? 'default', caller, 'run', async () => {
+        recheck(caller, 'run')
         const fork = input.forkOf
           ? await (async () => {
               requireScope(caller, 'view')
@@ -4500,6 +4506,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               [{ id: 'default', path: made.path }],
               guardedPaths,
               home,
+              '引用的文件不在新工作树里：新工作树只有已提交的文件。请先提交它，或在当前文件夹里开始。',
             )
           recheck(caller, 'run')
         }
@@ -5675,10 +5682,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         let result: { workspace: WorkspaceInfo; refused: FolderRefusal[] }
         if (signed.via === 'session') {
           const input = sessionProjectSchema.parse(signed)
-          result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => saveSessionProject(caller, input)))
+          // The folder it saves is a session's own folder in the start directory, so it waits for starts there.
+          result = await projectOperation('default', caller, 'admin', () =>
+            serial(caller, 'admin', () => saveSessionProject(caller, input)),
+          )
         } else {
           const input = projectCreateSchema.parse(signed)
-          result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => createProject(caller, input)))
+          // A new project has no sessions and no ID yet: no start can be in it, so it waits only for other changes.
+          result = await serial(caller, 'admin', () => createProject(caller, input))
         }
         refresh()
         json(res, result, 201)
@@ -5690,7 +5701,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireDesktop(caller)
         const id = safeDecode(foldersMatch[1]!)
         const input = folderAddSchema.parse(await signedFolderBody(req, caller))
-        const result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => addFolders(caller, id, input)))
+        const result = await projectOperation(id, caller, 'admin', () => serial(caller, 'admin', () => addFolders(caller, id, input)))
         refresh()
         json(res, result)
         return true
@@ -5700,7 +5711,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'admin')
         const id = safeDecode(folderMatch[1]!)
         const folderId = safeDecode(folderMatch[2]!)
-        const workspace = await projectOperation(caller, 'admin', () =>
+        const workspace = await projectOperation(id, caller, 'admin', () =>
           serial(caller, 'admin', () => removeFolder(caller, id, folderId, res)),
         )
         refresh()
@@ -5712,7 +5723,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'admin')
         const id = safeDecode(workspaceMatch[1]!)
         const input = projectPatchSchema.parse(await jsonBody(req))
-        const workspace = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => patchProject(caller, id, input)))
+        const workspace = await projectOperation(id, caller, 'admin', () => serial(caller, 'admin', () => patchProject(caller, id, input)))
         refresh()
         json(res, { workspace })
         return true
@@ -5720,7 +5731,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (workspaceMatch && method === 'DELETE') {
         requireScope(caller, 'admin')
         const id = safeDecode(workspaceMatch[1]!)
-        await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => removeWorkspace(caller, id, res)))
+        await projectOperation(id, caller, 'admin', () => serial(caller, 'admin', () => removeWorkspace(caller, id, res)))
         refresh()
         json(res, { deleted: true })
         return true

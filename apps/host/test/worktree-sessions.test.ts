@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { TaskDetail, TaskSummary } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { findGit } from '../src/changes/git.ts'
+import { Worktrees } from '../src/worktrees.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const git = findGit()
@@ -185,13 +186,67 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     expect(await f.leftovers()).toEqual({ buckets: [], branches: ['refs/heads/main'] })
   })
 
+  it(
+    "lets another project start while a worktree is being made, and holds this project's removal until the session exists",
+    SLOW,
+    async () => {
+      const f = await fixture()
+      const other = join(f.t.root, 'other')
+      await mkdir(other)
+      const { workspace } = (await (await f.owner.addFolders({ paths: [other] })).json()) as { workspace: { id: string } }
+      let enter!: () => void
+      let release!: () => void
+      const entered = new Promise<void>(done => {
+        enter = done
+      })
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      onTestFinished(() => release())
+      const create = Worktrees.prototype.create
+      vi.spyOn(Worktrees.prototype, 'create').mockImplementation(async function (this: Worktrees, input) {
+        enter()
+        await held
+        return create.call(this, input)
+      })
+      const order: string[] = []
+      const starting = f.start(f.owner).then(response => {
+        order.push('start')
+        return response
+      })
+      await entered
+      const removing = f.owner.request(`workspaces/${f.workspaceId}`, { method: 'DELETE' }).then(response => {
+        order.push('remove')
+        return response
+      })
+      try {
+        expect((await f.start(f.owner, { workspaceId: workspace.id, worktree: undefined })).status).toBe(201)
+        expect(order).toEqual([])
+      } finally {
+        release()
+      }
+      const response = await starting
+      expect(response.status).toBe(201)
+      const { sessionId } = (await response.json()) as { sessionId: string }
+      const removed = await removing
+      // The removal's in-use check sees the session in its worktree, whatever state it has reached by then.
+      expect(order).toEqual(['start', 'remove'])
+      expect([200, 409]).toContain(removed.status)
+      expect(existsSync((await summaryOf(f.owner, sessionId)).cwd!)).toBe(true)
+      vi.restoreAllMocks()
+    },
+  )
+
   it('leaves no worktree or branch behind when the start is refused after it was made', async () => {
     const f = await fixture()
     const untracked = [{ root: f.folderId, path: 'new.txt' }]
     // Untracked, so it is in the project folder and not in the worktree, where the session would read it.
     const response = await f.start(f.owner, { fileRefs: untracked })
     expect(response.status).toBe(403)
-    expect(await response.json()).toMatchObject({ error: 'file-reference-refused' })
+    expect(await response.json()).toMatchObject({
+      error: 'file-reference-refused',
+      message: '引用的文件不在新工作树里：新工作树只有已提交的文件。请先提交它，或在当前文件夹里开始。',
+    })
     expect(await f.leftovers()).toEqual({ buckets: [], branches: ['refs/heads/main'] })
     expect(existsSync(f.log)).toBe(false)
     expect((await f.start(f.owner, { worktree: undefined, fileRefs: untracked })).status).toBe(201)
