@@ -40,6 +40,11 @@ export class ConfigRequests {
     return saved?.state ?? (this.flights.has(key) ? 'pending' : 'unknown')
   }
 
+  /** Writes the Agent may or may not have taken: in flight now, or left unknown when their receipt could not be written. */
+  pending(): number {
+    return this.flights.size + [...this.preparations].filter(([key, row]) => row.unknown && !this.flights.has(key)).length
+  }
+
   async apply(sessionId: string, actor: Actor, input: Input, execute: (begin: () => Promise<void>) => Promise<void>): Promise<void> {
     if (this.closed) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
     const key = keyOf(sessionId, actor.deviceId, input.requestId),

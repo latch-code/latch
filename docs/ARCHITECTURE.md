@@ -483,6 +483,8 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 通知正文使用主进程固定文字，标题默认只写 Latch；用户开启标题时才使用已认证快照的会话标题，去控制字符并限制长度。每个会话十秒内最多一次；点击只把该快照里的会话 ID 交回应用。Dock 徽标独立于通知偏好，只显示待处理请求数。断连或鉴权失败不发通知。取消、中断不会误报完成，失败使用固定失败模板。持久化、旧壳兼容和有限事件合同见 [NOTIFICATIONS.md](./NOTIFICATIONS.md)。
 
+桌面端自身的更新由主进程完成：固定的签名更新源、下载校验，以及安装前经 `host.sock` 进入 Host 的安装窗口（新会话开始 409 `host-updating`，已有工作照常结算）。页面只得状态视图。见 [UPDATES.md](./UPDATES.md)。
+
 ## 提示模板
 
 提示模板独立保存在数据目录的 `prompt-templates.json`，由 `PromptTemplateStore` 校验并原子替换；每次写盘成功后才更新内存，串行写入失败不会污染后续请求。最多 200 条，名称 80 字符、内容 2 万字符，适用范围是所有会话、某个项目或某个 Agent。Host 声明 `features.promptTemplates`，并以可选 `promptTemplatesVersion` 通知客户端重新读取；流式消息更新不重复请求模板列表。

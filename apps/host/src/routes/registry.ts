@@ -40,6 +40,8 @@ export type AuditEvent = Parameters<AuditLog['append']>[0]
  * the rest of the Host only through this.
  */
 export interface RouteContext {
+  /** The install window (update-window.ts): Git delivery refuses new writes while it is committed and counts running ones. */
+  updateGate: { committed(): boolean; deliveries: { running: number } }
   hostId: string
   hostId8: string
   dataDir: string

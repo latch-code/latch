@@ -485,6 +485,8 @@ function classifyRoute(method, pathname) {
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
   if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
+  // The install window is main's alone (updater.cjs): the page can ask main to install, never hold the Host's starts.
+  if (lower === '/link/api/host/update-window' || lower.startsWith('/link/api/host/update-window/')) return { kind: 'host-update' }
   // A session ID with an encoded slash decodes into more than one segment, so any depth under /tasks/ counts.
   if (
     lower === '/link/api/files'
@@ -1056,6 +1058,13 @@ function createShellProxy(options) {
       if (route.kind === 'host-state') {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', '电脑的运行状态由 Latch 桌面端报告')
+      }
+      if (route.kind === 'host-update') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '更新由 Latch 桌面端处理')
+        }
+        return await forward(request, target, { kind: 'forward' })
       }
       if (route.kind === 'shell-files') {
         if (origin !== 'shell') {

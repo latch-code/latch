@@ -341,6 +341,31 @@ describe('terminal service', () => {
     expect((await rejection(() => terminals.input(ref, mac, Buffer.from('x')))).code).toBe('terminal-ended')
   })
 
+  it('reports terminals running a command and their local services to the install gate', async () => {
+    const terminals = await service()
+    await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    expect(terminals.activity()).toEqual({ terminals: 0, services: 0 })
+    const helper = helperAt(0)
+    helper.emit({ type: 'foreground', busy: true, name: 'node' })
+    helper.print('  ➜  Local:   http://localhost:5173/\r\n')
+    expect(terminals.activity()).toEqual({ terminals: 1, services: 1 })
+    helper.emit({ type: 'exit', code: 0 })
+    expect(terminals.activity()).toEqual({ terminals: 0, services: 0 })
+  })
+
+  it('refuses new terminals and typed input while the Host is about to stop for an update', async () => {
+    const terminals = await service()
+    const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    terminals.setHeld(true)
+    expect((await rejection(() => terminals.input({ sessionId: 's1', terminalId: id }, mac, Buffer.from('ls\r')))).code).toBe(
+      'host-updating',
+    )
+    expect((await rejection(terminals.create('s1', mac, { cols: 80, rows: 24 }))).code).toBe('host-updating')
+    terminals.setHeld(false)
+    terminals.input({ sessionId: 's1', terminalId: id }, mac, Buffer.from('ls\r'))
+  })
+
   it('asks before closing a terminal in which a program still runs', async () => {
     const terminals = await service()
     const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })

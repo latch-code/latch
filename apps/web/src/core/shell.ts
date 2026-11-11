@@ -106,6 +106,67 @@ export interface NotificationPreferences {
   consent?: 'unasked' | 'accepted' | 'declined'
 }
 
+/**
+ * The desktop app's own updates as main's updater sees them (apps/desktop/src/updater.cjs). The page never gets a
+ * download address or a file path.
+ */
+export type UpdateState =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'waiting'
+  | 'installing'
+  | 'failed'
+  | 'unsupported'
+
+export interface UpdateView {
+  state: UpdateState
+  /** This app's version, which may differ from the Host's. */
+  appVersion: string
+  autoDownload: boolean
+  /** 下次退出时安装 was chosen. */
+  installAtQuit: boolean
+  /** Why this build cannot update itself (`unsupported`). */
+  reason?: 'development' | 'not-configured' | 'unsigned' | 'platform'
+  checkedAt?: string
+  release?: {
+    version: string
+    publishedAt: string
+    notes: { 'zh-CN': string; en: string }
+    size: number
+    /** `app`: only the app restarts; `host`: this Mac's Host changes too, after its sessions settle. */
+    plan: 'app' | 'host'
+    /** Plugins on now that the new version will turn off on its first start (assets kept). */
+    incompatiblePlugins: Array<{ id: string; name: string }>
+  }
+  progress?: { received: number; total: number }
+  /** Sessions the install waits for: running, waiting for an approval, or with a write whose result is unknown. */
+  /**
+   * What the install waits for: sessions running, waiting for an approval or with a write whose result is unknown, queued
+   * messages and terminals running a command. Local services end with their terminals; they are listed, not waited for.
+   */
+  waiting?: { count: number; running: number; waiting: number; unknown: number; queued: number; terminals: number; services: number }
+  failure?: { stage: 'check' | 'download' | 'verify' | 'install' | 'gate'; code: string }
+  /** Plugins an earlier update turned off because the new version could not load them. */
+  heldPlugins: Array<{ id: string; name: string }>
+}
+
+export interface ShellUpdates {
+  get(): Promise<UpdateView | undefined>
+  check(): Promise<UpdateView | undefined>
+  download(): Promise<UpdateView | undefined>
+  install(when?: 'now' | 'at-quit'): Promise<UpdateView | undefined>
+  cancelWaiting(): Promise<UpdateView | undefined>
+  setAutoDownload(enabled: boolean): Promise<UpdateView | undefined>
+  /** Main pushes each change; returns the function that stops listening. */
+  onChange(callback: (view: UpdateView) => void): () => void
+  /** 「检查更新…」 in the app menu: show Settings › 关于. */
+  onShow(callback: () => void): () => void
+}
+
 /** What the Electron preload exposes; nothing else crosses into the renderer. */
 export interface LatchShell {
   /** Opaque HTML frames with main-process network and WebRTC restrictions. */
@@ -143,6 +204,8 @@ export interface LatchShell {
   }
   /** Shells from before file actions do not have it. */
   files?: ShellFiles
+  /** Shells from before updates do not have it. */
+  updates?: ShellUpdates
 }
 
 declare global {

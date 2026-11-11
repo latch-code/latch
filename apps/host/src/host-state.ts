@@ -430,6 +430,8 @@ export interface HostInfo {
   activeSessions: number
   /** The same, split; absent from older Hosts. */
   activity?: { running: number; waiting: number }
+  /** The Host API version the desktop app compares with an update's bundled Host (update-window.ts); absent from older Hosts. */
+  protocol?: number
 }
 
 const hostInfoSchema = z.object({
@@ -445,6 +447,7 @@ const hostInfoSchema = z.object({
   presence: z.object({ status: z.enum(['available', 'unavailable']), message: z.string().optional() }),
   activeSessions: z.number().int().nonnegative(),
   activity: z.object({ running: z.number().int().nonnegative(), waiting: z.number().int().nonnegative() }).optional(),
+  protocol: z.number().int().positive().optional(),
 })
 
 const MAX_INFO_BYTES = 64 * 1024

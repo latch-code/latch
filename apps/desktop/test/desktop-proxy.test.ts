@@ -1424,6 +1424,21 @@ describe('desktop shell proxy', () => {
       expect(response.status, path).toBe(403)
       expect(await response.json()).toEqual({ error: 'shell-managed', message: '电脑的运行状态由 Latch 桌面端报告' })
     }
+    // The install window is main's too (updater.cjs): the page cannot hold the Host's starts or read it.
+    for (const [method, path] of [
+      ['POST', '/link/api/host/update-window'],
+      ['GET', '/link/api/host/update-window'],
+      ['POST', '/link/api//host/update-window'],
+      ['POST', '/link/api/HOST/update-%77indow'],
+      ['POST', '/link/api/host/update-window/'],
+    ] as const) {
+      const response = await context.request(path, {
+        method,
+        ...(method === 'POST' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ open: true }) } : {}),
+      })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '更新由 Latch 桌面端处理' })
+    }
     expect(context.host.seen).toHaveLength(seen)
     for (const [method, path] of [
       ['GET', '/link/api/devices'],

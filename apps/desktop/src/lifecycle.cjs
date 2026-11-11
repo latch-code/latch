@@ -510,11 +510,34 @@ function createHostSupervisor(options) {
     while (alive(target.pid) && now() < deadline) await sleep(POLL_MS)
   }
 
+  /**
+   * An update that changes the Host is about to be installed: only a Host this app started from its launch record is
+   * stopped (announced as an update), so that the new version starts it from the same record. Any other Host is left
+   * alone and the install is refused, since whoever started it has to stop it.
+   */
+  async function stopForUpdate() {
+    const record = await readLaunch()
+    const target = await readState()
+    const live = target && target.hostId === hostId && alive(target.pid) ? target : undefined
+    if (!live) return { ok: true }
+    if (!record || record.hostId !== hostId || record.pid !== live.pid || record.launch === null)
+      return { ok: false, error: 'host-external' }
+    if (!(await inspect(live)).ok) return { ok: false, error: 'host-unverified' }
+    clearTimer(timer)
+    timer = undefined
+    await report(live.socketPath, { state: 'stopping', reason: 'update' }).catch(() => {})
+    signal(live.pid)
+    const deadline = now() + STOP_TIMEOUT_MS
+    while (alive(live.pid) && now() < deadline) await sleep(POLL_MS)
+    return alive(live.pid) ? { ok: false, error: 'host-stop-timeout' } : { ok: true }
+  }
+
   return {
     check,
     restartNow,
     announce,
     systemShutdown,
+    stopForUpdate,
     view,
     stop() {
       clearTimer(timer)
@@ -630,6 +653,10 @@ function createSystemQuit({ now = Date.now } = {}) {
       taken = true
       return true
     },
+    /** Whether a quit now would be the system's, without using the notice up (the updater never holds such a quit). */
+    active() {
+      return noticeAt !== undefined && now() - noticeAt <= SYSTEM_QUIT_WINDOW_MS
+    },
   }
 }
 
@@ -722,4 +749,6 @@ module.exports = {
   createLoginItem,
   createSystemQuit,
   excludeFromBackup,
+  readOwnFile,
+  writePrivateFile,
 }

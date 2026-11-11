@@ -181,6 +181,8 @@ function parseHostInfo(value) {
   if (!Number.isInteger(value.pid) || typeof value.devMode !== 'boolean') return undefined
   // Optional, as in host-state.ts: running sessions and waiting approvals, which the desktop app keeps the Mac awake for.
   if (value.activity !== undefined && !isActivity(value.activity)) return undefined
+  // Optional too: the Host API version, which the updater compares with a release's bundled Host (updater.cjs).
+  if (value.protocol !== undefined && !(Number.isInteger(value.protocol) && value.protocol > 0)) return undefined
   return value
 }
 

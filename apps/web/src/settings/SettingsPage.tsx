@@ -351,7 +351,13 @@ export function SettingsPage({
                     )}
                     {panel === 'plugins' && <PluginsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'about' && <AboutSettings snapshot={snapshot} access={access} />}
+                    {panel === 'about' && (
+                      <AboutSettings
+                        snapshot={snapshot}
+                        access={access}
+                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
+                      />
+                    )}
                   </div>
                 )}
               </div>

@@ -126,6 +126,18 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
     }
     if (method !== 'POST' || part === undefined) return false
     requireScope(caller, 'run')
+    // The Host is about to stop for an update: no new write starts the user's git now.
+    if (context.updateGate.committed()) throw new AppError(409, 'host-updating', '这台电脑正在安装更新，暂时不能写入 Git。安装完成后再试。')
+    context.updateGate.deliveries.running++
+    try {
+      return await write(request, caller, sessionId, part)
+    } finally {
+      context.updateGate.deliveries.running--
+    }
+  }
+
+  async function write(request: CallerRequest, caller: DeviceCaller, sessionId: string, part: GitDeliveryKind): Promise<boolean> {
+    const { req, res } = request
     permitted(caller, sessionId, part)
     limits.classC.take(caller.device.id)
     const body = await jsonBody(req)

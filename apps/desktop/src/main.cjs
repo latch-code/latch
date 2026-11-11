@@ -17,6 +17,7 @@ const {
   ClipboardItem,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   Notification,
   nativeTheme,
@@ -26,6 +27,7 @@ const {
   safeStorage,
   session,
   shell,
+  autoUpdater,
   WebContentsView,
 } = electron
 const { constants: fsConstants } = require('node:fs')
@@ -43,6 +45,9 @@ const {
 const { createFileActions } = require('./files.cjs')
 const { createNetworkSink } = require('./network.cjs')
 const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
+// Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
+const updates = require('./updater.cjs')
+const menus = require('./menu.cjs')
 const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
@@ -77,6 +82,8 @@ const {
 } = require('./proxy.cjs')
 
 const APP_URL = 'latch://app/link/'
+/** A development run is Electron's own bundle, whose version is Electron's; the desktop package says this app's. */
+const DESKTOP_VERSION = '0.1.0'
 const log = text => console.error(`[Latch] ${text}`)
 /** The Host start script of this checkout: the only script the desktop app starts (see lifecycle.cjs). */
 const HOST_SCRIPT = resolve(__dirname, '../../../dist/start.js')
@@ -357,6 +364,9 @@ function hostSupervisor(hostId, statePath, hooks) {
   })
 }
 
+/** A quit within 30 seconds of macOS announcing a logout, restart or shutdown: the system's, which nothing holds. */
+const systemQuit = createSystemQuit()
+
 /**
  * Starts the Host again after a crash, keeps the Mac awake while it has work, tells it about sleep and shutdown, and
  * answers the page's lifecycle requests (Settings › 通用). On macOS all of this goes on with no window open: the app
@@ -424,7 +434,6 @@ async function startLifecycle({ supervisor, hooks }) {
   powerMonitor.on('on-battery', () => keepAwake.powerChanged())
   // A logout, restart or shutdown: the notice records the reason with the Host (it lapses after a minute), and the quit
   // macOS then asks of this app stops the Host while the network is still up (see createSystemQuit).
-  const systemQuit = createSystemQuit()
   powerMonitor.on('shutdown', () => {
     systemQuit.noticed()
     void supervisor.announce({ state: 'stopping', reason: 'shutdown' })
@@ -443,6 +452,130 @@ async function startLifecycle({ supervisor, hooks }) {
   await supervisor.check()
   setInterval(() => void supervisor.check(), CHECK_INTERVAL_MS)
   return loginItem.openedAtLogin()
+}
+
+/**
+ * `latchShell.updates` and the menu bar. The updater (updater.cjs) reads one fixed feed, verifies it and the download,
+ * and installs through the gate; the page only sees its view. 「检查更新…」 in the app menu checks and shows
+ * Settings › 关于.
+ */
+async function startUpdates({ proxy, supervisor }) {
+  const userData = app.getPath('userData')
+  const config = updates.configuration()
+  const unsupported = updates.unsupportedReason({ packaged: app.isPackaged, platform: process.platform, source: config })
+  const appVersion = app.isPackaged ? app.getVersion() : DESKTOP_VERSION
+  const broadcast = view => {
+    for (const window of BrowserWindow.getAllWindows())
+      if (!window.isDestroyed()) window.webContents.send(updates.UPDATE_CHANNELS.changed, view)
+  }
+  const source = unsupported
+    ? {
+        latest: () => Promise.reject(new updates.UpdateError('check', 'unsupported')),
+        download: () => Promise.reject(new Error('unsupported')),
+      }
+    : updates.createFeedSource({
+        feedUrl: /** @type {string} */ (config.feedUrl),
+        publicKey: /** @type {string} */ (config.publicKey),
+        platform: process.platform,
+        arch: process.arch,
+        cacheDir: join(userData, 'updates'),
+      })
+  const gate = updates.createHostGate({
+    request: (method, path, body) => proxy.shellRequest(method, path, body),
+    async activity() {
+      const state = hostStatePath ? await readHostStateFile(hostStatePath) : undefined
+      const checked = state ? await inspectHostState(state) : undefined
+      if (!checked?.ok) return undefined
+      const { info } = checked
+      const activity = info.activity ?? { running: info.activeSessions ?? 0, waiting: 0 }
+      return { running: activity.running, waiting: activity.waiting, version: info.version, protocol: info.protocol }
+    },
+  })
+  const updater = updates.createUpdater({
+    appVersion,
+    platform: process.platform,
+    source,
+    installer: updates.createElectronInstaller({
+      autoUpdater,
+      stopHost: () => supervisor.stopForUpdate(),
+      restartHost: () => supervisor.restartNow(),
+      serve: file => updates.serveVerifiedFile(file),
+    }),
+    gate,
+    preferences: await updates.readUpdatePreferences(userData),
+    savePreferences: value => updates.writeUpdatePreferences(userData, value),
+    unsupported,
+    log,
+    onChange: broadcast,
+  })
+  const channels = updates.UPDATE_CHANNELS
+  const answer = handler => (event, input) => (isAppSender(event) ? handler(input) : undefined)
+  ipcMain.handle(
+    channels.get,
+    answer(() => updater.view()),
+  )
+  ipcMain.handle(
+    channels.check,
+    answer(() => updater.check()),
+  )
+  ipcMain.handle(
+    channels.download,
+    answer(() => updater.download()),
+  )
+  ipcMain.handle(
+    channels.install,
+    answer(when => updater.install(when === 'at-quit' ? 'at-quit' : 'now')),
+  )
+  ipcMain.handle(
+    channels.cancelWaiting,
+    answer(() => updater.cancelWaiting()),
+  )
+  ipcMain.handle(
+    channels.setAutoDownload,
+    answer(async enabled => {
+      if (typeof enabled !== 'boolean') return updater.view()
+      try {
+        return await updater.setAutoDownload(enabled)
+      } catch (error) {
+        log(`无法保存更新设置：${error instanceof Error ? error.message : '未知错误'}`)
+        return updater.view()
+      }
+    }),
+  )
+
+  const showUpdates = () => {
+    void updater.check()
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (!ready) return
+      openWindow()
+      mainWindow.webContents.once('did-finish-load', () => mainWindow?.webContents.send(channels.show))
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send(channels.show)
+  }
+  if (process.platform === 'darwin')
+    Menu.setApplicationMenu(Menu.buildFromTemplate(menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates })))
+
+  // The same gate for a quit the user starts: an install at quit waits for nothing that runs; a waiting install is given
+  // up. A quit macOS starts (logout, restart, shutdown) is never held; the update waits for the next time.
+  let quitHeld = false
+  app.on('before-quit', event => {
+    if (quitHeld || systemQuit.active() || !updater.holdsQuit({ system: false })) return
+    event.preventDefault()
+    quitHeld = true
+    void updater.quitting().then(
+      tookOver => {
+        if (!tookOver) app.quit()
+      },
+      () => app.quit(),
+    )
+  })
+  powerMonitor.on('resume', () => updater.resume())
+  app.on('will-quit', () => updater.stop())
+  updater.start()
 }
 
 /**
@@ -623,6 +756,7 @@ async function start() {
   if (store.current()) await proxy.renew()
   proxy.startRenewalTimer()
   const atLogin = await startLifecycle({ supervisor, hooks })
+  await startUpdates({ proxy, supervisor })
   ready = true
   // Opened at login, Latch keeps running in the background; the Dock icon opens the window.
   if (!atLogin) openWindow()

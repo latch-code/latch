@@ -37,6 +37,91 @@ function notificationState(value) {
   }
 }
 
+// `updates`: main's updater (updater.cjs). Only this checked view crosses: states, versions, counts, notes and codes,
+// never a URL or a path. 「检查更新…」 in the menu asks the page to show the update area; a request that arrives before
+// the page subscribes waits for the first subscriber.
+const UPDATE_STATES = new Set([
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'downloading',
+  'ready',
+  'waiting',
+  'installing',
+  'failed',
+  'unsupported',
+])
+const UPDATE_STAGES = new Set(['check', 'download', 'verify', 'install', 'gate'])
+const UPDATE_REASONS = new Set(['development', 'not-configured', 'unsigned', 'platform'])
+const UPDATE_CODE = /^[a-z0-9-]{1,40}$/
+const VERSION_TEXT = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/
+const count = value => Number.isSafeInteger(value) && value >= 0
+const shortText = (value, limit) => typeof value === 'string' && value.length <= limit
+const pluginList = value =>
+  Array.isArray(value) && value.length <= 64 && value.every(item => item && shortText(item.id, 64) && shortText(item.name, 80))
+    ? value.map(item => ({ id: item.id, name: item.name }))
+    : undefined
+function updateView(value) {
+  if (!value || typeof value !== 'object' || !UPDATE_STATES.has(value.state)) return undefined
+  if (!shortText(value.appVersion, 32) || typeof value.autoDownload !== 'boolean' || typeof value.installAtQuit !== 'boolean')
+    return undefined
+  const held = pluginList(value.heldPlugins)
+  if (!held) return undefined
+  const view = {
+    state: value.state,
+    appVersion: value.appVersion,
+    autoDownload: value.autoDownload,
+    installAtQuit: value.installAtQuit,
+    heldPlugins: held,
+  }
+  if (value.reason !== undefined) {
+    if (!UPDATE_REASONS.has(value.reason)) return undefined
+    view.reason = value.reason
+  }
+  if (value.checkedAt !== undefined) {
+    if (!shortText(value.checkedAt, 40)) return undefined
+    view.checkedAt = value.checkedAt
+  }
+  const release = value.release
+  if (release !== undefined) {
+    if (!release || !VERSION_TEXT.test(release.version) || !shortText(release.publishedAt, 40) || !count(release.size)) return undefined
+    if (!release.notes || !shortText(release.notes['zh-CN'], 4000) || !shortText(release.notes.en, 4000)) return undefined
+    if (release.plan !== 'app' && release.plan !== 'host') return undefined
+    const incompatible = pluginList(release.incompatiblePlugins)
+    if (!incompatible) return undefined
+    view.release = {
+      version: release.version,
+      publishedAt: release.publishedAt,
+      notes: { 'zh-CN': release.notes['zh-CN'], en: release.notes.en },
+      size: release.size,
+      plan: release.plan,
+      incompatiblePlugins: incompatible,
+    }
+  }
+  if (value.progress !== undefined) {
+    if (!value.progress || !count(value.progress.received) || !count(value.progress.total)) return undefined
+    view.progress = { received: value.progress.received, total: value.progress.total }
+  }
+  if (value.waiting !== undefined) {
+    const waiting = value.waiting
+    const keys = ['count', 'running', 'waiting', 'unknown', 'queued', 'terminals', 'services']
+    if (!waiting || !keys.every(key => count(waiting[key]))) return undefined
+    view.waiting = Object.fromEntries(keys.map(key => [key, waiting[key]]))
+  }
+  if (value.failure !== undefined) {
+    if (!value.failure || !UPDATE_STAGES.has(value.failure.stage) || !UPDATE_CODE.test(value.failure.code)) return undefined
+    view.failure = { stage: value.failure.stage, code: value.failure.code }
+  }
+  return view
+}
+const updateCall = (channel, input) => ipcRenderer.invoke(channel, input).then(updateView)
+let earlyShow = false
+const holdEarlyShow = () => {
+  earlyShow = true
+}
+ipcRenderer.on('latch:updates:show', holdEarlyShow)
+
 /** Absent is null; a given ID must match, otherwise undefined and the call is refused here. */
 function optionalId(value, pattern) {
   if (value === undefined || value === null) return null
@@ -242,6 +327,37 @@ contextBridge.exposeInMainWorld(
         earlySession = undefined
         if (early !== undefined) callback(early)
         return () => ipcRenderer.removeListener('latch:notifications:open', listener)
+      },
+    }),
+    // This app's own updates (Settings › 关于). Main owns the feed, the files and the install; the page gets the view.
+    updates: Object.freeze({
+      get: () => updateCall('latch:updates'),
+      check: () => updateCall('latch:updates:check'),
+      download: () => updateCall('latch:updates:download'),
+      /** 'now' (重启并安装) or 'at-quit' (下次退出时安装). */
+      install: when => updateCall('latch:updates:install', when === 'at-quit' ? 'at-quit' : 'now'),
+      cancelWaiting: () => updateCall('latch:updates:cancel-waiting'),
+      setAutoDownload: enabled => updateCall('latch:updates:auto-download', enabled === true),
+      onChange: callback => {
+        if (typeof callback !== 'function') return () => {}
+        const listener = (_event, value) => {
+          const view = updateView(value)
+          if (view) callback(view)
+        }
+        ipcRenderer.on('latch:updates:changed', listener)
+        return () => ipcRenderer.removeListener('latch:updates:changed', listener)
+      },
+      /** 「检查更新…」 was chosen in the menu: the page shows Settings › 关于. */
+      onShow: callback => {
+        if (typeof callback !== 'function') return () => {}
+        const listener = () => callback()
+        ipcRenderer.removeListener('latch:updates:show', holdEarlyShow)
+        ipcRenderer.on('latch:updates:show', listener)
+        if (earlyShow) {
+          earlyShow = false
+          callback()
+        }
+        return () => ipcRenderer.removeListener('latch:updates:show', listener)
       },
     }),
     files: Object.freeze({

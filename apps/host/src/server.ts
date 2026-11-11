@@ -1,4 +1,13 @@
 import { ConfigRequests } from './config-requests.ts'
+import {
+  HeldPlugins,
+  HOST_PROTOCOL,
+  PLUGIN_PACKAGE_FORMATS,
+  RequestRecords,
+  UPDATE_COMMIT_TTL_MS,
+  UpdateWindow,
+  updateWindowInputSchema,
+} from './update-window.ts'
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
@@ -1376,12 +1385,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const pluginAssets = await PluginAssets.open(dataDir, { audit })
     startupCleanup.push(() => pluginAssets.close())
     const assetPluginIds = new Set<string>()
+    // A version the desktop app installed may load other plugin formats: incompatible packages stay off, assets kept.
+    const heldPlugins = await HeldPlugins.open(pluginAssets.directory)
+    try {
+      const newlyHeld = await heldPlugins.settle(
+        pluginAssets
+          .list()
+          .flatMap(record => (record.appliedBundle ? [{ id: record.id, formatVersion: record.appliedBundle.manifest.formatVersion }] : [])),
+        { version: LATCH_VERSION, now: now() },
+      )
+      if (newlyHeld.length)
+        await audit
+          .append({ action: 'host.update.plugins-held', actor: { listener: 'host', via: 'startup' }, detail: { count: newlyHeld.length } })
+          .catch(error => log(`审计记录写入失败（host.update.plugins-held）：${errorText(error)}`))
+    } catch (error) {
+      log(`无法核对更新后停用的插件：${errorText(error)}`)
+    }
     for (const record of pluginAssets.list()) {
       if (!record.appliedBundle) continue
       try {
         registry.register(installedAssetPlugin(pluginAssets, record), { revision: record.appliedRevision })
         assetPluginIds.add(record.id)
-        if (record.enabled) await registry.enable(record.id)
+        if (record.enabled && !heldPlugins.isHeld(record.id)) await registry.enable(record.id)
       } catch {
         log(`自定义插件 ${record.id} 未加载，请检查本地声明与依赖。`)
       }
@@ -1670,12 +1695,58 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     startupCleanup.push(() => promptQueues.close())
     const configRequests = new ConfigRequests(harnessHub.receipts, now)
+    const updateWindow = new UpdateWindow(now)
+    let commitTimer: ReturnType<typeof setTimeout> | undefined
+    /** A window that ran out (unrenewed, or committed and not followed by a stop): starts and terminals open again, the plugin plan goes, on record. */
+    const expireCommit = async () => {
+      if (!updateWindow.lapsed()) return
+      updateWindow.close()
+      clearTimeout(commitTimer)
+      terminals.setHeld(false)
+      await heldPlugins.unplan().catch(error => log(`无法清除插件计划：${errorText(error)}`))
+      await audit
+        .append({ action: 'host.update-window', actor: { listener: 'host' }, detail: { state: 'left', reason: 'expired', busy: 0 } })
+        .catch(error => log(`审计记录写入失败（host.update-window）：${errorText(error)}`))
+    }
+    startupCleanup.push(() => clearTimeout(commitTimer))
+    /** Session starts and turns by device and request ID: in flight, their outcome is not known yet; accepted, a retry gets its answer. */
+    const startRequests = new RequestRecords()
+    const turnRequests = new RequestRecords()
+    /**
+     * Runs a start or a turn as in flight until it has really finished, whether or not a client still waits for it:
+     * accepted when it succeeds (its route then answers 2xx), forgotten when it fails, so its retry counts as new.
+     */
+    async function tracked<T>(records: RequestRecords, key: string, operation: () => Promise<T>): Promise<T> {
+      records.begin(key)
+      try {
+        const result = await operation()
+        records.settle(key, true)
+        return result
+      } catch (error) {
+        records.settle(key, false)
+        throw error
+      }
+    }
+    /** Git delivery writes running now: they run the user's own git, so the install waits for them. */
+    const deliveries = { running: 0 }
+    /** While the desktop app installs an update that changes the Host, nothing new starts; what runs settles. */
+    const refuseWhileUpdating = (what: 'session' | 'turn') => {
+      if (updateWindow.isOpen())
+        throw new AppError(
+          409,
+          'host-updating',
+          what === 'session'
+            ? '这台电脑正在安装更新，暂时不能开始新会话。安装完成后再试。'
+            : '这台电脑正在安装更新，暂时不能开始新一轮。安装完成后再试。',
+        )
+    }
     startupCleanup.push(() => configRequests.close())
     let shutdown: Promise<void> | undefined
     let listeners: ListenerSet | undefined
     let loopbackOrigin = ''
     let tlsOrigin: string | undefined
     const routeContext: RouteContext = {
+      updateGate: { committed: () => updateWindow.isCommitted, deliveries },
       hostId,
       hostId8,
       dataDir,
@@ -1935,6 +2006,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         authorize()
         return projectQueue(projectId ?? 'default', async () => {
           authorize()
+          refuseWhileUpdating('session')
           const chosen = projectId ? savedProject(projectId) : undefined
           if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
           if (chosen) await assertWorkspaceUsable(chosen)
@@ -3020,6 +3092,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       assets: pluginAssets,
       registry,
       installedIds: assetPluginIds,
+      held: heldPlugins,
       authorize(caller) {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -4303,6 +4376,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           presence: await presenceStatus(),
           activeSessions: running + waiting,
           activity: { running, waiting },
+          protocol: HOST_PROTOCOL,
         }
         json(res, info)
         return true
@@ -4427,6 +4501,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * private as its source. `res` only marks a missing post-start audit record.
      */
     async function startSession(
+      caller: DeviceCaller,
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string },
+      res: ServerResponse,
+    ): Promise<{ sessionId: string }> {
+      // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
+      // are refused (a handoff's start is keyed by its own start request ID). A start that failed is forgotten.
+      const startKey = `${caller.device.id}:${start.requestId}`
+      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res)
+      refuseWhileUpdating('session')
+      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res))
+    }
+
+    async function startSessionChecked(
       caller: DeviceCaller,
       start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string },
       res: ServerResponse,
@@ -4808,6 +4895,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
     ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+      // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
+      // queued or steered one on a session that is not running (it would start a turn at once), are refused.
+      const turnKey = `${id}:${caller.device.id}:${input.requestId}`
+      if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
+        return sendPromptChecked(caller, id, input)
+      if (updateWindow.isOpen()) {
+        if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
+        const status = (await hub!.summary(id)).status
+        if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
+      }
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input))
+    }
+
+    async function sendPromptChecked(
+      caller: DeviceCaller,
+      id: string,
+      input: z.infer<typeof queuedPromptSchema>,
+    ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
       await assertSessionWorkspace(id)
@@ -5018,6 +5123,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return true
       }
       if (method === 'POST' && match[3]) {
+        // 立即发送 starts a turn: not inside the install window, while the item is still waiting to be sent.
+        if (updateWindow.isOpen() && promptQueues.view(sessionId).some(item => item.id === itemId)) refuseWhileUpdating('turn')
         await promptQueues.send(sessionId, itemId, authorize)
         json(res, { accepted: true })
         return true
@@ -5764,6 +5871,100 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { deleted: true })
         return true
       }
+      if (path === '/link/api/host/update-window' || path === '/link/api/host/update-window/commit') {
+        // Only the desktop app on this Mac, over host.sock: its main process asks and holds the window, never its page
+        // (the shell's proxy refuses this path for the renderer) and never another device.
+        requireScope(caller, 'run')
+        requireDesktop(caller)
+        const busy = async () => {
+          const tasks = await hub!.listTasks()
+          return {
+            running: tasks.filter(task => task.status === 'running').length,
+            waiting: tasks.filter(task => task.status === 'waiting-approval').length,
+            unknown: configRequests.pending() + startRequests.inFlight() + turnRequests.inFlight() + deliveries.running,
+            queued: promptQueues.pending(),
+            ...terminals.activity(),
+          }
+        }
+        const blocking = (counts: Awaited<ReturnType<typeof busy>>) =>
+          counts.running + counts.waiting + counts.unknown + counts.queued + counts.terminals
+        // A window the desktop app stopped renewing (or a commit it did not follow up) ends here, plugin plan and all.
+        await expireCommit()
+        if (path.endsWith('/commit')) {
+          if (method !== 'POST') throw new AppError(405, 'method-not-allowed', '不支持此操作')
+          if (!updateWindow.isOpen()) throw new AppError(409, 'update-window-closed', '安装窗口已关闭，请重新开始安装。')
+          // One step: nothing busy now, and from here on nothing new starts until this Host exits.
+          const counts = await busy()
+          if (blocking(counts) > 0) throw new AppError(409, 'host-busy', '还有会话或终端在工作，暂不能安装。')
+          updateWindow.assertHolder(caller.device.id)
+          updateWindow.commit()
+          terminals.setHeld(true)
+          // A desktop app that quit or crashed before stopping this Host does not keep starts shut: after the commit's
+          // two minutes the window ends, starts and terminals are open again, and the plugin plan is dropped.
+          clearTimeout(commitTimer)
+          commitTimer = setTimeout(() => void expireCommit(), UPDATE_COMMIT_TTL_MS + 50)
+          commitTimer.unref()
+          await audited({ action: 'host.update-window', actor: actorOf(caller), detail: { state: 'committed', busy: 0 } }, res)
+          json(res, { committed: true })
+          return true
+        }
+        if (method !== 'GET' && method !== 'POST') throw new AppError(405, 'method-not-allowed', '不支持此操作')
+        if (method === 'POST') {
+          const input = updateWindowInputSchema.parse(await jsonBody(req))
+          const total = blocking(await busy())
+          if (input.open) {
+            if (input.pluginFormats && !input.version) throw new AppError(400, 'invalid-input', '插件计划需要目标版本。')
+            // Refusing starts takes nothing from anyone; an audit failure does not hold it up.
+            const step = updateWindow.open(caller.device.id)
+            if (input.pluginFormats && input.version)
+              await heldPlugins.plan(input.pluginFormats, input.version, updateWindow.endsAt ?? now())
+            if (step === 'entered')
+              await audited(
+                {
+                  action: 'host.update-window',
+                  actor: actorOf(caller),
+                  detail: { state: 'entered', busy: total, ...(input.pluginFormats ? { planned: true } : {}) },
+                },
+                res,
+              )
+          } else {
+            updateWindow.assertHolder(caller.device.id)
+            const was = updateWindow.close()
+            clearTimeout(commitTimer)
+            terminals.setHeld(false)
+            if (input.reason !== 'installing') await heldPlugins.unplan()
+            if (was)
+              await audited(
+                { action: 'host.update-window', actor: actorOf(caller), detail: { state: 'left', reason: input.reason, busy: total } },
+                res,
+              )
+          }
+        }
+        json(res, {
+          window: updateWindow.view(),
+          version: LATCH_VERSION,
+          protocol: HOST_PROTOCOL,
+          pluginFormats: PLUGIN_PACKAGE_FORMATS,
+          busy: await busy(),
+          plugins: pluginAssets.list().flatMap(record =>
+            record.appliedBundle
+              ? [
+                  {
+                    id: record.id,
+                    name: record.appliedBundle.manifest.name,
+                    formatVersion: record.appliedBundle.manifest.formatVersion,
+                    enabled: record.enabled,
+                  },
+                ]
+              : [],
+          ),
+          held: heldPlugins.list().flatMap(id => {
+            const record = pluginAssets.list().find(item => item.id === id)
+            return record ? [{ id, name: record.appliedBundle?.manifest.name ?? record.bundle.manifest.name }] : []
+          }),
+        })
+        return true
+      }
       if (path === '/link/api/folder-grants' && method === 'POST') {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -6005,6 +6206,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       if (path === '/link/api/tasks' && method === 'POST') {
+        requireScope(caller, 'run')
         await createTask(req, res, caller)
         return
       }

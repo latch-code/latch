@@ -1450,6 +1450,19 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
+/* 关于's update area: its groups and notices stand in the page's own column. */
+.about-updates {
+  display: contents;
+}
+/* 关于's release notes: the feed's plain text with its line breaks, in the card's padding. */
+.about-notes {
+  padding: var(--sp-12) 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* The 添加模型服务 sheet: the brand grid ending in 自定义地址…, then the chosen service's fields and what they found,
    with no box around either. */

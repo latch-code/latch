@@ -422,6 +422,7 @@ describe('listeners and request context', () => {
       presence: { status: 'available' },
       activeSessions: 0,
       activity: { running: 0, waiting: 0 },
+      protocol: 1,
     })
     for (const path of ['api/login', 'api/pair']) {
       const removed = await t.raw('loopback-tcp', path, { method: 'POST', body: { token: 'x' } })

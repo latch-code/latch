@@ -58,6 +58,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'presence.launch-trusted': { keyHash: hex },
   'host.started': { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hex, settingsHash: hex, devMode: true },
   'audit.torn-tail-removed': { bytes: 12 },
+  'host.update-window': { state: 'left', reason: 'cancelled', busy: 2 },
+  'host.update.plugins-held': { count: 1 },
   'policy.created': { before: '', after: hex, fields: ['local.maxLevel'], lowering: false },
   'policy.changed': { before: hex, after: hex, fields: [], lowering: true },
   'policy.changed-outside': { expected: hex, actual: hex },

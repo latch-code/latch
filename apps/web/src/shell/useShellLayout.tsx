@@ -468,6 +468,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
   }, [searchShortcut])
 
+  // 「检查更新…」 in the desktop app's menu: Settings › 关于 shows the update area (main has started the check).
+  const showAbout = useRef(openSettings)
+  showAbout.current = openSettings
+  useEffect(() => currentShell()?.updates?.onShow?.(() => showAbout.current('about')), [])
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
   const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)

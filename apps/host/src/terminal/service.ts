@@ -190,6 +190,8 @@ export class TerminalService {
   private readonly ending = new Set<Terminal>()
   private extracts = { start: 0, count: 0 }
   private stopping = false
+  /** The Host is about to stop for an update (its install window is committed): nothing new reaches a shell. */
+  private held = false
   private readonly now: () => number
 
   private constructor(
@@ -213,6 +215,24 @@ export class TerminalService {
     return this.unavailable === undefined
   }
 
+  /** While held, new terminals and typed input are refused, as new session starts are. */
+  setHeld(held: boolean): void {
+    this.held = held
+  }
+
+  private refuseWhileHeld(): void {
+    if (this.held) throw new AppError(409, 'host-updating', '这台电脑正在安装更新，终端暂不接受输入。安装完成后再试。')
+  }
+
+  /** For the install gate: terminals running a command (a stop would end it) and the local services they announced. */
+  activity(): { terminals: number; services: number } {
+    const running = [...this.terminals.values()].filter(terminal => terminal.status === 'running')
+    return {
+      terminals: running.filter(terminal => terminal.busy).length,
+      services: running.reduce((sum, terminal) => sum + terminal.services.length, 0),
+    }
+  }
+
   list(sessionId: string, requester: TerminalRequester): TerminalSummary[] {
     this.admit(requester)
     return [...this.terminals.values()]
@@ -222,6 +242,7 @@ export class TerminalService {
 
   /** `authorize` runs once the open has been audited, right before the shell starts, and refuses by throwing an AppError. */
   async create(sessionId: string, requester: TerminalRequester, size: TerminalSize, authorize?: () => void): Promise<TerminalSummary> {
+    this.refuseWhileHeld()
     this.admit(requester)
     if (this.unavailable === 'platform') throw new AppError(501, 'terminal-unsupported', '终端尚未实现：目前只支持 macOS')
     const launch = this.launch
@@ -288,6 +309,7 @@ export class TerminalService {
   }
 
   input(ref: TerminalRef, requester: TerminalRequester, data: Uint8Array): void {
+    this.refuseWhileHeld()
     this.admit(requester)
     const terminal = this.find(ref)
     if (terminal.status !== 'running' || !terminal.process) throw new AppError(409, 'terminal-ended', '终端已结束')

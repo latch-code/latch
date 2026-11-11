@@ -42,6 +42,8 @@ interface Options<Caller> {
   mount(id: string): Promise<void>
   changed(): void
   unavailableReason?(id: string): string | undefined
+  /** Plugin packages a new version held off on its first start (update-window.ts); turning one on or removing it releases it. */
+  held?: { isHeld(id: string): boolean; release(id: string): Promise<void> }
 }
 
 /** Constructing the object is inert. Only activate imports the approved immutable source; disposal removes that generation. */
@@ -72,8 +74,9 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
   }
   function summary(record: PluginAssetDescriptor): PluginPackageSummary {
     const info = installedIds.has(record.id) ? registry.list().find(plugin => plugin.id === record.id) : undefined
-    const unavailableReason =
-      record.enabled && info?.enabled !== true
+    const unavailableReason = options.held?.isHeld(record.id)
+      ? '这个插件与更新后的 Latch 不兼容，已停用；资产仍保留，更新插件后可重新启用。'
+      : record.enabled && info?.enabled !== true
         ? '插件尚未成功启用，请检查声明、标识和本地依赖。'
         : installedIds.has(record.id)
           ? options.unavailableReason?.(record.id)
@@ -256,6 +259,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
               }),
             ),
           )
+          await options.held?.release(id).catch(() => undefined)
           return true
         }
         if (method === 'DELETE' && action === undefined) {
@@ -272,6 +276,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
               }),
             ),
           )
+          await options.held?.release(id).catch(() => undefined)
           return true
         }
         throw new AppError(404, 'not-found', '接口不存在。')

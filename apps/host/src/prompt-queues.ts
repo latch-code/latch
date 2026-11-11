@@ -120,6 +120,20 @@ export class PromptQueues {
     return queue
   }
 
+  /** Whether this device's request is already on record for the session (queued, sent or otherwise answered). */
+  knows(sessionId: string, deviceId: string, requestId: string): boolean {
+    for (const item of this.entries.values())
+      if (item.sessionId === sessionId && item.deviceId === deviceId && item.requestId === requestId) return true
+    return false
+  }
+
+  /** Items that will still be sent by themselves or are being sent now. */
+  pending(): number {
+    let count = 0
+    for (const item of this.entries.values()) if (item.state === 'waiting' || item.state === 'sending') count++
+    return count
+  }
+
   view(sessionId: string): PromptQueueItem[] {
     return this.items(sessionId).map(item => ({
       id: item.id,

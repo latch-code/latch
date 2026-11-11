@@ -30,6 +30,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'TERMINAL',
     'TESTING',
     'TRANSPORT-PLUGINS',
+    'UPDATES',
     'WORKSPACE-RECOVERY',
   ].map(name => `docs/${name}.md`),
 )

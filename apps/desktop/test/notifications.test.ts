@@ -302,7 +302,8 @@ describe('Host-authorized notifications', () => {
     expect(clicked.mock.calls).toEqual([['early'], ['a']])
     unsubscribe()
     unclick()
-    expect(listeners.size).toBe(0)
+    // Only the updates' early holder for 「检查更新…」 is left, until the page subscribes to it.
+    expect([...listeners.keys()]).toEqual(['latch:updates:show'])
     invoke.mockResolvedValueOnce({ ...state, consent: 'invalid' })
     expect(await shell!.notifications.get()).toBeUndefined()
   })

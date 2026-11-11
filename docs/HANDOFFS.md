@@ -58,6 +58,8 @@ Host 依次检查，任何一项不通过都不留记录、不写审计：
 
 第一条消息与它的文件引用只在开始有定论之前保存在记录里，所以重试发出的总是同一条。Host 重启时仍是 `starting` 的交接改为 `start-unknown`；开始的结果写入失败时 Host 记日志，交接留在 `starting`，下一次读取或重试按上面的查询定论。`start-failed` 不自动重试：用新的 `requestId` 新建一条，或撤回这一条。
 
+桌面端安装更新的安装窗口里，新的开始被拒绝为 409 `host-updating`，按上面的规则第一次记为 `start-failed`、重试仍是 `start-unknown`；Host 已记录的开始请求 ID 的重试照常得到原来的回答（[UPDATES.md](./UPDATES.md#安装门禁与-host-安装窗口)）。
+
 `withdraw` 按状态做三件事：`start-failed` 改为 `withdrawn`；`started` 改为 `closed`；`start-unknown` 先查询，找到会话就关联它并回答 409 `handoff-start-found`（带 `targetSessionId`，要结束就再关闭一次），找不到就改为 `withdrawn`，并把它的开始请求 ID 记为作废：之后出现带这个 ID 的会话也不会被关联，同一 `requestId` 的重试不再开始。已撤回或已关闭的再撤回原样回答；正在开始时（包括同一请求的重试正在开始，在写入时核对）409 `handoff-starting`，已交回时 409 `handoff-returned`。撤回写审计（含原来的状态），审计失败也照常撤回，响应带 `x-latch-audit: failed`。
 
 ## 交回

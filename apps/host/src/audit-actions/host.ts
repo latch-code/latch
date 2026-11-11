@@ -50,6 +50,15 @@ export const HOST_ACTIONS = {
     devMode: z.boolean(),
   }),
   'audit.torn-tail-removed': z.strictObject({ bytes: count }),
+  /** The desktop app's install window (docs/UPDATES.md): new starts refused while it is open. */
+  'host.update-window': z.strictObject({
+    state: z.enum(['entered', 'committed', 'left']),
+    reason: z.enum(['cancelled', 'installing', 'failed', 'expired']).optional(),
+    busy: count,
+    planned: z.boolean().optional(),
+  }),
+  /** Plugin packages a new version held off on its first start because their format is not one it loads. */
+  'host.update.plugins-held': z.strictObject({ count }),
   'policy.created': policyChange,
   'policy.changed': policyChange,
   'policy.changed-outside': z.strictObject({ expected: hex64, actual: hex64 }),
