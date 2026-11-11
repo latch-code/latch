@@ -680,7 +680,7 @@ describe('a Gemini CLI reply that broke off and was generated again', () => {
         const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await draft.fill('retry 1500')
         await draft.press('Meta+Enter')
-        const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
+        const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
         if (
           await elsewhere.waitFor({ timeout: 3_000 }).then(
             () => true,

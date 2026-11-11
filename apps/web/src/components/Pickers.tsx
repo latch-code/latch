@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { Folder, FolderOpen, Plus, Sparkles } from 'lucide-react'
-import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
+import { useEffect, useState } from 'react'
+import { Folder, FolderPlus, Plus, Sparkles } from 'lucide-react'
+import type { AppSnapshot, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
+import { api } from '../core/api.ts'
 import { findProvider, noProjectLine, pinnedChoice, startableWorkspaces } from '../composerChoice.ts'
 import {
   fuzzyModelMatch,
@@ -15,13 +16,12 @@ import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
 import type { MenuSection } from './overlays.tsx'
-import { CODE_ROOT_COPY, SETUP_COPY } from '../core/securityCopy.ts'
+import { CODE_ROOT_COPY, computerName, SETUP_COPY } from '../core/securityCopy.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
 import {
   Badge,
   ChoiceList,
   DemoMark,
-  Icon,
   MenuFooterLink,
   MenuFooterNote,
   SegmentedControl,
@@ -34,6 +34,30 @@ import {
 const modelOf = (key: string): ModelRef => {
   const [providerId = '', model = ''] = key.split('\u0000')
   return { providerId, model }
+}
+
+/**
+ * The Host computer's name for a line that sends this device there (`computerName`), read from the snapshot only while
+ * such a line shows; 「Mac」 until it arrives or when it cannot be read.
+ */
+export function useComputerName(needed: boolean): string {
+  const [hostName, setHostName] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!needed || hostName !== undefined) return undefined
+    let active = true
+    api<AppSnapshot>('snapshot').then(
+      current => {
+        if (active) setHostName(current.hostName)
+      },
+      () => {
+        // The line still reads 「Mac」.
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [needed, hostName])
+  return computerName(hostName)
 }
 
 /** The models of every service, grouped under the service's tile and name; the demo model carries its mark. */
@@ -105,9 +129,11 @@ export function ModelPicker({
 }) {
   const [adding, setAdding] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
+  const [open, setOpen] = useState(false)
   const modelPreferences = useModelPreferences()
   const groups = modelGroups(catalog, modelPreferences, value, showHidden, access)
   const count = groups.reduce((sum, group) => sum + group.options.length, 0)
+  const computer = useComputerName(open && !access.admin && count === 0)
   const provider = value ? findProvider(catalog, value.providerId) : undefined
   return (
     <ValuePicker
@@ -122,8 +148,9 @@ export function ModelPicker({
       leading={provider ? <ProviderTile provider={provider} size={16} /> : Sparkles}
       className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker`}
       disabled={disabled}
-      onOpenChange={open => {
-        if (!open) setAdding(false)
+      onOpenChange={next => {
+        setOpen(next)
+        if (!next) setAdding(false)
       }}
       onValueChange={key => {
         rememberModel(key)
@@ -146,7 +173,7 @@ export function ModelPicker({
               添加模型服务…
             </MenuFooterLink>
           ) : (
-            count === 0 && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere()}</MenuFooterNote>
+            count === 0 && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere(computer)}</MenuFooterNote>
           )}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
@@ -209,13 +236,11 @@ export function ModelAddPanel({
 }
 
 const NO_PROJECT = '不选项目'
-/** Not a value: the row that opens the system's folder panel. */
-const OPEN_FOLDER = '~open-folder'
 
 /**
- * The project of a new session: the saved projects with their paths (the default one marked), 打开文件夹…, and going
- * without. In the desktop app 打开文件夹… opens the system's folder panel and the folder becomes a project at once;
- * elsewhere a note says where projects are created. 管理项目… goes to settings.
+ * The project of a new session: the saved projects with their paths (the default one marked) and going without, then
+ * 添加项目… and 管理项目…. In the desktop app 添加项目… opens the system's folder panel and the folder becomes a project at
+ * once; elsewhere a note names the computer where projects are added. 管理项目… goes to settings.
  */
 export function ProjectPicker({
   catalog,
@@ -252,6 +277,8 @@ export function ProjectPicker({
 }) {
   const workspaces = catalog.workspaces
   const start = workspaces.find(workspace => workspace.id === 'default')
+  const [open, setOpen] = useState(false)
+  const computer = useComputerName(open && !onCreate)
   const option = (workspace: (typeof workspaces)[number], label: string) => ({
     value: workspace.id,
     label,
@@ -282,9 +309,6 @@ export function ProjectPicker({
         .filter(workspace => workspace.id !== 'default')
         .map(workspace => option(workspace, workspace.name || basename(workspace.path))),
     },
-    ...(onCreate
-      ? [{ id: 'open', options: [{ value: OPEN_FOLDER, label: '打开文件夹…', media: <Icon icon={FolderOpen} size={16} /> }] }]
-      : []),
     ...(start
       ? [
           {
@@ -308,8 +332,9 @@ export function ProjectPicker({
       className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
       menuChevron={variant !== 'row'}
       openRequest={openRequest}
-      onOpenChange={open => {
-        if (!open) onClosed?.()
+      onOpenChange={next => {
+        setOpen(next)
+        if (!next) onClosed?.()
       }}
       leading={
         inline
@@ -324,14 +349,17 @@ export function ProjectPicker({
       value={value}
       groups={groups}
       disabled={disabled}
-      onValueChange={id => {
-        if (id === OPEN_FOLDER) onCreate?.()
-        else onChange(id)
-      }}
+      onValueChange={onChange}
       footer={
         <>
           {notice && <MenuFooterNote>{notice}</MenuFooterNote>}
-          {!onCreate && <MenuFooterNote>{SETUP_COPY.addProjectElsewhere()}</MenuFooterNote>}
+          {onCreate ? (
+            <MenuFooterLink icon={FolderPlus} chevron={false} closes onClick={onCreate}>
+              添加项目…
+            </MenuFooterLink>
+          ) : (
+            <MenuFooterNote>{SETUP_COPY.addProjectElsewhere(computer)}</MenuFooterNote>
+          )}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
               管理项目…

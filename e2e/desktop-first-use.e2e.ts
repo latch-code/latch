@@ -250,6 +250,24 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         await page.getByRole('button', { name: /^Harness：Codex/ }).waitFor()
         expect(await page.locator('.setup-card').count()).toBe(0)
+        // The first open lists what was found, with the file the Host found; the rest fold under one line.
+        const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
+        await found.getByText(/^在这台 Mac 上找到 1 个 Harness$/u).waitFor()
+        const codexRow = found.locator('.harness-found-row').filter({ hasText: 'Codex' })
+        await codexRow.getByText('已找到', { exact: true }).waitFor()
+        // A long path is shortened in the middle; the whole of it is the row's tooltip.
+        expect(await codexRow.locator('.harness-found-path').getAttribute('title')).toBe(adapter)
+        const fold = found.getByRole('button', { name: /^还可以装 8 个$/u })
+        expect(await fold.getAttribute('aria-expanded')).toBe('false')
+        await fold.click()
+        await found.getByRole('button', { name: '怎么装 pi', exact: true }).click()
+        await found.getByText('npm i -g @earendil-works/pi-coding-agent', { exact: true }).waitFor()
+        await found.getByRole('button', { name: '复制 pi 的安装命令', exact: true }).waitFor()
+        // Claude Agent is named, never given a login here: the card only says how to install.
+        await found.locator('.harness-found-row').filter({ hasText: 'Claude Agent' }).waitFor()
+        await noHorizontalOverflow(page)
+        await mkdir('test-results/desktop-first-use', { recursive: true })
+        await page.screenshot({ path: 'test-results/desktop-first-use/found-1440.png', animations: 'disabled' })
         const owner = await host.enroll({ listener: 'unix' })
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
 
@@ -257,7 +275,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('修一下测试')
         await input.press('Meta+Enter')
-        const open = page.getByRole('menuitemradio', { name: '打开文件夹…' }).or(page.getByRole('option', { name: '打开文件夹…' }))
+        const open = page.getByRole('menuitem', { name: '添加项目…', exact: true })
         await open.waitFor()
         expect(await input.inputValue()).toBe('修一下测试')
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
@@ -285,6 +303,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await expect.poll(async () => (await owner.json<{ agents: AgentSettings[] }>('agents')).agents.length).toBe(1)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
+        expect(await found.count()).toBe(0)
         // The first start of this launch in this project says what the Harness can do, and it stays.
         const startNote = page.locator('.session-start-note')
         await startNote
@@ -304,7 +323,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // 不选项目 works too: a new empty folder, nothing refused.
         await startNew(page, 1440)
         await page.locator('.new-session-title button').first().click()
-        await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
+        await page.getByText('Codex 在一个新的空文件夹里开始', { exact: true }).click()
         await input.fill('随便试试')
         await input.press('Meta+Enter')
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
@@ -333,6 +352,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await add.click()
         await page.locator('.new-session-title').getByText('second', { exact: true }).first().waitFor()
         await page.locator('#session-navigation').getByText('second', { exact: true }).waitFor()
+
+        // A new session in the project lists that project's latest sessions under the input, and only those.
+        await page.locator('.new-session-title button').first().click()
+        await page
+          .getByRole('menuitemradio', { name: /^rust-learn/u })
+          .or(page.getByRole('option', { name: /^rust-learn/u }))
+          .click()
+        const recent = page.getByRole('region', { name: '这个项目最近的会话', exact: true })
+        await expect.poll(() => recent.getByRole('button').count()).toBe(2)
+        expect(await recent.getByText('随便试试').count()).toBe(0)
+        await recent.getByRole('button').first().click()
+        await page.locator('.transcript').getByText('echo: 再来一个', { exact: true }).waitFor()
       } finally {
         await application?.close()
         await host.close()

@@ -9,7 +9,7 @@ describe('no project means chat', () => {
     [390, 'light'],
     [1440, 'dark'],
   ] as const)('%s %s: the built-in Harness with no project touches no files, and a project gives them back', async (width, theme) => {
-    const host = await startTestHost({ sessionFolders: true })
+    const host = await startTestHost({ sessionFolders: true, hostName: 'studio-mini' })
     const browser = await chromium.launch(browserLaunchOptions())
     const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' })
     try {
@@ -28,7 +28,11 @@ describe('no project means chat', () => {
         .filter({ visible: true })
         .first()
         .click()
-      await page.getByText('不读写文件，不运行命令', { exact: true }).filter({ visible: true }).first().waitFor()
+      // One kind of sentence for every Harness: who works, and how.
+      await page.getByText('Latch 内置 只回复文字，不读写文件', { exact: true }).filter({ visible: true }).first().waitFor()
+      // A browser is another device: projects are added on the computer, which the menu names.
+      await page.getByText('在 studio-mini 上的 Latch 里添加项目', { exact: true }).filter({ visible: true }).first().waitFor()
+      expect(await page.getByRole('menuitem', { name: '添加项目…' }).count()).toBe(0)
       await page.getByText('不选项目', { exact: true }).filter({ visible: true }).last().click()
       expect(await input.inputValue()).toBe('解释一下什么是 SSE')
       await page.getByText('不读写文件', { exact: true }).filter({ visible: true }).first().waitFor()

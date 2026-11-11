@@ -85,7 +85,7 @@ describe('logging in to a Harness from a browser', () => {
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('echo 第一轮')
     await input.press('Meta+Enter')
-    await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
+    await page.getByText(/ 在一个新的空文件夹里开始$/u).click()
     await input.press('Meta+Enter')
     await refusal(page).waitFor()
     const end = page.locator('.run-end')

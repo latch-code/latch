@@ -103,7 +103,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await input(page).fill(text)
     await input(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
-    const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
+    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
     if (
       await elsewhere.waitFor({ timeout: 3_000 }).then(
         () => true,
@@ -267,7 +267,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await input(page).fill('第三轮')
     await input(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
-    const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
+    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
     if (
       await elsewhere.waitFor({ timeout: 3_000 }).then(
         () => true,

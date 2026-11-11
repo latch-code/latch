@@ -316,9 +316,16 @@ function startMode(catalog: HostCatalog, harness: HarnessInfo | undefined, works
   return modes.includes('agent') ? 'agent' : modes[0]!
 }
 
-/** What 不选项目 will do for this Harness, where the Host has no folder set. */
-export const noProjectLine = (harness: Pick<HarnessInfo, 'modes'> | undefined): string =>
-  harness?.modes.includes('chat') ? '不读写文件，不运行命令' : '在一个新的空文件夹里开始'
+/**
+ * What 不选项目 will do for this Harness, where the Host has no folder set: one kind of sentence for both kinds, the
+ * Harness and what it does.
+ */
+export function noProjectLine(harness: Pick<HarnessInfo, 'modes' | 'capabilities'> | undefined): string {
+  if (!harness) return '在一个新的空文件夹里开始'
+  return harness.modes.includes('chat')
+    ? `${harnessName(harness)} 只回复文字，不读写文件`
+    : `${harnessName(harness)} 在一个新的空文件夹里开始`
+}
 
 /**
  * A remembered or partial choice, repaired against what the Host offers now: a
@@ -394,6 +401,20 @@ export function nothingInstalled(
   if (block?.kind !== 'model-required' || block.action !== undefined || !catalog || access.legacy || !access.local || !access.admin)
     return false
   return !engineEntries(catalog).some(entry => entry.harness.capabilities.tools.shell)
+}
+
+/**
+ * The first open on this Mac (J9): nothing records one, so it is this Mac's app with no session yet, where something
+ * that runs commands was found. The page then lists what was found before the input. With nothing found the install
+ * card (`nothingInstalled`) speaks instead; the two never show together.
+ */
+export function listsFoundHarnesses(
+  catalog: HostCatalog | undefined,
+  sessions: number,
+  access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>,
+): boolean {
+  if (!catalog || sessions > 0 || access.legacy || !access.local || !access.admin) return false
+  return engineEntries(catalog).some(entry => entry.harness.capabilities.tools.shell)
 }
 
 /**

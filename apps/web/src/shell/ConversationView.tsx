@@ -1,10 +1,11 @@
 import { ShieldAlert } from 'lucide-react'
 import { api, errorMessage } from '../core/api.ts'
-import { projectFor } from '../composerChoice.ts'
+import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
-import { NewSession } from '../newSession/NewSession.tsx'
+import { FoundHarnessesCard, NewSession, RecentSessions } from '../newSession/NewSession.tsx'
+import { recentProjectSessions } from '../sessions.ts'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
@@ -60,6 +61,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     topHarness,
     demo,
     selectedId,
+    refresh,
   } = shell
   const forkChoice = () => ({
     harnessId: current?.summary.harnessId,
@@ -107,6 +109,20 @@ export function ConversationView({ shell }: { shell: ShellState }) {
             </>
           }
           setup={<SetupNotices shell={shell} />}
+          found={listsFoundHarnesses(catalog, snapshot.tasks.length, access) ? <FoundHarnessesCard onRecheck={refresh} /> : undefined}
+          recent={
+            catalog && choice.workspaceId && choice.workspaceId !== 'default' && !submission.fork ? (
+              <RecentSessions
+                snapshot={snapshot}
+                sessions={recentProjectSessions(
+                  choice.workspaceId,
+                  snapshot.tasks.filter(task => !task.archived),
+                  catalog.workspaces,
+                )}
+                onOpen={choose}
+              />
+            ) : undefined
+          }
         />
       ) : (
         <div className="conversation">

@@ -16,6 +16,7 @@ import { workspaceSections } from '../src/components/Pickers.tsx'
 import { workspaceOptions } from '../src/components/pickerOptions.tsx'
 import {
   engineEntries,
+  listsFoundHarnesses,
   noProjectLine,
   needsProject,
   worktreeProject,
@@ -35,7 +36,10 @@ import {
   type DraftPick,
 } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
+import { presetsFound } from '../src/core/agentDetection.ts'
 import { GeneralSettings } from '../src/settings/GeneralSettings.tsx'
+
+const at = (id: string) => AGENT_PRESETS.find(preset => preset.id === id)!
 
 function catalog(overrides: Partial<HostCatalog> = {}): HostCatalog {
   return {
@@ -132,9 +136,10 @@ describe('composer choice', () => {
     expect(forkedChoice(hostChosen, null, { ...borrowed, harnessId: 'codex', mode: 'chat' }).choice).toMatchObject({ mode: 'agent' })
   })
 
-  it('says what 不选项目 does for this Harness', () => {
-    expect(noProjectLine({ modes: ['chat', 'agent'] })).toBe('不读写文件，不运行命令')
-    expect(noProjectLine({ modes: ['agent'] })).toBe('在一个新的空文件夹里开始')
+  it('says what 不选项目 does for this Harness, in one kind of sentence for both kinds', () => {
+    const [builtin, codex] = catalog().harnesses
+    expect(noProjectLine({ ...builtin!, modes: ['chat', 'agent'] })).toBe('Latch 内置 只回复文字，不读写文件')
+    expect(noProjectLine({ ...codex!, modes: ['agent'] })).toBe('Codex 在一个新的空文件夹里开始')
   })
 
   it('never asks: the last engine of this device, otherwise the first it can start with the built-in one last', () => {
@@ -188,6 +193,46 @@ describe('composer choice', () => {
     expect(resolveChoice(both, null).workspaceId).toBe('rust')
     expect(resolveChoice(both, { workspaceId: 'default', projectSkipped: true }).workspaceId).toBe('default')
     expect(resolveChoice(catalog({ workspaces: [start, saved] }), null).workspaceId).toBe('default')
+  })
+
+  it('lists what was found on a first open of this Mac only, and never beside the install card', () => {
+    const owner = { legacy: false, local: true, admin: true }
+    const found = catalog()
+    expect(listsFoundHarnesses(found, 0, owner)).toBe(true)
+    // A first open is a Host with no session yet: nothing else records one.
+    expect(listsFoundHarnesses(found, 1, owner)).toBe(false)
+    // Another device, or one that cannot manage the Host, is not this Mac's app.
+    expect(listsFoundHarnesses(found, 0, { ...owner, local: false })).toBe(false)
+    expect(listsFoundHarnesses(found, 0, { ...owner, admin: false })).toBe(false)
+    expect(listsFoundHarnesses(found, 0, { ...owner, legacy: true })).toBe(false)
+    expect(listsFoundHarnesses(undefined, 0, owner)).toBe(false)
+    // Nothing that runs commands was found: the install card speaks, with or without a service.
+    const onlyBuiltin = catalog({ harnesses: [catalog().harnesses[0]!], providers: [] })
+    expect(listsFoundHarnesses(onlyBuiltin, 0, owner)).toBe(false)
+    expect(nothingInstalled(startBlock(snapshot({ catalog: onlyBuiltin }), resolveChoice(onlyBuiltin, null)), onlyBuiltin, owner)).toBe(
+      true,
+    )
+    const withService = catalog({ harnesses: [catalog().harnesses[0]!] })
+    expect(listsFoundHarnesses(withService, 0, owner)).toBe(false)
+    // A found Harness with a saved service is still listed: the card is about what is on this Mac.
+    expect(listsFoundHarnesses(catalog({ providers: [] }), 0, owner)).toBe(true)
+  })
+
+  it('sorts the presets into found, half-way and the rest, in preset order, counting each once', () => {
+    const sorted = presetsFound([
+      { ...at('codex'), detected: { found: false, agent: { command: 'codex', found: true } } },
+      { ...at('claude-agent'), detected: { found: true, path: '/opt/homebrew/bin/claude-agent-acp' } },
+      { ...at('pi'), detected: { found: false } },
+      { ...at('opencode'), detected: { found: true, path: '/opt/homebrew/bin/opencode' } },
+      // An older Host sends no detection: the preset is in no list.
+      at('goose'),
+    ])
+    expect(sorted.found.map(item => [item.preset.id, item.path])).toEqual([
+      ['claude-agent', '/opt/homebrew/bin/claude-agent-acp'],
+      ['opencode', '/opt/homebrew/bin/opencode'],
+    ])
+    expect(sorted.halfway.map(item => [item.preset.id, item.program])).toEqual([['codex', 'codex']])
+    expect(sorted.more.map(preset => preset.id)).toEqual(['pi'])
   })
 
   it('says what to install only where nothing else can run and this device could change that', () => {

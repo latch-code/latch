@@ -772,14 +772,258 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   margin-top: var(--sp-4);
 }
 /* The list of what to install is tall: the page starts higher, so the input is not left below the window. */
-.new-session-inner:has(.harness-install) {
+.new-session-inner:has(:is(.harness-install, .harness-found)) {
   padding-top: var(--sp-48);
+}
+/*
+ * The one texture: a dot grid behind the empty page (J13), in the hairline ink, fading out before it reaches anything to
+ * read. It is the page's own ground, so it scrolls with it and takes no pointer.
+ */
+.workspace.is-new .new-session::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 1px 1px, var(--line-strong) 1px, transparent 1.5px);
+  background-size: 24px 24px;
+  background-position: 12px 8px;
+  mask-image: radial-gradient(ellipse 62% 56% at 50% 34%, #000 0, rgba(0, 0, 0, 0.5) 45%, transparent 78%);
+}
+
+/*
+ * What was found on this Mac, above the input of a first open: a raised card of rows, the found ones first, then the
+ * fold of what could be installed. 「已找到」 is quiet ink, never green.
+ */
+.harness-found {
+  display: grid;
+  padding: var(--sp-6);
+  border-radius: var(--r-16);
+  background: var(--raised);
+  box-shadow: var(--sh-lift);
+}
+.harness-found-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 36px;
+  padding: 0 var(--sp-4) 0 var(--sp-10);
+}
+.harness-found-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.harness-found-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.harness-found-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.harness-found-row {
+  display: grid;
+  grid-template-columns: 16px 132px auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--sp-10);
+  min-height: 34px;
+  padding: 0 var(--sp-4) 0 var(--sp-10);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.harness-found-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.harness-found-state {
+  color: var(--muted);
+}
+.harness-found-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+/* A row to install: the name, its note, then 怎么装 at the end; the command opens under it, across the row. */
+.harness-found-row:is([data-halfway], [data-more]) {
+  grid-template-columns: 16px 132px minmax(0, 1fr) auto;
+}
+.harness-found-row[data-more] .harness-found-name {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.harness-found-note {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.harness-found-row[data-halfway] .harness-found-note {
+  color: var(--ink-2);
+}
+.harness-found-row > .ui-collapse {
+  grid-column: 2 / -1;
+}
+.harness-found-how {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  margin: var(--sp-2) 0 var(--sp-6);
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  box-shadow: var(--sh-well);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+.harness-found-prompt {
+  color: var(--faint);
+}
+.harness-found-how code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.harness-found-how-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  font-family: var(--font);
+}
+.harness-found-fold {
+  border: 0;
+  background: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  margin-top: var(--sp-2);
+  padding: 0 var(--sp-10);
+  border-radius: var(--r-8);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.harness-found-fold:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.harness-found-fold:active {
+  background: var(--press);
+}
+.harness-found-fold > svg {
+  color: var(--faint);
+  transition: rotate var(--m-panel) var(--e-panel);
+}
+.harness-found-fold[aria-expanded='true'] > svg {
+  rotate: 90deg;
+}
+
+/* Under the input in a project: its latest sessions, quiet rows that open each one. */
+.new-session-recent {
+  display: grid;
+  margin-top: var(--sp-8);
+}
+.new-session-recent h3 {
+  padding: 0 var(--sp-16) var(--sp-8);
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.new-session-recent ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.new-session-recent-row {
+  border: 0;
+  background: none;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-12);
+  width: 100%;
+  min-height: 38px;
+  padding: 0 var(--sp-16);
+  border-radius: var(--r-8);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.new-session-recent-row:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.new-session-recent-row:active {
+  background: var(--press);
+}
+.new-session-recent-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.new-session-recent-title > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.new-session-recent-harness {
+  flex-shrink: 0;
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-session-recent-row time {
+  min-width: 64px;
+  text-align: right;
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 @media (max-width: 767.98px) {
   .new-session-inner {
     gap: var(--sp-16);
     padding-top: 8vh;
     padding-bottom: var(--sp-32);
+  }
+  .harness-found-row,
+  .harness-found-row:is([data-halfway], [data-more]) {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    row-gap: var(--sp-2);
+    padding-block: var(--sp-6);
+  }
+  .harness-found-path,
+  .harness-found-note {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+  .harness-found-row:is([data-halfway], [data-more]) .ui-button {
+    grid-column: 3;
+    grid-row: 1;
   }
 }
 

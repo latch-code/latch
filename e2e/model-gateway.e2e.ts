@@ -36,7 +36,7 @@ const row = (page: Page, name: RegExp | string) =>
 /** Sends the draft, starting in a new empty folder when the page asks where, however late it asks. */
 async function sendDraft(page: Page): Promise<void> {
   await input(page).press('Meta+Enter')
-  const elsewhere = page.getByText('在一个新的空文件夹里开始', { exact: true })
+  const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
   const sent = page.getByRole('textbox', { name: '继续对话', exact: true })
   await elsewhere.or(sent).first().waitFor({ timeout: 20_000 })
   if (await elsewhere.isVisible()) {
