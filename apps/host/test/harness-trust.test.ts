@@ -39,6 +39,16 @@ describe('what a driver can say about itself', () => {
     expect(facts('plugin', garbage as never)).toEqual({ ...weakest, models: { ...weakest.models, wires: ['responses'] } })
   })
 
+  it('passes on that a harness uses its own models only, unless it also names a protocol Latch forwards', () => {
+    expect(facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: [], ownOnly: true } }).models.ownOnly).toBe(true)
+    expect(
+      facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: ['responses'], ownOnly: true } }).models,
+    ).not.toHaveProperty('ownOnly')
+    expect(
+      facts('plugin', { models: { owner: 'harness', catalogue: 'none', wires: [], ownOnly: 'yes' as never } }).models,
+    ).not.toHaveProperty('ownOnly')
+  })
+
   it('cannot read as safer than Latch can vouch for: only the built-in driver can say it runs no commands', () => {
     expect(strongest('builtin').tools.shell).toBe(false)
     expect(strongest('acp').tools.shell).toBe(true)

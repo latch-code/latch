@@ -245,6 +245,11 @@ export interface HarnessProfile {
   readonly extensions?: HarnessExtensions
   readonly gateway?: ProfileGateway
   /**
+   * Latch never points this harness at the gateway: it reaches its vendor's models through its own login only. Shown
+   * to clients as `HarnessCapabilities.models.ownOnly`; it changes nothing that runs, so the version stays.
+   */
+  readonly ownModelsOnly?: true
+  /**
    * Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. A process of
    * a session on a gateway route also gets the route and the session's private temporary directory, rewritten before every
    * spawn and removed with the session.

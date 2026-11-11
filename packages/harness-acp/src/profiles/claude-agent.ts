@@ -57,6 +57,7 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
   version: 1,
+  ownModelsOnly: true,
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

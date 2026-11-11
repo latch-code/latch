@@ -51,6 +51,7 @@ export function harnessFacts(declared: HarnessDeclaration | undefined, name: str
       wires: Array.isArray(models?.wires) ? [...new Set(models.wires.filter(wire => WIRES.has(wire)))] : [],
       ...(models?.experimental === true ? { experimental: true as const } : {}),
       ...(models?.knownOnly === true ? { knownOnly: true as const } : {}),
+      ...(models?.ownOnly === true && !(Array.isArray(models.wires) && models.wires.length > 0) ? { ownOnly: true as const } : {}),
     },
     permission: {
       enforcement: enforcement === 'latch' ? (kind === 'builtin' ? 'latch' : 'harness') : enforcement === 'harness' ? 'harness' : 'none',

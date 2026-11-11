@@ -71,6 +71,12 @@ describe('the services a Harness cannot use, folded into one row', () => {
     expect(ownModelGroups(catalogOf(info), info, []).map(group => group.id)).toEqual(['~own'])
   })
 
+  it('says of a Harness that uses only its own models that it does not, never that it is unfinished', () => {
+    const info = testHarness('claude-agent', { label: 'Claude Agent' })
+    info.capabilities.models = { ...info.capabilities.models, wires: [], ownOnly: true }
+    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('Claude Agent 不经 Latch 用模型服务'))
+  })
+
   it('keeps the rule that a session stays on the service it started with, with its reason', () => {
     const info = codex()
     const route = { providerId: 'openai', model: 'openai-model', name: 'OpenAI' }

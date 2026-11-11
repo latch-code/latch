@@ -68,6 +68,7 @@ function merged(sessionKey: string, items: Todo[], merge: boolean): Todo[] {
 export const cursorProfile: HarnessProfile = {
   presetId: 'cursor',
   version: 1,
+  ownModelsOnly: true,
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

@@ -80,6 +80,12 @@ export interface HarnessCapabilities {
      * (`modelIdKey`); a client offers no others.
      */
     knownOnly?: true
+    /**
+     * Latch does not forward this harness's requests to a model service and is not going to: it uses its own login and
+     * models (a vendor's agent reached through its own route, or a command Latch knows nothing of). Clients say so
+     * instead of calling the forwarding unfinished.
+     */
+    ownOnly?: true
   }
   permission: {
     /** Who decides whether a tool call runs. Only the built-in harness can be `latch`. */

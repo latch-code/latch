@@ -77,6 +77,8 @@ function agentFacts(name: string, presetId: string | undefined, profile: Harness
       wires: [...(gateway?.wires ?? [])],
       ...(gateway?.experimental ? { experimental: true as const } : {}),
       ...(gateway?.knownOnly ? { knownOnly: true as const } : {}),
+      // A command without a profile is one Latch knows nothing of, so nothing points it at the gateway either.
+      ...(!gateway && (!profile || profile.ownModelsOnly) ? { ownOnly: true as const } : {}),
     },
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },

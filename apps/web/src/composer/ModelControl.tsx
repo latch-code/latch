@@ -452,7 +452,7 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
   const route = pairRoute(harness.capabilities, provider)
   if (route.kind === 'passthrough') return undefined
   if (route.kind === 'translate') return MODEL_MENU_COPY.wrongProtocol(name)
-  return MODEL_MENU_COPY.notRouted(name)
+  return harness.capabilities.models.ownOnly ? MODEL_MENU_COPY.ownModelsOnly(name) : MODEL_MENU_COPY.notRouted(name)
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
