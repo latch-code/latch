@@ -1,8 +1,10 @@
+import type { AppManifestEntry } from './apps.ts'
 import type { UiPanelDocument } from './ui.ts'
 
 export type PluginJson = null | boolean | number | string | PluginJson[] | { [key: string]: PluginJson }
 export interface PluginPackageManifest {
-  formatVersion: 1
+  /** 2 adds `apps`; 1 loads unchanged. */
+  formatVersion: 1 | 2
   id: string
   name: string
   version: string
@@ -13,6 +15,8 @@ export interface PluginPackageManifest {
   panels?: Array<{ id: string; title: string; description?: string; harnessIds?: string[]; entry: string }>
   /** Finite text data, without executing a Host or browser module. */
   dataPanels?: Array<{ id: string; title: string; description?: string; harnessIds?: string[]; document: UiPanelDocument }>
+  /** Pages (format 2): isolated frames that reach the Host only through the capabilities listed here. */
+  apps?: AppManifestEntry[]
 }
 export interface PluginPackageBundle {
   manifest: PluginPackageManifest
@@ -31,6 +35,8 @@ export interface PluginPackageSummary {
   capabilities: string[]
   unavailableReason?: string
   state: 'draft' | 'applied' | 'update-available'
+  /** Earlier applied revisions a rollback can return to, newest first (format 2 Hosts). */
+  rollbackRevisions?: Array<{ revision: string; version: string }>
 }
 export interface PluginPackageDetail extends PluginPackageSummary {
   bundle: PluginPackageBundle

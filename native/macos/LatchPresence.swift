@@ -426,6 +426,9 @@ let reasonForms: [String: ReasonForm] = [
   "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Latch 连接 "), countSlot, .text(" 个新地址")]),
   "policy.several": ReasonForm(actions: ["policy.change"], segments: [.text("放宽这台 Mac 的安全设置："), countSlot, .text(" 项更改")]),
   "plugin.package.apply": ReasonForm(actions: ["plugin.package.apply"], segments: [.text("应用插件「"), slot("plugin", 24), .text("」")]),
+  "plugin.package.apply-pages": ReasonForm(actions: ["plugin.package.apply"], segments: [
+    .text("让插件页面可以："), slot("capabilities", 48), .text("（插件「"), slot("plugin", 16), .text("」）"),
+  ]),
 ]
 
 /// The reason for `action` from a subject, or nil when the form, its action or its slots do not match exactly.

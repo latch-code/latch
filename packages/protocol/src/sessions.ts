@@ -1,3 +1,4 @@
+import type { SessionOrigin } from './apps.ts'
 import type { FileChange } from './files.ts'
 import type { FileMention } from './file-refs.ts'
 import type { AttachmentRef } from './attachments.ts'
@@ -97,6 +98,8 @@ export interface DriverTaskSummary {
   agentPrivate?: true
   /** The automation this session is a run of. */
   automationId?: string
+  /** The plugin page that started this session (Host metadata; a driver's claim is dropped). */
+  origin?: SessionOrigin
   /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */
   pendingQuestions?: number
   id: string

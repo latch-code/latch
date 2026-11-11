@@ -27,7 +27,7 @@ import {
   type SteerOutcome,
 } from '@latch/sdk'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
-import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
+import { RUN_ID, SessionMetaStore, type PageOrigin, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
 import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
@@ -623,6 +623,42 @@ export class HarnessHub implements Bridge {
     return this.meta.sessionFolders()
   }
 
+  /** The plugin page that started the session, from the Host's own records. */
+  originOf(sessionId: string): PageOrigin | undefined {
+    const origin = this.meta.get(sessionId)?.origin
+    return origin && { ...origin }
+  }
+  findOrigin(app: string, requestId: string, install: string): string | undefined {
+    return this.meta.findOrigin(app, requestId, install)
+  }
+  /** Sessions whose permissions a person changed in this run, for a page start recorded after the change. */
+  private readonly touched = new Set<string>()
+  /** A person is changing the permission mode of a page's session: the page may no longer drive it. */
+  async markOriginChanged(sessionId: string): Promise<void> {
+    // A session a page is still starting has no origin yet: the mark waits for `recordOrigin`.
+    this.touched.delete(sessionId)
+    this.touched.add(sessionId)
+    for (const id of this.touched) {
+      if (this.touched.size <= 10_000) break
+      this.touched.delete(id)
+    }
+    if (!this.meta.get(sessionId)?.origin || this.meta.get(sessionId)?.origin?.changed) return
+    await this.meta.update(sessionId, current => (current.origin ? { ...current, origin: { ...current.origin, changed: true } } : current))
+  }
+  /** Marks a session as a page's; a session already marked for another page or request is refused. */
+  async recordOrigin(sessionId: string, origin: PageOrigin, title?: string): Promise<void> {
+    await this.meta.update(sessionId, current => {
+      if (
+        current.origin
+        && (current.origin.app !== origin.app || current.origin.requestId !== origin.requestId || current.origin.install !== origin.install)
+      )
+        throw new AppError(409, 'request-conflict', '这个会话已属于另一个请求。')
+      const recorded = current.origin ?? { ...origin, ...(this.touched.has(sessionId) ? { changed: true as const } : {}) }
+      return { ...current, origin: recorded, ...(title && !current.title ? { title: title.slice(0, 120) } : {}) }
+    })
+    this.emit(sessionId)
+  }
+
   /** Preserve a legacy session's uniquely identified project before its primary folder changes. */
   async recordWorkspace(sessionId: string, workspaceId: string): Promise<void> {
     await this.route(sessionId)
@@ -934,6 +970,7 @@ export class HarnessHub implements Bridge {
       firstStart: _firstStart,
       forkOf: _forkOf,
       automationId: _automationId,
+      origin: _origin,
       runId,
       live,
       modelRoute,
@@ -960,6 +997,7 @@ export class HarnessHub implements Bridge {
       ...(agent ? { agent } : {}),
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
+      ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
       ...(meta?.worktree
         ? { worktree: { branch: meta.worktree.branch, ...(meta.worktree.unfiltered ? { unfiltered: meta.worktree.unfiltered } : {}) } }

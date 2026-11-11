@@ -41,6 +41,8 @@ export interface HostFeatures {
   runLiveness?: true
   /** `PUT /preferences` takes `pinned`, and `SessionDefaults.pinned` reports it. */
   pinnedDefaults?: true
+  /** Plugin pages: `AppSnapshot.apps`, `via` on task starts and input, `/apps/:pluginId/...`; the value is the version. */
+  appPages?: 1
 }
 
 export interface SearchHit {

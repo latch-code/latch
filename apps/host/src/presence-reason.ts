@@ -43,6 +43,15 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
   'policy.egress-many': { actions: ['policy.change'], segments: ['允许 Latch 连接 ', COUNT, ' 个新地址'] },
   'policy.several': { actions: ['policy.change'], segments: ['放宽这台 Mac 的安全设置：', COUNT, ' 项更改'] },
   'plugin.package.apply': { actions: ['plugin.package.apply'], segments: ['应用插件「', { slot: 'plugin', max: 24 }, '」'] },
+  /**
+   * A package with pages, whenever their capabilities need the confirmation: what they may do is on the sheet itself.
+   * The Host writes the capabilities slot (`capabilitySummary`), never longer than its limit, so it is never cut. The
+   * list comes first: whatever a plugin's name says can only follow the real one.
+   */
+  'plugin.package.apply-pages': {
+    actions: ['plugin.package.apply'],
+    segments: ['让插件页面可以：', { slot: 'capabilities', max: 48 }, '（插件「', { slot: 'plugin', max: 16 }, '」）'],
+  },
 }
 
 const graphemes = new Intl.Segmenter('und', { granularity: 'grapheme' })

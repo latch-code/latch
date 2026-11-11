@@ -1,5 +1,6 @@
 import { createAgentLoginRoutes, type AgentLoginDeps, type AgentLoginRoutes } from './agent-login.ts'
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
+import { createAppRoutes, type AppRouteDeps, type AppRoutes } from './apps.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
 import { createChangeRoutes } from './changes.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
@@ -19,6 +20,7 @@ export interface RouteDeps {
   automations: AutomationRouteDeps
   handoffs: HandoffRouteDeps
   git?: GitRouteOptions
+  apps: AppRouteDeps
 }
 
 /**
@@ -28,14 +30,16 @@ export interface RouteDeps {
 export function createRoutes(
   context: RouteContext,
   deps: RouteDeps,
-): { native: NativeRoutes; terminal: TerminalRoutes; agentLogin: AgentLoginRoutes; routes: RouteRegistry } {
+): { native: NativeRoutes; terminal: TerminalRoutes; agentLogin: AgentLoginRoutes; apps: AppRoutes; routes: RouteRegistry } {
   const native = createNativeRoutes(context, deps.native)
+  const apps = createAppRoutes(context, deps.apps)
   const terminal = createTerminalRoutes(context, deps.terminals)
   const agentLogin = createAgentLoginRoutes(context, deps.agentLogin)
   return {
     native,
     terminal,
     agentLogin,
+    apps,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
@@ -46,6 +50,7 @@ export function createRoutes(
       agentLogin,
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
+      apps,
     ]),
   }
 }

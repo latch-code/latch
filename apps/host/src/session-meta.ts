@@ -24,6 +24,8 @@ const isoTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const requestIdText = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const deviceIdText = z.string().min(1).max(64)
 const runIdText = z.string().regex(RUN_ID)
+/** `<pluginId>/<appId>` of a plugin page. */
+export const APP_REF = /^[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,64}$/u
 
 // Every persisted field must be listed: z.object drops unknown keys on load.
 const approvalReceiptSchema = z.object({
@@ -116,6 +118,19 @@ const metaSchema = z.object({
         personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
         agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
         automationId: z.string().min(1).max(64).optional(),
+        origin: z
+          .strictObject({
+            app: z.string().regex(APP_REF),
+            requestId: requestIdText,
+            install: z
+              .string()
+              .regex(/^[A-Za-z0-9_-]{22}$/u)
+              .optional(),
+            level: z.enum(['L1', 'L3']).optional(),
+            mode: z.string().max(256).optional(),
+            changed: z.literal(true).optional(),
+          })
+          .optional(),
         agentPrivate: z.literal(true).optional(),
         workspaceId: z
           .string()
@@ -151,11 +166,26 @@ export type CancelRecord = z.infer<typeof cancelReceiptSchema>
 export type ConfigRecord = z.infer<typeof configReceiptSchema>
 export type GitRecord = z.infer<typeof gitReceiptSchema>
 export type StoredReceipt = ApprovalRecord | CancelRecord | ConfigRecord | GitRecord
+/**
+ * The plugin page that started a session: its plugin record (`install`), and the permission level and mode the session
+ * started with, so a page cannot drive a session a person widened.
+ */
+export interface PageOrigin {
+  app: string
+  requestId: string
+  install?: string
+  level?: 'L1' | 'L3'
+  mode?: string
+  /** A person asked to change the session's permission mode after the page started it. */
+  changed?: true
+}
 /** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
 export interface StoredMeta {
   personal?: TaskSummary['personal']
   agent?: TaskSummary['agent']
   automationId?: string
+  /** The plugin page that started the session, with the page's own request ID. */
+  origin?: PageOrigin
   agentPrivate?: true
   title?: string
   pinned?: true
@@ -287,6 +317,13 @@ export class SessionMetaStore implements SessionReceipts {
 
   get(sessionId: string): StoredMeta | undefined {
     return this.meta.get(sessionId)
+  }
+
+  /** The session a plugin page started with this request ID. */
+  findOrigin(app: string, requestId: string, install: string): string | undefined {
+    for (const [sessionId, meta] of this.meta)
+      if (meta.origin?.app === app && meta.origin.requestId === requestId && meta.origin.install === install) return sessionId
+    return undefined
   }
 
   /** Folder names owned by sessions in the Host metadata. */

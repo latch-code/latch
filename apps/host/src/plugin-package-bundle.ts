@@ -68,7 +68,12 @@ export function checkedPluginBundle(input: unknown): { bundle: PluginPackageBund
       host: data.manifest.host.map(path => required(path, 1000000)),
       skills: data.manifest.skills.map(skill => ({ ...skill, file: required(skill.file, 32000) })),
       panels: data.manifest.panels.map(panel => ({ ...panel, entry: required(panel.entry, 1000000) })),
+      ...(data.manifest.formatVersion === 2 && data.manifest.apps
+        ? { apps: data.manifest.apps.map(app => ({ ...app, entry: required(app.entry, 1000000) })) }
+        : {}),
     }
+    if (manifest.apps?.some(app => !/\.tsx?$/iu.test(app.entry)))
+      throw new AppError(400, 'plugin-package-app-entry', '页面入口必须是包内的 .ts 或 .tsx 源文件。')
     if (manifest.skills.some(skill => !/\.(?:md|txt)$/iu.test(skill.file)))
       throw new AppError(400, 'plugin-package-skill-file', '应用内技能文件只接受 .md 或 .txt 文本，执行模块必须单独保存。')
     if (Buffer.byteLength(JSON.stringify(manifest)) > 65536) throw new AppError(413, 'plugin-package-large', '插件声明超过 64 KiB。')

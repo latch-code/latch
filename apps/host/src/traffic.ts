@@ -3,7 +3,16 @@ import type { ListenerClass } from '@latch/protocol'
 /** Upper bounds in bytes of the size histogram's buckets; one more bucket counts anything larger. */
 export const TRAFFIC_BUCKETS: readonly number[] = [256, 1024, 4096, 16_384, 65_536, 262_144, 1_048_576, 4_194_304]
 /** Event-stream frames by event type, then the two responses a client resynchronises with. */
-export const TRAFFIC_KINDS = ['task-state', 'tasks-invalidated', 'refresh', 'host-state', 'heartbeat', 'snapshot', 'detail'] as const
+export const TRAFFIC_KINDS = [
+  'task-state',
+  'tasks-invalidated',
+  'refresh',
+  'host-state',
+  'app.data',
+  'heartbeat',
+  'snapshot',
+  'detail',
+] as const
 export type TrafficKind = (typeof TRAFFIC_KINDS)[number]
 export type FrameKind = Exclude<TrafficKind, 'snapshot' | 'detail'>
 
@@ -76,6 +85,7 @@ export class TrafficMeter {
     'tasks-invalidated': emptyCount(),
     refresh: emptyCount(),
     'host-state': emptyCount(),
+    'app.data': emptyCount(),
     heartbeat: emptyCount(),
     snapshot: emptyCount(),
     detail: emptyCount(),

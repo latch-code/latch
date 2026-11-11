@@ -4,6 +4,7 @@
  */
 export const PRIVATE_ENTRIES = [
   'plugin-packages',
+  'plugin-data',
   'auth',
   'identity',
   'native',

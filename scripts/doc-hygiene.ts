@@ -8,6 +8,7 @@ const LOCAL_IGNORE_LINE = `/${LOCAL_DIR}/`
 /** The mechanism documents. A new one joins this list on purpose, so that other kinds of writing do not arrive by file name. */
 const DOCUMENTS: ReadonlySet<string> = new Set(
   [
+    'APP-PAGES',
     'ARCHITECTURE',
     'ATTACHMENTS',
     'AUTOMATIONS',

@@ -528,6 +528,7 @@ const TRAFFIC_LABELS: Record<TrafficKind, string> = {
   'tasks-invalidated': '列表失效帧',
   refresh: '刷新帧',
   'host-state': 'Host 状态帧',
+  'app.data': '插件数据帧',
   heartbeat: '心跳',
   snapshot: '快照响应',
   detail: '会话详情响应',

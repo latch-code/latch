@@ -143,7 +143,7 @@ export interface PluginInfo {
   enabled: boolean
   activeRuns: number
   capabilities: string[]
-  package?: { formatVersion: 1 }
+  package?: { formatVersion: 1 | 2 }
   /** Local editable asset; its mutations use the plugin-packages receipt flow. */
   editable?: true
   /** Set when the Host manages the plugin from settings (model providers, agents). */

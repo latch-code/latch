@@ -17,6 +17,8 @@ const presenceAction = z.enum([
   'provider.confirm-origin',
   'approval.r2',
 ])
+/** Plugin, page, project and Harness IDs as manifests and projects spell them. */
+const pageId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)
 const fieldPath = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/u)
@@ -37,10 +39,39 @@ const fileAction = z.strictObject({ ...fileContext, pathHash: hex64, type: z.enu
 /** The Host itself: startup, settings, policy and local confirmation, model services, projects, files and plugins. */
 export const HOST_ACTIONS = {
   'plugin.package.changed': z.strictObject({
-    operation: z.enum(['create', 'save', 'trust', 'apply', 'enable', 'disable', 'delete']),
+    operation: z.enum(['create', 'save', 'trust', 'apply', 'rollback', 'enable', 'disable', 'delete']),
     before: hex64,
     after: hex64,
   }),
+  /**
+   * How a package's pages came to be trusted: `confirmed` by this computer's confirmation, or `capabilities-approved`
+   * because they ask for no more than was confirmed before. Written before the apply or rollback.
+   */
+  'plugin.package.app-trust': z.strictObject({
+    operation: z.enum(['apply', 'rollback']),
+    trust: z.enum(['confirmed', 'capabilities-approved']),
+    revision: hex64,
+    capabilitiesHash: hex64,
+  }),
+  /** A plugin page started a session; the start's own audits follow. `requestHash` covers the page and its request ID. */
+  'app.task.start': z.strictObject({
+    pluginId: pageId,
+    appId: pageId,
+    revision: hex64,
+    requestHash: hex64,
+    workspaceId: pageId,
+    harnessId: pageId.optional(),
+  }),
+  'app.data.migrate': z.strictObject({
+    pluginId: pageId,
+    fromGeneration: count,
+    toGeneration: count,
+    fromVersion: count,
+    toVersion: count,
+    documents: count,
+  }),
+  /** A plugin deleted together with its data. */
+  'app.data.removed': z.strictObject({ pluginId: pageId, documents: count }),
   'presence.launch-trusted': z.strictObject({ keyHash: hex64 }),
   'host.started': z.strictObject({
     hostId: z.string().regex(/^[a-z2-7]{52}$/u),

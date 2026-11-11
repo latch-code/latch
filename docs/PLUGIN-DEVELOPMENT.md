@@ -87,7 +87,8 @@ Host 声明可选能力 `catalog.features.pluginPackages`。管理接口只给 h
 | `GET /plugin-packages/:id/export` | 返回可再次导入的 `{bundle}` JSON，不包含运行数据 |
 | `POST /plugin-packages/:id/apply` | `{requestId,revision}` 显式应用这个精确草稿 |
 | `POST /plugin-packages/:id/enabled` | `{requestId,enabled}` 启停已应用快照，不自动应用草稿 |
-| `DELETE /plugin-packages/:id` | `{requestId,baseRevision}` 撤下并移除插件资产 |
+| `POST /plugin-packages/:id/rollback` | `{requestId,revision}` 重新应用最近 5 个之前应用过的快照之一，草稿不变 |
+| `DELETE /plugin-packages/:id` | `{requestId,baseRevision,deleteData?}` 撤下并移除插件资产；`deleteData: true` 才删除它的页面数据 |
 
 摘要的 `revision` 是规范完整资产的 SHA-256，`appliedRevision` 才是实际发布内容。状态为 `draft`、`applied` 或 `update-available`；`enabled`、`trusted` 与真实 `capabilities` 分别描述当前运行、当前草稿的执行信任和实际注册项。请求超时保持结果未知并复用原 requestId。写入使用 0600 临时文件、文件同步、原子替换和目录同步；替换后的结果未知时，普通读取拒绝，只有同设备原请求能结算。应用重试必须再次激活候选，不能把已回滚的候选误报为发布成功。
 
@@ -109,6 +110,10 @@ Node ESM 模块本身会缓存到 Host 退出，清理 effect 不等于卸载 Ja
 
 
 桌面端安装的新版本若不再加载某个插件包的 `formatVersion`，新版首次启动时这个插件不启用，资产与记录保留，插件列表写明原因；重新启用或删除即解除（[UPDATES.md](./UPDATES.md#插件兼容)）。
+
+### 页面（formatVersion 2）
+
+`formatVersion: 2` 的包可以带 `apps`：最多 4 个页面，每个声明入口、`dataVersion` 与能力（`tasks.read`、`tasks.start`、`tasks.continue`、`tasks.readOwn`、`storage`），可选 `requires.appSdk`（`^1`）。格式 1 原样加载，格式 2 也可以带其他贡献。页面不在 Host 进程里运行，没有可执行摘要；它的信任绑定能力集合：第一次应用或能力变宽时经 `plugin.package.apply` 确认，确认里逐条列出每个页面的能力；相同或更窄的应用只审计（`plugin.package.app-trust`）。页面经 `via` 开始与继续会话、读写插件数据、上报诊断，规则、接口与数据目录见 [APP-PAGES.md](APP-PAGES.md)。页面框、桥与构建尚未实现，所以页面目前不显示。
 
 ## 连接载体
 

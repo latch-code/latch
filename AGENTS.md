@@ -5,8 +5,8 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 ## 开始之前
 
 1. 运行 `git status`，保留已有的未提交改动。
-2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`（Claude Code 经 `CLAUDE.md` 读取），再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
-3. 不停止、重启或连接用户正在运行的 Host，也不使用默认数据目录（见「本机运行安全」）。
+2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`，再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
+3. 遵守「本机运行安全」：不碰用户正在运行的 Host 与默认数据目录。
 
 ## 代码地图
 
@@ -30,14 +30,14 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `scripts/` | 仓库工具：检查、文档与技能、安全扫描、依赖边界、供应链、工作流 |
 | `native/` | macOS 本机确认与目录组件；`ios/` 含独立 Swift 核心、iPhone/iPad App 与互操作夹具 |
 | `docs/`、`examples/` | 机制文档（见「改动前先读」）；插件示例 |
-| `.agents/skills/` | `latch-verify`、`latch-security-review`、`latch-ui-check`；`.claude/skills/` 由 `pnpm agents:sync` 生成 |
+| `.agents/skills/` | 技能；`.claude/skills/` 由 `pnpm agents:sync` 生成 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |
 
-依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `pnpm check:boundaries`、`pnpm knip` 与 `pnpm lint` 执行；违规在边界上修，不加例外。
+依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `check:boundaries`、`knip` 与 `lint` 执行；违规在边界上修，不加例外。
 
 ## 命令
 
-需要 Node.js 24.22.1（`.node-version`；`engines` 只接受含 2026-10-20 安全修复的版本，其他版本下 pnpm 命令直接失败，用 `fnm use` 切换）与 pnpm 11.28.6（`packageManager` 固定版本与 sha512），构建原生组件需要 Go 1.26.10（`.go-version`）。
+需要 Node.js 24.22.1（`.node-version`；`engines` 只接受含 2026-10-20 安全修复的版本，用 `fnm use` 切换）与 pnpm 11.28.6（`packageManager` 固定版本与 sha512），构建原生组件需要 Go 1.26.10（`.go-version`）。
 
 ```sh
 pnpm install
@@ -80,8 +80,9 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；按 Vite 打印的 htt
 - **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。网关凭据 `lmg1.` 只给所属 Agent 进程，不进参数、URL 与日志。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存中、也只存哈希。模型密钥只在数据目录的 0600 文件中，不返回浏览器；`LATCH_API_KEY` 只在内存中使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
-- **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
+- **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码与页面能力变宽；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 都经受限运行器（文件与配置钩子、fsmonitor、filter、传输关闭）；只有人按下的提交、推送与有 filter 的暂存以你的账户运行 Git：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
+- **插件页面只凭已批准的能力行事。** Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（格式见 [docs/TESTING.md](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`。
 - **共享安全编码。** 修改 base32、指纹、`canonicalJson`、确认预览与 previewHash、`hashDisplay`、`escapeSecurityText` 或签名文本时，同时更新 `packages/testkit/vectors/security-v1.json`、`native/macos/LatchPresence.swift` 与各处实现（`apps/host/src/crypto.ts`、`auth.ts`（签名文本）、`presence*.ts`（确认预览）、`packages/core/src/node-kit/digest.ts`、`packages/protocol/src/text.ts`、`apps/web/src/core/deviceKey.ts`、`contentHash.ts`、`apps/desktop/src/credentials.cjs`），再 `pnpm build:presence` 并运行 `presence.test.ts`（自检用例对旧组件失败）。
@@ -92,7 +93,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；按 Vite 打印的 htt
 - 每个命令都显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时会落到用户的数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/Library/Application Support/Latch/Host`）、`~/Latch/workspace` 与端口 4317。
 - 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户的数据，后者还会把它们写进对象库。
-- 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`（如 `git -c core.hooksPath=/dev/null worktree add <临时目录> <提交>`），因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
+- 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`，因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
 - 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调用付费模型，不对真实 Agent CLI 发送提示。不运行 `pnpm desktop`（它使用系统钥匙串与默认桌面端数据目录），桌面端用 Electron e2e 验证。
 - `pnpm build` 会更新 `dist/web`，运行中的旧 Host 会直接提供新页面。上线前不为旧 Host 写降级：Host 字段变化后要重启 Host 并告知用户。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，已运行 Host 的本机确认随之失效，需用户停止 Host 后运行 `pnpm latch presence repin`，并告知用户。
 

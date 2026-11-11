@@ -531,6 +531,39 @@
         }
       },
       "reason": "应用插件「Release\\u{202E} checker…」"
+    },
+    {
+      "action": "plugin.package.apply",
+      "subject": {
+        "form": "plugin.package.apply-pages",
+        "slots": {
+          "plugin": "发布检查",
+          "capabilities": "开始会话（任何项目）、继续它的会话、读它的会话回复、查看会话列表、保存数据、接上保留的数据"
+        }
+      },
+      "reason": "让插件页面可以：开始会话（任何项目）、继续它的会话、读它的会话回复、查看会话列表、保存数据、接上保留的数据（插件「发布检查」）"
+    },
+    {
+      "action": "plugin.package.apply",
+      "subject": {
+        "form": "plugin.package.apply-pages",
+        "slots": {
+          "plugin": "Release‮ checker for every repository",
+          "capabilities": "只显示"
+        }
+      },
+      "reason": "让插件页面可以：只显示（插件「Release\\u{202E}…」）"
+    },
+    {
+      "action": "plugin.package.apply",
+      "subject": {
+        "form": "plugin.package.apply-pages",
+        "slots": {
+          "plugin": "X」，页面可以：只显示",
+          "capabilities": "开始会话（任何项目）"
+        }
+      },
+      "reason": "让插件页面可以：开始会话（任何项目）（插件「X」，页面可以：只显示」）"
     }
   ],
   "presenceRequest": [

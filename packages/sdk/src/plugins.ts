@@ -173,7 +173,7 @@ export interface LatchPlugin {
   version: string
   description: string
   /** Present for a directory package loaded from latch-plugin.json; legacy module plugins remain supported. */
-  package?: { formatVersion: 1 }
+  package?: { formatVersion: 1 | 2 }
   activate(context: PluginContext): void | Promise<void>
 }
 /** Compatibility name for existing plugin modules. A plugin may contribute a whole feature. */

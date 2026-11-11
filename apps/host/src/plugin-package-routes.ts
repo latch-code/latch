@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import type { PluginPackageDetail, PluginPackageSummary } from '@latch/protocol'
+import type { AppManifestEntry, PluginPackageBundle, PluginPackageDetail, PluginPackageSummary } from '@latch/protocol'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
 import type { PluginRegistry } from '@latch/core'
 import { json, jsonBody, safeDecode } from './http-util.ts'
@@ -11,25 +11,42 @@ import {
   type PluginAssetRecord,
   type PluginAssetMutation,
   type PluginAssetDescriptor,
+  type PluginAssetEffect,
   describePluginAsset,
+  installIdOf,
 } from './plugin-assets.ts'
 import { PLUGIN_PACKAGE_BYTES, checkedPluginBundle } from './plugin-package-bundle.ts'
 import { loadPluginPackage } from './plugin-packages.ts'
+import { capabilitySet, capabilitySetHash, withinApproved } from './app-capabilities.ts'
 
 const requestId = z.string().min(8).max(128),
   hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const createSchema = z.strictObject({ requestId, bundle: z.unknown() }),
   saveSchema = createSchema.extend({ baseRevision: hash })
 const applySchema = z.strictObject({ requestId, revision: hash }),
-  deleteSchema = z.strictObject({ requestId, baseRevision: hash }),
+  deleteSchema = z.strictObject({ requestId, baseRevision: hash, deleteData: z.boolean().optional() }),
   enabledSchema = z.strictObject({ requestId, enabled: z.boolean() })
 export interface PluginApplyConfirmation {
   id: string
   name: string
   revision: string
-  executionHash: string
+  /** Present when the package's Host or React code is not yet trusted. */
+  executionHash?: string
   hostModules: number
   clientPanels: number
+  /** Present when the pages ask for more than this computer approved: every page with all its capabilities. */
+  apps?: AppManifestEntry[]
+  capabilitiesHash?: string
+  /** The plugin takes over page data that a deleted plugin with this ID kept. */
+  adoptsData?: true
+}
+/** How an apply or rollback with pages came to be trusted; recorded before it takes effect. */
+export interface PluginAppTrust {
+  id: string
+  revision: string
+  capabilitiesHash: string
+  operation: 'apply' | 'rollback'
+  trust: 'confirmed' | 'capabilities-approved'
 }
 interface Options<Caller> {
   assets: PluginAssets
@@ -37,6 +54,14 @@ interface Options<Caller> {
   installedIds?: Set<string>
   authorize(caller: Caller): PluginAssetActor
   confirm(req: IncomingMessage, caller: Caller, input: PluginApplyConfirmation): Promise<void>
+  /** Audits a page trust decision; a failure refuses the apply. */
+  appTrust?(caller: Caller, input: PluginAppTrust): Promise<void>
+  /** After a plugin is deleted: removes its page data when its owner asked for it (`remove`), or only lets go of it. */
+  removeData?(caller: Caller, id: string, remove: boolean): Promise<{ audited: boolean }>
+  /** Whose page data the plugin's directory holds: none, this record's, or a deleted record's kept data. */
+  dataClaim?(plugin: { id: string; owner: string }): Promise<'none' | 'own' | 'other'>
+  /** Hands kept data to this record, once a confirmation said so. */
+  adoptData?(plugin: { id: string; owner: string }): Promise<void>
   serial<T>(actor: PluginAssetActor, operation: () => Promise<T>): Promise<T>
   unmount(id: string): Promise<void>
   mount(id: string): Promise<void>
@@ -94,12 +119,81 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       capabilities: info?.capabilities ?? [],
       ...(unavailableReason ? { unavailableReason } : {}),
       state: !record.appliedRevision ? 'draft' : record.revision === record.appliedRevision ? 'applied' : 'update-available',
+      ...(record.rollbackRevisions.length ? { rollbackRevisions: record.rollbackRevisions } : {}),
     }
   }
   const detail = (record: PluginAssetRecord): PluginPackageDetail => ({
     ...summary(describePluginAsset(record)),
     bundle: structuredClone(record.bundle),
   })
+  /**
+   * Pages ask for capabilities; trust binds that set, not the code, because a page's frame never holds the page's
+   * authority. A first apply or a wider set takes the confirmation; Host or React code keeps its per-digest one.
+   */
+  async function trustFor(
+    req: IncomingMessage,
+    caller: Caller,
+    id: string,
+    revision: string,
+    bundle: PluginPackageBundle,
+    record: { id: string; installId?: string; trusted: string[]; approvedApps?: PluginAssetRecord['approvedApps'] },
+    executionHash: string | undefined,
+    operation: PluginAppTrust['operation'],
+  ) {
+    const apps = bundle.manifest.apps ?? [],
+      set = capabilitySet(bundle.manifest),
+      capabilitiesHash = capabilitySetHash(set)
+    const untrusted = executionHash && !record.trusted.includes(executionHash) ? executionHash : undefined
+    // Data a deleted plugin with this ID kept is taken over only with a confirmation that says so.
+    const owner = { id, owner: installIdOf(record) }
+    const adoptsData =
+      apps.some(app => app.capabilities.storage) && (await options.dataClaim?.(owner)) === 'other' ? (true as const) : undefined
+    const widens = apps.length > 0 && (!withinApproved(set, record.approvedApps) || adoptsData === true)
+    if (untrusted || widens)
+      await options.confirm(req, caller, {
+        id,
+        name: bundle.manifest.name,
+        revision,
+        ...(untrusted ? { executionHash: untrusted } : {}),
+        hostModules: bundle.manifest.host?.length ?? 0,
+        clientPanels: bundle.manifest.panels?.length ?? 0,
+        ...(widens ? { apps, capabilitiesHash } : {}),
+        ...(adoptsData ? { adoptsData } : {}),
+      })
+    if (apps.length)
+      await options.appTrust?.(caller, { id, revision, capabilitiesHash, operation, trust: widens ? 'confirmed' : 'capabilities-approved' })
+    return {
+      approve: widens ? set : undefined,
+      capabilitiesHash,
+      adopt: adoptsData ? async () => options.adoptData?.(owner) : async () => {},
+    }
+  }
+  /** Swaps the registered package for the snapshot `state` holds; a failure leaves the previous one mounted. */
+  const activate =
+    (id: string, actor: PluginAssetActor): PluginAssetEffect =>
+    async (state, commit) => {
+      await options.unmount(id)
+      actor.authorize()
+      try {
+        await registry.replace(
+          installedAssetPlugin(
+            assets,
+            state.packages.find(record => record.id === id)!,
+          ),
+          async () => {
+            actor.authorize()
+            await commit()
+          },
+          { revision: state.packages.find(record => record.id === id)!.appliedRevision },
+        )
+        installedIds.add(id)
+      } catch (cause) {
+        await options.mount(id)
+        if (cause instanceof AppError) throw cause
+        throw new AppError(502, 'plugin-package-activation-failed', '插件未能应用，旧版和草稿已保留。请检查模块声明与本地依赖。')
+      }
+      await options.mount(id)
+    }
   let active = 0
   const activeDevices = new Map<string, number>()
   return {
@@ -137,7 +231,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           }
           throw new AppError(404, 'not-found', '接口不存在。')
         }
-        const match = /^\/link\/api\/plugin-packages\/([^/]+)(?:\/(apply|export|enabled))?$/u.exec(path)
+        const match = /^\/link\/api\/plugin-packages\/([^/]+)(?:\/(apply|export|enabled|rollback))?$/u.exec(path)
         if (!match) throw new AppError(404, 'not-found', '接口不存在。')
         const id = safeDecode(match[1]!),
           action = match[2]
@@ -181,47 +275,35 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           }
           namespace(id)
           const candidate = assets.candidate(id, input.revision, input.requestId, actor)
-          if (candidate.executionHash && !candidate.trusted.includes(candidate.executionHash))
-            await options.confirm(req, caller, {
-              id,
-              name: candidate.bundle.manifest.name,
-              revision: input.revision,
-              executionHash: candidate.executionHash,
-              hostModules: candidate.bundle.manifest.host?.length ?? 0,
-              clientPanels: candidate.bundle.manifest.panels?.length ?? 0,
-            })
+          const trust = await trustFor(req, caller, id, input.revision, candidate.bundle, candidate, candidate.executionHash, 'apply')
           actor.authorize()
           await options.serial(actor, async () => {
             const fresh = assets.candidate(id, input.revision, input.requestId, actor)
             if (fresh.executionHash !== candidate.executionHash)
               throw new AppError(409, 'plugin-package-changed', '插件可执行内容已变化，请重新检查。')
             if (fresh.executionHash) await assets.trust(id, fresh.executionHash, pluginTrustRequestId(input.requestId), actor)
-            reply(
-              await assets.apply(id, input.revision, input.requestId, actor, async (state, commit) => {
-                await options.unmount(id)
-                actor.authorize()
-                try {
-                  await registry.replace(
-                    installedAssetPlugin(
-                      assets,
-                      state.packages.find(record => record.id === id)!,
-                    ),
-                    async () => {
-                      actor.authorize()
-                      await commit()
-                    },
-                    { revision: state.packages.find(record => record.id === id)!.appliedRevision },
-                  )
-                  installedIds.add(id)
-                } catch (cause) {
-                  await options.mount(id)
-                  if (cause instanceof AppError) throw cause
-                  throw new AppError(502, 'plugin-package-activation-failed', '插件未能应用，旧版和草稿已保留。请检查模块声明与本地依赖。')
-                }
-                await options.mount(id)
-              }),
-            )
+            const result = await assets.apply(id, input.revision, input.requestId, actor, activate(id, actor), trust.approve)
+            await trust.adopt()
+            reply(result)
           })
+          return true
+        }
+        if (method === 'POST' && action === 'rollback') {
+          const input = applySchema.parse(await jsonBody(req))
+          actor.authorize()
+          const replay = assets.replay(id, 'rollback', input.requestId, { revision: input.revision }, actor)
+          if (replay) {
+            reply(replay)
+            return true
+          }
+          namespace(id)
+          const { bundle, record } = assets.rollbackCandidate(id, input.revision, input.requestId, actor)
+          // Earlier snapshots were trusted when they were applied; only their pages' capabilities are compared again.
+          const trust = await trustFor(req, caller, id, input.revision, bundle, record, undefined, 'rollback')
+          actor.authorize()
+          await options.serial(actor, async () =>
+            reply(await assets.rollback(id, input.revision, input.requestId, actor, activate(id, actor), trust.approve)),
+          )
           return true
         }
         if (method === 'POST' && action === 'enabled') {
@@ -265,17 +347,19 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
         if (method === 'DELETE' && action === undefined) {
           const input = deleteSchema.parse(await jsonBody(req))
           actor.authorize()
-          await options.serial(actor, async () =>
-            reply(
-              await assets.remove(id, input.baseRevision, input.requestId, actor, async (_state, commit) => {
-                if (installedIds.has(id)) await options.unmount(id)
-                actor.authorize()
-                if (installedIds.has(id) && registry.list().some(plugin => plugin.id === id)) registry.retire(id, true)
-                installedIds.delete(id)
-                await commit()
-              }),
-            ),
-          )
+          await options.serial(actor, async () => {
+            const result = await assets.remove(id, input.baseRevision, input.requestId, actor, async (_state, commit) => {
+              if (installedIds.has(id)) await options.unmount(id)
+              actor.authorize()
+              if (installedIds.has(id) && registry.list().some(plugin => plugin.id === id)) registry.retire(id, true)
+              installedIds.delete(id)
+              await commit()
+            })
+            // Kept by default: a plugin installed again under the same ID finds its data.
+            if (options.removeData && !(await options.removeData(caller, id, input.deleteData === true)).audited)
+              res.setHeader('x-latch-audit', 'failed')
+            reply(result)
+          })
           await options.held?.release(id).catch(() => undefined)
           return true
         }

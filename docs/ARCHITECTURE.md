@@ -331,6 +331,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及审批决定、取消与交付（提交、推送，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
+| `plugin-data/<pluginId>/gen-<n>/data.json`、`plugin-data/<pluginId>/diagnostics.json` | 插件页面的文档与回执（每个数据版本一代，保留最近 3 代）、页面诊断（0600，目录 0700，见 [APP-PAGES.md](APP-PAGES.md)） |
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
@@ -384,9 +385,10 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /workspaces/:id/worktree` | `run` | 新工作树会从哪里开始：`{ branch?, commit }`，或 Host 不能在这个项目里新建工作树的 409 与原因；不写任何东西 |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
-| `POST /tasks` | `run` | L3 写两条启动审计，不弹确认 |
+| `POST /tasks` | `run` | L3 写两条启动审计，不弹确认；带 `via` 时是插件页面开始会话，先按已应用清单核对页面与能力，见 [APP-PAGES.md](APP-PAGES.md#会话) |
+| `GET /apps/:pluginId/data…`、`PUT/DELETE /apps/:pluginId/data/:scope/:key`、`POST /apps/:pluginId/data/migrate[/lease]`、`GET/POST /apps/:pluginId/diagnostics`、`GET /apps/:pluginId/pages/:appId/lookup/:requestId`、`GET /apps/:pluginId/pages/:appId/sessions/:id/last-reply` | 读与诊断：`view`；写与迁移：`run`；都先核对页面的修订与能力，会话与私有会话的数据照常要求能读 | 插件页面的数据、迁移、诊断与它开始的会话，见 [APP-PAGES.md](APP-PAGES.md) |
 | `GET /handoffs?sessionId=`、`GET /handoffs/:id`；`POST /handoffs`、`POST /handoffs/:id/return`、`POST /handoffs/:id/withdraw` | 读：`view`；新建、交回、撤回：`run`；都要能读相关的会话 | 交接，先写审计再新建或交回，见 [HANDOFFS.md](HANDOFFS.md) |
-| `POST /tasks/:id/prompt` | `run` | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
+| `POST /tasks/:id/prompt` | `run`；带 `via` 时只限这个页面开始的会话 | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
 | `POST /tasks/:id/config` | `run` | 放宽权限模式写 `task.mode.widened`；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |
 | `DELETE /tasks/:id` | `run` | |

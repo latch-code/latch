@@ -3,6 +3,7 @@ import type { HostFeatures } from './features.ts'
 import type { CustomAgentSummary } from './custom-agents.ts'
 import type { AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
+import type { AppSummary } from './apps.ts'
 import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
@@ -64,6 +65,8 @@ export interface AppSnapshot {
   automations?: AutomationSummary[]
   /** Handoffs whose source or target is among `tasks`; absent on older Hosts. */
   handoffs?: HandoffSummary[]
+  /** Applied plugin pages; absent on older Hosts. */
+  apps?: AppSummary[]
   version?: string
   /** The Host's clock when it answered. */
   hostTime?: string

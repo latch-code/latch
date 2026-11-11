@@ -97,7 +97,7 @@ export function buildPreview(
     reason: presenceReason(input.action, subject),
     subject,
     requester,
-    lines: input.lines.map(line => ({ label: line.label, value: escapeSecurityText(line.value) })),
+    lines: input.lines.map(line => ({ label: escapeSecurityText(line.label), value: escapeSecurityText(line.value) })),
     warnings: [...input.warnings],
     nonce: randomNonce(),
     expiresAt: new Date(input.now + CONFIRMATION_LIFETIME_MS).toISOString(),

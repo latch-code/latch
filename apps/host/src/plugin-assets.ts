@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, rename, rm } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import type { PluginPackageBundle } from '@latch/protocol'
@@ -8,9 +8,12 @@ import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic, type AtomicWriteFs } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { checkedPluginBundle } from './plugin-package-bundle.ts'
+import { appCapabilitiesSchema, capabilitySet, withinApproved, type AppSet } from './app-capabilities.ts'
 
 const LIMIT = 64 * 1024 * 1024,
   MAX_RECEIPTS = 10000
+/** Earlier applied revisions a rollback can return to; the oldest go first when the asset budget is short. */
+export const ROLLBACK_REVISIONS = 5
 const idSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u),
   hash = z.string().regex(/^[a-f0-9]{64}$/u),
   rid = z.string().min(8).max(128)
@@ -31,6 +34,18 @@ const recordSchema = z.strictObject({
   appliedRevision: hash.optional(),
   enabled: z.boolean(),
   trusted: z.array(hash).max(128),
+  /** This record's own identity: a plugin created again under a deleted one's ID gets a new one (its pages' data and sessions). */
+  installId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{22}$/u)
+    .optional(),
+  /** The page capabilities this computer confirmed, by page ID: code that asks for no more applies without a confirmation. */
+  approvedApps: z.record(idSchema, appCapabilitiesSchema).optional(),
+  /** Earlier applied snapshots, newest first. */
+  history: z
+    .array(z.strictObject({ revision: hash, bundle: bundleSchema }))
+    .max(ROLLBACK_REVISIONS)
+    .optional(),
 })
 const receiptSchema = z.strictObject({ hash, id: idSchema })
 const stateSchema = z.strictObject({
@@ -39,23 +54,29 @@ const stateSchema = z.strictObject({
   receipts: z.record(hash, receiptSchema),
 })
 export type PluginAssetRecord = z.infer<typeof recordSchema>
-export type PluginAssetDescriptor = Omit<PluginAssetRecord, 'bundle' | 'appliedBundle'> & {
+export type PluginAssetDescriptor = Omit<PluginAssetRecord, 'bundle' | 'appliedBundle' | 'history'> & {
   name: string
   version: string
   description: string
+  rollbackRevisions: Array<{ revision: string; version: string }>
+}
+/** A record's identity; records saved before identities existed get a fixed one derived from their ID. */
+export function installIdOf(record: Pick<PluginAssetRecord, 'id' | 'installId'>): string {
+  return record.installId ?? sha256Hex(canonicalJson(['plugin-install', record.id])).slice(0, 22)
 }
 export function describePluginAsset(record: PluginAssetRecord): PluginAssetDescriptor {
-  const { bundle, appliedBundle: _, ...rest } = record
+  const { bundle, appliedBundle: _, history, ...rest } = record
   return {
     ...rest,
     trusted: [...rest.trusted],
+    rollbackRevisions: (history ?? []).map(entry => ({ revision: entry.revision, version: entry.bundle.manifest.version })),
     name: bundle.manifest.name,
     version: bundle.manifest.version,
     description: bundle.manifest.description,
   }
 }
 type State = z.infer<typeof stateSchema>
-type Operation = 'create' | 'save' | 'trust' | 'apply' | 'enable' | 'disable' | 'delete'
+type Operation = 'create' | 'save' | 'trust' | 'apply' | 'rollback' | 'enable' | 'disable' | 'delete'
 export interface PluginAssetActor {
   actor: AuditActor & { deviceId: string }
   authorize(): void
@@ -76,7 +97,8 @@ export interface PluginAssetMutation {
   audited: boolean
   replay?: true
 }
-type Effect = (next: State, commit: () => Promise<void>) => Promise<void>
+export type PluginAssetEffect = (next: { packages: PluginAssetRecord[] }, commit: () => Promise<void>) => Promise<void>
+type Effect = PluginAssetEffect
 export const pluginTrustRequestId = (requestId: string): string => sha256Hex(canonicalJson(['plugin-execution-trust', requestId]))
 
 /** Editable data and applied snapshots are separate. A failed atomic publication blocks reads until the exact write is retried. */
@@ -130,7 +152,16 @@ export class PluginAssets {
               || (applied.executionHash && !record.trusted.includes(applied.executionHash))
             )
               throw new Error('Untrusted applied snapshot')
-          } else if (record.appliedRevision || record.enabled) throw new Error('Missing applied snapshot')
+          } else if (record.appliedRevision || record.enabled || record.history?.length) throw new Error('Missing applied snapshot')
+          for (const entry of record.history ?? []) {
+            const earlier = checkedPluginBundle(entry.bundle)
+            if (
+              earlier.bundle.manifest.id !== record.id
+              || earlier.revision !== entry.revision
+              || (earlier.executionHash && !record.trusted.includes(earlier.executionHash))
+            )
+              throw new Error('Untrusted earlier snapshot')
+          }
         }
       } finally {
         await fd.close()
@@ -281,7 +312,15 @@ export class PluginAssets {
         if (baseRevision === undefined) {
           if (existing) throw new AppError(409, 'plugin-package-exists', '这个插件标识已存在。')
           if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
-          state.packages.push({ id, bundle, revision, ...(executionHash ? { executionHash } : {}), enabled: false, trusted: [] })
+          state.packages.push({
+            id,
+            bundle,
+            revision,
+            ...(executionHash ? { executionHash } : {}),
+            enabled: false,
+            trusted: [],
+            installId: randomBytes(16).toString('base64url'),
+          })
         } else {
           if (!existing || existing.revision !== baseRevision)
             throw new AppError(409, 'plugin-package-changed', '插件草稿已变化，请刷新后再保存。')
@@ -305,7 +344,18 @@ export class PluginAssets {
       record.trusted.push(executionHash)
     })
   }
-  apply(id: string, revision: string, requestId: string, actor: PluginAssetActor, effect: Effect): Promise<PluginAssetMutation> {
+  /**
+   * `approve`: the page capabilities a confirmation just covered; without it the draft's pages must ask for no more than
+   * what was approved before.
+   */
+  apply(
+    id: string,
+    revision: string,
+    requestId: string,
+    actor: PluginAssetActor,
+    effect: Effect,
+    approve?: AppSet,
+  ): Promise<PluginAssetMutation> {
     return this.change(
       id,
       'apply',
@@ -317,12 +367,77 @@ export class PluginAssets {
         if (record.revision !== revision) throw new AppError(409, 'plugin-package-changed', '插件草稿已变化，请重新检查后应用。')
         if (record.executionHash && !record.trusted.includes(record.executionHash))
           throw new AppError(403, 'plugin-package-untrusted', '请先在这台电脑上批准插件的可执行内容。')
-        record.appliedBundle = structuredClone(record.bundle)
-        record.appliedRevision = revision
-        record.enabled = true
+        this.publishApplied(state, record, revision, structuredClone(record.bundle), approve)
       },
       effect,
     )
+  }
+  /** Applies an earlier applied snapshot again; the draft is left as it is. */
+  rollback(
+    id: string,
+    revision: string,
+    requestId: string,
+    actor: PluginAssetActor,
+    effect: Effect,
+    approve?: AppSet,
+  ): Promise<PluginAssetMutation> {
+    return this.change(
+      id,
+      'rollback',
+      requestId,
+      { revision },
+      actor,
+      state => {
+        const record = this.find(state, id)
+        const earlier = record.history?.find(entry => entry.revision === revision)
+        if (!earlier) throw new AppError(404, 'plugin-package-revision-not-found', '找不到这个已应用过的版本。')
+        const checked = checkedPluginBundle(earlier.bundle)
+        if (checked.executionHash && !record.trusted.includes(checked.executionHash))
+          throw new AppError(403, 'plugin-package-untrusted', '请先在这台电脑上批准插件的可执行内容。')
+        record.history = record.history!.filter(entry => entry.revision !== revision)
+        this.publishApplied(state, record, revision, structuredClone(earlier.bundle), approve)
+      },
+      effect,
+    )
+  }
+  /** A rollback's target snapshot; like `candidate`, only the same device/request recovers an uncertain commit. */
+  rollbackCandidate(
+    id: string,
+    revision: string,
+    requestId: string,
+    actor: PluginAssetActor,
+  ): { bundle: PluginPackageBundle; record: PluginAssetRecord } {
+    actor.authorize()
+    idSchema.parse(id)
+    hash.parse(revision)
+    rid.parse(requestId)
+    const key = sha256Hex(canonicalJson([actor.actor.deviceId, requestId]))
+    if (this.pending && (this.pending.key !== key || this.pending.id !== id)) this.certain()
+    const record = this.find(this.pending?.state ?? this.state, id)
+    if (this.pending && record.appliedRevision === revision && record.appliedBundle)
+      return { bundle: structuredClone(record.appliedBundle), record: structuredClone(record) }
+    const entry = record.history?.find(item => item.revision === revision)
+    if (!entry) throw new AppError(404, 'plugin-package-revision-not-found', '找不到这个已应用过的版本。')
+    return { bundle: structuredClone(entry.bundle), record: structuredClone(record) }
+  }
+  private publishApplied(state: State, record: PluginAssetRecord, revision: string, bundle: PluginPackageBundle, approve?: AppSet): void {
+    if (approve) record.approvedApps = structuredClone(approve)
+    if (!withinApproved(capabilitySet(bundle.manifest), record.approvedApps))
+      throw new AppError(403, 'plugin-package-capabilities', '页面要求的能力还没有在这台电脑上确认。')
+    if (record.appliedBundle && record.appliedRevision && record.appliedRevision !== revision)
+      record.history = [
+        { revision: record.appliedRevision, bundle: record.appliedBundle },
+        ...(record.history ?? []).filter(entry => entry.revision !== record.appliedRevision && entry.revision !== revision),
+      ].slice(0, ROLLBACK_REVISIONS)
+    record.appliedBundle = bundle
+    record.appliedRevision = revision
+    record.enabled = true
+    if (!record.history?.length) delete record.history
+    // Earlier snapshots give way to the asset budget before an apply would be refused for it.
+    while (record.history?.length && Buffer.byteLength(JSON.stringify(state)) > LIMIT) {
+      record.history.pop()
+      if (!record.history.length) delete record.history
+    }
   }
   setEnabled(id: string, enabled: boolean, requestId: string, actor: PluginAssetActor, effect: Effect): Promise<PluginAssetMutation> {
     return this.change(

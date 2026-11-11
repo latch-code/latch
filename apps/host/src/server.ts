@@ -48,6 +48,7 @@ import {
   type AgentPresetSettings,
   type AgentRecord,
   type AgentSettings,
+  type AppDataEvent,
   type AppSnapshot,
   type CommandDetection,
   type Approval,
@@ -214,6 +215,9 @@ import { createFileRoutes } from './files/index.ts'
 import { FileDirectoryReader } from './files/directory.ts'
 import { FileReferenceStore } from './files/reference-store.ts'
 import { PluginAssets } from './plugin-assets.ts'
+import { AppDataStore } from './app-data.ts'
+import { AppDiagnostics } from './app-diagnostics.ts'
+import { capabilityLines, capabilitySummary } from './app-capabilities.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
 import { createRoutes } from './routes/index.ts'
 import type { GitRouteOptions } from './routes/git.ts'
@@ -1384,6 +1388,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const pluginAssets = await PluginAssets.open(dataDir, { audit })
     startupCleanup.push(() => pluginAssets.close())
+    const appData = await AppDataStore.open(dataDir, { now })
+    startupCleanup.push(() => appData.close())
+    const appDiagnostics = new AppDiagnostics(id => appData.pluginDirectory(id), now)
     const assetPluginIds = new Set<string>()
     // A version the desktop app installed may load other plugin formats: incompatible packages stay off, assets kept.
     const heldPlugins = await HeldPlugins.open(pluginAssets.directory)
@@ -1802,6 +1809,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       native: nativeRoutes,
       terminal: terminalRoutes,
       agentLogin: agentLoginRoutes,
+      apps: appRoutes,
       routes,
     } = createRoutes(routeContext, {
       native: {
@@ -1845,6 +1853,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       automations: { automations: () => automations, access: agentAccess },
       handoffs: { handoffs: () => handoffs },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
+      apps: {
+        assets: () => pluginAssets,
+        pluginEnabled: id => registry.list().some(plugin => plugin.id === id && plugin.enabled),
+        data: appData,
+        diagnostics: appDiagnostics,
+        async pageSession(caller, sessionId, write = false) {
+          requireScope(caller, write ? 'run' : 'view')
+          if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
+            throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+          // From the Host's own records first: a session whose Harness is gone must not slip through as a 404.
+          const refusePrivate = () => {
+            if (hub!.agentPrivate(sessionId)) throw new AppError(403, 'app-private-session', '插件页面不能使用私有会话。')
+          }
+          refusePrivate()
+          await hub!.harnessOf(sessionId)
+          refusePrivate()
+          recheck(caller, write ? 'run' : 'view')
+        },
+        broadcast: (event, restricted) => sendAppData(event, restricted),
+      },
       agentLogin: {
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)
@@ -3110,16 +3138,61 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           req,
           caller,
           'plugin.package.apply',
-          { id: input.id, revision: input.revision, executionHash: input.executionHash },
-          { form: 'plugin.package.apply', slots: { plugin: input.name } },
+          {
+            id: input.id,
+            revision: input.revision,
+            ...(input.executionHash ? { executionHash: input.executionHash } : {}),
+            ...(input.capabilitiesHash ? { capabilitiesHash: input.capabilitiesHash } : {}),
+            ...(input.adoptsData ? { adoptsData: true } : {}),
+          },
+          input.apps
+            ? {
+                form: 'plugin.package.apply-pages',
+                slots: { plugin: input.name, capabilities: capabilitySummary(input.apps, input.adoptsData === true) },
+              }
+            : { form: 'plugin.package.apply', slots: { plugin: input.name } },
           [
             { label: '插件', value: input.name },
-            { label: 'Host 模块', value: String(input.hostModules) },
-            { label: 'React 面板', value: String(input.clientPanels) },
-            { label: '可执行内容摘要', value: input.executionHash },
+            ...(input.executionHash
+              ? [
+                  { label: 'Host 模块', value: String(input.hostModules) },
+                  { label: 'React 面板', value: String(input.clientPanels) },
+                  { label: '可执行内容摘要', value: input.executionHash },
+                ]
+              : []),
+            ...(input.apps ? capabilityLines(input.apps, id => savedProject(id)?.name ?? id) : []),
+            ...(input.adoptsData ? [{ label: '保存的数据', value: '接上之前删除的同 ID 插件留下的数据' }] : []),
           ],
-          ['插件是可信本机代码，可访问 Host 进程的数据；客户端模块具有当前页面权限。'],
+          [
+            ...(input.executionHash ? ['插件是可信本机代码，可访问 Host 进程的数据；客户端模块具有当前页面权限。'] : []),
+            ...(input.apps ? ['页面只能经 Host 使用上面列出的能力；开始的会话用项目的默认权限。这不是系统隔离。'] : []),
+          ],
         )
+      },
+      dataClaim: plugin => appData.claim(plugin),
+      adoptData: plugin => appData.adopt(plugin),
+      async appTrust(caller, input) {
+        await audited({
+          action: 'plugin.package.app-trust',
+          actor: actorOf(caller),
+          target: input.id,
+          detail: { operation: input.operation, trust: input.trust, revision: input.revision, capabilitiesHash: input.capabilitiesHash },
+        })
+      },
+      async removeData(caller, id, remove) {
+        if (!remove) {
+          appData.forget(id)
+          return { audited: true }
+        }
+        let audited = true
+        const documents = await appData.removePlugin(id)
+        appDiagnostics.forget(id)
+        try {
+          await audit.append({ action: 'app.data.removed', actor: actorOf(caller), target: id, detail: { pluginId: id, documents } })
+        } catch {
+          audited = false
+        }
+        return { audited }
       },
       serial(actor, operation) {
         const pending = changes.then(() => {
@@ -3934,6 +4007,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.decision === 'allow' && optionKind === 'allow_always' && (approval.advisory || approval.risk === 'R2')) {
         throw new AppError(403, 'approval-always-unavailable', '高风险操作不提供“始终允许”')
       }
+      // A standing allowance widens the session as a mode change does: a page may no longer drive it.
+      if (input.decision === 'allow' && optionKind === 'allow_always') await hub!.markOriginChanged(approval.sessionId)
       if (input.decision === 'allow' && approval.risk === 'R2' && !approval.advisory) {
         previewHash = (await approvalFacts(approval, args, session)).previewHash
       }
@@ -4152,6 +4227,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       write(res, stream, 'host-state', `event: host-state\ndata: ${JSON.stringify(event)}\n\n`)
+    }
+
+    /**
+     * A plugin page's document changed: to every stream whose device may read it, outside the revision order (a page
+     * reads the document again). A session's documents go only where that session may be read.
+     */
+    function sendAppData(change: Omit<AppDataEvent, 'type' | 'instanceId'>, restricted = false): void {
+      const sessionId = change.scope.startsWith('session:') ? change.scope.slice('session:'.length) : undefined
+      const isPrivate = restricted || (sessionId !== undefined && hub!.agentPrivate(sessionId))
+      const event: AppDataEvent = { type: 'app.data', instanceId, ...change }
+      const frame = `event: app.data\ndata: ${JSON.stringify(event)}\n\n`
+      for (const [res, stream] of streams) {
+        if (!streamAllowed(stream)) continue
+        if (isPrivate && devices.get(stream.deviceId)?.dataScope !== 'all') continue
+        if (stream.nativeOpening && nativeRoutes.verifiedUntil(stream.nativeOpening) <= now()) continue
+        write(res, stream, 'app.data', frame)
+      }
     }
 
     /** Announces the stop on every stream and ends them all, giving the last frames a moment to leave. */
@@ -4489,6 +4581,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // An earlier build's phone may still hold a message for an assistant; without the field it would start an ordinary session.
       if (typeof body === 'object' && body !== null && 'assistantId' in body)
         throw new AppError(409, 'assistant-removed', '这条消息是发给已移除的 Agent 的，没有发出。')
+      if (typeof body === 'object' && body !== null && 'via' in body) {
+        const started = await appRoutes.start(caller, body, start =>
+          startSession(caller, { ...createTaskSchema.parse(start), withoutPrivateContext: true }, res),
+        )
+        json(res, started, 201)
+        return
+      }
       const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
@@ -4502,7 +4601,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function startSession(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string },
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true },
       res: ServerResponse,
     ): Promise<{ sessionId: string }> {
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
@@ -4515,10 +4614,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function startSessionChecked(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string },
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true },
       res: ServerResponse,
     ): Promise<{ sessionId: string }> {
-      const { privateFrom, title, ...requested } = start
+      // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
+      const { privateFrom, title, withoutPrivateContext, ...requested } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -4579,7 +4679,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const agentContext: AgentExecutionContext | undefined =
           (customAgentId
             ? agentPlans.agentContext(customAgentId, harnessId)
-            : generalContextFor(devices.get(caller.device.id)?.dataScope, harnessId))
+            : generalContextFor(withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope, harnessId))
           ?? (fork && privateSession(fork.source)
             ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
             : undefined)
@@ -4894,24 +4994,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       caller: DeviceCaller,
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
+      withoutPrivateContext = false,
     ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input))
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext))
     }
 
     async function sendPromptChecked(
       caller: DeviceCaller,
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
+      withoutPrivateContext: boolean,
     ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
@@ -4935,7 +5037,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, input) }
       const harnessId = await hub!.harnessOf(id),
-        agentTurn = turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
+        agentTurn = turnContext(id, harnessId, withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope),
         attachments = await promptAttachments(
           caller,
           input.attachmentIds,
@@ -5211,7 +5313,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (method === 'POST' && action === 'prompt') {
         requireScope(caller, 'run')
-        const input = queuedPromptSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+        const body = await jsonBody(req, TASK_BODY_LIMIT)
+        if (typeof body === 'object' && body !== null && 'via' in body) {
+          await appRoutes.continueSession(caller, id, body, async input => {
+            await sendPrompt(caller, id, queuedPromptSchema.parse(input), true)
+          })
+          json(res, { accepted: true })
+          return true
+        }
+        const input = queuedPromptSchema.parse(body)
         if ((input.queue || input.steer) && (input.attachmentIds?.length || input.fileRefs?.length))
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         if (input.freshContext && (input.queue || input.steer))
@@ -5277,6 +5387,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           authority()
         }
         await authorize()
+        // Before the change, and whether or not it lands: a page cannot drive a session whose mode a person touched.
+        if (input.configId === 'mode') await hub!.markOriginChanged(id)
+        else {
+          // A session that cannot be read now is marked too: the driver's own answer to the change comes after this.
+          const detail = await hub!.detail(id).catch(() => undefined)
+          if (!detail || detail.config?.find(item => item.id === input.configId)?.category === 'mode') await hub!.markOriginChanged(id)
+        }
         const execute = async (before: () => Promise<void>) => {
           await authorize()
           const change = await hub!.classifyConfigChange(id, input.configId, input.value)
@@ -6138,6 +6255,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         const handoffSummaries = handoffs.summaries(new Set(snapshot.tasks.map(task => task.id)))
         if (handoffSummaries?.length) snapshot.handoffs = handoffSummaries
+        const appSummaries = await appRoutes.summaries()
+        if (appSummaries.length) snapshot.apps = appSummaries
         traffic.response('snapshot', json(res, snapshot))
         return
       }

@@ -117,6 +117,7 @@ export type PresenceReasonForm =
   | 'policy.egress-many'
   | 'policy.several'
   | 'plugin.package.apply'
+  | 'plugin.package.apply-pages'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
 export interface PresenceSubject {

@@ -4,58 +4,67 @@ import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { AppError, type HarnessPlugin, type PluginContext } from '@latch/sdk'
 import { isUiPanelDocument, type UiPanelDocument } from '@latch/protocol'
+import { appPluginNameSchema, appRequiresSchema, appsSchema } from './app-capabilities.ts'
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/u)
-export const pluginManifestSchema = z
-  .object({
-    formatVersion: z.literal(1),
-    id,
-    name: z.string().trim().min(1).max(80),
-    version: z.string().min(1).max(64),
-    description: z.string().max(500),
-    host: z.array(z.string().min(1)).max(32).default([]),
-    config: z.record(z.string(), z.unknown()).default({}),
-    skills: z
-      .array(
-        z
-          .object({
-            id,
-            name: z.string().trim().min(1).max(80),
-            description: z.string().max(500),
-            file: z.string().min(1),
-          })
-          .strict(),
-      )
-      .max(32)
-      .default([]),
-    panels: z
-      .array(
-        z
-          .object({
-            id,
-            title: z.string().trim().min(1).max(48),
-            description: z.string().max(240).optional(),
-            harnessIds: z.array(id).max(32).optional(),
-            entry: z.string().min(1),
-          })
-          .strict(),
-      )
-      .max(32)
-      .default([]),
-    dataPanels: z
-      .array(
-        z.strictObject({
+const manifestFields = {
+  id,
+  name: z.string().trim().min(1).max(80),
+  version: z.string().min(1).max(64),
+  description: z.string().max(500),
+  host: z.array(z.string().min(1)).max(32).default([]),
+  config: z.record(z.string(), z.unknown()).default({}),
+  skills: z
+    .array(
+      z
+        .object({
+          id,
+          name: z.string().trim().min(1).max(80),
+          description: z.string().max(500),
+          file: z.string().min(1),
+        })
+        .strict(),
+    )
+    .max(32)
+    .default([]),
+  panels: z
+    .array(
+      z
+        .object({
           id,
           title: z.string().trim().min(1).max(48),
           description: z.string().max(240).optional(),
           harnessIds: z.array(id).max(32).optional(),
-          document: z.custom<UiPanelDocument>(isUiPanelDocument),
-        }),
-      )
-      .max(32)
-      .default([]),
-  })
-  .strict()
+          entry: z.string().min(1),
+        })
+        .strict(),
+    )
+    .max(32)
+    .default([]),
+  dataPanels: z
+    .array(
+      z.strictObject({
+        id,
+        title: z.string().trim().min(1).max(48),
+        description: z.string().max(240).optional(),
+        harnessIds: z.array(id).max(32).optional(),
+        document: z.custom<UiPanelDocument>(isUiPanelDocument),
+      }),
+    )
+    .max(32)
+    .default([]),
+}
+/** Format 1 loads unchanged; format 2 adds pages (`apps`) and the SDK range they need. Both are strict. */
+export const pluginManifestSchema = z.discriminatedUnion('formatVersion', [
+  z.strictObject({ formatVersion: z.literal(1), ...manifestFields }),
+  z.strictObject({
+    formatVersion: z.literal(2),
+    ...manifestFields,
+    name: appPluginNameSchema,
+    requires: appRequiresSchema.optional(),
+    apps: appsSchema.optional(),
+  }),
+])
 
 interface HostModule {
   activate(context: PluginContext, config: Readonly<Record<string, unknown>>): void | Promise<void>
@@ -125,7 +134,7 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
     name: manifest.name,
     version: manifest.version,
     description: manifest.description,
-    package: { formatVersion: 1 },
+    package: { formatVersion: manifest.formatVersion },
     async activate(context) {
       for (const skill of skills) context.registerSkill(skill)
       for (const panel of panels) context.registerClientPanel(panel)

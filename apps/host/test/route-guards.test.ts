@@ -400,6 +400,68 @@ describe('route guards', () => {
     expect(results).toEqual(expected)
   })
 
+  it('keeps every plugin page route to its scopes: reading takes view, every change run, before any page check', async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const viewer = await t.enroll({ name: 'Viewer', scopes: ['view'] })
+    const member = await t.enroll({ listener: 'unix', name: 'Member', scopes: ['view', 'run'] })
+    const devices: Record<string, TestDevice> = { viewer, member }
+    type Caller = 'anonymous' | 'viewer' | 'member'
+    const call = (caller: Caller, method: Method, path: string, body: unknown): Promise<Response> => {
+      const init = { method, ...(body === undefined ? {} : { body }) }
+      return caller === 'anonymous' ? t.raw('unix', `api/${path}`, init) : devices[caller]!.request(path, init)
+    }
+    const revision = 'a'.repeat(64)
+    const via = { app: 'p/main', revision }
+    const page = `app=p%2Fmain&revision=${revision}`
+    const requestId = '00000000-0000-4000-8000-000000000000'
+    const rows: Array<Row<Caller>> = [
+      ['GET', `apps/p/data?scope=plugin&${page}`, undefined, { anonymous: [401, 'unauthorized'], viewer: [404, 'app-not-found'] }],
+      ['GET', `apps/p/data/status?${page}`, undefined, { viewer: [404, 'app-not-found'] }],
+      ['GET', `apps/p/data/plugin/k?${page}`, undefined, { viewer: [404, 'app-not-found'] }],
+      [
+        'PUT',
+        'apps/p/data/plugin/k',
+        { via, requestId, ifVersion: 0, value: 1 },
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [404, 'app-not-found'] },
+      ],
+      [
+        'DELETE',
+        'apps/p/data/plugin/k',
+        { via, requestId, ifVersion: 1 },
+        { viewer: [403, 'scope-required'], member: [404, 'app-not-found'] },
+      ],
+      ['POST', 'apps/p/data/migrate/lease', { via }, { viewer: [403, 'scope-required'], member: [404, 'app-not-found'] }],
+      [
+        'POST',
+        'apps/p/data/migrate',
+        { via, requestId, lease: 'A'.repeat(22), fromGeneration: 1, toVersion: 2, documents: [] },
+        { viewer: [403, 'scope-required'], member: [404, 'app-not-found'] },
+      ],
+      ['GET', `apps/p/diagnostics?${page}`, undefined, { anonymous: [401, 'unauthorized'], viewer: [404, 'app-not-found'] }],
+      ['POST', 'apps/p/diagnostics', { via, source: 'runtime', message: 'x' }, { viewer: [404, 'app-not-found'] }],
+      ['GET', `apps/p/pages/main/lookup/${requestId}?revision=${revision}`, undefined, { viewer: [404, 'app-not-found'] }],
+      ['GET', `apps/p/pages/main/sessions/s/last-reply?revision=${revision}`, undefined, { viewer: [404, 'app-not-found'] }],
+      ['GET', 'apps/p/elsewhere', undefined, { viewer: [404, 'not-found'] }],
+      [
+        'POST',
+        'tasks',
+        { via, requestId, prompt: 'x' },
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [404, 'app-not-found'] },
+      ],
+      ['POST', 'tasks/s/prompt', { via, requestId, prompt: 'x' }, { viewer: [403, 'scope-required'], member: [404, 'app-not-found'] }],
+    ]
+    const results: Record<string, Outcome> = {}
+    const expected: Record<string, Outcome> = {}
+    for (const [method, path, body, outcomes] of rows)
+      for (const [caller, outcome] of Object.entries(outcomes) as Array<[Caller, Outcome]>) {
+        const key = `${caller} ${method} /link/api/${path}`
+        expected[key] = outcome
+        results[key] = await responseOutcome(await call(caller, method, path, body))
+      }
+    expect(results).toEqual(expected)
+  })
+
   it('keeps native openings to pairing, their verification window and the routes a phone may use', async () => {
     const t = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanups.push(() => t.close())
@@ -439,6 +501,7 @@ describe('route guards', () => {
       ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'handoffs?sessionId=s', undefined, { phone: [403, 'native-verification-required'] }],
       ['POST', 'handoffs', {}, { phone: [403, 'native-verification-required'] }],
+      ['GET', `apps/p/data/status?app=p%2Fmain&revision=${'a'.repeat(64)}`, undefined, { phone: [403, 'native-verification-required'] }],
     ])
     const locked = await phone.request('GET', '/link/api/snapshot')
     expect(locked.status).toBe(200)
