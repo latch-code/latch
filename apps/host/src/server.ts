@@ -207,6 +207,7 @@ import { FileReferenceStore } from './files/reference-store.ts'
 import { PluginAssets } from './plugin-assets.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
 import { createRoutes } from './routes/index.ts'
+import type { GitRouteOptions } from './routes/git.ts'
 import { TerminalService, type TerminalServiceOptions } from './terminal/service.ts'
 import { RENEW_INTERVAL_MS, UNIX_ADDRESS } from './routes/devices.ts'
 import { opaqueId } from './audit-actions/fields.ts'
@@ -531,6 +532,8 @@ export interface ServerOptions {
   fileHooks?: { afterResolve?(realPath: string): Promise<void> }
   /** Tests: the terminal component (`binary`, default `dist/native/latch-pty`) or a stand-in for it. Production never sets it. */
   terminal?: Pick<TerminalServiceOptions, 'launch' | 'shell' | 'hostEnv'> & { binary?: string }
+  /** Tests: the Git, home, environment, shell and time limits of 交付 (`routes/git.ts`). Production never sets it. */
+  gitDelivery?: GitRouteOptions
   /**
    * Finds the programs whose login commands the Host may run. The start script passes `resolveCommand`; left out, as in
    * tests, no real program on this computer can be run to check or start a login.
@@ -1770,6 +1773,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       automations: { automations: () => automations, access: agentAccess },
       handoffs: { handoffs: () => handoffs },
+      ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
       agentLogin: {
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)

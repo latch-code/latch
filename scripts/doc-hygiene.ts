@@ -19,6 +19,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'DOCUMENT-PERFORMANCE',
     'DOCUMENT-PREVIEWS',
     'FILE-OUTPUTS',
+    'GIT-DELIVERY',
     'HANDOFFS',
     'HARNESSES',
     'MODEL-CONFIGURATION',

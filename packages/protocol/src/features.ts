@@ -24,6 +24,8 @@ export interface HostFeatures {
   usage?: true
   changes?: true
   gitWrites?: true
+  /** `/tasks/:id/git` and its stage, unstage, commit and push routes (docs/GIT-DELIVERY.md). */
+  gitDelivery?: true
   terminal?: true
   /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
   loginTerminal?: true

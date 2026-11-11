@@ -21,4 +21,4 @@
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
 - `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。
 - `src/terminal.ts` 定义终端路由的线上类型；路由只接受 `host.sock`，见 [docs/TERMINAL.md](../../docs/TERMINAL.md)。
-
+- `src/git-delivery.ts` 定义交付路由的线上类型与错误码，见 [docs/GIT-DELIVERY.md](../../docs/GIT-DELIVERY.md)。

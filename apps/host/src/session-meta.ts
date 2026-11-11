@@ -54,7 +54,49 @@ const configReceiptSchema = z.strictObject({
   state: z.enum(['pending', 'applied', 'failed', 'unknown']),
   at: isoTime,
 })
-const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema])
+const oidText = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
+const hex64Text = z.string().regex(/^[a-f0-9]{64}$/u)
+/**
+ * A commit or push of 交付 (docs/GIT-DELIVERY.md): written `pending` before Git runs, so a retry or a later Host process
+ * never runs it a second time. A `pending` one read from the file is `unknown`: Git may or may not have finished.
+ */
+const gitReceiptSchema = z.strictObject({
+  kind: z.literal('git'),
+  operation: z.enum(['commit', 'push']),
+  requestId: requestIdText,
+  deviceId: deviceIdText,
+  payloadHash: hex64Text,
+  state: z.enum(['pending', 'done', 'failed', 'unknown']),
+  /** Commit: HEAD before (absent on an unborn branch), the index's tree, the subject line's hash, hooks skipped. */
+  preHead: oidText.optional(),
+  indexTree: oidText.optional(),
+  subjectHash: hex64Text.optional(),
+  skipHooks: z.literal(true).optional(),
+  startedAt: isoTime.optional(),
+  /** Push: the remote's name, the ref on it, the commit sent, and whether the push sets the upstream. */
+  remote: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u)
+    .optional(),
+  ref: z.string().min(12).max(1024).startsWith('refs/heads/').optional(),
+  localSha: oidText.optional(),
+  setUpstream: z.literal(true).optional(),
+  via: z.enum(['upstream', 'push-remote', 'origin']).optional(),
+  /** The commit made, once done. */
+  commit: oidText.optional(),
+  /** The fixed reason a failed one gives on a retry, and the hook that failed. */
+  code: z
+    .string()
+    .regex(/^git-[a-z-]{1,60}$/u)
+    .optional(),
+  hook: z
+    .string()
+    .regex(/^[a-z0-9-]{1,40}$/u)
+    .optional(),
+  exitCode: z.number().int().min(-1).max(255).optional(),
+  at: isoTime,
+})
+const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema, gitReceiptSchema])
 
 /**
  * Version 1 since titles, pins and archives; receipts were added as an optional field, so files written before them
@@ -107,7 +149,8 @@ const metaSchema = z.object({
 export type ApprovalRecord = z.infer<typeof approvalReceiptSchema>
 export type CancelRecord = z.infer<typeof cancelReceiptSchema>
 export type ConfigRecord = z.infer<typeof configReceiptSchema>
-export type StoredReceipt = ApprovalRecord | CancelRecord | ConfigRecord
+export type GitRecord = z.infer<typeof gitReceiptSchema>
+export type StoredReceipt = ApprovalRecord | CancelRecord | ConfigRecord | GitRecord
 /** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
 export interface StoredMeta {
   personal?: TaskSummary['personal']
@@ -147,6 +190,10 @@ export interface SessionReceipts {
   config(sessionId: string, deviceId: string, requestId: string): ConfigRecord | undefined
   /** Config identities never expire before their session; capacity is refused before an Agent can be invoked. */
   recordConfig(sessionId: string, receipt: ConfigRecord): Promise<void>
+  /** A commit or push of 交付 this device sent on this session with this `requestId`. */
+  git(sessionId: string, deviceId: string, requestId: string): GitRecord | undefined
+  /** Settles when the file holds it; a failed write throws, so a write that must be on record first does not run. */
+  recordGit(sessionId: string, receipt: GitRecord): Promise<void>
 }
 
 function codeOf(error: unknown): unknown {
@@ -176,6 +223,7 @@ export class SessionMetaStore implements SessionReceipts {
   private readonly approvals = new Map<string, Entry>()
   private readonly cancels = new Map<string, Entry>()
   private readonly configs = new Map<string, Entry>()
+  private readonly gits = new Map<string, Entry>()
   private readonly perDevice = new Map<string, number>()
 
   private constructor(
@@ -208,7 +256,8 @@ export class SessionMetaStore implements SessionReceipts {
         for (const value of receipts ?? []) {
           const receipt = receiptSchema.safeParse(value)
           if (receipt.success) {
-            if (receipt.data.kind === 'config' && receipt.data.state === 'pending') receipt.data.state = 'unknown'
+            if ((receipt.data.kind === 'config' || receipt.data.kind === 'git') && receipt.data.state === 'pending')
+              receipt.data.state = 'unknown'
             loaded.push({ sessionId: id, receipt: receipt.data })
           } else if (typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'config') {
             throw new AppError(500, 'config-corrupt', '会话配置回执无法读取，原文件已保留。')
@@ -326,6 +375,27 @@ export class SessionMetaStore implements SessionReceipts {
     })
   }
 
+  git(sessionId: string, deviceId: string, requestId: string): GitRecord | undefined {
+    this.prune()
+    const value = this.gits.get(cancelKey(sessionId, deviceId, requestId))?.receipt
+    return value?.kind === 'git' ? structuredClone(value) : undefined
+  }
+
+  async recordGit(sessionId: string, input: GitRecord): Promise<void> {
+    const receipt = gitReceiptSchema.parse(input),
+      key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
+    const entry: Entry = { sessionId, receipt }
+    this.insert(entry)
+    this.prune()
+    try {
+      await this.enqueue(() => this.write(this.meta))
+    } catch (error) {
+      // A start that is not on record does not run, so it must not answer a retry either.
+      if (receipt.state === 'pending' && this.gits.get(key) === entry) this.delete(entry)
+      throw error
+    }
+  }
+
   flush(): Promise<void> {
     return this.queue
   }
@@ -348,13 +418,17 @@ export class SessionMetaStore implements SessionReceipts {
       this.approvals.set(receipt.approvalId, entry)
     } else {
       const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId),
-        index = receipt.kind === 'config' ? this.configs : this.cancels
+        index = this.indexOf(receipt.kind)
       const previous = index.get(key)
       if (previous) this.delete(previous)
       index.set(key, entry)
     }
     this.entries.add(entry)
     this.perDevice.set(receipt.deviceId, (this.perDevice.get(receipt.deviceId) ?? 0) + 1)
+  }
+
+  private indexOf(kind: 'cancel' | 'config' | 'git'): Map<string, Entry> {
+    return kind === 'config' ? this.configs : kind === 'git' ? this.gits : this.cancels
   }
 
   private delete(entry: Entry): void {
@@ -364,7 +438,7 @@ export class SessionMetaStore implements SessionReceipts {
       if (this.approvals.get(receipt.approvalId) === entry) this.approvals.delete(receipt.approvalId)
     } else {
       const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
-      const index = receipt.kind === 'config' ? this.configs : this.cancels
+      const index = this.indexOf(receipt.kind)
       if (index.get(key) === entry) index.delete(key)
     }
     const count = (this.perDevice.get(receipt.deviceId) ?? 1) - 1

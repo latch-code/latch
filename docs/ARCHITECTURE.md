@@ -44,7 +44,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
-| HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
+| HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、提交与推送在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
@@ -329,7 +329,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `policy.json` | 本机安全策略 |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
-| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及审批决定与取消回执 |
+| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及审批决定、取消与交付（提交、推送，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
@@ -391,6 +391,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |
 | `DELETE /tasks/:id` | `run` | |
 | `PATCH /tasks/:id` | `run` | 重命名、置顶、归档；会话还有终端时归档可能被拒绝（见 [TERMINAL.md](./TERMINAL.md)） |
+| `GET /tasks/:id/git`、`POST /tasks/:id/git/{stage,unstage,commit,push}` | 读：`view` + 数据范围 `all`；暂存与取消暂存：`run` + `all`；提交与推送：`run`，私有会话另需 `all` | 交付：仓库状态、按文件暂存、提交（默认运行钩子）、推送到上游或 `origin`；提交、推送与有 filter 时的暂存以你的账户运行你的 Git，先写审计，见 [GIT-DELIVERY.md](GIT-DELIVERY.md) |
 | `POST /tasks/:id/cancel` | `view` | `{ requestId?, runId? }`，回答取消的回执 |
 | `POST /tasks/:id/stop-subagent` | `view` | `{ subagentId }`，单独停止一个宣告能单独停止的子 Agent，先写 `task.subagent.stopped`，见 [HARNESSES.md](./HARNESSES.md#子-agent) |
 | `POST /tasks/:id/keep-waiting` | `view` | `{ runId, thresholdMs }`，让这次运行晚一些再说沉默，见 [STREAMING.md](./STREAMING.md#运行的真实状态) |
