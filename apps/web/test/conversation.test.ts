@@ -554,7 +554,7 @@ describe('the live run', () => {
     const phase = (extra: Partial<TaskDetail>, opts: { cancelling?: boolean; approvals?: number } = {}) =>
       phaseText(livePhase({ ...base, ...extra }, { cancelling: false, approvals: 0, hostNow: T0 + 12_000, ...opts }), 'Codex')
     expect(phase({}, { cancelling: true })).toBe('正在停止…')
-    expect(phase({}, { approvals: 1 })).toBe('需要你允许')
+    expect(phase({}, { approvals: 1 })).toBe('等你处理')
     expect(
       phase({ messages: [user('u'), tool('t', { state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } })] }),
     ).toBe('运行 pnpm test')
@@ -587,7 +587,7 @@ describe('the live run', () => {
       text: '命令运行中 · swift test',
       clock: '1:12',
     })
-    expect(status({}, { live: live({ activity: 'approval' }) }, { approvals: 1 })).toEqual({ tone: 'quiet', text: '需要你允许' })
+    expect(status({}, { live: live({ activity: 'approval' }) }, { approvals: 1 })).toEqual({ tone: 'quiet', text: '等你处理' })
     expect(status({ questions: [{}] as unknown as TaskDetail['questions'] }).tone).toBe('quiet')
     expect(status({}, {}, { cancelling: true })).toEqual({ tone: 'plain', text: '正在停止…' })
   })

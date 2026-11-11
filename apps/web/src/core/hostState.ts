@@ -45,16 +45,20 @@ function clock(at: string): string {
   return new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-/** The state line shown while the Host does not answer, instead of a generic reconnecting message. */
-export function hostNoticeCopy(notice: HostNotice): { title: string; body: string } {
-  if (notice.state === 'sleeping') return { title: `Mac 已休眠（${clock(notice.at)} 起）`, body: 'Mac 唤醒后会自动重新连接。' }
+/**
+ * The state line shown while the Host does not answer, instead of a generic reconnecting message. `computer` is
+ * `computerLabel`: 「这台 Mac」 in the Latch app there, the computer's name on any other device.
+ */
+export function hostNoticeCopy(notice: HostNotice, computer = 'Mac'): { title: string; body: string } {
+  if (notice.state === 'sleeping')
+    return { title: `${computer} 已休眠（${clock(notice.at)} 起）`, body: `${computer} 唤醒后会自动重新连接。` }
   switch (notice.reason) {
     case 'restart':
-      return { title: 'Mac 上的 Latch 正在重启', body: '几秒后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 正在重启`, body: '几秒后会自动重新连接。' }
     case 'update':
-      return { title: 'Mac 上的 Latch 正在更新', body: '更新完成后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 正在更新`, body: '更新完成后会自动重新连接。' }
     case 'sleep':
     case 'shutdown':
-      return { title: `Mac 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 再次启动后会自动重新连接。' }
+      return { title: `${computer} 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 再次启动后会自动重新连接。' }
   }
 }

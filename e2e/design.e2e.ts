@@ -158,7 +158,7 @@ describe('responsive workspace controls', () => {
       // OpenAI needs a key: the form says before saving where it is typed and that the service waits for it.
       await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
       await reachable(sheet.getByRole('button', { name: '检测连接', exact: true }))
-      await reachable(sheet.getByRole('button', { name: '保存服务', exact: true }))
+      await reachable(sheet.getByRole('button', { name: '保存', exact: true }))
       await capture(page, `${label}-model-settings`)
       await sheet.getByRole('button', { name: '取消', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })

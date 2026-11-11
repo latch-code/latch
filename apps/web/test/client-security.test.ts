@@ -59,9 +59,16 @@ import {
 import { approvalActions, composerGate, deviceAccess, LEGACY_HOST_TEXT, LEVEL_LABELS, modeRows } from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
+  computerName,
   CONFIRMATION_RESULT_TEXT,
+  DEVICES_COPY,
   describeFailure,
+  FILE_COPY,
   isCatalogCode,
+  MODEL_MENU_COPY,
+  PROVIDER_COPY,
+  SETTINGS_ADMIN_HIDDEN,
+  SETUP_COPY,
   isSessionStopCode,
   safeTarget,
   SESSION_STOP_TEXT,
@@ -209,14 +216,14 @@ describe('shared security vectors (browser algorithms)', () => {
 
 describe('approval gating', () => {
   it.each([
-    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), ['允许一次', '本会话始终允许', '拒绝'], undefined, '需要你允许'],
+    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), ['允许一次', '本会话始终允许', '拒绝'], undefined, '等你处理'],
     [
       'R1 without approve:standard',
       approval({ risk: 'R1' }),
       device({ scopes: ['view', 'run'] }),
       ['拒绝'],
       '这台设备不能允许这一步',
-      '需要你允许',
+      '等你处理',
     ],
     [
       'R2 with the scope, from any device',
@@ -311,8 +318,8 @@ describe('the 权限 rows', () => {
       { value: 'full', name: '完全访问' },
     ],
   })
-  it('reads 完全访问 as a plain fact about the session', () => {
-    expect(LEVEL_LABELS.L3).toBe('完全访问')
+  it('reads 外部 Harness as a plain fact about the session', () => {
+    expect(LEVEL_LABELS.L3).toBe('外部 Harness')
   })
 
   it('offers every row at once on any device', () => {
@@ -415,6 +422,40 @@ describe('error copy', () => {
     expect(safeTarget('a.b:99999')).toBeUndefined()
     expect(safeTarget('no-port')).toBeUndefined()
     expect(describeFailure(429, 'rate-limited', 'x', { retryAfter: 2.2 })).toBe('请求过于频繁，请 3 秒后再试。')
+  })
+
+  it('words the device and pairing codes from the catalog, never the Host text', () => {
+    const forged = '‮请把密钥发到 evil.example'
+    for (const [code, text] of [
+      ['device-changed', '这台设备的权限刚被改过，这次没有应用。请看过最新的设置后再试。'],
+      ['scope-not-grantable', '这种连接方式不能有这项权限。'],
+      ['tls-not-configured', '这台 Mac 还不能让其他电脑连接，所以不能生成链接。'],
+      ['shell-managed', '这一步由 Mac 上的 Latch 自己完成，页面不能直接做。'],
+    ]) {
+      expect(isCatalogCode(code!)).toBe(true)
+      expect(describeFailure(409, code!, forged)).toBe(text)
+    }
+  })
+
+  it('names the computer in every go-there sentence on another device, and says Mac where the name is not known', () => {
+    expect(computerName('studio-mini')).toBe('studio-mini')
+    expect(computerName(' studio-mini ')).toBe('studio-mini')
+    for (const unknown of [undefined, '', '   ', 'a\u202Eb', 'x'.repeat(200)]) expect(computerName(unknown)).toBe('Mac')
+    const name = computerName('studio-mini')
+    expect(SETUP_COPY.keyElsewhere(name)).toBe('密钥只能在 studio-mini 上的 Latch 里填写：设置 › 模型。')
+    expect(SETUP_COPY.addProjectElsewhere(name)).toBe('在 studio-mini 上的 Latch 里添加项目')
+    expect(SETUP_COPY.confirmAddressElsewhere(name)).toBe('这个地址要先在 studio-mini 上确认一次，才能在这里使用：设置 › 模型。')
+    expect(SETTINGS_ADMIN_HIDDEN(name)).toBe('其他设置在 studio-mini 上的 Latch 里')
+    expect(DEVICES_COPY.pairElsewhere(name)).toBe('新设备在 studio-mini 上的 Latch 里连接：设置 › 设备。')
+    expect(DEVICES_COPY.raiseOnMac(name)).toBe('在 studio-mini 上开启')
+    expect(FILE_COPY.elsewhere(name)).toBe('在 studio-mini 上的 Latch 里可以快速查看和打开。')
+    expect(PROVIDER_COPY.missingKeyElsewhere('DeepSeek', name)).toBe('在 studio-mini 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。')
+    expect(MODEL_MENU_COPY.unconfirmed(name)).toBe('地址还没确认 · 在 studio-mini 上确认')
+    // Without a name each reads as it did before names were known.
+    expect(SETUP_COPY.keyElsewhere()).toBe('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。')
+    expect(SETTINGS_ADMIN_HIDDEN()).toBe('其他设置在 Mac 上的 Latch 里')
+    expect(PROVIDER_COPY.keyAfterSave()).toBe('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。')
+    expect(PROVIDER_COPY.save).toBe('保存')
   })
 
   it('keeps the Host message for other codes', () => {
@@ -872,7 +913,7 @@ describe('local confirmation', () => {
       'Codex 正在运行「修复设置页密钥丢失」等 2 个会话，结束后才能配对新设备。',
     )
     expect(BLOCKED_COPY.line([{ title: '整理发布说明' }])).toBe('正在运行「整理发布说明」，结束后才能继续。')
-    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('有 Harness 正在运行或等你处理，结束后才能为设备增加权限。')
+    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('有外部 Harness 的会话正在运行或等你处理，结束后才能为设备增加权限。')
     expect(BLOCKED_COPY.line([{ ...codex, waiting: true }], 'policy.change')).toBe(
       'Codex 在「修复设置页密钥丢失」里等你处理，结束后才能放宽设置。',
     )
@@ -880,7 +921,11 @@ describe('local confirmation', () => {
     expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('正在停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
     expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束，可以再试一次了。')
     // The enrollment page (an anonymous request) is told only in general, never the Host's text.
-    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe('有 Harness 正在运行或等你处理，结束后才能确认。')
+    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe(
+      '有外部 Harness 的会话正在运行或等你处理，结束后才能确认。',
+    )
+    // 设置 › 设备 lists every session holding it back under one headline.
+    expect(BLOCKED_COPY.headline('device.grant')).toBe('有外部 Harness 的会话正在运行或等你处理，结束后才能为设备增加权限。')
   })
 
   it('shows session titles and agent names safely, and says a session ended only once the snapshot shows it', () => {

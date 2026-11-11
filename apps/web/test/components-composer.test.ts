@@ -462,8 +462,8 @@ describe('approval cards', () => {
 
   it('says it waits once, in amber after its shield, and pages through several requests', () => {
     const html = renderToStaticMarkup(createElement(Drawer, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
-    expect(html.match(/需要你允许/gu)).toHaveLength(1)
-    expect(html).toMatch(/lucide-shield[^>]*>.*?<\/svg><span>需要你允许<\/span>/u)
+    expect(html.match(/等你处理/gu)).toHaveLength(1)
+    expect(html).toMatch(/lucide-shield[^>]*>.*?<\/svg><span>等你处理<\/span>/u)
     const two = renderToStaticMarkup(
       createElement(ApprovalDrawer, {
         approvals: [approval({ risk: 'R1' }), approval({ id: 'ap2', risk: 'R1' })],

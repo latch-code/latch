@@ -45,10 +45,10 @@ export function SetupCard({
             {model
               ? owner
                 ? (held?.hint ?? 'Latch 内置要先连一个模型服务才能开始。Latch 内置只能读写项目里的文件，不能运行命令。')
-                : SETUP_COPY.modelNeedsAdmin
+                : SETUP_COPY.modelNeedsAdmin()
               : owner
                 ? '可在设置中检查 Harness 与插件。'
-                : SETUP_COPY.harnessNeedsAdmin}
+                : SETUP_COPY.harnessNeedsAdmin()}
           </p>
         </div>
         {owner && settable && !adding && (

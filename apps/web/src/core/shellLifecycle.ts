@@ -13,14 +13,14 @@ export function loginItemNote(view: ShellLifecycle['loginItem']): string {
 
 /** Whether the Mac is being kept awake now, and why or why not. */
 export function keepAwakeLine(view: ShellLifecycle['keepAwake']): string {
-  if (!view.enabled) return '已关闭：有任务时电脑也会按系统设置休眠。'
+  if (!view.enabled) return '已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。'
   if (view.active)
     return view.cause === 'waiting'
       ? '保持唤醒中：有审批在等你处理。显示器仍按系统设置熄灭。'
       : '保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。'
-  if (view.batteryLimitReached) return '正在使用电池：已保持唤醒 1 小时，之后电脑按系统设置休眠。'
+  if (view.batteryLimitReached) return '正在使用电池：已保持唤醒 1 小时，之后这台 Mac 按系统设置休眠。'
   if (view.power === 'battery') return '正在使用电池：只在会话运行时保持唤醒，每次最长 1 小时。'
-  return '没有运行中的会话或等待的审批，电脑按系统设置休眠。'
+  return '没有运行中的会话或等待的审批，这台 Mac 按系统设置休眠。'
 }
 
 /** The Host as main sees it, for Settings and for the connection banner. */
@@ -39,24 +39,24 @@ export function hostLine(view: ShellLifecycle['host']): { text: string; tone: To
       }
     case 'crashed':
       return view.reason === 'environment'
-        ? { text: 'Latch 服务意外退出。它的设置来自环境变量，桌面端不能按原样启动，请重新运行 pnpm desktop。', tone: 'error' }
-        : { text: 'Latch 服务意外退出。它不是由 Latch 桌面端启动的，不会自动重新启动。', tone: 'error' }
+        ? { text: 'Latch 服务意外退出。它的设置来自环境变量，Latch 应用不能按原样启动它，请重新运行 pnpm desktop。', tone: 'error' }
+        : { text: 'Latch 服务意外退出。它不是由 Latch 应用启动的，不会自动重新启动。', tone: 'error' }
     case 'stopped':
       return { text: 'Latch 服务已停止。', tone: 'warn' }
     case 'unresponsive':
       return {
-        text: 'Latch 服务没有响应：进程仍在，但无法通过 host.sock 核对。在它恢复应答之前，电脑不会为它保持唤醒。',
+        text: 'Latch 服务没有响应：进程仍在，但无法通过 host.sock 核对。在它恢复应答之前，这台 Mac 不会为它保持唤醒。',
         tone: 'error',
       }
     case 'running':
       if (view.supervised) return { text: 'Latch 服务运行中。意外退出后会自动重新启动。', tone: 'neutral' }
       return view.reason === 'environment'
         ? { text: 'Latch 服务运行中。它的设置来自环境变量，意外退出后不会自动重新启动。', tone: 'neutral' }
-        : { text: 'Latch 服务运行中。它不是由 Latch 桌面端启动的，意外退出后不会自动重新启动。', tone: 'neutral' }
+        : { text: 'Latch 服务运行中。它不是由 Latch 应用启动的，意外退出后不会自动重新启动。', tone: 'neutral' }
   }
 }
 
-/** Whether 「启动 Host」 can help: the Host stopped, or main stopped restarting it. A Host it never started it cannot. */
+/** Whether 「启动 Latch」 can help: the Host stopped, or main stopped restarting it. A Host it never started it cannot. */
 export function hostNeedsStart(view: ShellLifecycle['host']): boolean {
   return view.status === 'crash-loop' || view.status === 'stopped'
 }
@@ -92,7 +92,7 @@ export function useShellLifecycle() {
       setView(result.lifecycle)
       return ''
     } catch {
-      return '桌面端没有响应，请重试。'
+      return 'Latch 应用没有响应，请重试。'
     }
   }, [])
   return {

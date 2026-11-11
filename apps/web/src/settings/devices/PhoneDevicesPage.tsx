@@ -11,6 +11,7 @@ import { withConfirmation } from '../../core/confirmations.ts'
 import { BASE_SCOPES } from '../../core/enrollment.ts'
 import { hostView, type DeviceAccess } from '../../core/permissions.ts'
 import {
+  computerName,
   DEVICE_NAME_INVALID_TEXT,
   describeFailure,
   DEVICES_COPY as COPY,
@@ -219,7 +220,7 @@ function DeviceDetail({
                 <Button
                   loading={scope.pending}
                   disabled={!access.local}
-                  title={access.local ? undefined : COPY.raiseOnMac}
+                  title={access.local ? undefined : COPY.raiseOnMac()}
                   onClick={() => {
                     void scope.change(BASE_SCOPES)
                   }}>
@@ -237,7 +238,7 @@ function DeviceDetail({
             title={COPY.manage}
             description={COPY.manageNote}
             checked={admin}
-            locked={!admin && !access.local ? COPY.raiseOnMac : undefined}
+            locked={!admin && !access.local ? COPY.raiseOnMac() : undefined}
             disabled={scope.pending}
             onCheckedChange={next => {
               void scope.change(next ? [...device.scopes, 'admin'] : device.scopes.filter(item => item !== 'admin'))
@@ -520,7 +521,7 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
           </div>
         )
       })}
-      {!canPair && <p className="device-foot-note device-pair-elsewhere">{COPY.pairElsewhere}</p>}
+      {!canPair && <p className="device-foot-note device-pair-elsewhere">{COPY.pairElsewhere(computerName(snapshot.hostName))}</p>}
     </div>
   )
   const foot = (
@@ -536,7 +537,7 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
       <span className="pair-glyph" aria-hidden="true">
         <Icon icon={deviceIcon({ listener: 'native-direct', name: '' })} size={20} />
       </span>
-      <EmptyState title={COPY.empty} description={canPair ? COPY.emptyBody : COPY.pairElsewhere} />
+      <EmptyState title={COPY.empty} description={canPair ? COPY.emptyBody : COPY.pairElsewhere(computerName(snapshot.hostName))} />
     </div>
   )
   const detail = selected && (

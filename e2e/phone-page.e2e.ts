@@ -110,7 +110,11 @@ describe('the 手机 page', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    testHost = await startTestHost({ demo: true, uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
+    testHost = await startTestHost({
+      demo: true,
+      hostName: 'studio-mini',
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+    })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -147,7 +151,7 @@ describe('the 手机 page', () => {
       await openEntry(page, '手机')
 
       // No device yet.
-      await page.getByText('还没有连接手机', { exact: true }).waitFor()
+      await page.getByText('还没有别的设备连接这台 Mac。', { exact: true }).waitFor()
       await capture('empty')
 
       // The row, its page, its menu and 关于连接. The desktop app reading the page is not listed; another desktop device is.
@@ -352,7 +356,7 @@ describe('the 手机 page', () => {
       const state = base({ listFails: true })
       const { context, page } = await open(state)
       await page.getByText('读取失败', { exact: false }).waitFor()
-      expect(await page.getByText('还没有连接手机', { exact: true }).count()).toBe(0)
+      expect(await page.getByText('还没有别的设备连接这台 Mac。', { exact: true }).count()).toBe(0)
       state.listFails = false
       await page.locator('[data-device-id="dev_phone"]').waitFor()
       await context.close()
@@ -396,7 +400,7 @@ describe('the 手机 page', () => {
 
       // A desktop device left behind can only be removed, in its own words.
       await pick('dev_old_mac')
-      await page.getByText('它会立即断开，之后要在那个桌面端重新确认才能连接。', { exact: true }).waitFor()
+      await page.getByText('它会立即断开，之后要在那台电脑的 Latch 里重新确认才能连接。', { exact: true }).waitFor()
       expect(await manage.count()).toBe(0)
       await context.close()
     })
@@ -433,7 +437,7 @@ describe('the 手机 page', () => {
       const state = base({ create: 'blocked' })
       const { context, page, sheet, qr } = await open(state)
       await page.locator('.device-connect').click()
-      await sheet.getByText('有 Harness 正在运行或等你处理', { exact: false }).waitFor()
+      await sheet.getByText('有外部 Harness 的会话正在运行或等你处理', { exact: false }).waitFor()
       expect(await sheet.getByText('用 iPhone 上的 Latch 扫码', { exact: true }).count()).toBe(0)
       expect(await sheet.locator('.pair-qr').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/sheet-held-back-desktop-light.png`, animations: 'disabled' })
@@ -477,7 +481,7 @@ describe('the 手机 page', () => {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'approve:standard'] })
       await openSettings(page, '手机与设备')
-      await page.getByText('要连接手机，请在 Mac 上的 Latch 里打开这一页', { exact: true }).waitFor()
+      await page.getByText('新设备在 studio-mini 上的 Latch 里连接：设置 › 设备。', { exact: true }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/pair-elsewhere-desktop-light.png`, animations: 'disabled' })
       expect(await page.locator('.device-connect').count()).toBe(0)
       await context.close()

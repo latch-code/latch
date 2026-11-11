@@ -10,7 +10,7 @@ import {
   type AppSnapshot,
 } from '@latch/protocol'
 import { api, inlineError } from '../core/api.ts'
-import { SETUP_COPY } from '../core/securityCopy.ts'
+import { computerName, SETUP_COPY } from '../core/securityCopy.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { hostOf } from '../format.ts'
@@ -207,7 +207,7 @@ export function AgentSetupPanel({
             </Button>
           </>
         ) : (
-          <Elsewhere>{SETUP_COPY.addAgentElsewhere}</Elsewhere>
+          <Elsewhere>{SETUP_COPY.addAgentElsewhere()}</Elsewhere>
         )
       }>
       <p className="setup-panel-text">{preset.description}</p>
@@ -280,7 +280,7 @@ export function ProviderSetupPanel({
   if (!access.admin)
     return (
       <SetupPanel title="添加模型服务" onBack={onCancel}>
-        <Elsewhere>{SETUP_COPY.addProviderElsewhere}</Elsewhere>
+        <Elsewhere>{SETUP_COPY.addProviderElsewhere()}</Elsewhere>
       </SetupPanel>
     )
   const presets = data?.presets ?? PROVIDER_PRESETS
@@ -323,9 +323,9 @@ export function ProviderSetupPanel({
     !access.legacy
     && !access.local
     && (preset.requiresKey
-      ? SETUP_COPY.keyElsewhere
+      ? SETUP_COPY.keyElsewhere(computerName(snapshot?.hostName))
       : data && destinationOf(preset.baseURL, data) === 'unconfirmed'
-        ? SETUP_COPY.confirmAddressElsewhere
+        ? SETUP_COPY.confirmAddressElsewhere(computerName(snapshot?.hostName))
         : undefined)
   if (elsewhere)
     return (

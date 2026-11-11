@@ -91,7 +91,8 @@ export function browserDeviceName(userAgent: string, touchPoints = 0): string {
 export function defaultDeviceName(knownName?: string): string {
   const known = acceptableName(knownName)
   if (known) return known
-  if (currentShell()) return 'Latch 桌面端'
+  // Read on other devices' lists and in the system sheet's name slot, like 「Mac 上的 Chrome」.
+  if (currentShell()) return 'Mac 上的 Latch'
   return typeof navigator === 'undefined' ? '浏览器' : browserDeviceName(navigator.userAgent, navigator.maxTouchPoints)
 }
 

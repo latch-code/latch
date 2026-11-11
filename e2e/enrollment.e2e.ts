@@ -409,7 +409,7 @@ describe('device enrollment in the browser', () => {
     const page = await phone.newPage()
     await page.goto(`${testHost.host.tlsOrigin}/link/`)
     // Where to make the invitation, in words: no terminal command for a person holding a phone.
-    const needs = page.getByText(/^这台设备还没连接到 Latch。要连接手机，在 Mac 上的 Latch 里/)
+    const needs = page.getByText(/^这台设备还没连接到 Latch。用运行 Latch 的人发来的链接/)
     await needs.waitFor()
     expect(await needs.textContent()).not.toMatch(/pnpm|--[a-z]/u)
 

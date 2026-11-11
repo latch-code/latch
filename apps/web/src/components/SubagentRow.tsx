@@ -1,6 +1,7 @@
 import { createContext, memo, useContext, useEffect, useState } from 'react'
 import { Bot, ChevronRight } from 'lucide-react'
 import type { Message, Subagent } from '@latch/protocol'
+import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { MessageContent } from '../MessageContent.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
@@ -9,7 +10,7 @@ import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone } from '@lat
 /** How a subagent last said it was doing, in the words a row uses. Nothing said, nothing shown. */
 const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
   running: { tone: 'running', words: '运行中' },
-  waiting: { tone: 'waiting', words: '等你批准' },
+  waiting: { tone: 'waiting', words: APPROVAL_COPY.waiting },
   done: { tone: 'done', words: '已完成' },
   failed: { tone: 'failed', words: '失败' },
   cancelled: { tone: 'neutral', words: '已停止' },

@@ -182,7 +182,7 @@ describe('conversation forks', () => {
       await pick(page, 'goose').click()
       const mapped = [
         '没有沿用来源会话的模型「Large」：goose 在这里不能选。',
-        '来源会话的权限是「按规则放行」，goose 没有这一档，这里用更严的「先问你」。',
+        '来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。',
       ]
       await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
       const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))
@@ -265,7 +265,7 @@ describe('conversation forks', () => {
       await pick(page, 'Qwen Code').click()
       await expect
         .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
-        .toContain('来源会话不读写文件，Qwen Code 没有这一档，这里从它的默认模式开始。')
+        .toContain('来源会话不读写文件，Qwen Code 没有这一项，这里从它默认的那一项开始。')
       expect(await label(/^权限：/u)).toContain('先问你')
       await page.screenshot({ path: 'test-results/fork-chat-1280.png', fullPage: true })
       await context.close()

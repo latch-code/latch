@@ -715,7 +715,7 @@ export function DraftModelControl({
               添加模型服务…
             </MenuFooterLink>
           ) : (
-            noService && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere}</MenuFooterNote>
+            noService && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere()}</MenuFooterNote>
           )}
           {manage}
         </div>

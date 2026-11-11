@@ -565,7 +565,7 @@ function addressNote(destination: Destination, abilities: ProviderAbilities, loc
   if (destination !== 'unconfirmed') return null
   if (abilities.confirm) return localTarget ? PROVIDER_COPY.localAddressAtSave(localTarget) : PROVIDER_COPY.firstUse
   if (abilities.offline) return offlineText(abilities)
-  return `这个地址要在 Mac 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed}`
+  return `这个地址要在 Mac 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed()}`
 }
 
 /**
@@ -793,9 +793,9 @@ export function ProviderAddForm({
     failure === null || failure.kind === 'local'
       ? undefined
       : failure.kind === 'key' && !keyEditable && requiresKey
-        ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere}`
+        ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere()}`
         : failure.text
-  const keyElsewhere = abilities.keys ? offlineText(abilities) : requiresKey ? PROVIDER_COPY.keyAfterSave : PROVIDER_COPY.keyElsewhere
+  const keyElsewhere = abilities.keys ? offlineText(abilities) : requiresKey ? PROVIDER_COPY.keyAfterSave() : PROVIDER_COPY.keyElsewhere()
   // The picker can live inside the composer's form. Its compact panel must not nest another native form there.
   const Form = compact ? 'div' : 'form'
   const formId = useId()
@@ -1115,7 +1115,7 @@ function ProviderPage({
     : abilities.offline
       ? PROVIDER_COPY.keyOffline(provider.id)
       : requiresKey || provider.hasKey
-        ? PROVIDER_COPY.keyElsewhere
+        ? PROVIDER_COPY.keyElsewhere()
         : undefined
   return (
     <>
@@ -1256,7 +1256,7 @@ function ProviderPage({
           busy={busy}
           waiting={saving && waiting}
           actionLabel={PROVIDER_COPY.allowAgain(localTarget)}
-          elsewhere={abilities.offline ? offlineText(abilities, provider.id) : PROVIDER_COPY.allowElsewhere}
+          elsewhere={abilities.offline ? offlineText(abilities, provider.id) : PROVIDER_COPY.allowElsewhere()}
           onAllow={confirmHere}
         />
       )}
@@ -1530,12 +1530,12 @@ function ServiceStatus({
     </span>
   )
   if (!provider.enabled) return word('已停用')
-  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow)
+  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow())
   const keyAction = (label: string) => (
     <Button
       variant="outline"
       disabled={!abilities.keys}
-      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere}
+      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere()}
       onClick={onUpdateKey}>
       {label}
     </Button>
@@ -1702,7 +1702,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                             id: 'key',
                             label: '更新密钥…',
                             icon: KeyRound,
-                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere }),
+                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere() }),
                             onSelect: () => {
                               setKeyFor(provider)
                             },

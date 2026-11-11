@@ -131,7 +131,7 @@ describe('path chips', () => {
     // Every chip opens the same kind of menu: the file name, 复制路径, and where it can be opened.
     expect(html.match(/aria-haspopup="menu"/g)).toHaveLength(6)
     expect(html).toContain('aria-label="文件：report.md"')
-    expect(html.match(new RegExp(FILE_COPY.elsewhere, 'gu'))).toHaveLength(6)
+    expect(html.match(new RegExp(FILE_COPY.elsewhere(), 'gu'))).toHaveLength(6)
     expect(html).toContain('lucide-lock')
     expect(html).toContain('<span>bad</span>')
   })
@@ -146,7 +146,7 @@ describe('path chips', () => {
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('aria-label="out/deck.pptx"')
     expect(html).toContain(FILE_COPY.checking)
-    expect(html).not.toContain(FILE_COPY.elsewhere)
+    expect(html).not.toContain(FILE_COPY.elsewhere())
     expect(html).not.toContain('href=')
     // An older shell without file actions says a restart brings them, with the info glyph rather than the lock.
     desktopShell({ inspect: action, reveal: action })

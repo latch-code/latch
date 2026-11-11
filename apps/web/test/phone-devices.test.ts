@@ -33,7 +33,7 @@ describe('the 手机 page rows', () => {
 
   it('keeps a desktop device left behind within reach, and the Mac from a browser, because each holds what a desktop holds', () => {
     expect(listedDevices(devices, 'new').map(item => item.id)).toEqual(['mac', 'new', 'old', 'left-behind'])
-    expect(removeBody(device({ id: 'left-behind', listener: 'unix' }), false, [])).toContain('桌面端重新确认')
+    expect(removeBody(device({ id: 'left-behind', listener: 'unix' }), false, [])).toContain('那台电脑的 Latch 里重新确认')
   })
 
   it('says 在线 only of the device reading the page, because the Host reports no live state for others', () => {

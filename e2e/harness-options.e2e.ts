@@ -150,7 +150,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await chip(page, '权限').click()
     await page
       .locator('.permission-list-note')
-      .getByText('发第一条消息后可以换：Codex 开始会话时给出能换的模式。', { exact: true })
+      .getByText('发第一条消息后可以换：Codex 开始会话时才给出其他几项。', { exact: true })
       .waitFor()
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
@@ -618,7 +618,7 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
         await route.continue()
       })
       await chip.click()
-      await page.locator('.permission-list-note').getByText('正在读取 Gemini CLI 的模式…', { exact: true }).waitFor()
+      await page.locator('.permission-list-note').getByText('正在读取 Gemini CLI 的权限…', { exact: true }).waitFor()
       await shot('permission-reading-1280-dark')
       const rule = page
         .getByRole('menuitemradio', { name: /按规则放行/u })

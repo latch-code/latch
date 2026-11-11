@@ -270,22 +270,22 @@ describe('the 权限 chip', () => {
       draftPermission(target, 'agent', undefined, read)?.note
     // Its read opens a session, which reports the modes: the menu reads it, and the rows come once it is read.
     expect(readsOnPermission(reads, run)).toBe(true)
-    expect(note(reads, 'reading')).toBe('正在读取 Fake Agent 的模式…')
-    expect(note(reads, 'readable')).toBe('读取 Fake Agent 的模式后可以换。')
+    expect(note(reads, 'reading')).toBe('正在读取 Fake Agent 的权限…')
+    expect(note(reads, 'readable')).toBe('读取 Fake Agent 的权限后可以换。')
     expect(note({ ...reads, catalogueRead: { ...reads.catalogueRead, last: { at: 'x', ok: false } } }, 'readable')).toBe(
-      '没有读到 Fake Agent 的模式。发第一条消息后可以换。',
+      '没有读到 Fake Agent 的权限。发第一条消息后可以换。',
     )
     // Its read lists models only, as Codex's own model list does: the modes come with the session.
     const models = { ...reads, catalogueRead: { when: 'select' as const, modes: false } }
     expect(readsOnPermission(models, run)).toBe(false)
     for (const read of ['reading', 'readable', undefined] as const)
-      expect(note(models, read)).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
-    expect(note({ ...reads, catalogueRead: undefined }, undefined)).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
+      expect(note(models, read)).toBe('发第一条消息后可以换：Fake Agent 开始会话时才给出其他几项。')
+    expect(note({ ...reads, catalogueRead: undefined }, undefined)).toBe('发第一条消息后可以换：Fake Agent 开始会话时才给出其他几项。')
     // What it reported had no modes: nothing to change to, so no promise of it.
     const none = { options: [], perModel: [], reportedAt: 'x' }
     expect(note({ ...reads, catalogue: { ...none, source: 'check' } })).toBeUndefined()
     expect(note({ ...models, catalogue: { ...none, source: 'session' } })).toBeUndefined()
-    expect(note({ ...models, catalogue: { ...none, source: 'check' } })).toBe('发第一条消息后可以换：Fake Agent 开始会话时给出能换的模式。')
+    expect(note({ ...models, catalogue: { ...none, source: 'check' } })).toBe('发第一条消息后可以换：Fake Agent 开始会话时才给出其他几项。')
   })
 
   it('says an undeclared Harness that can be read tells its modes when read, not only once started', () => {
@@ -308,14 +308,14 @@ describe('the 权限 chip', () => {
 
     const before = draftPermission(readable, 'agent', undefined, 'readable')
     expect(before).toMatchObject({ label: '读取后可以选', amber: false })
-    expect(before?.line).toBe('Fake Agent 读取或开始时告诉 Latch 它有哪些权限模式')
+    expect(before?.line).toBe('Fake Agent 读取或开始时告诉 Latch 它有哪几项权限')
     expect(draftPermission(readable, 'agent', undefined, 'reading')).toMatchObject({
       label: '正在读取…',
-      line: '正在读取 Fake Agent 的权限模式…',
+      line: '正在读取 Fake Agent 的权限…',
       amber: false,
     })
     // Without a read the agent tells only once started.
-    expect(draftPermission(harness, 'agent')?.line).toBe('Fake Agent 开始后才告诉 Latch 它有哪些权限模式')
+    expect(draftPermission(harness, 'agent')?.line).toBe('Fake Agent 开始后才告诉 Latch 它有哪几项权限')
     // What a Harness declares, and a chat, need no read.
     expect(
       draftPermission({ ...readable, permission: { approvals: 'none', readback: 'none' } }, 'agent', undefined, 'reading'),

@@ -584,7 +584,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.emulateMedia({ colorScheme: 'light' })
       // Turning it off releases the Mac at once and is remembered in the shell's own data directory.
       await keepAwake.click()
-      await background.getByText('已关闭：有任务时电脑也会按系统设置休眠。', { exact: true }).waitFor()
+      await background.getByText('已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。', { exact: true }).waitFor()
       expect(JSON.parse(await readFile(join(userData, 'lifecycle.json'), 'utf8'))).toEqual({ version: 1, keepAwake: false })
       await keepAwake.click()
       await background.getByText('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。', { exact: true }).waitFor()
@@ -626,7 +626,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await application.evaluate(({ powerMonitor }) => {
         powerMonitor.emit('suspend')
       })
-      await banner.getByText(/^Mac 已休眠（\d{2}:\d{2} 起）$/u).waitFor()
+      await banner.getByText(/^这台 Mac 已休眠（\d{2}:\d{2} 起）$/u).waitFor()
       await application.evaluate(({ powerMonitor }) => {
         powerMonitor.emit('resume')
       })
@@ -877,7 +877,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
         await manual.fill('deepseek-chat')
         await manual.press('Enter')
-        await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+        await sheet.getByRole('button', { name: '保存', exact: true }).click()
         await sheet.waitFor({ state: 'hidden' })
         expect(testHost.presence.requests.length).toBe(asked)
         expect(host.config.provider('deepseek')).toMatchObject({ apiKey: 'sk-e2e-preset-key', keyOrigin: 'https://api.deepseek.com:443' })

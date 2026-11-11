@@ -1078,7 +1078,7 @@ describe('visual capture of the real product', () => {
         // A browser cannot set keys: the panel says where it can be done.
         await target
           .getByRole('region', { name: 'DeepSeek', exact: true })
-          .locator('.setup-panel-note', { hasText: '密钥只能在 Mac 上的 Latch 里填写' })
+          .locator('.setup-panel-note', { hasText: '上的 Latch 里填写：设置 › 模型' })
           .waitFor()
         await settleMotion(target)
         await recorder.capture(target, viewport, 'new-session-model-add-key', 'a service that needs a key, on a device that cannot set one')
@@ -1402,7 +1402,7 @@ describe('visual capture of the real product', () => {
       await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await reachable(r1.getByRole('button', { name: '允许', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
-      await r1.locator('.approval-title', { hasText: '需要你允许' }).waitFor()
+      await r1.locator('.approval-title', { hasText: '等你处理' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
       // The rest of the Host's choices sit behind ⋯ (a bottom sheet of 更多选项 on phones).
@@ -1517,7 +1517,7 @@ describe('visual capture of the real product', () => {
       await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await locked.getByText('这台设备不能允许这一步', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.approval-title', { hasText: '需要你允许' }).waitFor()
+      await locked.locator('.approval-title', { hasText: '等你处理' }).waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
@@ -1777,13 +1777,13 @@ describe('visual capture of the real product', () => {
           await expect.poll(() => presets.count()).toBe(13)
           expect(await presets.locator('.ui-tile').count()).toBe(13)
           await recorder.capture(target, viewport, 'settings-provider-presets', 'choosing a model-service preset')
-          // Adding one: the address, the check, the models and 保存服务; a browser cannot set keys.
+          // Adding one: the address, the check, the models and 保存; a browser cannot set keys.
           await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
           for (const control of [
             sheet.getByLabel('地址', { exact: true }),
             sheet.getByRole('button', { name: '检测连接', exact: true }),
             sheet.getByLabel('手动添加模型 ID', { exact: true }),
-            sheet.getByRole('button', { name: '保存服务', exact: true }),
+            sheet.getByRole('button', { name: '保存', exact: true }),
           ])
             await reachable(control, { allowDisabled: true })
           await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()

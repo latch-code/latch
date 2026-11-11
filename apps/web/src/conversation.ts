@@ -11,7 +11,7 @@ import {
   type ToolKind,
 } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
-import { DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
+import { APPROVAL_COPY, DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
 import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
@@ -765,8 +765,8 @@ function toolText(message: Message): string {
 
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {
   cancelling: '正在停止…',
-  approval: '需要你允许',
-  question: '等你回答',
+  approval: APPROVAL_COPY.waiting,
+  question: APPROVAL_COPY.waiting,
   reply: '正在回复',
   thinking: '正在思考',
   model: '等待模型…',

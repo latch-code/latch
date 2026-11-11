@@ -146,7 +146,7 @@ export function ModelPicker({
               添加模型服务…
             </MenuFooterLink>
           ) : (
-            count === 0 && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere}</MenuFooterNote>
+            count === 0 && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere()}</MenuFooterNote>
           )}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
@@ -331,7 +331,7 @@ export function ProjectPicker({
       footer={
         <>
           {notice && <MenuFooterNote>{notice}</MenuFooterNote>}
-          {!onCreate && <MenuFooterNote>{SETUP_COPY.addProjectElsewhere}</MenuFooterNote>}
+          {!onCreate && <MenuFooterNote>{SETUP_COPY.addProjectElsewhere()}</MenuFooterNote>}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
               管理项目…

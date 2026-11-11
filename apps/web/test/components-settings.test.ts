@@ -80,7 +80,12 @@ describe('phone pairing', () => {
   const FLAG = /(?:^|[\s「（(])--[a-z]/u
 
   it('never names a flag or a command in the words a person holding a phone reads', () => {
-    for (const text of [NATIVE_LINK_COPY.scan, NATIVE_LINK_COPY.sameWifi, DEVICES_COPY.pairElsewhere, ENROLLMENT_COPY.invitationRequired]) {
+    for (const text of [
+      NATIVE_LINK_COPY.scan,
+      NATIVE_LINK_COPY.sameWifi,
+      DEVICES_COPY.pairElsewhere(),
+      ENROLLMENT_COPY.invitationRequired,
+    ]) {
       expect(text).not.toMatch(FLAG)
       expect(text).not.toContain('pnpm ')
     }

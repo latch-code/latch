@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostStateEvent } from '@latch/protocol'
 import { connectEventStream } from '../src/core/eventStream.ts'
 import { hostNoticeCopy, noticeOf, parseHostState } from '../src/core/hostState.ts'
+import { computerLabel } from '../src/core/securityCopy.ts'
 import { hostLine, hostNeedsStart, keepAwakeLine, loginItemNote } from '../src/core/shellLifecycle.ts'
 import type { ShellLifecycle } from '../src/core/shell.ts'
 
@@ -43,6 +44,15 @@ describe('host state announcements', () => {
     expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'shutdown', retryAfter: 15 }))).toEqual({
       title: `Mac 上的 Latch 已停止（${localTime} 起）`,
       body: 'Latch 再次启动后会自动重新连接。',
+    })
+    // Another device names the computer; the Latch app on it says 这台 Mac.
+    const restart = notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })
+    expect(hostNoticeCopy(restart, computerLabel(false, 'studio-mini')).title).toBe('studio-mini 上的 Latch 正在重启')
+    expect(hostNoticeCopy(restart, computerLabel(false, '')).title).toBe('Mac 上的 Latch 正在重启')
+    expect(hostNoticeCopy(restart, computerLabel(true, 'studio-mini')).title).toBe('这台 Mac 上的 Latch 正在重启')
+    expect(hostNoticeCopy(notice({ state: 'sleeping', reason: 'sleep', retryAfter: 10 }), 'studio-mini')).toEqual({
+      title: `studio-mini 已休眠（${localTime} 起）`,
+      body: 'studio-mini 唤醒后会自动重新连接。',
     })
     expect(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).toEqual({
       state: 'stopping',
@@ -124,10 +134,10 @@ describe('desktop lifecycle copy', () => {
       keepAwakeLine({ enabled: true, active: false, cause: null, power: 'ac', batteryLimitReached: false, ...patch })
     expect(awake({ active: true, cause: 'running' })).toBe('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。')
     expect(awake({ active: true, cause: 'waiting' })).toBe('保持唤醒中：有审批在等你处理。显示器仍按系统设置熄灭。')
-    expect(awake({ power: 'battery', batteryLimitReached: true })).toBe('正在使用电池：已保持唤醒 1 小时，之后电脑按系统设置休眠。')
+    expect(awake({ power: 'battery', batteryLimitReached: true })).toBe('正在使用电池：已保持唤醒 1 小时，之后这台 Mac 按系统设置休眠。')
     expect(awake({ power: 'battery' })).toBe('正在使用电池：只在会话运行时保持唤醒，每次最长 1 小时。')
-    expect(awake({ enabled: false })).toBe('已关闭：有任务时电脑也会按系统设置休眠。')
-    expect(awake({})).toBe('没有运行中的会话或等待的审批，电脑按系统设置休眠。')
+    expect(awake({ enabled: false })).toBe('已关闭：有会话运行时，这台 Mac 也会按系统设置休眠。')
+    expect(awake({})).toBe('没有运行中的会话或等待的审批，这台 Mac 按系统设置休眠。')
   })
 
   it('reports restarts and a crash loop, and offers a start only where it can work', () => {
@@ -139,7 +149,7 @@ describe('desktop lifecycle copy', () => {
       tone: 'error',
       text: expect.stringContaining('已停止自动重启'),
     })
-    expect(hostLine(view({ supervised: false, reason: 'external' })).text).toContain('不是由 Latch 桌面端启动的')
+    expect(hostLine(view({ supervised: false, reason: 'external' })).text).toContain('不是由 Latch 应用启动的')
     expect(hostLine(view({ supervised: false, reason: 'environment' })).text).toContain('环境变量')
     expect(hostLine(view({ status: 'unresponsive' }))).toMatchObject({ tone: 'error', text: expect.stringContaining('没有响应') })
     // A Host that is alive but does not answer cannot be stopped or started from here.

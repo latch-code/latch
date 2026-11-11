@@ -114,7 +114,7 @@ describe('a fork keeps what its source ran with', () => {
     // No 由模型判断 there: the widest stricter row.
     const judged = forkedChoice(catalog, wide, { harnessId: 'gemini' }, forkSource(codexSession('review'), codex))
     expect(judged.choice.config?.mode).toBe('edit')
-    expect(judged.missed).toEqual(['来源会话的权限是「由模型判断」，GEMINI 没有这一档，这里用更严的「按规则放行」。'])
+    expect(judged.missed).toEqual(['来源会话的权限是「由模型判断」，GEMINI 没有这一项，这里用更严的「按规则放行」。'])
     // Modes Latch has no tiers for: none is taken, so the session starts in its own default.
     const unknown = forkedChoice(
       catalog,
@@ -123,7 +123,7 @@ describe('a fork keeps what its source ran with', () => {
       forkSource(codexSession('full'), codex),
     )
     expect(unknown.choice.config).toEqual({ model: 'large', effort: 'high' })
-    expect(unknown.missed).toEqual(['来源会话的权限是「不再询问」，CURSOR 的模式对应不上，这里从它的默认模式开始。'])
+    expect(unknown.missed).toEqual(['来源会话的权限是「不再询问」，CURSOR 的权限对应不上，这里从它默认的那一项开始。'])
   })
 
   it('takes the strictest row there is, and says so, when the Harness has nothing as strict as the source', () => {
@@ -136,7 +136,7 @@ describe('a fork keeps what its source ran with', () => {
       forkSource(planned, gemini),
     )
     expect(forked.choice.config).toEqual({ mode: 'ask' })
-    expect(forked.missed).toEqual(['来源会话的权限是「只看不改」，CODEX 没有这一档或更严的，这里用它最严的「先问你」。'])
+    expect(forked.missed).toEqual(['来源会话的权限是「只看不改」，CODEX 没有这一项或更严的，这里用它最严的「先问你」。'])
   })
 
   it('starts a Harness on its default row when the source had none', () => {
@@ -186,7 +186,7 @@ describe('a fork keeps what its source ran with', () => {
 
   it('says so when a session that only chats goes to a Harness that always works on files', () => {
     const source = forkSource(detail({ harnessId: 'standard', mode: 'chat', providerId: 'deepseek', model: 'deepseek-chat' }), undefined)
-    const line = '来源会话不读写文件，CODEX 没有这一档，这里从它的默认模式开始。'
+    const line = '来源会话不读写文件，CODEX 没有这一项，这里从它默认的那一项开始。'
     const forked = forkedChoice(catalog, null, { harnessId: 'codex', mode: 'chat' }, source)
     expect(forked.choice).toMatchObject({ harnessId: 'codex', mode: 'agent' })
     expect(forked.choice.config?.mode).toBeUndefined()
@@ -263,7 +263,7 @@ describe('a fork keeps what its source ran with', () => {
     // With no row Latch held it to, nothing is taken: the Harness's default row, and the draft says why.
     const unknown = forkedChoice(catalog, remembered, { harnessId: 'codex' }, forkSource(drifted(), codex))
     expect(unknown.choice.config).toEqual({ model: 'large', effort: 'high' })
-    expect(unknown.missed).toEqual(['来源会话的权限被它的 Harness 自己改过，没有沿用，这里从 CODEX 的默认模式开始。'])
+    expect(unknown.missed).toEqual(['来源会话的权限被它的 Harness 自己改过，没有沿用，这里从 CODEX 默认的那一项开始。'])
   })
 
   it("says nothing is lost before the other Harness's options are read, only that they are needed", () => {

@@ -17,7 +17,7 @@ import {
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
-import { SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
+import { computerName, SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
@@ -99,7 +99,9 @@ export const sectionLabel = (id: SettingsSection): string => sections.find(secti
 /** The line under the sections of a device that lacks 管理此 Host: some sections are hidden, and where to grant it. */
 export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAccess): string | undefined {
   if (access.admin || access.legacy) return undefined
-  return sections.some(section => section.admin && (snapshot.catalog || !section.catalog)) ? SETTINGS_ADMIN_HIDDEN : undefined
+  return sections.some(section => section.admin && (snapshot.catalog || !section.catalog))
+    ? SETTINGS_ADMIN_HIDDEN(computerName(snapshot.hostName))
+    : undefined
 }
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {

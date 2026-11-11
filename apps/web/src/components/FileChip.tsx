@@ -233,7 +233,7 @@ function CopyFileChip(props: ChipProps) {
             void copy(props.path)
           }),
         ]}
-        note={outdated ? { text: FILE_COPY.shellOutdated, tone: 'info' } : { text: FILE_COPY.elsewhere, tone: 'lock' }}
+        note={outdated ? { text: FILE_COPY.shellOutdated, tone: 'info' } : { text: FILE_COPY.elsewhere(), tone: 'lock' }}
       />
       <CopyStatus state={state} />
     </>
