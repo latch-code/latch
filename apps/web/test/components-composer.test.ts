@@ -7,7 +7,7 @@ import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
 import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
 import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
-import { ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
+import { allowsByKey, approvalKeyCaps, ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
@@ -74,6 +74,8 @@ const approvalCard = (extra: Partial<Approval>, status?: ApprovalStatus, gate?: 
       ...(gate ? { gateFor: () => gate } : {}),
     }),
   )
+/** Whether a card offers 更多, the one name of its other choices at every width. */
+const offersMore = (html: string) => /<button[^>]*class="ui-button approval-more"[^>]*>更多<svg/u.test(html)
 /** The words on a card's buttons, in order. */
 const buttonLabels = (html: string) =>
   [...html.matchAll(/<button[^>]*class="ui-button"[^>]*>(?:<svg.*?<\/svg>)?([^<]+)<\/button>/g)].map(match => match[1])
@@ -331,11 +333,11 @@ describe('approval cards', () => {
   it('keeps 本会话始终允许 out of reach when the content hides characters', () => {
     const html = approvalCard({ risk: 'R1', reason: '写入 a\u200B.ts', options: [...ALWAYS] })
     expect(html).toContain(APPROVAL_COPY.hiddenCharacters)
-    expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
+    expect(offersMore(html)).toBe(false)
     expect(buttonLabels(html)).toEqual(['拒绝', '允许'])
     expect(html).not.toContain('data-variant="primary"')
     // A clean request still offers it.
-    expect(approvalCard({ risk: 'R1', options: [...ALWAYS] })).toContain(`aria-label="${APPROVAL_COPY.more}"`)
+    expect(offersMore(approvalCard({ risk: 'R1', options: [...ALWAYS] }))).toBe(true)
   })
 
   it('names the choice whose outcome is unknown and leaves 重试 as the one clear action', () => {
@@ -344,7 +346,7 @@ describe('approval cards', () => {
     expect(html).toContain('「拒绝」的结果未知')
     expect(buttonLabels(html)).toEqual(['拒绝', '允许', '重试'])
     expect(html).not.toContain('data-variant="primary"')
-    expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
+    expect(offersMore(html)).toBe(false)
   })
 
   it("shows an agent's options in the product's words", () => {
@@ -460,10 +462,27 @@ describe('approval cards', () => {
     expect(html).not.toContain('line 7<')
   })
 
-  it('says it waits once, in amber after its shield, and pages through several requests', () => {
-    const html = renderToStaticMarkup(createElement(Drawer, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
-    expect(html.match(/等你处理/gu)).toHaveLength(1)
-    expect(html).toMatch(/lucide-shield[^>]*>.*?<\/svg><span>等你处理<\/span>/u)
+  it('titles a request by what it asks to do, after an amber dot, puts 更多 first, and pages through several requests', () => {
+    const html = approvalCard({
+      risk: 'R1',
+      options: [...ALWAYS],
+      tool: {
+        toolTitle: '写入文件',
+        input: JSON.stringify({ path: 'docs/notes.md', content: 'a\nb\n' }),
+        diffs: [{ path: 'docs/notes.md', oldText: '', newText: 'a\nb\n' }],
+      },
+    })
+    expect(html).toMatch(
+      /<div class="approval-title"><span class="approval-dot" aria-hidden="true"><\/span><span class="approval-object">写入文件 docs\/notes\.md<\/span><span class="approval-stat"><span class="stat-add">\+2<\/span>/u,
+    )
+    // No word of waiting stands in for the title, and the tool's ID and 查看改动 sit on the line under it.
+    expect(html).not.toMatch(/等你处理|需要你允许/u)
+    expect(html).toMatch(
+      /<div class="approval-meta"><code class="tool-card-name">write_file<\/code><button type="button" class="approval-see"[^>]*>查看改动<\/button>/u,
+    )
+    // 更多 · 拒绝 · 允许.
+    const order = [...html.matchAll(/<button[^>]*class="ui-button(?: approval-more)?"[^>]*>([^<]+)/gu)].map(match => match[1])
+    expect(order).toEqual(['更多', '拒绝', '允许'])
     const two = renderToStaticMarkup(
       createElement(ApprovalDrawer, {
         approvals: [approval({ risk: 'R1' }), approval({ id: 'ap2', risk: 'R1' })],
@@ -504,8 +523,37 @@ describe('approval cards', () => {
       }),
     )
     expect(html).toContain('data-risky=""')
-    expect(html).toContain('<p class="approval-clause">')
+    // The red reason, then the Host's sentence word for word, on their own line; not repeated in the details.
+    expect(html).toContain(
+      '<p class="approval-clause"><span class="approval-clause-reason">高风险</span><span class="approval-clause-sentence">写入需要确认</span></p>',
+    )
+    expect(html.match(/写入需要确认/gu)).toHaveLength(1)
     expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?允许<\/button>/u)
+  })
+
+  it('draws a key cap only on a button its key presses now', () => {
+    const allowOnce = { kind: 'allow_once' } as const
+    // ⌘⏎ allows an ordinary request of Latch 内置 or an older Host, never a high-risk request or an agent's ask.
+    expect(allowsByKey({ kind: 'R1' }, allowOnce)).toBe(true)
+    expect(allowsByKey({ kind: 'legacy' }, allowOnce)).toBe(true)
+    expect(allowsByKey({ kind: 'R2' }, allowOnce)).toBe(false)
+    expect(allowsByKey({ kind: 'advisory' }, allowOnce)).toBe(false)
+    expect(allowsByKey({ kind: 'R1' }, { kind: 'allow_always' })).toBe(false)
+    const now = { phone: false, shortcut: true, escapes: true, inCard: true, escapeRefuses: true }
+    expect(approvalKeyCaps(now)).toEqual({ allow: ['mod', 'enter'], reject: ['esc'] })
+    // A high-risk request or an agent's ask: Esc still refuses, 允许 has no key.
+    expect(approvalKeyCaps({ ...now, shortcut: false })).toEqual({ reject: ['esc'] })
+    // Focus outside the card (in the input, say): ⌘⏎ sends there, so 允许 shows none.
+    expect(approvalKeyCaps({ ...now, inCard: false })).toEqual({ reject: ['esc'] })
+    // Writing a note to send with the rejection, or focus in another field: Esc does not refuse.
+    expect(approvalKeyCaps({ ...now, rejectLabel: APPROVAL_COPY.rejectAndSend })).toEqual({ allow: ['mod', 'enter'] })
+    expect(approvalKeyCaps({ ...now, inCard: false, escapeRefuses: false })).toEqual({})
+    // Not armed yet, or a choice on its way: no key does anything.
+    expect(approvalKeyCaps({ ...now, shortcut: false, escapes: false })).toEqual({})
+    // A phone draws none.
+    expect(approvalKeyCaps({ ...now, phone: true })).toEqual({})
+    // Rendered before focus is known, a card claims no key.
+    expect(approvalCard({ risk: 'R1' })).not.toContain('ui-button-keys')
   })
 
   it('never labels a write without previous text as a new file', () => {

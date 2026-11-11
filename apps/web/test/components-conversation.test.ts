@@ -229,10 +229,10 @@ describe('tool cards', () => {
     expect(html).toContain('<code class="tool-card-name">write_file</code>')
     expect(html).toContain('无参数')
     expect(html).not.toContain('{}')
-    // Two buttons at most: reject, then the blue allow once; the Host's other options wait behind ⋯.
+    // Two buttons at most: reject, then the blue allow once; the Host's other options wait behind 更多.
     expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['拒绝', '允许'])
     expect(html).toMatch(/<button[^>]*class="ui-button"[^>]*data-variant="primary"[^>]*>允许<\/button>/)
-    expect(html).toContain('aria-label="更多批准选项"')
+    expect(html).toMatch(/<button[^>]*class="ui-button approval-more"[^>]*>更多<svg/u)
     expect(html).toContain('aria-haspopup="menu"')
   })
 

@@ -1,13 +1,16 @@
 /* The approval card and the input while a device may only watch. */
 /*
- * The approval drawer above the input. A neutral surface in both themes; amber is only the shield and 「需要你允许」. Row 1:
- * those and the pager. Row 2: what it does and to what, the lines it changes and 查看改动. A risky request adds its reason on
- * a red line of its own. Buttons at the right; on a phone they take their own row. This layer keeps injected page styles
- * from moving or hiding what the approver weighs.
+ * The approval card above the input, as wide as it (the shared .composer-drawer joint). A neutral surface in both themes;
+ * amber is only the dot. Line 1, the title: what it asks to do and the lines it changes. Line 2, quieter: the tool's ID,
+ * a sub-agent's name, 查看改动 and the pager. 更多 · 拒绝 · 允许 sit beside the title, one size up from a toolbar's; on a phone
+ * they take their own rows. Under them, full width: a risky request's red reason with the Host's sentence, an agent's
+ * advisory line, warnings and why this device cannot allow. This layer keeps injected page styles from moving or hiding
+ * what the approver weighs.
  */
 .approval-panel {
   display: grid !important;
-  gap: var(--sp-8);
+  gap: var(--sp-10);
+  padding: var(--sp-12) var(--sp-12) var(--sp-12) var(--sp-16);
   border-color: var(--line-strong) !important;
   background: var(--raised) !important;
   opacity: 1 !important;
@@ -29,15 +32,44 @@
 }
 .approval-title {
   display: flex !important;
-  align-items: center;
-  gap: var(--sp-6);
-  color: var(--amber) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-weight: 500;
 }
-.approval-shield {
-  color: var(--amber-icon) !important;
+/* The one amber mark of a request that waits; the title beside it says what for. */
+.approval-dot {
+  display: block !important;
+  flex-shrink: 0;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--amber-icon) !important;
+}
+/* Line 2 starts under the title's words, past the dot. */
+.approval-meta {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--sp-12);
+  row-gap: var(--sp-2);
+  min-width: 0;
+  padding-inline-start: var(--sp-16);
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.approval-meta .tool-card-name {
+  display: inline-block !important;
+  max-width: 100%;
+  margin-left: 0;
+}
+.approval-meta:empty {
+  display: none !important;
 }
 .approval-subagent {
   min-width: 0;
@@ -53,13 +85,6 @@
   gap: var(--sp-2);
   color: var(--muted) !important;
   font-weight: 400;
-}
-.approval-action {
-  display: flex !important;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--sp-8);
-  min-width: 0;
 }
 .approval-object {
   display: inline !important;
@@ -85,15 +110,37 @@
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   text-decoration: underline;
+  text-decoration-color: var(--line-strong);
   text-underline-offset: 3px;
   white-space: nowrap;
+}
+.approval-see:hover {
+  color: var(--ink) !important;
+  text-decoration-color: var(--muted);
+}
+/* Everything the request says beyond its title, under the title's words and as wide as the card. */
+.approval-notes {
+  display: grid !important;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding-inline-start: var(--sp-16);
 }
 .approval-clause {
   display: block !important;
   color: var(--red) !important;
   font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
+  line-height: var(--lh-ui-para) !important;
   font-weight: 500;
+}
+.approval-clause-reason {
+  display: inline !important;
+}
+/* The Host's sentence follows the red reason in plain ink, a space apart. */
+.approval-clause-sentence {
+  display: inline !important;
+  margin-inline-start: var(--sp-12);
+  color: var(--ink-2) !important;
+  font-weight: 400;
 }
 .composer-stop[data-secure] {
   display: flex !important;
@@ -140,6 +187,7 @@
 }
 .approval-preview {
   display: grid !important;
+  padding-inline-start: var(--sp-16);
   grid-template-rows: 0fr;
   transition: grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit);
 }
@@ -307,6 +355,7 @@
 }
 .approval-buttons {
   display: flex !important;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--sp-8);
   margin-left: auto;
@@ -327,8 +376,20 @@
   color: var(--muted);
 }
 @media (max-width: 767.98px) {
+  /* On a phone the buttons follow everything that is weighed before pressing them, and come before the details. */
   .approval-row {
-    display: grid !important;
+    display: contents !important;
+  }
+  .approval-notes {
+    order: 1;
+  }
+  .approval-buttons {
+    order: 2;
+  }
+  .approval-preview,
+  .approval-failure,
+  .approval-uncertain {
+    order: 3;
   }
   .approval-buttons {
     display: grid !important;
@@ -338,9 +399,11 @@
   .approval-buttons[data-single] {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* 更多 is a full row under 拒绝 and 允许, where a thumb does not take it for one of them. */
   .approval-buttons > :not(.ui-button),
   .approval-buttons > .approval-more {
     grid-column: 1 / -1;
+    order: 1;
   }
 }
 

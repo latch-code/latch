@@ -87,8 +87,6 @@ export const APPROVAL_COPY = {
   check: '需要核对',
   advisoryNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
   hiddenCharacters: '含有不可见字符，已标出',
-  more: '更多批准选项',
-  moreSheet: '更多选项',
   /** One name for the card's other choices at every width. */
   moreChoices: '更多',
   allowSession: '这个会话都允许这类操作',

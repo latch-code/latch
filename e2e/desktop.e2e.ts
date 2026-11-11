@@ -790,12 +790,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.locator(`[data-task-id="${advisoryId}"]`).click()
       const advisory = page.locator('[data-approval-id]')
       await advisory.locator('.ui-button[data-variant="primary"]', { hasText: '允许' }).waitFor()
+      // An agent's ask: 拒绝 and 允许 by their words (a key cap may follow), and ⌘⏎ never on 允许.
       expect(
         await advisory
-          .getByRole('button')
-          .filter({ hasText: /^(拒绝|允许)$/ })
-          .allInnerTexts(),
+          .locator('.approval-buttons > .ui-button:not(.approval-more)')
+          .evaluateAll(buttons => buttons.map(button => button.firstChild?.textContent ?? '')),
       ).toEqual(['拒绝', '允许'])
+      expect(await advisory.getByRole('button', { name: '允许', exact: true }).locator('.ui-button-keys').count()).toBe(0)
       await captureThemes(page, 'native-desktop-advisory')
 
       // While it waits for an answer, a confirmation that would outlive the session is held back, and the dock where it

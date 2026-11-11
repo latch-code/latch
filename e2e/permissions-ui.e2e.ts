@@ -164,6 +164,83 @@ describe('permission states in a browser', () => {
     expect(await composer.inputValue()).toBe('')
   })
 
+  /** The key caps a card's button draws, as their glyphs ('' when it draws none). */
+  const caps = (card: Locator, name: string) =>
+    card
+      .getByRole('button', { name, exact: true })
+      .locator('.ui-button-keys')
+      .evaluateAll(spans => spans.map(span => span.textContent ?? '').join(''))
+
+  it('draws a key cap only where the key does it now, and ⌘⏎ in the input rejects with what was written', async () => {
+    const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '生成需要审批的报告', requestId: randomUUID(), mode: 'agent', model: { providerId: 'demo', model: 'demo' } },
+    })
+    await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
+    await open(sessionId)
+    const card = page.locator('[data-approval-id]')
+    await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+    // The title is what it asks to do; 更多 · 拒绝 · 允许, one name for the other choices.
+    expect(await card.locator('.approval-title').textContent()).not.toMatch(/等你处理|需要你允许/u)
+    expect(
+      await card
+        .locator('.approval-buttons .ui-button')
+        .evaluateAll(buttons => buttons.map(button => button.firstChild?.textContent ?? '')),
+    ).toEqual(['更多', '拒绝', '允许'])
+    // Focus in the empty input: Esc refuses, ⌘⏎ would send there, so 允许 has no cap.
+    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
+    await note.focus()
+    expect(await caps(card, '拒绝')).toBe('Esc')
+    expect(await caps(card, '允许')).toBe('')
+    // Focus in the card: ⌘⏎ allows an ordinary request of Latch 内置.
+    await card.getByRole('button', { name: '拒绝', exact: true }).focus()
+    await expect.poll(() => caps(card, '允许')).toMatch(/^(?:⌘⏎|Ctrl⏎)$/u)
+    await page.screenshot({ path: `${OUTPUT}/approval-caps-focused.png`, animations: 'disabled' })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.screenshot({ path: `${OUTPUT}/approval-caps-focused-dark.png`, animations: 'disabled' })
+    await page.emulateMedia({ colorScheme: 'light' })
+    // Writing what to do instead: 拒绝 sends it, Esc does not refuse, and ⌘⏎ in the input rejects with the note.
+    await note.fill('只列出文件名')
+    await card.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
+    expect(await caps(card, '拒绝并发送')).toBe('')
+    expect(await caps(card, '允许')).toBe('')
+    await note.press('ControlOrMeta+Enter')
+    await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+    const settled = await detail(sessionId)
+    expect(settled.messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({ outcome: 'rejected' })
+    expect(settled.messages.filter(message => message.role === 'assistant').at(-1)?.text).toContain('只列出文件名')
+  })
+
+  it('draws no ⌘⏎ on a high-risk request, and no cap at a phone width', async () => {
+    const sessionId = await startHighRisk('高风险的键帽')
+    await open(sessionId)
+    const card = page.locator('[data-approval-id]')
+    await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+    await card.getByRole('button', { name: '拒绝', exact: true }).focus()
+    expect(await caps(card, '拒绝')).toBe('Esc')
+    expect(await caps(card, '允许')).toBe('')
+    // ⌘⏎ inside the card does not allow it either.
+    await page.keyboard.press('ControlOrMeta+Enter')
+    expect((await detail(sessionId)).approvals).toHaveLength(1)
+    await page.screenshot({ path: `${OUTPUT}/approval-r2-caps.png`, animations: 'disabled' })
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'zh-CN' })
+    try {
+      const phone = await context.newPage()
+      await enrollBrowser(phone, testHost, { name: '键帽手机' })
+      await phone.locator(`[data-task-id="${sessionId}"]`).click()
+      const narrow = phone.locator('[data-approval-id]')
+      await expect.poll(() => narrow.getAttribute('data-arming')).toBeNull()
+      await narrow.getByRole('button', { name: '拒绝', exact: true }).focus()
+      expect(await narrow.locator('.ui-button-keys').count()).toBe(0)
+      await narrow.getByRole('button', { name: '更多', exact: true }).waitFor()
+      await phone.screenshot({ path: `${OUTPUT}/approval-r2-phone.png`, animations: 'disabled' })
+    } finally {
+      await context.close()
+    }
+    await rejectWithoutNote(card)
+    await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+  })
+
   it('arms the drawer before it takes a press, ignores Enter, and refuses once on Esc', async () => {
     const first = await startHighRisk('第一个请求')
     await open(first)
@@ -293,6 +370,11 @@ describe('permission states in a browser', () => {
     // The first start of a launch says once what it can do, in the timeline.
     await page.locator('.session-start-note').waitFor()
     await card.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
+    // An agent's ask: Esc refuses, but ⌘⏎ never allows it, so 允许 has no cap even with focus in the card.
+    await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+    await card.getByRole('button', { name: '拒绝', exact: true }).focus()
+    expect(await caps(card, '拒绝')).toBe('Esc')
+    expect(await caps(card, '允许')).toBe('')
     await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-desktop.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 390, height: 844 })
     await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-phone.png`, fullPage: true, animations: 'disabled' })

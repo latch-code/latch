@@ -1395,14 +1395,13 @@ describe('visual capture of the real product', () => {
       await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await reachable(r1.getByRole('button', { name: '允许', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
-      await r1.locator('.approval-title', { hasText: '等你处理' }).waitFor()
+      // The title is what it asks to do; no word of waiting stands in for it.
+      await r1.locator('.approval-title .approval-object').waitFor()
+      expect(await r1.locator('.approval-title').textContent()).not.toMatch(/等你处理|需要你允许/u)
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
-      // The rest of the Host's choices sit behind ⋯ (a bottom sheet of 更多选项 on phones).
-      const choices =
-        viewport.name === 'phone'
-          ? r1.getByRole('button', { name: '更多选项', exact: true })
-          : r1.getByRole('button', { name: '更多批准选项', exact: true })
+      // The rest of the Host's choices sit behind 更多, one name at every width (a bottom sheet on phones).
+      const choices = r1.getByRole('button', { name: '更多', exact: true })
       await reachable(choices)
       await choices.click()
       await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor()
@@ -1510,7 +1509,7 @@ describe('visual capture of the real product', () => {
       await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await locked.getByText('这台设备不能允许这一步', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.approval-title', { hasText: '等你处理' }).waitFor()
+      await locked.locator('.approval-title .approval-object').waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')

@@ -1,5 +1,5 @@
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Ellipsis, LockKeyhole, Shield } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { ChevronLeft, ChevronRight, LockKeyhole } from 'lucide-react'
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
 import { Button, ICON_STROKE, IconButton, InlineNotice, Menu, type MenuItem, type MenuTriggerProps } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
@@ -91,6 +91,20 @@ const typingOutsideComposer = (target: EventTarget | null) =>
   && target.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], .ui-popover') !== null
   && !target.closest('.composer textarea')
 
+/** Whether another layer is open, which takes Esc for itself. */
+const layerOpen = () => document.querySelector(':popover-open:not([role="tooltip"]), dialog[open], .ui-sheet') !== null
+
+/** Whether an Esc pressed where focus is now would refuse: not from another field or layer, nor over written text. */
+function escapeRefusesAt(target: EventTarget | null): boolean {
+  if (typingOutsideComposer(target)) return false
+  if (layerOpen()) return false
+  return !(target instanceof HTMLTextAreaElement && target.value.trim())
+}
+
+/** Where ⌘⏎ is taken: inside the card, and never from a field or a menu in it. */
+const takesKeysAt = (target: EventTarget | null) =>
+  !(target instanceof Element && target.closest('input, textarea, [role="menu"], .ui-popover'))
+
 /** Esc refuses once: never while another layer is open or text is being written, and never by a held key. */
 function useEscapeRefuses(active: boolean, refuse: () => void): void {
   useEffect(() => {
@@ -99,10 +113,7 @@ function useEscapeRefuses(active: boolean, refuse: () => void): void {
       if (event.key !== 'Escape' || event.repeat || event.defaultPrevented || event.isComposing) return
       if (escapeIsLeftover(event)) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
-      if (typingOutsideComposer(event.target)) return
-      if (document.querySelector(':popover-open:not([role="tooltip"]), dialog[open], .ui-sheet')) return
-      const composer = event.target instanceof HTMLTextAreaElement ? event.target : null
-      if (composer?.value.trim()) return
+      if (!escapeRefusesAt(event.target)) return
       event.preventDefault()
       refuse()
     }
@@ -111,6 +122,62 @@ function useEscapeRefuses(active: boolean, refuse: () => void): void {
       document.removeEventListener('keydown', keydown)
     }
   }, [active, refuse])
+}
+
+/**
+ * Whether ⌘⏎ may press this allow: a plain allow once of an ordinary request (R1, or any request of an older Host).
+ * Never a high-risk request and never an agent's ask, which the Host treats as high risk.
+ */
+export function allowsByKey(gate: Pick<ApprovalGate, 'kind'>, allow: Pick<ApprovalOption, 'kind'>): boolean {
+  return allow.kind === 'allow_once' && (gate.kind === 'R1' || gate.kind === 'legacy')
+}
+
+/**
+ * The key caps on 拒绝 and 允许: each only while its key would do that now. ⌘⏎ allows an ordinary request of Latch 内置
+ * (or an older Host's) from inside the card, never from a field, and never a high-risk request or an agent's ask; Esc
+ * refuses from anywhere but another field or layer, and not while a note to send with the rejection is being written.
+ * A phone draws none (touch screens hide them in `Button` too).
+ */
+export function approvalKeyCaps(input: {
+  phone: boolean
+  /** ⌘⏎ would allow: an armed, idle card whose plain allow is its one clear action (`shortcut`). */
+  shortcut: boolean
+  /** Esc would refuse: armed, idle, with a reject option. */
+  escapes: boolean
+  /** Focus is inside the card and not in a field or menu of it. */
+  inCard: boolean
+  /** Focus is where an Esc refuses. */
+  escapeRefuses: boolean
+  rejectLabel?: string | undefined
+}): { allow?: string[]; reject?: string[] } {
+  if (input.phone) return {}
+  return {
+    ...(input.shortcut && input.inCard ? { allow: ['mod', 'enter'] } : {}),
+    ...(input.escapes && input.escapeRefuses && input.rejectLabel !== APPROVAL_COPY.rejectAndSend ? { reject: ['esc'] } : {}),
+  }
+}
+
+/**
+ * Where focus is, for the key caps: a cap is drawn only on a button its key presses at this moment. Read again whenever
+ * focus moves or text is typed, from the same tests the key handlers use, so a cap and its key cannot disagree.
+ */
+function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; escapeRefuses: boolean } {
+  const [places, setPlaces] = useState({ inCard: false, escapeRefuses: false })
+  useEffect(() => {
+    const read = () => {
+      const active = document.activeElement
+      const inCard = card.current?.contains(active) === true && takesKeysAt(active)
+      const escapeRefuses = escapeRefusesAt(active)
+      setPlaces(places => (places.inCard === inCard && places.escapeRefuses === escapeRefuses ? places : { inCard, escapeRefuses }))
+    }
+    read()
+    const events = ['focusin', 'focusout', 'input', 'toggle'] as const
+    for (const name of events) document.addEventListener(name, read, true)
+    return () => {
+      for (const name of events) document.removeEventListener(name, read, true)
+    }
+  }, [card])
+  return places
 }
 
 export interface ApprovalDrawerProps {
@@ -130,11 +197,13 @@ export interface ApprovalDrawerProps {
 }
 
 /**
- * The request the session waits on, attached above the composer: amber words, what it does and to what, the pager, and
- * at most two buttons with the rest behind ⋯. A risky request is taller, with its reason on its own red line. Buttons arm
- * after 320ms, Enter does nothing, and Esc refuses once. A routine diff unfolds in place on request; everything else
+ * The request the session waits on, joined to the composer and as wide as it: its title is what it asks to do, after
+ * an amber dot, with the tool's ID, 查看改动 and the pager under it, and 更多 · 拒绝 · 允许 beside it. A risky request
+ * adds its red reason and the Host's sentence on a line of their own, an agent's ask the line that it is only advisory.
+ * Buttons arm after 320ms, Enter does nothing, Esc refuses once and ⌘⏎ allows an ordinary request from inside the card;
+ * a key's cap is drawn only while that key would do it. A routine diff unfolds in place on request; everything else
  * starts unfolded (see `opensUnfolded`), and content that hides characters never offers the broadest choices. A device
- * that may not allow sees where it can, beside 拒绝.
+ * that may not allow sees why, under the request.
  */
 export function ApprovalDrawer({
   approvals,
@@ -196,6 +265,8 @@ function ApprovalPanel({
 }) {
   const phone = useViewport() === 'phone'
   const armed = useArmed(approval.id)
+  const card = useRef<HTMLElement>(null)
+  const places = useKeyPlaces(card)
   const tool = message?.tool ?? approval.tool
   const toolName = message?.toolName ?? approval.toolName
   // The tool's own title and its ID are what the approver weighs against each other, so the drawer always shows both.
@@ -213,6 +284,8 @@ function ApprovalPanel({
   const hasPreview = hasDetail || diffs.length > 0
   const covered = diffs.flatMap(diff => [diff.path, diff.newText])
   const risky = gate.kind === 'R2'
+  // A high-risk request's sentence is the Host's own; it stands beside the red reason, word for word.
+  const riskSentence = risky && approval.reason && approval.reason !== action ? approval.reason : undefined
   const [open, setOpen] = useState(() =>
     opensUnfolded({
       hidden,
@@ -228,15 +301,18 @@ function ApprovalPanel({
   }
   // A risky request's allow is still the drawer's one clear action; hidden characters take that away.
   const primary = allow !== undefined && !hidden && uncertain === undefined
-  const shortcut = primary && allow.kind === 'allow_once' && (gate.kind === 'R1' || gate.kind === 'legacy')
+  const shortcut = primary && allowsByKey(gate, allow)
   // Content that may read as something else, or a choice in doubt, keeps the broadest choices out of reach.
   const offerMore = !hidden && uncertain === undefined
-  useEscapeRefuses(armed && !running && reject !== undefined, () => {
+  // ⌘⏎ allows only while the card is ready, and Esc refuses only then.
+  const escapes = armed && !running && reject !== undefined
+  useEscapeRefuses(escapes, () => {
     if (reject) choose(reject)
   })
+  const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectLabel })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     if (running || !armed || event.defaultPrevented) return
-    if (event.target instanceof Element && event.target.closest('input, textarea, [role="menu"], .ui-popover')) return
+    if (!takesKeysAt(event.target)) return
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && shortcut && allow) {
       event.preventDefault()
       choose(allow)
@@ -260,25 +336,24 @@ function ApprovalPanel({
       : []),
     ...(onStop ? [{ id: '~stop', label: APPROVAL_COPY.stopTurn, onSelect: onStop }] : []),
   ]
-  const moreTrigger = (props: MenuTriggerProps) =>
-    phone ? (
-      <Button {...props} variant="ghost" size="lg" block className="approval-more" disabled={running}>
-        {APPROVAL_COPY.moreSheet}
-      </Button>
-    ) : (
-      <IconButton {...props} label={APPROVAL_COPY.more} icon={Ellipsis} className="approval-more" disabled={running} />
-    )
+  // One name at every width: a button with its chevron on a desk, a full row that opens a sheet on a phone.
+  const moreTrigger = (props: MenuTriggerProps) => (
+    <Button {...props} variant="ghost" size={phone ? 'lg' : 'md'} menu block={phone} className="approval-more" disabled={running}>
+      {APPROVAL_COPY.moreChoices}
+    </Button>
+  )
   const moreMenu =
     menuItems.length > 0 ? (
-      <Menu label={APPROVAL_COPY.more} align="end" side="top" sections={[{ id: 'more', items: menuItems }]} trigger={moreTrigger} />
+      <Menu label={APPROVAL_COPY.moreChoices} align="end" side="top" sections={[{ id: 'more', items: menuItems }]} trigger={moreTrigger} />
     ) : null
-  const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string): ReactNode => {
+  const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string, keys: string[] | undefined): ReactNode => {
     const pressed = busy === option.id
     return (
       <Button
         key={option.id}
         variant={variant}
-        size={phone ? 'lg' : 'sm'}
+        size={phone ? 'lg' : 'md'}
+        keys={keys}
         tooltip={label === option.label ? undefined : option.label}
         loading={pressed}
         disabled={!armed || (running && !pressed)}
@@ -298,16 +373,44 @@ function ApprovalPanel({
       data-risk={approval.advisory ? 'advisory' : approval.risk}
       data-arming={armed ? undefined : ''}
       aria-label="待批准操作"
+      ref={card}
       onKeyDown={keys}>
       <div className="approval-row">
         <div className="approval-what">
           <div className="approval-title">
-            <Shield className="approval-shield" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span>{APPROVAL_COPY.waiting}</span>
+            <span className="approval-dot" aria-hidden="true" />
+            <span className="approval-object">
+              <VisibleText text={action} />
+            </span>
+            {stat && (
+              <span className="approval-stat">
+                <span className="stat-add">+{stat.add}</span>
+                {stat.del > 0 && <span className="stat-del"> −{stat.del}</span>}
+              </span>
+            )}
+          </div>
+          <div className="approval-meta">
+            {toolName && toolName !== action && (
+              <code className="tool-card-name">
+                <VisibleText text={toolName} />
+              </code>
+            )}
             {approval.subagent && (
               <span className="approval-subagent">
                 子 Agent · <VisibleText text={approval.subagent} />
               </span>
+            )}
+            {hasPreview && (
+              <button
+                type="button"
+                className="approval-see"
+                aria-expanded={open}
+                aria-controls={previewId}
+                onClick={() => {
+                  setOpen(!open)
+                }}>
+                {open ? APPROVAL_COPY.hidePreview : diffs.length > 0 ? APPROVAL_COPY.viewChange : APPROVAL_COPY.viewDetail}
+              </button>
             )}
             {total > 1 && (
               <span className="approval-pager">
@@ -333,35 +436,25 @@ function ApprovalPanel({
               </span>
             )}
           </div>
-          <div className="approval-action">
-            <span className="approval-object">
-              <VisibleText text={action} />
-            </span>
-            {stat && (
-              <span className="approval-stat">
-                <span className="stat-add">+{stat.add}</span>
-                {stat.del > 0 && <span className="stat-del"> −{stat.del}</span>}
-              </span>
-            )}
-            {hasPreview && (
-              <button
-                type="button"
-                className="approval-see"
-                aria-expanded={open}
-                aria-controls={previewId}
-                onClick={() => {
-                  setOpen(!open)
-                }}>
-                {open ? APPROVAL_COPY.hidePreview : diffs.length > 0 ? APPROVAL_COPY.viewChange : APPROVAL_COPY.viewDetail}
-              </button>
-            )}
-          </div>
-          {toolName && toolName !== action && (
-            <code className="tool-card-name">
-              <VisibleText text={toolName} />
-            </code>
+        </div>
+        <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
+          {moreMenu}
+          {reject && button(reject, 'outline', rejectLabel ?? optionLabel(reject, gate), caps.reject)}
+          {allow && button(allow, primary ? 'primary' : 'outline', optionLabel(allow, gate), caps.allow)}
+        </div>
+      </div>
+      {(risky || gate.note || hidden || previousNotes.length > 0 || gate.hint) && (
+        <div className="approval-notes">
+          {risky && (
+            <p className="approval-clause">
+              <span className="approval-clause-reason">{RISK_CLAUSE(approval.riskReason)}</span>
+              {riskSentence && (
+                <span className="approval-clause-sentence">
+                  <VisibleText text={riskSentence} />
+                </span>
+              )}
+            </p>
           )}
-          {risky && <p className="approval-clause">{RISK_CLAUSE(approval.riskReason)}</p>}
           {gate.note && <p className="approval-note">{gate.note}</p>}
           {hidden && (
             <p className="approval-warning" role="note">
@@ -380,16 +473,11 @@ function ApprovalPanel({
             </p>
           )}
         </div>
-        <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
-          {reject && button(reject, 'outline', rejectLabel ?? optionLabel(reject, gate))}
-          {allow && button(allow, primary ? 'primary' : 'outline', optionLabel(allow, gate))}
-          {moreMenu}
-        </div>
-      </div>
+      )}
       {hasPreview && (
         <div className="approval-preview" id={previewId} data-open={open ? '' : undefined}>
           <div className="approval-preview-inner" inert={!open}>
-            {approval.reason && approval.reason !== action && (
+            {approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
               <p className="approval-reason">
                 <VisibleText text={approval.reason} />
               </p>
