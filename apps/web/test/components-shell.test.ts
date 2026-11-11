@@ -59,7 +59,7 @@ describe('top bar', () => {
       runStartedAt: '2026-11-11T10:00:00Z',
       lastEventAt: '2026-11-11T10:01:10Z',
     }
-    expect(pill({ status: 'running', live })).toEqual(['running', '运行中 1:12'])
+    expect(pill({ status: 'running', live })).toEqual(['running', '在等模型 1:12'])
     expect(pill({ status: 'running' })).toEqual(['running', '运行中'])
     expect(pill({ status: 'idle' })).toBeNull()
     expect(pill({ status: 'waiting-approval' })).toEqual(['waiting', '等你处理'])
