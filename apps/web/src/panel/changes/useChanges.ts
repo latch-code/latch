@@ -148,10 +148,14 @@ export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>
   // The turn's end refreshes what is shown. Its start reads only the turn list, so the last list stays with its line.
   const wasRunning = useRef(running)
   const runKey = summary.runId ?? ''
+  const lastRun = useRef(runKey)
   useEffect(() => {
     const before = wasRunning.current
+    const newRun = lastRun.current !== runKey
     wasRunning.current = running
-    if (before && !running) void load()
+    lastRun.current = runKey
+    // A run that began and ended between two looks at the session (the list's snapshot can skip it) ends here too.
+    if ((before || newRun) && !running) void load()
     else if (running) {
       if (!before) {
         setResult(undefined)

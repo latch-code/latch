@@ -62,6 +62,23 @@ describe('the delivery tab', () => {
     expect(primaryAction(state())).toBeUndefined()
   })
 
+  it('puts 推送 next on the phone right after a commit, while the files left out wait for a quieter button', () => {
+    const leftOut = state({ ahead: 1, untracked: ['scratch.txt'] })
+    expect(primaryAction(leftOut)).toMatchObject({ kind: 'stage' })
+    expect(primaryAction(leftOut, { bound: true, justCommitted: true })).toEqual({ kind: 'push', label: '推送 1 个提交' })
+    // Nowhere to push, or something staged again: the usual order.
+    expect(
+      primaryAction(state({ ahead: 1, untracked: ['x'], remote: undefined, upstream: undefined }), { bound: true, justCommitted: true }),
+    ).toMatchObject({
+      kind: 'stage',
+    })
+    expect(primaryAction(state({ ahead: 1, staged: [{ path: 'a.ts', status: 'M' }] }), { bound: true, justCommitted: true })).toMatchObject(
+      {
+        kind: 'commit',
+      },
+    )
+  })
+
   it('offers a push only with a branch, a commit and a remote', () => {
     expect(canPush(state({ ahead: 1 }))).toBe(true)
     expect(canPush(state({ ahead: 1, remote: undefined, upstream: undefined }))).toBe(false)

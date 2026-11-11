@@ -48,6 +48,7 @@ import { currentShell, shellFolders } from '../core/shell.ts'
 import { useDrawer } from '../hooks/useDrawer.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
+import { usePhoneReview } from '../phone-review/usePhoneReview.ts'
 import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
@@ -1064,6 +1065,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     fileContext?.kind === 'workspace' ? catalog?.workspaces.find(item => item.id === fileContext.workspaceId) : undefined
   /** Phones: a session is pushed over the list, which stays beneath it, inert, until the session slides away. */
   const phoneSession = phone && (selectedId !== null || (infoPage && filesVisible))
+  /** Phones: a session's changes pushed over the list from its row's 「复核 N 处改动」. */
+  const phoneReview = usePhoneReview({ phone: phone && selectedId === null, snapshot, isUnread: session.unread, setSeen: session.setSeen })
   const column = usePresence(columnOpen, MOTION.panelExit)
   // Which way the columns last moved: a fold takes the exit timing. Unchanged state keeps the last direction.
   const columns = useRef({ right: columnOpen, left: sidebarCollapsed, folding: false })
@@ -1122,6 +1125,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     resync,
     connection,
     phoneSession,
+    phoneReview,
     conversationEpoch,
     viewport,
     coarse,

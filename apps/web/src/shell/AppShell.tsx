@@ -12,6 +12,7 @@ import { ConversationHeader } from './ConversationHeader.tsx'
 import { Button, IconButton, LiveChanges, LayerHistory, ResizeHandle, Scrim } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
+import { PhoneReview } from '../phone-review/PhoneReview.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
@@ -35,6 +36,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const shell = useShellLayout({ harness, snapshot })
   const {
     phoneSession,
+    phoneReview,
     folding,
     route,
     setRoute,
@@ -168,8 +170,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 id="session-navigation"
                 className="phone-list"
                 aria-label="会话"
-                data-covered={phoneSession && !popping ? '' : undefined}
-                inert={(phoneSession && !popping) || route.entry !== 'sessions' || undefined}>
+                data-covered={(phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) ? '' : undefined}
+                inert={
+                  (phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) || route.entry !== 'sessions' || undefined
+                }>
                 <PhoneSessionList
                   snapshot={snapshot}
                   searchResults={searchResults}
@@ -197,6 +201,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   sessionMenu={sessionMenu}
                   now={now}
                   banners={selectedId === null ? <ConnectionBanners shell={shell} /> : undefined}
+                  reviews={phoneReview.reviews}
+                  onReview={phoneReview.open}
                 />
               </section>
             ) : (
@@ -401,6 +407,19 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 onChanged={() => {
                   void refresh()
                 }}
+              />
+            )}
+            {phone && phoneReview.present && phoneReview.target && phoneReview.summary && (
+              <PhoneReview
+                target={phoneReview.target}
+                summary={phoneReview.summary}
+                snapshot={snapshot}
+                canRun={access.scopes.has('run')}
+                canDeliver={catalog?.features?.gitDelivery === true && access.scopes.has('view') && phoneReview.summary.mode !== 'chat'}
+                offline={connection === 'reconnecting' || connection === 'offline'}
+                leaving={phoneReview.leaving}
+                onTarget={phoneReview.setTarget}
+                onClose={phoneReview.close}
               />
             )}
             {phone && <PhoneTabBar shell={shell} />}

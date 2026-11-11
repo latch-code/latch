@@ -2,7 +2,7 @@ import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { originTitle } from '../plugin-pages/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { Archive, ChevronLeft, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
+import { Archive, ChevronLeft, FileDiff, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { deviceAccess } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
@@ -89,7 +89,12 @@ const PhoneRow = memo(function PhoneRow({
   onHold,
   handoffWaits = false,
   from,
+  review,
+  onReview,
 }: {
+  /** 「复核 N 处改动」: the session's changes wait for the person; pressing it pushes the review over the list. */
+  review?: string | undefined
+  onReview?: ((id: string) => void) | undefined
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
   /** The plugin page that started it: 「来自 <页面名>」. */
@@ -172,6 +177,21 @@ const PhoneRow = memo(function PhoneRow({
         </span>
         <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${handoffWaits ? '，待交回' : ''}${time ? `，${time}` : ''}`}</span>
       </button>
+      {review && onReview && !leaving && (
+        <div className="phone-row-review">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={FileDiff}
+            data-review-task={task.id}
+            aria-label={`${review} · ${title}`}
+            onClick={() => {
+              onReview(task.id)
+            }}>
+            {review}
+          </Button>
+        </div>
+      )}
     </li>
   )
 })
@@ -192,7 +212,11 @@ function PhoneGroup({
   onEditProject,
   onProjectsChanged,
   onHold,
+  reviews,
+  onReview,
 }: ProjectNavigationActions & {
+  reviews?: ReadonlyMap<string, string> | undefined
+  onReview?: ((id: string) => void) | undefined
   group: SessionGroup
   snapshot: AppSnapshot
   context: string
@@ -261,6 +285,8 @@ function PhoneGroup({
               now={now}
               onSelect={onSelect}
               onHold={onHold}
+              review={reviews?.get(task.id)}
+              onReview={onReview}
             />
           )
         })}
@@ -299,7 +325,12 @@ export function PhoneSessionList({
   sessionMenu,
   now,
   banners,
+  reviews,
+  onReview,
 }: ProjectNavigationActions & {
+  /** Rows whose changes wait on the person, with the words of their 「复核 N 处改动」. */
+  reviews?: ReadonlyMap<string, string>
+  onReview?: (id: string) => void
   snapshot: AppSnapshot
   searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
@@ -426,6 +457,8 @@ export function PhoneSessionList({
                 onSelect={onSelect}
                 onNewIn={onNewIn}
                 onHold={setHeld}
+                reviews={reviews}
+                onReview={onReview}
                 onEditProject={onEditProject}
                 onProjectsChanged={onProjectsChanged}
               />

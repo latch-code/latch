@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   Check,
   ChevronRight,
@@ -61,6 +61,8 @@ export interface DeliveryPanelProps {
   onOpenFile: (path: string) => void
   /** Puts text into the session's composer draft without sending it. */
   onCompose?: ((text: string) => void) | undefined
+  /** A commit or push the Host answered as done, for a page that leads somewhere after it. */
+  onOutcome?: ((kind: 'committed' | 'pushed') => void) | undefined
 }
 
 const STEP_ORDER = ['stage', 'commit', 'push', 'pr'] as const
@@ -191,9 +193,12 @@ function UnknownLine({
 
 /** The right panel's 交付 tab: stage, commit and push the session's repository. */
 export function DeliveryPanel(props: DeliveryPanelProps) {
-  const { summary, revision, open, canRun, hostName, offline, phone, onOpenFile, onCompose } = props
+  const { summary, revision, open, canRun, hostName, offline, phone, onOpenFile, onCompose, onOutcome } = props
   const delivery = useDelivery({ sessionId: summary.id, status: summary.status, revision, open, offline })
   const { read, pending, writing, failure, unknown, outcome, writes } = delivery
+  useEffect(() => {
+    if (outcome) onOutcome?.(outcome.kind)
+  }, [outcome, onOutcome])
   const [message, setMessage] = useState('')
   const [skipHooks, setSkipHooks] = useState(false)
   const [showOutput, setShowOutput] = useState(false)
@@ -244,9 +249,12 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       onCompose={onCompose}
     />
   ) : null
+  /** A phone's foot is its page's bottom bar: buttons a thumb can hit. */
+  const footSize = phone ? ({ size: 'lg' } as const) : {}
   const prButton = (
     <Button
       variant="primary"
+      {...footSize}
       icon={GitPullRequest}
       loading={pull.creating}
       loadingLabel="创建 PR 中…"
@@ -392,6 +400,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           <div className="delivery-foot">
             <Button
               variant="outline"
+              {...footSize}
               loading={writing === 'push'}
               loadingLabel="推送中…"
               disabled={offline || busy || unknown?.kind === 'push'}
@@ -404,6 +413,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
             ) : (
               <Button
                 variant="primary"
+                {...footSize}
                 loading={writing === 'commit'}
                 loadingLabel="提交中…"
                 disabled={offline || busy || !message.trim() || unknown?.kind === 'commit'}
@@ -442,7 +452,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
     )
 
   const step = deliveryStep(state, { bound: !prUnbound })
-  const primary = primaryAction(state, { bound: !prUnbound })
+  const primary = primaryAction(state, { bound: !prUnbound, justCommitted: phone && outcome?.kind === 'committed' })
   const summaryWord = prState?.pr ? checksSummary(prState.checks) : undefined
   const upstreamOther = !!state.upstream && !!state.remote && !!state.branch && state.upstream !== `${state.remote}/${state.branch}`
   const pushable = canPush(state) && !upstreamOther
@@ -616,6 +626,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         {primary && primary.kind !== 'pr' && (primary.kind !== 'push' || pushable) && canWrite && (
           <Button
             variant="primary"
+            {...footSize}
             icon={primary.kind === 'push' ? Upload : primary.kind === 'commit' ? GitCommitHorizontal : undefined}
             loading={writing === primary.kind || (primary.kind === 'stage' && pending.size > 0)}
             loadingLabel={primary.kind === 'stage' ? '暂存中…' : RUNNING_WORD[primary.kind]}

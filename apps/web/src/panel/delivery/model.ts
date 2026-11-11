@@ -60,8 +60,17 @@ export function pushLabel(state: Pick<GitDeliveryState, 'upstream' | 'ahead'>): 
   return state.upstream && state.ahead > 0 ? `推送 ${state.ahead} 个提交` : '推送'
 }
 
-/** The one blue button: 暂存全部, then 提交 N 个文件, then 推送 (推送 N 个提交 when the branch is ahead), then 创建 PR. */
-export function primaryAction(state: GitDeliveryState, pr: { bound: boolean } = { bound: true }): PrimaryAction | undefined {
+/**
+ * The one blue button: 暂存全部, then 提交 N 个文件, then 推送 (推送 N 个提交 when the branch is ahead), then 创建 PR.
+ * `justCommitted` (the phone's page, right after its commit): the files left out were left out on purpose, so 推送 comes
+ * next while there is somewhere to push, and 全部暂存 stays a quiet button.
+ */
+export function primaryAction(
+  state: GitDeliveryState,
+  pr: { bound: boolean; justCommitted?: boolean } = { bound: true },
+): PrimaryAction | undefined {
+  if (pr.justCommitted && state.staged.length === 0 && state.conflicted.length === 0 && canPush(state))
+    return { kind: 'push', label: pushLabel(state) }
   const step = deliveryStep(state, pr)
   if (step === 'pr') return { kind: 'pr', label: '创建 PR' }
   if (step === 'commit') return { kind: 'commit', label: `提交 ${state.staged.length} 个文件` }

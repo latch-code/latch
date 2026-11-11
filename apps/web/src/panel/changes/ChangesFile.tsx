@@ -22,12 +22,22 @@ import {
 } from './notes.ts'
 import { NoteCard, NoteEditor, type NoteWriting } from './ReviewNotes.tsx'
 
+/**
+ * Lines picked by the page around the diff (the phone's review): taps go to `onTap` with both sides' lines, for the
+ * note's snippet, and the note is written in the page's sheet instead of under the lines.
+ */
+export interface ExternalPick {
+  selection: LineSelection | undefined
+  onTap: (line: DiffLine, sides: { old: string[]; new: string[] }) => void
+}
+
 /** A file's line feedback: the notes kept on it, and whether this device may add more. */
-interface FileNotes {
+export interface FileNotes {
   notes: ReviewNote[]
   /** The diff new notes are anchored to; absent, no new notes from here. */
   anchor?: { scope: ChangeScope; turnId?: string }
   writing?: NoteWriting
+  pick?: ExternalPick
 }
 
 export interface FileRowProps {
@@ -157,7 +167,7 @@ const whyEmpty = (file: ChangedFile) =>
         ? '内容没有变化，只改了执行位'
         : '内容没有变化'
 
-function FileBody({
+export function FileBody({
   file,
   layout,
   revision,
@@ -226,7 +236,9 @@ function FileReview({
   notes: FileNotes | undefined
   onStale: (count: number) => void
 }) {
-  const [selection, setSelection] = useState<LineSelection>()
+  const [own, setSelection] = useState<LineSelection>()
+  const pick = notes?.pick
+  const selection = pick ? pick.selection : own
   const kept = notes?.notes ?? []
   const texts = useMemo(() => reviewOf(detail.hunks!), [detail])
   const placed = useMemo(() => placeNotes(kept, texts.oldText, texts.newText), [kept, texts])
@@ -247,10 +259,14 @@ function FileReview({
   const anchor = notes?.anchor
   const writing = notes?.writing
   const press = (line: DiffLine) => (event: MouseEvent) => {
+    if (pick) {
+      pick.onTap(line, sides)
+      return
+    }
     setSelection(current => selectLine(current, line, event.shiftKey || (HOVERLESS_NOW() && current !== undefined)))
   }
   const step = (event: KeyboardEvent) => {
-    if (!event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || !selection) return
+    if (pick || !event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || !selection) return
     event.preventDefault()
     setSelection(stepSelection(selection, event.key === 'ArrowDown' ? 1 : -1, sides[selection.side].length))
   }
@@ -285,7 +301,7 @@ function FileReview({
           : {})}
         annotation={line => {
           const under = notesUnder(placed, line)
-          const editing = anchor && writing && selection && numberOn(line, selection.side) === selection.end
+          const editing = !pick && anchor && writing && selection && numberOn(line, selection.side) === selection.end
           if (!under.length && !editing) return undefined
           return (
             <>

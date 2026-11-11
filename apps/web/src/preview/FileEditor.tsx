@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Copy } from 'lucide-react'
 import type { FileEditResult, FileMetadata } from '@latch/protocol'
 import { Button, ConfirmDialog, InlineNotice, StatusWord, useCopy } from '@latch/ui'
 import { ApiError, api, errorMessage, fileBytes, isUncertain, newRequestId } from '../core/api.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
+import { useVisualViewportFit } from '../hooks/useVisualViewportFit.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { decodeEditable, editHash } from './editText.ts'
 import type { EditPhase as Phase, EditSent as Sent, EditTheirs as Theirs, EditorState } from './editDrafts.ts'
@@ -66,22 +67,7 @@ export function FileEditor({
     area.current?.focus({ preventScroll: true })
   }, [])
   // The phone page follows the visible viewport, so the keyboard never covers the text being typed.
-  useLayoutEffect(() => {
-    const view = window.visualViewport
-    const page = root.current
-    if (!phone || !view || !page) return undefined
-    const fit = () => {
-      page.style.height = `${Math.round(view.height)}px`
-      page.style.top = `${Math.round(view.offsetTop)}px`
-    }
-    fit()
-    view.addEventListener('resize', fit)
-    view.addEventListener('scroll', fit)
-    return () => {
-      view.removeEventListener('resize', fit)
-      view.removeEventListener('scroll', fit)
-    }
-  }, [phone])
+  useVisualViewportFit(root, phone)
   useBackLayer(phone && asking === undefined, () => {
     if (dirty || phase === 'unknown' || phase === 'conflict') setAsking('discard')
     else onClose(false)
