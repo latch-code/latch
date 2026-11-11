@@ -16,6 +16,7 @@ import {
   type TestPresence,
 } from '@latch/testkit'
 import { AuditLog, verifyAuditFile, type AuditFs } from '../src/audit.ts'
+import { enrollmentSubject, presenceReason } from '../src/presence-reason.ts'
 import {
   CREDENTIAL_LIFETIME,
   DeviceStore,
@@ -1814,6 +1815,31 @@ describe('device names', () => {
         code: 'invalid-device-name',
       })
     }
+  })
+
+  it('numbers a browser that asks with a name another device already has, and keeps the number in the sheet', async () => {
+    const context = await fixture()
+    const nameOf = (device: Enrolled) => context.devices.get(device.id)?.name
+    const first = await enroll(context, loopback, { name: 'Mac 上的 Chrome' })
+    expect(nameOf(first)).toBe('Mac 上的 Chrome')
+    const second = await enroll(context, loopback, { name: 'Mac 上的 Chrome' })
+    expect(nameOf(second)).toBe('Mac 上的 Chrome (2)')
+    expect(context.presence.requests.at(-1)!.preview.requester.deviceName).toBe('Mac 上的 Chrome (2)')
+    expect(presenceReason('device.enroll', enrollmentSubject('loopback-tcp', nameOf(second)!))).toBe(
+      '允许「Mac 上的 Chrome (2)」连接这台 Mac',
+    )
+
+    // A long name gives way in front of its number, so the 20-grapheme slot of the sheet still shows the number.
+    const long = 'Windows 上的 Microsoft Edge'
+    await enroll(context, loopback, { name: long })
+    const numbered = nameOf(await enroll(context, loopback, { name: long }))!
+    expect(numbered).toBe('Windows 上的 Micro (2)')
+    expect(Array.from(new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(numbered))).toHaveLength(20)
+    expect(presenceReason('device.enroll', enrollmentSubject('loopback-tcp', numbered))).toContain('(2)」')
+
+    // A removed device frees its name.
+    await context.devices.revoke(first.id, 'manual', actor)
+    expect(nameOf(await enroll(context, loopback, { name: 'Mac 上的 Chrome' }))).toBe('Mac 上的 Chrome')
   })
 
   it('replaces a migrated name that cannot be shown before the takeover is confirmed', async () => {

@@ -81,6 +81,9 @@ const NATIVE_PAIRED_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:st
 const INVITABLE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 /** Name used when a migrated record's name cannot be shown in a confirmation dialog. */
 const DEFAULT_DEVICE_NAME = '未命名设备'
+/** The confirmation sheet's device slot (`presence-reason.ts`): a number added to a name must fit inside it. */
+const SHEET_NAME_GRAPHEMES = 20
+const NAME_GRAPHEMES = new Intl.Segmenter('und', { granularity: 'grapheme' })
 
 const DEVICES_FILE = 'devices.json'
 const REVOCATIONS_FILE = 'revocations.jsonl'
@@ -925,15 +928,20 @@ export class DeviceStore {
     })
   }
 
-  /** A phone's self-reported name, told apart from the Host's other devices with 「(2)」 and so on. */
+  /**
+   * A new device's name, told apart from the Host's other devices with 「(2)」 and so on, before it reaches the
+   * confirmation sheet. The sheet shows at most 20 graphemes of a name (`presence-reason.ts`, the device slot) and cuts
+   * the end, so a numbered name is shortened in front of its number until it fits: the number is what tells two
+   * devices apart while confirming. A name that is not taken is kept whole.
+   */
   distinctName(name: string): string {
     const taken = new Set(this.state.devices.filter(device => device.status !== 'revoked').map(device => device.name))
     if (!taken.has(name)) return name
+    const clusters = Array.from(NAME_GRAPHEMES.segment(name), part => part.segment)
     for (let number = 2; number < 100; number++) {
-      const suffix = ` (${number})`,
-        candidate = `${Array.from(name)
-          .slice(0, 80 - suffix.length)
-          .join('')}${suffix}`
+      const suffix = ` (${number})`
+      const room = Math.max(1, SHEET_NAME_GRAPHEMES - suffix.length)
+      const candidate = `${clusters.slice(0, room).join('').trimEnd()}${suffix}`
       if (!taken.has(candidate)) return candidate
     }
     return name
@@ -1699,13 +1707,14 @@ export class EnrollmentService {
     const action = isNativeListener(connection.listener) ? 'device.enroll-native' : 'device.enroll'
     const legacyDevice =
       connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
-    // A migrated name is checked like any other before it reaches the confirmation dialog.
+    // A migrated name is checked like any other before it reaches the confirmation dialog. A takeover keeps its name
+    // unnumbered: the record it replaces is the one holding that name.
     const name =
       legacyDevice && (typeof request.name !== 'string' || request.name.trim() === '')
         ? legacyName(legacyDevice.name)
-        : isNativeListener(connection.listener)
-          ? this.devices.distinctName(deviceName(request.name))
-          : deviceName(request.name)
+        : legacyDevice
+          ? deviceName(request.name)
+          : this.devices.distinctName(deviceName(request.name))
     if (request.scopes !== undefined && (!Array.isArray(request.scopes) || request.scopes.some(scope => typeof scope !== 'string'))) {
       throw new AppError(400, 'invalid-scope', '未知的设备权限')
     }

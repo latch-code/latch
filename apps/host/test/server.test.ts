@@ -3561,7 +3561,7 @@ describe('workspaces, policy and audit', () => {
     const preview = t.presence.requests.at(-1)!.preview
     expect(preview.lines.slice(0, 4)).toEqual([
       { label: '连接方式', value: `局域网 HTTPS · ${t.host.tlsOrigin}` },
-      { label: '配对方式', value: '配对邀请（邀请设备：Test device）' },
+      { label: '配对方式', value: '配对邀请（邀请设备：Test device (2)）' },
       { label: '当前状态', value: '待复核（邀请设备已被撤销）' },
       { label: '设备名称', value: 'Owner Mac' },
     ])

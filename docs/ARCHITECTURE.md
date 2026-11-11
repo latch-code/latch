@@ -375,7 +375,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /health` | 无 | `{"ok":true}` |
 | `GET /host-info` | 无（仅 `host.sock`） | Host 实例信息 |
 | `POST /host/state` | 无（仅 `host.sock`；桌面端页面经转发时主进程返回 403） | 报告睡眠、唤醒与即将停止的原因（见「Host 的生命周期」） |
-| `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接允许申请的权限，其中是否有 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记 |
+| `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接允许申请的权限，其中是否有 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记。新设备报的名称与一台未移除的设备相同时，Host 在创建请求时给它加「 (2)」等序号，再交给系统确认表单；名称加上序号超过表单设备名称的 20 个字符时，先截短序号前面的部分，序号总在表单里可见。迁移旧设备的名称不加序号 |
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
