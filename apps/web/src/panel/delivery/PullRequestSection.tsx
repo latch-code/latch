@@ -53,6 +53,9 @@ export interface PullRequestSectionProps {
   logs: Record<string, LogRead>
   onReload: () => void
   onRetry: () => void
+  onAbandon: () => void
+  /** The unknown row's retry: not held back by that unknown result, as the rest of the section is. */
+  retryDisabled: boolean
   onReadLog: (job: string) => void
   onCloseLog: (job: string) => void
   onCompose?: ((text: string) => void) | undefined
@@ -252,11 +255,22 @@ export function PullRequestSection(props: PullRequestSectionProps) {
         <Line
           tone="muted"
           icon={CircleHelp}
-          detail="没有收到答复，PR 可能已经建好。重试沿用同一请求，电脑会先按分支查找，不会建两个。"
+          detail="没有收到答复，PR 可能已经建好。重试沿用同一请求，电脑会先按分支查找，不会建两个。放弃这次结果只在这个页面上放下它，电脑上的记录仍是结果未知；之后再创建 PR 时，电脑同样先按分支查找，找到就绑定它。"
           action={
-            <Button size="xs" variant="outline" loading={creating} loadingLabel="核对中…" disabled={disabled} onClick={props.onRetry}>
-              重试同一请求
-            </Button>
+            <>
+              <Button
+                size="xs"
+                variant="outline"
+                loading={creating}
+                loadingLabel="核对中…"
+                disabled={props.retryDisabled}
+                onClick={props.onRetry}>
+                重试同一请求
+              </Button>
+              <Button size="xs" variant="ghost" disabled={creating} onClick={props.onAbandon}>
+                放弃这次结果
+              </Button>
+            </>
           }>
           PR 结果未知
         </Line>

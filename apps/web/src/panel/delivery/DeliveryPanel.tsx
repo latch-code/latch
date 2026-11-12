@@ -169,22 +169,31 @@ function UnknownLine({
   busy,
   disabled,
   onRetry,
+  onAbandon,
 }: {
   unknown: UnknownWrite
   busy: boolean
   disabled: boolean
   onRetry: () => void
+  onAbandon: () => void
 }) {
   const what = unknown.kind === 'commit' ? '提交' : '推送'
+  const fresh =
+    unknown.kind === 'commit' ? '新的提交只提交那时暂存的文件，第一次已经提交的不会再提交一次。' : '新的推送照常推送当前分支，从不强制。'
   return (
     <Line
       tone="muted"
       icon={CircleHelp}
-      detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，电脑会先核对结果，不会${what}两次。`}
+      detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，电脑会先核对结果，不会${what}两次。放弃这次结果只在这个页面上放下它，之后可以发起新的请求；电脑上的记录仍是结果未知。${fresh}`}
       action={
-        <Button size="xs" variant="outline" loading={busy} loadingLabel="核对中…" disabled={disabled} onClick={onRetry}>
-          重试同一请求
-        </Button>
+        <>
+          <Button size="xs" variant="outline" loading={busy} loadingLabel="核对中…" disabled={disabled} onClick={onRetry}>
+            重试同一请求
+          </Button>
+          <Button size="xs" variant="ghost" disabled={busy} onClick={onAbandon}>
+            放弃这次结果
+          </Button>
+        </>
       }>
       {what}结果未知
     </Line>
@@ -241,9 +250,11 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       creating={pull.creating}
       failure={pull.failure}
       unknown={pull.unknown}
+      retryDisabled={offline || !canWrite || busy || pull.creating}
       logs={pull.logs}
       onReload={() => void pull.reload()}
       onRetry={() => void pull.retry()}
+      onAbandon={pull.abandon}
       onReadLog={job => void pull.readLog(job)}
       onCloseLog={pull.closeLog}
       onCompose={onCompose}
@@ -314,6 +325,10 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           busy={writing === unknown.kind}
           disabled={offline || (busy && writing !== unknown.kind)}
           onRetry={() => void retry()}
+          onAbandon={() => {
+            if (unknown.kind === 'commit') setSkipHooks(false)
+            writes.abandon()
+          }}
         />
       )}
       {failure?.code === 'git-hook-failed' ? (

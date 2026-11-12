@@ -203,6 +203,16 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return { label: '会话文件夹不可用', tone: 'failed' }
     case 'git-paths-invalid':
       return { label: '路径无效', tone: 'failed' }
+    case 'rate-limited':
+      return { label: '请求太频繁，稍后再试', tone: 'neutral' }
+    case 'task-not-found':
+      return { label: '找不到这个会话', tone: 'neutral' }
+    case 'session-read-only':
+      return { label: '这个会话只读', tone: 'neutral' }
+    case 'scope-required':
+    case 'file-scope':
+    case 'agent-scope-required':
+      return { label: '这台设备没有这项权限', tone: 'neutral', detail: '在电脑上的设备管理里调整这台设备的权限。' }
     case 'request-conflict':
       return { label: '同一请求换了内容，没有执行', tone: 'failed' }
     case 'git-failed':
@@ -238,9 +248,42 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
  */
 export type WriteEnd = 'done' | 'failed' | 'unknown' | 'updating'
 
-export function writeEnd(input: { code?: string | undefined; uncertain: boolean }): Exclude<WriteEnd, 'done'> {
+/**
+ * Answers to a retried write that the Host gives only after reading its receipt (`replay`) or what the remote holds;
+ * every other answer to a retry says nothing about the first attempt (docs/GIT-DELIVERY.md「回执与结果未知」).
+ * - commit: never run again, so only the receipt's answer settles it.
+ * - push: the failures of a push run again after `ls-remote` showed the remote's branch without the commit.
+ * - pr: the Host looked the branch's pull request up and found none, then `gh pr create` refused, or found one
+ *   elsewhere. `gh-*` codes may come from before that lookup, so they settle nothing.
+ */
+const SETTLES_RETRY: Readonly<Record<'commit' | 'push' | 'pr', ReadonlySet<string>>> = {
+  commit: new Set(),
+  push: new Set([
+    'git-push-remote-rejected',
+    'git-hook-failed',
+    'git-push-auth',
+    'git-push-host-key',
+    'git-push-unreachable',
+    'git-push-failed',
+  ]),
+  pr: new Set(['pr-create-failed', 'pr-exists-elsewhere']),
+}
+
+/**
+ * `retry`: the same request again after an unknown result. It settles only on an answer from the receipt (`replay`) or
+ * from the remote; any other refusal (a route's 400, 403 or 429, a session check) says nothing about the first attempt,
+ * so the result stays unknown with its request ID, for the person to retry or abandon.
+ */
+export function writeEnd(input: {
+  code?: string | undefined
+  uncertain: boolean
+  retry?: { kind: 'commit' | 'push' | 'pr'; replay: boolean }
+}): Exclude<WriteEnd, 'done'> {
   if (input.code === 'host-updating') return 'updating'
-  return input.uncertain ? 'unknown' : 'failed'
+  if (input.uncertain) return 'unknown'
+  const retry = input.retry
+  if (retry && !retry.replay && !(input.code !== undefined && SETTLES_RETRY[retry.kind].has(input.code))) return 'unknown'
+  return 'failed'
 }
 
 /** The write whose result is unknown after an attempt: the attempt's own, or the one pending before it. */

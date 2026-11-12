@@ -143,6 +143,44 @@ describe('the delivery tab', () => {
     expect(writeEnd({ code: 'git-push-auth', uncertain: false })).toBe('failed')
   })
 
+  it('settles a retried commit, push or PR only on an answer from its receipt or the remote', () => {
+    const after = (kind: 'commit' | 'push' | 'pr', input: { code?: string; uncertain?: boolean; replay?: boolean }) => {
+      const pending = { kind, requestId: `r-${kind}` }
+      const { replay = false, ...rest } = input
+      return unknownAfter(pending, pending, writeEnd({ uncertain: false, ...rest, retry: { kind, replay } })) === pending
+    }
+    for (const kind of ['commit', 'push', 'pr'] as const) {
+      // Refusals that say nothing about the first attempt: a route's 400, 403 or 429, a session check, a Host that did
+      // not record or is closing, a network error, an update window.
+      for (const code of [
+        'invalid-input',
+        'scope-required',
+        'file-scope',
+        'agent-scope-required',
+        'rate-limited',
+        'task-not-found',
+        'session-read-only',
+        'workspace-changed',
+        'git-receipt-unsaved',
+        'host-closing',
+      ])
+        expect(after(kind, { code })).toBe(true)
+      expect(after(kind, { uncertain: true })).toBe(true)
+      expect(after(kind, { code: 'git-result-unknown', uncertain: true })).toBe(true)
+      expect(after(kind, { code: 'host-updating' })).toBe(true)
+      // The receipt's answer lets go of it.
+      expect(after(kind, { code: kind === 'commit' ? 'git-commit-not-made' : 'git-push-failed', replay: true })).toBe(false)
+    }
+    // A push failure the Host settles after reading the remote, and a PR it looked up first.
+    expect(after('push', { code: 'git-push-remote-rejected' })).toBe(false)
+    expect(after('push', { code: 'git-push-unreachable' })).toBe(false)
+    expect(after('commit', { code: 'git-push-unreachable' })).toBe(true)
+    expect(after('pr', { code: 'pr-create-failed' })).toBe(false)
+    expect(after('pr', { code: 'gh-logged-out' })).toBe(true)
+    // A first attempt's refusal is a failure as before.
+    expect(writeEnd({ code: 'rate-limited', uncertain: false })).toBe('failed')
+  })
+
   it('reads only the details it knows from a refusal', () => {
     expect(
       failureDetails({

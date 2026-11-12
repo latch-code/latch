@@ -2,12 +2,12 @@ import { chromium, type Browser, type Locator, type Page } from '@playwright/tes
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
@@ -374,6 +374,234 @@ touch '${control}/commit-ran'`,
     await page.locator('.changes-panel').filter({ visible: true }).locator('.diff-add', { hasText: 'later' }).waitFor()
 
     for (const item of [desk, phone, locked]) await item.context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+    await rm(scratch, { recursive: true, force: true })
+  }
+})
+
+const ACCEPTANCE = '/tmp/latch-acceptance/2026-11-12-git-retry'
+
+/**
+ * The page as it is, light and dark, with motion frozen, for acceptance outside the repository (skipped elsewhere). The
+ * width is the page's own: a page crossing the phone width remounts its panel, which keeps nothing of this page's state.
+ */
+async function acceptance(page: Page, name: string) {
+  if (!existsSync('/tmp/latch-acceptance')) return
+  await mkdir(ACCEPTANCE, { recursive: true })
+  const { width } = page.viewportSize()!
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addStyleTag({
+    content: '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }',
+  })
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(250)
+    await page.screenshot({ path: join(ACCEPTANCE, `${name}--${width}--${scheme}.png`) })
+  }
+  await page.emulateMedia({ colorScheme: 'light' })
+}
+
+/**
+ * Keeps this device's write budget spent: requests the Host refuses before reading them (no request ID), two always in
+ * flight, so the next write is refused as 429 too, the page's own single automatic retry included.
+ */
+async function spendWrites(page: Page, path: string): Promise<() => Promise<void>> {
+  const url = `/link/api/${path}`
+  await page.evaluate(target => {
+    const state = window as unknown as { spending?: boolean }
+    state.spending = true
+    const one = async (): Promise<void> => {
+      while (state.spending)
+        await fetch(target, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    }
+    // Two at a time: the page keeps the rest of the browser's six connections to the Host for its own reads.
+    for (let i = 0; i < 2; i++) void one()
+  }, url)
+  // The bucket holds 60: wait until it is empty.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          async target =>
+            (
+              await fetch(target, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+              })
+            ).status,
+          url,
+        ),
+      SLOW,
+    )
+    .toBe(429)
+  return async () => {
+    await page.evaluate(() => {
+      ;(window as unknown as { spending?: boolean }).spending = false
+    })
+    // A token again for the next write.
+    await page.waitForTimeout(2_500)
+  }
+}
+
+it('keeps a retried push and PR unknown on a refusal, shows it, and lets the page abandon the result', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'latch-delivery-retry-e2e-'))
+  const home = join(scratch, 'home'),
+    control = join(scratch, 'control')
+  await mkdir(home)
+  await mkdir(control)
+  const gh = await installFakeGh(join(scratch, 'gh'))
+  const host = await startTestHost({
+    demo: false,
+    // The real write budget: 60, then one a second.
+    rateLimits: 'default',
+    gitDelivery: {
+      home,
+      hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch },
+      shell: gh.shell,
+      timeouts: { push: 4_000, prCreate: 3_000 },
+    },
+  })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: host.workspaceRoot, env, stdio: ['ignore', 'pipe', 'pipe'] })
+        .toString('utf8')
+        .trim()
+    const bare = join(scratch, 'remote.git')
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare], { env })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.name', 'Tester')
+    git('config', 'user.email', 'tester@example.invalid')
+    await appendFile(join(host.workspaceRoot, '.git', 'info', 'exclude'), 'agent-edit.txt\ncommand-edit.txt\n')
+    git('commit', '-q', '--allow-empty', '-m', 'first')
+    // GitHub by name, a local bare repository in fact.
+    git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git')
+    git('config', 'remote.origin.pushurl', bare)
+    git('push', '-q', '-u', 'origin', 'main')
+    const branch = (name: string) => {
+      git('switch', '-q', '-c', name)
+      git('commit', '-q', '--allow-empty', '-m', `Start ${name}`)
+      git('push', '-q', '-u', 'origin', name)
+    }
+    branch('feat/currency-filter')
+    const pre = join(host.workspaceRoot, '.git', 'hooks', 'pre-push')
+    await writeFile(pre, `#!/bin/sh\nif [ -f '${control}/slow-push' ]; then rm '${control}/slow-push'; sleep 10; fi\n`)
+    await chmod(pre, 0o755)
+
+    const owner = await host.enroll({ listener: 'unix' })
+    expect(
+      (
+        await owner.request('agents', {
+          method: 'POST',
+          body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
+        })
+      ).status,
+    ).toBe(201)
+    const start = async () => {
+      const created = await owner.confirmed('tasks', {
+        method: 'POST',
+        body: { prompt: 'shell-edit', requestId: randomUUID(), mode: 'agent', harnessId: 'fake', workspaceId: 'default' },
+      })
+      const { sessionId } = (await created.json()) as { sessionId: string }
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, SLOW).toBe('idle')
+      return sessionId
+    }
+    const first = await start()
+    const second = await start()
+
+    /** On one page: a push and a PR whose answers never came, each retried into a refusal, then abandoned. */
+    const run = async (page: Page, sessionId: string, branchName: string, prNumber: number) => {
+      const pushes: string[] = []
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/git/push')) {
+          const body = request.postDataJSON() as { requestId?: string }
+          if (body.requestId) pushes.push(body.requestId)
+        }
+      })
+      const panel = await openDelivery(page)
+      const primary = panel.locator('.delivery-foot .ui-button[data-variant="primary"]')
+
+      // A push with no answer in time: unknown.
+      git('commit', '-q', '--allow-empty', '-m', `Round amounts on ${branchName}`)
+      await comeBack(page)
+      await expect.poll(() => primary.innerText(), SLOW).toBe('推送 1 个提交')
+      await writeFile(join(control, 'slow-push'), '')
+      await primary.click()
+      const unknownRow = panel.locator('.delivery-line', { hasText: '推送结果未知' })
+      await unknownRow.waitFor({ timeout: 20_000 })
+      const unknownId = pushes.at(-1)!
+
+      // The retry is refused before the Host reads anything (the write budget is spent): still unknown, the same
+      // request, and the refusal in its short words under the row.
+      const stop = await spendWrites(page, `tasks/${sessionId}/git/push`)
+      await unknownRow.getByRole('button', { name: '重试同一请求', exact: true }).click()
+      const refusal = panel.locator('.delivery-line', { hasText: '请求太频繁，稍后再试' })
+      await refusal.waitFor({ timeout: 20_000 })
+      await unknownRow.getByRole('button', { name: '重试同一请求', exact: true }).waitFor()
+      expect(pushes.filter(id => id === unknownId).length).toBeGreaterThanOrEqual(2)
+      expect(new Set(pushes)).toEqual(new Set([unknownId]))
+      await stop()
+      await acceptance(page, 'push-retry-refused')
+      // The fine print says what abandoning does.
+      await unknownRow.getByRole('button', { name: '说明', exact: true }).click()
+      await unknownRow.getByText('电脑上的记录仍是结果未知', { exact: false }).waitFor()
+      await acceptance(page, 'push-retry-refused-hint')
+
+      // Abandoned: the row goes, and a new push is a new request that goes through.
+      await unknownRow.getByRole('button', { name: '放弃这次结果', exact: true }).click()
+      await unknownRow.waitFor({ state: 'detached' })
+      await refusal.waitFor({ state: 'detached' })
+      await acceptance(page, 'push-abandoned')
+      await expect.poll(() => primary.innerText(), SLOW).toBe('推送 1 个提交')
+      await primary.click()
+      await panel.locator('.delivery-line', { hasText: '已推送到' }).waitFor()
+      expect(pushes.at(-1)).not.toBe(unknownId)
+      expect(execFileSync('git', ['rev-parse', branchName], { cwd: bare, env }).toString('utf8').trim()).toBe(git('rev-parse', 'HEAD'))
+
+      // A PR whose answer never came (gh made it, then took longer than the Host waits): the same, for 创建 PR.
+      await gh.update(state => {
+        state.createDelayMs = 8_000
+      })
+      const createPr = panel.getByRole('button', { name: '创建 PR', exact: true })
+      await createPr.waitFor()
+      await expect.poll(() => createPr.getAttribute('aria-disabled'), SLOW).not.toBe('true')
+      await createPr.click()
+      const prUnknown = panel.locator('.delivery-line', { hasText: 'PR 结果未知' })
+      await prUnknown.waitFor({ timeout: 20_000 })
+      await gh.update(state => {
+        delete state.createDelayMs
+      })
+      const stopPr = await spendWrites(page, `tasks/${sessionId}/git/pr`)
+      await prUnknown.getByRole('button', { name: '重试同一请求', exact: true }).click()
+      await refusal.waitFor({ timeout: 20_000 })
+      await prUnknown.getByRole('button', { name: '重试同一请求', exact: true }).waitFor()
+      await stopPr()
+      await acceptance(page, 'pr-retry-refused')
+      await prUnknown.getByRole('button', { name: '放弃这次结果', exact: true }).click()
+      await prUnknown.waitFor({ state: 'detached' })
+      await acceptance(page, 'pr-abandoned')
+      // A new 创建 PR finds the one the first attempt made and binds it: never a second.
+      await expect.poll(() => createPr.getAttribute('aria-disabled'), SLOW).not.toBe('true')
+      await createPr.click()
+      await panel.getByText(`#${prNumber}`, { exact: false }).first().waitFor()
+      expect((await gh.state()).prs).toHaveLength(prNumber)
+    }
+
+    const desk = await openBrowser(browser, host, owner, first, { width: 1440, height: 900, dataScope: 'all' })
+    await run(desk.page, first, 'feat/currency-filter', 1)
+    await desk.context.close()
+    // At 390, on its own page and branch: a page keeps its unknown result only while it is mounted.
+    branch('feat/second-filter')
+    const phone = await openBrowser(browser, host, owner, second, { width: 390, height: 844, dataScope: 'all' })
+    await run(phone.page, second, 'feat/second-filter', 2)
+    await noHorizontalOverflow(phone.page)
+    await phone.context.close()
+    expect(await gh.violations()).toEqual([])
   } finally {
     await browser.close()
     await host.close()

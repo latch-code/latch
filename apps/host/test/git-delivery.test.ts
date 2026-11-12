@@ -1,12 +1,20 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
-import { redactSecrets } from '@latch/core/node-kit'
-import { GitDelivery, deliveryEnvironment, readableTail, type DeliveryAuditEvent, type DeliveryCaller } from '../src/git-delivery.ts'
+import { canonicalJson, redactSecrets, sha256Hex } from '@latch/core/node-kit'
+import {
+  GitDelivery,
+  RepositoryHolds,
+  deliveryEnvironment,
+  readableTail,
+  type DeliveryAuditEvent,
+  type DeliveryCaller,
+  type GitDeliveryOptions,
+} from '../src/git-delivery.ts'
 import { SessionMetaStore } from '../src/session-meta.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -26,7 +34,12 @@ interface Fixture {
   gitIn: (cwd: string, ...args: string[]) => string
   hook: (name: string, body: string, dir?: string) => Promise<void>
   marked: (name: string) => boolean
-  delivery: (options?: { timeouts?: { commit?: number; push?: number; stage?: number } }) => Promise<GitDelivery>
+  delivery: (options?: {
+    timeouts?: { commit?: number; push?: number; stage?: number }
+    holds?: RepositoryHolds
+    git?: string
+    receipts?: (store: SessionMetaStore) => GitDeliveryOptions['receipts']
+  }) => Promise<GitDelivery>
   caller: (overrides?: Partial<DeliveryCaller>) => DeliveryCaller & { audits: DeliveryAuditEvent[]; results: unknown[] }
   dataDir: string
 }
@@ -68,11 +81,11 @@ async function fixture(): Promise<Fixture> {
       await chmod(join(dir, name), 0o755)
     },
     marked: name => existsSync(join(marks, name)),
-    async delivery(options = {}) {
-      const receipts = await SessionMetaStore.open(dataDir)
-      stores.push(receipts)
+    async delivery({ receipts: wrap, ...options } = {}) {
+      const store = await SessionMetaStore.open(dataDir)
+      stores.push(store)
       return new GitDelivery({
-        receipts,
+        receipts: wrap ? wrap(store) : store,
         home,
         hostEnv: {
           HOME: home,
@@ -120,6 +133,35 @@ async function failure(promise: Promise<unknown>): Promise<AppError> {
     throw error
   }
   throw new Error('expected a refusal')
+}
+
+/** A push receipt left pending by an attempt whose answer was lost, as a Host that stopped mid-push leaves it. */
+async function recordPush(
+  f: Fixture,
+  requestId: string,
+  localSha: string,
+  extra: { setUpstream?: true; via?: 'upstream' | 'origin' } = {},
+): Promise<void> {
+  const store = await SessionMetaStore.open(f.dataDir)
+  await store.recordGit('session-1', {
+    kind: 'git',
+    operation: 'push',
+    requestId,
+    deviceId: 'dev_test',
+    payloadHash: sha256Hex(canonicalJson({ kind: 'push' })),
+    state: 'pending',
+    remote: 'origin',
+    ref: 'refs/heads/main',
+    localSha,
+    via: 'upstream',
+    ...extra,
+    at: new Date().toISOString(),
+  })
+  await store.flush()
+}
+
+async function receiptOf(f: Fixture, requestId: string) {
+  return (await SessionMetaStore.open(f.dataDir)).git('session-1', 'dev_test', requestId)
 }
 
 const id = (n: number) => `request-${String(n).padStart(4, '0')}`
@@ -432,6 +474,7 @@ describe('git delivery', () => {
           payloadHash: sha256Hex(canonicalJson({ kind: 'commit', message, skipHooks: false })),
           state: 'pending',
           preHead,
+          headRef: 'refs/heads/main',
           indexTree: tree,
           subjectHash: sha256Hex(message),
           at: new Date().toISOString(),
@@ -691,6 +734,270 @@ describe('git delivery', () => {
       expect(f.gitIn(remote, 'rev-parse', 'main')).toBe(tip)
     },
   )
+
+  it('answers a retried push from the remote after HEAD was detached, and never with a fresh refusal', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', remote)
+    await writeFile(join(f.repo, 'b.txt'), 'b\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'b')
+    const localSha = f.git('rev-parse', 'HEAD')
+    // The first attempt (to origin, setting the upstream) landed and its answer was lost; then HEAD was detached.
+    f.git('push', '-q', 'origin', 'main')
+    await recordPush(f, id(1), localSha, { setUpstream: true, via: 'origin' })
+    f.git('checkout', '-q', '--detach')
+    // A merge under way refuses writes, but a retry has nothing new to say: it stays unknown, the receipt as it was.
+    await writeFile(join(f.repo, '.git', 'MERGE_HEAD'), `${localSha}\n`)
+    const caller = f.caller()
+    const delivery = await f.delivery()
+    expect(await failure(delivery.push(caller, { requestId: id(1) }))).toMatchObject({ status: 504, code: 'git-result-unknown' })
+    expect(caller.audits).toEqual([])
+    expect((await receiptOf(f, id(1)))?.state).toBe('unknown')
+    await rm(join(f.repo, '.git', 'MERGE_HEAD'))
+    // Detached: answered from the receipt's target, and the upstream, which needs a branch, is left alone.
+    expect(await delivery.push(caller, { requestId: id(1) })).toEqual({ remote: 'origin', ref: 'refs/heads/main', sha: localSha })
+    expect(caller.results).toEqual([{ operation: 'push', outcome: 'done', commit: localSha }])
+    expect(() => f.git('config', 'branch.main.remote')).toThrow()
+    expect(await receiptOf(f, id(1))).toMatchObject({ state: 'done' })
+    expect((await receiptOf(f, id(1)))?.setUpstream).toBeUndefined()
+    // A new push from a detached HEAD is still refused.
+    expect((await failure(delivery.push(caller, { requestId: id(2) }))).code).toBe('git-detached')
+  })
+
+  it('keeps a retried push unknown while the remote cannot be reached, and settles it once the remote answers', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git'),
+      away = join(f.root, 'away.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', remote)
+    f.git('push', '-q', '-u', 'origin', 'main')
+    await writeFile(join(f.repo, 'b.txt'), 'b\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'b')
+    const localSha = f.git('rev-parse', 'HEAD')
+    // The first attempt landed; then the remote went out of reach: `ls-remote` cannot tell and the push again fails.
+    f.git('push', '-q', 'origin', 'main')
+    await recordPush(f, id(1), localSha)
+    await rename(remote, away)
+    const caller = f.caller()
+    const delivery = await f.delivery()
+    expect(await failure(delivery.push(caller, { requestId: id(1) }))).toMatchObject({ status: 504, code: 'git-result-unknown' })
+    expect(caller.results).toEqual([{ operation: 'push', outcome: 'unknown' }])
+    expect((await receiptOf(f, id(1)))?.state).toBe('unknown')
+    // Reachable again: the remote shows the commit, so the same request is done.
+    await rename(away, remote)
+    expect(await delivery.push(caller, { requestId: id(1) })).toEqual({ remote: 'origin', ref: 'refs/heads/main', sha: localSha })
+    expect((await receiptOf(f, id(1)))?.state).toBe('done')
+    expect(await delivery.push(caller, { requestId: id(1) })).toMatchObject({ sha: localSha, replay: true })
+
+    // A first attempt that never landed, retried while `pre-push` refuses: the remote answered without the commit, so
+    // the refusal settles it.
+    await writeFile(join(f.repo, 'c.txt'), 'c\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'c')
+    await recordPush(f, id(2), f.git('rev-parse', 'HEAD'))
+    await f.hook('pre-push', 'exit 1')
+    const settled = await f.delivery()
+    expect((await failure(settled.push(caller, { requestId: id(2) }))).code).toBe('git-hook-failed')
+    expect(await receiptOf(f, id(2))).toMatchObject({ state: 'failed', code: 'git-hook-failed' })
+    // The same refusal while the remote cannot be reached says nothing about the first attempt.
+    await recordPush(f, id(3), f.git('rev-parse', 'HEAD'))
+    await rename(remote, away)
+    expect((await failure((await f.delivery()).push(caller, { requestId: id(3) }))).code).toBe('git-result-unknown')
+    expect((await receiptOf(f, id(3)))?.state).toBe('unknown')
+  })
+
+  it('keeps a retried commit unknown when its folder is no longer a repository', SLOW, async () => {
+    const f = await fixture()
+    const preHead = f.git('rev-parse', 'HEAD')
+    await writeFile(join(f.repo, 'new.txt'), 'new\n')
+    f.git('add', 'new.txt')
+    const store = await SessionMetaStore.open(f.dataDir)
+    await store.recordGit('session-1', {
+      kind: 'git',
+      operation: 'commit',
+      requestId: id(1),
+      deviceId: 'dev_test',
+      payloadHash: sha256Hex(canonicalJson({ kind: 'commit', message: 'made', skipHooks: false })),
+      state: 'pending',
+      preHead,
+      headRef: 'refs/heads/main',
+      indexTree: f.git('write-tree'),
+      subjectHash: sha256Hex('made'),
+      at: new Date().toISOString(),
+    })
+    await store.flush()
+    f.git('commit', '-q', '-m', 'made')
+    const made = f.git('rev-parse', 'HEAD')
+    const delivery = await f.delivery()
+    await rename(join(f.repo, '.git'), join(f.root, 'git-away'))
+    expect(await failure(delivery.commit(f.caller(), { requestId: id(1), message: 'made' }))).toMatchObject({
+      status: 504,
+      code: 'git-result-unknown',
+    })
+    await rename(join(f.root, 'git-away'), join(f.repo, '.git'))
+    // On another branch whose HEAD is the old one: the commit may be on the first branch, so not "never made".
+    f.git('checkout', '-q', '-b', 'other', preHead)
+    expect((await failure(delivery.commit(f.caller(), { requestId: id(1), message: 'made' }))).code).toBe('git-result-unknown')
+    f.git('checkout', '-q', 'main')
+    expect(await delivery.commit(f.caller(), { requestId: id(1), message: 'made' })).toEqual({ commit: made, replay: true }) // Abandoned on the page, the same commit as a new request: what the first made is no longer staged, so nothing again.
+    expect((await failure(delivery.commit(f.caller(), { requestId: id(2), message: 'made' }))).code).toBe('git-nothing-staged')
+    expect(f.git('rev-parse', 'HEAD')).toBe(made)
+  })
+
+  it('keeps a retried push receipt when its write fails, so the next retry still sends the same commit', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git'),
+      away = join(f.root, 'away.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', remote)
+    f.git('push', '-q', '-u', 'origin', 'main')
+    await writeFile(join(f.repo, 'b.txt'), 'b\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'b')
+    const first = f.git('rev-parse', 'HEAD')
+    await recordPush(f, id(1), first)
+    await rename(remote, away)
+    const unsaved = await f.delivery({
+      receipts: store => ({
+        git: (...args) => store.git(...args),
+        recordGit: async () => {
+          throw new Error('disk full')
+        },
+      }),
+    })
+    const caller = f.caller()
+    expect((await failure(unsaved.push(caller, { requestId: id(1) }))).code).toBe('git-result-unknown')
+    expect(await receiptOf(f, id(1))).toMatchObject({ localSha: first, remote: 'origin', ref: 'refs/heads/main' })
+    // HEAD moves on; the remote is back. The retry sends the receipt's commit, not the new HEAD.
+    await writeFile(join(f.repo, 'c.txt'), 'c\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'c')
+    await rename(away, remote)
+    expect(await (await f.delivery()).push(caller, { requestId: id(1) })).toMatchObject({ sha: first })
+    expect(f.gitIn(remote, 'rev-parse', 'main')).toBe(first)
+    // A new request pushes HEAD as any push does: a fast-forward, never forced.
+    const head = f.git('rev-parse', 'HEAD')
+    expect(await (await f.delivery()).push(caller, { requestId: id(2) })).toMatchObject({ sha: head })
+    expect(f.gitIn(remote, 'rev-parse', 'main')).toBe(head)
+  })
+
+  it('settles a retried push the remote rejects only when the remote still lacks the commit afterwards', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', remote)
+    f.git('push', '-q', '-u', 'origin', 'main')
+    const commit = async (name: string) => {
+      await writeFile(join(f.repo, name), `${name}\n`)
+      f.git('add', '.')
+      f.git('commit', '-q', '-m', name)
+      return f.git('rev-parse', 'HEAD')
+    }
+    const caller = f.caller()
+    // The server's hook refuses, and the remote still lacks the commit after: failed.
+    await f.hook('pre-receive', 'exit 1', join(remote, 'hooks'))
+    await recordPush(f, id(1), await commit('b.txt'))
+    expect((await failure((await f.delivery()).push(caller, { requestId: id(1) }))).code).toBe('git-push-remote-rejected')
+    expect(await receiptOf(f, id(1))).toMatchObject({ state: 'failed', code: 'git-push-remote-rejected' })
+    // The first attempt lands while the hook refuses this one (as a slow hook on the first would): done.
+    const landing = await commit('c.txt')
+    await rm(join(remote, 'hooks', 'pre-receive'))
+    f.git('push', '-q', 'origin', `${landing}:refs/heads/side`)
+    await f.hook(
+      'pre-receive',
+      `env -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git update-ref refs/heads/main ${landing}\nexit 1`,
+      join(remote, 'hooks'),
+    )
+    await recordPush(f, id(2), landing)
+    expect(await (await f.delivery()).push(caller, { requestId: id(2) })).toMatchObject({ sha: landing })
+    expect(f.gitIn(remote, 'rev-parse', 'main')).toBe(landing)
+    // The branch was locked by another update: never settled, even though the remote lacks the commit.
+    await rm(join(remote, 'hooks', 'pre-receive'))
+    await writeFile(join(remote, 'refs', 'heads', 'main.lock'), '')
+    await recordPush(f, id(3), await commit('d.txt'))
+    expect((await failure((await f.delivery()).push(caller, { requestId: id(3) }))).code).toBe('git-result-unknown')
+    expect((await receiptOf(f, id(3)))?.state).toBe('unknown')
+    await rm(join(remote, 'refs', 'heads', 'main.lock'))
+    // The remote answers without the commit and the push cannot reach it: settled as that failure.
+    f.git('config', 'remote.origin.receivepack', join(f.root, 'no-such-receive-pack'))
+    await recordPush(f, id(4), f.git('rev-parse', 'HEAD'))
+    expect((await failure((await f.delivery()).push(caller, { requestId: id(4) }))).code).toBe('git-push-unreachable')
+    expect(await receiptOf(f, id(4))).toMatchObject({ state: 'failed', code: 'git-push-unreachable' })
+  })
+
+  it('never reads the remote of a retried push by a URL: a different push URL is unsure, and the push runs again', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', join(f.root, 'fetch-only.git'))
+    f.git('config', 'remote.origin.pushurl', remote)
+    await writeFile(join(f.repo, 'b.txt'), 'b\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'b')
+    const sha = f.git('rev-parse', 'HEAD')
+    f.git('push', '-q', 'origin', 'main')
+    // Every Git the Host starts, restricted or yours, through a wrapper that records its arguments.
+    const argv = join(f.root, 'argv.log'),
+      wrapper = join(f.root, 'git-wrapper')
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${argv}'\nexec ${execFileSync('/bin/sh', ['-c', 'command -v git']).toString('utf8').trim()} "$@"\n`,
+    )
+    await chmod(wrapper, 0o755)
+    // The push cannot be told from the fetch URL, so it runs again; this time its hook refuses, and it stays unknown.
+    await f.hook('pre-push', 'exit 1')
+    await recordPush(f, id(1), sha)
+    const caller = f.caller()
+    expect((await failure((await f.delivery({ git: wrapper })).push(caller, { requestId: id(1) }))).code).toBe('git-result-unknown')
+    expect(f.marked('pre-push')).toBe(true)
+    // Without the hook it goes through: the same commit, already there.
+    await rm(join(f.repo, '.git', 'hooks', 'pre-push'))
+    expect(await (await f.delivery({ git: wrapper })).push(caller, { requestId: id(1) })).toMatchObject({ sha })
+    const calls = await readFile(argv, 'utf8')
+    // Unsure without asking the remote; the push names the remote, never its URL.
+    expect(calls).not.toContain('ls-remote')
+    expect(calls).toContain('push --porcelain')
+    expect(calls).not.toContain(remote)
+    // The same URLs, but a pushInsteadOf rewrites where a push goes: unsure too.
+    f.git('config', '--unset', 'remote.origin.pushurl')
+    f.git('remote', 'set-url', 'origin', remote)
+    f.git('config', `url.${remote}.pushInsteadOf`, join(f.root, 'elsewhere.git'))
+    await f.hook('pre-push', 'exit 1')
+    await recordPush(f, id(2), sha)
+    expect((await failure((await f.delivery()).push(caller, { requestId: id(2) }))).code).toBe('git-result-unknown')
+  })
+
+  it('lets the caller checks and an update window refuse a retried push, and records the upstream it really sets', SLOW, async () => {
+    const f = await fixture()
+    const remote = join(f.root, 'remote.git')
+    f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+    f.git('remote', 'add', 'origin', remote)
+    await writeFile(join(f.repo, 'b.txt'), 'b\n')
+    f.git('add', '.')
+    f.git('commit', '-q', '-m', 'b')
+    const sha = f.git('rev-parse', 'HEAD')
+    f.git('push', '-q', 'origin', 'main')
+    await recordPush(f, id(1), sha, { setUpstream: true, via: 'origin' })
+    const denied = f.caller({
+      authorize: async () => {
+        throw new AppError(403, 'scope-required', 'no')
+      },
+    })
+    expect((await failure((await f.delivery()).push(denied, { requestId: id(1) }))).code).toBe('scope-required')
+    const updating = await f.delivery({ holds: new RepositoryHolds({ closed: () => true }) })
+    expect((await failure(updating.push(f.caller(), { requestId: id(1) }))).code).toBe('host-updating')
+    expect((await receiptOf(f, id(1)))?.state).toBe('unknown')
+    // HEAD is on another branch now: done, without writing that branch's upstream, and the audit says so.
+    f.git('checkout', '-q', '-b', 'other')
+    const caller = f.caller()
+    expect(await (await f.delivery()).push(caller, { requestId: id(1) })).toEqual({ remote: 'origin', ref: 'refs/heads/main', sha })
+    expect(caller.audits.at(-1)!.detail).toMatchObject({ setUpstream: false })
+    expect(() => f.git('config', 'branch.other.remote')).toThrow()
+    expect(() => f.git('config', 'branch.main.remote')).toThrow()
+  })
 
   it('settles when Git exits, even when a hook leaves a daemon holding its output, and frees the repository', SLOW, async () => {
     const f = await fixture()

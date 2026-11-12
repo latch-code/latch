@@ -367,6 +367,41 @@ export function pushTarget(config: RepositoryConfig, branch: string): { remote: 
   throw refuse('git-no-remote', '这个仓库没有远端，提交留在本地。')
 }
 
+/** Whether the push records its upstream: only on the branch that was pushed; a retry may find HEAD elsewhere by now. */
+function upstreamOn(target: { ref: string; setUpstream: boolean }, branch: string | undefined): branch is string {
+  return target.setUpstream && branch !== undefined && target.ref === `refs/heads/${branch}`
+}
+
+/** A rejection while the remote's branch was locked or had moved under it: another update was under way there. */
+const RACING =
+  /cannot lock ref|failed to lock|failed to update ref|reference already exists|is at [0-9a-f]+ but expected|incorrect old value|stale info/iu
+
+/**
+ * Whether a re-run push that failed settles a retry whose first attempt's result is unknown, once a second `ls-remote`
+ * after it showed the remote's branch without the commit (any other answer to that keeps it unknown, `landed` makes it
+ * done). `output`: Git's stdout and stderr.
+ */
+function settlesRetry(code: string, output: string): boolean {
+  switch (code) {
+    // The remote's hook refused the update: settled, unless the branch was locked or not at the value Git read, which is
+    // what another update (the first attempt's, still landing) looks like from here.
+    case 'git-push-remote-rejected':
+      return !RACING.test(output)
+    // The remote has commits this repository lacks: it may have moved on top of the first attempt; never settled.
+    case 'git-push-non-fast-forward':
+      return false
+    // `pre-push`, credentials, host key, connection or anything else: this run learned nothing, but the remote has just
+    // answered without the commit, so the first attempt is not there and this one was not taken.
+    case 'git-hook-failed':
+    case 'git-push-auth':
+    case 'git-push-host-key':
+    case 'git-push-unreachable':
+    case 'git-push-failed':
+    default:
+      return !RACING.test(output)
+  }
+}
+
 /** The receipt's answer, for a retry with the same request. */
 function storedFailure(receipt: GitRecord): AppError {
   const details = {
@@ -693,6 +728,7 @@ export class GitDelivery {
           indexTree: tree,
           subjectHash: sha256Hex(subject),
           ...(input.skipHooks ? { skipHooks: true as const } : {}),
+          headRef: 'branch' in layout.head ? `refs/heads/${layout.head.branch}` : 'HEAD',
           startedAt: running.startedAt,
           at: new Date(this.now()).toISOString(),
         }
@@ -751,8 +787,15 @@ export class GitDelivery {
   private async answerCommit(caller: DeliveryCaller, receipt: GitRecord): Promise<GitCommitResult> {
     if (receipt.state === 'done' && receipt.commit) return { commit: receipt.commit, replay: true }
     if (receipt.state === 'failed') throw storedFailure(receipt)
-    const layout = await this.layout(caller.folder)
-    const git = this.git()
+    // Answered from the receipt or not at all: a folder that is no longer a repository (or no Git) says nothing about
+    // the commit the first attempt may have made, so it stays unknown rather than refused afresh.
+    let layout: GitLayout, git: GitReader
+    try {
+      layout = await this.layout(caller.folder)
+      git = this.git()
+    } catch {
+      throw unknown()
+    }
     const identity = {
       ...(receipt.preHead ? { preHead: receipt.preHead } : {}),
       ...(receipt.indexTree ? { indexTree: receipt.indexTree } : {}),
@@ -769,8 +812,11 @@ export class GitDelivery {
       () => true,
       error => codeOf(error) !== 'ENOENT',
     )
-    if (head === receipt.preHead && !locked) {
-      // Git is not running there and HEAD has not moved: the commit was never made.
+    // Where HEAD points now, as the receipt records it: a commit made on another branch is not on this one's line.
+    const headRef = 'branch' in layout.head ? `refs/heads/${layout.head.branch}` : 'HEAD'
+    if (receipt.headRef === headRef && head === receipt.preHead && !locked) {
+      // Git is not running there and HEAD is on the same branch, not moved: the commit was never made. A receipt from
+      // before `headRef` was kept cannot tell a switched branch apart, so it stays unknown.
       await this.record(caller, { ...receipt, state: 'failed', code: 'git-commit-not-made', at: new Date(this.now()).toISOString() }).catch(
         () => {},
       )
@@ -794,150 +840,221 @@ export class GitDelivery {
           replay: true as const,
         }
       if (receipt?.state === 'failed') throw storedFailure(receipt)
-      const layout = await this.layout(caller.folder)
-      if (!('branch' in layout.head)) throw refuse('git-detached', 'HEAD 没有指向分支，没有推送。在终端里切到一个分支后再试。')
-      const branch = layout.head.branch
-      return this.hold(caller, layout, 'push', input.requestId, async running => {
-        const git = this.git()
-        let target: { remote: string; ref: string; localSha: string; setUpstream: boolean; via: PushVia }
-        if (receipt?.remote && receipt.ref && receipt.localSha) {
-          // An earlier attempt whose result is unknown: the same commit to the same place, which a non-forced push may repeat.
-          target = {
-            remote: receipt.remote,
-            ref: receipt.ref,
-            localSha: receipt.localSha,
-            setUpstream: !!receipt.setUpstream,
-            via: receipt.via ?? (receipt.setUpstream ? 'origin' : 'upstream'),
-          }
-        } else {
-          const config = await this.config(layout)
-          const localSha = await git.commit(layout, 'HEAD').catch(() => undefined)
-          if (!localSha) throw refuse('git-no-commit', '还没有提交，没有可推送的内容。')
-          target = { ...pushTarget(config, branch), localSha }
-          // Always the branch of the same name, and only a name Git takes as a branch.
-          const valid = await git.run(layout, ['check-ref-format', target.ref], { maxBytes: 1024 }).then(
-            () => true,
-            () => false,
-          )
-          if (!valid || target.ref.includes(':')) throw refuse('git-remote-invalid', '这个分支名不能用来推送。')
-        }
-        const hooks = await this.config(layout).then(config =>
-          commonDirOf(git, layout).then(common => listHooks(config, layout, common, this.home())),
-        )
-        await caller.authorize('push')
-        await caller.audit({
-          action: 'git.push',
-          detail: {
-            sessionId: caller.sessionId,
-            requestHash: sha256Hex(input.requestId),
-            localSha: target.localSha,
-            remote: target.via,
-            remoteHash: sha256Hex(target.remote),
-            refHash: sha256Hex(target.ref),
-            setUpstream: target.setUpstream,
-            hooks,
-          },
-        })
-        const pending: GitRecord = {
-          kind: 'git',
-          operation: 'push',
-          requestId: input.requestId,
-          deviceId: caller.deviceId,
-          payloadHash: payload,
-          state: 'pending',
-          remote: target.remote,
-          ref: target.ref,
-          localSha: target.localSha,
-          ...(target.setUpstream ? { setUpstream: true as const } : {}),
-          via: target.via,
-          startedAt: running.startedAt,
-          at: new Date(this.now()).toISOString(),
-        }
-        await this.record(caller, pending, true)
-        const stillUnknown = async (details: Record<string, unknown> = {}) => {
-          await this.record(caller, { ...pending, state: 'unknown', at: new Date(this.now()).toISOString() })
-          await this.reportResult(caller, { operation: 'push', outcome: 'unknown' })
-          return unknown(details)
-        }
-        if (receipt) {
-          const remote = await this.landed(layout, running, target)
-          if (remote === 'landed') return this.pushed(caller, layout, pending, target, branch)
-          // The remote's branch is at a commit this repository does not have: it may well contain this one.
-          if (typeof remote === 'object') throw await stillUnknown({ remoteSha: remote.unknownTip })
-        }
-        // Never forced: no `--force`, no `+` in the refspec, and an explicit refspec so no configured one applies; no
-        // tags and no submodules go along.
-        const outcome = await this.runYourGit(
-          layout,
-          running,
-          [
-            'push',
-            '--porcelain',
-            '--no-follow-tags',
-            '--recurse-submodules=no',
-            '--end-of-options',
-            target.remote,
-            `${target.localSha}:${target.ref}`,
-          ],
-          { timeoutMs: this.timeouts.push },
-        )
-        if (outcome.timedOut) throw await stillUnknown()
-        const stdout = outcome.stdout.toString('utf8')
-        const accepted = outcome.code === 0 && !stdout.split('\n').some(line => line.startsWith('!\t'))
-        if (!accepted) {
-          const failure = pushFailure(outcome)
-          // On a retry, the first attempt may have landed before the remote moved on.
-          if (receipt && failure.code === 'git-push-non-fast-forward') throw await stillUnknown()
-          const hook = failure.details?.hook as HookName | undefined
-          await this.record(caller, {
-            ...pending,
-            state: 'failed',
-            code: failure.code,
-            ...(hook ? { hook } : {}),
-            ...(typeof failure.details?.exitCode === 'number' ? { exitCode: failure.details.exitCode } : {}),
-            at: new Date(this.now()).toISOString(),
-          })
-          await this.reportResult(caller, {
-            operation: 'push',
-            outcome: 'failed',
-            code: failure.code as DeliveryResultEvent['code'] & string,
-          })
-          throw failure
-        }
-        return this.pushed(caller, layout, pending, target, branch)
+      // An earlier attempt whose result is unknown: the same commit to the same place, which a non-forced push may repeat.
+      const earlier =
+        receipt?.remote && receipt.ref && receipt.localSha
+          ? {
+              remote: receipt.remote,
+              ref: receipt.ref,
+              localSha: receipt.localSha,
+              setUpstream: !!receipt.setUpstream,
+              via: receipt.via ?? (receipt.setUpstream ? ('origin' as const) : ('upstream' as const)),
+            }
+          : undefined
+      // Answers that may leave a retry as they are: the caller's own checks, and outcomes that settle the receipt.
+      const final = new WeakSet<object>()
+      const attempt = this.attemptPush(caller, input.requestId, payload, receipt, earlier, final)
+      if (!earlier) return attempt
+      // A retry is answered from what the remote shows or stays unknown: a refusal that comes before anything is known
+      // (a moved folder, a busy repository, a merge under way, Git failing to read, an unsaved receipt or audit, the
+      // Host closing) says nothing about the first attempt, and a client would drop 「推送结果未知」 on it.
+      return attempt.catch((error: unknown) => {
+        if (error instanceof AppError && (error.code === 'git-result-unknown' || error.code === 'host-updating')) throw error
+        if (typeof error === 'object' && error !== null && final.has(error)) throw error
+        throw unknown()
       })
     })
   }
 
+  private async attemptPush(
+    caller: DeliveryCaller,
+    requestId: string,
+    payload: string,
+    receipt: GitRecord | undefined,
+    earlier: { remote: string; ref: string; localSha: string; setUpstream: boolean; via: PushVia } | undefined,
+    final: WeakSet<object>,
+  ): Promise<GitPushResult> {
+    const layout = await this.layout(caller.folder)
+    // A retry pushes the receipt's commit to the receipt's branch, wherever HEAD is now: only the upstream setting,
+    // which belongs to a branch, waits for HEAD to be on that branch again.
+    const branch = 'branch' in layout.head ? layout.head.branch : undefined
+    if (!earlier && branch === undefined) throw refuse('git-detached', 'HEAD 没有指向分支，没有推送。在终端里切到一个分支后再试。')
+    return this.hold(caller, layout, 'push', requestId, async running => {
+      const git = this.git()
+      let target: { remote: string; ref: string; localSha: string; setUpstream: boolean; via: PushVia }
+      if (earlier) {
+        target = earlier
+      } else if (branch === undefined) {
+        throw refuse('git-detached', 'HEAD 没有指向分支，没有推送。在终端里切到一个分支后再试。')
+      } else {
+        const config = await this.config(layout)
+        const localSha = await git.commit(layout, 'HEAD').catch(() => undefined)
+        if (!localSha) throw refuse('git-no-commit', '还没有提交，没有可推送的内容。')
+        target = { ...pushTarget(config, branch), localSha }
+        // Always the branch of the same name, and only a name Git takes as a branch.
+        const valid = await git.run(layout, ['check-ref-format', target.ref], { maxBytes: 1024 }).then(
+          () => true,
+          () => false,
+        )
+        if (!valid || target.ref.includes(':')) throw refuse('git-remote-invalid', '这个分支名不能用来推送。')
+      }
+      const hooks = await this.config(layout).then(config =>
+        commonDirOf(git, layout).then(common => listHooks(config, layout, common, this.home())),
+      )
+      const setUpstream = upstreamOn(target, branch)
+      await caller.authorize('push').catch((error: unknown) => {
+        if (typeof error === 'object' && error !== null) final.add(error)
+        throw error
+      })
+      await caller.audit({
+        action: 'git.push',
+        detail: {
+          sessionId: caller.sessionId,
+          requestHash: sha256Hex(requestId),
+          localSha: target.localSha,
+          remote: target.via,
+          remoteHash: sha256Hex(target.remote),
+          refHash: sha256Hex(target.ref),
+          setUpstream,
+          hooks,
+        },
+      })
+      const pending: GitRecord = {
+        kind: 'git',
+        operation: 'push',
+        requestId: requestId,
+        deviceId: caller.deviceId,
+        payloadHash: payload,
+        state: 'pending',
+        remote: target.remote,
+        ref: target.ref,
+        localSha: target.localSha,
+        ...(target.setUpstream ? { setUpstream: true as const } : {}),
+        via: target.via,
+        startedAt: running.startedAt,
+        at: new Date(this.now()).toISOString(),
+      }
+      // A retry leaves its receipt as it is until the outcome is known: rewritten now, a failed write would drop it, and the
+      // next retry would push whatever HEAD is then.
+      if (!earlier) await this.record(caller, pending, true)
+      const stillUnknown = async (details: Record<string, unknown> = {}) => {
+        await this.record(caller, { ...pending, state: 'unknown', at: new Date(this.now()).toISOString() })
+        await this.reportResult(caller, { operation: 'push', outcome: 'unknown' })
+        return unknown(details)
+      }
+      // On a retry: whether the remote's branch shows the first attempt, before anything is pushed again.
+      if (receipt) {
+        const remote = await this.landed(layout, running, target)
+        if (remote === 'landed') return this.pushed(caller, layout, pending, target, branch)
+        // The remote's branch is at a commit this repository does not have: it may well contain this one.
+        if (typeof remote === 'object') throw await stillUnknown({ remoteSha: remote.unknownTip })
+      }
+      // Never forced: no `--force`, no `+` in the refspec, and an explicit refspec so no configured one applies; no
+      // tags and no submodules go along.
+      const outcome = await this.runYourGit(
+        layout,
+        running,
+        [
+          'push',
+          '--porcelain',
+          '--no-follow-tags',
+          '--recurse-submodules=no',
+          '--end-of-options',
+          target.remote,
+          `${target.localSha}:${target.ref}`,
+        ],
+        { timeoutMs: this.timeouts.push },
+      )
+      if (outcome.timedOut) throw await stillUnknown()
+      const stdout = outcome.stdout.toString('utf8')
+      const accepted = outcome.code === 0 && !stdout.split('\n').some(line => line.startsWith('!\t'))
+      if (!accepted) {
+        const failure = pushFailure(outcome)
+        if (receipt) {
+          // The first attempt may still be landing (a slow hook on the server, a Git that outlived the Host): look again.
+          const again = await this.landed(layout, running, target)
+          if (again === 'landed') return this.pushed(caller, layout, pending, target, branch)
+          if (again !== 'missing' || !settlesRetry(failure.code, `${stdout}\n${outcome.stderr.toString('utf8')}`))
+            throw await stillUnknown(typeof again === 'object' ? { remoteSha: again.unknownTip } : {})
+        }
+        final.add(failure)
+        const hook = failure.details?.hook as HookName | undefined
+        await this.record(caller, {
+          ...pending,
+          state: 'failed',
+          code: failure.code,
+          ...(hook ? { hook } : {}),
+          ...(typeof failure.details?.exitCode === 'number' ? { exitCode: failure.details.exitCode } : {}),
+          at: new Date(this.now()).toISOString(),
+        })
+        await this.reportResult(caller, {
+          operation: 'push',
+          outcome: 'failed',
+          code: failure.code as DeliveryResultEvent['code'] & string,
+        })
+        throw failure
+      }
+      return this.pushed(caller, layout, pending, target, branch)
+    })
+  }
+
   /**
-   * A retried push whose first attempt may have landed: `landed` when the remote's branch is at the commit or past it,
-   * the remote's tip when this repository does not have that commit (so it cannot tell), `push` otherwise.
+   * A retried push whose first attempt may have landed: `landed` when the remote's branch is at the commit or past it;
+   * the remote's tip when this repository does not have that commit (so it cannot tell); `missing` when the remote
+   * answered and its branch does not hold the commit (absent, or at a known commit that does not contain it); `unsure`
+   * when `ls-remote` failed, timed out or printed nothing usable. Pushed again on `missing` and `unsure`.
    */
   private async landed(
     layout: GitLayout,
     running: Running,
     target: { remote: string; ref: string; localSha: string },
-  ): Promise<'landed' | 'push' | { unknownTip: string }> {
+  ): Promise<'landed' | 'missing' | 'unsure' | { unknownTip: string }> {
+    const git = this.git()
+    // A push goes to the push URL (`pushurl`, `pushInsteadOf`); `ls-remote <remote>` reads the fetch URL. Only when both
+    // are surely the same is the remote read, and always by its name: a URL never goes into arguments (it may hold
+    // credentials, and your Git would rewrite it by `insteadOf`, which a push does not). The restricted Git reads the
+    // configuration alone, contacting nothing and running no hook.
+    const read = async (args: string[], exitCodes?: number[]) =>
+      (await git.run(layout, args, { maxBytes: 64 * 1024, ...(exitCodes ? { exitCodes } : {}) }))
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean)
+    try {
+      const [fetchUrls, pushUrls, pushInsteadOf] = await Promise.all([
+        read(['remote', 'get-url', target.remote]),
+        read(['remote', 'get-url', '--push', '--all', target.remote]),
+        read(['config', '--get-regexp', '^url\\..*\\.pushinsteadof$'], [0, 1]),
+      ])
+      if (fetchUrls.length !== 1 || pushUrls.length !== 1 || pushUrls[0] !== fetchUrls[0] || pushInsteadOf.length > 0) return 'unsure'
+    } catch {
+      return 'unsure'
+    }
     const outcome = await this.runYourGit(layout, running, ['ls-remote', '--end-of-options', target.remote, target.ref], {
       timeoutMs: this.timeouts.push,
     })
-    if (outcome.timedOut || outcome.code !== 0) return 'push'
+    if (outcome.timedOut || outcome.code !== 0) return 'unsure'
     const line = outcome.stdout
       .toString('utf8')
       .split('\n')
       .find(entry => entry.endsWith(`\t${target.ref}`))
-    const sha = line?.split('\t')[0]
-    if (!sha || !OID.test(sha)) return 'push'
+    if (!line) return 'missing'
+    const sha = line.split('\t')[0]
+    if (!sha || !OID.test(sha)) return 'unsure'
     if (sha === target.localSha) return 'landed'
-    const git = this.git()
     const known = await git.run(layout, ['cat-file', '-e', `${sha}^{commit}`], { maxBytes: 1024 }).then(
       () => true,
       () => false,
     )
     if (!known) return { unknownTip: sha }
-    return git.run(layout, ['merge-base', '--is-ancestor', target.localSha, sha], { maxBytes: 1024 }).then(
+    // `--is-ancestor` exits 1 for "no"; any other failure (a commit gone from this repository, say) cannot tell.
+    const ancestor = ['merge-base', '--is-ancestor', target.localSha, sha]
+    return git.run(layout, ancestor, { maxBytes: 1024 }).then(
       () => 'landed' as const,
-      () => 'push' as const,
+      () =>
+        git.run(layout, ancestor, { maxBytes: 1024, exitCodes: [1] }).then(
+          () => 'missing' as const,
+          () => 'unsure' as const,
+        ),
     )
   }
 
@@ -946,9 +1063,10 @@ export class GitDelivery {
     layout: GitLayout,
     pending: GitRecord,
     target: { remote: string; ref: string; localSha: string; setUpstream: boolean },
-    branch: string,
+    branch: string | undefined,
   ): Promise<GitPushResult> {
-    if (target.setUpstream) {
+    const setUpstream = upstreamOn(target, branch)
+    if (setUpstream) {
       // Recorded by the restricted Git, as `push -u` would, without taking the branch's config lock during the push.
       try {
         await this.git().run(layout, ['config', `branch.${branch}.remote`, target.remote], { maxBytes: 1024 })
@@ -957,13 +1075,14 @@ export class GitDelivery {
         this.options.log('推送已完成，但没能记下上游分支。')
       }
     }
-    await this.record(caller, { ...pending, state: 'done', at: new Date(this.now()).toISOString() })
+    const { setUpstream: _planned, ...rest } = pending
+    await this.record(caller, { ...rest, ...(setUpstream ? { setUpstream } : {}), state: 'done', at: new Date(this.now()).toISOString() })
     await this.reportResult(caller, { operation: 'push', outcome: 'done', commit: target.localSha })
     return {
       remote: target.remote,
       ref: target.ref,
       sha: target.localSha,
-      ...(target.setUpstream ? { setUpstream: true as const } : {}),
+      ...(setUpstream ? { setUpstream: true as const } : {}),
     }
   }
 

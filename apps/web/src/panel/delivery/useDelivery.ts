@@ -47,6 +47,7 @@ export interface DeliveryWrites {
   push(): Promise<void>
   /** Undefined when nothing was pending. */
   retry(): Promise<WriteEnd | undefined>
+  abandon(): void
 }
 
 interface Queued {
@@ -179,7 +180,7 @@ export function useDelivery(input: {
   }, [queue, base, load])
 
   const send = useCallback(
-    async (write: UnknownWrite) => {
+    async (write: UnknownWrite, retry = false) => {
       setWriting(write.kind)
       setFailure(undefined)
       setOutcome(undefined)
@@ -197,10 +198,23 @@ export function useDelivery(input: {
         )
         return 'done' as const
       } catch (cause) {
-        const end = writeEnd({ code: cause instanceof ApiError ? cause.code : undefined, uncertain: uncertainWrite(cause) })
+        const uncertain = uncertainWrite(cause)
+        const end = writeEnd({
+          code: cause instanceof ApiError ? cause.code : undefined,
+          uncertain,
+          ...(retry
+            ? {
+                retry: {
+                  kind: write.kind,
+                  replay: cause instanceof ApiError && (cause.details as Record<string, unknown>).replay === true,
+                },
+              }
+            : {}),
+        })
         setUnknown(previous => unknownAfter(previous, write, end))
-        // 「这台电脑正在安装更新」 reads as a neutral line; a retry's unknown stays on screen with it.
-        if (end !== 'unknown') setFailure(failureOf(write.kind, cause))
+        // 「这台电脑正在安装更新」 reads as a neutral line; a retry's unknown stays on screen with it, as does the refusal
+        // that kept a retry unknown, under it.
+        if (end !== 'unknown' || !uncertain) setFailure(failureOf(write.kind, cause))
         return end
       } finally {
         setWriting(undefined)
@@ -222,7 +236,12 @@ export function useDelivery(input: {
     async push() {
       await send({ kind: 'push', requestId: newRequestId(), body: {} })
     },
-    retry: async () => (unknown ? send(unknown) : undefined),
+    retry: async () => (unknown ? send(unknown, true) : undefined),
+    /** Lets go of the unknown result on this page only, so a new request can be made; the Host's receipt stays unknown. */
+    abandon: () => {
+      setUnknown(undefined)
+      setFailure(undefined)
+    },
   }
 
   /** The paths waiting or under way, by what pressing their box asked for. */

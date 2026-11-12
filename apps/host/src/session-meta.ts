@@ -89,6 +89,12 @@ const gitReceiptSchema = z.strictObject({
   indexTree: oidText.optional(),
   subjectHash: hex64Text.optional(),
   skipHooks: z.literal(true).optional(),
+  /** Commit: where HEAD pointed, `refs/heads/<branch>` or `HEAD` when detached; absent in receipts written before it. */
+  headRef: z
+    .string()
+    .max(1024)
+    .regex(/^(?:HEAD|refs\/heads\/[^\u0000-\u001f\u007f]+)$/u)
+    .optional(),
   startedAt: isoTime.optional(),
   /** Push: the remote's name, the ref on it, the commit sent, and whether the push sets the upstream. */
   remote: z

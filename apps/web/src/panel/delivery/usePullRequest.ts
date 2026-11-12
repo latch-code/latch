@@ -120,7 +120,7 @@ export function usePullRequest(input: {
   }, [pending, open, enabled, offline, load])
 
   const send = useCallback(
-    async (write: PrUnknown): Promise<WriteEnd> => {
+    async (write: PrUnknown, retry = false): Promise<WriteEnd> => {
       setCreating(true)
       setFailure(undefined)
       try {
@@ -133,9 +133,22 @@ export function usePullRequest(input: {
         setCreated(result)
         return 'done'
       } catch (cause) {
-        const end = writeEnd({ code: cause instanceof ApiError ? cause.code : undefined, uncertain: uncertainWrite(cause) })
+        const uncertain = uncertainWrite(cause)
+        const end = writeEnd({
+          code: cause instanceof ApiError ? cause.code : undefined,
+          uncertain,
+          ...(retry
+            ? {
+                retry: {
+                  kind: 'pr' as const,
+                  replay: cause instanceof ApiError && (cause.details as Record<string, unknown>).replay === true,
+                },
+              }
+            : {}),
+        })
         setUnknown(previous => unknownAfter(previous, write, end))
-        if (end !== 'unknown')
+        // A refusal that kept a retry unknown shows under it.
+        if (end !== 'unknown' || !uncertain)
           setFailure(
             cause instanceof ApiError
               ? {
@@ -189,7 +202,12 @@ export function usePullRequest(input: {
       })
     },
     create: (body: PrCreateInput) => send({ requestId: newRequestId(), body }),
-    retry: async () => (unknown ? send(unknown) : undefined),
+    retry: async () => (unknown ? send(unknown, true) : undefined),
+    /** Lets go of the unknown result on this page only; the Host's receipt stays unknown, and 创建 PR binds what it finds. */
+    abandon: () => {
+      setUnknown(undefined)
+      setFailure(undefined)
+    },
     dismiss: () => {
       setFailure(undefined)
     },
