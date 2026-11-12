@@ -91,6 +91,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 - 对 workspace 包的依赖都在表允许的范围内，写成 `workspace:*`，且被依赖的包能在该环境运行（浏览器与同构项目不能依赖 Node 项目）。devDependencies 只由项目的测试与工具（如 Vite 配置）加载，它们在 Node 中运行，所以也可以是 Node 项目；生产代码导入 devDependencies 时 `pnpm knip` 的 `--strict` 一遍失败。
 - `@latch/` 下的名称只能是 workspace 项目，不会从 registry 安装同名包；仓库根不能被依赖。
 - 表中标为只供测试的项目（`@latch/testkit`、`@latch/e2e`）只能写在 devDependencies，仓库根也不例外。
+- iOS 的 `LatchScreens` 专用代码（截图场景与 Live 模式的软件密钥：`ScreensStage`、`PhoneLive`、`LiveSoftwareKeys`、`LiveIdentityProvider`、`LatchLive`）只出现在 `native/ios/Screens/` 或 `native/ios/App/` 的 `#if LATCH_SCREENS` 中，不进共享核心；`project.pbxproj` 中只有 LatchScreens（仅模拟器）构建 `Screens/` 并设置 `LATCH_SCREENS`。
 
 `.oxlintrc.json` 的 `no-restricted-imports` 守住六条导入边界，`import/no-cycle` 不允许循环导入，二者违反时 `pnpm lint` 都失败（其他 lint 规则中，只有下一节的运行环境规则是错误，其余目前只报告）：
 

@@ -47,9 +47,9 @@ extension PhoneModel {
             _ = try PairingInvitation.parse(payload)
             if let draft, draft.payload != payload { try await store.abandonDraft(); self.draft = nil }
             if draft == nil {
-                let keys = try SecureDeviceKeys.create(), next = PairingDraft(payload: payload, keys: keys, name: "Mac")
+                let keys = try PhoneKeys.create(), next = PairingDraft(payload: payload, keys: keys, name: "Mac")
                 do { try await store.saveDraft(next) }
-                catch { SecureDeviceKeys.remove(keys); throw error }
+                catch { PhoneKeys.remove(keys); throw error }
                 guard current == generation else { return }
                 draft = next
             }
@@ -66,7 +66,7 @@ extension PhoneModel {
             var invitation: PairingInvitation?
             defer { if generation == current { busy = false }; pairingTask = nil }
             do {
-                let parsed = try PairingInvitation.parseStored(draft.payload), keys = SecureIdentityProvider(reference: draft.keys)
+                let parsed = try PairingInvitation.parseStored(draft.payload), keys = PhoneKeys.provider(draft.keys)
                 invitation = parsed
                 let (connection, peer) = try await pairingTransport(parsed)
                 owned = connection

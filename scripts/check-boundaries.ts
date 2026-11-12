@@ -1,13 +1,15 @@
 import { fileURLToPath } from 'node:url'
-import { checkBoundaries, PROJECTS, readWorkspaceProjects } from './boundaries.ts'
+import { checkBoundaries, checkScreensOnly, PROJECTS, readIosSources, readWorkspaceProjects } from './boundaries.ts'
 
 /**
  * `pnpm check:boundaries`: every workspace project declares the environment it runs in, and lists only the workspace
- * packages that scripts/boundaries.ts allows it. Exits 1 on any problem.
+ * packages that scripts/boundaries.ts allows it; the iOS LatchScreens target's own code stays out of the Latch product.
+ * Exits 1 on any problem.
  */
 const root = fileURLToPath(new URL('..', import.meta.url))
 const { projects, problems: listing } = await readWorkspaceProjects(root)
-const problems = [...listing, ...checkBoundaries(projects)]
+const ios = await readIosSources(root)
+const problems = [...listing, ...checkBoundaries(projects), ...checkScreensOnly(ios.files, ios.project)]
 for (const project of projects) {
   const name = typeof project.manifest.name === 'string' ? project.manifest.name : project.dir
   const env = PROJECTS[name]?.env

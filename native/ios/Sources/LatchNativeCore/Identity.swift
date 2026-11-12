@@ -9,6 +9,10 @@ public struct DeviceKeyReference: Codable, Sendable {
     public let verificationTag: Data
     public let connectionSpki: Data
     public let verificationSpki: Data
+    public init(connectionTag: Data, verificationTag: Data, connectionSpki: Data, verificationSpki: Data) {
+        self.connectionTag = connectionTag; self.verificationTag = verificationTag
+        self.connectionSpki = connectionSpki; self.verificationSpki = verificationSpki
+    }
 }
 
 public enum SecureDeviceKeys {

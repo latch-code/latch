@@ -18,10 +18,10 @@
 - 发现 epoch 仅作取簿提示：有效正文窗口内由一个所有者合并刷新，固定 Root 验签并持久化后才采用；提示不能替换已验密钥或确认正文游标。
 - 邻近提示只用当前公有 NWPath 网关与接口掩码，在正文窗口内后台提交；是否邻近由 Host 的物理连接证据决定，不提升权限，也不阻塞拨号。
 - Swift 包版本精确锁定，主源发布至少七天；提交 Package.resolved。共享编码遵循 link-v1/security-v1 向量，不另创协议。
-- 系统性验证统一由现有 Vitest 项目编排 Swift 编译、向量及本地 Host 互操作；不新增独立 JS 或 XCTest 测试入口。只用临时目录、端口0、假模型、无签名模拟器构建与夹具身份；不操作用户 Host、默认钥匙串或真实模型。
+- 验证由现有 Vitest 项目编排 Swift 编译、向量及本地 Host 互操作；不新增独立 JS 或 XCTest 测试入口。只用临时目录、端口0、假模型、无签名模拟器构建与夹具身份；不操作用户 Host、默认钥匙串或真实模型。
 
 机制见 docs/STREAMING.md。真机 Secure Enclave、Face ID、App Attest 与推送签名配置由所有者人工验收，自动化结果不能代替它们。
 
-- `LatchScreens` 目标只编模拟器，截图场景在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts` 核对）。
+- `LatchScreens` 只编模拟器：截图场景与 `-LatchLive 1` 的软件密钥（`ios-live.e2e.ts`）在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts`、`check:boundaries` 核对）。
 - 预览取消关闭自有Task，晚回不展示。
 - 目录只为固定节点/公钥恢复公网地址；提示不授予正文或替换身份。

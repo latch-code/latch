@@ -111,6 +111,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。`e2e/ios-screens.e2e.ts`（`LATCH_IOS_SCREENS=1`，需要已安装的 iOS 模拟器运行时）构建独立的 `LatchScreens` 目标，选能同时运行窄屏 iPhone、宽屏 iPhone 与 iPad 的最新运行时（只支持一种设备的运行时不选），在自己新建并在结束时删除的模拟器上按启动参数 `-LatchScene` 截各场景的浅深色，写入 `LATCH_IOS_SCREENS_DIR` 或 `test-results/ios-screens/`；场景数据是固定样本，不连 Host，不等于对真实 Host 的验收。
 
+`e2e/ios-live.e2e.ts`（`LATCH_IOS_LIVE=1`，需要模拟器运行时，默认路由是带私网 IPv4 的 Wi-Fi 或以太网）让 iOS 改动能在模拟器里真实点一遍：构建 `LatchScreens` 并核对四个 Live 标记与软件密钥符号确实在其中，删除上次未清理的 `latch-live-` 模拟器，新建并启动自己的模拟器、装好 App，之后才用 `startTestHost` 起临时 Host（演示模型、假 ACP Agent「Fake Agent」、临时 Git 项目、不弹窗的测试确认）。Host 的原生监听绑定默认路由接口的私网地址（不用 VPN 隧道或虚拟机网桥），只在这次运行期间存在、局域网可达，连接仍需连接码。以 `-LatchLive 1` 启动 App，再把连接码经 `simctl pbcopy` 的标准输入放进模拟器剪贴板，供配对页的「粘贴」使用；每写一个码都记下当时已登记与等待登记的手机数，数目增加（这个码被用了）才清空，换码前与结束时也清空，连接码不进参数、环境、文件与日志。Simulator.app 的「Automatically Sync Pasteboard」（默认开）会把模拟器剪贴板同步到本机剪贴板与通用剪贴板，没有供命令行关闭的接口，所以测试以无界面方式运行模拟器，开始时与每次写码前都检查 Simulator.app：打开时开始阶段跳过，保持运行时不写码并在 `<文件>.info` 中写明原因。`LATCH_IOS_LIVE_PAIR_SECONDS` 等人在该时限内配对并断言成功；`LATCH_IOS_LIVE_HOLD=<文件>` 保持运行直到该文件出现或 `LATCH_IOS_LIVE_HOLD_MINUTES`（默认 120）到期，`<文件>.pair` 换一个新连接码，`<文件>.info` 写出模拟器 UDID；用例时限按各步上限之和（含每个遗留模拟器两次调用）加上这两项计算，保持运行的截止时间在每次等待中检查。手动操作用一台可复用的模拟器 `latch-hands-on`：模拟器控制工具对每台新设备都要所有者授权一次，它就是所有者授权的那一台。`LATCH_IOS_LIVE_KEEP=1` 创建它（已有同名设备时沿用）并留下，UDID 写入输出目录的 `device.txt`；之后用 `LATCH_IOS_LIVE_DEVICE=<udid>` 在它（或任何已有模拟器）上运行。测试不关闭、抹掉或删除这台设备，只安装、启动与停止 App 并清空剪贴板；开始时清理 `latch-live-` 遗留设备的步骤也不碰它。截图写入 `LATCH_IOS_LIVE_DIR` 或 `test-results/ios-live/`。Live 模式只在 `LatchScreens` 中编译，用进程内存里的 CryptoKit P-256 软件密钥代替 Secure Enclave，资料库密钥也只在内存、目录随进程；TLS、敲门 HMAC、根证明、正文窗口与 requestId 与产品相同。它不证明 Secure Enclave、Face ID、钥匙串或真机行为，也不验证 Bonjour 重连（测试 Host 不发布），重开 App 需重新配对。`ios-app.e2e.ts` 核对 `Latch.app` 不含这些标记，`nm -u` 中也没有 `SecKeyCreateWithData`、`kSecAttrKeyClassPrivate` 与任何 `P256.Signing.PrivateKey` 符号；`pnpm check:boundaries` 按对象 ID 解析 `project.pbxproj`，核对只有 LatchScreens（仅模拟器）构建 `Screens/` 并设置 `LATCH_SCREENS`、Latch 与项目配置不引用 xcconfig、也不经变量间接设置编译条件，找不到 Screens 组或目标时失败（注释只在字符串之外跳过），并核对这些代码、软件密钥调用与未指定 `kSecAttrTokenIDSecureEnclave` 的 `SecKeyCreateRandomKey` 只在 `Screens/` 与 `App/` 的 `#if LATCH_SCREENS` 中。
+
 | 改动 | 用例 |
 | --- | --- |
 | 共享安全编码 | `crypto.test.ts`、`identity.test.ts`、`presence.test.ts`、`client-security.test.ts`、`desktop-proxy.test.ts` |
@@ -198,7 +200,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 依赖供应链：`pnpm-workspace.yaml` 例外的格式、到期与锁文件核对，`packageManager` 的 sha512 | `supply-chain.test.ts` |
 | 安装金丝雀：在当前设置下逐个使安装失败，放宽对应设置后能安装 | `supply-canaries.test.ts`（需经 pnpm 运行） |
 | `pnpm check:workflows` 的工具下载：SHA-256 不符时不安装、只取出二进制、复用已下载的版本、没有固定归档的平台 | `workflow-tools.test.ts` |
-| `pnpm check:boundaries`：运行环境声明、按项目表与运行环境允许的 workspace 依赖（仓库根也按它的行检查）、只供测试的包只能写在 devDependencies、`workspace:*` 与 `@latch/` 名称、`pnpm-workspace.yaml` 中项目的列举 | `boundaries.test.ts` |
+| `pnpm check:boundaries`：运行环境声明、按项目表与运行环境允许的 workspace 依赖（仓库根也按它的行检查）、只供测试的包只能写在 devDependencies、`workspace:*` 与 `@latch/` 名称、`pnpm-workspace.yaml` 中项目的列举、iOS `LatchScreens` 专用代码不进 `Latch` | `boundaries.test.ts` |
 | `pnpm check:agents` 与 `pnpm docs:affected`：字节预算、`CLAUDE.md`、链接与锚点、提到的路径与用例、根地图中的项目、技能链接、docs 的 front matter、不应提交的路径与词；候选文档 | `agent-docs.test.ts` |
 | `pnpm check -- --plan`：按改动路径选择检查与用例，不认识的路径要求全部检查 | `verify-plan.test.ts` |
 | `pnpm security:scan`：新增行中的秘密形状与禁用 API、测试代码中的匹配只列出、需要一起修改的文件 | `security-rules.test.ts` |

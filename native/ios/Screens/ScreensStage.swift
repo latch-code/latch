@@ -6,6 +6,7 @@ import UIKit
 /**
  * Canned scenes for screenshots, compiled only into the LatchScreens target. There is no network, no key and no secret
  * here: a launch argument picks the scene (`-LatchScene agents`), and the data below stands in for a Host's answers.
+ * Live mode (`LiveKeys.swift`) skips the scenes and talks to a real test Host.
  */
 @MainActor enum ScreensStage {
     static let marker = "LatchScreens fixture state"
@@ -231,6 +232,7 @@ import UIKit
 
 @main struct ScreensApp: App {
     @StateObject private var model = PhoneModel()
+    @Environment(\.scenePhase) private var phase
     /** `-LatchTheme dark` or `light`; absent: the device's own. */
     private var theme: ColorScheme? {
         switch UserDefaults.standard.string(forKey: "LatchTheme") { case "dark": .dark; case "light": .light; default: nil }
@@ -238,7 +240,14 @@ import UIKit
     var body: some Scene {
         WindowGroup {
             PhoneRootView().environmentObject(model).tint(.blue).preferredColorScheme(theme)
-                .task { ScreensStage.stage(model); ScreensStage.fitWindow() }
+                .task {
+                    // Live mode (`-LatchLive 1`) opens the store and pairs like the product; otherwise a canned scene.
+                    if PhoneLive.isOn { await model.open() } else { ScreensStage.stage(model); ScreensStage.fitWindow() }
+                }
+                .onChange(of: phase) { _, next in
+                    guard PhoneLive.isOn else { return }
+                    Task { if next == .background { await model.lock() }; if next == .active { await model.open() } }
+                }
         }
     }
 }

@@ -181,7 +181,7 @@ import UIKit
         do {
             let vault = try await store.hostVault(host)
             guard generation == current else { await vault.lock(); return }
-            let next = try NativeWorkspace(device: host.device, keys: SecureIdentityProvider(reference: host.keys, askOwner: { PhoneFaceID.isOn }), vault: vault,
+            let next = try NativeWorkspace(device: host.device, keys: PhoneKeys.provider(host.keys, askOwner: { PhoneFaceID.isOn }), vault: vault,
                 onRevoked: { [weak self, store] proof in Task { @MainActor in await self?.retire(host, proof: proof, retiredStore: store) } })
             workspace = next
             bookRefresher = NativeBookRefresher(workspace: next, persist: { device in
@@ -479,7 +479,7 @@ import UIKit
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
         let book = try? AddressBookCodec.verify(host.device.signedAddressBook, rootSpki: host.device.rootSpki,
             deviceId: host.device.deviceId, nowMs: now, priorGeneration: host.device.bookGeneration, priorHash: host.device.bookHash)
-        let keys = SecureIdentityProvider(reference: host.keys)
+        let keys = PhoneKeys.provider(host.keys)
         // LAN entries are hints only. Direct candidates are supplied by current-network discovery, never old private IPs.
         var result = try await discovery.candidates(device: host.device, keys: keys)
         if let (invitation, network) = freshPairings[host.id], network == networkGeneration, invitation.expiresAt > Date() {

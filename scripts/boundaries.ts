@@ -258,3 +258,218 @@ export async function readWorkspaceProjects(root: string): Promise<{ projects: P
   }
   return { projects, problems }
 }
+
+/** Names of the LatchScreens target's own code: its canned scenes and live mode's software keys. */
+const SCREENS_ONLY = /\b(?:ScreensStage|PhoneLive|LiveSoftwareKeys|LiveIdentityProvider)\b|LatchLive/u
+/**
+ * Calls only a software key makes: the product's keys are Secure Enclave keys, never built from bytes. A random key
+ * made without `kSecAttrTokenIDSecureEnclave` is one too (checked separately, across the call's lines).
+ */
+const SOFTWARE_KEY = /\bSecKeyCreateWithData\b|\bP256\.Signing\.PrivateKey\s*\(/u
+
+type Plist = string | Plist[] | { [key: string]: Plist }
+
+/** A call's text from `SecKeyCreateRandomKey(` on the given line to its closing parenthesis, across lines. */
+function callText(lines: readonly string[], index: number): string {
+  const rest = lines.slice(index).join('\n')
+  const start = rest.indexOf('SecKeyCreateRandomKey')
+  let depth = 0
+  for (let at = rest.indexOf('(', start); at >= 0 && at < rest.length; at++) {
+    if (rest[at] === '(') depth++
+    else if (rest[at] === ')' && --depth === 0) return rest.slice(start, at + 1)
+  }
+  return rest.slice(start)
+}
+
+/** The OpenStep property list of a project.pbxproj, comments skipped outside strings; throws on anything it cannot read. */
+export function parsePbxproj(text: string): Record<string, Plist> {
+  const source = text
+  let at = 0
+  // Comments are skipped only between tokens, so a quoted "$(SRCROOT)/**" or "//" stays a value.
+  const space = () => {
+    for (;;) {
+      while (at < source.length && /\s/u.test(source[at]!)) at++
+      if (source.startsWith('/*', at)) {
+        const end = source.indexOf('*/', at + 2)
+        if (end < 0) throw new Error('project.pbxproj 的注释没有结束')
+        at = end + 2
+      } else if (source.startsWith('//', at)) {
+        const end = source.indexOf('\n', at)
+        at = end < 0 ? source.length : end + 1
+      } else return
+    }
+  }
+  const expect = (char: string) => {
+    space()
+    if (source[at] !== char) throw new Error(`project.pbxproj 在 ${at} 处应为 ${char}`)
+    at++
+  }
+  const value = (): Plist => {
+    space()
+    const char = source[at]
+    if (char === '{') {
+      at++
+      const object: Record<string, Plist> = {}
+      for (space(); source[at] !== '}'; space()) {
+        const key = value()
+        if (typeof key !== 'string') throw new Error('project.pbxproj 的键不是字符串')
+        expect('=')
+        object[key] = value()
+        expect(';')
+      }
+      at++
+      return object
+    }
+    if (char === '(') {
+      at++
+      const list: Plist[] = []
+      for (space(); source[at] !== ')'; space()) {
+        list.push(value())
+        space()
+        if (source[at] === ',') at++
+      }
+      at++
+      return list
+    }
+    if (char === '"') {
+      let result = ''
+      for (at++; source[at] !== '"'; at++) {
+        if (at >= source.length) throw new Error('project.pbxproj 的字符串没有结束')
+        result += source[at] === '\\' ? source[++at] : source[at]
+      }
+      at++
+      return result
+    }
+    const bare = /^[^\s=;,(){}"]+/u.exec(source.slice(at))?.[0]
+    if (!bare) throw new Error(`project.pbxproj 在 ${at} 处无法解析`)
+    at += bare.length
+    return bare
+  }
+  const root = value()
+  if (typeof root !== 'object' || Array.isArray(root)) throw new Error('project.pbxproj 的根不是字典')
+  return root
+}
+
+/**
+ * The iOS App's screenshot scenes and live mode's software keys stay out of the Latch product: they may be named, and
+ * software keys made, only in `native/ios/Screens/` (a folder only LatchScreens builds) or inside `#if LATCH_SCREENS`
+ * in `native/ios/App/`, never in the shared core or its fixtures. In the project, only LatchScreens builds Screens/ or
+ * sets LATCH_SCREENS (simulator only), and the Latch target's settings are all in the project, with no indirection a
+ * reader could miss. `files` are repository paths under native/ios with their text; `project` is project.pbxproj.
+ */
+export function checkScreensOnly(files: ReadonlyArray<{ path: string; text: string }>, project: string): string[] {
+  const problems: string[] = []
+  for (const { path, text } of files) {
+    if (path.startsWith('native/ios/Screens/')) continue
+    const lines = text.split('\n')
+    const conditions: string[] = []
+    for (const [index, raw] of lines.entries()) {
+      const line = raw.trim()
+      const directive = /^#(if|elseif|else|endif)\b\s*(.*)$/u.exec(line)
+      if (directive) {
+        if (directive[1] === 'if') conditions.push(directive[2]!.trim())
+        else if (directive[1] === 'endif') conditions.pop()
+        else conditions[conditions.length - 1] = '!'
+        continue
+      }
+      if (/^(?:\/\/|\/\*|\*)/u.test(line)) continue
+      const product = /^native\/ios\/(?:App|Sources)\//u.test(path)
+      const named = SCREENS_ONLY.test(line),
+        software =
+          product
+          && (SOFTWARE_KEY.test(line)
+            || (/\bSecKeyCreateRandomKey\s*\(/u.test(line) && !/\bkSecAttrTokenIDSecureEnclave\b/u.test(callText(lines, index))))
+      if (!named && !software) continue
+      if (path.startsWith('native/ios/App/') && conditions.includes('LATCH_SCREENS')) continue
+      problems.push(
+        named
+          ? `${path}:${index + 1}：LatchScreens 的代码只写在 native/ios/Screens/ 或 App/ 的 #if LATCH_SCREENS 中`
+          : `${path}:${index + 1}：产品只用 Secure Enclave 密钥；软件密钥只在 LatchScreens 的 #if LATCH_SCREENS 中`,
+      )
+    }
+  }
+  return [...problems, ...checkScreensProject(project)]
+}
+
+function checkScreensProject(text: string): string[] {
+  let objects: Record<string, Plist>
+  try {
+    const root = parsePbxproj(text)
+    const found = root.objects
+    if (typeof found !== 'object' || Array.isArray(found)) throw new Error('project.pbxproj 没有 objects')
+    objects = found
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)]
+  }
+  const problems: string[] = []
+  const dict = (id: Plist | undefined): Record<string, Plist> | undefined => {
+    const value = typeof id === 'string' ? objects[id] : undefined
+    return typeof value === 'object' && !Array.isArray(value) ? value : undefined
+  }
+  const list = (value: Plist | undefined): string[] => (Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])
+  const entries = Object.entries(objects).flatMap(([id, value]) =>
+    typeof value === 'object' && !Array.isArray(value) ? [{ id, value }] : [],
+  )
+  const targets = entries.filter(item => item.value.isa === 'PBXNativeTarget')
+  const screens = entries.filter(
+    item => /^PBX(?:FileSystemSynchronizedRoot)?Group$/u.test(String(item.value.isa)) && item.value.path === 'Screens',
+  )
+  const screensTarget = targets.find(item => item.value.name === 'LatchScreens')
+  const product = targets.find(item => item.value.name === 'Latch')
+  if (screens.length !== 1) problems.push('project.pbxproj：找不到唯一的 Screens 组')
+  if (!screensTarget) problems.push('project.pbxproj：找不到 LatchScreens 目标')
+  if (!product) problems.push('project.pbxproj：找不到 Latch 目标')
+  const screensId = screens[0]?.id
+  for (const target of targets) {
+    if (target === screensTarget || !screensId) continue
+    if ([...list(target.value.fileSystemSynchronizedGroups), ...list(target.value.children)].includes(screensId))
+      problems.push(`project.pbxproj：只有 LatchScreens 目标构建 Screens/，${String(target.value.name)} 不能`)
+  }
+  const configurations = (owner: Record<string, Plist> | undefined) => list(dict(owner?.buildConfigurationList)?.buildConfigurations)
+  const screensConfigs = new Set(configurations(screensTarget?.value))
+  const projectEntry = entries.find(item => item.value.isa === 'PBXProject')
+  // The Latch target's own settings and the project's, which it inherits.
+  const productConfigs = [...configurations(product?.value), ...configurations(projectEntry?.value)]
+  for (const id of productConfigs) {
+    const config = dict(id)
+    if (!config) continue
+    if (config.baseConfigurationReference !== undefined)
+      problems.push('project.pbxproj：Latch 与项目的配置不引用 xcconfig 文件，设置都写在项目里')
+    const settings = dict(id)?.buildSettings
+    if (typeof settings !== 'object' || Array.isArray(settings)) continue
+    for (const [key, value] of Object.entries(settings)) {
+      if (!/^(?:SWIFT_ACTIVE_COMPILATION_CONDITIONS|OTHER_SWIFT_FLAGS|GCC_PREPROCESSOR_DEFINITIONS)\b/u.test(key)) continue
+      const shown = Array.isArray(value) ? value.join(' ') : String(value)
+      if (/LATCH_SCREENS/u.test(shown) || /\$\((?!inherited\))|\$\{/u.test(shown))
+        problems.push(`project.pbxproj：Latch 与项目的 ${key} 不设置 LATCH_SCREENS，也不经变量间接设置`)
+    }
+  }
+  for (const item of entries) {
+    if (item.value.isa !== 'XCBuildConfiguration' || !/LATCH_SCREENS/u.test(JSON.stringify(item.value.buildSettings ?? ''))) continue
+    const settings = dict(item.id)?.buildSettings as Record<string, Plist> | undefined
+    if (
+      !screensConfigs.has(item.id)
+      || settings?.SUPPORTED_PLATFORMS !== 'iphonesimulator'
+      || settings.PRODUCT_BUNDLE_IDENTIFIER !== 'dev.latch.ios.screens'
+    )
+      problems.push('project.pbxproj：只有 LatchScreens（仅模拟器）设置 LATCH_SCREENS')
+  }
+  return problems
+}
+
+/** The Swift files of the iOS App and core, for `checkScreensOnly`. */
+export async function readIosSources(root: string): Promise<{ files: Array<{ path: string; text: string }>; project: string }> {
+  const files: Array<{ path: string; text: string }> = []
+  for (const top of ['App', 'Screens', 'Sources', 'Testkit']) {
+    const base = posix.join('native/ios', top)
+    let entries: string[] = []
+    try {
+      entries = await readdir(join(root, base), { recursive: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries.toSorted())
+      if (entry.endsWith('.swift')) files.push({ path: posix.join(base, entry), text: await readFile(join(root, base, entry), 'utf8') })
+  }
+  return { files, project: await readFile(join(root, 'native/ios/Latch.xcodeproj/project.pbxproj'), 'utf8') }
+}
