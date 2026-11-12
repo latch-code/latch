@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { AutomationList, HostFeatures } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type Automation, type AutomationCreate, type AutomationList, type HostFeatures } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { Automations } from '../automations.ts'
 import type { AgentActor } from '../custom-agents.ts'
@@ -9,6 +9,41 @@ import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } f
 export interface AutomationRouteDeps {
   automations: () => Automations
   access: (caller: Caller, write?: boolean) => AgentActor
+  /** Refuses, before anything is saved, a proposal that is not this owner's schedule proposal still open (or saved, on a retry). */
+  proposalCheck: (owner: string, proposalId: string, replay: boolean) => void
+  /** A schedule saved from an Agent's schedule proposal: the proposal now names it. */
+  proposalSaved: (
+    owner: string,
+    proposalId: string,
+    input: { requestId: string; automationId: string },
+    actor: AgentActor,
+  ) => Promise<{ audited: boolean }>
+}
+
+/**
+ * A schedule saved from an Agent's schedule proposal. The create itself refuses a proposal another request saved (in the
+ * same write), so two saves never make two schedules; then the proposal is marked. A mark that failed is finished by a
+ * retry of the same request, or by the next save of the proposal, which is refused and marks it with the first schedule.
+ */
+export async function saveFromProposal(
+  service: Pick<Automations, 'create' | 'answered'>,
+  deps: Pick<AutomationRouteDeps, 'proposalCheck' | 'proposalSaved'>,
+  body: AutomationCreate & { proposalId: string },
+  actor: AgentActor,
+): Promise<{ value: Automation; audited: boolean }> {
+  const owner = body.customAgentId ?? GENERAL_AGENT_ID
+  deps.proposalCheck(owner, body.proposalId, typeof body.requestId === 'string' && service.answered(actor.actor.deviceId, body.requestId))
+  let created: { value: Automation; audited: boolean }
+  try {
+    created = await service.create(body, actor)
+  } catch (error) {
+    const first = error instanceof AppError && error.code === 'agent-proposal-decided' ? error.details?.automationId : undefined
+    if (typeof first === 'string')
+      await deps.proposalSaved(owner, body.proposalId, { requestId: body.requestId, automationId: first }, actor).catch(() => {})
+    throw error
+  }
+  const marked = await deps.proposalSaved(owner, body.proposalId, { requestId: body.requestId, automationId: created.value.id }, actor)
+  return { value: created.value, audited: created.audited && marked.audited }
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
@@ -32,9 +67,16 @@ export function createAutomationRoutes(_context: RouteContext, deps: AutomationR
         if (method === 'GET') {
           const list: AutomationList = { automations: service.list() }
           json(res, list)
-        } else if (method === 'POST')
-          reply(await service.create((await jsonBody(req, CONFIG_BODY_LIMIT)) as Parameters<Automations['create']>[0], actor), 201)
-        else throw new AppError(404, 'not-found', '接口不存在。')
+        } else if (method === 'POST') {
+          const body = (await jsonBody(req, CONFIG_BODY_LIMIT)) as AutomationCreate
+          const proposalId = body.proposalId
+          reply(
+            typeof proposalId === 'string'
+              ? await saveFromProposal(service, deps, { ...body, proposalId }, actor)
+              : await service.create(body, actor),
+            201,
+          )
+        } else throw new AppError(404, 'not-found', '接口不存在。')
         return true
       }
       const match = AUTOMATION.exec(path)

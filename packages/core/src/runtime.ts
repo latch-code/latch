@@ -42,6 +42,7 @@ import {
   type PromptOptions,
   type SessionFolder,
   type MemoryProposalInput,
+  type ScheduleProposalInput,
 } from '@latch/sdk'
 import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
@@ -131,10 +132,17 @@ export interface RuntimeOptions {
    * tool. The Host keeps a proposal pending; it never becomes a memory without the person.
    */
   proposeMemory?(input: MemoryProposalInput): Promise<void>
+  /**
+   * Where `propose_schedule` sends what it proposes, for the same runs. Without it no run offers that tool. The Host keeps
+   * it pending; nothing runs until the person saves it in the schedule editor.
+   */
+  proposeSchedule?(input: ScheduleProposalInput): Promise<void>
 }
 
 /** The tool a run of an Agent's or 通用's session may call to propose a memory; it saves nothing by itself. */
 export const PROPOSE_MEMORY_TOOL = 'propose_memory'
+/** The tool the same runs may call to propose a schedule; it creates nothing by itself. */
+export const PROPOSE_SCHEDULE_TOOL = 'propose_schedule'
 const MEMORY_LIMIT = 4000
 /** Per session, as the skills server's limit. */
 export const SESSION_PROPOSAL_LIMIT = 32
@@ -197,8 +205,8 @@ interface Run {
   done: Promise<void>
   resolveDone(): void
   activity?: DriverTaskDetail['activity']
-  /** The run's own `propose_memory`, when its context lets its agent propose memories. */
-  proposal?: ToolDefinition
+  /** The run's own `propose_memory` and `propose_schedule`, when its context lets its agent propose. */
+  proposals?: ToolDefinition[]
   /** A scheduled run: nobody watched what it read, so all it proposes is external. */
   unattended?: boolean
   /**
@@ -1040,16 +1048,23 @@ class HarnessRuntime implements Bridge {
       lastEventAt: clock.startedAt,
     }
     if (agentContext?.unattended) run.unattended = true
-    if (agentContext?.proposals && this.options.proposeMemory)
-      run.proposal = proposeMemoryTool(run, this.options.proposeMemory, {
+    if (agentContext?.proposals) {
+      // Memories and schedules share the session's count, as they share the skills server's file.
+      const session = {
         outside: () => this.state.tasks[run.sessionId]?.outsideRead === true,
         reserve: () =>
           this.change(run.sessionId, task => {
             const used = task.proposals ?? 0
-            if (used >= SESSION_PROPOSAL_LIMIT) throw new Error('This session has proposed as many memories as it may.')
+            if (used >= SESSION_PROPOSAL_LIMIT) throw new Error('This session has proposed as much as it may.')
             task.proposals = used + 1
           }),
-      })
+      }
+      const own = [
+        ...(this.options.proposeMemory ? [proposeMemoryTool(run, this.options.proposeMemory, session)] : []),
+        ...(this.options.proposeSchedule ? [proposeScheduleTool(run, this.options.proposeSchedule, session)] : []),
+      ]
+      if (own.length) run.proposals = own
+    }
     // Reserve ownership before persistence publishes the new running task.
     this.runs.set(sessionId, run)
     return run
@@ -1160,7 +1175,7 @@ class HarnessRuntime implements Bridge {
   /** Fails closed: a classifier that throws or returns anything else yields R2. */
   private async risk(run: Run, call: ToolCall, tool: ToolDefinition): Promise<RiskLevel> {
     // The run's own tool only hands the Host a proposal, which waits for the person.
-    if (tool === run.proposal) return 'R0'
+    if (run.proposals?.includes(tool)) return 'R0'
     if (!this.options.classifyToolCall) return tool.requiresApproval ? 'R1' : 'R0'
     let level: unknown
     try {
@@ -1388,15 +1403,14 @@ class HarnessRuntime implements Bridge {
     try {
       if (run.mode === 'agent') await this.fileTracking.start(run.sessionId, run.id, run.folders)
       signal.throwIfAborted()
-      // The run's own propose_memory stands in for any plugin's tool of that name. It is the one tool a 只对话 run has:
-      // it reads and changes nothing, and only hands the Host a proposal that waits for the person.
+      // The run's own propose_memory and propose_schedule stand in for any plugin's tool of those names. They are the only
+      // tools a 只对话 run has: they read and change nothing, and only hand the Host a proposal that waits for the person.
+      const own = run.proposals ?? []
       const availableTools =
         run.mode === 'chat'
-          ? run.proposal
-            ? [run.proposal]
-            : []
-          : run.proposal
-            ? [...run.lease.tools.filter(tool => tool.name !== PROPOSE_MEMORY_TOOL), run.proposal]
+          ? own
+          : own.length
+            ? [...run.lease.tools.filter(tool => !own.some(item => item.name === tool.name)), ...own]
             : run.lease.tools
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
@@ -1446,7 +1460,7 @@ class HarnessRuntime implements Bridge {
             this.output(run)
             this.notify(run.sessionId)
           } else if (delta.type === 'tool-call') {
-            if (run.mode === 'chat' && !(run.proposal && delta.call.name === PROPOSE_MEMORY_TOOL))
+            if (run.mode === 'chat' && !run.proposals?.some(tool => tool.name === delta.call.name))
               throw new AppError(502, 'chat-tools-disabled', '普通对话模式不允许调用工具；本次工具请求已拒绝，未执行任何操作。')
             const call = safeCall(delta.call)
             if (seen.has(call.id) || calls.length >= 32) throw new AppError(502, 'provider-protocol', '模型返回重复工具标识或过多工具调用')
@@ -1585,12 +1599,13 @@ class HarnessRuntime implements Bridge {
   }
 }
 
+interface ProposalSession {
+  outside(): boolean
+  reserve(): Promise<void>
+}
+
 /** `propose_memory` for one run: the Host gets the proposal with the turn it came from and whether it may be external. */
-function proposeMemoryTool(
-  run: Run,
-  propose: NonNullable<RuntimeOptions['proposeMemory']>,
-  session: { outside(): boolean; reserve(): Promise<void> },
-): ToolDefinition {
+function proposeMemoryTool(run: Run, propose: NonNullable<RuntimeOptions['proposeMemory']>, session: ProposalSession): ToolDefinition {
   return {
     name: PROPOSE_MEMORY_TOOL,
     title: '提议记忆',
@@ -1624,6 +1639,58 @@ function proposeMemoryTool(
         key: `call:${run.id}:${context.callId}`,
       })
       return { text: '已提议。是否保存由用户决定，现在还没有保存。' }
+    },
+  }
+}
+
+/**
+ * `propose_schedule` for one run: a schedule the person may open in the schedule editor and save. The Host checks the plan
+ * against the scheduler's own schema and answers a refusal in English, which the tool hands back to the model.
+ */
+function proposeScheduleTool(run: Run, propose: NonNullable<RuntimeOptions['proposeSchedule']>, session: ProposalSession): ToolDefinition {
+  return {
+    name: PROPOSE_SCHEDULE_TOOL,
+    title: '提议定时任务',
+    kind: 'other',
+    description:
+      'Propose a recurring task for the user to set up: a name, when it runs, and the message each run starts with. Nothing is created or run: the user opens it, may change it, and saves it. Never put secrets or credentials in it.',
+    requiresApproval: false,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['name', 'plan', 'prompt'],
+      properties: {
+        name: { type: 'string', maxLength: 80, description: 'A short name for the schedule.' },
+        plan: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'time'],
+          description: "When it runs, in the Mac's local time. `day` (0 is Sunday) only with kind weekly.",
+          properties: {
+            kind: { type: 'string', enum: ['daily', 'weekdays', 'weekly'] },
+            time: { type: 'string', pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: 'HH:MM, 24-hour.' },
+            day: { type: 'integer', minimum: 0, maximum: 6 },
+          },
+        },
+        prompt: { type: 'string', maxLength: MEMORY_LIMIT, description: 'The message each run starts with.' },
+      },
+    },
+    async execute(args, context) {
+      const name = typeof args.name === 'string' ? args.name.trim() : ''
+      const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+      if (!name || !prompt) throw new Error('name and prompt must not be empty.')
+      const outside = run.outside === true || run.unattended === true || session.outside()
+      await session.reserve()
+      await propose({
+        sessionId: context.sessionId,
+        messageId: run.userMessageId,
+        name,
+        plan: args.plan,
+        prompt,
+        external: outside,
+        key: `call:${run.id}:${context.callId}`,
+      })
+      return { text: 'Proposed. The user opens it and decides whether to save it; nothing is scheduled yet.' }
     },
   }
 }

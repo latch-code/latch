@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { GENERAL_AGENT_ID, type AutomationSummary, type CustomAgentList, type TaskSummary } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AutomationSummary, type CustomAgentList } from '@latch/protocol'
 import {
   Button,
   EmptyState,
@@ -16,14 +16,13 @@ import {
   PlusGlyph,
 } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
-import { SessionStatus, useLastConfirmed } from '../components/SessionStatus.tsx'
-import { relativeTime } from '../format.ts'
-import { rowStatus } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentForm, GeneralForm, WriteNotice } from './AgentForm.tsx'
 import { AvatarPicker } from './AvatarPicker.tsx'
-import { agentTopics, type ProfileSection } from './chat.ts'
+import { type ProfileSection } from './chat.ts'
+import { ActivityTab, LibraryTab } from './Activity.tsx'
+import { activityVersion, type SchedulePrefill } from './activity.ts'
 import { MemoryTab } from './Memory.tsx'
 import { agentActivity, dutyLine, GENERAL_NAME, runsWith, scheduleWords, worksIn } from './model.ts'
 import { Availability, LockedAgents } from './parts.tsx'
@@ -34,36 +33,9 @@ import { effectWords } from './proposals.ts'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
 
 const NO_PLUGINS: CustomAgentList['plugins'] = []
-const SHOWN_TOPICS = 6
 
 type View = 'main' | 'settings' | 'schedules'
-type Segment = 'activity' | 'memory'
-
-/** One recent topic: its title, when, and what it is doing in the session list's words; it opens the topic. */
-function TopicRow({ task, frozen, onOpen }: { task: TaskSummary; frozen: string | null; onOpen: (id: string) => void }) {
-  return (
-    <li>
-      <button
-        type="button"
-        className="agent-recent-row"
-        onClick={() => {
-          onOpen(task.id)
-        }}>
-        <span className="agent-recent-text">
-          <span className="agent-recent-title">{task.title || '未命名会话'}</span>
-          <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt)}</time>
-        </span>
-        <SessionStatus
-          status={rowStatus(task, { frozen: frozen !== null })}
-          live={task.live}
-          inWaitingShelf={false}
-          time={frozen ?? ''}
-          dateTime={task.updatedAt}
-        />
-      </button>
-    </li>
-  )
-}
+type Segment = 'activity' | 'library' | 'memory'
 
 /** 即将进行: each schedule with its plan and a switch; 编辑 opens the schedules' own editing. */
 function Upcoming({
@@ -138,6 +110,7 @@ export function AgentProfile({
   owner,
   section,
   nonce,
+  prefill,
   phone = false,
   onClose,
 }: {
@@ -146,6 +119,8 @@ export function AgentProfile({
   section?: ProfileSection | undefined
   /** Changes when a link asks for a section again. */
   nonce: number
+  /** Opens the schedule editor filled in from a schedule proposal. */
+  prefill?: SchedulePrefill | undefined
   phone?: boolean
   onClose: () => void
 }) {
@@ -164,7 +139,6 @@ export function AgentProfile({
   }, [reloadList, detail.reload, reloadProposals, refreshShell])
   const writes = useAgentWrites(settle)
   const scheduleWrites = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
-  const frozen = useLastConfirmed(connection, snapshot)
   const viewOf = (wanted: ProfileSection | undefined): View =>
     wanted === 'settings' ? 'settings' : wanted === 'schedules' ? 'schedules' : 'main'
   const [view, setView] = useState<View>(() => viewOf(section))
@@ -194,7 +168,6 @@ export function AgentProfile({
   // 通用's schedules are the ones that name no Agent.
   const automations = snapshot.automations?.filter(item => (general ? item.customAgentId === undefined : item.customAgentId === owner))
   const canRun = access.scopes.has('run')
-  const topics = agentTopics(snapshot.tasks, owner).open
   const harness = summary && catalog?.harnesses.find(item => item.id === summary.harnessId)
   const plugins = 'value' in listRead && listRead.value ? listRead.value.plugins : NO_PLUGINS
   const skills = value?.kind === 'custom' ? value.detail.agent.skills : value?.kind === 'general' ? value.detail.general.skills : undefined
@@ -264,24 +237,38 @@ export function AgentProfile({
             </div>
             <div className="agent-profile-section">
               <SegmentedControl<Segment>
-                label="动态与记忆"
+                label="动态、资料库与记忆"
                 value={segment}
                 options={[
                   { value: 'activity', label: '动态' },
+                  { value: 'library', label: '资料库' },
                   { value: 'memory', label: '记忆' },
                 ]}
                 onValueChange={setSegment}
               />
-              {segment === 'activity'
-                && (topics.length === 0 ? (
-                  <p className="agent-profile-quiet">还没有话题</p>
-                ) : (
-                  <ul className="agent-recent" aria-label="最近话题">
-                    {topics.slice(0, SHOWN_TOPICS).map(task => (
-                      <TopicRow key={task.id} task={task} frozen={frozen} onOpen={shell.choose} />
-                    ))}
-                  </ul>
-                ))}
+              {segment === 'activity' && (
+                <ActivityTab
+                  owner={owner}
+                  version={activityVersion(snapshot, owner)}
+                  onOpenSession={shell.choose}
+                  onMemory={() => {
+                    setSegment('memory')
+                  }}
+                />
+              )}
+              {segment === 'library' && (
+                <LibraryTab
+                  owner={owner}
+                  version={activityVersion(snapshot, owner)}
+                  canOpen={catalog?.features?.filePreview === true && snapshot.device.dataScope === 'all'}
+                  onOpenFile={target => {
+                    // The file preview stands where the profile stands.
+                    shell.closeProfile()
+                    shell.openFile(target)
+                  }}
+                  onOpenSession={shell.choose}
+                />
+              )}
               {segment === 'memory'
                 && (value ? (
                   <MemoryTab
@@ -289,7 +276,11 @@ export function AgentProfile({
                     owner={owner}
                     memories={value.detail.memories}
                     changes={value.detail.memoryChanges}
-                    proposals={'value' in proposalRead && proposalRead.value ? proposalRead.value.proposals : []}
+                    proposals={
+                      'value' in proposalRead && proposalRead.value
+                        ? proposalRead.value.proposals.filter(item => item.kind !== 'schedule')
+                        : []
+                    }
                     effect={general ? undefined : effectWords(harness)}
                     writes={writes}
                     disabled={held}
@@ -392,6 +383,8 @@ export function AgentProfile({
             offline={offline}
             onOpenSession={shell.choose}
             onReload={settle}
+            prefill={prefill}
+            nonce={nonce}
           />
         )}
       </div>
@@ -421,7 +414,15 @@ export function ProfileSheet({ shell }: { shell: ShellState }) {
       className="agent-profile-sheet"
       onClose={shell.closeProfile}>
       {shown && (
-        <AgentProfile shell={shell} owner={shown.owner} section={shown.section} nonce={shown.nonce} phone onClose={shell.closeProfile} />
+        <AgentProfile
+          shell={shell}
+          owner={shown.owner}
+          section={shown.section}
+          nonce={shown.nonce}
+          prefill={shown.prefill}
+          phone
+          onClose={shell.closeProfile}
+        />
       )}
     </Sheet>
   )

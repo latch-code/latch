@@ -4,6 +4,7 @@ import type { FileMention } from './file-refs.ts'
 import type { AttachmentRef } from './attachments.ts'
 import type { PromptQueueItem } from './features.ts'
 import type { AgentQuestion } from './questions.ts'
+import type { ScheduleResult } from './automations.ts'
 import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 
 export interface SessionCommand {
@@ -555,6 +556,8 @@ export interface TaskDetail {
   questions?: AgentQuestion[]
   /** The person's 「记住…」 in this session that the Host did not keep, by the message's request, with why; never the text. */
   memoryRefusals?: Array<{ requestId: string; reason: string }>
+  /** A topic of 我的 Agent: the schedule results delivered into it, oldest first. Host records, never messages. */
+  results?: ScheduleResult[]
   approvals: Approval[]
   liveText: string
   cursor: number

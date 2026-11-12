@@ -72,7 +72,8 @@ export interface AutomationDetail {
   /** Newest first. */
   runs: AutomationRun[]
 }
-export type AutomationCreate = AutomationConfig & { requestId: string }
+/** `proposalId`: saved from the Agent's schedule proposal, which the Host then marks saved. Never stored on the schedule. */
+export type AutomationCreate = AutomationConfig & { requestId: string; proposalId?: string }
 export type AutomationPatch = Partial<Omit<AutomationConfig, 'customAgentId' | 'model' | 'projectId'>> & {
   requestId: string
   baseRevision: number
@@ -90,4 +91,54 @@ export interface AutomationRunRequest {
 }
 export interface AutomationList {
   automations: Automation[]
+}
+
+/** How a run that settled ended, as its result card says. */
+export type ScheduleResultOutcome = 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown'
+export interface ScheduleResultFile {
+  root: string
+  path: string
+  change: 'created' | 'modified' | 'deleted'
+}
+/**
+ * A run's result card: recorded by the Host when a run of a schedule settles, in its Agent's conversation (通用's for a
+ * schedule that names no Agent). Never a message: no Harness receives it, and it changes no topic's context.
+ */
+export interface ScheduleResult {
+  /** Stable for one run: the same run settling again (a restart) records it once. */
+  id: string
+  automationId: string
+  /** An Agent's ID, or `general`. */
+  owner: string
+  /** The schedule's name when the run settled. */
+  name: string
+  outcome: ScheduleResultOutcome
+  trigger: 'schedule' | 'manual'
+  /** When the run was due, or when 立即运行 was pressed. */
+  runAt: string
+  /** When it settled: where the card sits in the topic. */
+  at: string
+  /** The run's session; absent when it never started. */
+  sessionId?: string
+  /** The topic it was delivered in; absent while the Agent had no topic (shown on its new topic, then kept by the next). */
+  topicId?: string
+  /** The start of the run's last reply. */
+  reply?: string
+  replyTruncated?: true
+  /** What the run changed or produced, from its changes and observed outputs. */
+  files?: ScheduleResultFile[]
+  /** Files beyond those listed. */
+  filesMore?: number
+  /** Why it did not complete, as the run's failure note says it, with that note's error code for the next step. */
+  failure?: { reason: string; code?: string }
+  /** The run's session was deleted: its reply and files went with it. */
+  contentRemoved?: true
+}
+export interface ScheduleResultList {
+  results: ScheduleResult[]
+}
+/** What the snapshot says of an owner's result cards: how many wait for a topic, and when any last changed. */
+export interface AgentResultState {
+  unbound: number
+  at: string
 }

@@ -13,7 +13,13 @@ export const AGENT_ACTIONS = {
     via: z.enum(['proposal', 'undo']).optional(),
   }),
   /** A memory proposal kept pending for the person; never its text. */
-  'agent.memory.proposed': z.strictObject({ origin: z.enum(['user', 'agent']), external: z.boolean(), customAgentId: opaqueId.optional() }),
+  'agent.memory.proposed': z.strictObject({
+    origin: z.enum(['user', 'agent']),
+    external: z.boolean(),
+    customAgentId: opaqueId.optional(),
+    /** A memory or a schedule; absent on records written before schedules could be proposed. */
+    kind: z.enum(['memory', 'schedule']).optional(),
+  }),
   'automation.changed': z.strictObject({ operation: z.enum(['create', 'update', 'delete']), before: hex64, after: hex64 }),
   'automation.ran': z.strictObject({ trigger: z.enum(['schedule', 'manual']), attempt: hex64 }),
   'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),

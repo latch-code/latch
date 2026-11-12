@@ -921,6 +921,24 @@ const scenarios = {
     say(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
     return END
   },
+  // `schedule <name> <daily|weekdays|weekly[:day]> <HH:MM> <prompt>`: calls `propose_schedule` on the session's
+  // `latch-skills` server, reporting the call as a tool row, and says what came back.
+  schedule: async ({ sessionId, input, say, tool }) => {
+    const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-skills')
+    if (!server) {
+      say('no MCP server')
+      return END
+    }
+    const [, name = '', when = '', time = '', ...rest] = input.trim().split(/\s+/u)
+    const [kind, day] = when.split(':')
+    const plan = kind === 'weekly' ? { kind, day: Number(day), time } : { kind, time }
+    const id = `schedule_${Date.now()}`
+    tool({ toolCallId: id, title: 'latch-skills: propose_schedule', kind: 'other', status: 'in_progress', rawInput: { name } })
+    const reply = await server.ask('tools/call', { name: 'propose_schedule', arguments: { name, plan, prompt: rest.join(' ') } })
+    tool({ toolCallId: id, status: reply.result?.isError ? 'failed' : 'completed' }, 'tool_call_update')
+    say(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
+    return END
+  },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.
   skills: async ({ sessionId, say }) => {
     const server = mcpServers.get(sessionId)?.[0]

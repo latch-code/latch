@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   CHANGE_SCOPES,
   isFileMention,
+  type ChangedFile,
   type ChangeScope,
   type DiscardPreview,
   type FileDiff,
@@ -83,7 +84,14 @@ function queryOf(url: string | undefined): { scope: ChangeScope; turnId?: string
 }
 
 /** The changes routes, and what the person's file edits need from the engine and the open runs. */
-export type ChangeRoutes = RouteModule & { edits: Pick<FileEditHooks, 'turnRunning' | 'record'> }
+export type ChangeRoutes = RouteModule & {
+  edits: Pick<FileEditHooks, 'turnRunning' | 'record'>
+  /**
+   * The files a session's own turns changed (session scope, without what changed between its turns), for an Agent's
+   * result cards and 资料库; undefined when the record cannot say. The caller has checked the device may see them.
+   */
+  sessionFiles(sessionId: string): Promise<ChangedFile[] | undefined>
+}
 
 export function createChangeRoutes(context: RouteContext): ChangeRoutes {
   const { audited, actorOf, devices, hub, lifecycle, limits, log, recheck, refresh, requireLocal, sessionRoots } = context
@@ -323,5 +331,37 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
     },
   }
 
-  return { route, features: () => ({ changes: true }), edits }
+  /** Turns of a session whose files are read, newest first: an Agent's 资料库 looks at what its turns did, not at the folder. */
+  const TURNS_READ = 20
+  /** Settled turns' files, by session and turn, the oldest dropped first. */
+  const TURN_CACHE = 2000
+  const turnFiles = new Map<string, ChangedFile[]>()
+  async function sessionFiles(sessionId: string): Promise<ChangedFile[] | undefined> {
+    try {
+      const { session } = await sessionOf(sessionId)
+      const changes = await engine()
+      // Each turn against its own end: what changed in the shared folder between turns, by anyone, is not this session's.
+      // A turn another session ran beside in the same folder cannot say whose its files are: none of them is shown.
+      const turns = (await changes.turns({ session })).filter(
+        turn => turn.state === 'settled' && !turn.undone && turn.files && !turn.otherSessions?.length,
+      )
+      const files = new Map<string, ChangedFile>()
+      for (const turn of turns.toReversed().slice(0, TURNS_READ)) {
+        // A settled turn's record does not change: each is read once, not on every page or card.
+        const key = `${sessionId}\n${turn.turnId}`
+        let listed = turnFiles.get(key)
+        if (!listed) {
+          listed = (await changes.list({ session, scope: 'turn', turnId: turn.turnId })).files
+          turnFiles.set(key, listed)
+          if (turnFiles.size > TURN_CACHE) turnFiles.delete(turnFiles.keys().next().value!)
+        }
+        for (const file of listed) if (!files.has(`${file.root}\n${file.path}`)) files.set(`${file.root}\n${file.path}`, file)
+      }
+      return [...files.values()]
+    } catch {
+      return undefined
+    }
+  }
+
+  return { route, features: () => ({ changes: true }), edits, sessionFiles }
 }

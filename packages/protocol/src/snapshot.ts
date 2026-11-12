@@ -1,7 +1,7 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
 import type { AgentProposalState, CustomAgentSummary } from './custom-agents.ts'
-import type { AutomationSummary } from './automations.ts'
+import type { AgentResultState, AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
 import type { AppSummary } from './apps.ts'
 import type { ReviewNoteCounts } from './review-notes.ts'
@@ -71,6 +71,8 @@ export interface AppSnapshot {
   automations?: AutomationSummary[]
   /** Memory proposals by owner (an Agent's ID or `general`), under the same condition: counts only, never their text. */
   agentProposals?: Record<string, AgentProposalState>
+  /** Schedule result cards by owner, under the same condition: counts and a time only. */
+  agentResults?: Record<string, AgentResultState>
   /** Handoffs whose source or target is among `tasks`; absent on older Hosts. */
   handoffs?: HandoffSummary[]
   /** Applied plugin pages; absent on older Hosts. */

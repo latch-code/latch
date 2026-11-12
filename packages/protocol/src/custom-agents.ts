@@ -1,4 +1,6 @@
 import type { ModelRef, PluginInfo, TaskMode, TaskSummary } from './types.ts'
+import type { AttachmentRef } from './attachments.ts'
+import type { AutomationRunState, AutomationSchedule, ScheduleResultOutcome } from './automations.ts'
 
 /** The bracket face: a pair of brackets around two eyes on a soft plate. */
 export const AGENT_BRACKETS = ['round', 'curly', 'square', 'angle'] as const
@@ -123,11 +125,25 @@ export interface AgentMemory {
 }
 
 /**
- * Something the agent or the person's 「记住…」 offered to remember. Nothing is saved until the person saves it; there is
- * no automatic saving. `external`: a tool that read outside content ran in that turn before it, or the Host could not tell.
+ * What `propose_schedule` offers: a schedule for the person to open in the schedule editor and save there. `content` of
+ * its proposal is the input each run would get.
+ */
+export interface ScheduleProposalPlan {
+  name: string
+  plan: AutomationSchedule
+}
+
+/**
+ * Something the agent or the person's 「记住…」 offered to remember, or (`kind: 'schedule'`) a schedule the agent offered
+ * to set up. Nothing is saved until the person saves it; there is no automatic saving. `external`: a tool that read
+ * outside content ran in that turn before it, or the Host could not tell.
  */
 export interface MemoryProposal {
   id: string
+  /** Absent: a memory. */
+  kind?: 'schedule'
+  /** A schedule proposal: its name and when; `content` is each run's input. */
+  schedule?: ScheduleProposalPlan
   content: string
   /** The agent's reason, when it gave one. */
   reason?: string
@@ -139,6 +155,8 @@ export interface MemoryProposal {
   updatedAt: string
   /** The memory it became. */
   memoryId?: string
+  /** A schedule proposal: the schedule the person saved from it. */
+  automationId?: string
 }
 export interface MemoryProposalList {
   proposals: MemoryProposal[]
@@ -206,6 +224,69 @@ export interface GeneralAgentDetail {
   general: GeneralAgent
   memories: AgentMemory[]
   memoryChanges: AgentMemoryChange[]
+}
+
+/**
+ * One row of an Agent's 动态, derived from the Host's own records (sessions, schedule runs, result cards, memories and
+ * proposals); never invented, never a memory's or a proposal's text.
+ */
+export type AgentActivityItem =
+  | { kind: 'topic'; id: string; at: string; sessionId: string; title: string }
+  | {
+      kind: 'run'
+      id: string
+      at: string
+      automationId: string
+      name: string
+      state: AutomationRunState
+      sessionId?: string
+    }
+  | { kind: 'result'; id: string; at: string; resultId: string; name: string; outcome: ScheduleResultOutcome; topicId?: string }
+  | { kind: 'memory'; id: string; at: string; change: 'added' | 'updated' | 'deleted'; memoryId: string }
+  | {
+      kind: 'proposal'
+      id: string
+      at: string
+      proposalId: string
+      proposal: 'memory' | 'schedule'
+      state: MemoryProposal['state']
+      sessionId: string
+    }
+export interface AgentActivityPage {
+  items: AgentActivityItem[]
+  /** Pass as `before` for the next page; absent on the last. */
+  next?: string
+}
+
+/**
+ * One file of an Agent's 资料库: a file one of its sessions changed or produced (from the session's changes and the turns'
+ * observed outputs), or an attachment the person gave it. Opened through the session it belongs to, under that session's
+ * file rules.
+ */
+export type AgentLibraryItem =
+  | {
+      kind: 'file'
+      sessionId: string
+      root: string
+      path: string
+      change: 'created' | 'modified' | 'deleted'
+      at: string
+    }
+  | { kind: 'attachment'; sessionId: string; messageId: string; attachment: AttachmentRef; at: string }
+/** The files of one session, newest session first. */
+export interface AgentLibraryGroup {
+  sessionId: string
+  title: string
+  at: string
+  /** A run of this schedule, not a topic. */
+  automationId?: string
+  items: AgentLibraryItem[]
+  /** More files than a group lists. */
+  more?: number
+}
+export interface AgentLibraryPage {
+  groups: AgentLibraryGroup[]
+  next?: string
 }
 
 export interface SessionAgentRef {

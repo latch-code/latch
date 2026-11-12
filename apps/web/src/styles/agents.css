@@ -1236,3 +1236,218 @@ button.agent-memory-topic:hover {
     gap: var(--sp-4);
   }
 }
+
+/* A schedule's result in the conversation: a Host record, never a message. */
+.schedule-results {
+  display: grid;
+  gap: var(--sp-12);
+  margin: var(--sp-24) 0;
+}
+.schedule-result {
+  display: grid;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.schedule-result-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.schedule-result-head > strong {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-weight: 500;
+}
+.schedule-result-name {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schedule-result-head > time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.schedule-result-head > .ui-status-word {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+.schedule-result-body {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.schedule-result-reason {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.schedule-result-reply {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.schedule-result-more {
+  justify-self: start;
+}
+.schedule-result-muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.schedule-result-files,
+.agent-library-files {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.schedule-result-files > li,
+.agent-library-files > li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.schedule-result-files svg,
+.agent-library-files svg {
+  flex-shrink: 0;
+}
+.schedule-result-file,
+.agent-library-file {
+  overflow: hidden;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.schedule-result-file:hover,
+button.agent-library-file:hover {
+  text-decoration: underline;
+}
+button.schedule-result-file:focus-visible,
+button.agent-library-file:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-4);
+}
+.schedule-result-change,
+.agent-library-kind {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+.schedule-result-files > li[data-change='deleted'] .is-mono {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.schedule-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+.agent-chat-results {
+  width: 100%;
+  max-width: var(--content-width);
+  margin-inline: auto;
+}
+
+/* 动态 and 资料库 in the profile. */
+.agent-activity-bucket {
+  display: grid;
+  gap: var(--sp-6);
+}
+.agent-activity-bucket > h4,
+.agent-library-head time {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.agent-activity-lead {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.agent-recent-static {
+  cursor: default;
+}
+.agent-library {
+  display: grid;
+  gap: var(--sp-12);
+}
+.agent-library-group {
+  display: grid;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agent-library-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: start;
+}
+.agent-library-head > .agent-recent-title {
+  flex: 1;
+}
+.agent-library-head:hover > .agent-recent-title {
+  text-decoration: underline;
+}
+.agent-library-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-4);
+}
+.agent-library-head > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.memory-proposal-input {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-schedule-from {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.schedule-results-more {
+  justify-self: start;
+}

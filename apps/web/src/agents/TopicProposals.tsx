@@ -5,6 +5,8 @@ import { StatusWord } from '@latch/ui'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { topicOwner } from './chat.ts'
 import { ProposalRow } from './ProposalRow.tsx'
+import { ScheduleProposalRow } from './ScheduleProposalRow.tsx'
+import { proposalDraft } from './activity.ts'
 import { effectWords, placeProposals } from './proposals.ts'
 import { useProposals } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
@@ -14,7 +16,7 @@ import { useAgentWrites } from './useAgentWrites.ts'
  * takes. Undefined outside 我的 Agent and while there are none.
  */
 export function useTopicProposals(
-  shell: Pick<ShellState, 'snapshot' | 'catalog' | 'connection' | 'access' | 'refresh'>,
+  shell: Pick<ShellState, 'snapshot' | 'catalog' | 'connection' | 'access' | 'refresh' | 'openProfile'>,
   detail: TaskDetail | null,
 ): ((turns: ReadonlyArray<{ key: string }>) => ReadonlyMap<string, ReactNode>) | undefined {
   const owner = detail ? (topicOwner(detail.summary) ?? null) : null
@@ -43,13 +45,34 @@ export function useTopicProposals(
   if (!proposals.length && !refusals.length) return undefined
   const effect = effectWords(shell.catalog?.harnesses.find(harness => harness.id === detail.summary.harnessId))
   const disabled = shell.connection === 'offline' || !shell.access.scopes.has('run')
+  const schedulesOn = shell.catalog?.features?.automations === true
+  const defaultProject = shell.snapshot.customAgents?.find(agent => agent.id === owner)?.defaultProjectId
   return turns =>
     new Map(
       [...placeProposals([...proposals, ...refusals], sessionId, detail.messages, turns)].map(([key, items]) => [
         key,
         <div key={`proposals:${key}`} className="memory-proposals">
           {items.map(proposal =>
-            proposal.id.startsWith('refused:') ? (
+            proposal.kind === 'schedule' ? (
+              <ScheduleProposalRow
+                key={proposal.id}
+                owner={owner}
+                proposal={proposal}
+                writes={writes}
+                disabled={disabled}
+                {...(schedulesOn
+                  ? {
+                      onOpen: () => {
+                        shell.openProfile(owner, 'schedules', {
+                          proposalId: proposal.id,
+                          draft: proposalDraft(proposal, defaultProject),
+                          external: proposal.external,
+                        })
+                      },
+                    }
+                  : {})}
+              />
+            ) : proposal.id.startsWith('refused:') ? (
               <p key={proposal.id} className="memory-proposal-refused" role="status">
                 <StatusWord tone="failed">没有记下</StatusWord>
                 <span>{proposal.content}</span>

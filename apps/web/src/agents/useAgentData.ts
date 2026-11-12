@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, MemoryProposalList } from '@latch/protocol'
+import type {
+  AppSnapshot,
+  CustomAgentDetail,
+  CustomAgentList,
+  GeneralAgentDetail,
+  MemoryProposalList,
+  ScheduleResultList,
+} from '@latch/protocol'
+import { resultsVersion } from './activity.ts'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { api, ApiError, errorMessage } from '../core/api.ts'
 import { lockedRead, readsAgents } from './model.ts'
@@ -73,6 +81,15 @@ export function useProposals(snapshot: Pick<AppSnapshot, 'device' | 'customAgent
   const state = owner === null ? undefined : snapshot.agentProposals?.[owner]
   const version = `${state?.pending ?? 0}:${state?.at ?? ''}:${snapshot.customAgents === undefined ? 'absent' : 'present'}`
   return useAgentRead<MemoryProposalList>(snapshot, owner === null ? null : `custom-agents/${encodeURIComponent(owner)}/proposals`, version)
+}
+
+/** An owner's result cards still waiting for a topic, read again whenever the snapshot says its cards changed. */
+export function useWaitingResults(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'agentResults'>, owner: string | null) {
+  return useAgentRead<ScheduleResultList>(
+    snapshot,
+    owner === null ? null : `custom-agents/${encodeURIComponent(owner)}/results`,
+    owner === null ? '' : resultsVersion(snapshot, owner),
+  )
 }
 
 export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>) {

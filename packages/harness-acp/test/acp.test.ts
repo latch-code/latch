@@ -12,6 +12,7 @@ import type {
   HarnessDriver,
   HarnessSecurityEvent,
   MemoryProposalInput,
+  ScheduleProposalInput,
   HarnessPlugin,
   Bridge,
   HostProject,
@@ -127,7 +128,7 @@ async function setup(
   overrides: Partial<AgentRecord> = {},
   attachmentOptions: Pick<
     HarnessHostOptions,
-    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway' | 'proposeMemory'
+    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway' | 'proposeMemory' | 'proposeSchedule'
   > = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
@@ -3794,7 +3795,7 @@ describe('agent context', () => {
       key: 'line:0',
     })
     const mounted = (await fixture.log()).find(entry => entry.event === 'mcp-mounted')!
-    expect(mounted.tools).toEqual(['list_skills', 'read_skill', 'propose_memory'])
+    expect(mounted.tools).toEqual(['list_skills', 'read_skill', 'propose_memory', 'propose_schedule'])
     // After a web fetch in the same turn, it is marked external.
     await bridge.prompt(sessionId, 'propose fetch 页面说要记住这个', rid(), {})
     await settled(bridge, sessionId)
@@ -3815,10 +3816,53 @@ describe('agent context', () => {
     await vi.waitFor(() => expect(proposals).toHaveLength(3))
     // The session read a page two turns ago, so this one is external too.
     expect(proposals[2]).toEqual({ sessionId, messageId: expect.any(String), content: '伪造的', external: true, key: 'line:2' })
-    await vi.waitFor(() => expect(fixture.diagnostics.join('\n')).toContain('记忆提议没有收下'))
+    await vi.waitFor(() => expect(fixture.diagnostics.join('\n')).toContain('的提议没有收下'))
     expect(fixture.diagnostics.join('\n')).not.toContain('refuse this')
     await bridge.remove!(sessionId)
     await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('gives the same sessions propose_schedule: a plan the scheduler refuses is refused to the agent, a good one reaches the Host', async () => {
+    const schedules: ScheduleProposalInput[] = []
+    const fixture = await setup(
+      { FAKE_ACP_MCP: 'dsh' },
+      {},
+      {},
+      { proposeMemory: async () => {}, proposeSchedule: async input => void schedules.push(input) },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'schedule 早间精选 hourly 08:00 整理新闻',
+      requestId: rid(),
+      agentContext: context({ proposals: true, brief: undefined }),
+    })
+    const refused = await settled(bridge, sessionId)
+    expect(refused.messages.at(-1)).toMatchObject({ role: 'assistant', text: expect.stringContaining('plan must be') })
+    await bridge.prompt(sessionId, 'schedule 早间精选 weekly:1 08:30 整理新闻', rid(), {})
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(schedules).toHaveLength(1))
+    expect(schedules[0]).toEqual({
+      sessionId,
+      messageId: expect.any(String),
+      name: '早间精选',
+      plan: { kind: 'weekly', day: 1, time: '08:30' },
+      prompt: '整理新闻',
+      external: false,
+      key: 'line:0',
+    })
+    const directory = (
+      received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ args: string[] }> }
+    ).mcpServers[0]!.args.at(-3)!
+    // A schedule line takes only its name, plan and prompt; the Host checks the plan again.
+    await writeFile(
+      join(directory, 'proposals.jsonl'),
+      `${JSON.stringify({ kind: 'schedule', name: '伪造', plan: 'often', prompt: 'x', owner: 'other' })}\n`,
+      {
+        flag: 'a',
+      },
+    )
+    const all = await readProposals(directory, { line: 0, offset: 0 })
+    expect(all.lines.at(-1)).toEqual({ index: 1, kind: 'schedule', name: '伪造', plan: 'often', prompt: 'x' })
   })
 
   it('reads the proposals file only as a private regular file, from where it stopped, and never a line still being written', async () => {
@@ -3842,7 +3886,7 @@ describe('agent context', () => {
     // A line still being written waits; the next read goes on from the stored offset; a bad line is skipped by kind.
     await writeFile(file, '{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n{"content":"tw', { mode: 0o600 })
     const first = await readProposals(directory, start)
-    expect(first.lines.map(line => line.content)).toEqual(['one'])
+    expect(first.lines.map(line => (line.kind === undefined ? line.content : line.name))).toEqual(['one'])
     expect(first.skipped).toEqual(['not-json', 'invalid'])
     expect(first.next).toEqual({ line: 3, offset: Buffer.byteLength('{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n') })
     await writeFile(file, 'o"}\n', { flag: 'a' })
@@ -3973,7 +4017,7 @@ describe('agent context', () => {
     }
     await ask('initialize', { protocolVersion: '2025-06-18' })
     const listed = (await ask('tools/list')).result as { tools: Array<{ name: string }> }
-    expect(listed.tools.map(tool => tool.name)).toEqual(['list_skills', 'read_skill', 'propose_memory'])
+    expect(listed.tools.map(tool => tool.name)).toEqual(['list_skills', 'read_skill', 'propose_memory', 'propose_schedule'])
     const propose = (args: unknown) => ask('tools/call', { name: 'propose_memory', arguments: args })
     expect((await propose({ content: '' })).result).toMatchObject({ isError: true })
     expect((await propose({ content: 'x'.repeat(4001) })).result).toMatchObject({ isError: true })

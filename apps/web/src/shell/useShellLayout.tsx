@@ -36,6 +36,7 @@ import { backRoute, initialRoute, useSpaces } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
 import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
+import type { SchedulePrefill } from '../agents/activity.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId } from '../core/api.ts'
@@ -313,7 +314,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * The profile of the Agent in view, opened from its face or name (or a link to one of its sections): on wide windows
    * in the right panel's place, in turn with the panel's surfaces; on phones in a bottom sheet.
    */
-  const [profile, setProfile] = useState<{ owner: string; section?: ProfileSection; nonce: number } | null>(null)
+  const [profile, setProfile] = useState<{ owner: string; section?: ProfileSection; nonce: number; prefill?: SchedulePrefill } | null>(null)
   const profileOwner =
     route.entry === 'agents'
       ? route.myAgent?.id !== 'new'
@@ -579,9 +580,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     setRoute({ entry: 'agents', ...(opening.target ? { myAgent: opening.target } : {}) })
   }
-  /** The profile of the Agent in view, at a section; again on the same section brings it back to the top. */
-  const openProfile = (owner: string, section?: ProfileSection) => {
-    setProfile(previous => ({ owner, ...(section ? { section } : {}), nonce: (previous?.nonce ?? 0) + 1 }))
+  /**
+   * The profile of the Agent in view, at a section; again on the same section brings it back to the top. `prefill` opens
+   * the schedule editor filled in from a schedule proposal.
+   */
+  const openProfile = (owner: string, section?: ProfileSection, prefill?: SchedulePrefill) => {
+    setProfile(previous => ({ owner, ...(section ? { section } : {}), ...(prefill ? { prefill } : {}), nonce: (previous?.nonce ?? 0) + 1 }))
   }
   /** Closing gives focus back to the face that opened it. */
   const closeProfile = () => {

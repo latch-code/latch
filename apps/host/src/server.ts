@@ -14,6 +14,7 @@ import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans, canPropose } from './agent-plans.ts'
+import { currentTopic, resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import { GENERAL_AGENT_ID, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
@@ -97,6 +98,7 @@ import {
   type HarnessDriver,
   type HarnessSecurityEvent,
   type MemoryProposalInput,
+  type ScheduleProposalInput,
   type HostProject,
   type ModelRoute,
   type ProjectFolder,
@@ -1448,7 +1450,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function agentSummaries(
       caller: Caller,
       tasks: readonly TaskSummary[],
-    ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals'> {
+    ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals' | 'agentResults'> {
       if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all') return {}
       if (caller.nativeOpening && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now()) return {}
       // Absent, as on a Host without them, while a write is being confirmed: the rest of the app has nothing to wait for.
@@ -1457,6 +1459,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         customAgents: customAgents.list().map(agent => agentPlans.summary(agent, tasks)),
         automations: automations.list().map(automationSummary),
         agentProposals: customAgents.proposalStates(),
+        agentResults: automations.resultStates(),
       }
     }
     function questionSummary(task: TaskSummary): TaskSummary {
@@ -2128,8 +2131,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         access: agentAccess,
         sessions: () => hub!.listTasks(),
         plugins: enabledPluginInfo,
+        detail: id => hub!.detail(id),
+        sessionFiles: id => changeRoutes.sessionFiles(id),
       },
-      automations: { automations: () => automations, access: agentAccess },
+      automations: {
+        automations: () => automations,
+        access: agentAccess,
+        proposalCheck(owner, proposalId, replay) {
+          const found = customAgents.proposals(owner).find(row => row.id === proposalId)
+          if (found?.kind !== 'schedule') throw new AppError(404, 'agent-proposal-not-found', '找不到这条定时提议。')
+          // Only a retry of the request that saved it finds it saved; nothing else saves it twice.
+          if (found.state === 'dismissed' || (found.state === 'saved' && !replay))
+            throw new AppError(409, 'agent-proposal-decided', '这条提议已经处理过了。')
+        },
+        async proposalSaved(owner, proposalId, input, actor) {
+          const marked = await customAgents.scheduleSaved(owner, proposalId, input, actor)
+          refresh()
+          return marked
+        },
+      },
       handoffs: { handoffs: () => handoffs },
       history: { history: () => historyImports },
       reviewNotes: {
@@ -2257,28 +2277,58 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * start has been recorded, so it waits a little for that. Kept pending for the person, never saved here.
      */
     async function proposeFromAgent(driver: HarnessDriver, input: MemoryProposalInput): Promise<void> {
-      // A driver proposes only into its own sessions, of an Agent or 通用, on a Harness the Host gives `proposals` to.
-      const own = () =>
-        hub?.ownerOf(input.sessionId) === driver.id && hub.proposalsOf(input.sessionId) && sessionOwner(input.sessionId) !== undefined
-      for (let attempt = 0; !own() && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 100))
-      const owner = own() ? sessionOwner(input.sessionId) : undefined
-      const harness = hub?.info(driver.id)
-      if (owner === undefined || !harness || !canPropose(harness))
-        throw new AppError(409, 'agent-proposal-session', 'This session cannot propose memories.')
-      // Only Latch's own loops can tell what a turn read; another driver's word that it read nothing is not taken.
-      const trusted = kindOf(driver) !== 'plugin'
+      const { owner, external } = await proposingSession(driver, input)
       await customAgents.propose({
         owner,
         key: `agent:${input.sessionId}:${input.key}`,
         content: input.content,
         ...(input.reason ? { reason: input.reason } : {}),
         origin: 'agent',
-        // Nobody watched what a scheduled run read; the driver says so too, this covers a run it could not tell.
-        external: input.external || !trusted || hub?.automationOf(input.sessionId) !== undefined,
+        external,
         source: { sessionId: input.sessionId, ...(input.messageId ? { messageId: input.messageId } : {}) },
         actor: { listener: 'host' },
       })
       refresh()
+    }
+    /**
+     * A driver's `propose_schedule`: through the same session check, caps, secret check, external mark and audit as a
+     * memory proposal. Its plan is checked against the scheduler's own schema; refusals are in English, for the agent.
+     * Nothing is created: the person opens it in the schedule editor and saves it there.
+     */
+    async function proposeScheduleFromAgent(driver: HarnessDriver, input: ScheduleProposalInput): Promise<void> {
+      const { owner, external } = await proposingSession(driver, input)
+      await customAgents.propose({
+        owner,
+        key: `agent:${input.sessionId}:${input.key}`,
+        content: input.prompt,
+        schedule: { name: input.name, plan: input.plan },
+        origin: 'agent',
+        external,
+        source: { sessionId: input.sessionId, ...(input.messageId ? { messageId: input.messageId } : {}) },
+        actor: { listener: 'host' },
+      })
+      refresh()
+    }
+    /**
+     * The owner of a session a driver proposes into, from the Host's records; a first turn may ask before its start has
+     * been recorded, so it waits a little for that. A driver proposes only into its own sessions, of an Agent or 通用, on a
+     * Harness the Host gives `proposals` to.
+     */
+    async function proposingSession(
+      driver: HarnessDriver,
+      input: Pick<MemoryProposalInput, 'sessionId' | 'external'>,
+    ): Promise<{ owner: string; external: boolean }> {
+      const own = () =>
+        hub?.ownerOf(input.sessionId) === driver.id && hub.proposalsOf(input.sessionId) && sessionOwner(input.sessionId) !== undefined
+      for (let attempt = 0; !own() && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 100))
+      const owner = own() ? sessionOwner(input.sessionId) : undefined
+      const harness = hub?.info(driver.id)
+      if (owner === undefined || !harness || !canPropose(harness))
+        throw new AppError(409, 'agent-proposal-session', 'This session cannot propose.')
+      // Only Latch's own loops can tell what a turn read; another driver's word that it read nothing is not taken.
+      const trusted = kindOf(driver) !== 'plugin'
+      // Nobody watched what a scheduled run read; the driver says so too, this covers a run it could not tell.
+      return { owner, external: input.external || !trusted || hub?.automationOf(input.sessionId) !== undefined }
     }
     /**
      * The person's own 「记住…」 in a session of 我的 Agent: a proposal from their words, which they still save. Their
@@ -2390,6 +2440,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       detail: id => hub!.detail(id),
       cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
       approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
+      /** The owner's current topic, and what the run said and touched; read when the run settles. */
+      async resultContent(run) {
+        const tasks = await hub!.listTasks().catch(() => [] as TaskSummary[])
+        const topic = currentTopic(tasks, run.owner)
+        const files = run.sessionId && run.detail ? await changeRoutes.sessionFiles(run.sessionId) : undefined
+        return { ...(topic ? { topicId: topic.id } : {}), ...resultContent(run.outcome, run.detail, files, run.refused) }
+      },
+      async exists(id) {
+        if (!hub) throw new Error('Sessions are not ready.')
+        try {
+          await hub.summary(id)
+          return true
+        } catch (error) {
+          if (error instanceof AppError && error.status === 404) return false
+          throw error
+        }
+      },
+      resultsChanged: topics => {
+        for (const topic of topics) refresh(topic)
+        refresh()
+      },
       async start({ requestId, automationId, title, prompt, projectId, plan, authorize }) {
         authorize()
         // In flight like any other start until it settles, so the install waits for it.
@@ -2533,6 +2604,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
     startupCleanup.push(() => reviewNotes.close())
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
+      void automations.sessionDeleted(sessionId).catch(error => log(`会话 ${sessionId} 删除后定时结果没有更新：${errorText(error)}`))
+    })
     /**
      * One queue per project ID (`'default'` for the start directory): a start cannot enter a project between a removal's
      * in-use check and its committed settings write, and a start in a new worktree holds its project until the session
@@ -3284,6 +3358,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             securityEvent,
             clock,
             proposeMemory: input => proposeFromAgent(driver, input),
+            proposeSchedule: input => proposeScheduleFromAgent(driver, input),
             // Only a driver that says it can be pointed at a service gets tokens for one.
             ...(hub!.info(driver.id)?.capabilities.models.wires.length ? { modelGateway } : {}),
             trackFiles: async input => {
@@ -4647,6 +4722,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         queue: promptQueues.view(sessionId),
         questions: questions.view(sessionId),
         ...(memoryRefusals.get(sessionId)?.length ? { memoryRefusals: memoryRefusals.get(sessionId)! } : {}),
+        // Cards go only into topics of 我的 Agent, which are private: only a device with the full data scope reads them.
+        ...(hub!.agentPrivate(sessionId) && automations.resultsIn(sessionId).length ? { results: automations.resultsIn(sessionId) } : {}),
         approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, level, detail.summary))),
       }
     }
@@ -5442,6 +5519,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       const started = await startSession(caller, input, res)
+      // A new topic of 我的 Agent keeps the result cards that waited for one.
+      if (input.customAgentId && !input.forkOf)
+        await automations
+          .adoptResults(input.customAgentId, started.sessionId)
+          .catch(error => log(`新话题没有收下定时结果：${errorText(error)}`))
       const refused =
         input.customAgentId && input.prompt && !input.forkOf
           ? await rememberFromPerson(

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
@@ -12,6 +12,9 @@ import { NewTopic } from './NewTopic.tsx'
 import { dutyLine, GENERAL_NAME, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { TopicFrame } from './TopicFrame.tsx'
+import { ResultStack } from './TopicResults.tsx'
+import { useWaitingResults } from './useAgentData.ts'
+import { useAgentWrites } from './useAgentWrites.ts'
 
 /**
  * A conversation with an Agent on a new topic: its frame on top (the face and name open the profile, 话题 ▾ goes back to
@@ -29,6 +32,11 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const duty = general ? '没选别的 Agent 的会话都带上它' : agent ? dutyLine(agent) : ''
   const earlier = agentTopics(snapshot.tasks, owner).open.length > 0
   const locked = !readsAgents(snapshot)
+  // Results of its schedules while it has no topic: they stay here, and the next topic keeps them.
+  const { read: waitingRead } = useWaitingResults(snapshot, locked ? null : owner)
+  const waiting = 'value' in waitingRead && waitingRead.value ? waitingRead.value.results : []
+  const refreshShell = shell.refresh
+  const writes = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
   // 新对话… or 新话题 asked for the input: it takes the keys once it is drawn.
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -54,11 +62,16 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
           ) : confirming ? (
             <EmptyState title="正在确认上一项修改" />
           ) : (
-            <div className="agent-chat-intro">
-              <AgentAvatar avatar={agent?.avatar ?? 'general'} size={56} />
-              <h1>{earlier ? '新话题' : name}</h1>
-              {!earlier && duty && <p>{duty}</p>}
-            </div>
+            <>
+              <div className="agent-chat-intro">
+                <AgentAvatar avatar={agent?.avatar ?? 'general'} size={56} />
+                <h1>{earlier ? '新话题' : name}</h1>
+                {!earlier && duty && <p>{duty}</p>}
+              </div>
+              {waiting.length > 0 && (
+                <ResultStack shell={shell} owner={owner} results={waiting} writes={writes} className="agent-chat-results" />
+              )}
+            </>
           )}
         </div>
         {!locked && !missing && !confirming && (
@@ -74,6 +87,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
             owner={owner}
             section={shell.profileShown.section}
             nonce={shell.profileShown.nonce}
+            prefill={shell.profileShown.prefill}
             onClose={shell.closeProfile}
           />
         </aside>

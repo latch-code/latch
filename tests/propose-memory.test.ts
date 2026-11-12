@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { RiskLevel } from '@latch/protocol'
-import type { Bridge, MemoryProposalInput, ModelProvider, ToolDefinition } from '@latch/sdk'
-import { createRuntime, PROPOSE_MEMORY_TOOL, SESSION_PROPOSAL_LIMIT } from '@latch/core'
+import type { Bridge, MemoryProposalInput, ModelProvider, ScheduleProposalInput, ToolDefinition } from '@latch/sdk'
+import { createRuntime, PROPOSE_MEMORY_TOOL, PROPOSE_SCHEDULE_TOOL, SESSION_PROPOSAL_LIMIT } from '@latch/core'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -269,5 +269,56 @@ it('stops a session at 32 proposals and tells the agent so', async () => {
   }
   expect(proposed).toHaveLength(SESSION_PROPOSAL_LIMIT)
   const last = (await bridge.detail(sessionId)).messages.filter(message => message.role === 'tool').at(-1)
-  expect(last?.tool?.output).toBe('TOOL_ERROR: This session has proposed as many memories as it may.')
+  expect(last?.tool?.output).toBe('TOOL_ERROR: This session has proposed as much as it may.')
 }, 60_000)
+
+it('offers propose_schedule beside propose_memory, without asking, hands the Host the plan as sent and gives the model its refusal', async () => {
+  const offered: string[][] = []
+  const schedules: ScheduleProposalInput[] = []
+  const dataDir = await mkdtemp(join(tmpdir(), 'latch-propose-'))
+  cleanups.push(() => rm(dataDir, { recursive: true, force: true }))
+  const classifyToolCall = vi.fn(async (): Promise<RiskLevel> => 'R2')
+  const provider = scripted(
+    [
+      { name: PROPOSE_SCHEDULE_TOOL, arguments: { name: '早间', plan: { kind: 'hourly' }, prompt: '整理' } },
+      { name: PROPOSE_SCHEDULE_TOOL, arguments: { name: ' 早间 ', plan: { kind: 'daily', time: '08:00' }, prompt: ' 整理新闻 ' } },
+    ],
+    offered,
+  )
+  const bridge: Bridge = createRuntime({
+    dataDir,
+    workspaceRoot: dataDir,
+    registry: { acquire: () => ({ provider, tools: [], release: () => {} }) },
+    providerId: 'fixture',
+    classifyToolCall,
+    proposeMemory: async () => {},
+    async proposeSchedule(input) {
+      if ((input.plan as { kind?: string }).kind === 'hourly') throw new Error('The plan must be daily, weekdays or weekly.')
+      schedules.push(input)
+    },
+  })
+  cleanups.push(() => bridge.close())
+  const { sessionId } = await bridge.createTask({
+    prompt: 'hi',
+    requestId: 'schedule',
+    mode: 'chat',
+    agentContext: { ...context, proposals: true },
+  })
+  const detail = await settled(bridge, sessionId)
+  expect(offered[0]).toEqual([PROPOSE_MEMORY_TOOL, PROPOSE_SCHEDULE_TOOL])
+  expect(classifyToolCall).not.toHaveBeenCalled()
+  const outputs = detail.messages.filter(message => message.role === 'tool').map(message => message.tool?.output)
+  expect(outputs[0]).toContain('The plan must be')
+  expect(outputs[1]).toContain('nothing is scheduled yet')
+  expect(schedules).toEqual([
+    {
+      sessionId,
+      messageId: expect.any(String),
+      name: '早间',
+      plan: { kind: 'daily', time: '08:00' },
+      prompt: '整理新闻',
+      external: false,
+      key: expect.stringMatching(/^call:[0-9a-f-]{36}:call-1$/u),
+    },
+  ])
+})

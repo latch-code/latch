@@ -28,6 +28,7 @@ import { AppError } from '@latch/sdk'
 import { canonicalJson, containsSecret, redactSecrets, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
 import { AgentJournal } from './agent-journal.ts'
 import type { AuditActor, AuditLog } from './audit.ts'
+import { scheduleSchema } from './schedule.ts'
 
 export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
 const MAX_AGENTS = 64
@@ -149,9 +150,14 @@ const memorySchema = z.strictObject({
   updatedAt: stamp,
   source: memoryOrigin.optional(),
 })
+const automationId = z.string().regex(/^auto_[a-f0-9-]{36}$/u)
+/** A schedule proposal's name and when; its `content` is each run's input. */
+const scheduleProposal = z.strictObject({ name, plan: scheduleSchema })
 const proposalSchema = z
   .strictObject({
     id: proposalId,
+    kind: z.literal('schedule').optional(),
+    schedule: scheduleProposal.optional(),
     /** One proposal per key: a driver's channel position, or the person's message by its request. */
     key: hash,
     /** Empty once the memory it became is gone for good (`purged`): the row keeps only its ids and state. */
@@ -164,9 +170,15 @@ const proposalSchema = z
     createdAt: stamp,
     updatedAt: stamp,
     memoryId: memoryId.optional(),
+    automationId: automationId.optional(),
     purged: z.literal(true).optional(),
   })
   .refine(row => (row.content === '') === (row.purged === true) && (!row.purged || (row.state === 'saved' && row.reason === undefined)))
+  .refine(
+    row =>
+      (row.kind === 'schedule') === (row.schedule !== undefined)
+      && (row.kind === 'schedule' ? row.memoryId === undefined && row.origin === 'agent' && !row.purged : row.automationId === undefined),
+  )
 const changeSchema = z.strictObject({ memoryId, operation: z.enum(['update', 'delete']), at: stamp, previous: memorySchema })
 const generalSchema = z.strictObject({
   id: z.literal(GENERAL_AGENT_ID),
@@ -467,10 +479,35 @@ export class CustomAgents {
     external: boolean
     source: MemorySource
     actor: AuditActor
+    /** A schedule proposal: its name and plan, as the agent sent them; `content` is each run's input. */
+    schedule?: { name: string; plan: unknown }
   }): Promise<MemoryProposal> {
     memoryOwner.parse(input.owner)
-    const text = input.content.trim(),
+    // A schedule's input is read whole before saving: runs of blank lines, which could push text out of view, are one.
+    const trimmed = input.content.trim(),
+      text = input.schedule ? trimmed.replace(/(?:[ \t]*\n){3,}/gu, '\n\n') : trimmed,
       why = input.reason?.trim() ?? ''
+    // A schedule proposal is refused to the agent in its own words; checked against the scheduler's own schema.
+    let plan: z.infer<typeof scheduleProposal> | undefined
+    if (input.schedule) {
+      if (input.origin !== 'agent') throw new AppError(400, 'agent-proposal-kind', 'Only an agent proposes schedules.')
+      const named = name.safeParse(input.schedule.name)
+      if (!named.success)
+        throw new AppError(400, 'agent-schedule-invalid', 'The name must be 1 to 80 characters, with no control characters.')
+      const when = scheduleSchema.safeParse(input.schedule.plan)
+      if (!when.success)
+        throw new AppError(
+          400,
+          'agent-schedule-invalid',
+          'The plan must be {"kind":"daily"|"weekdays","time":"HH:MM"} or {"kind":"weekly","day":0-6,"time":"HH:MM"}, 0 being Sunday.',
+        )
+      if (!text || text.length > 4000) throw new AppError(413, 'agent-schedule-invalid', 'The prompt must be 1 to 4000 characters.')
+      if (looksSecret(text) || looksSecret(named.data))
+        throw new AppError(422, 'agent-memory-secret', 'It looks like a secret or credential, so it was not proposed.')
+      if (!proposalContent.safeParse(text).success)
+        throw new AppError(400, 'agent-schedule-invalid', 'The prompt has hidden or control characters, so it was not proposed.')
+      plan = { name: named.data, plan: when.data }
+    }
     if (!text) throw new AppError(400, 'agent-memory-empty', '提议的记忆是空的。')
     if (text.length > 4000 || why.length > 500) throw new AppError(413, 'agent-memory-too-long', '记忆最多 4000 字，理由最多 500 字。')
     if (looksSecret(text) || looksSecret(why)) throw new AppError(422, 'agent-memory-secret', '内容像是密钥或凭据，没有记下。')
@@ -480,7 +517,7 @@ export class CustomAgents {
     const parsedSource = source.safeParse(input.source)
     if (!parsedSource.success) throw new AppError(400, 'agent-proposal-source', '提议的来源无效，没有记下。')
     const key = digest(['proposal', input.owner, input.key]),
-      payload = digest([input.owner, input.key, text, why, input.origin, input.external, parsedSource.data])
+      payload = digest([input.owner, input.key, text, why, input.origin, input.external, parsedSource.data, plan ?? null])
     const id = await this.journal.change(key, payload, async state => {
       this.assertOwner(state, input.owner)
       this.prune(state)
@@ -492,11 +529,12 @@ export class CustomAgents {
         throw new AppError(
           409,
           'agent-proposal-limit',
-          'Too many of your memory proposals are waiting for the user. Propose again after the user has decided on them.',
+          'Too many of your proposals are waiting for the user. Propose again after the user has decided on them.',
         )
       const at = this.at(),
         proposal = {
           id: `prp_${randomUUID()}`,
+          ...(plan ? { kind: 'schedule' as const, schedule: plan } : {}),
           key,
           content: text,
           ...(why ? { reason: why } : {}),
@@ -522,7 +560,7 @@ export class CustomAgents {
           throw new AppError(
             409,
             'agent-proposal-limit',
-            'Your memory proposals waiting for the user are too long in total. Propose again after the user has decided on them.',
+            'Your proposals waiting for the user are too long in total. Propose again after the user has decided on them.',
           )
       }
       // Room comes from decided ones, oldest first: dismissed, then saved. Pending ones wait for the person.
@@ -541,7 +579,7 @@ export class CustomAgents {
         action: 'agent.memory.proposed',
         actor: input.actor,
         target: proposal.id,
-        detail: { origin: input.origin, external: input.external, ...ownerDetail(input.owner) },
+        detail: { origin: input.origin, external: input.external, ...ownerDetail(input.owner), kind: plan ? 'schedule' : 'memory' },
       })
       return { value: proposal.id }
     })
@@ -556,6 +594,7 @@ export class CustomAgents {
       this.assertOwner(state, owner)
       const found = state.proposals[owner]?.find(row => row.id === id)
       if (!found) throw new AppError(404, 'agent-proposal-not-found', '找不到这条提议。')
+      if (found.kind === 'schedule') throw new AppError(409, 'agent-proposal-kind', '这是定时任务的提议，请打开后在定时编辑里保存。')
       if (found.state !== 'pending') throw new AppError(409, 'agent-proposal-decided', '这条提议已经处理过了。')
       const rows = (state.memories[owner] ??= [])
       if (rows.length >= MAX_MEMORIES) throw new AppError(409, 'agent-memory-limit', `一个 Agent 最多保存 ${MAX_MEMORIES} 条记忆。`)
@@ -597,6 +636,42 @@ export class CustomAgents {
         }
         return { target: id, ...ownerDetail(owner) }
       },
+      true,
+    ).then(result => ({ ...result, value: this.decision(owner, id) }))
+  }
+
+  /**
+   * A schedule proposal the person saved in the schedule editor: it now names that schedule. The schedule was created
+   * first, under its own receipt; a retry with the same request finds it saved with the same schedule and answers the same.
+   */
+  scheduleSaved(
+    owner: string,
+    id: string,
+    input: { requestId: string; automationId: string },
+    actor: AgentActor,
+  ): Promise<AgentMutation<MemoryProposalResult>> {
+    memoryOwner.parse(owner)
+    proposalId.parse(id)
+    const saved = automationId.parse(input.automationId)
+    return this.mutate(
+      'update',
+      'proposal',
+      `${owner}/${id}/scheduled/${saved}`,
+      { requestId: requestId.parse(input.requestId) },
+      actor,
+      state => {
+        this.assertOwner(state, owner)
+        const found = state.proposals[owner]?.find(row => row.id === id)
+        if (!found) throw new AppError(404, 'agent-proposal-not-found', '找不到这条提议。')
+        if (found.kind !== 'schedule') throw new AppError(409, 'agent-proposal-kind', '这条提议不是定时任务。')
+        if (found.state === 'saved' && found.automationId === saved) return { target: id, ...ownerDetail(owner) }
+        if (found.state !== 'pending') throw new AppError(409, 'agent-proposal-decided', '这条提议已经处理过了。')
+        found.state = 'saved'
+        found.automationId = saved
+        found.updatedAt = this.at()
+        return { target: id, ...ownerDetail(owner) }
+      },
+      // The schedule is saved already; the proposal's mark follows it even without an audit record.
       true,
     ).then(result => ({ ...result, value: this.decision(owner, id) }))
   }

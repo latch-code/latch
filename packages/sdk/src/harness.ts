@@ -145,6 +145,12 @@ export interface HarnessHostOptions {
    */
   proposeMemory?(input: MemoryProposalInput): Promise<void>
   /**
+   * The same sessions: its agent proposed a schedule (`propose_schedule`). The Host keeps it pending until the person
+   * opens it in the schedule editor and saves it; nothing runs before. Rejects, in English for the agent, when it is
+   * refused (an invalid plan, a secret, too long, too many).
+   */
+  proposeSchedule?(input: ScheduleProposalInput): Promise<void>
+  /**
    * Puts an agent's question to the person, as the built-in `ask_user` tool does: shown on the session's tool row
    * `tool:<callId>`, answered from any device that may run. Resolves with the committed answer (a `QuestionResult` as
    * JSON); rejects when the question closed unanswered or `signal` aborted. The driver then records the row's result and
@@ -153,6 +159,22 @@ export interface HarnessHostOptions {
   askUser?(input: AskUserInput): Promise<{ text: string }>
   /** `unknown`: the row's result could not be written; the device that answered is told so, not that it is done. */
   questionSettled?(context: { sessionId: string; callId: string; state: 'completed' | 'failed' | 'cancelled' | 'unknown' }): Promise<void>
+}
+
+/** A schedule an agent proposed through `propose_schedule`. Only `name`, `plan` and `prompt` come from the agent. */
+export interface ScheduleProposalInput {
+  sessionId: string
+  /** The user message of the turn it came from. */
+  messageId?: string
+  name: string
+  /** As the agent sent it; the Host checks it against the scheduler's own schema. */
+  plan: unknown
+  /** What each run would be sent. */
+  prompt: string
+  /** A tool that read outside content ran in that turn before it, or the driver could not tell. */
+  external: boolean
+  /** Unique within the session's own channel, so a proposal read twice is kept once. */
+  key: string
 }
 
 /** A memory an agent proposed through `propose_memory`. Only `content` and `reason` come from the agent. */

@@ -51,7 +51,7 @@ describe('memory proposals', () => {
     expect(store.memories(agent.id)).toHaveLength(0)
     const proposed = audit.append.mock.calls.map(call => (call as unknown[])[0] as { action: string; detail: unknown })
     const row = proposed.find(entry => entry.action === 'agent.memory.proposed')!
-    expect(row.detail).toEqual({ origin: 'agent', external: false, customAgentId: agent.id })
+    expect(row.detail).toEqual({ origin: 'agent', external: false, customAgentId: agent.id, kind: 'memory' })
     expect(AUDIT_ACTIONS['agent.memory.proposed'].safeParse(row.detail).success).toBe(true)
     expect(JSON.stringify(audit.append.mock.calls)).not.toContain('简短')
     // The file is strict: a field it does not know refuses it, and the original stays.
@@ -157,7 +157,7 @@ describe('memory proposals', () => {
     for (let index = 0; index < MAX_AGENT_PENDING; index++) await store.propose(proposal(agent.id, `a${index}`, `第 ${index} 条`))
     await expect(store.propose(proposal(agent.id, 'over'))).rejects.toMatchObject({
       code: 'agent-proposal-limit',
-      message: expect.stringContaining('Too many of your memory proposals'),
+      message: expect.stringContaining('Too many of your proposals'),
     })
     for (let index = 0; index < MAX_PROPOSALS - MAX_AGENT_PENDING; index++)
       await store.propose({ ...proposal(agent.id, `u${index}`, `人 ${index}`), origin: 'user' })

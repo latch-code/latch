@@ -14,20 +14,31 @@ import type {
   AutomationRunState,
   AutomationSummary,
   ModelRef,
+  ScheduleResult,
+  ScheduleResultFile,
+  ScheduleResultOutcome,
   TaskDetail,
   TaskMode,
 } from '@latch/protocol'
+import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
 import { AgentJournal } from './agent-journal.ts'
 import type { AuditLog } from './audit.ts'
 import { CUSTOM_AGENT_ID, type AgentActor } from './custom-agents.ts'
-import { nextRun, scheduleDate } from './schedule.ts'
+import { nextRun, scheduleDate, scheduleSchema } from './schedule.ts'
 
 const MAX_AUTOMATIONS = 128
 const MAX_RUNS = 50
 const MAX_RECEIPTS = 4096
 const MAX_ATTEMPTS = 2
+/** Ticks (half a second each) a run's card waits for the files observed after it ended. */
+const SETTLE_WAITS = 12
+/** Result cards kept, over every owner; the oldest go first. */
+const MAX_RESULTS = 256
+/** Per owner; the oldest of that owner go first. */
+const OWNER_RESULTS = 64
+export const RESULT_LIMITS = { reply: 2000, files: 20, reason: 300 } as const
 /** A scheduled time counts as met only this soon after it; later than that the Mac was off or asleep. */
 const MISSED_AFTER_MS = 60_000
 /**
@@ -42,12 +53,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const id = z.string().regex(/^auto_[a-f0-9-]{36}$/u)
 const at = z.string().datetime()
 const revision = z.number().int().positive().safe()
-const time = z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u)
-const schedule = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('daily'), time }),
-  z.strictObject({ kind: z.literal('weekdays'), time }),
-  z.strictObject({ kind: z.literal('weekly'), day: z.number().int().min(0).max(6), time }),
-])
+const schedule = scheduleSchema
 const name = z
   .string()
   .trim()
@@ -100,23 +106,71 @@ const row = z.strictObject({
   attempt: z.strictObject({ requestId: z.string().max(256), sessionId: z.string().min(1).max(256).optional() }).optional(),
   /** The due time waiting for one of the runs in progress to end. It was met, so a late start is no missed time. */
   queued: at.optional(),
+  /** Saved from this schedule proposal: no other request may save it again. */
+  proposalId: z
+    .string()
+    .regex(/^prp_[a-f0-9-]{36}$/u)
+    .optional(),
+  /** When it last moved to another Agent or to 通用: its earlier runs stay with the owner they ran for. */
+  ownedSince: at.optional(),
   /** Local date of the last scheduled run, so a repeated wall time cannot run twice that day. */
   lastDate: z.string().max(10).optional(),
   /** The time zone `nextRunAt` was worked out in. */
   zone: z.string().max(80).optional(),
   runs: z.array(runSchema).max(MAX_RUNS),
 })
+const resultFile = z.strictObject({
+  root: z.string().min(1).max(128),
+  path: z.string().min(1).max(4096),
+  change: z.enum(['created', 'modified', 'deleted']),
+})
+const resultSchema = z.strictObject({
+  id: z.string().regex(/^res_[a-f0-9]{40}$/u),
+  automationId: id,
+  owner: z.union([customAgentId, z.literal(GENERAL_AGENT_ID)]),
+  name,
+  outcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted', 'unknown']),
+  trigger: z.enum(['schedule', 'manual']),
+  runAt: at,
+  at,
+  sessionId: z.string().min(1).max(256).optional(),
+  topicId: z.string().min(1).max(256).optional(),
+  reply: z.string().max(RESULT_LIMITS.reply).optional(),
+  replyTruncated: z.literal(true).optional(),
+  files: z.array(resultFile).max(RESULT_LIMITS.files).optional(),
+  filesMore: z.number().int().positive().max(1_000_000).optional(),
+  failure: z
+    .strictObject({
+      reason: z.string().max(RESULT_LIMITS.reason),
+      code: z
+        .string()
+        .regex(/^[a-z0-9-]{1,64}$/u)
+        .optional(),
+    })
+    .optional(),
+  contentRemoved: z.literal(true).optional(),
+})
 const stateSchema = z
   .strictObject({
     version: z.literal(1),
     rows: z.array(row).max(MAX_AUTOMATIONS),
+    /** Result cards of runs that settled, oldest first: Host records in an Agent's conversation, never messages. */
+    results: z.array(resultSchema).max(MAX_RESULTS).default([]),
     receipts: z.record(hash, z.strictObject({ hash, id: z.string().max(64), audited: z.boolean() })),
   })
   .superRefine((state, ctx) => {
     if (new Set(state.rows.map(item => item.automation.id)).size !== state.rows.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
+    if (new Set(state.results.map(item => item.id)).size !== state.results.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
   })
-const createSchema = config.extend({ requestId: rid })
+const createSchema = config.extend({
+  requestId: rid,
+  proposalId: z
+    .string()
+    .regex(/^prp_[a-f0-9-]{36}$/u)
+    .optional(),
+})
 const patchSchema = z.strictObject({
   name: name.optional(),
   customAgentId: customAgentId.nullable().optional(),
@@ -154,6 +208,48 @@ export interface AutomationPlan {
   model?: ModelRef
   agentContext?: AgentExecutionContext
 }
+/** Clears from cards what they took from deleted sessions, and lets cards of a deleted topic wait for the next. */
+function forget(results: ScheduleResult[], ids: ReadonlySet<string>): boolean {
+  let changed = false
+  for (const item of results) {
+    if (item.topicId !== undefined && ids.has(item.topicId)) {
+      delete item.topicId
+      changed = true
+    }
+    if (item.sessionId !== undefined && ids.has(item.sessionId) && !item.contentRemoved) {
+      delete item.reply
+      delete item.replyTruncated
+      delete item.files
+      delete item.filesMore
+      delete item.failure
+      item.contentRemoved = true
+      changed = true
+    }
+  }
+  return changed
+}
+
+/** What the Host reads of a settled run for its result card: where it goes, and what it says. */
+export interface ResultContent {
+  /** The owner's current topic when the run settled; absent when it had none. */
+  topicId?: string
+  reply?: string
+  replyTruncated?: true
+  files?: ScheduleResultFile[]
+  filesMore?: number
+  failure?: { reason: string; code?: string }
+}
+/** A run that settled, for the Host to read its result card from. */
+export interface SettledRun {
+  /** An Agent's ID, or `general`. */
+  owner: string
+  automationId: string
+  outcome: ScheduleResultOutcome
+  sessionId?: string
+  detail?: TaskDetail
+  /** Why a start was refused, when it never became a session. */
+  refused?: unknown
+}
 /** A scheduled run the Host starts as a session. */
 export interface AutomationStartInput {
   requestId: string
@@ -179,6 +275,15 @@ interface Options {
   cancel(sessionId: string, runId?: string): Promise<unknown>
   approvalTtlMs(): number
   changed(): void
+  /**
+   * Reads a settled run's result card: the owner's current topic, the start of the last reply, its files and why it did
+   * not complete. Without it no card is recorded. A failure here records the card with what is known.
+   */
+  resultContent?(run: SettledRun): Promise<ResultContent>
+  /** Whether a session still exists; rejects when that cannot be told now. Cards of sessions gone are cleared at start. */
+  exists?(sessionId: string): Promise<boolean>
+  /** A result card was recorded or moved; `topics` are the sessions whose conversations show it. */
+  resultsChanged?(topics: string[]): void
 }
 
 export function automationSummary(value: Automation): AutomationSummary {
@@ -210,6 +315,14 @@ export class Automations {
   private running = false
   private closed = false
   private timer?: ReturnType<typeof setInterval>
+  /** Sessions deleted since this Host started, so a card written later does not take their content. */
+  private readonly gone = new Set<string>()
+  /** Deletions not yet written to the cards; tried again on each check. */
+  private readonly unforgotten = new Set<string>()
+  /** Cards were checked against the sessions that still exist, once after this start. */
+  private reconciled = false
+  /** Runs that ended while their files were still being observed: how many ticks each has waited. */
+  private readonly settling = new Map<string, number>()
   /** Agents being saved, by ID and `''` for 通用, with how many saves are in progress. */
   private readonly editing = new Map<string, number>()
   private constructor(
@@ -222,7 +335,7 @@ export class Automations {
         options.dataDir,
         'automations.json',
         stateSchema,
-        { version: 1, rows: [], receipts: {} },
+        { version: 1, rows: [], results: [], receipts: {} },
         options.atomicFs ? { atomicFs: options.atomicFs } : {},
       ),
       service = new Automations(options, journal)
@@ -256,6 +369,116 @@ export class Automations {
   hasPending(): boolean {
     return this.journal.hasPending()
   }
+
+  /** Whether this device's request was answered already, so sending it again replays that answer. */
+  answered(deviceId: string, requestId: string): boolean {
+    return this.journal.read().receipts[digest([deviceId, requestId])] !== undefined
+  }
+  /**
+   * An owner's schedules with the runs it had (newest first), for its 动态: a schedule that moved here from another owner
+   * brings none of the runs made before.
+   */
+  runsOf(owner: string): Array<{ automation: Automation; runs: AutomationRun[] }> {
+    return this.journal
+      .read()
+      .rows.filter(item => (item.automation.customAgentId ?? GENERAL_AGENT_ID) === owner)
+      .map(item => ({
+        automation: item.automation,
+        runs: item.ownedSince ? item.runs.filter(run => run.at >= item.ownedSince!) : item.runs,
+      }))
+  }
+  /** Every result card, oldest first. */
+  results(): ScheduleResult[] {
+    return this.journal.read().results
+  }
+  /** An owner's cards: those delivered into `topicId`, or with `null` those still waiting for a topic. */
+  resultsOf(owner: string, topicId: string | null): ScheduleResult[] {
+    return this.results().filter(item => item.owner === owner && (topicId === null ? item.topicId === undefined : item.topicId === topicId))
+  }
+  /** The cards shown in a topic's conversation, whoever owns it. */
+  resultsIn(topicId: string): ScheduleResult[] {
+    return this.results().filter(item => item.topicId === topicId)
+  }
+  /** For the snapshot: per owner, how many cards wait for a topic and when any last changed. */
+  resultStates(): Record<string, { unbound: number; at: string }> {
+    const states: Record<string, { unbound: number; at: string }> = {}
+    for (const item of this.results()) {
+      const state = (states[item.owner] ??= { unbound: 0, at: '' })
+      if (item.topicId === undefined) state.unbound++
+      if (item.at > state.at) state.at = item.at
+    }
+    return states
+  }
+
+  /**
+   * A new topic of the owner keeps the cards that waited for one: they sit before its first message, at the time each
+   * run settled. Nothing is sent to the Harness.
+   */
+  async adoptResults(owner: string, topicId: string): Promise<void> {
+    if (!this.results().some(item => item.owner === owner && item.topicId === undefined)) return
+    const moved = await this.journal.change(`adopt:${owner}:${topicId}`, digest(['adopt', owner, topicId]), state => {
+      let changed = false
+      for (const item of state.results)
+        if (item.owner === owner && item.topicId === undefined) {
+          item.topicId = topicId
+          changed = true
+        }
+      return { value: changed, changed }
+    })
+    if (moved) this.options.resultsChanged?.([topicId])
+  }
+
+  /**
+   * A deleted session: the cards of a run it was lose the reply, files and reason they took from it; the cards delivered
+   * into a topic it was wait for the owner's next topic.
+   */
+  async sessionDeleted(sessionId: string): Promise<void> {
+    // Known at once, so a card written after this (a run settling now) never takes the session's content.
+    this.gone.add(sessionId)
+    if (!this.results().some(item => item.sessionId === sessionId || item.topicId === sessionId)) return
+    try {
+      await this.journal.change(`deleted:${sessionId}`, digest(['deleted', sessionId]), state => {
+        const changed = forget(state.results, new Set([sessionId]))
+        return { value: changed, changed }
+      })
+      this.unforgotten.delete(sessionId)
+    } catch (error) {
+      // Tried again on every check until it is written.
+      this.unforgotten.add(sessionId)
+      throw error
+    }
+    this.options.changed()
+  }
+
+  /**
+   * Cards whose session went while the Host could not write it down (stopped, or the write failed): checked once after
+   * a start, and again on each check for a deletion that is still to be written.
+   */
+  private async reconcile(): Promise<void> {
+    if (this.unforgotten.size) {
+      const ids = new Set(this.unforgotten)
+      await this.journal.change(`deleted:${digest([...ids])}`, digest(['deleted', [...ids]]), state => {
+        const changed = forget(state.results, ids)
+        return { value: changed, changed }
+      })
+      for (const id of ids) this.unforgotten.delete(id)
+      this.options.changed()
+    }
+    if (this.reconciled || !this.options.exists) return
+    const ids = new Set(this.results().flatMap(item => [...(item.contentRemoved ? [] : [item.sessionId ?? '']), item.topicId ?? '']))
+    ids.delete('')
+    const missing = new Set<string>()
+    for (const id of ids) if (!(await this.options.exists(id))) missing.add(id)
+    if (missing.size) {
+      for (const id of missing) this.gone.add(id)
+      await this.journal.change(`reconciled:${digest([...missing])}`, digest(['deleted', [...missing]]), state => {
+        const changed = forget(state.results, missing)
+        return { value: changed, changed }
+      })
+      this.options.changed()
+    }
+    this.reconciled = true
+  }
   /** Finishes a write whose result was left unknown, so a read does not stay refused until that request is retried. */
   recover(): Promise<void> {
     return this.journal.recover()
@@ -263,8 +486,12 @@ export class Automations {
 
   async create(input: AutomationCreate, actor: AgentActor): Promise<{ value: Automation; audited: boolean }> {
     const data = createSchema.parse(input)
-    const { requestId: _, ...definition } = data
+    const { requestId: _, proposalId: __, ...definition } = data
     const result = await this.mutate('create', '', data, actor, state => {
+      // A proposal saves one schedule. Checked in the same write as the create: two saves at once, or a save after one
+      // whose proposal mark failed, find the first and create nothing. A retry of the same request replays its receipt.
+      const saved = data.proposalId ? state.rows.find(row => row.proposalId === data.proposalId) : undefined
+      if (saved) throw new AppError(409, 'agent-proposal-decided', '这条提议已经保存过了。', { automationId: saved.automation.id })
       if (state.rows.length >= MAX_AUTOMATIONS) throw new AppError(409, 'automation-limit', `最多保存 ${MAX_AUTOMATIONS} 个定时任务。`)
       const stamp = this.stamp(),
         value: Automation = {
@@ -276,7 +503,7 @@ export class Automations {
           createdAt: stamp,
           updatedAt: stamp,
         },
-        item: Row = { automation: value, runs: [] }
+        item: Row = { automation: value, runs: [], ...(data.proposalId ? { proposalId: data.proposalId } : {}) }
       this.grant(item, actor)
       state.rows.push(item)
       return value.id
@@ -300,6 +527,7 @@ export class Automations {
       } as Automation
       if (agent === null) delete next.customAgentId
       else if (agent !== undefined) next.customAgentId = agent
+      if ((next.customAgentId ?? null) !== (old.customAgentId ?? null)) item.ownedSince = this.stamp()
       if (selected === null) delete next.model
       else if (selected !== undefined) next.model = selected
       if (project === null) delete next.projectId
@@ -480,6 +708,8 @@ export class Automations {
         for (const item of this.journal.read().rows)
           if (item.attempt && !item.attempt.sessionId) await this.markPaused(item, 'unknown-outcome')
       }
+      // Asked again next time when the sessions cannot be read yet.
+      await this.reconcile().catch(() => {})
       // Settled first, so a run that finished frees its place for a time due now.
       await this.eachRow(this.journal.read().rows, async item => {
         if (item.attempt?.sessionId) await this.settle(item)
@@ -628,17 +858,24 @@ export class Automations {
     } catch (error) {
       const refused = passing(error) || (error instanceof AppError && error.status >= 400 && error.status < 500 && error.status !== 408)
       if (!this.journal.hasPending()) {
+        const missed = error instanceof AppError && error.code === 'host-updating'
+        // A start refused is a run that failed: its card says why. A missed time is not a run.
+        const held = this.journal.read().rows.find(row => row.automation.id === key)
+        const card =
+          refused && !missed && held?.attempt?.requestId === requestId ? await this.card(held, 'failed', { refused: error }) : undefined
         if (refused)
           await this.journal.change(requestId, 'refused', state => {
             const target = this.find(state, key)
             if (target.attempt?.requestId !== requestId) return { value: false, changed: false }
-            this.update(target, { state: error instanceof AppError && error.code === 'host-updating' ? 'missed' : 'failed' })
+            this.update(target, { state: missed ? 'missed' : 'failed' })
             delete target.attempt
             if (passing(error)) this.rest(target)
             else this.pause(target, error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable')
+            this.deliver(state, card)
             return { value: true }
           })
         else await this.markPaused(this.find(this.journal.read(), key), 'unknown-outcome')
+        if (card?.topicId) this.options.resultsChanged?.([card.topicId])
       }
     }
     this.options.changed()
@@ -673,17 +910,76 @@ export class Automations {
         return
       }
     }
+    // The run's files are still being observed for a moment after it ends: its card waits for them, a few ticks at most.
+    if (this.options.resultContent && detail?.messages.some(message => message.outputsPending)) {
+      const waited = this.settling.get(attempt.requestId) ?? 0
+      if (waited < SETTLE_WAITS) {
+        this.settling.set(attempt.requestId, waited + 1)
+        return
+      }
+    }
+    this.settling.delete(attempt.requestId)
+    const outcome = detail?.summary.runOutcome
+    const card = await this.card(item, outcome ?? 'unknown', { sessionId: attempt.sessionId!, ...(detail ? { detail } : {}) })
     await this.journal.change(attempt.requestId, 'settled', draft => {
       const target = this.find(draft, key)
       if (target.attempt?.requestId !== attempt.requestId) return { value: false, changed: false }
-      const outcome = detail?.summary.runOutcome
       this.update(target, { state: outcome ?? 'unknown' })
       delete target.attempt
       if (detail && (outcome === 'interrupted' || !outcome)) this.pause(target, 'unknown-outcome')
       else this.rest(target)
+      this.deliver(draft, card)
       return { value: true }
     })
     this.options.changed()
+    if (card?.topicId) this.options.resultsChanged?.([card.topicId])
+  }
+
+  /**
+   * The result card of the attempt `item` is running now: its ID comes from the attempt, so the same run settling again
+   * after a restart is recorded once. Undefined when the Host reads none.
+   */
+  private async card(
+    item: Row,
+    outcome: ScheduleResultOutcome,
+    run: { sessionId?: string; detail?: TaskDetail; refused?: unknown },
+  ): Promise<ScheduleResult | undefined> {
+    const read = this.options.resultContent,
+      attempt = item.attempt,
+      last = item.runs[0]
+    if (!read || !attempt || !last) return undefined
+    const owner = item.automation.customAgentId ?? GENERAL_AGENT_ID
+    let content: ResultContent = {}
+    try {
+      content = await read({ owner, automationId: item.automation.id, outcome, ...run })
+    } catch {
+      // The card still says how the run ended and links to it.
+    }
+    return {
+      id: `res_${digest(['result', item.automation.id, attempt.requestId]).slice(0, 40)}`,
+      automationId: item.automation.id,
+      owner,
+      name: item.automation.name,
+      outcome,
+      trigger: last.trigger,
+      runAt: last.at,
+      at: this.stamp(),
+      ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+      ...content,
+    }
+  }
+  /** Keeps a card once, by its ID; the oldest go first past the limit. */
+  private deliver(state: State, card: ScheduleResult | undefined): void {
+    if (!card || state.results.some(existing => existing.id === card.id)) return
+    const parsed = resultSchema.safeParse(card)
+    if (!parsed.success) return
+    // A session deleted since its content was read: checked in the same write that keeps the card.
+    forget([parsed.data], this.gone)
+    state.results.push(parsed.data)
+    // Each owner keeps its newest; the oldest go first, of the owner and then overall.
+    const owned = state.results.filter(item => item.owner === parsed.data.owner)
+    for (const old of owned.slice(0, Math.max(0, owned.length - OWNER_RESULTS))) state.results.splice(state.results.indexOf(old), 1)
+    if (state.results.length > MAX_RESULTS) state.results.splice(0, state.results.length - MAX_RESULTS)
   }
 
   /** The state an automation returns to once nothing is running. */

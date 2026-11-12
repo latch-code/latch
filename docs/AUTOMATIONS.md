@@ -9,6 +9,8 @@ sources:
   - packages/protocol/src/automations.ts
   - apps/web/src/agents/Schedules.tsx
   - apps/web/src/agents/scheduleModel.ts
+  - apps/web/src/agents/ResultCard.tsx
+  - apps/web/src/agents/TopicResults.tsx
 ---
 # 定时任务
 
@@ -16,7 +18,7 @@ sources:
 
 | 接口 | 作用 |
 | --- | --- |
-| `GET`、`POST /automations` | 列表；新建，保存后即开启 |
+| `GET`、`POST /automations` | 列表；新建，保存后即开启；带 `proposalId` 时是从 Agent 的定时提议保存（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#定时提议)） |
 | `GET`、`PATCH`、`DELETE /automations/:id` | 详情与最近 50 条运行记录；修改；删除。运行中不能修改或删除 |
 | `POST /automations/:id/enabled` | `{requestId,baseRevision,enabled}` |
 | `POST /automations/:id/run` | 立即运行，开或关都可以，不影响下一次时间；已有两个在运行时拒绝（`automation-limit-running`） |
@@ -48,6 +50,14 @@ sources:
 **没有人看着时**：运行照常在每个审批处停下，超过审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
 
 **同时最多两个运行**：到点时已有两个在运行，这一次排队，有位置时按到点先后开始，不算错过；排队期间 Host 重启则记为 `missed`。
+
+## 结果回到对话
+
+一次运行结算（完成、失败、停止、中断或结果未知）时，Host 记一张结果卡，放进这个 Agent 的对话（不指定 Agent 的定时任务放进「通用」的对话）。卡在 `automations.json` 的 `results`（strict schema，每个 Agent 最多 64 张、合计最多 256 张，最早的先丢），与结算写在同一次写入里：ID 由定时任务与这次运行的请求得出，Host 重启后再结算同一次运行也只有一张。启动就被拒绝的运行（例如默认项目已移除）同样记一张失败的卡，写 Host 的原因；因安装更新错过的时间不是运行，不记卡。
+
+- **放在哪个话题**：结算时这个 Agent 的当前话题（最近活动过、未归档、不是定时运行的会话，与页面的判断相同）；那时还没有话题的卡等着（`GET /custom-agents/:id/results`），这个 Agent 下一次新开的话题收下它们。话题删除后，它收下的卡回到等着；运行的会话删除后，卡上取自它的回复、文件与原因一并删去，只留「运行的会话已删除」。Host 一知道删除就记在内存里，之后写下的卡在同一次写入里核对；写入失败时每次检查重试；启动后核对一次所有卡的会话是否还在，Host 没有运行时删掉的也照此处理。
+- **卡上写什么**：名称（结算时的）、结果、运行的会话 ID、最后一条回复的前 2000 字、这次运行改动的文件（每轮改动记录，不含另一个会话同时在同一文件夹运行的轮次，最多 20 个，另记个数）、没有完成时失败说明的原因（300 字）与它的错误码。Host 读这些时会等运行结束后两秒的文件观察结束，最多 6 秒。定时任务移到别的 Agent 时记下时间，之前的运行留在原来的 Agent 的「动态」里。
+- **不是消息**：卡是 Host 的记录，只在会话详情的 `results` 里给能读这个话题的设备（完整数据范围），Harness 收不到，话题的上下文与历史不变。快照的 `agentResults` 只有每个 Agent 等着的张数与最近的时间，页面据此重新读取。
 
 ## 界面
 

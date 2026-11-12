@@ -1,5 +1,14 @@
+import { z } from 'zod'
 import type { AutomationSchedule } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
+
+const time = z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u)
+/** The scheduler's own schema of when a schedule runs: what `automations.json` stores and a proposed plan is checked against. */
+export const scheduleSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('daily'), time }),
+  z.strictObject({ kind: z.literal('weekdays'), time }),
+  z.strictObject({ kind: z.literal('weekly'), day: z.number().int().min(0).max(6), time }),
+])
 
 const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

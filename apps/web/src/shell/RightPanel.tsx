@@ -81,6 +81,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
         owner={shell.profileShown.owner}
         section={shell.profileShown.section}
         nonce={shell.profileShown.nonce}
+        prefill={shell.profileShown.prefill}
         onClose={shell.closeProfile}
       />
     )

@@ -2251,20 +2251,27 @@ export class AgentRuntime implements Bridge {
       const turn = proposalTurn(task)
       const from = { line: task.acp.proposalsRead ?? 0, offset: task.acp.proposalsOffset ?? 0 }
       const { lines, next, skipped } = await readProposals(skillsDirectory(this.options.dataDir, taskId), from)
-      for (const reason of skipped) this.limits.log(`${this.agent.name} 会话 ${taskId} 的一条记忆提议无效，已跳过：${reason}`)
+      for (const reason of skipped) this.limits.log(`${this.agent.name} 会话 ${taskId} 的一条提议无效，已跳过：${reason}`)
       if (next.line === from.line && next.offset === from.offset) return
-      for (const line of lines)
-        await propose({
+      for (const line of lines) {
+        const common = {
           sessionId: taskId,
           ...(turn.messageId ? { messageId: turn.messageId } : {}),
-          content: line.content,
-          ...(line.reason ? { reason: line.reason } : {}),
           external: turn.external || task.acp.unattended === true,
           key: `line:${line.index}`,
-        }).catch((error: unknown) => {
+        }
+        const schedule = this.options.proposeSchedule
+        const handed =
+          line.kind === 'schedule'
+            ? schedule
+              ? schedule({ ...common, name: line.name, plan: line.plan, prompt: line.prompt })
+              : Promise.reject(new Error('Schedules cannot be proposed here.'))
+            : propose({ ...common, content: line.content, ...(line.reason ? { reason: line.reason } : {}) })
+        await handed.catch((error: unknown) => {
           // The Host's reasons never quote the proposal.
-          this.limits.log(`${this.agent.name} 会话 ${taskId} 的记忆提议没有收下：${clip(this.redact(message(error)), 200)}`)
+          this.limits.log(`${this.agent.name} 会话 ${taskId} 的提议没有收下：${clip(this.redact(message(error)), 200)}`)
         })
+      }
       const current = this.state.tasks[taskId]
       if (!current) return
       current.acp.proposalsRead = next.line
@@ -5225,7 +5232,7 @@ export class AgentRuntime implements Bridge {
 }
 
 /** The server's own tools: calling them reads nothing from outside. Compared by exact name, after the server's prefix. */
-const OWN_TOOLS: ReadonlySet<string> = new Set(['propose_memory', 'list_skills', 'read_skill'])
+const OWN_TOOLS: ReadonlySet<string> = new Set(['propose_memory', 'propose_schedule', 'list_skills', 'read_skill'])
 /** How agents name an MCP tool of `latch-skills`: Claude Code's `mcp__latch-skills__x`, others' `latch-skills: x` and similar. */
 const SERVER_PREFIX = /^(?:mcp__latch[-_]skills__|latch[-_]skills(?:\s*[:/.]\s*|__))/u
 /** Kinds that name what they touch in `locations`; any other kind (fetch, search, execute, think, other) may read anything. */

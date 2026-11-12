@@ -54,6 +54,7 @@ import {
   type ScheduleDraft,
 } from './scheduleModel.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
+import { inputRows, type SchedulePrefill } from './activity.ts'
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 const KINDS = [
@@ -62,6 +63,8 @@ const KINDS = [
   { value: 'weekly' as const, label: '每周' },
 ]
 const SHOWN_RUNS = 5
+/** Prefills already put in a form: a profile keeps its prefill, but it opens the form only once. */
+const usedPrefills = new WeakSet<SchedulePrefill>()
 
 /** Each automation's detail (its input and its runs), read again whenever the snapshot says one changed. */
 function useAutomationDetails(automations: readonly AutomationSummary[]) {
@@ -104,6 +107,7 @@ function ScheduleForm({
   access,
   base,
   editing,
+  proposal,
   writes,
   writeKey,
   disabled,
@@ -116,6 +120,8 @@ function ScheduleForm({
   access: DeviceAccess
   base: ScheduleDraft
   editing: boolean
+  /** Filled in from the Agent's proposal: its input is what the Agent wrote, read whole before saving. */
+  proposal?: { external: boolean } | undefined
   writes: AgentWrites
   writeKey: string
   disabled: boolean
@@ -195,10 +201,16 @@ function ScheduleForm({
           }}
         />
       </div>
+      {proposal && (
+        <p className="agent-schedule-from">
+          <span>它写的</span>
+          {proposal.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+        </p>
+      )}
       <TextAreaField
         label="每次的输入"
         value={draft.prompt}
-        rows={4}
+        rows={proposal ? inputRows(draft.prompt) : 4}
         maxLength={16_000}
         disabled={locked}
         placeholder="每次运行要做的事；要用的文件写出它在工作位置里的路径"
@@ -471,6 +483,8 @@ export function SchedulesTab({
   offline,
   onOpenSession,
   onReload,
+  prefill,
+  nonce,
 }: {
   catalog: HostCatalog | undefined
   access: DeviceAccess
@@ -483,8 +497,19 @@ export function SchedulesTab({
   offline: boolean
   onOpenSession: (id: string) => void
   onReload: () => void
+  /** A schedule proposal to open the new-schedule form with; saving it marks the proposal. */
+  prefill?: SchedulePrefill | undefined
+  /** Changes when the same prefill is asked for again. */
+  nonce?: number
 }) {
-  const [form, setForm] = useState<{ base: ScheduleDraft; automation?: Automation } | null>(null)
+  const [form, setForm] = useState<{ base: ScheduleDraft; automation?: Automation; proposalId?: string; external?: boolean } | null>(null)
+  // Each 打开 on a proposal fills the form once; coming back to this list later does not open it again.
+  useEffect(() => {
+    if (!prefill || usedPrefills.has(prefill)) return
+    usedPrefills.add(prefill)
+    writes.clear()
+    setForm({ base: prefill.draft, proposalId: prefill.proposalId, external: prefill.external })
+  }, [prefill, nonce, writes.clear])
   const [deleting, setDeleting] = useState<AutomationSummary | null>(null)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const details = useAutomationDetails(automations ?? [])
@@ -504,7 +529,10 @@ export function SchedulesTab({
           ...schedulePatch(form.base, draft),
           baseRevision: form.automation.revision,
         })
-      : await writes.run('automation:new', 'automations', 'POST', { ...scheduleCreate(draft, agentId) })
+      : await writes.run('automation:new', 'automations', 'POST', {
+          ...scheduleCreate(draft, agentId),
+          ...(form?.proposalId ? { proposalId: form.proposalId } : {}),
+        })
     if (done !== undefined) setForm(null)
   }
   // The first automation shows its runs from the start; the others unfold on request.
@@ -534,12 +562,13 @@ export function SchedulesTab({
       </div>
       {form && catalog && (
         <ScheduleForm
-          key={form.automation?.id ?? 'new'}
+          key={form.automation?.id ?? form.proposalId ?? 'new'}
           catalog={catalog}
           harness={harness}
           access={access}
           base={form.base}
           editing={form.automation !== undefined}
+          proposal={form.proposalId ? { external: form.external === true } : undefined}
           writes={writes}
           writeKey={writeKey}
           disabled={offline || (!form.automation && block !== undefined)}

@@ -1,10 +1,21 @@
 import { z } from 'zod'
-import type { CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostFeatures, MemoryProposalList, TaskSummary } from '@latch/protocol'
+import type {
+  ChangedFile,
+  CustomAgentDetail,
+  CustomAgentList,
+  GeneralAgentDetail,
+  HostFeatures,
+  MemoryProposalList,
+  ScheduleResultList,
+  TaskDetail,
+  TaskSummary,
+} from '@latch/protocol'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { AgentActor, AgentMutation, CustomAgents } from '../custom-agents.ts'
 import type { AgentPlans } from '../agent-plans.ts'
 import type { Automations } from '../automations.ts'
+import { activityPage, libraryPage, sessionOwner } from '../agent-activity.ts'
 import { json, jsonBody } from '../http-util.ts'
 import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } from './registry.ts'
 
@@ -16,11 +27,16 @@ export interface AgentRouteDeps {
   access: (caller: Caller, write?: boolean) => AgentActor
   sessions: () => Promise<TaskSummary[]>
   plugins: () => CustomAgentList['plugins']
+  /** A session's detail and the files its turns changed, for 资料库. */
+  detail: (sessionId: string) => Promise<TaskDetail>
+  sessionFiles: (sessionId: string) => Promise<ChangedFile[] | undefined>
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo)?)?)?$/u
 const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
+/** Read-only views of an owner's own records: result cards waiting for a topic, 动态 and 资料库. */
+const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library)$/u
 
 /** 我的 Agent and 通用. `/link/api/agents` keeps meaning engine definitions. */
 export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): RouteModule {
@@ -61,6 +77,49 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           return true
         }
         throw new AppError(404, 'not-found', '接口不存在。')
+      }
+      const view = VIEWS.exec(path)
+      if (view) {
+        if (method !== 'GET') throw new AppError(404, 'not-found', '接口不存在。')
+        const owner = view[1]!,
+          which = view[2]!
+        // Each answers only for an owner that exists, and only to a device that may read Agents (the access above).
+        agents.memories(owner)
+        const params = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
+        const automations = deps.automations()
+        if (which === 'results') {
+          const list: ScheduleResultList = { results: automations.resultsOf(owner, null) }
+          actor.authorize()
+          json(res, list)
+          return true
+        }
+        // Its own sessions, by the owner each one ran for: a schedule moved to another Agent leaves its runs behind. A run
+        // of 通用's schedule names no Agent and is no conversation with it, so it is 通用's while its schedule is.
+        const general = new Set(owner === GENERAL_AGENT_ID ? automations.runsOf(owner).map(row => row.automation.id) : [])
+        const sessions = (await deps.sessions()).filter(task => {
+          const own = sessionOwner(task)
+          return own === owner || (own === undefined && task.automationId !== undefined && general.has(task.automationId))
+        })
+        const page =
+          which === 'activity'
+            ? activityPage({
+                sessions,
+                automations: automations.runsOf(owner),
+                results: automations.results().filter(item => item.owner === owner),
+                memories: agents.memories(owner),
+                changes: agents.memoryChanges(owner),
+                proposals: agents.proposals(owner),
+                before: params.get('before'),
+              })
+            : await libraryPage({
+                sessions,
+                detail: id => deps.detail(id),
+                files: id => deps.sessionFiles(id),
+                before: params.get('before'),
+              })
+        actor.authorize()
+        json(res, page)
+        return true
       }
       const proposal = PROPOSALS.exec(path)
       if (proposal) {

@@ -35,6 +35,7 @@ import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
 import { SideQuestionPanel } from '../conversation/SideQuestion.tsx'
+import { useTopicResults } from '../agents/TopicResults.tsx'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -90,6 +91,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
   } = shell
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   const placeProposals = useTopicProposals(shell, current)
+  const placeResults = useTopicResults(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   // A session brought in as it was whose Harness lost it: rebuilt as text, through the same choice as an import.
@@ -345,10 +347,13 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                           })}
                       onReveal={reading.reveal}
                       {...(handing ? { onHandoff: handOff } : {})}
-                      {...(returned.length || placeProposals
+                      {...(returned.length || placeProposals || placeResults
                         ? {
                             placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
-                              joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                              joinPlaced(
+                                joinPlaced(returned.length ? placeReturned(turns) : undefined, placeResults?.(turns)),
+                                placeProposals?.(turns),
+                              ),
                           }
                         : {})}
                       {...(frozenAt !== undefined ? { frozenAt } : {})}
