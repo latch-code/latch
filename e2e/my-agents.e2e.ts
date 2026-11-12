@@ -357,6 +357,9 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await expect.poll(async () => (await delegated()).length, { timeout: 15_000 }).toBe(3)
     expect(sent).toHaveLength(2)
     expect(new Set(sent).size).toBe(1)
+    // The page ends the unconfirmed start only on the Host's answer: wait until that answer has opened its topic here.
+    const third = (await delegated()).find(task => task.id !== first!.id && task.id !== second.id)!
+    await expect.poll(() => page.locator(`[data-task-id="${third.id}"][aria-current="page"]`).count()).toBe(1)
     await page.locator('.topbar .agent-frame').waitFor()
     // A start still unconfirmed says why and can be given up: its text comes back, and nothing new was started here.
     await page.locator('.topbar').getByRole('button', { name: '话题', exact: true }).click()
