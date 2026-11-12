@@ -404,6 +404,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 onOpenSession={id => {
                   choose(id)
                 }}
+                onOpenApp={app => {
+                  setRoute({ entry: 'apps', app })
+                }}
                 onChanged={() => {
                   void refresh()
                 }}

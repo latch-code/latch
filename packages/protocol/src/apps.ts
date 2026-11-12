@@ -27,6 +27,14 @@ export interface AppManifestEntry {
   entry: string
   dataVersion: number
   capabilities: AppCapabilities
+  /** Sample sessions for the preview (`tasks.list` there); the applied page never uses them. */
+  preview?: { tasks: AppPreviewTask[] }
+}
+
+export interface AppPreviewTask {
+  title: string
+  status?: 'idle' | 'running' | 'waiting-approval' | 'cancelled' | 'failed' | 'interrupted'
+  projectName?: string
 }
 
 /** `app` is `<pluginId>/<appId>`; `revision` is the plugin's `appliedRevision` the page was loaded from. */
@@ -100,6 +108,16 @@ export interface AppDataEvent {
   key: string
   /** 0: removed. */
   version: number
+}
+
+/**
+ * SSE `app.updated`: a plugin's pages were applied, rolled back, turned on or off, or removed. Open frames of that plugin
+ * are rebuilt from the snapshot (`AppSummary.revision`, `bundleHash`), carrying their view state.
+ */
+export interface AppUpdatedEvent {
+  type: 'app.updated'
+  instanceId: string
+  pluginId: string
 }
 
 export type AppDiagnosticSource = 'build' | 'runtime' | 'handshake' | 'bridge' | 'migration'

@@ -95,6 +95,8 @@ export interface StartInput {
 
 export interface AppRouteDeps {
   assets: () => PluginAssets
+  /** A page's bundle from the Host's build of that revision (`.ts`, `.tsx` entries). */
+  builtModule?(pluginId: string, revision: string, appId: string): Promise<{ hash: string; bytes: Buffer } | undefined>
   /** Whether the registry runs the plugin now. */
   pluginEnabled(id: string): boolean
   data: AppDataStore
@@ -185,20 +187,21 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
   const writes = new Window(APP_WRITES_PER_MINUTE, context.now)
   /** Starts on their way, by page and request ID, so a lookup can say `pending`. */
   const pending = new Map<string, number>()
-  /** Built page modules by applied revision and page, with their hash; a new revision makes new entries. */
+  /** Prebuilt page modules by applied revision and page, with their hash; a new revision makes new entries. */
   const modules = new Map<string, { hash: string; bytes: Buffer } | null>()
 
   /**
-   * A page's module: until the Host builds pages itself, an applied package's prebuilt `.js` entry is the module as it
-   * is; a `.ts` or `.tsx` entry has no module yet.
+   * A page's module: the Host's successful build of the applied revision for a `.ts` or `.tsx` entry (apply requires
+   * one), or a package's prebuilt `.js` entry as it is.
    */
-  function moduleOf(record: ReturnType<PluginAssets['get']>, appId: string): { hash: string; bytes: Buffer } | undefined {
+  async function moduleOf(record: ReturnType<PluginAssets['get']>, appId: string): Promise<{ hash: string; bytes: Buffer } | undefined> {
     const revision = record.appliedRevision
     const bundle = record.appliedBundle
     if (!revision || !bundle) return undefined
+    const app = bundle.manifest.apps?.find(item => item.id === appId)
+    if (app && /\.tsx?$/iu.test(app.entry)) return deps.builtModule?.(record.id, revision, appId)
     const name = `${revision}/${appId}`
     if (!modules.has(name)) {
-      const app = bundle.manifest.apps?.find(item => item.id === appId)
       const file = app && /\.js$/iu.test(app.entry) ? bundle.files.find(item => item.path === app.entry) : undefined
       const bytes = file ? Buffer.from(file.content, 'utf8') : undefined
       if (modules.size >= 64) modules.clear()
@@ -354,7 +357,7 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
             : (await deps.data.status(owner, codeVersion).catch(() => undefined))?.status
         if (!status) continue
         for (const app of bundle.manifest.apps) {
-          const built = moduleOf(record, app.id)
+          const built = await moduleOf(record, app.id)
           out.push({
             pluginId: record.id,
             appId: app.id,
@@ -387,7 +390,16 @@ export function createAppRoutes(context: RouteContext, deps: AppRouteDeps): AppR
         if (!revision) throw new AppError(404, 'app-not-found', '找不到这个页面。')
         // The same checks as any page call, at the applied revision: enabled, the page exists, approval still holds.
         gate(caller, { app: `${pluginId}/${appId}`, revision }, undefined, pluginId)
-        const built = moduleOf(assets.get(pluginId), appId)
+        const record = assets.get(pluginId)
+        let built = await moduleOf(record, appId)
+        // The version applied before this one stays available, so a frame whose new version will not open can fall
+        // back to it (its calls are refused as stale: it only shows).
+        if (built?.hash !== hash) {
+          const earlier = record.history?.[0]
+          built = earlier
+            ? await moduleOf({ ...record, appliedRevision: earlier.revision, appliedBundle: earlier.bundle }, appId)
+            : undefined
+        }
         if (!built || built.hash !== hash) throw new AppError(404, 'app-module-not-found', '这个页面版本已不可用，请重新加载。')
         context.recheck(caller, 'view')
         res.writeHead(200, {

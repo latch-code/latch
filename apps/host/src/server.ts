@@ -32,7 +32,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { existsSync } from 'node:fs'
-import { lstat, mkdir, chmod, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
+import { lstat, mkdir, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
@@ -53,6 +53,7 @@ import {
   type AgentRecord,
   type AgentSettings,
   type AppDataEvent,
+  type AppUpdatedEvent,
   type AppSnapshot,
   type CommandDetection,
   type Approval,
@@ -223,6 +224,10 @@ import { FileReferenceStore } from './files/reference-store.ts'
 import { PluginAssets } from './plugin-assets.ts'
 import { AppDataStore } from './app-data.ts'
 import { AppDiagnostics } from './app-diagnostics.ts'
+import { AppBuilds } from './app-builds.ts'
+import { buildPages, hostBuildTools } from './app-build.ts'
+import { APP_DRAFT_DIRECTORY, APP_DRAFT_MANIFEST, readSessionDraft } from './app-import.ts'
+import { APP_GUIDE, APP_SDK_DTS, appSkeleton } from './app-sdk-types.ts'
 import { capabilityLines, capabilitySummary } from './app-capabilities.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
 import { createRoutes } from './routes/index.ts'
@@ -309,6 +314,8 @@ const removeWorktreeSchema = z.strictObject({
 
 const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
+  /** 让 Agent 做: an Agent session in its own folder, where the Host writes a page draft's skeleton before the first input. */
+  appDraft: z.literal(true).optional(),
   forkOf: z
     .object({ taskId: z.string().min(1).max(256), upToMessageId: z.string().min(1).max(256) })
     .strict()
@@ -1425,6 +1432,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const appData = await AppDataStore.open(dataDir, { now })
     startupCleanup.push(() => appData.close())
     const appDiagnostics = new AppDiagnostics(id => appData.pluginDirectory(id), now)
+    const appBuilds = await AppBuilds.open(dataDir, now)
     const assetPluginIds = new Set<string>()
     // A version the desktop app installed may load other plugin formats: incompatible packages stay off, assets kept.
     const heldPlugins = await HeldPlugins.open(pluginAssets.directory)
@@ -1911,6 +1919,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
       apps: {
         assets: () => pluginAssets,
+        builtModule: (pluginId, revision, appId) => appBuilds.module(pluginId, revision, appId),
         pluginEnabled: id => registry.list().some(plugin => plugin.id === id && plugin.enabled),
         data: appData,
         diagnostics: appDiagnostics,
@@ -3181,11 +3190,64 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
+    /** The primary folder of a session whose folders are still available, for its page draft. */
+    async function draftFolder(sessionId: string): Promise<string> {
+      const roots = await sessionRoots(sessionId)
+      if (roots === undefined) throw new AppError(404, 'session-not-found', '找不到这个会话。')
+      if (roots === 'removed' || !roots[0]) throw new AppError(409, 'app-draft-missing', '这个会话的文件夹找不到了。')
+      return roots[0].path
+    }
     const pluginPackageRoutes = createPluginPackageRoutes<Caller>({
       assets: pluginAssets,
       registry,
       installedIds: assetPluginIds,
       held: heldPlugins,
+      builds: appBuilds,
+      // The tools never read the Host's own data, wherever it lives.
+      build: bundle => buildPages(bundle, hostBuildTools(), { hidden: [dataDir] }),
+      readDraft: async sessionId => readSessionDraft(await draftFolder(sessionId)),
+      async hasDraft(sessionId) {
+        const folder = await draftFolder(sessionId).catch(() => undefined)
+        if (!folder) return false
+        const directory = await lstat(join(folder, APP_DRAFT_DIRECTORY)).catch(() => undefined)
+        const manifest = directory?.isDirectory()
+          ? await lstat(join(folder, APP_DRAFT_DIRECTORY, APP_DRAFT_MANIFEST)).catch(() => undefined)
+          : undefined
+        return manifest?.isFile() === true
+      },
+      async auditBuild(actor, id, detail) {
+        try {
+          await audit.append({ action: 'plugin.package.build', actor: actor.actor, target: id, detail })
+          return true
+        } catch (error) {
+          log(`审计记录写入失败（plugin.package.build）：${errorText(error)}`)
+          return false
+        }
+      },
+      buildFailed(id, appIds, message) {
+        for (const appId of appIds) void appDiagnostics.record(id, { appId, source: 'build', message }).catch(() => {})
+      },
+      automatedActor(deviceId) {
+        const allowed = () => {
+          const device = devices.get(deviceId)
+          return (
+            device !== undefined
+            && devices.isActive(deviceId)
+            && device.listener === 'unix'
+            && device.scopes.includes('admin')
+            && device.dataScope === 'all'
+          )
+        }
+        if (!allowed()) return undefined
+        return {
+          actor: { deviceId, listener: 'unix', via: 'http' },
+          authorize: () => {
+            if (!allowed()) throw new AppError(403, 'plugin-package-scope', '开启开发中的设备已不能编辑插件。')
+          },
+        }
+      },
+      pagesChanged: pluginId => sendAppUpdated(pluginId),
+      log,
       authorize(caller) {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -3286,6 +3348,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         pluginHarnesses(id).some(harnessId => hub!.info(harnessId)?.status !== 'ready')
           ? '此插件有 Harness 未能启动，请检查模块声明与本地依赖。'
           : undefined,
+    })
+    // 开发中 belongs to the device that turned it on: removing that device turns it off.
+    devices.onRevoked(deviceId => {
+      void pluginAssets.stopDev(deviceId).then(
+        count => {
+          if (count) refresh()
+        },
+        error => log(`开发中没有随设备移除而关闭：${errorText(error)}`),
+      )
+    })
+    // 开发中: a draft's source session that ended a turn is imported and built again when its draft changed.
+    lifecycleListeners.on('runSettled', ({ sessionId }) => {
+      void pluginPackageRoutes.devTurn(sessionId)
     })
 
     /** The start directory and the other projects' primary folders: a new primary folder may equal none of them. */
@@ -4603,6 +4678,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /** A plugin's applied pages changed: every stream hears it and reads the snapshot again, where the pages are. */
+    function sendAppUpdated(pluginId: string): void {
+      const event: AppUpdatedEvent = { type: 'app.updated', instanceId, pluginId }
+      const frame = `event: app.updated\ndata: ${JSON.stringify(event)}\n\n`
+      for (const [res, stream] of streams) {
+        if (!streamAllowed(stream)) continue
+        if (stream.nativeOpening && nativeRoutes.verifiedUntil(stream.nativeOpening) <= now()) continue
+        write(res, stream, 'app.updated', frame)
+      }
+    }
+
     /** Announces the stop on every stream and ends them all, giving the last frames a moment to leave. */
     async function endStreams(event: HostStateEvent): Promise<void> {
       const open = [...streams.keys()]
@@ -4932,6 +5018,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /**
+     * A page draft's skeleton in a session's new folder, before its first input: the manifest, the SDK's declarations
+     * and the guide. A retried start finds them there and leaves them as they are.
+     */
+    async function writeAppDraft(folder: string, name: string): Promise<void> {
+      const directory = join(folder, APP_DRAFT_DIRECTORY)
+      try {
+        await mkdir(directory)
+      } catch (error) {
+        if (codeOf(error) === 'EEXIST') return
+        throw new AppError(409, 'app-draft-folder', '没能在会话文件夹里写入应用草稿。')
+      }
+      const files: Array<[string, string]> = [
+        [APP_DRAFT_MANIFEST, appSkeleton(`app-${name}`)],
+        ['sdk.d.ts', APP_SDK_DTS],
+        ['README.md', APP_GUIDE],
+      ]
+      for (const [file, content] of files) {
+        const handle = await openFile(join(directory, file), 'wx', 0o644)
+        try {
+          await handle.writeFile(content)
+        } finally {
+          await handle.close()
+        }
+      }
+    }
+
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
       const body = await jsonBody(req, TASK_BODY_LIMIT)
@@ -5071,6 +5184,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           !chosen && fork?.source.workspaceId === 'default' && fork.source.sessionFolder && mode === 'agent' ? fork.source.cwd : undefined
         if (forkFolder && !(await ownFolders.verify(forkFolder))) throw workspaceChanged()
         const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder
+        if (input.appDraft) {
+          // The page pipeline is this Mac's: the desktop's admin device with all data, as for the plugin assets.
+          requireScope(caller, 'admin')
+          requireDesktop(caller)
+          if (devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'plugin-package-scope', '自定义插件只能由这台电脑上拥有完整数据范围的管理设备编辑。')
+          if (!ownFolder || customAgentId || input.worktree)
+            throw new AppError(409, 'app-draft-folder', '应用草稿要在会话自己的文件夹里开始：不选项目，用 Agent 模式。')
+        }
         if (input.worktree) {
           if (!chosen) throw new AppError(400, 'worktree-project', '新工作树要从一个项目开始，请先选项目。')
           if (fork) throw new AppError(400, 'worktree-fork', '分叉的会话在原来的项目文件夹里开始，不能新建工作树。')
@@ -5209,6 +5331,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (hub!.levelOf(harnessId) === 'L1') {
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
+            if (input.appDraft) await writeAppDraft(own.path, own.name)
             return await respondCreated(
               await acceptCreate(() => createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart)),
             )
@@ -5227,6 +5350,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (workspaceId === 'default' && defaultFlags.codeRoot)
           throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
         const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
+        if (own && input.appDraft) await writeAppDraft(own.path, own.name)
         // A worktree's project configuration is read there, now that it exists: it is what the session will run with.
         const cwd = await realpath(made?.path ?? own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
         // As for L1; the audit below counts the ones the driver says it passes to the agent.

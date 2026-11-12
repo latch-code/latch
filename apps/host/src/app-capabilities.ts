@@ -50,6 +50,20 @@ export const appEntrySchema = z.strictObject({
   entry: z.string().min(1).max(256),
   dataVersion: z.number().int().min(1).max(1_000_000),
   capabilities: appCapabilitiesSchema,
+  /** Sample sessions the preview shows instead of the fixed ones; never sent to the Host by a page. */
+  preview: z
+    .strictObject({
+      tasks: z
+        .array(
+          z.strictObject({
+            title: z.string().trim().min(1).max(120),
+            status: z.enum(['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted']).optional(),
+            projectName: z.string().trim().min(1).max(80).optional(),
+          }),
+        )
+        .max(20),
+    })
+    .optional(),
 })
 
 /** The SDK range a page needs; the Host offers SDK 1. */

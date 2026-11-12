@@ -7,6 +7,7 @@ import {
   type AppFrameInit,
   type AppHostInfo,
   type AppMigrationLease,
+  type AppPreviewTask,
   type AppSnapshot,
   type AppSummary,
 } from '@latch/protocol'
@@ -15,6 +16,7 @@ import { onAppData } from '../core/appEvents.ts'
 import { currentShell } from '../core/shell.ts'
 import { acceptFrameKey, appRef, storageDocument } from './model.ts'
 import { createParentBridge, type ParentBridge } from './parentBridge.ts'
+import { createPreviewBridge } from './previewBridge.ts'
 
 /** Whatever a page kept with `view.setState`, by page: only in this tab's memory, carried over to a reload or a new version. */
 const views = new Map<string, unknown>()
@@ -74,6 +76,11 @@ interface FrameProps {
   onShortcut: (init: KeyboardEventInit) => void
   /** Esc pressed in the frame. */
   onEscape: () => void
+  /**
+   * A draft's preview: the bundle from `moduleUrl` (the build route), a bridge that never calls the Host, and no
+   * diagnostics sent anywhere.
+   */
+  preview?: { moduleUrl: string; tasks?: readonly AppPreviewTask[]; onPreviewOnly: () => void }
 }
 
 /**
@@ -82,13 +89,26 @@ interface FrameProps {
  * credentials and hands the bytes over; the frame never makes an authenticated request. Unmounting closes the port, the
  * subscriptions and the bridge.
  */
-export function AppFrame({ page, snapshot, online, info, covered, migration, onOutcome, onOpenSession, onShortcut, onEscape }: FrameProps) {
+export function AppFrame({
+  page,
+  snapshot,
+  online,
+  info,
+  covered,
+  migration,
+  onOutcome,
+  onOpenSession,
+  onShortcut,
+  onEscape,
+  preview,
+}: FrameProps) {
   const frame = useRef<HTMLIFrameElement>(null)
   const bridge = useRef<ParentBridge | null>(null)
-  const latest = useRef({ snapshot, online, info, onOutcome, onOpenSession, onShortcut, onEscape, migration, covered })
-  latest.current = { snapshot, online, info, onOutcome, onOpenSession, onShortcut, onEscape, migration, covered }
+  const latest = useRef({ snapshot, online, info, onOutcome, onOpenSession, onShortcut, onEscape, migration, covered, preview })
+  latest.current = { snapshot, online, info, onOutcome, onOpenSession, onShortcut, onEscape, migration, covered, preview }
   const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [page.revision, page.bundleHash, migration])
-  const key = appRef(page)
+  // A preview keeps its view state apart from the applied page's.
+  const key = (preview ? 'preview:' : '') + appRef(page)
 
   useEffect(() => {
     let disposed = false
@@ -97,8 +117,9 @@ export function AppFrame({ page, snapshot, online, info, covered, migration, onO
     let loads = 0
     const channel = new MessageChannel()
     const element = frame.current
+    const previewing = latest.current.preview
     const module = api<ArrayBuffer>(
-      `app-modules/${encodeURIComponent(page.pluginId)}/${encodeURIComponent(page.appId)}/${page.bundleHash}.js`,
+      previewing?.moduleUrl ?? `app-modules/${encodeURIComponent(page.pluginId)}/${encodeURIComponent(page.appId)}/${page.bundleHash}.js`,
       { response: 'bytes', timeoutMs: 30_000 },
     )
     module.catch(() => {})
@@ -116,7 +137,7 @@ export function AppFrame({ page, snapshot, online, info, covered, migration, onO
     const finish = (outcome: FrameOutcome) => {
       if (disposed) return
       close()
-      if (outcome.kind === 'failed' && latest.current.online) reportDiagnostic(page, outcome.source, outcome.message)
+      if (outcome.kind === 'failed' && latest.current.online && !previewing) reportDiagnostic(page, outcome.source, outcome.message)
       latest.current.onOutcome(outcome)
     }
     const timer = setTimeout(() => {
@@ -144,25 +165,40 @@ export function AppFrame({ page, snapshot, online, info, covered, migration, onO
       )
     }
     const start = (bytes: ArrayBuffer) => {
-      const lease = latest.current.migration
-      bridge.current = createParentBridge({
-        page,
-        snapshot: () => latest.current.snapshot,
-        online: () => latest.current.online,
-        info: () => latest.current.info,
-        api,
-        send: message => {
-          if (!disposed) channel.port1.postMessage(message)
-        },
-        openSession: id => {
-          latest.current.onOpenSession(id)
-        },
-        setView: state => {
-          views.set(key, state)
-        },
-        covered: () => latest.current.covered,
-        activated: () => navigator.userActivation?.isActive === true,
-      })
+      const lease = previewing ? undefined : latest.current.migration
+      bridge.current = previewing
+        ? createPreviewBridge({
+            page,
+            ...(previewing.tasks ? { tasks: previewing.tasks } : {}),
+            info: () => latest.current.info,
+            send: message => {
+              if (!disposed) channel.port1.postMessage(message)
+            },
+            setView: state => {
+              views.set(key, state)
+            },
+            onPreviewOnly: () => {
+              latest.current.preview?.onPreviewOnly()
+            },
+          })
+        : createParentBridge({
+            page,
+            snapshot: () => latest.current.snapshot,
+            online: () => latest.current.online,
+            info: () => latest.current.info,
+            api,
+            send: message => {
+              if (!disposed) channel.port1.postMessage(message)
+            },
+            openSession: id => {
+              latest.current.onOpenSession(id)
+            },
+            setView: state => {
+              views.set(key, state)
+            },
+            covered: () => latest.current.covered,
+            activated: () => navigator.userActivation?.isActive === true,
+          })
       channel.port1.onmessage = event => {
         if (disposed) return
         const message: unknown = event.data
@@ -207,7 +243,7 @@ export function AppFrame({ page, snapshot, online, info, covered, migration, onO
           case 'error':
             if (lease) finish({ kind: 'migrate-failed', message: message.message })
             else if (!rendered) finish({ kind: 'failed', source: 'runtime', message: message.message })
-            else if (latest.current.online) reportDiagnostic(page, 'runtime', message.message)
+            else if (latest.current.online && !previewing) reportDiagnostic(page, 'runtime', message.message)
             return
           case 'migrated':
             if (lease) finish({ kind: 'migrated', documents: message.documents })

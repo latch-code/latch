@@ -860,3 +860,18 @@
 .review-notes-foot-note[data-tone='amber'] {
   color: var(--amber);
 }
+
+/* 改动's 「作为应用草稿」, above the scope row. */
+.changes-app-draft {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-12);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
+.changes-app-draft > .ui-button {
+  margin-left: auto;
+  font-family: inherit;
+}

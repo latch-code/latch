@@ -41,6 +41,20 @@ const recordSchema = z.strictObject({
     .optional(),
   /** The page capabilities this computer confirmed, by page ID: code that asks for no more applies without a confirmation. */
   approvedApps: z.record(idSchema, appCapabilitiesSchema).optional(),
+  /**
+   * The session a page draft was imported from. `dev`: after each of its turns that changed `latch-app/`, the draft is
+   * imported and built again, as `devDevice` (the device that turned it on) would.
+   */
+  source: z
+    .strictObject({
+      sessionId: z.string().min(1).max(256),
+      dev: z.boolean(),
+      devDevice: z
+        .string()
+        .regex(/^dev_[A-Za-z0-9_-]{22}$/u)
+        .optional(),
+    })
+    .optional(),
   /** Earlier applied snapshots, newest first. */
   history: z
     .array(z.strictObject({ revision: hash, bundle: bundleSchema }))
@@ -76,7 +90,7 @@ export function describePluginAsset(record: PluginAssetRecord): PluginAssetDescr
   }
 }
 type State = z.infer<typeof stateSchema>
-type Operation = 'create' | 'save' | 'trust' | 'apply' | 'rollback' | 'enable' | 'disable' | 'delete'
+type Operation = 'create' | 'save' | 'import' | 'dev' | 'trust' | 'apply' | 'rollback' | 'enable' | 'disable' | 'delete'
 export interface PluginAssetActor {
   actor: AuditActor & { deviceId: string }
   authorize(): void
@@ -330,6 +344,58 @@ export class PluginAssets {
         }
       },
     )
+  }
+  /**
+   * A page draft read from a session (`app-import.ts`): a new record, or a new draft revision of one that came from a
+   * session before. A record made another way keeps its draft; the draft's `id` must change.
+   */
+  importDraft(bundleInput: unknown, sessionId: string, requestId: string, actor: PluginAssetActor): Promise<PluginAssetMutation> {
+    const { bundle, revision, executionHash } = checkedPluginBundle(bundleInput),
+      id = bundle.manifest.id
+    if (executionHash) throw new AppError(400, 'app-import-code', '应用草稿只能有页面；Host 模块与面板请用插件的高级导入。')
+    return this.change(id, 'import', requestId, { revision, sessionId }, actor, state => {
+      const existing = state.packages.find(record => record.id === id)
+      if (!existing) {
+        if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
+        state.packages.push({
+          id,
+          bundle,
+          revision,
+          enabled: false,
+          trusted: [],
+          installId: randomBytes(16).toString('base64url'),
+          source: { sessionId, dev: false },
+        })
+        return
+      }
+      if (!existing.source)
+        throw new AppError(409, 'plugin-package-exists', '这个插件标识已被别的插件使用，请在 latch-app.json 里换一个 id。')
+      Object.assign(existing, { bundle, revision })
+      delete existing.executionHash
+      if (existing.source.sessionId !== sessionId) existing.source = { sessionId, dev: false }
+    })
+  }
+  /**
+   * Turns 开发中 off wherever this device turned it on: it was removed, or can no longer stand behind the work. Recorded
+   * as the Host acting for that device.
+   */
+  async stopDev(deviceId: string): Promise<number> {
+    const ids = this.state.packages.filter(record => record.source?.dev && record.source.devDevice === deviceId).map(record => record.id)
+    const actor: PluginAssetActor = { actor: { deviceId, listener: 'host' }, authorize: () => {} }
+    for (const id of ids)
+      await this.change(id, 'dev', randomUUID(), { dev: false, stopped: deviceId }, actor, state => {
+        const record = this.find(state, id)
+        if (record.source?.devDevice === deviceId) record.source = { sessionId: record.source.sessionId, dev: false }
+      })
+    return ids.length
+  }
+  /** Turns 开发中 on or off for a draft imported from a session. */
+  setDev(id: string, dev: boolean, requestId: string, actor: PluginAssetActor): Promise<PluginAssetMutation> {
+    return this.change(id, 'dev', requestId, { dev }, actor, state => {
+      const record = this.find(state, id)
+      if (!record.source) throw new AppError(409, 'app-draft-no-source', '这个插件不是从会话导入的。')
+      record.source = { sessionId: record.source.sessionId, dev, ...(dev ? { devDevice: actor.actor.deviceId } : {}) }
+    })
   }
   trust(id: string, executionHash: string, requestId: string, actor: PluginAssetActor): Promise<PluginAssetMutation> {
     hash.parse(executionHash)

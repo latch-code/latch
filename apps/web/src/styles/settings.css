@@ -1794,3 +1794,167 @@
 .project-row-where > :first-child {
   flex-shrink: 0;
 }
+
+/*
+ * 设置 › 插件's 新应用: drafts imported from sessions, each a card with its four steps (草稿 › 构建 › 预览 › 应用), the
+ * build's diagnostics, the preview in a dashed frame marked 预览, and 应用. The steps are bars: done in ink, the current
+ * one in ink, a failed build in red, waiting for this Mac in amber; all with their words.
+ */
+.new-apps {
+  display: grid;
+  gap: var(--sp-12);
+  margin-bottom: var(--sp-24);
+}
+.new-apps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.new-apps-head h3,
+.new-app-head h3 {
+  margin: 0;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.new-app-card {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border-radius: var(--r-12);
+  background: var(--card);
+  box-shadow: var(--sh-1);
+  min-width: 0;
+}
+.new-app-head,
+.new-app-source,
+.new-app-applied,
+.new-app-foot,
+.new-app-preview-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.new-app-id,
+.new-app-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  overflow-wrap: anywhere;
+}
+.new-app-spacer {
+  flex: 1;
+}
+.new-app-phases {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.new-app-phases li {
+  display: grid;
+  gap: var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-app-phases i {
+  display: block;
+  height: 3px;
+  border-radius: var(--r-2);
+  background: var(--track);
+}
+.new-app-phases li[data-s='done'] i,
+.new-app-phases li[data-s='now'] i {
+  background: var(--ink);
+}
+.new-app-phases li[data-s='now'] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.new-app-phases li[data-s='fail'] {
+  color: var(--red);
+  font-weight: 600;
+}
+.new-app-phases li[data-s='fail'] i {
+  background: var(--red);
+}
+.new-app-phases li[data-s='wait'] {
+  color: var(--amber);
+  font-weight: 600;
+}
+.new-app-phases li[data-s='wait'] i {
+  background: var(--amber);
+}
+.new-app-source {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-app-diagnostics {
+  margin: var(--sp-6) 0 0;
+  padding: var(--sp-8) var(--sp-12);
+  overflow-x: auto;
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.new-app-preview {
+  display: grid;
+  gap: var(--sp-8);
+}
+.new-app-tag {
+  padding: 0 var(--sp-6);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-app-preview-frame {
+  display: flex;
+  height: 360px;
+  overflow: hidden;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-8);
+}
+.new-app-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-app-applied > svg {
+  color: var(--ink);
+}
+.new-app-dev {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.new-app-source > .ui-button {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 599px) {
+  .new-app-card {
+    padding: var(--sp-12);
+  }
+  .new-app-preview-frame {
+    height: 300px;
+  }
+}

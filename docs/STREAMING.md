@@ -61,6 +61,7 @@ Provider.stream             Standard Runtime             Host                   
 | `refresh` | 设备、配置等整体变化，流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
 | `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
 | `app.data` | 插件页面的一个文档变了：`{ type, instanceId, pluginId, scope, key, version }`（删除时 `version` 为 0）；只发给能读那个作用域的连接，私有会话的文档只给数据范围 `all` 的设备 | 打开着该插件页面的客户端只把本插件、页面声明过的作用域的变化经桥转给页面（`storage.onChange`），页面自己决定是否重读；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#存储)） |
+| `app.updated` | 插件的已应用页面变了（应用、回退、启停、删除）：`{ type, instanceId, pluginId }`，发给每条仍被接受的流 | 客户端重读快照；快照里页面的修订或 `bundleHash` 变了，打开着的框带着 `view` 状态重建；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#桥)） |
 
 `task-state` 形状如下，正文省略：
 
@@ -95,7 +96,7 @@ Provider.stream             Standard Runtime             Host                   
 
 Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/traffic.ts)），作为以后改进同步方式时的基线，只在内存中，重启清零：
 
-- **计什么。** 事件流每一帧写出的文本（`task-state`、`tasks-invalidated`、`refresh`、`host-state`、`app.data` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
+- **计什么。** 事件流每一帧写出的文本（`task-state`、`tasks-invalidated`、`refresh`、`host-state`、`app.data`、`app.updated` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
 - **怎么分。** 每一类有次数、字节数与大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大，共 9 档）；每个会话有点名它的帧（`task-state`、`tasks-invalidated`，所有连接合计）与它的详情响应；每条事件流有入口类别、打开与关闭时间、帧数（含心跳）、字节数与心跳数。会话最多保留 1000 个（最近计入的），已关闭的事件流保留最近 100 条。
 - **只有数字。** 计数只含次数、字节、时间、入口类别、Host 内的连接序号与会话 ID，不含正文、标题、设备 ID 或设备名。
 - **谁能看。** `GET /link/api/traffic` 只读，需要 `admin`，或 `host.sock` 上的匿名命令行；`pnpm latch traffic` 打印摘要（`--json` 打印原样）。

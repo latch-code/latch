@@ -121,25 +121,37 @@ describe('page modules', () => {
     expect((await host.raw('loopback-tcp', `api/app-modules/pages/main/${hash}.js`)).status).toBe(401)
     expect((await owner.request(`app-modules/pages/other/${hash}.js`)).status).toBe(404)
 
-    // A new version: the old hash is gone.
+    // A new version: the one applied just before stays available for a frame to fall back to; older ones are gone.
     await install(owner, pageBundle('page.js', `${MODULE}// 2\n`))
-    const old = await owner.request(`app-modules/pages/main/${hash}.js`)
-    expect([old.status, ((await old.json()) as { error: string }).error]).toEqual([404, 'app-module-not-found'])
+    expect((await owner.request(`app-modules/pages/main/${hash}.js`)).status).toBe(200)
     const next = (await owner.json<AppSnapshot>('snapshot')).apps?.[0]?.bundleHash
     expect(next).toBe(createHash('sha256').update(`${MODULE}// 2\n`).digest('hex'))
+    await install(owner, pageBundle('page.js', `${MODULE}// 3\n`))
+    const old = await owner.request(`app-modules/pages/main/${hash}.js`)
+    expect([old.status, ((await old.json()) as { error: string }).error]).toEqual([404, 'app-module-not-found'])
+    expect((await owner.request(`app-modules/pages/main/${next}.js`)).status).toBe(200)
 
     // A disabled plugin serves nothing.
     expect((await owner.request('plugin-packages/pages/enabled', { body: { requestId: randomUUID(), enabled: false } })).status).toBe(200)
-    const disabled = await owner.request(`app-modules/pages/main/${next}.js`)
+    const current = (await owner.json<AppSnapshot>('snapshot')).apps?.[0]?.bundleHash
+    const disabled = await owner.request(`app-modules/pages/main/${current}.js`)
     expect([disabled.status, ((await disabled.json()) as { error: string }).error]).toEqual([409, 'app-disabled'])
   })
 
-  it('has no module for a source entry until pages are built, and refuses other entry kinds', async () => {
+  it('applies a source entry only once it is built, and refuses other entry kinds', async () => {
     const host = await startTestHost()
     clean.push(() => host.close())
     const owner = await host.enroll({ listener: 'unix' })
-    await install(owner, pageBundle('src/index.tsx', 'export default null'))
-    expect((await owner.json<AppSnapshot>('snapshot')).apps?.[0]).not.toHaveProperty('bundleHash')
+    const draft = (
+      await owner.json<{ package: PluginPackageDetail }>('plugin-packages', {
+        body: { requestId: randomUUID(), bundle: pageBundle('src/index.tsx', 'export default null') },
+      })
+    ).package
+    const unbuilt = await owner.request(`plugin-packages/${draft.id}/apply`, {
+      body: { requestId: randomUUID(), revision: draft.revision },
+    })
+    expect([unbuilt.status, ((await unbuilt.json()) as { error: string }).error]).toEqual([409, 'plugin-package-not-built'])
+    expect((await owner.json<AppSnapshot>('snapshot')).apps ?? []).toEqual([])
     const refused = await owner.request('plugin-packages', {
       body: {
         requestId: randomUUID(),

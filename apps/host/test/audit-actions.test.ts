@@ -32,6 +32,7 @@ const fileAction = { sessionId, pathHash: hex, type: 'other' }
 const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'terminal.open': { sessionId: 'task_1', terminalId: 'term_1' },
   'plugin.package.changed': { operation: 'apply', before: hex, after: hex },
+  'plugin.package.build': { revision: hex, result: 'ok', bundleHashes: [hex], bytes: 1200, diagnostics: 0, typeChecked: true },
   'plugin.package.app-trust': { operation: 'apply', trust: 'confirmed', revision: hex, capabilitiesHash: hex },
   'app.task.start': { pluginId: 'release-check', appId: 'main', revision: hex, requestHash: hex, workspaceId: 'default' },
   'app.data.migrate': { pluginId: 'release-check', fromGeneration: 1, toGeneration: 2, fromVersion: 1, toVersion: 2, documents: 3 },

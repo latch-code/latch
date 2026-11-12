@@ -73,6 +73,7 @@
     "@latch/host": "workspace:*",
     "@types/node": "catalog:",
     "@types/qrcode": "catalog:",
+    "@types/react": "catalog:",
     "@vitest/browser-playwright": "catalog:",
     "electron": "catalog:",
     "esbuild": "catalog:",

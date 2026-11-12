@@ -13,10 +13,15 @@ sources:
   - apps/host/src/plugin-package-routes.ts
   - apps/host/src/plugin-assets.ts
   - packages/protocol/src/apps.ts
+  - apps/host/src/app-import.ts
+  - apps/host/src/app-build.ts
+  - apps/host/src/app-builds.ts
+  - apps/host/src/app-sdk-types.ts
+  - apps/web/src/settings/NewAppCard.tsx
 ---
 # 插件页面
 
-插件包 `formatVersion: 2` 可以带「页面」（`apps`）。页面是插件作者写的界面，在不透明隔离框里运行，拿不到设备凭据，只能经父页面的桥使用清单里声明、并在这台电脑上确认过的能力，Host 再逐次核对。本文写清单、信任、会话、存储、诊断与回退（Host），以及页面框、桥与壳层（客户端）。Host 还不构建 `.ts`/`.tsx` 入口（尚未实现），在那之前页面的模块是包里预先构建的 `.js` 入口。
+插件包 `formatVersion: 2` 可以带「页面」（`apps`）。页面是插件作者写的界面，在不透明隔离框里运行，拿不到设备凭据，只能经父页面的桥使用清单里声明、并在这台电脑上确认过的能力，Host 再逐次核对。本文写清单、信任、会话、存储、诊断与回退（Host），从会话起草、构建与预览，以及页面框、桥与壳层（客户端）。`.ts`/`.tsx` 入口由 Host 用固定的工具构建（见「草稿、构建与预览」）；包里也可以带预先构建的 `.js` 入口，原样作为页面的模块。
 
 Host 声明 `catalog.features.appPages: 1`。
 
@@ -52,6 +57,7 @@ Host 声明 `catalog.features.appPages: 1`。
 - `formatVersion: 1` 的包原样加载；`formatVersion: 2` 也可以带 `host`、`skills`、`panels`、`dataPanels`。两种格式都是严格校验，未知字段、未知能力都使整个包无效。
 - 格式 2 的插件名称与页面标题不能含「」『』、冒号（全角或半角）与换行，免得读起来像确认的固定文字。
 - 每个插件最多 4 个页面，页面标识不重复；`entry` 是包内的 `.ts`、`.tsx` 源文件，或预先构建的 `.js` 模块（见「页面框」）；`requires.appSdk` 只接受 `^1` 的范围；同一插件的页面用同一个 `dataVersion`（存储是插件的）。
+- `apps[].preview.tasks`（可选，最多 20 条 `{ title, status?, projectName? }`）是预览里 `tasks.list` 列出的样例会话，已应用的页面不用它。
 - 能力：`tasks.read`（会话摘要）、`tasks.start`（`projects` 为 `any` 或最多 32 个项目 ID）、`tasks.continue`（只对本页面开始的会话，须同时声明 `tasks.start`）、`tasks.readOwn`（本页面开始的会话的最后回复）、`storage`（`plugin`、`project`、`session` 的子集）。没有批准、授权、确认、配对或改设置类的能力。
 
 ## 信任
@@ -119,10 +125,49 @@ Host 声明 `catalog.features.appPages: 1`。
 
 ## 诊断
 
-每个页面保留最近 200 条，存在 `plugin-data/<pluginId>/diagnostics.json`（0600）。每条 `{ id, at, appId, source, code?, message }`，`message` 先经 `redactSecrets` 再截到 2 KiB。来源：`runtime`、`handshake`、`bridge`（页面上报）、`bridge`（Host 拒绝的能力，只记能力名）、`migration`、`build`（后续步骤）。
+每个页面保留最近 200 条，存在 `plugin-data/<pluginId>/diagnostics.json`（0600）。每条 `{ id, at, appId, source, code?, message }`，`message` 先经 `redactSecrets` 再截到 2 KiB。来源：`runtime`、`handshake`、`bridge`（页面上报）、`bridge`（Host 拒绝的能力，只记能力名）、`migration`、`build`（构建没通过时每个页面记一条，第一条诊断在里面）。
 
 - `GET /apps/:pluginId/diagnostics?app=&revision=`（`view`）。
 - `POST /apps/:pluginId/diagnostics` `{ via, source, code?, message }`（`view`）：每台设备每分钟最多 20 条，Host 记下的拒绝也计在里面。
+
+## 草稿、构建与预览
+
+整条路径只在这台 Mac 的桌面端：`host.sock` 上数据范围 `all` 的管理设备，与插件资产管理相同。别的设备只看到已应用的页面，页面的 ⋯ 写「在 <电脑名> 上修改」。
+
+**让 Agent 做。** 设置 › 插件 › 新应用 › 「让 Agent 做」开始一个普通的 Agent 会话（`POST /tasks` 带 `appDraft: true`，不选项目，用会话自己的文件夹，Harness 由人选，模型用 Harness 的默认）。Host 在第一条输入之前写入 `latch-app/latch-app.json` 骨架（`id` 为 `app-<文件夹名>`）、`latch-app/sdk.d.ts`（SDK 的声明）与 `latch-app/README.md`（布局、SDK 与能力的说明）。会话不在自己的文件夹时回答 409 `app-draft-folder`。内置技能只能经「我的 Agent」交给会话，不能挂在一个普通会话的第一条输入上，所以说明写在 README.md 里，第一条输入请 Agent 按它写。
+
+**导入。** `POST /plugin-packages/import` `{ requestId, sessionId }` 读会话主文件夹下的 `latch-app/`（`app-import.ts`）：
+
+- 不跟随链接：`latch-app` 本身、其中任何文件或文件夹是链接、或文件有不止一个硬链接都拒绝（400 `app-import-link`）；读文件用 `O_NOFOLLOW` 并核对打开的就是遍历时看到的那个普通文件、真实路径仍在会话文件夹里（`app-import-outside`）。
+- 只收 `latch-app.json`、`.ts`、`.tsx`、`.css`、`.png`、`.webp`；其他文件、点开头的文件与 `node_modules`、`.git`、`dist`、`build` 文件夹跳过，Host 自己写的 `sdk.d.ts` 与 `README.md` 也不收。`.mjs`、`.cjs` 拒绝（`app-import-module`）；清单里有 `host` 或 `panels` 拒绝（`app-import-code`），本机代码走插件的高级导入与逐摘要确认。入口必须是 `.ts`/`.tsx`。
+- 最多 64 个文件、单个 512 KiB、合计 2 MiB（`app-import-limit`）；看起来含密钥的文件拒绝（`app-import-secret`）；图片按文件头核对（`app-import-image`），以 base64 存进包里。
+- 结果成为资产存储里的草稿修订，记录 `source: { sessionId, dev }`。同一个 ID 已被别的方式建的插件占用时 409 `plugin-package-exists`。之后构建只用这份快照，不再读会话文件夹。审计 `plugin.package.changed`（`operation: import`）。
+- 改动页签在会话文件夹有 `latch-app/latch-app.json` 时给「作为应用草稿」（`GET /plugin-packages/session-draft?sessionId=` 回答 `{ present, pluginId? }`）。
+
+**构建。** `POST /plugin-packages/:id/build` `{ requestId, revision }`，只构建草稿当前的修订；这个修订已有成功的构建时直接回答它。Host 同时只跑一个构建（`app-build.ts`）：
+
+- 两个子进程：`node --disable-sigusr1 --max-old-space-size=512 --input-type=module -e <固定脚本>` 跑 esbuild，以及 TypeScript 7 的原生 `tsc`。环境只有 `GOMEMLIMIT=512MiB`（两个工具都是 Go 程序；它是 Go 的软上限，Node 的堆上限是硬的），没有 Latch 的任何变量与秘密；工作目录是新建的 0700 临时文件夹，构建后删除；每个工具在自己的进程组里，60 秒后整组被杀掉（含 esbuild 的 Go 子进程，`timeout`）。
+- 第二层：在 macOS 上两个工具另由 `/usr/bin/sandbox-exec` 包住。它拒绝：
+  - 一切套接字（`network*`）；
+  - 一切 Mach 服务（`mach-lookup`）：读不到偏好设置守护进程，用不了 LaunchServices，所以沙箱里的 `defaults read`、`open` 都失败；两个工具启动时不需要任何服务；
+  - 启动 Node、esbuild 的二进制与 tsc 以外的任何程序；
+  - 写构建自己的文件夹与 `/dev/null` 以外的任何地方；
+  - 读 `/Users`、`/Volumes`、`/private/tmp`、`/private/var/folders`、`/private/var/root`、`/opt`、`/usr/local` 与 Host 的数据目录（无论在哪里）下的文件内容，构建的文件夹与工具自己的文件除外：Node 只开放它自己的二进制，不开放它所在的文件夹；esbuild、TypeScript、`@types/react`、`csstype` 开放各自的包。
+- 第二层不拦的：上面这些文件夹里的文件名、大小等元数据仍可见（Node 解析路径要逐级查看）；`/System`、`/usr/lib`、`/etc` 等系统文件夹仍可读；进程与系统信息的查询照常。没有 `sandbox-exec` 的系统（macOS 以外）只有第一层：`noResolve` 与只认内存草稿的解析插件。
+- esbuild 的输入只在内存里：草稿的文件经 stdin 交给子进程，Host 的解析插件只允许草稿内的相对导入（`.tsx`、`.ts`、`/index.tsx`、`/index.ts`、`.css`、`.png`、`.webp`）与 `react`、`react/jsx-runtime`、`@latch/app-sdk`，后三个解析成 `globalThis.__latchModules[...]`；其他导入是诊断。`bundle`、`format: 'esm'`、`platform: 'browser'`、`write: false`、`jsx: automatic`、`tsconfigRaw: {}`。CSS 变成往 `<head>` 加 `<style>` 的模块，图片变成 `data:` 地址。草稿的 `package.json`、`tsconfig`、构建配置与插件从不被读。
+- 类型检查：Host 生成 `tsconfig.json`（`strict`、`noEmit`、`noResolve`、`types: []`、`typeRoots: []`、`jsx: react-jsx`、`moduleResolution: bundler`），并逐个列出全部文件：草稿的 `.ts`/`.tsx`、Host 的 `app-sdk.d.ts`（与写给会话的 `sdk.d.ts` 相同）以及 `@types/react` 的 `index.d.ts`、`global.d.ts`、`jsx-runtime.d.ts` 与 `csstype`。草稿用 `import`、`import type`、`typeof import()` 或 `/// <reference>` 指向别处时，编译器也不读那个文件（第一层）。
+- esbuild 与 tsc 只解析不执行输入；未信任的草稿从不在 Host 或可信页面里运行，只在页面框里运行。
+- 每个页面的产物 ≤ 2 MiB。诊断 `{ tool: esbuild | tsc | build, file?, line?, column?, message }` 最多 100 条，先经 `redactSecrets`；tsc 关于草稿 `src/` 以外任何文件的诊断（以及不带文件的）整条丢掉，连同消息。
+- 构建记录（结果、用时、是否做了类型检查、诊断、每个页面的产物与哈希）存在 `plugin-packages/builds/<pluginId>.json`（0600），保留草稿、已应用与可回退修订的构建，加最近一次成功的与另外两个；文件始终小于读回它的上限，超出时先丢备用的，再丢上次成功的预览，再丢最旧的回退目标，草稿与已应用修订的构建一直保留；读取时核对产物的 SHA-256，不符的整条不用。审计 `plugin.package.build`（修订、结果、产物哈希、字节数、诊断条数、是否类型检查），不写源码；审计写不进时构建照常记录，响应带 `x-latch-audit: failed`。
+- `GET /plugin-packages/:id/build?revision=` 回答该修订最近的构建（含诊断）；摘要的 `build` 只给诊断条数，`preview` 是最近一次成功的构建。
+
+**应用。** `POST /plugin-packages/:id/apply` 与 `/rollback` 对有 `.ts`/`.tsx` 入口的修订要求该修订有成功的构建（409 `plugin-package-not-built`），信任规则不变（见「信任」）。`GET /link/api/app-modules/...` 提供的就是这次构建的产物。已应用的页面在草稿有新修订时由人点「应用新版本」，之后各设备经 `app.updated` 重建框。
+
+**预览。** 同一个页面框、同一份产物，产物经 `GET /plugin-packages/:id/builds/:bundleHash.js`（同样的管理设备规则；`application/octet-stream`、`nosniff`，`sec-fetch-dest` 不是 `empty` 时 403）。父页面接的是预览桥（`previewBridge.ts`），它从不调用 Host：`tasks.list/subscribe` 给清单的 `preview.tasks` 或三条固定样例，`tasks.start/continue` 与 `nav.openSession` 回答 `preview`（壳层写「预览里不会开会话」），`tasks.lookup` 为 `not-found`，存储在这个桥的内存里，关掉预览就没了，`diag.report` 什么都不发；能力照常按清单核对。框外是虚线边框与「预览」标记；运行时错误不上报。
+
+**开发中。** 新应用卡片的「开发中」开关（`POST /plugin-packages/:id/dev` `{ requestId, dev }`，记下开启它的设备）：来源会话每轮结束（`runSettled`）后 Host 再读 `latch-app/`，修订变了就导入并构建，身份是开启它的设备：那台设备被移除时开发中立即关掉；它过期或不再是这台 Mac 拥有完整数据范围的管理设备时，下一轮不导入，并关掉开发中（审计 `plugin.package.changed`，`operation: dev`，执行者为 Host）。构建失败时卡片显示诊断，预览仍是上一个成功的构建；「交回 Agent」把诊断放进那个会话的草稿（只在这个标签页的内存里，打开会话时追加），不发送。导入被拒绝也记成页面的 `build` 诊断。
+
+**卡片。** 设置 › 插件「新应用」：每个从会话导入的插件一张卡，四段进度 草稿 › 构建 › 预览 › 应用（构建没通过为红，等这台 Mac 确认为琥珀），来自哪个会话与「从会话更新」，构建失败的诊断（「全部 N 条」），预览，「应用」或「应用新版本」，已应用后「打开」。写请求都带 `requestId`，结果未知时用同一个请求重试。插件详情里另有「回退到 x.y.z」与每个页面的「诊断」。
 
 ## 页面框
 
@@ -136,7 +181,7 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 
 **仍有的旁路。** 框里的导航（`location.href = …`）会被拒绝或让父页面销毁框，但浏览器在拒绝之前可能已经为目标地址做了 DNS 查询或建立了 TCP 连接，所以页面能经域名把少量数据带到它选的 DNS 服务器或地址。这不是凭据或 Host 数据：页面本来就拿不到它们；能带出的只是页面经桥读到的东西（会话摘要、它开始的会话的回复、它的数据）。
 
-1. 父页面用一个随机 nonce 打开框（地址片段 `#nonce=`），同时带自己的凭据取模块：`GET /link/api/app-modules/:pluginId/:appId/:bundleHash.js`（`view`，照常核对修订、启用与批准；`no-store`；旧哈希 404 `app-module-not-found`）。它以 `application/octet-stream` 与 `nosniff` 返回，`sec-fetch-dest` 不是 `empty` 时 403 `app-module-refused`，所以从不作为脚本、框或页面在壳层的来源上运行。
+1. 父页面用一个随机 nonce 打开框（地址片段 `#nonce=`），同时带自己的凭据取模块：`GET /link/api/app-modules/:pluginId/:appId/:bundleHash.js`（`view`，照常核对修订、启用与批准；`no-store`；只认当前修订与它之前应用的那个修订的哈希，更早的 404 `app-module-not-found`）。它以 `application/octet-stream` 与 `nosniff` 返回，`sec-fetch-dest` 不是 `empty` 时 403 `app-module-refused`，所以从不作为脚本、框或页面在壳层的来源上运行。
 2. 框只说一次 `{ type: 'ready', protocol: 1, nonce }`。父页面核对 `event.source` 是自己的框、`origin` 是 `'null'`、nonce 一致，然后发 `init`，把一个 MessagePort 与模块字节一起转交。之后只走这个端口，窗口消息一概不理。
 3. 运行时核对字节的 SHA-256 等于 `bundleHash`，从 Blob 地址导入，默认导出必须来自 `defineApp`。模块里的 `react`、`react/jsx-runtime` 与 `@latch/app-sdk` 是运行时放在 `globalThis.__latchModules` 的冻结对象，版本与 Web 同一 catalog。
 4. 15 秒内没有 `ready` 与画好的页面、页面发来无法识别的消息、框离开引导页（第二次 `load`）或页面在画好前出错，都算一次打开失败：父页面销毁框，记诊断（`handshake` 或 `runtime`）。连续 3 次失败只显示错误卡；中间画好过也照样计数，页面不能画好又失败地无限重载。只有「重新加载」或新版本从零开始。
@@ -163,7 +208,7 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 - 父页面先查：形状、清单里的能力（不在清单里的直接 `capability-denied`，不问 Host）、页面仍挂着；再用自己的凭据问 Host。写请求的 `requestId` 由 SDK 生成，结果未知（`unknown`）时错误里带回它，用同一个重试。
 - 限速在父页面也镜像一份（开始与继续每分钟 6 次、写入 60 次、上报 20 次），只为让页面早点知道；Host 仍是权威。
 - 订阅：断线时先发一次 `offline`（带上次的列表），重新同步后发一次完整列表，不跨缺口补增量。
-- 停用、卸载、换版本时父页面关闭端口与订阅，之后什么都不再发。快照里页面的修订或 `bundleHash` 变了就重建框，`view` 状态带过去。
+- 停用、卸载、换版本时父页面关闭端口与订阅，之后什么都不再发。快照里页面的修订或 `bundleHash` 变了就重建框，`view` 状态带过去。新版本在这个标签页里打不开时，页面回到这个标签页上次画好的版本（Host 仍提供它之前应用的那个修订的产物），页头下写「新版本没有打开，正在显示上一个版本」并记诊断；那个旧版本的桥调用会因修订过期被拒，只能看；「重新加载」再试新版本。应用、回退、启停与删除后 Host 向每个事件流发 SSE `app.updated` `{ pluginId }`，客户端随即重读快照，所以每台设备上打开的框立刻换成新产物。
 
 ## 壳层
 
@@ -176,7 +221,7 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 
 ## 失败码
 
-页面看到的是固定的几种：`capability-denied`、`forbidden`、`offline`、`unknown`、`rate-limited`、`invalid-input`、`not-found`。Host 的回答由父页面对应过去，Host 的原文不给页面：
+页面看到的是固定的几种：`capability-denied`、`forbidden`、`offline`、`unknown`、`rate-limited`、`invalid-input`、`not-found`；预览桥另有 `preview`（预览里开始、继续或打开会话）。Host 的回答由父页面对应过去，Host 的原文不给页面：
 
 | Host | 页面 |
 | --- | --- |

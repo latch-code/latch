@@ -529,6 +529,7 @@ const TRAFFIC_LABELS: Record<TrafficKind, string> = {
   refresh: '刷新帧',
   'host-state': 'Host 状态帧',
   'app.data': '插件数据帧',
+  'app.updated': '插件页面更新帧',
   heartbeat: '心跳',
   snapshot: '快照响应',
   detail: '会话详情响应',

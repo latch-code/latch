@@ -136,6 +136,7 @@ export function SettingsPage({
   onSection,
   onChanged,
   onOpenSession,
+  onOpenApp,
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
@@ -155,6 +156,8 @@ export function SettingsPage({
   onSection: (section?: SettingsSection) => void
   onChanged: () => void
   onOpenSession?: (id: string) => void
+  /** Opens an applied plugin page (设置 › 插件's 新应用). */
+  onOpenApp?: (target: { pluginId: string; appId: string }) => void
 }) {
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
@@ -349,7 +352,15 @@ export function SettingsPage({
                         {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                       />
                     )}
-                    {panel === 'plugins' && <PluginsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'plugins' && (
+                      <PluginsSettings
+                        snapshot={snapshot}
+                        access={access}
+                        onChanged={onChanged}
+                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
+                        {...(onOpenApp ? { onOpenApp } : {})}
+                      />
+                    )}
                     {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'about' && (
                       <AboutSettings

@@ -11,6 +11,7 @@ import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDe
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { ConfigRequests } from '../core/configRequest.ts'
 import { SessionDrafts } from '../core/sessionDrafts.ts'
+import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
 import {
   findHarness,
@@ -389,6 +390,8 @@ export function useSessionController({
   const choose = useStableCallback((id: string | null): void => {
     // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
     if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id))) return
+    const handed = id === null ? undefined : takeHandedDraft(id)
+    if (handed && id === selectedId) submission.setDraft(previous => joinDraft(previous, handed))
     if (id !== selectedId || id === null) {
       if (selectedId !== null) {
         const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === selectedId
@@ -400,7 +403,7 @@ export function useSessionController({
       } else if (id !== null) sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
       if (selectedId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
-      submission.setDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible))
+      submission.setDraft(joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed))
       draftSessionId.current = id
     }
     onBeforeSelect(id)

@@ -27,7 +27,10 @@
     "@latch/harness-acp": "workspace:*",
     "@latch/protocol": "workspace:*",
     "@latch/sdk": "workspace:*",
+    "@types/react": "catalog:",
+    "esbuild": "catalog:",
     "qrcode": "catalog:",
+    "typescript": "catalog:",
     "undici": "catalog:",
     "zod": "catalog:",
     "@latch/link-wire": "workspace:*",
@@ -35,8 +38,7 @@
   },
   "devDependencies": {
     "@latch/testkit": "workspace:*",
-    "electron": "catalog:",
-    "esbuild": "catalog:"
+    "electron": "catalog:"
   },
   "latch": {
     "env": "node"

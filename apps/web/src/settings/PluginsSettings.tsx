@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { ArrowLeftRight, BookOpen, Plus, Wrench } from 'lucide-react'
-import type { AppSnapshot, PluginInfo, PluginPackageManifest, PluginPackageSummary } from '@latch/protocol'
+import type { AppSnapshot, AppSummary, PluginInfo, PluginPackageManifest, PluginPackageSummary } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { Button, EmptyState, IconButton, InlineNotice, Switch, type LucideIcon } from '@latch/ui'
@@ -8,6 +8,9 @@ import { IconTile, Loading, SectionHeading, SettingsGroup, SettingsRow } from '.
 import { NavigationContext, SettingsPages } from './navigation.tsx'
 import { packageState, PluginReachGroup, usePluginAssets } from './PluginAssetsSettings.tsx'
 import { packageReach, pluginReach, type PluginReach } from './pluginAssets.ts'
+import { NewApps } from './NewAppCard.tsx'
+import { computerName } from '../core/securityCopy.ts'
+import { DiagnosticsDialog } from '../plugin-pages/AppsPage.tsx'
 
 type Shelf = 'tool' | 'skill' | 'connection'
 const SHELVES: Array<{ id: Shelf; label: string; icon: LucideIcon }> = [
@@ -40,8 +43,17 @@ function provides(capabilities: readonly string[]): string {
   return [...counts].map(([kind, count]) => `${CAPABILITY_LABELS[kind] ?? kind} ${count}`).join(' · ')
 }
 
+/** What a package brings and where it runs, in a few words: a page, a panel with the page's authority, or Mac code. */
+export function reachLabel(record: Pick<PluginPackageSummary, 'pages' | 'capabilities'>): string | undefined {
+  const kinds = kindsOf(record.capabilities)
+  if (['tool', 'harness', 'provider', 'transport'].some(kind => kinds.includes(kind))) return '代码 · 在 Mac 上运行'
+  if (kinds.includes('ui')) return '面板 · 与页面同权'
+  if ((record.pages ?? 0) > 0) return '页面 · 侧栏入口'
+  return undefined
+}
+
 /** One row of a shelf, whichever source it came from. */
-type Item = { key: string; name: string; state: string; attention: boolean; shelf: Shelf } & (
+type Item = { key: string; name: string; state: string; attention: boolean; shelf: Shelf; reach?: string } & (
   | { kind: 'plugin'; plugin: PluginInfo }
   | { kind: 'package'; record: PluginPackageSummary; plugin?: PluginInfo }
 )
@@ -69,6 +81,7 @@ export function pluginItems(plugins: readonly PluginInfo[], records: readonly Pl
         ...(plugin ? { plugin } : {}),
         name: record.name,
         state: packageState(record),
+        ...(reachLabel(record) ? { reach: reachLabel(record)! } : {}),
         attention: record.unavailableReason !== undefined,
         shelf: shelfOf(record.capabilities),
       }
@@ -124,7 +137,7 @@ function Shelves({
                 <span className="plugin-nav-text">
                   <span className="plugin-nav-name">{item.name}</span>
                   <span className="plugin-nav-state" data-attention={item.attention ? '' : undefined}>
-                    {item.attention ? '需要处理' : item.state}
+                    {item.attention ? '需要处理' : item.reach ? `${item.reach} · ${item.state}` : item.state}
                   </span>
                 </span>
               </button>
@@ -153,6 +166,8 @@ function PluginDetail({
   onToggle,
   onSetPackage,
   onEdit,
+  pages = [],
+  onRollback,
 }: {
   item: Item
   busy: boolean
@@ -165,7 +180,11 @@ function PluginDetail({
   onToggle: (plugin: PluginInfo) => void
   onSetPackage: (record: PluginPackageSummary, enabled: boolean) => void
   onEdit: (record: PluginPackageSummary) => void
+  /** The package's applied pages, from the snapshot. */
+  pages?: AppSummary[]
+  onRollback?: (record: PluginPackageSummary, revision: string) => void
 }) {
+  const [diagnostics, setDiagnostics] = useState<AppSummary | null>(null)
   // A phone's page has the name in its bar.
   const { phone } = useContext(NavigationContext)
   const plugin = item.plugin
@@ -216,13 +235,44 @@ function PluginDetail({
             }
           />
         )}
+        {record && canEdit && onRollback && record.rollbackRevisions?.[0] && (
+          <SettingsRow
+            title="回退"
+            trailing={
+              <Button disabled={busy} onClick={() => onRollback(record, record.rollbackRevisions![0]!.revision)}>
+                {`回退到 ${record.rollbackRevisions[0].version}`}
+              </Button>
+            }
+          />
+        )}
+        {pages.map(page => (
+          <SettingsRow
+            key={page.appId}
+            title={page.title}
+            description="页面 · 侧栏入口"
+            trailing={<Button onClick={() => setDiagnostics(page)}>诊断</Button>}
+          />
+        ))}
       </SettingsGroup>
+      {diagnostics && <DiagnosticsDialog page={diagnostics} onClose={() => setDiagnostics(null)} />}
       <PluginReachGroup reach={reach} {...(onRetryReach ? { onRetryRead: onRetryReach } : {})} />
     </>
   )
 }
 
-export function PluginsSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: DeviceAccess; onChanged: () => void }) {
+export function PluginsSettings({
+  snapshot,
+  access,
+  onChanged,
+  onOpenSession,
+  onOpenApp,
+}: {
+  snapshot: AppSnapshot
+  access: DeviceAccess
+  onChanged: () => void
+  onOpenSession?: (id: string) => void
+  onOpenApp?: (target: { pluginId: string; appId: string }) => void
+}) {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null)
   const [chosen, setChosen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -248,6 +298,13 @@ export function PluginsSettings({ snapshot, access, onChanged }: { snapshot: App
       onChanged()
     },
   })
+
+  // A build or an automatic import (开发中) changes the list without this page asking: the snapshot moves with it.
+  const reload = assets.reload
+  useEffect(() => {
+    if (canEdit) reload()
+  }, [snapshot.revision, canEdit])
+  const appPages = snapshot.catalog?.features?.appPages === 1
 
   // The switch moving is the feedback; only a failure is said.
   const toggle = async (plugin: PluginInfo) => {
@@ -323,6 +380,8 @@ export function PluginsSettings({ snapshot, access, onChanged }: { snapshot: App
       }}
       onSetPackage={assets.setEnabled}
       onEdit={assets.open}
+      pages={(snapshot.apps ?? []).filter(page => selected.kind === 'package' && page.pluginId === selected.record.id)}
+      onRollback={assets.rollback}
     />
   )
   const assetsError = !assets.locked && assets.error && (
@@ -343,6 +402,19 @@ export function PluginsSettings({ snapshot, access, onChanged }: { snapshot: App
           <>
             {error && !selected && <InlineNotice tone="error">{error}</InlineNotice>}
             {assetsError}
+            {canEdit && appPages && assets.records && (
+              <NewApps
+                records={assets.records}
+                snapshot={snapshot}
+                onChanged={() => {
+                  assets.reload()
+                  onChanged()
+                }}
+                {...(onOpenSession ? { onOpenSession } : {})}
+                {...(onOpenApp ? { onOpenApp } : {})}
+              />
+            )}
+            {!canEdit && appPages && <p className="settings-empty">{`在 ${computerName(snapshot.hostName)} 上修改`}</p>}
             {items.length === 0 ? <EmptyState title="这台 Mac 还没有可管理的插件" /> : shelves}
           </>
         }

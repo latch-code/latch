@@ -49,6 +49,7 @@ import type { AppDiagnostic, AppMigrationLease, AppSummary, PluginPackageDetail 
 import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { currentShell } from '../core/shell.ts'
+import { computerName } from '../core/securityCopy.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { EntryRows } from '../agents/parts.tsx'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
@@ -56,7 +57,7 @@ import { settingsSections } from '../settings/SettingsPage.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
 import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFrame.tsx'
-import { appRef, findApp, listedApps, openStep, shellTheme } from './model.ts'
+import { appRef, fallbackVersion, findApp, listedApps, openStep, shellTheme, type PageVersion } from './model.ts'
 import { useSecureCover } from './secureCover.ts'
 
 const ICONS: Record<string, LucideIcon> = {
@@ -225,7 +226,8 @@ interface PendingChange {
   revision?: string
 }
 
-function useShellTheme(): 'light' | 'dark' {
+/** The shell's theme as it changes (the system's, or the one chosen in 设置). */
+export function useShellTheme(): 'light' | 'dark' {
   const [theme, setTheme] = useState(shellTheme)
   useEffect(() => {
     const update = () => {
@@ -264,11 +266,15 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   const [error, setError] = useState('')
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const version = `${page.revision}:${page.bundleHash ?? ''}:${page.status}`
+  /** The version last drawn here, and the earlier one shown after a new version would not open. */
+  const lastDrawn = useRef<PageVersion | null>(null)
+  const [fallback, setFallback] = useState<PageVersion | null>(null)
   // A new version, or a page that came back, starts fresh: three more tries.
   useEffect(() => {
     failures.current = 0
     setPhase({ kind: 'loading' })
     setLease(undefined)
+    setFallback(null)
   }, [version])
   useEffect(() => () => clearTimeout(retry.current), [])
   useEffect(() => {
@@ -287,6 +293,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
 
   const reload = () => {
     clearTimeout(retry.current)
+    setFallback(null)
     failures.current = 0
     setPhase({ kind: 'loading' })
     setLease(undefined)
@@ -294,6 +301,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   }
   const outcome = (result: FrameOutcome) => {
     if (result.kind === 'ready') {
+      if (!fallback && page.bundleHash) lastDrawn.current = { revision: page.revision, bundleHash: page.bundleHash }
       setPhase({ kind: 'ready' })
       return
     }
@@ -304,6 +312,16 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
     if (result.kind === 'migrate-failed') {
       reportDiagnostic(page, 'runtime', `数据更新失败：${result.message}`)
       setPhase({ kind: 'migration-failed' })
+      return
+    }
+    // A new version that will not open: back to the one this tab last drew, which the Host still serves.
+    const back = fallbackVersion(lastDrawn.current, page, fallback !== null)
+    if (back && result.kind === 'failed') {
+      if (online) reportDiagnostic(page, result.source, `新版本没有打开，回到上一个版本：${result.message}`)
+      setFallback(back)
+      failures.current = 0
+      setPhase({ kind: 'loading' })
+      setAttempt(value => value + 1)
       return
     }
     const step = openStep(failures.current, 'failed')
@@ -427,7 +445,13 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
             ],
           },
         ]
-      : []),
+      : [
+          {
+            id: 'manage',
+            // Building, applying, turning off and going back happen on the Mac that runs the Host.
+            items: [{ id: 'elsewhere', label: `在 ${computerName(snapshot.hostName)} 上修改`, disabled: true, onSelect: () => {} }],
+          },
+        ]),
   ]
   const info = hostInfo(theme, online, canRun)
   // Esc in the frame is the page's way back on a phone, and nothing else.
@@ -536,7 +560,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
         {phase.kind !== 'ready' && <Loading variant="page" label="正在打开页面…" />}
         <AppFrame
           key={`${version}:${attempt}`}
-          page={{ ...page, bundleHash: page.bundleHash }}
+          page={{ ...page, bundleHash: page.bundleHash, ...(fallback ?? {}) }}
           snapshot={snapshot}
           online={online}
           info={info}
@@ -583,6 +607,18 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {error}
         </InlineNotice>
       )}
+      {fallback && (
+        <InlineNotice
+          tone="warn"
+          className="app-page-error"
+          action={
+            <Button variant="ghost" onClick={reload}>
+              重新加载
+            </Button>
+          }>
+          新版本没有打开，正在显示上一个版本
+        </InlineNotice>
+      )}
       <div className="app-page-body">{body}</div>
       {diagnostics && (
         <DiagnosticsDialog
@@ -605,7 +641,7 @@ const SOURCE_LABEL: Record<AppDiagnostic['source'], string> = {
 }
 
 /** The page's last diagnostics, newest first, as the Host keeps them (redacted, at most 2 KiB each). */
-function DiagnosticsDialog({ page, onClose }: { page: AppSummary; onClose: () => void }) {
+export function DiagnosticsDialog({ page, onClose }: { page: AppSummary; onClose: () => void }) {
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'ready'; items: AppDiagnostic[] } | { kind: 'failed'; message: string }>(
     {
       kind: 'loading',

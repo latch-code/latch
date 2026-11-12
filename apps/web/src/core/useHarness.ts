@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { publishAppData } from './appEvents.ts'
+import { publishAppData, publishAppUpdated } from './appEvents.ts'
 import type { AppSnapshot, ChangeEvent, TaskDetail } from '@latch/protocol'
 import { api, ApiError, errorMessage, setAuthHooks } from './api.ts'
 import { browserRenewal, RenewalScheduler } from './credentials.ts'
@@ -391,6 +391,9 @@ export function useHarness() {
         } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
         else if (message.event === 'host-state') hostState(message.data)
         else if (message.event === 'app.data') publishAppData(message.data, guard.current.instanceId ?? undefined)
+        // A plugin's pages changed: the snapshot names the new revision and bundle, and open frames rebuild from it.
+        else if (message.event === 'app.updated' && publishAppUpdated(message.data, guard.current.instanceId ?? undefined))
+          void synchronize('all')
       },
       onError: () => {
         if (disposed) return

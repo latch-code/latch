@@ -44,15 +44,15 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 pnpm install
 pnpm check:quick                 # fmt:check、lint、typecheck、check:boundaries、check:agents
 pnpm check                       # check:quick 加 knip 与 test，逐项汇报
-pnpm check -- --plan             # 按改动列出要运行与不需要运行的检查；--base <ref> 指定比较的提交
-pnpm fmt                         # oxfmt 写入格式；不处理 Markdown 与 packages/testkit/vectors/
+pnpm check -- --plan             # 按改动列出该跑的检查；--base <ref> 指定比较的提交
+pnpm fmt                         # oxfmt 写入；不处理 Markdown 与 packages/testkit/vectors/
 pnpm test --project @latch/host  # 只跑一个项目（项目名见 vitest.config.ts）
 pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
-pnpm build                       # build:host + build:web + build:presence；e2e 使用 dist/web
+pnpm build                       # 含 host、web 与 presence；e2e 用 dist/web
 LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
 LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
                                  # 仅 macOS，先 pnpm build；用例不碰钥匙串与桌面端数据
-pnpm latch --help                # 列出子命令；调用时都加 --data-dir <临时目录>
+pnpm latch --help                # 列出子命令；都加 --data-dir <临时目录>
 pnpm start:demo -- --port 0 --data-dir <临时数据目录> --workspace <临时工作区>
 pnpm stop -- --data-dir <同一数据目录>
 LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 /link/ 地址
@@ -83,7 +83,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码与页面能力变宽；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 都经受限运行器（文件与配置钩子、fsmonitor、filter、传输关闭）；只有人按下的提交、推送与有 filter 的暂存以你的账户运行 Git：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
-- **插件页面只凭已批准的能力行事。** 只在不透明隔离框中运行、不拿凭据；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
+- **插件页面只凭已批准的能力行事。** 只在不透明隔离框中运行、不拿凭据，草稿只经 Host 固定工具在沙箱中构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（格式见 [docs/TESTING.md](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`。
 - **共享安全编码。** 修改 base32、指纹、`canonicalJson`、确认预览与 previewHash、`hashDisplay`、`escapeSecurityText` 或签名文本时，同时更新 `packages/testkit/vectors/security-v1.json`、`native/macos/LatchPresence.swift` 与各处实现（`apps/host/src/crypto.ts`、`auth.ts`（签名文本）、`presence*.ts`（确认预览）、`packages/core/src/node-kit/digest.ts`、`packages/protocol/src/text.ts`、`apps/web/src/core/deviceKey.ts`、`contentHash.ts`、`apps/desktop/src/credentials.cjs`），再 `pnpm build:presence` 并运行 `presence.test.ts`（自检用例对旧组件失败）。

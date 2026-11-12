@@ -150,3 +150,18 @@ export function sessionWaits(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
   const task = snapshot.tasks.find(item => item.id === sessionId)
   return (task !== undefined && waitsOnYou(task)) || snapshot.approvals.some(approval => approval.sessionId === sessionId)
 }
+
+/** A page version as a frame loads it. */
+export interface PageVersion {
+  revision: string
+  bundleHash: string
+}
+
+/**
+ * After the newly applied version fails to open: the version this page last drew in this tab, when that is an earlier
+ * one and the page has not fallen back already. Its calls are refused as stale; it only keeps the page on screen.
+ */
+export function fallbackVersion(lastDrawn: PageVersion | null, page: { revision: string }, fallen: boolean): PageVersion | undefined {
+  if (fallen || !lastDrawn || lastDrawn.revision === page.revision) return undefined
+  return lastDrawn
+}

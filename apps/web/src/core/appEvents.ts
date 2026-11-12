@@ -1,4 +1,4 @@
-import type { AppDataEvent } from '@latch/protocol'
+import type { AppDataEvent, AppUpdatedEvent } from '@latch/protocol'
 
 type Listener = (event: Pick<AppDataEvent, 'pluginId' | 'scope' | 'key' | 'version'>) => void
 const listeners = new Set<Listener>()
@@ -28,5 +28,27 @@ export function publishAppData(data: string, instanceId: string | undefined): vo
     for (const listener of listeners) listener(change)
   } catch {
     /* A malformed event changes nothing. */
+  }
+}
+
+const updated = new Set<(pluginId: string) => void>()
+
+/** SSE `app.updated`: a plugin's pages were applied, rolled back, turned on or off, or removed. */
+export function onAppUpdated(listener: (pluginId: string) => void): () => void {
+  updated.add(listener)
+  return () => {
+    updated.delete(listener)
+  }
+}
+
+/** Parses an `app.updated` event of this Host instance; true when it was one, so the caller reads the snapshot again. */
+export function publishAppUpdated(data: string, instanceId: string | undefined): boolean {
+  try {
+    const event = JSON.parse(data) as Partial<AppUpdatedEvent>
+    if (event.type !== 'app.updated' || event.instanceId !== instanceId || typeof event.pluginId !== 'string') return false
+    for (const listener of updated) listener(event.pluginId)
+    return true
+  } catch {
+    return false
   }
 }

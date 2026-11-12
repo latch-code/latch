@@ -5,7 +5,7 @@
  */
 import type { AppCapabilities, AppDataDocument, AppStorageScopeKind } from './apps.ts'
 
-/** The fixed failure codes a page sees; the Host's own error text never reaches it. */
+/** The fixed failure codes a page sees; the Host's own error text never reaches it. `preview` comes only from the preview bridge. */
 export const APP_ERROR_CODES = [
   'capability-denied',
   'forbidden',
@@ -14,6 +14,8 @@ export const APP_ERROR_CODES = [
   'rate-limited',
   'invalid-input',
   'not-found',
+  /** Only in the preview: starting or continuing a session does nothing there. */
+  'preview',
 ] as const
 
 export const APP_PROTOCOL = 1

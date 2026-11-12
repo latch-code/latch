@@ -84,6 +84,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
   const [manifestText, setManifestText] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const alive = useRef(true)
+  const reloading = useRef(false)
   const changed = useRef(onChanged)
   changed.current = onChanged
   async function load() {
@@ -547,6 +548,20 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       void load().catch((cause: unknown) => {
         setError(inlineError(cause))
       })
+    },
+    /** Reads the list again quietly: a build or an automatic import finished elsewhere. */
+    reload: () => {
+      if (!alive.current || reloading.current) return
+      reloading.current = true
+      void load()
+        .catch(() => {})
+        .finally(() => {
+          reloading.current = false
+        })
+    },
+    /** Applies an earlier applied revision again (回退), with its confirmation when its pages ask for more. */
+    rollback: (record: PluginPackageSummary, revision: string) => {
+      void perform({ path: route(record.id) + '/rollback', options: { method: 'POST', body: { requestId: newRequestId(), revision } } })
     },
   }
 }

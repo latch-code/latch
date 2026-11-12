@@ -2,6 +2,7 @@ import { fileContextKey } from '../preview/fileContext.ts'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
+import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
 import { errorMessage } from '../core/api.ts'
@@ -76,6 +77,13 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     composerRef.current?.focus()
   }
   const readsChanges = canViewChanges && snapshot.device.dataScope === 'all'
+  // The page pipeline is this Mac's: the desktop's admin device with all data.
+  const pageDrafts =
+    catalog?.features?.appPages === 1
+    && catalog.features.pluginPackages === true
+    && access.local
+    && access.admin
+    && snapshot.device.dataScope === 'all'
   return (
     <SessionPanels
       key={contextKey}
@@ -106,6 +114,23 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 }}
                 onTotals={setChangesTotals}
                 {...(canDeliver ? { onDeliver: () => showSurface({ kind: 'delivery' }) } : {})}
+                {...(pageDrafts
+                  ? {
+                      appDraft: (
+                        <AppDraftEntry
+                          sessionId={summary.id}
+                          revision={`${summary.updatedAt}:${summary.status}`}
+                          onImported={() => {
+                            setToast({ text: '已作为应用草稿导入', tone: 'ok' })
+                            shell.openSettings('plugins')
+                          }}
+                          onError={text => {
+                            setToast({ text, tone: 'error' })
+                          }}
+                        />
+                      ),
+                    }
+                  : {})}
               />
             ),
           }

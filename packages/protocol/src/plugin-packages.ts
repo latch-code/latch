@@ -37,6 +37,36 @@ export interface PluginPackageSummary {
   state: 'draft' | 'applied' | 'update-available'
   /** Earlier applied revisions a rollback can return to, newest first (format 2 Hosts). */
   rollbackRevisions?: Array<{ revision: string; version: string }>
+  /** The session the draft was imported from (`POST /plugin-packages/import`); `dev`: imported and built again after its turns. */
+  source?: { sessionId: string; dev: boolean }
+  /** The pages the draft declares. */
+  pages?: number
+  /** The latest build of the draft revision, without its diagnostics' text (`GET /plugin-packages/:id/build`). */
+  build?: Omit<PluginBuild, 'diagnostics'> & { diagnostics: number }
+  /** The newest successful build of the draft, which its preview loads (`GET /plugin-packages/:id/builds/:bundleHash.js`). */
+  preview?: { revision: string; modules: PluginBuild['modules'] }
+}
+
+/** One message of a build: `esbuild` bundling (syntax, imports), `tsc` the type check, `build` the build itself. */
+export interface PluginBuildDiagnostic {
+  tool: 'esbuild' | 'tsc' | 'build'
+  file?: string
+  line?: number
+  column?: number
+  message: string
+}
+
+/** A page draft's build with the Host's fixed tools; `modules` are the pages' bundles of a successful one. */
+export interface PluginBuild {
+  id: string
+  revision: string
+  status: 'ok' | 'failed' | 'timeout'
+  at: string
+  durationMs: number
+  /** Whether the TypeScript check ran. */
+  typeChecked: boolean
+  diagnostics: PluginBuildDiagnostic[]
+  modules: Array<{ appId: string; bundleHash: string; bytes: number }>
 }
 export interface PluginPackageDetail extends PluginPackageSummary {
   bundle: PluginPackageBundle

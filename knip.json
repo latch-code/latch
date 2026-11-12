@@ -28,7 +28,8 @@
       // lefthook runs by hand once per clone (`pnpm exec lefthook install`), not from a script. qrcode and undici are
       // imported only by workspace projects (qrcode by the Host and the web client, undici by the Host); the Host
       // bundles in dist/ load them from the root's node_modules, so the root declares them too.
-      "ignoreDependencies": ["lefthook", "qrcode", "undici"],
+      // @types/react: the Host type-checks page drafts against it at run time (app-build.ts); dist/ resolves it from the root.
+      "ignoreDependencies": ["lefthook", "qrcode", "undici", "@types/react"],
       // System commands that tests run.
       "ignoreBinaries": ["mkfifo"]
     },

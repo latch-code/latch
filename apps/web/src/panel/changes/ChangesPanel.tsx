@@ -113,6 +113,8 @@ export interface ChangesPanelProps {
   onTotals?: (totals: ChangeList['totals'] | undefined) => void
   /** Opens 交付, from 未提交. */
   onDeliver?: () => void
+  /** 「作为应用草稿」 for a session whose folder holds a page draft (`AppDraftEntry`). */
+  appDraft?: ReactNode
 }
 
 /** Notes on files this scope does not list: they stay in reach with their original lines. */
@@ -563,6 +565,7 @@ function ReadableChanges({
   onToast,
   onTotals,
   onDeliver,
+  appDraft,
 }: ChangesPanelProps) {
   const preferences = usePreferences()
   const [choice, setChoice] = useState<ScopeChoice>(
@@ -771,6 +774,7 @@ function ReadableChanges({
       data-undone={list?.undone ? '' : undefined}
       data-phone={phone ? '' : undefined}
       data-wrap={preferences.diffWrap ? '' : undefined}>
+      {appDraft}
       <div className="changes-scope-row">
         <Menu
           label="改动范围"

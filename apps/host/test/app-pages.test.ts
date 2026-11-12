@@ -55,14 +55,14 @@ function appBundle(
           id: 'main',
           title: '发布检查',
           icon: 'list-checks',
-          entry: 'src/index.tsx',
+          entry: 'src/index.js',
           dataVersion: options.dataVersion ?? 1,
           capabilities: structuredClone(options.capabilities ?? ALL),
           ...options.extra,
         },
       ],
     },
-    files: [{ path: 'src/index.tsx', content: `export default function Page() { return null } // ${version}` }],
+    files: [{ path: 'src/index.js', content: `export default function Page() { return null } // ${version}` }],
   }
 }
 

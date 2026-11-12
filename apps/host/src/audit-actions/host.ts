@@ -39,9 +39,18 @@ const fileAction = z.strictObject({ ...fileContext, pathHash: hex64, type: z.enu
 /** The Host itself: startup, settings, policy and local confirmation, model services, projects, files and plugins. */
 export const HOST_ACTIONS = {
   'plugin.package.changed': z.strictObject({
-    operation: z.enum(['create', 'save', 'trust', 'apply', 'rollback', 'enable', 'disable', 'delete']),
+    operation: z.enum(['create', 'save', 'import', 'dev', 'trust', 'apply', 'rollback', 'enable', 'disable', 'delete']),
     before: hex64,
     after: hex64,
+  }),
+  /** A page draft built with the Host's fixed tools: the result and the bundles' hashes, never the source. */
+  'plugin.package.build': z.strictObject({
+    revision: hex64,
+    result: z.enum(['ok', 'failed', 'timeout']),
+    bundleHashes: z.array(hex64).max(4),
+    bytes: count,
+    diagnostics: count,
+    typeChecked: z.boolean(),
   }),
   /**
    * How a package's pages came to be trusted: `confirmed` by this computer's confirmation, or `capabilities-approved`
