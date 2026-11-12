@@ -18,6 +18,7 @@ import {
   projectOf,
   rowMeta,
   rowStatus,
+  showsUnread,
   waitsOnYou,
   type SessionFilter,
   type SessionGroup,
@@ -140,7 +141,7 @@ const PhoneRow = memo(function PhoneRow({
     status.kind === 'waiting'
     || status.kind === 'silent'
     || status.kind === 'failed'
-    || status.kind === 'unread'
+    || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
   const said = statusLabel(status, task.live)
   const hold = useHold(() => {
@@ -150,7 +151,7 @@ const PhoneRow = memo(function PhoneRow({
     <li className="phone-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <button
         type="button"
-        className={`phone-row ${selected ? 'is-selected' : ''} ${held ? 'is-held' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}
+        className={`phone-row ${selected ? 'is-selected' : ''} ${held ? 'is-held' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}
         data-task-id={leaving ? undefined : task.id}
         aria-current={selected ? 'page' : undefined}
         {...hold.handlers}

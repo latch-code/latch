@@ -83,6 +83,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     untracked: 3,
     forced: true,
     ownBranch: true,
+    deleteBranch: true,
+    merged: 'default',
     unpushed: 2,
   },
   'worktree.result': { workspaceId: 'ws-1', worktreeHash: hex, requestHash: hex, outcome: 'removed', branch: 'kept' },

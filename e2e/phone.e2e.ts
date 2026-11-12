@@ -328,6 +328,30 @@ describe('the phone stack', () => {
     }
   })
 
+  it('keeps a toast above the tab bar and the safe area at every phone width', async () => {
+    const { context, page } = await phone('reduce', '提示手机')
+    try {
+      await page.locator('#session-navigation').waitFor()
+      for (const width of [320, 375, 390, 414]) {
+        await page.setViewportSize({ width, height: 740 })
+        // A new approval in another session raises 另一个会话等你处理 over the list.
+        await local.json('tasks', { method: 'POST', body: { prompt: '批准生成验收报告', requestId: randomUUID(), mode: 'agent' } })
+        const toast = page.locator('.toast', { hasText: '另一个会话等你处理' })
+        await toast.waitFor()
+        const bar = (await page.locator('.phone-tabs').boundingBox())!
+        await expect
+          .poll(async () => {
+            const box = (await toast.boundingBox())!
+            return box.y + box.height
+          })
+          .toBeLessThanOrEqual(bar.y)
+        await page.screenshot({ path: `test-results/phone-toast--${width}.png` })
+      }
+    } finally {
+      await context.close()
+    }
+  })
+
   it("opens a row's menu when the row is held, without opening the session", async () => {
     const { context, page } = await phone('no-preference', '长按手机')
     try {

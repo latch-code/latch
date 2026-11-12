@@ -87,7 +87,7 @@ export function statusLabel(status: RowStatus, live: RunLive | undefined): strin
     case 'unread':
       return '有新内容'
     case 'ended':
-      return status.unknown > 0 ? `${status.word}，${status.unknown} 条结果未知` : status.word
+      return [status.word, status.unknown > 0 && `${status.unknown} 条结果未知`, status.unread && '有新内容'].filter(Boolean).join('，')
     case 'frozen':
       return '状态未更新'
     case 'read':

@@ -3,6 +3,7 @@ import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { Kbd } from '@latch/ui'
 
+const RANDOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 const slashQuery = (draft: string) => (/^\/[^\s]*$/u.test(draft) ? draft.slice(1).toLocaleLowerCase() : null)
 const rank = (name: string, query: string) => {
   const value = name.toLocaleLowerCase()
@@ -57,14 +58,18 @@ export function slashOptions(
       score: rank(action.name, query),
       run: action.run,
     })),
-    ...templates.map(template => ({
-      id: 'template:' + template.id,
-      kind: 'template' as const,
-      label: '/' + template.id + ' · ' + template.name,
-      description: '提示模板 · ' + { all: '全部会话', project: '当前项目', agent: '当前 Harness' }[template.scope.kind],
-      text: template.content,
-      score: Math.min(rank(template.id, query), rank(template.name, query)),
-    })),
+    ...templates.map(template => {
+      // A template made in 设置 has a random ID: it is named, and found, by its name alone.
+      const slug = !RANDOM_ID.test(template.id)
+      return {
+        id: 'template:' + template.id,
+        kind: 'template' as const,
+        label: slug ? '/' + template.id + ' · ' + template.name : '/' + template.name,
+        description: '提示模板 · ' + { all: '全部会话', project: '当前项目', agent: '当前 Harness' }[template.scope.kind],
+        text: template.content,
+        score: slug ? Math.min(rank(template.id, query), rank(template.name, query)) : rank(template.name, query),
+      }
+    }),
     ...commands.map(command => ({
       id: 'command:' + command.name,
       kind: 'command' as const,

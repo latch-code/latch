@@ -120,6 +120,40 @@ describe('the Host announcing it stops answering', () => {
   }, 120_000)
 })
 
+describe('the connection line without an announcement', () => {
+  it('says this device has no network only when the browser says so, and otherwise names the computer it cannot reach', async () => {
+    const testHost = await startTestHost({ demo: true, hostName: 'studio-mini' })
+    const browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const { context, page } = await openPage(browser, { width: 1440, height: 900 }, false)
+      await enrollBrowser(page, testHost, { name: '断网测试浏览器' })
+      const banner = page.locator('.banner-region')
+      await context.setOffline(true)
+      await banner.getByText('这台设备没有联网', { exact: true }).waitFor()
+      // Back on the network, but the computer does not answer and never said why.
+      await page.route('**/link/api/**', route => route.abort('connectionrefused'))
+      await context.setOffline(false)
+      await banner.getByText('连不上 studio-mini，正在重连…', { exact: true }).waitFor()
+      expect(await banner.getByText(/没有联网|已离线|检查网络/u).count()).toBe(0)
+      for (const scheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: scheme })
+        await page.screenshot({ path: `test-results/connection-unreachable-${scheme}.png`, animations: 'disabled' })
+      }
+      // The computer answers, but with an error of its own: that is not 连不上.
+      await page.unroute('**/link/api/**')
+      await page.route('**/link/api/**', route => route.fulfill({ status: 503, json: { error: 'unavailable', message: '暂时不可用' } }))
+      await banner.getByText('studio-mini 上的 Latch 出错（HTTP 503）', { exact: true }).waitFor()
+      await page.screenshot({ path: 'test-results/connection-host-error-light.png', animations: 'disabled' })
+      await page.unroute('**/link/api/**')
+      await connected(page)
+      await context.close()
+    } finally {
+      await browser.close()
+      await testHost.close()
+    }
+  }, 60_000)
+})
+
 describe('a Host refusing the device after it announced a stop', () => {
   let browser: Browser
   let testHost: TestHost

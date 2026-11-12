@@ -5,7 +5,7 @@ import { api, ApiError, errorMessage, setAuthHooks } from './api.ts'
 import { browserRenewal, RenewalScheduler } from './credentials.ts'
 import type { EnrolledResult } from './enrollment.ts'
 import { connectEventStream, type EventStreamConnection } from './eventStream.ts'
-import { noticeOf, parseHostState, type HostNotice } from './hostState.ts'
+import { connectionFailure, noticeOf, parseHostState, type ConnectionFailure, type HostNotice } from './hostState.ts'
 import { hostView } from './permissions.ts'
 import { observeHostTime } from './hostClock.ts'
 import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTicket } from './projection.ts'
@@ -49,6 +49,7 @@ export function useHarness() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [error, setError] = useState('')
+  const [failure, setFailure] = useState<ConnectionFailure | null>(null)
   const [loading, setLoading] = useState(true)
   const [connection, setConnection] = useState<ConnectionStatus>('connecting')
   /** The Host said it is stopping or the computer is going to sleep; cleared once the Host answers again. */
@@ -166,6 +167,7 @@ export function useHarness() {
             signedOut.current = false
             setAuth(null)
             setError('')
+            setFailure(null)
             renewal.failure = null
             lastSyncFailure.current = null
             if (restoredDevice.current !== next.device.id) {
@@ -216,6 +218,7 @@ export function useHarness() {
             else {
               // Includes a renewal that failed for a transient reason: retry with the connection, not re-enrollment.
               setError(errorMessage(cause))
+              setFailure(connectionFailure(cause))
               setConnection(navigator.onLine ? 'reconnecting' : 'offline')
             }
           } finally {
@@ -462,6 +465,7 @@ export function useHarness() {
     connection,
     hostNotice,
     error,
+    failure,
     removed,
     resyncs,
     refreshHints,

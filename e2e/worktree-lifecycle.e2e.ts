@@ -117,7 +117,9 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await page.getByRole('menuitem', { name: '移除工作树…' }).click()
     const dialog = page.getByRole('dialog', { name: /的工作树$/u })
     await dialog.getByText('未跟踪 2').waitFor()
-    await dialog.getByText('没有新提交').waitFor()
+    // Its branch has no commits past feature/login, where it started: deleting it loses nothing, and the dialog says so.
+    await dialog.getByText('没有新提交，会删除').waitFor()
+    await dialog.getByText('没有新提交', { exact: true }).waitFor()
     const remove = dialog.getByRole('button', { name: '移除工作树' })
     expect(await remove.isDisabled()).toBe(true)
     for (const colorScheme of ['light', 'dark'] as const) {
@@ -128,7 +130,7 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await dialog.getByRole('checkbox', { name: '丢弃 2 个未提交的文件' }).check()
     await remove.click()
     await dialog.waitFor({ state: 'detached' })
-    await page.getByText('已移除工作树', { exact: false }).first().waitFor()
+    await page.getByText('已移除工作树和分支').first().waitFor()
     expect(existsSync(first.cwd!)).toBe(false)
     await expect.poll(() => page.locator('.topbar-crumb-worktree').innerText()).toContain('工作树已移除')
     await expect.poll(() => row.innerText()).toContain('工作树已移除')
@@ -158,13 +160,18 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await page.locator('.topbar-title-button').first().click()
     await page.getByRole('menuitem', { name: '移除工作树…' }).click()
     const sheet = page.getByRole('dialog', { name: /的工作树$/u })
-    await sheet.getByText('没有新提交').waitFor()
+    await sheet.getByText('没有新提交', { exact: true }).waitFor()
+    await sheet.getByText('已合并，会删除').waitFor()
     await noHorizontalOverflow(page)
-    await page.screenshot({ path: `${OUT}/remove-clean--390.png` })
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      await page.screenshot({ path: `${OUT}/remove-clean--390--${colorScheme}.png` })
+    }
+    await page.emulateMedia({ colorScheme: 'light' })
     await sheet.getByRole('button', { name: '移除工作树' }).click()
     await sheet.waitFor({ state: 'detached' })
     expect(existsSync(secondCwd)).toBe(false)
-    // Every commit on the first worktree's branch is also on feature/login, so it went too; nothing is reachable only by reflog.
+    // Both went: the first had no commits past where it started, the second is main's commit.
     expect(git('for-each-ref', '--format=%(refname)', 'refs/heads').trim().split('\n').toSorted()).toEqual(
       ['refs/heads/feature/login', 'refs/heads/main'].toSorted(),
     )
@@ -219,7 +226,7 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await page.screenshot({ path: `${OUT}/leftovers--768--dark.png` })
     await leftover.getByRole('button', { name: '移除…' }).click()
     const confirm = page.getByRole('dialog', { name: /的工作树$/u })
-    await confirm.getByText('没有新提交').waitFor()
+    await confirm.getByText('没有新提交', { exact: true }).waitFor()
     await confirm.getByRole('button', { name: '移除工作树' }).click()
     await confirm.waitFor({ state: 'detached' })
     await leftover.waitFor({ state: 'detached' })

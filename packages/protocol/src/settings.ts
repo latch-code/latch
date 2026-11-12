@@ -157,8 +157,13 @@ export interface WorktreeInventory {
   ahead?: number
   /** Without an upstream: commits on this branch and on no other branch or remote ref (从未推送). */
   unpushed?: number
-  /** Latch made its branch, so removal tries `git branch -d` on it. */
+  /** Latch made its branch: removal deletes it only when it is merged and the person was shown that. */
   ownBranch: boolean
+  /**
+   * Of Latch's own branch, why removal may delete it: a default branch (`main`, `origin/main`…) holds all its commits, or
+   * it has none of its own past where it started. Absent: no evidence it is merged, so it is kept.
+   */
+  merged?: { into: 'default'; ref: string } | { into: 'start' }
   /** Why it cannot be removed now. */
   busy?: 'turn' | 'delivery' | 'terminal' | 'starting' | 'removing'
 }

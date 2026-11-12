@@ -43,7 +43,7 @@ import type { Handoff } from '@latch/protocol'
 
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
-import { hostNoticeCopy } from '../core/hostState.ts'
+import { connectionWords, hostNoticeCopy } from '../core/hostState.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { currentShell, shellFolders } from '../core/shell.ts'
@@ -1121,10 +1121,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // What is known about why the Host does not answer: main's own view on the desktop, else the Host's announcement.
   const shellHost = lifecycle.view?.host
   const hostProblem = shellHost && shellHost.status !== 'running' ? hostLine(shellHost) : null
-  const notice = harness.hostNotice ? hostNoticeCopy(harness.hostNotice, computerLabel(access.local, snapshot.hostName)) : null
-  const connectionTitle = connection === 'offline' ? '当前设备已离线' : (hostProblem?.text ?? notice?.title ?? '连接已中断，正在重连…')
+  const computer = computerLabel(access.local, snapshot.hostName)
+  const notice = harness.hostNotice ? hostNoticeCopy(harness.hostNotice, computer) : null
   // The title and 重试 say it; only a reason of the Host's own, or how it comes back, adds a line.
-  const connectionText = connection === 'offline' ? '' : (notice?.body ?? (hostProblem ? '' : harness.error || ''))
+  const { title: connectionTitle, text: connectionText } = connectionWords(connection, notice, hostProblem, harness.failure, computer)
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 

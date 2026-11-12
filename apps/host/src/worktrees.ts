@@ -78,7 +78,18 @@ const markerSchema = z.strictObject({
   existingBranch: z.literal(true).optional(),
   /** A private session owned it: it stays private once that session is gone. */
   private: z.literal(true).optional(),
+  /** The commit its own branch started at: a branch still within it has no commits of its own. */
+  base: z
+    .string()
+    .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
+    .optional(),
 })
+
+/**
+ * Why the branch Latch made may go: its commits are on a default branch, or it has none past where it started and another
+ * ref holds them. `ref` at `oid` is what the delete verifies.
+ */
+export type BranchMerged = { into: 'default' | 'start'; ref: string; oid: string }
 
 export interface Worktree {
   /** The new work tree's root: a session's `cwd`. */
@@ -615,6 +626,7 @@ export class Worktrees {
         request,
         ...(found.marker.existingBranch ? { existingBranch: true } : {}),
         ...(found.marker.private ? { private: true } : {}),
+        ...(found.marker.base ? { base: found.marker.base } : {}),
       }
       await writeFileAtomic(join(found.layout.gitdir, MARKER_FILE), `${JSON.stringify(marker)}\n`).catch(() => {
         throw failed('写入标记')
@@ -687,26 +699,123 @@ export class Worktrees {
   }
 
   /**
-   * The branch Latch made goes only when every commit on it is on another branch, a remote ref or a tag (so nothing is
-   * left reachable from the reflog alone), it is checked out nowhere, and it still names the commit the inspection saw.
+   * Why the branch Latch made (`own`, at `tip`) loses nothing when it goes. First a default branch that holds every commit
+   * up to `tip`: exactly `main`, `master` or `init.defaultBranch`, locally or on a remote, or what a remote's `HEAD` names;
+   * never a `latch/` branch or one of the same name, so pushing the branch alone (which can make it a new repository's
+   * `HEAD`) never counts. Then the commit it started at, when it has no commits of its own. Undefined: no evidence.
    */
-  private async dropBranch(git: GitReader, source: GitLayout, own: { name: string; tip: string }): Promise<boolean> {
-    try {
-      if ((await this.checkedOut(git, source)).has(own.name)) return false
-      const unique = await git.run(
+  private async mergedInto(
+    git: GitReader,
+    source: GitLayout,
+    tip: string,
+    own: { name: string; base?: string },
+  ): Promise<BranchMerged | undefined> {
+    const configured = (
+      await git
+        .run(source, ['config', '--get', 'init.defaultBranch'], { maxBytes: 4096, env: WRITE_ENV, exitCodes: [0, 1] })
+        .catch(() => Buffer.from(''))
+    )
+      .toString('utf8')
+      .trim()
+    const names = new Set(['main', 'master', ...(BRANCH_NAME.test(configured) ? [configured] : [])])
+    // On the full ref name, since a remote's own name may hold a slash: nothing named latch/ anywhere counts.
+    const eligible = (ref: string) => /^refs\/(?:heads|remotes)\//u.test(ref) && !ref.includes('/latch/') && !ref.endsWith(`/${own.name}`)
+    const listed = await git
+      .run(
         source,
-        ['rev-list', '--count', own.tip, '--not', `--exclude=${own.name}`, '--branches', '--remotes', '--tags'],
-        { maxBytes: 256, env: WRITE_ENV },
+        [
+          'for-each-ref',
+          '--format=%(refname)%00%(symref)',
+          ...[...names].map(name => `refs/heads/${name}`),
+          ...[...names, 'HEAD'].map(name => `refs/remotes/*/${name}`),
+        ],
+        { maxBytes: 1024 * 1024, env: WRITE_ENV },
       )
-      if (unique.toString('utf8').trim() !== '0') return false
-      await git.run(source, [...WRITE_CONFIG, 'update-ref', '-d', `refs/heads/${own.name}`, own.tip], {
-        maxBytes: 64 * 1024,
-        env: WRITE_ENV,
+      .catch(() => Buffer.from(''))
+    const refs = listed
+      .toString('utf8')
+      .split('\n')
+      .flatMap(line => {
+        const [ref = '', symref = ''] = line.split('\0')
+        const local = /^refs\/heads\/(.+)$/u.exec(ref)?.[1]
+        if (local !== undefined) return names.has(local) && !symref ? [ref] : []
+        const remote = /^refs\/remotes\/[^/]+\/(.+)$/u.exec(ref)?.[1]
+        if (remote === 'HEAD') return symref.startsWith('refs/remotes/') ? [symref] : []
+        return remote !== undefined && names.has(remote) && !symref ? [ref] : []
       })
+      .filter(eligible)
+    for (const ref of new Set(refs)) {
+      try {
+        const oid = await git.commit(source, ref as `refs/${string}`)
+        if (!oid) continue
+        const outside = await git.run(source, ['rev-list', '--count', tip, '--not', oid], { maxBytes: 256, env: WRITE_ENV })
+        if (outside.toString('utf8').trim() === '0') return { into: 'default', ref, oid }
+      } catch {
+        // A ref Git cannot read is no evidence either way: try the next one.
+      }
+    }
+    if (!own.base || !OID.test(own.base)) return undefined
+    const outside = await git
+      .run(source, ['rev-list', '--count', tip, '--not', own.base], { maxBytes: 256, env: WRITE_ENV })
+      .catch(() => undefined)
+    if (outside?.toString('utf8').trim() !== '0') return undefined
+    // The marker is only a claim (anything with a shell can rewrite it), and where it started may since be gone: the tip
+    // must also be held by another ref, which the delete then verifies, so no commit is left reachable from the reflog alone.
+    const holders = await git
+      .run(
+        source,
+        [
+          'for-each-ref',
+          '--contains',
+          tip,
+          '--format=%(refname)%00%(objectname)%00%(symref)',
+          'refs/heads/',
+          'refs/remotes/',
+          'refs/tags/',
+        ],
+        { maxBytes: 4 * 1024 * 1024, env: WRITE_ENV },
+      )
+      .catch(() => Buffer.from(''))
+    for (const line of holders.toString('utf8').split('\n')) {
+      const [ref = '', oid = '', symref = ''] = line.split('\0')
+      if (!ref || symref || !OID.test(oid) || ref === `refs/heads/${own.name}` || ref.endsWith('/HEAD')) continue
+      return { into: 'start', ref, oid }
+    }
+    return undefined
+  }
+
+  /**
+   * The branch Latch made goes only when the dialog said so (`deleteBranch`), it is a plain ref (not symbolic), checked out
+   * nowhere and still merged (`mergedInto`). One `update-ref --no-deref` transaction verifies the default branch is where
+   * the check saw it and deletes the branch only at the commit the inspection saw, so neither can move in between.
+   */
+  private async dropBranch(git: GitReader, source: GitLayout, own: { name: string; tip: string; base?: string }): Promise<boolean> {
+    try {
+      const ref = `refs/heads/${own.name}`
+      const symbolic = await git.run(source, ['for-each-ref', '--format=%(symref)', ref], { maxBytes: 64 * 1024, env: WRITE_ENV })
+      if (symbolic.toString('utf8').trim() !== '') return false
+      if ((await this.checkedOut(git, source)).has(own.name)) return false
+      const merged = await this.mergedInto(git, source, own.tip, own)
+      if (!merged) return false
+      const input = `verify ${merged.ref} ${merged.oid}\ndelete ${ref} ${own.tip}\n`
+      await git.run(source, [...WRITE_CONFIG, 'update-ref', '--no-deref', '--stdin'], { input, maxBytes: 64 * 1024, env: WRITE_ENV })
       return true
     } catch {
       return false
     }
+  }
+
+  /** After a restart: whether the branch Latch made for the worktree `name` is still in the repository of `sourcePath`. */
+  async branchLeft(sourcePath: string, name: string): Promise<boolean | undefined> {
+    const git = this.git
+    const source = await readGitLayout(sourcePath)
+    if (!git || !source || !WORKTREE_NAME.test(name)) return undefined
+    return git
+      .run(source, ['for-each-ref', '--format=%(refname)', `refs/heads/latch/${name}`], { maxBytes: 64 * 1024, env: WRITE_ENV })
+      .then(
+        out => out.toString('utf8').split('\n').includes(`refs/heads/latch/${name}`),
+        () => undefined,
+      )
   }
 
   /**
@@ -810,6 +919,10 @@ export class Worktrees {
     const own = found.marker.existingBranch ? undefined : `latch/${name}`
     const ownTip = own === undefined ? undefined : await git.commit(source, `refs/heads/${own}`).catch(() => undefined)
     const ownBranch = ownTip !== undefined
+    const base = found.marker.base
+    const merged = ownBranch
+      ? await this.mergedInto(git, source, ownTip!, { name: own!, ...(base ? { base } : {}) }).catch(() => undefined)
+      : undefined
     const shown = head ? shownName(head) : undefined
     const facts: WorktreeInventory = {
       name,
@@ -836,19 +949,28 @@ export class Worktrees {
       ...(counted.upstream ? { upstream: counted.upstream, ahead: counted.ahead } : {}),
       ...(unpushed !== undefined ? { unpushed } : {}),
       ownBranch,
+      ...(merged
+        ? {
+            merged:
+              merged.into === 'default'
+                ? { into: 'default' as const, ref: shownName(merged.ref.replace(/^refs\/(?:heads|remotes)\//u, '')) ?? '…' }
+                : { into: 'start' as const },
+          }
+        : {}),
     }
-    return { found, git, source, drivers, facts, own: ownBranch ? { name: own!, tip: ownTip! } : undefined }
+    return { found, git, source, drivers, facts, own: ownBranch ? { name: own!, tip: ownTip!, ...(base ? { base } : {}) } : undefined }
   }
 
   /**
    * Removes a Latch worktree: `git worktree remove` without `--force` while it is clean; with uncommitted files only
    * when `discard` is exactly how many there are now, and then forced. `audit` is written first and nothing happens
-   * when it throws. Then the branch Latch made goes with `git branch -d` only, so Git keeps one that is not merged; an
-   * existing branch that was checked out is never touched. The caller has checked that no turn or delivery runs there.
+   * when it throws. Then the branch Latch made goes only when `deleteBranch` says the dialog showed it going and it is
+   * merged into a default branch (`dropBranch`); an existing branch that was checked out is never touched. The caller
+   * has checked that no turn or delivery runs there.
    */
   async remove(
     path: string,
-    input: { discard?: number; digest?: string; audit: (facts: WorktreeInventory) => Promise<void> },
+    input: { discard?: number; digest?: string; deleteBranch?: boolean; audit: (facts: WorktreeInventory) => Promise<void> },
   ): Promise<{ facts: WorktreeInventory; branch: 'deleted' | 'kept' | 'none'; branchName?: string }> {
     if (this.busy(path)) throw refuse('worktree-busy', '这个工作树正在开始会话或正在移除，等它结束后再试。')
     this.removing.add(path)
@@ -904,7 +1026,7 @@ export class Worktrees {
       if (request !== undefined) this.requests.delete(request)
       this.requestOf.delete(path)
       let branch: 'deleted' | 'kept' | 'none' = 'none'
-      if (own) branch = (await this.dropBranch(git, source, own)) ? 'deleted' : 'kept'
+      if (own) branch = input.deleteBranch === true && (await this.dropBranch(git, source, own)) ? 'deleted' : 'kept'
       await rmdir(dirname(path)).catch(() => {})
       return { facts, branch, ...(own ? { branchName: own.name } : {}) }
     } finally {
@@ -1124,7 +1246,7 @@ export class Worktrees {
       )
         throw failed('检查新工作树')
       try {
-        const marker = { version: 1, request: sha256Hex(requestId), ...(existing ? { existingBranch: true } : {}) }
+        const marker = { version: 1, request: sha256Hex(requestId), ...(existing ? { existingBranch: true } : { base }) }
         await writeFile(join(layout.gitdir, MARKER_FILE), `${JSON.stringify(marker)}\n`, {
           flag: 'wx',
           mode: 0o600,

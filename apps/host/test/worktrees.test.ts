@@ -817,9 +817,10 @@ describe.skipIf(!git)('removing a worktree', () => {
       deletions: 0,
       unpushed: 0,
       ownBranch: true,
+      merged: { into: 'default', ref: 'main' },
     })
     const audits: unknown[] = []
-    const removed = await worktrees.remove(made.path, { audit: async facts => void audits.push(facts) })
+    const removed = await worktrees.remove(made.path, { deleteBranch: true, audit: async facts => void audits.push(facts) })
     expect(removed).toMatchObject({ branch: 'deleted', branchName: made.branch })
     expect(audits).toHaveLength(1)
     await nothingLeft(t)
@@ -852,7 +853,7 @@ describe.skipIf(!git)('removing a worktree', () => {
     await expect(worktrees.remove(made.path, { audit: noAudit })).rejects.toMatchObject({ code: 'worktree-dirty', details: { files: 3 } })
     await expect(worktrees.remove(made.path, { discard: 2, audit: noAudit })).rejects.toMatchObject({ code: 'worktree-dirty' })
     expect(existsSync(join(made.path, 'new.txt'))).toBe(true)
-    const removed = await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })
+    const removed = await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), deleteBranch: true, audit: noAudit })
     expect(removed).toMatchObject({ branch: 'kept', branchName: made.branch })
     expect(existsSync(made.path)).toBe(false)
     expect(t.branches()).toContain(`refs/heads/${made.branch}`)
@@ -980,6 +981,196 @@ describe.skipIf(!git)('removing a worktree', () => {
     expect(await readFile(join(made.path, 'lib', 's.txt'), 'utf8')).toBe('changed\n')
   })
 
+  describe('the branch matches what the dialog said', () => {
+    /** A worktree whose branch has one commit of its own. */
+    async function withCommit(t: Awaited<ReturnType<typeof setup>>, worktrees: Worktrees) {
+      const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+      await worktrees.bind(made.path, 'request-0001', 'session-1')
+      await writeFile(join(made.path, 'c.txt'), 'work\n')
+      t.run('-C', made.path, 'add', 'c.txt')
+      t.run('-C', made.path, 'commit', '-qm', 'agent work')
+      return { made, tip: t.run('-C', made.path, 'rev-parse', 'HEAD').trim() }
+    }
+
+    it('keeps a branch pushed to its remote but not merged, even when asked to delete', async () => {
+      const t = await setup()
+      const remote = join(t.base, 'remote.git')
+      t.run('init', '-q', '--bare', remote)
+      t.run('remote', 'add', 'origin', remote)
+      t.run('push', '-q', 'origin', 'main')
+      t.run('remote', 'set-head', 'origin', 'main')
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      t.run('-C', made.path, 'push', '-q', '-u', 'origin', made.branch)
+      const facts = await worktrees.inventory(made.path)
+      expect(facts).toMatchObject({ ownBranch: true, upstream: `origin/${made.branch}`, ahead: 0 })
+      expect(facts.merged).toBeUndefined()
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+    })
+
+    it('keeps a local-only branch whose commits are also on another unmerged branch', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      t.run('branch', 'other', made.branch)
+      expect((await worktrees.inventory(made.path)).merged).toBeUndefined()
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+    })
+
+    it('deletes a merged branch only when the dialog said so', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made } = await withCommit(t, worktrees)
+      t.run('merge', '-q', '--ff-only', made.branch)
+      expect((await worktrees.inventory(made.path)).merged).toEqual({ into: 'default', ref: 'main' })
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'deleted' })
+      expect(t.branches()).toEqual(['refs/heads/main'])
+    })
+
+    it('keeps a merged branch when the dialog did not say it goes', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made } = await withCommit(t, worktrees)
+      t.run('merge', '-q', '--ff-only', made.branch)
+      expect(await worktrees.remove(made.path, { audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.branches()).toContain(`refs/heads/${made.branch}`)
+    })
+
+    it('never counts a remote HEAD that names the branch itself, as a first push to an empty repository makes it', async () => {
+      const t = await setup()
+      const remote = join(t.base, 'empty.git')
+      t.run('init', '-q', '--bare', remote)
+      t.run('remote', 'add', 'origin', remote)
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      t.run('-C', made.path, 'push', '-q', '-u', 'origin', made.branch)
+      t.run('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${made.branch}`)
+      // A remote whose name holds a slash: refs/remotes/a/HEAD naming a/b's copy of the branch.
+      t.run('update-ref', `refs/remotes/a/b/${made.branch}`, tip)
+      t.run('symbolic-ref', 'refs/remotes/a/HEAD', `refs/remotes/a/b/${made.branch}`)
+      expect((await worktrees.inventory(made.path)).merged).toBeUndefined()
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+    })
+
+    it('takes exactly main, master or init.defaultBranch, not a branch under main/', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      t.run('branch', '-m', 'main', 'trunk')
+      t.run('branch', 'main/wip', tip)
+      expect((await worktrees.inventory(made.path)).merged).toBeUndefined()
+      t.run('config', 'init.defaultBranch', 'trunk')
+      t.run('merge', '-q', '--ff-only', made.branch)
+      expect((await worktrees.inventory(made.path)).merged).toEqual({ into: 'default', ref: 'trunk' })
+    })
+
+    it('deletes a branch with no commits of its own past where it started, and keeps one with commits', async () => {
+      const t = await setup()
+      t.run('checkout', '-q', '-b', 'feature/x')
+      await writeFile(join(t.root, 'f.txt'), 'feature\n')
+      t.run('add', 'f.txt')
+      t.run('commit', '-qm', 'feature')
+      t.run('checkout', '-q', 'main')
+      const worktrees = t.service()
+      const start = { from: 'commit' as const, ref: 'feature/x' }
+      const idle = await worktrees.create({ source: t.root, requestId: 'request-0001', start })
+      await worktrees.bind(idle.path, 'request-0001', 'session-1')
+      expect((await worktrees.inventory(idle.path)).merged).toEqual({ into: 'start' })
+      expect(await worktrees.remove(idle.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'deleted' })
+      const busy = await worktrees.create({ source: t.root, requestId: 'request-0002', start })
+      await worktrees.bind(busy.path, 'request-0002', 'session-2')
+      await writeFile(join(busy.path, 'c.txt'), 'work\n')
+      t.run('-C', busy.path, 'add', 'c.txt')
+      t.run('-C', busy.path, 'commit', '-qm', 'agent work')
+      expect((await worktrees.inventory(busy.path)).merged).toBeUndefined()
+      expect(await worktrees.remove(busy.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+    })
+
+    it('refuses to delete a branch that is a symbolic ref, and never deletes what it points at', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+      await worktrees.bind(made.path, 'request-0001', 'session-1')
+      const main = t.run('rev-parse', 'refs/heads/main').trim()
+      t.run('symbolic-ref', `refs/heads/${made.branch}`, 'refs/heads/main')
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', 'refs/heads/main').trim()).toBe(main)
+      expect(t.run('symbolic-ref', `refs/heads/${made.branch}`).trim()).toBe('refs/heads/main')
+    })
+
+    it('never deletes what the branch points at when it turns symbolic just before the delete', async () => {
+      const t = await setup()
+      const main = t.run('rev-parse', 'refs/heads/main').trim()
+      // Another branch than the one the delete verifies: only --no-deref keeps the delete from following the link to it.
+      t.run('branch', 'keepme', main)
+      const turning = await wrapper(
+        t.base,
+        '--stdin',
+        `'${git}' -C '${t.root}' symbolic-ref "refs/heads/$(cat '${t.base}/branch')" refs/heads/keepme`,
+      )
+      const worktrees = t.service({ git: turning })
+      const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+      await writeFile(join(t.base, 'branch'), made.branch)
+      await worktrees.bind(made.path, 'request-0001', 'session-1')
+      await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })
+      expect(t.run('rev-parse', 'refs/heads/main').trim()).toBe(main)
+      expect(t.run('rev-parse', 'refs/heads/keepme').trim()).toBe(main)
+    })
+
+    it('keeps a branch whose marker claims a later start, or whose start no ref holds any more', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      const marker = join(t.root, '.git', 'worktrees', basename(made.path), 'latch-session.json')
+      await writeFile(marker, JSON.stringify({ ...JSON.parse(await readFile(marker, 'utf8')), base: tip }))
+      expect((await worktrees.inventory(made.path)).merged).toBeUndefined()
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+
+      t.run('checkout', '-q', '-b', 'feature/gone')
+      await writeFile(join(t.root, 'g.txt'), 'only here\n')
+      t.run('add', 'g.txt')
+      t.run('commit', '-qm', 'unpushed feature')
+      t.run('checkout', '-q', 'main')
+      const orphan = await worktrees.create({ source: t.root, requestId: 'request-0009', start: { from: 'commit', ref: 'feature/gone' } })
+      await worktrees.bind(orphan.path, 'request-0009', 'session-9')
+      t.run('branch', '-D', 'feature/gone')
+      expect((await worktrees.inventory(orphan.path)).merged).toBeUndefined()
+      expect(await worktrees.remove(orphan.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.branches()).toContain(`refs/heads/${orphan.branch}`)
+    })
+
+    it('keeps the branch when the default branch moves between the check and the delete', async () => {
+      const t = await setup()
+      const other = t.run('commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'elsewhere').trim()
+      const moving = await wrapper(t.base, '--stdin', `'${git}' -C '${t.root}' update-ref refs/heads/main ${other}`)
+      const worktrees = t.service({ git: moving })
+      const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
+      await worktrees.bind(made.path, 'request-0001', 'session-1')
+      expect((await worktrees.inventory(made.path)).merged).toEqual({ into: 'default', ref: 'main' })
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.branches()).toContain(`refs/heads/${made.branch}`)
+      expect(t.run('rev-parse', 'refs/heads/main').trim()).toBe(other)
+    })
+
+    it('keeps the unmerged branch of a worktree left on a detached HEAD', async () => {
+      const t = await setup()
+      const worktrees = t.service()
+      const { made, tip } = await withCommit(t, worktrees)
+      t.run('-C', made.path, 'checkout', '-q', '--detach')
+      t.run('branch', 'other', made.branch)
+      const facts = await worktrees.inventory(made.path)
+      expect(facts.branch).toBeUndefined()
+      expect(facts).toMatchObject({ ownBranch: true })
+      expect(facts.merged).toBeUndefined()
+      expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
+      expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
+    })
+  })
+
   it('keeps a branch whose commits only a detached HEAD in the project folder reaches', async () => {
     const t = await setup()
     const worktrees = t.service()
@@ -991,7 +1182,7 @@ describe.skipIf(!git)('removing a worktree', () => {
     const tip = t.run('-C', made.path, 'rev-parse', 'HEAD').trim()
     // The project folder sits on that commit, detached: `branch -d` would call the branch merged.
     t.run('checkout', '-q', '--detach', tip)
-    expect(await worktrees.remove(made.path, { audit: noAudit })).toMatchObject({ branch: 'kept' })
+    expect(await worktrees.remove(made.path, { deleteBranch: true, audit: noAudit })).toMatchObject({ branch: 'kept' })
     expect(t.run('rev-parse', `refs/heads/${made.branch}`).trim()).toBe(tip)
   })
 

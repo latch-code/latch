@@ -20,6 +20,7 @@ import {
   shelvesKey,
   rowModel,
   rowStatus,
+  showsUnread,
   unknownNote,
   waitKind,
   waitsOnYou,
@@ -120,7 +121,7 @@ const SessionItem = memo(function SessionItem({
     status.kind === 'waiting'
     || status.kind === 'silent'
     || status.kind === 'failed'
-    || status.kind === 'unread'
+    || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
   const sections = menu(task)
   const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
@@ -132,7 +133,7 @@ const SessionItem = memo(function SessionItem({
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <div
-        className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}>
+        className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}>
         <button
           type="button"
           className="session-item-main"

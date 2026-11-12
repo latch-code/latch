@@ -18,6 +18,15 @@ describe('advertised slash commands', () => {
     const offered = ['preinit', 'project-init', 'init-more', 'init', 'initial'].map(name => ({ name }))
     expect(slashMatches('/init', offered).map(item => item.name)).toEqual(['init', 'init-more', 'initial', 'project-init', 'preinit'])
   })
+  it('names a template made in 设置 by its name, never its random ID', () => {
+    const id = '65aad3f9-54a6-43a4-a9df-ccd0bb1cb6cc'
+    const templates = [{ id, name: '代码审查', content: '审查这次改动。', scope: { kind: 'all' as const } }]
+    const [option] = slashOptions('/', [], templates)
+    expect(option).toMatchObject({ id: `template:${id}`, label: '/代码审查', text: '审查这次改动。' })
+    expect(slashOptions('/代码', [], templates)[0]?.label).toBe('/代码审查')
+    expect(slashOptions('/65aad3f9', [], templates)).toEqual([])
+  })
+
   it('finds a translated template by slash ID or display name and keeps it editable', () => {
     const templates = [{ id: 'review', name: '检查改动', content: '先检查改动，再给出建议。', scope: { kind: 'all' as const } }]
     const result = slashOptions('/review', commands, templates)

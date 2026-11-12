@@ -25,7 +25,7 @@ const BUSY: Record<NonNullable<WorktreeInventory['busy']>, string> = {
 /** What happened, in a few words, for the toast after it is gone. */
 export function removalWords(result: WorktreeRemoval): string {
   if (result.branch === 'deleted') return '已移除工作树和分支'
-  if (result.branch === 'kept') return `已移除工作树 · 分支 ${result.branchName ?? ''} 有未合并的提交，已保留`
+  if (result.branch === 'kept') return `已移除工作树 · 分支 ${result.branchName ?? ''} 已保留`
   return '已移除工作树'
 }
 
@@ -85,10 +85,17 @@ function Facts({ facts }: { facts: WorktreeInventory }) {
       <Line label="提交">{commits.tone === 'warn' ? <StatusWord tone="warn">{commits.text}</StatusWord> : commits.text}</Line>
       <Line label="分支">
         {facts.branch ? <VisibleText text={facts.branch} /> : '分离 HEAD'}
-        <Hint label={facts.ownBranch ? '合并过才删除' : '保留'}>
-          {facts.ownBranch
-            ? '只用 git branch -d 删除 Latch 新建的分支：没有合并的分支会保留，提交不会丢。'
-            : '这个分支不是 Latch 新建的，移除工作树时不删除它。'}
+        <Hint
+          label={
+            !facts.ownBranch ? '保留' : facts.merged?.into === 'default' ? '已合并，会删除' : facts.merged ? '没有新提交，会删除' : '保留'
+          }>
+          {!facts.ownBranch
+            ? '不是 Latch 新建的分支，不删除。'
+            : facts.merged?.into === 'default'
+              ? `提交都已在 ${facts.merged.ref} 上。`
+              : facts.merged
+                ? '没有自己的提交，删除不丢提交。'
+                : '没有找到它已合并的证据。'}
         </Hint>
       </Line>
     </dl>
@@ -119,7 +126,7 @@ export function RemoveWorktreeDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [uncertain, setUncertain] = useState(false)
-  const request = useRef<{ id: string; discard: number | undefined; digest: string } | null>(null)
+  const request = useRef<{ id: string; discard: number | undefined; digest: string; deleteBranch: boolean } | null>(null)
   const path = endpoint(target)
 
   const load = () => {
@@ -139,7 +146,13 @@ export function RemoveWorktreeDialog({
   const remove = async () => {
     if (!facts) return
     // The same request until the Host answers it; a retry after an unknown result repeats it exactly.
-    request.current ??= { id: newRequestId(), discard: facts.files + facts.ignored || undefined, digest: facts.digest }
+    request.current ??= {
+      id: newRequestId(),
+      discard: facts.files + facts.ignored || undefined,
+      digest: facts.digest,
+      // Only what the dialog showed: a branch it said is kept is never deleted.
+      deleteBranch: facts.ownBranch && facts.merged !== undefined,
+    }
     setBusy(true)
     setError('')
     try {
@@ -148,6 +161,7 @@ export function RemoveWorktreeDialog({
         body: {
           requestId: request.current.id,
           ...(request.current.discard ? { discard: request.current.discard, digest: request.current.digest } : {}),
+          ...(request.current.deleteBranch ? { deleteBranch: true } : {}),
         },
       })
       onRemoved(result)

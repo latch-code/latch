@@ -12,7 +12,7 @@ import { canDelegate } from '../agents/model.ts'
 
 /**
  * Lifts the window's toast 12 above the composer while one is on screen and not covered, centred on it, so it never lies
- * over the model control or the send button. The toast itself is ignored when asking what covers the composer: a tall one
+ * over the model control or the send button; without one, 12 above a phone's tab bar while it shows. The toast itself is ignored when asking what covers the composer: a tall one
  * standing at its resting place would otherwise read as covering it and stay there. It tracks the composer's height, which
  * drawers and typing change while a toast shows, and a composer that appears only after the toast does.
  */
@@ -45,8 +45,12 @@ function ToastClearance() {
         root.style.setProperty('--toast-clearance', `${window.innerHeight - box.top + 12}px`)
         root.style.setProperty('--toast-center', `${box.left + box.width / 2}px`)
       } else {
-        root.style.removeProperty('--toast-clearance')
         root.style.removeProperty('--toast-center')
+        // A phone's root pages keep their tab bar (and the safe area under it) at the bottom: the toast stands above it.
+        const tabs = document.querySelector<HTMLElement>('.phone-tabs')
+        const bar = tabs && getComputedStyle(tabs).visibility !== 'hidden' ? tabs.getBoundingClientRect() : undefined
+        if (bar && bar.height > 0) root.style.setProperty('--toast-clearance', `${window.innerHeight - bar.top + 12}px`)
+        else root.style.removeProperty('--toast-clearance')
       }
     }
     measure()

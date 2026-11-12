@@ -781,7 +781,7 @@ describe('visual capture of the real product', () => {
 
     // Offline, the list says so at its top, with 重试.
     await pages.get(viewport.name)!.context.setOffline(true)
-    const banner = list.locator('.banner-region').getByText('当前设备已离线', { exact: true })
+    const banner = list.locator('.banner-region').getByText('这台设备没有联网', { exact: true })
     await banner.waitFor()
     await reachable(list.locator('.banner-region').getByRole('button', { name: '重试', exact: true }))
     await list.locator('.ui-collapse[data-settled] > .ui-collapse-inner > .banner-region').first().waitFor()

@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostStateEvent } from '@latch/protocol'
+import { ApiError } from '../src/core/api.ts'
 import { connectEventStream } from '../src/core/eventStream.ts'
-import { hostNoticeCopy, noticeOf, parseHostState } from '../src/core/hostState.ts'
+import {
+  connectionFailure,
+  connectionWords,
+  hostNoticeCopy,
+  noticeOf,
+  parseHostState,
+  type ConnectionFailure,
+} from '../src/core/hostState.ts'
 import { computerLabel } from '../src/core/securityCopy.ts'
 import { hostLine, hostNeedsStart, keepAwakeLine, loginItemNote } from '../src/core/shellLifecycle.ts'
 import type { ShellLifecycle } from '../src/core/shell.ts'
@@ -159,5 +167,40 @@ describe('desktop lifecycle copy', () => {
     expect(hostNeedsStart(view({ status: 'stopped' }))).toBe(true)
     expect(hostNeedsStart(view({ status: 'crashed', supervised: false }))).toBe(false)
     expect(hostNeedsStart(view())).toBe(false)
+  })
+})
+
+describe('the connection banner says only what the page knows', () => {
+  const words = (
+    connection: 'offline' | 'reconnecting',
+    failure: ConnectionFailure | null,
+    notice: { title: string; body: string } | null = null,
+  ) => connectionWords(connection, notice, null, failure, 'studio-mini')
+
+  it('names this device only when the browser says it has no network, else the computer, with no guessed second line', () => {
+    expect(words('offline', { kind: 'unreachable' })).toEqual({ title: '这台设备没有联网', text: '' })
+    expect(words('reconnecting', connectionFailure(new TypeError('Failed to fetch')))).toEqual({
+      title: '连不上 studio-mini，正在重连…',
+      text: '',
+    })
+  })
+
+  it('says the Host had an error, with its status, when it answers with a 5xx', () => {
+    expect(words('reconnecting', connectionFailure(new ApiError(503, 'unavailable', '暂时不可用')))).toEqual({
+      title: 'studio-mini 上的 Latch 出错（HTTP 503）',
+      text: '',
+    })
+  })
+
+  it('says the reason a Host gave when it refused the read', () => {
+    expect(words('reconnecting', connectionFailure(new ApiError(403, 'scope-required', '这台设备没有这个权限。')))).toEqual({
+      title: '这台设备没有这个权限。',
+      text: '',
+    })
+  })
+
+  it("keeps the Host's own announcement ahead of a failed read", () => {
+    const notice = { title: 'studio-mini 上的 Latch 已停止（21:03 起）', body: 'Latch 启动后自动重连' }
+    expect(words('reconnecting', { kind: 'unreachable' }, notice)).toEqual({ title: notice.title, text: notice.body })
   })
 })

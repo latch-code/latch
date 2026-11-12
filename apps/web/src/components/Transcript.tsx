@@ -608,6 +608,11 @@ export function Transcript({
     active,
     ...(detail.summary.runId ? { latestRunId: detail.summary.runId } : {}),
   })
+  // Until the Host has recorded the run that just ended, every turn's undo reads 运行中: the session's one poll of its
+  // records (above) sees them move on, and each card in view reads its own list again.
+  const recordsRead = useRef({ records, count: 0 })
+  if (recordsRead.current.records !== records) recordsRead.current = { records, count: recordsRead.current.count + 1 }
+  const cardsRevision = `${changesRevision}\n${recordsRead.current.count}`
   const summaryOptions = useMemo<TurnSummaryOptionsValue>(
     () => ({
       undo: changes?.undo ?? 'read-only',
@@ -713,7 +718,7 @@ export function Transcript({
                     {...(onFork ? { onContinue: continueRun } : {})}
                     {...(record ? { changes: record } : {})}
                     sessionActive={active}
-                    changesRevision={changesRevision}
+                    changesRevision={cardsRevision}
                     changesEnabled={changes?.enabled === true}
                     onChangesError={changesError}
                     {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}

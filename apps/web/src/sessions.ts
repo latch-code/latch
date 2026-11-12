@@ -33,8 +33,8 @@ export type RowStatus =
   | { kind: 'running' }
   | { kind: 'failed' }
   | { kind: 'unread' }
-  /** Ended without an answer. `unknown` is how many results nobody can vouch for. */
-  | { kind: 'ended'; word: string; unknown: number }
+  /** Ended without an answer. `unknown` is how many results nobody can vouch for; `unread`: new to this device, or marked so. */
+  | { kind: 'ended'; word: string; unknown: number; unread?: true }
   /** The connection is down: what the row last knew may no longer be true, so nothing live is drawn. */
   | { kind: 'frozen' }
   | { kind: 'read' }
@@ -85,11 +85,15 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
   const outcome = task.status === 'idle' ? task.runOutcome : undefined
   if (task.status === 'failed' || outcome === 'failed') return { kind: 'failed' }
   const unknown = task.runEnd?.unknownResultCount ?? 0
-  if (task.status === 'cancelled' || outcome === 'cancelled') return { kind: 'ended', word: '已停止', unknown }
+  const marked = unread ? { unread: true as const } : {}
+  if (task.status === 'cancelled' || outcome === 'cancelled') return { kind: 'ended', word: '已停止', unknown, ...marked }
   if (task.status === 'interrupted' || outcome === 'interrupted')
-    return { kind: 'ended', word: task.runEnd?.reason === 'forced-stop' ? '已强制停止' : '已中断', unknown }
+    return { kind: 'ended', word: task.runEnd?.reason === 'forced-stop' ? '已强制停止' : '已中断', unknown, ...marked }
   return { kind: unread ? 'unread' : 'read' }
 }
+
+/** A row drawn as unread: an answered one, or one that ended without an answer and still says how (已停止). */
+export const showsUnread = (status: RowStatus): boolean => status.kind === 'unread' || (status.kind === 'ended' && status.unread === true)
 
 /** What a running row says the run is doing, from the summary's activity alone; 运行中 when the Host named none. */
 const ACTIVITY_WORDS: Partial<Record<RunLive['activity'], string>> = {

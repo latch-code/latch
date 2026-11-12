@@ -21,6 +21,7 @@ import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { deviceAccess } from '../core/permissions.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -290,7 +291,7 @@ export function connectionTrouble(
   connection: ConnectionStatus,
   hostProblem: { text: string } | null,
 ): { tone: 'warn' | 'error'; text: string } | null {
-  if (connection === 'offline') return { tone: 'warn', text: '这台设备已离线' }
+  if (connection === 'offline') return { tone: 'warn', text: DEVICE_OFFLINE }
   if (hostProblem) return { tone: 'error', text: hostProblem.text }
   if (connection === 'reconnecting') return { tone: 'warn', text: '正在重新连接' }
   return null

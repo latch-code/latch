@@ -316,6 +316,8 @@ const removeWorktreeSchema = z.strictObject({
     .string()
     .regex(/^[0-9a-f]{64}$/u)
     .optional(),
+  /** The dialog said Latch's merged branch goes: without it the branch is always kept. */
+  deleteBranch: z.literal(true).optional(),
 })
 
 const createTaskSchema = promptSchema.extend({
@@ -3689,10 +3691,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               return done
             }
             // Git removed it but the Host stopped before the result was recorded (the marker went with the folder):
-            // finish from the record written before Git ran. Latch deleted no branch, so its own one is kept.
+            // finish from the record written before Git ran, and say whether its branch is still there.
             const begun = !existsSync(path) && audit.worktreeRemovalBegun(sha256Hex(path))
             if (begun && begun.detail.sessionId === sessionId) {
-              const branch = begun.detail.ownBranch === true ? ('kept' as const) : ('none' as const)
+              // Latch deletes its branch only after Git removed the folder: it may or may not have got that far.
+              const left =
+                begun.detail.ownBranch === true
+                  ? await worktrees.branchLeft(record.folders[0]?.path ?? record.path, basename(path))
+                  : undefined
+              const branch = begun.detail.ownBranch !== true ? ('none' as const) : left === false ? ('deleted' as const) : ('kept' as const)
               await audited(
                 {
                   action: 'worktree.result',
@@ -3732,6 +3739,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             const removing = worktrees.remove(path, {
               ...(body.discard !== undefined ? { discard: body.discard } : {}),
               ...(body.digest !== undefined ? { digest: body.digest } : {}),
+              ...(body.deleteBranch ? { deleteBranch: true } : {}),
               audit: async facts => {
                 await refuseTurn()
                 refuseTerminal()
@@ -3750,6 +3758,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                     ignored: facts.ignored,
                     forced: facts.files > 0,
                     ownBranch: facts.ownBranch,
+                    deleteBranch: body.deleteBranch === true,
+                    merged: facts.merged?.into ?? 'none',
                     ...(facts.ahead !== undefined ? { ahead: facts.ahead } : {}),
                     ...(facts.unpushed !== undefined ? { unpushed: facts.unpushed } : {}),
                   },

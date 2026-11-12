@@ -342,20 +342,27 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     const requestId = randomUUID()
     const removed = await f.owner.json(`${path}/remove`, {
       method: 'POST',
-      body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest },
+      body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest, deleteBranch: true },
     })
     expect(removed).toEqual({ removed: true, discarded: facts.files, branch: 'deleted', branchName: summary.worktree!.branch })
     expect(
       await f.owner.json(`${path}/remove`, {
         method: 'POST',
-        body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest },
+        body: { requestId, discard: facts.files + facts.ignored, digest: facts.digest, deleteBranch: true },
       }),
     ).toEqual(removed)
     expect(existsSync(cwd)).toBe(false)
     expect(f.run('for-each-ref', '--format=%(refname)', 'refs/heads').trim()).toBe('refs/heads/main')
     const audits = (await f.audits()).filter(entry => entry.action.startsWith('worktree.'))
     expect(audits.map(entry => entry.action)).toEqual(['worktree.remove', 'worktree.result'])
-    expect(audits[0]!.detail).toMatchObject({ sessionId, forced: true, ownBranch: true, untracked: facts.untracked })
+    expect(audits[0]!.detail).toMatchObject({
+      sessionId,
+      forced: true,
+      ownBranch: true,
+      untracked: facts.untracked,
+      deleteBranch: true,
+      merged: 'default',
+    })
     expect(JSON.stringify(audits)).not.toContain('scratch')
     expect(JSON.stringify(audits)).not.toContain(cwd)
     expect(audits[1]!.detail).toMatchObject({ outcome: 'removed', branch: 'deleted' })
@@ -390,7 +397,10 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     expect(listed.worktrees.find(item => item.name === name)).toMatchObject({ state: 'leftover', reusable: true })
     expect(await f.owner.json<WorktreeInventory>(`workspaces/${f.workspaceId}/worktrees/${name}`)).toMatchObject({ files: 0 })
     expect(
-      await f.owner.json(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, { method: 'POST', body: { requestId: randomUUID() } }),
+      await f.owner.json(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, {
+        method: 'POST',
+        body: { requestId: randomUUID(), deleteBranch: true },
+      }),
     ).toMatchObject({ removed: true, branch: 'deleted' })
     expect(existsSync(cwd)).toBe(false)
     expect((await f.audits()).find(entry => entry.action === 'worktree.remove')?.detail).toMatchObject({
@@ -486,11 +496,13 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
       vi.restoreAllMocks()
     })
     const requestId = randomUUID()
-    const first = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId } })
+    const first = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId, deleteBranch: true } })
     expect(first.status).toBe(500)
     expect(existsSync(cwd)).toBe(false)
     expect((await summaryOf(f.owner, sessionId)).worktree?.removed).toBeUndefined()
-    expect(await f.owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId } })).toMatchObject({
+    expect(
+      await f.owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId, deleteBranch: true } }),
+    ).toMatchObject({
       removed: true,
       branch: 'deleted',
     })
@@ -536,52 +548,58 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     expect((await f.audits()).filter(entry => entry.action === 'worktree.remove')).toHaveLength(1)
   })
 
-  it('finishes a removal Git completed before the Host stopped, on a retry after the restart', async () => {
-    const dirs = await realpath(await mkdtemp(join(tmpdir(), 'latch-worktree-restart-')))
-    onTestFinished(() => rm(dirs, { recursive: true, force: true }))
-    const dataDir = join(dirs, 'data'),
-      workspaceRoot = join(dirs, 'workspace')
-    await mkdir(workspaceRoot)
-    const f = await fixture({}, { dataDir, workspaceRoot })
-    const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
-    await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
-    const cwd = (await summaryOf(f.owner, sessionId)).cwd!
-    // Git removes the folder; the Host stops before it records the result or deletes the branch.
-    let removed!: () => void
-    const gitDone = new Promise<void>(done => (removed = done))
-    const run = GitReader.prototype.run
-    vi.spyOn(GitReader.prototype, 'run').mockImplementation(async function (this: GitReader, layout, args, options) {
-      if (!(args.includes('worktree') && args.includes('remove'))) return run.call(this, layout, args, options)
-      await run.call(this, layout, args, options)
-      removed()
-      return new Promise<Buffer>(() => {})
-    })
-    const abort = new AbortController()
-    const first = f.owner
-      .request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() }, signal: abort.signal })
-      .catch(() => undefined)
-    await gitDone
-    vi.restoreAllMocks()
-    expect(existsSync(cwd)).toBe(false)
-    abort.abort()
-    await first
-    // Only the Host stops: the project and the worktrees stay where they are.
-    await f.t.host.close()
-    expect((await f.audits()).map(entry => entry.action).filter(action => action.startsWith('worktree.'))).toEqual(['worktree.remove'])
+  it.each([false, true])(
+    'finishes a removal Git completed before the Host stopped, reading whether the branch is left (deleted: %s)',
+    async gone => {
+      const dirs = await realpath(await mkdtemp(join(tmpdir(), 'latch-worktree-restart-')))
+      onTestFinished(() => rm(dirs, { recursive: true, force: true }))
+      const dataDir = join(dirs, 'data'),
+        workspaceRoot = join(dirs, 'workspace')
+      await mkdir(workspaceRoot)
+      const f = await fixture({}, { dataDir, workspaceRoot })
+      const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
+      await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
+      const cwd = (await summaryOf(f.owner, sessionId)).cwd!
+      const branch = (await summaryOf(f.owner, sessionId)).worktree!.branch
+      // Git removes the folder; the Host stops before it records the result or deletes the branch.
+      let removed!: () => void
+      const gitDone = new Promise<void>(done => (removed = done))
+      const run = GitReader.prototype.run
+      vi.spyOn(GitReader.prototype, 'run').mockImplementation(async function (this: GitReader, layout, args, options) {
+        if (!(args.includes('worktree') && args.includes('remove'))) return run.call(this, layout, args, options)
+        await run.call(this, layout, args, options)
+        removed()
+        return new Promise<Buffer>(() => {})
+      })
+      const abort = new AbortController()
+      const first = f.owner
+        .request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() }, signal: abort.signal })
+        .catch(() => undefined)
+      await gitDone
+      vi.restoreAllMocks()
+      expect(existsSync(cwd)).toBe(false)
+      abort.abort()
+      await first
+      // Only the Host stops: the project and the worktrees stay where they are.
+      await f.t.host.close()
+      // The Host may have got as far as deleting its branch before it stopped.
+      if (gone) f.run('update-ref', '-d', `refs/heads/${branch}`)
+      expect((await f.audits()).map(entry => entry.action).filter(action => action.startsWith('worktree.'))).toEqual(['worktree.remove'])
 
-    const again = await startTestHost({ ...f.agentOnly, dataDir, workspaceRoot })
-    hosts.push(again)
-    const owner = await again.enroll({ listener: 'unix' })
-    expect(await owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })).toEqual({
-      removed: true,
-      discarded: 0,
-      branch: 'kept',
-    })
-    expect((await summaryOf(owner, sessionId)).worktree?.removed).toBe(true)
-    const results = (await f.audits()).filter(entry => entry.action === 'worktree.result')
-    expect(results).toHaveLength(1)
-    expect(results[0]!.detail).toMatchObject({ sessionId, outcome: 'removed', branch: 'kept' })
-  })
+      const again = await startTestHost({ ...f.agentOnly, dataDir, workspaceRoot })
+      hosts.push(again)
+      const owner = await again.enroll({ listener: 'unix' })
+      expect(await owner.json(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })).toEqual({
+        removed: true,
+        discarded: 0,
+        branch: gone ? 'deleted' : 'kept',
+      })
+      expect((await summaryOf(owner, sessionId)).worktree?.removed).toBe(true)
+      const results = (await f.audits()).filter(entry => entry.action === 'worktree.result')
+      expect(results).toHaveLength(1)
+      expect(results[0]!.detail).toMatchObject({ sessionId, outcome: 'removed', branch: gone ? 'deleted' : 'kept' })
+    },
+  )
 
   it('keeps the worktree of a session that became private after its start private as a leftover once it is deleted', async () => {
     const f = await fixture()

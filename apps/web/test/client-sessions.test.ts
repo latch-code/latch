@@ -24,7 +24,9 @@ import {
   unknownNote,
   waitKind,
   writeFolded,
+  showsUnread,
 } from '../src/sessions.ts'
+import { statusLabel } from '../src/components/SessionStatus.tsx'
 import { steadyHold } from '../src/hooks/useSteady.ts'
 
 function task(id: string, updatedAt: Date, extra: Partial<TaskSummary> = {}): TaskSummary {
@@ -163,6 +165,16 @@ describe('session row status', () => {
     expect(of({ status: 'idle' }, { unread: true })).toEqual({ kind: 'unread' })
     expect(of({ status: 'idle' })).toEqual({ kind: 'read' })
     expect(of({ status: 'idle', runOutcome: 'failed' })).toEqual({ kind: 'failed' })
+  })
+
+  it('keeps 已停止 on a stopped session marked unread, and draws it unread like an answered one', () => {
+    const stopped = of({ status: 'cancelled' }, { unread: true })
+    expect(stopped).toEqual({ kind: 'ended', word: '已停止', unknown: 0, unread: true })
+    expect(showsUnread(stopped)).toBe(true)
+    expect(statusLabel(stopped, undefined)).toBe('已停止，有新内容')
+    expect(showsUnread(of({ status: 'idle', runOutcome: 'interrupted' }, { unread: true }))).toBe(true)
+    expect(showsUnread(of({ status: 'cancelled' }))).toBe(false)
+    expect(showsUnread(of({ status: 'idle' }, { unread: true }))).toBe(true)
   })
 
   it('calls a run silent only when the Host does, never from elapsed time alone', () => {

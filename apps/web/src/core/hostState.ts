@@ -1,4 +1,5 @@
 import { HOST_STATE_REASONS, type HostStateEvent, type HostStateReason } from '@latch/protocol'
+import { ApiError } from './api.ts'
 
 /** The Host's last announcement that it stopped answering: why, since when, and when to try again. */
 export interface HostNotice {
@@ -60,4 +61,37 @@ export function hostNoticeCopy(notice: HostNotice, computer = 'Mac'): { title: s
     case 'shutdown':
       return { title: `${computer} 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 启动后自动重连' }
   }
+}
+
+/** What the page says while the Host is not reached, from `navigator.onLine` alone. */
+export const DEVICE_OFFLINE = '这台设备没有联网'
+
+/** Why the last read of the Host failed, as far as the page can tell. */
+export type ConnectionFailure = { kind: 'unreachable' } | { kind: 'host-error'; status: number } | { kind: 'refused'; message: string }
+
+/** A failed read: no answer at all (or none in time), the Host answering with an error of its own, or a refusal it explained. */
+export function connectionFailure(cause: unknown): ConnectionFailure {
+  if (!(cause instanceof ApiError)) return { kind: 'unreachable' }
+  return cause.status >= 500 ? { kind: 'host-error', status: cause.status } : { kind: 'refused', message: cause.message }
+}
+
+/**
+ * The connection banner's title and its one optional line, from what the page really knows and nothing more: the
+ * browser says it has no network (`offline`), the Host announced why it stopped (`notice`), the desktop shell knows the
+ * Host process (`hostProblem`), the Host answered with an error, or requests simply got no answer, which says nothing
+ * about why.
+ */
+export function connectionWords(
+  connection: 'offline' | 'reconnecting' | 'connecting' | 'connected',
+  notice: { title: string; body: string } | null,
+  hostProblem: { text: string } | null,
+  failure: ConnectionFailure | null,
+  computer: string,
+): { title: string; text: string } {
+  if (connection === 'offline') return { title: DEVICE_OFFLINE, text: '' }
+  if (hostProblem) return { title: hostProblem.text, text: notice?.body ?? '' }
+  if (notice) return { title: notice.title, text: notice.body }
+  if (failure?.kind === 'host-error') return { title: `${computer} 上的 Latch 出错（HTTP ${failure.status}）`, text: '' }
+  if (failure?.kind === 'refused') return { title: failure.message, text: '' }
+  return { title: `连不上 ${computer}，正在重连…`, text: '' }
 }

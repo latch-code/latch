@@ -159,6 +159,45 @@ it('offers undo without a reload when a run that just ended settles in view', as
   })
 })
 
+it('drops 运行中不能撤销 on a card once the Host has recorded the run that just ended, without a reload', async () => {
+  const id = await settledSession('上一轮的卡片')
+  await withPage(async page => {
+    // The session is idle, but the Host is still recording a run that just ended (a later one, with no card here): the
+    // session's records list it as running once, and the card's list, read meanwhile, says it cannot undo while running.
+    let listed = false,
+      reads = 0
+    await page.route(`**/tasks/${id}/changes/turns`, async route => {
+      if (listed) return route.continue()
+      listed = true
+      const response = await route.fetch()
+      const answer = (await response.json()) as { turns: Array<{ turnId: string; state: string }> }
+      answer.turns.push({ ...answer.turns.at(-1)!, turnId: randomUUID(), state: 'running' })
+      return route.fulfill({ response, json: answer })
+    })
+    await page.route(`**/tasks/${id}/changes?*`, async route => {
+      reads++
+      if (reads > 1) return route.continue()
+      const response = await route.fetch()
+      const answer = (await response.json()) as Record<string, unknown>
+      return route.fulfill({ response, json: { ...answer, undo: { available: false, reason: 'running' } } })
+    })
+    await page.locator(`[data-task-id="${id}"]`).first().click()
+    await cardOf(page).getByRole('button', { name: '撤销本轮', exact: true }).waitFor()
+    expect(await cardOf(page).getByText('运行中不能撤销').count()).toBe(0)
+    expect(reads).toBeGreaterThan(1)
+    for (const [width, height] of [
+      [1440, 900],
+      [390, 844],
+    ] as const)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.setViewportSize({ width, height })
+        await page.emulateMedia({ colorScheme })
+        await cardOf(page).scrollIntoViewIfNeeded()
+        await page.screenshot({ path: `test-results/turn-undo-settled--${width}--${colorScheme}.png` })
+      }
+  })
+})
+
 it('sends the next message once, and stops promising to tell the engine once it has', async () => {
   const id = await settledSession('撤销后再说')
   await withPage(async page => {

@@ -73,10 +73,14 @@ export const GIT_ACTIONS = {
     ignored: count.optional(),
     forced: z.boolean(),
     ownBranch: z.boolean(),
+    /** The dialog said the branch goes; without it the branch is kept. */
+    deleteBranch: z.boolean().optional(),
+    /** Why the branch may go: on a default branch, no commits past its start, or no evidence (`none`). */
+    merged: z.enum(['default', 'start', 'none']).optional(),
     ahead: count.optional(),
     unpushed: count.optional(),
   }),
-  /** After: removed, and the branch Latch made deleted (`-d`), kept (not merged), or none. */
+  /** After: removed, and the branch Latch made deleted (merged and confirmed), kept, or none. */
   'worktree.result': z.strictObject({
     ...worktree,
     outcome: z.enum(['removed', 'failed']),
