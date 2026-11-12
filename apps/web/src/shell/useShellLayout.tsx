@@ -35,6 +35,7 @@ import {
 import { backRoute, initialRoute, useSpaces } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
+import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId } from '../core/api.ts'
@@ -295,6 +296,26 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const terminalOpen = terminalWanted && canTerminal
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
+  /**
+   * The profile of the Agent in view, opened from its face or name (or a link to one of its sections): on wide windows
+   * in the right panel's place, in turn with the panel's surfaces; on phones in a bottom sheet.
+   */
+  const [profile, setProfile] = useState<{ owner: string; section?: ProfileSection; nonce: number } | null>(null)
+  const profileOwner =
+    route.entry === 'agents'
+      ? route.myAgent?.id !== 'new'
+        ? route.myAgent?.id
+        : undefined
+      : route.entry === 'sessions'
+        ? topicOwner(summary)
+        : undefined
+  const profileShown = profile !== null && profile.owner === profileOwner ? profile : null
+  // Another Agent in view lets the profile go: it opens again only when asked for.
+  useEffect(() => {
+    if (profile && profileOwner !== undefined && profile.owner !== profileOwner) setProfile(null)
+  }, [profile, profileOwner])
+  /** The profile stands in the right panel's column beside a topic. */
+  const profileColumn = profileShown !== null && route.entry === 'sessions' && !phone
   useLayoutEffect(() => {
     setFilesOpen(false)
     setPluginPanel(undefined)
@@ -326,14 +347,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const placement =
     !summary && !filesVisible
       ? null
-      : (filesVisible || changesOpen || deliveryOpen || terminalOpen || pluginPanel !== undefined) && fileExpanded
+      : !profileColumn && (filesVisible || changesOpen || deliveryOpen || terminalOpen || pluginPanel !== undefined) && fileExpanded
         ? { kind: 'page' as const }
-        : placed
+        : profileColumn && placed.kind === 'page'
+          ? null
+          : placed
   const pageMode = placement?.kind === 'page'
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
-    && (filesVisible || changesOpen || deliveryOpen || terminalOpen || (!!summary && preferences.rightPanel.open))
+    && (profileColumn || filesVisible || changesOpen || deliveryOpen || terminalOpen || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
@@ -424,8 +447,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    */
   const back = (instant = false) => {
     const id = selectedId
-    // A delegation goes back to its Agent's page under 我的 Agent, not to Code's list it is not on.
-    const away = backRoute(summary, snapshot.customAgents, entries.includes('agents'))
+    // A conversation in 我的 Agent goes back to its list, not to Code's list it is not on.
+    const away = backRoute(summary, entries.includes('agents'))
     const arrive = () => {
       choose(null)
       if (away) {
@@ -515,11 +538,41 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (trigger) trigger.click()
     else openMyAgent()
   }
-  /** 我的 Agent, at an Agent's page (and tab) or at the list. */
+  /**
+   * 我的 Agent: the list, the form for a new Agent, or a conversation with an Agent. A conversation opens on its current
+   * topic, or on a new topic when it has none or one is asked for; a link to a section of the old tabs also opens the
+   * profile there.
+   */
   const openMyAgent = (target?: MyAgentTarget) => {
     drawer.setOpen(false)
     setNewSheet(false)
-    setRoute({ entry: 'agents', ...(target ? { myAgent: target } : {}) })
+    const opening = openAgent(target, snapshot.tasks)
+    const owner = opening.kind === 'topic' ? opening.owner : opening.target?.topic === 'new' ? opening.target.id : undefined
+    if (owner && opening.section) setProfile(previous => ({ owner, section: opening.section, nonce: (previous?.nonce ?? 0) + 1 }))
+    if (opening.kind === 'topic') {
+      if (opening.sessionId !== selectedId) choose(opening.sessionId)
+      setRoute({ entry: 'sessions' })
+      return
+    }
+    setRoute({ entry: 'agents', ...(opening.target ? { myAgent: opening.target } : {}) })
+  }
+  /** The profile of the Agent in view, at a section; again on the same section brings it back to the top. */
+  const openProfile = (owner: string, section?: ProfileSection) => {
+    setProfile(previous => ({ owner, ...(section ? { section } : {}), nonce: (previous?.nonce ?? 0) + 1 }))
+  }
+  /** Closing gives focus back to the face that opened it. */
+  const closeProfile = () => {
+    setProfile(null)
+    requestAnimationFrame(() => {
+      const face = [...document.querySelectorAll<HTMLElement>('.agent-frame-who')].find(
+        button => button.checkVisibility() && !button.closest('[inert]'),
+      )
+      face?.focus({ preventScroll: true })
+    })
+  }
+  const toggleProfile = (owner: string) => {
+    if (profileShown) closeProfile()
+    else openProfile(owner)
   }
   /** 应用, at a page or at the list. */
   const openApp = (target?: AppTarget) => {
@@ -698,6 +751,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   /** Shows one surface of the panel, opening the panel if it is shut. */
   const showSurface = (surface: PanelSurface) => {
+    setProfile(null)
     launcherAsked.current = surface.kind === 'launcher'
     setChangesWanted(surface.kind === 'changes')
     setDeliveryWanted(surface.kind === 'delivery')
@@ -730,6 +784,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
                 ? { kind: 'plugin', id: pluginPanel }
                 : { kind: 'launcher' }
   const closePanel = () => {
+    setProfile(null)
     lastSurface.current = shownSurface()
     setChangesWanted(false)
     setDeliveryWanted(false)
@@ -743,6 +798,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
     if (!canViewChanges) return
+    setProfile(null)
     setChangesWanted(true)
     setDeliveryWanted(false)
     setTerminalWanted(false)
@@ -760,6 +816,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     else openChangesTab()
   }
   const togglePanel = () => {
+    if (profileColumn) {
+      // The profile stands in the panel's place: the toggle brings the panel back in its stead.
+      const shown = shownSurface()
+      showSurface(shown.kind === 'launcher' ? lastSurface.current : shown)
+      return
+    }
     if (columnOpen || (pageMode && infoPage)) closePanel()
     else {
       // A page sent back (Esc, the platform's back, sending from it) still holds its surface; only closePanel lets go of it.
@@ -1306,6 +1368,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openSettings,
     openAgentPage,
     openMyAgent,
+    profileOwner,
+    profileShown,
+    profileColumn,
+    openProfile,
+    closeProfile,
+    toggleProfile,
     openApp,
     frameShortcut,
     delegation,

@@ -133,6 +133,7 @@ const sessionEntrySchema = z.object({
   personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
   agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
   automationId: z.string().min(1).max(64).optional(),
+  generalChat: z.literal(true).optional(),
   origin: z
     .strictObject({
       app: z.string().regex(APP_REF),
@@ -220,6 +221,8 @@ export interface StoredMeta {
   personal?: TaskSummary['personal']
   agent?: TaskSummary['agent']
   automationId?: string
+  /** A conversation with 通用 in 我的 Agent. */
+  generalChat?: true
   /** The plugin page that started the session, with the page's own request ID. */
   origin?: PageOrigin
   agentPrivate?: true

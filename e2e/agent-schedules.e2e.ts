@@ -21,15 +21,20 @@ async function agentBrowser(page: Page, host: TestHost, owner: TestDevice, name:
   await connected(page)
 }
 
-const settled = (page: Page) =>
-  page
-    .locator('.agents-page')
-    .evaluate(element => Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => undefined))))
-
 const choice = (page: Page, name: RegExp) => page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
 const pad = (value: number) => String(value).padStart(2, '0')
 
-async function openAgent(page: Page, tab: '委托' | '定时') {
+/** Opens the conversation with 资料助手 from the list that stands where the sidebar stands (or a phone's tab). */
+async function openConversation(page: Page) {
+  const tabs = page.locator('.phone-tabs')
+  if (await tabs.isVisible().catch(() => false)) {
+    await tabs.getByRole('button', { name: '我的 Agent', exact: true }).click()
+    await page
+      .getByRole('list', { name: '我的 Agent', exact: true })
+      .getByRole('button', { name: /资料助手/u })
+      .click()
+    return
+  }
   const place = page.getByRole('radio', { name: '我的 Agent', exact: true }).first()
   await place.click()
   await expect.poll(() => place.getAttribute('aria-checked')).toBe('true')
@@ -40,10 +45,29 @@ async function openAgent(page: Page, tab: '委托' | '定时') {
     .getByRole('region', { name: 'Agent', exact: true })
     .getByRole('button', { name: /资料助手/u })
     .click()
-  await page.getByRole('tab', { name: tab, exact: true }).click()
 }
 
-it('creates, runs, pauses and resumes a schedule, shows a missed time, and carries an earlier result into a new delegation', async () => {
+/** 定时 is in the profile: its face opens it, and 编辑 (or 新建定时) opens the schedules' own editing. */
+async function openSchedules(page: Page) {
+  await openConversation(page)
+  // A profile left open since stays open on the same Agent: it starts again from its top.
+  const open = page.getByRole('region', { name: '资料助手 的资料', exact: true })
+  if (await open.isVisible().catch(() => false)) await page.getByRole('button', { name: '资料助手 的资料', exact: true }).first().click()
+  await open.waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: '资料助手 的资料', exact: true }).first().click()
+  const profile = page.getByRole('region', { name: '资料助手 的资料', exact: true }).last()
+  await profile.getByRole('group', { name: '即将进行' }).getByRole('button').first().click()
+  return profile
+}
+
+/** A new topic with 资料助手, from 话题 ▾. */
+async function newTopic(page: Page) {
+  await page.getByRole('button', { name: '话题', exact: true }).first().click()
+  await page.getByRole('menuitemradio', { name: /新话题/u }).click()
+  return page.getByRole('textbox', { name: '给资料助手发消息', exact: true })
+}
+
+it('creates, runs, pauses and resumes a schedule, shows a missed time, and carries an earlier result into a new topic', async () => {
   await mkdir(OUT, { recursive: true })
   // The Host's clock, moved forward to pass a scheduled time while the Host is "asleep".
   let shift = 0
@@ -77,7 +101,7 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await agentBrowser(page, host, owner, '定时 1440')
-    await openAgent(page, '定时')
+    await openSchedules(page)
     await page.getByText('没有定时任务').waitFor()
     await page.screenshot({ path: `${OUT}/empty-1440.png` })
 
@@ -129,7 +153,7 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     expect(run.summary.automationId).toBe(saved!.id)
 
     // 暂停 and 继续: the Host says it is off, then on again.
-    await openAgent(page, '定时')
+    await openSchedules(page)
     // A pause whose answer is lost keeps the request; retrying sends the same requestId.
     const toggles: string[] = []
     page.on('request', request => {
@@ -172,9 +196,9 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await expect.poll(async () => (await automations())[0]?.schedule.kind).toBe('weekdays')
     await card.getByText(new RegExp(`工作日 ${time}`, 'u')).waitFor()
 
-    // 带入上次成果: a delegation's last reply goes into a new delegation's draft as quoted text, in a new session.
-    await page.getByRole('tab', { name: '委托', exact: true }).click()
-    const input = page.getByRole('textbox', { name: '委托内容', exact: true })
+    // 带入上次成果: a topic's last reply goes into a new topic's draft as quoted text, in a new session.
+    await page.getByRole('button', { name: '关闭资料', exact: true }).click()
+    const input = await newTopic(page)
     await input.fill('比较三家汇率接口')
     await input.press('Meta+Enter')
     const delegated = async () =>
@@ -186,12 +210,12 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
         timeout: 15_000,
       })
       .toBe(true)
-    // The automation's run is among the Agent's sessions, tagged 定时.
-    await page
-      .getByRole('region', { name: '近期委托' })
-      .getByRole('button', { name: /定时\s*汇率周报/u })
-      .waitFor()
-    await page.locator('.agent-delegate-new').getByText('新会话', { exact: true }).waitFor()
+    // The automation's run is among the Agent's topics.
+    await page.locator(`[data-task-id="${first!.id}"][aria-current="page"]`).waitFor()
+    await page.getByRole('button', { name: '话题', exact: true }).first().click()
+    await page.getByRole('menuitemradio', { name: /汇率周报/u }).waitFor()
+    await page.keyboard.press('Escape')
+    await newTopic(page)
     await page.getByRole('button', { name: '带入上次成果', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '带入上次成果' })
     await dialog.getByRole('checkbox', { name: first!.title }).check()
@@ -220,14 +244,9 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     const narrow = await phone.newPage()
     narrow.setDefaultTimeout(15_000)
     await agentBrowser(narrow, host, owner, '定时 390')
-    await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
-    await narrow
-      .getByRole('list', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /资料助手/u })
-      .click()
-    await narrow.getByRole('tab', { name: '定时', exact: true }).click()
+    await openSchedules(narrow)
     await narrow.getByRole('listitem', { name: '汇率周报' }).getByText('错过 1 次').waitFor()
-    await settled(narrow)
+    await narrow.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))))
     await noHorizontalOverflow(narrow)
     await narrow.screenshot({ path: `${OUT}/schedules-390-dark.png`, fullPage: true })
     await narrow.getByRole('button', { name: '新建定时', exact: true }).click()
@@ -235,7 +254,8 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await noHorizontalOverflow(narrow)
     await narrow.screenshot({ path: `${OUT}/form-390-dark.png`, fullPage: true })
     await narrow.getByRole('button', { name: '取消', exact: true }).click()
-    await narrow.getByRole('tab', { name: '委托', exact: true }).click()
+    await narrow.getByRole('button', { name: '完成', exact: true }).click()
+    await newTopic(narrow)
     await narrow.getByRole('button', { name: '带入上次成果', exact: true }).click()
     const sheet = narrow.getByRole('dialog', { name: '带入上次成果' })
     await sheet.getByRole('checkbox').first().check()
@@ -255,23 +275,16 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
       const view = await sized.newPage()
       view.setDefaultTimeout(15_000)
       await agentBrowser(view, host, owner, `定时 ${width} ${scheme}`)
-      if (width < 768) {
-        await view.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
-        await view
-          .getByRole('list', { name: '我的 Agent', exact: true })
-          .getByRole('button', { name: /资料助手/u })
-          .click()
-        await view.getByRole('tab', { name: '定时', exact: true }).click()
-      } else {
-        // A tablet keeps the sidebar in a drawer.
-        if (width < 1024) await view.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await openAgent(view, '定时')
-      }
+      // A tablet keeps the sidebar in a drawer.
+      if (width >= 768 && width < 1024) await view.getByRole('button', { name: '打开会话列表', exact: true }).click()
+      await openSchedules(view)
       await view.getByRole('listitem', { name: '汇率周报' }).getByText('错过 1 次').waitFor()
       await view.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))))
       await noHorizontalOverflow(view)
       await view.screenshot({ path: `${OUT}/schedules-${width}-${scheme}.png`, fullPage: true })
-      await view.getByRole('tab', { name: '委托', exact: true }).click()
+      if (width < 768) await view.getByRole('button', { name: '完成', exact: true }).click()
+      else await view.getByRole('button', { name: '关闭资料', exact: true }).click()
+      await newTopic(view)
       await view.getByRole('button', { name: '带入上次成果', exact: true }).waitFor()
       await noHorizontalOverflow(view)
       await view.screenshot({ path: `${OUT}/delegate-${width}-${scheme}.png` })
@@ -283,9 +296,12 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     const viewer = await viewing.newPage()
     viewer.setDefaultTimeout(15_000)
     await agentBrowser(viewer, host, owner, '只看 1440', ['view'])
-    await openAgent(viewer, '定时')
-    await viewer.getByRole('listitem', { name: '汇率周报' }).waitFor()
-    await viewer.getByText('只能查看', { exact: true }).waitFor()
+    await openConversation(viewer)
+    await viewer.getByRole('button', { name: '资料助手 的资料', exact: true }).first().click()
+    await viewer.getByRole('group', { name: '即将进行' }).getByText('汇率周报').waitFor()
+    // A device that may only view gets no 编辑; the switch says it cannot.
+    expect(await viewer.getByRole('group', { name: '即将进行' }).getByRole('button', { name: '编辑' }).count()).toBe(0)
+    expect(await viewer.getByRole('switch', { name: '汇率周报 开启' }).isDisabled()).toBe(true)
     expect(await viewer.getByRole('button', { name: '新建定时' }).count()).toBe(0)
     expect(await viewer.getByRole('button', { name: '立即运行' }).count()).toBe(0)
     await viewing.close()

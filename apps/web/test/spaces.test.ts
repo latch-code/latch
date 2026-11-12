@@ -156,12 +156,11 @@ describe("every delegation in exactly one of 我的 Agent's lists", () => {
     expect(delegationAgent(undefined, gone)).toBe('Agent')
   })
 
-  it('goes back from a delegation to its Agent, or to the list once the Agent is gone', () => {
-    expect(backRoute(delegated('a'), [{ id: 'review' }], true)).toEqual({ entry: 'agents', myAgent: { id: 'review', tab: 'delegate' } })
-    expect(backRoute(delegated('a'), [], true)).toEqual({ entry: 'agents' })
-    expect(backRoute(delegated('a'), undefined, true)).toEqual({ entry: 'agents' })
-    expect(backRoute(task('c'), [{ id: 'review' }], true)).toBeNull()
-    expect(backRoute(delegated('a'), [{ id: 'review' }], false)).toBeNull()
+  it('goes back from a conversation in 我的 Agent to its list, and from anything else to Code', () => {
+    expect(backRoute(delegated('a'), true)).toEqual({ entry: 'agents' })
+    expect(backRoute(task('g', { generalChat: true }), true)).toEqual({ entry: 'agents' })
+    expect(backRoute(task('c'), true)).toBeNull()
+    expect(backRoute(delegated('a'), false)).toBeNull()
   })
 
   it('steps the keys through the rows 我的 Agent shows: 全部 when open, 已归档 when chosen', () => {

@@ -9,14 +9,15 @@ export type SessionFilter = 'all' | 'archived'
 
 /**
  * The two places of a wide window's navigation: Code (the sessions you start) and 我的 Agent (the sessions delegated to
- * one of your Agents). A session's place is fixed when it starts: only `TaskSummary.agent` says it was delegated.
+ * one of your Agents, and conversations with 通用). A session's place is fixed when it starts: only `TaskSummary.agent` and
+ * `TaskSummary.generalChat` say it is 我的 Agent's.
  */
 export type Space = 'code' | 'agents'
 
-export const spaceOf = (task: Pick<TaskSummary, 'agent'>): Space => (task.agent ? 'agents' : 'code')
+export const spaceOf = (task: Pick<TaskSummary, 'agent' | 'generalChat'>): Space => (task.agent || task.generalChat ? 'agents' : 'code')
 
 /** The sessions of one place; every session when no place is given. */
-export function inSpace<T extends Pick<TaskSummary, 'agent'>>(tasks: readonly T[], space: Space | undefined): T[] {
+export function inSpace<T extends Pick<TaskSummary, 'agent' | 'generalChat'>>(tasks: readonly T[], space: Space | undefined): T[] {
   return space === undefined ? [...tasks] : tasks.filter(task => spaceOf(task) === space)
 }
 

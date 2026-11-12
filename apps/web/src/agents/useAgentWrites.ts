@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
 import { api, newRequestId, readPending, submissionRequest, writePending, type PendingSubmission } from '../core/api.ts'
+import { abandonSubmission, unconfirmedReason } from '../core/sendingMessage.ts'
 import { writeOutcome, type WriteOutcome } from './model.ts'
 
 /** One write to 我的 Agent, as sent: a retry repeats it with the same requestId. */
@@ -77,6 +78,8 @@ export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: ()
   const [pending, setPending] = useState<PendingSubmission | null>(() => readPending(key))
   const [sending, setSending] = useState(false)
   const [refused, setRefused] = useState<{ customAgentId: string; message: string; code?: string } | null>(null)
+  /** Why the pending start is still unconfirmed after this page's last try; '' before one. */
+  const [reason, setReason] = useState('')
   const busy = useRef(false)
   useEffect(() => {
     setPending(readPending(key))
@@ -94,6 +97,7 @@ export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: ()
     setPending(submission)
     setSending(true)
     setRefused(null)
+    setReason('')
     try {
       const { path, body } = submissionRequest(submission)
       const result = await api<{ sessionId?: string }>(path, { method: 'POST', body })
@@ -103,6 +107,7 @@ export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: ()
       return result.sessionId
     } catch (error) {
       const outcome = writeOutcome(error)
+      setReason(unconfirmedReason(error) ?? (outcome.kind === 'unknown' ? outcome.message : ''))
       if (outcome.kind !== 'unknown') {
         writePending(key, null)
         setPending(null)
@@ -128,6 +133,18 @@ export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: ()
     start: (submission: Omit<PendingSubmission, 'requestId'> & { customAgentId: string }) =>
       send({ ...submission, requestId: newRequestId() }),
     retry: () => (pending ? send(pending) : Promise.resolve(undefined)),
+    reason,
+    /**
+     * 放弃这次提交: this device stops waiting for the start's answer and gets its text back. A start the Host did get
+     * shows up as a topic; sending the text again starts another one with a new requestId.
+     */
+    abandon: (): { customAgentId: string | undefined; text: string } | null => {
+      if (busy.current || pending === null) return null
+      const home = abandonSubmission(key, pending)
+      setPending(null)
+      setReason('')
+      return { customAgentId: pending.customAgentId, text: home.text }
+    },
   }
 }
 

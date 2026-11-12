@@ -270,7 +270,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 - **权限级别。** Hub 由 `trustOf` 给会话标注级别：Driver 的来源由注册它的插件得出，内置且声明 Latch 把关的是 L1，ACP 与插件 Harness 是 L3（未知来源按 L3），Driver 只能往低了说（`apps/host/src/harness-trust.ts`）；会话详情带 `permission` 说明由谁把关、能否读回模式与漂移状态。
 - **故障隔离。** 某个 Driver 列表失败不影响快照；非必需 Driver 启动失败只会在目录中标为不可用。
 - **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。自己带模型的 Harness 选了模型服务时，Host 用 `pairRoute` 重算这一对，只把 `modelRoute`（服务、模型、协议与源）交给声明了 `models.wires` 的 Driver，Driver 经 `modelGateway` 为每个进程换一个网关凭据（见 [HARNESSES.md](./HARNESSES.md#经-latch-使用模型服务)）。
-- **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效；审批决定与取消的回执也随会话保存在这里（见「审批与取消」）。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`，删除成功后一并删除该会话的元数据与回执。
+- **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效；在我的 Agent 里和「通用」的对话也记在这里（`generalChat`，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#会话)）；审批决定与取消的回执也随会话保存在这里（见「审批与取消」）。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`，删除成功后一并删除该会话的元数据与回执。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化（Standard 与 ACP 都如此；不记录运行的外部 Driver 不提供）。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **生命周期事件。** `session-lifecycle.ts` 把会话与 Host 的变化发给 Host 内按会话保存状态的模块，路由模块经 `RouteContext.lifecycle` 拿到的对象只有 `on`，只能订阅、不能发出。没有监听器时这些事件不增加任何读取或等待。
   - `runStarted`（`{ sessionId, projectId, runId, folders }`）：Driver 在一次运行的第一条提示发给模型或 Agent 之前等待 Host 提供的 `trackFiles`，Host 在其中向该 Driver 核对这是会话当前的运行后发出；`folders` 是 Host 按会话记下的文件夹解析的结果（没有记下时为工作目录），主文件夹在前。只对话的运行不跟踪文件，不发出。

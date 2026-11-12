@@ -52,6 +52,8 @@ export interface HubCreateInput extends CreateTaskInput {
   initialTitle?: string
   /** The automation this session is a run of. */
   automationId?: string
+  /** A conversation with 通用 in 我的 Agent; kept in the Host's session metadata, never sent to the driver. */
+  generalChat?: true
 }
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
@@ -519,7 +521,19 @@ export class HarnessHub implements Bridge {
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, workspaceId, folders, sessionFolder, worktree, firstStart, forkOf, initialTitle, automationId, ...rest } = input
+    const {
+      harnessId,
+      workspaceId,
+      folders,
+      sessionFolder,
+      worktree,
+      firstStart,
+      forkOf,
+      initialTitle,
+      automationId,
+      generalChat,
+      ...rest
+    } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
@@ -536,6 +550,10 @@ export class HarnessHub implements Bridge {
       await this.meta
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
+    if (generalChat)
+      await this.recordGeneralChat(result.sessionId).catch(error =>
+        this.log(`会话 ${result.sessionId} 的通用对话标记写入失败：${message(error)}`),
+      )
     if (initialTitle && !automationId && !forkOf)
       await this.meta
         .update(result.sessionId, current => ({ ...current, title: initialTitle.slice(0, 120) }))
@@ -598,6 +616,8 @@ export class HarnessHub implements Bridge {
       // Brought in from outside Latch's authority: it may hold anything the person ever pasted there.
       || !!meta?.imported
       || !!meta?.automationId
+      // A conversation with 通用 in 我的 Agent is private whatever 通用 held when it started.
+      || !!meta?.generalChat
       || this.agentOf(sessionId) !== undefined
       || this.personalOf(sessionId) !== undefined
     )
@@ -606,6 +626,11 @@ export class HarnessHub implements Bridge {
   private async recordPrivate(sessionId: string): Promise<void> {
     this.briefSessions.add(sessionId)
     if (!this.meta.get(sessionId)?.agentPrivate) await this.meta.update(sessionId, current => ({ ...current, agentPrivate: true as const }))
+  }
+  /** As recordPrivate: private in memory before the write, so a failed write never leaves it readable by a smaller scope. */
+  private async recordGeneralChat(sessionId: string): Promise<void> {
+    this.briefSessions.add(sessionId)
+    if (!this.meta.get(sessionId)?.generalChat) await this.meta.update(sessionId, current => ({ ...current, generalChat: true as const }))
   }
   /** The session's agent, which makes its contents private; available even when the driver cannot list its tasks. */
   agentOf(sessionId: string): TaskSummary['agent'] {
@@ -1135,6 +1160,7 @@ export class HarnessHub implements Bridge {
       forkOf: _forkOf,
       imported: _imported,
       automationId: _automationId,
+      generalChat: _generalChat,
       origin: _origin,
       runId,
       live,
@@ -1173,6 +1199,7 @@ export class HarnessHub implements Bridge {
       ...(agent ? { agent } : {}),
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
+      ...(meta?.generalChat && !agent ? { generalChat: true as const } : {}),
       ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
       ...(meta?.worktree

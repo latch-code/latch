@@ -106,8 +106,8 @@ export function shortcutRows(
 ): Array<{ id: ShortcutId; label: string; keys: string }> {
   return SHORTCUTS.flatMap(({ id, label: named }) => {
     if (!spaces && SPACE_SHORTCUTS.has(id)) return []
-    // In 我的 Agent the same key is 委托…, said only where this device can delegate.
-    const label = id === 'new' && spaces && delegate ? '新会话 · 委托' : named
+    // In 我的 Agent the same key is 新对话…, said only where this device can start one.
+    const label = id === 'new' && spaces && delegate ? '新会话 · 新对话' : named
     const keys = shortcutKeys(id, desktop, mac)
     return keys === null ? [] : [{ id, label, keys }]
   })

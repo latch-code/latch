@@ -18,6 +18,7 @@ import { findProvider, harnessName, type ComposerChoice } from '../composerChoic
 import { projectName } from '../projects.tsx'
 import { rowStatus, waitsOnYou } from '../sessions.ts'
 import type { AvatarState } from './avatarFace.ts'
+import { agentTopics, topicOwner } from './chat.ts'
 
 /** One entry of 我的 Agent's list: 通用 first, then the Host's own order. */
 export type AgentEntry =
@@ -74,21 +75,21 @@ export function worksIn(catalog: HostCatalog | undefined, projectId: string | un
   return project ? projectName(project) : '项目已移除'
 }
 
-/** This Agent's sessions, newest first. 通用 has none of its own: its sessions name no Agent. */
+/** This Agent's topics that are not archived, newest first; 通用's are the conversations marked as its. */
 export function agentSessions(tasks: readonly TaskSummary[], id: string): TaskSummary[] {
-  if (id === GENERAL_AGENT_ID) return []
-  return tasks.filter(task => task.agent?.customAgentId === id && !task.archived).toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  return agentTopics(tasks, id).open
 }
 
-/** The Agent a session belongs to, by its summary. */
+/** The Agent a session belongs to in 我的 Agent, by its summary: one of yours, or 通用 for a conversation with it. */
 export function sessionAgent(
   snapshot: Pick<AppSnapshot, 'customAgents'>,
-  task: TaskSummary | undefined,
+  task: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined,
 ): { id: string; name: string; avatar?: AgentAvatar } | undefined {
-  const id = task?.agent?.customAgentId
+  const id = topicOwner(task)
   if (!id) return undefined
+  if (id === GENERAL_AGENT_ID) return { id, name: GENERAL_NAME }
   const found = snapshot.customAgents?.find(agent => agent.id === id)
-  return { id, name: found?.name ?? 'Agent', ...(found ? { avatar: found.avatar } : {}) }
+  return { id, name: found?.name ?? (snapshot.customAgents ? '已删除的 Agent' : 'Agent'), ...(found ? { avatar: found.avatar } : {}) }
 }
 
 /** Whether this device may read Agents at all: their contents are private to a device with the full data scope. */
@@ -106,7 +107,7 @@ export function agentActivity(
   snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
   agent: Pick<CustomAgentSummary, 'id' | 'available'>,
 ): AvatarState {
-  const own = snapshot.tasks.filter(task => task.agent?.customAgentId === agent.id)
+  const own = snapshot.tasks.filter(task => topicOwner(task) === agent.id)
   const asking = new Set(snapshot.approvals.map(approval => approval.sessionId))
   if (own.some(task => waitsOnYou(task) || (asking.has(task.id) && task.status === 'running'))) return 'waiting'
   if (own.some(task => task.status === 'running' || task.status === 'waiting-approval')) return 'running'

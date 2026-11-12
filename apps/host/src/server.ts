@@ -16,7 +16,7 @@ import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans } from './agent-plans.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import type { AgentExecutionContext, AutomationConfig } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
@@ -338,10 +338,8 @@ const createTaskSchema = promptSchema.extend({
       z.strictObject({ from: z.literal('reuse'), name: z.string().regex(WORKTREE_NAME) }),
     ])
     .optional(),
-  customAgentId: z
-    .string()
-    .regex(/^agt_[a-f0-9-]{36}$/u)
-    .optional(),
+  /** One of 我的 Agent, or `general`: a conversation with 通用 that belongs to 我的 Agent (`TaskSummary.generalChat`). */
+  customAgentId: z.union([z.literal(GENERAL_AGENT_ID), z.string().regex(/^agt_[a-f0-9-]{36}$/u)]).optional(),
   /** Choices from the harness's catalogue, set before the first prompt. */
   config: z
     .array(z.strictObject({ configId: z.string().min(1).max(128), value: z.string().max(1024) }))
@@ -5117,7 +5115,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       let made: Worktree | undefined
       let startedIn = false
       recheck(caller, 'run')
-      const customAgentId = input.customAgentId
+      // A conversation with 通用 names no Agent: 通用 applies as to any session, and only the place it is listed differs.
+      const generalChat = input.customAgentId === GENERAL_AGENT_ID
+      const customAgentId = generalChat ? undefined : input.customAgentId
+      if (generalChat) {
+        agentAccess(caller, true)
+        if (input.forkOf || input.worktree || input.appDraft || (input.workspaceId !== undefined && input.workspaceId !== 'default'))
+          throw new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
+      }
       // A custom Agent's start fixes its project before it queues: the journal keeps one answer per request, so the
       // project's queue is known before entering it. The project itself is checked again inside.
       if (customAgentId) {
@@ -5308,6 +5313,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(attachments.length ? { attachments } : {}),
           requestId: input.requestId,
           ...(agentContext ? { agentContext } : {}),
+          ...(generalChat ? { generalChat: true as const } : {}),
           harnessId,
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
@@ -5333,7 +5339,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             agentAccess(caller, true)
             if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
               throw new AppError(409, 'agent-changed', '这个 Agent 的设置或记忆已改变，请重新开始。')
-          } else if (agentContext) agentAccess(caller, true)
+          } else if (generalChat || agentContext) agentAccess(caller, true)
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (fork) {

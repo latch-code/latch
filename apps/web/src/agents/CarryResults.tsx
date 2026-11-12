@@ -95,9 +95,9 @@ export function CarryResults({
   const list = (
     <>
       {shown.length === 0 ? (
-        <EmptyState title="还没有委托" />
+        <EmptyState title="还没有话题" />
       ) : (
-        <ul className="agent-carry" aria-label="之前的委托">
+        <ul className="agent-carry" aria-label="之前的话题">
           {shown.map(task => {
             const pick = picks.get(task.id),
               got = reads.get(task.id)

@@ -100,8 +100,8 @@ describe('workbench key routing', () => {
     expect(shortcutKeys('space-agents', false, false)).toBe('Ctrl Shift 2')
     // Only where the Host has 我的 Agent.
     expect(shortcutRows(true, true, { spaces: false }).some(row => row.id === 'space-code')).toBe(false)
-    // ⌘N says 委托 too only where this device can delegate.
-    expect(shortcutRows(true, true).find(row => row.id === 'new')?.label).toBe('新会话 · 委托')
+    // ⌘N says 新对话 too only where this device can start one.
+    expect(shortcutRows(true, true).find(row => row.id === 'new')?.label).toBe('新会话 · 新对话')
     expect(shortcutRows(true, true, { delegate: false }).find(row => row.id === 'new')?.label).toBe('新会话')
     expect(shortcutRows(true, true, { spaces: false }).find(row => row.id === 'new')?.label).toBe('新会话')
     expect(shortcutRows(true, true).some(row => row.id === 'space-agents')).toBe(true)

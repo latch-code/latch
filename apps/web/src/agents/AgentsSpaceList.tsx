@@ -9,6 +9,7 @@ import { delegationRows, rowStatus, RECENT_DELEGATIONS } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { agentActivity, GENERAL_NAME, readsAgents } from './model.ts'
+import { ownerName, topicOwner } from './chat.ts'
 import { ActivityWord, LockedAgents } from './parts.tsx'
 
 /**
@@ -28,9 +29,9 @@ function AgentWord({ shell, agent, frozen }: { shell: ShellState; agent: CustomA
 }
 
 /**
- * 我的 Agent's list in the sidebar: 通用 (built in), your Agents with their faces and what they are doing, 新建 Agent, then
- * 最近委托, the sessions you delegated to them, newest first. The open Agent, or the Agent of the open delegation, and the
- * open delegation are selected. Drawn from the snapshot's summaries, so it is the same wherever it stands.
+ * 我的 Agent's list in the sidebar: 通用 (built in), your Agents with their faces and what they are doing (a row opens its
+ * current topic), 新建 Agent, then 最近对话, the topics of all of them, newest first. The Agent in view and the open topic
+ * are selected. Drawn from the snapshot's summaries, so it is the same wherever it stands.
  */
 export function AgentsSpaceList({ shell }: { shell: ShellState }) {
   const { snapshot, route, selectedId, connection, now } = shell
@@ -40,7 +41,7 @@ export function AgentsSpaceList({ shell }: { shell: ShellState }) {
   const canRun = shell.access.scopes.has('run')
   const offline = connection === 'offline'
   const open = route.entry === 'sessions' ? snapshot.tasks.find(task => task.id === selectedId) : undefined
-  const currentAgent = route.entry === 'agents' ? route.myAgent?.id : route.entry === 'sessions' ? open?.agent?.customAgentId : undefined
+  const currentAgent = route.entry === 'agents' ? route.myAgent?.id : route.entry === 'sessions' ? topicOwner(open) : undefined
   const home = route.entry === 'agents' && route.myAgent === undefined
   const agentRow = (id: string, name: string, face: ReactNode, end: ReactNode) => (
     <li key={id}>
@@ -120,14 +121,16 @@ export function AgentsSpaceList({ shell }: { shell: ShellState }) {
   )
 }
 
-/** A delegation's Agent by name; one deleted since keeps its sessions, under 「已删除的 Agent」. */
-export function delegationAgent(agents: readonly CustomAgentSummary[] | undefined, task: Pick<TaskSummary, 'agent'>): string {
-  if (agents === undefined) return 'Agent'
-  return agents.find(agent => agent.id === task.agent?.customAgentId)?.name ?? '已删除的 Agent'
+/** A conversation's Agent by name: 通用, or one of yours; one deleted since keeps its sessions, under 「已删除的 Agent」. */
+export function delegationAgent(
+  agents: readonly CustomAgentSummary[] | undefined,
+  task: Pick<TaskSummary, 'agent' | 'generalChat'>,
+): string {
+  return ownerName(agents, topicOwner(task) ?? '')
 }
 
 /**
- * 最近委托, then a quiet 已归档 row, as Code's list has one: every delegation is reachable from exactly one of them. What
+ * 最近对话, then a quiet 已归档 row, as Code's list has one: every delegation is reachable from exactly one of them. What
  * waits on you leads 最近委托 and is never cut by 全部. Under 已归档 the way back leads the archived ones. The sidebar and
  * a phone's 我的 Agent tab both draw it; the shell keeps which of them shows, so the keys step through the same rows.
  */
@@ -167,15 +170,15 @@ export function Delegations({ shell, frozen }: { shell: ShellState; frozen: stri
           <span>已归档</span>
           <span className="archived-count">{archivedCount}</span>
         </button>
-        {rows.length === 0 ? <p className="space-quiet">没有已归档的委托</p> : list}
+        {rows.length === 0 ? <p className="space-quiet">没有已归档的对话</p> : list}
       </section>
     )
   return (
     <>
       {total > 0 && (
-        <section className="space-group" aria-label="最近委托">
+        <section className="space-group" aria-label="最近对话">
           <h2 className="space-head">
-            <span>最近委托</span>
+            <span>最近对话</span>
           </h2>
           {list}
           {total > RECENT_DELEGATIONS && (rows.length < total || agentsExpanded) && (
@@ -195,7 +198,7 @@ export function Delegations({ shell, frozen }: { shell: ShellState; frozen: stri
         <button
           type="button"
           className="archived-row"
-          aria-label={`已归档的委托（${archivedCount}）`}
+          aria-label={`已归档的对话（${archivedCount}）`}
           onClick={() => {
             setAgentsFilter('archived')
           }}>

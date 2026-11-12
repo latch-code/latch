@@ -290,6 +290,65 @@ test('通用 reaches the sessions of a device that may read it, with no agent on
   expect((await owner.request('custom-agents/general', { method: 'DELETE', body: { requestId: randomUUID() } })).status).toBe(404)
 })
 
+test("a conversation with 通用 is 我的 Agent's and private even while 通用 is empty, and needs the full data scope", async () => {
+  const { host, owner } = await fixture()
+  const work = await host.enroll({ listener: 'loopback-tcp' })
+  await owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+  // What a device with the work scope hears, from before the conversation starts.
+  const controller = new AbortController()
+  const stream = await work.request('events', { signal: controller.signal })
+  expect(stream.status).toBe(200)
+  let heard = ''
+  const reader = stream.body!.getReader()
+  const decoder = new TextDecoder()
+  const reading = (async () => {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) return
+      heard += decoder.decode(next.value, { stream: true })
+    }
+  })().catch(() => {})
+  try {
+    // 通用 is empty: nothing private reaches the model, yet the conversation is as private as an Agent's.
+    const body = { prompt: 'Hello', mode: 'chat', model, customAgentId: 'general' }
+    const requestId = randomUUID()
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: { ...body, requestId } })
+    await settled(owner, sessionId)
+    const summary = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary
+    expect(summary).toMatchObject({ generalChat: true, agentPrivate: true })
+    expect(summary).not.toHaveProperty('agent')
+    // A retry with the same request is the same session; a plain session carries no mark.
+    expect((await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: { ...body, requestId } })).sessionId).toBe(sessionId)
+    const plain = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'Plain', mode: 'chat', model, requestId: randomUUID() },
+    })
+    await settled(owner, plain.sessionId)
+    expect((await owner.json<TaskDetail>(`tasks/${plain.sessionId}`)).summary).not.toHaveProperty('generalChat')
+
+    // The work device can neither read it, find it in its snapshot, hear of it nor send to it.
+    expect((await work.request(`tasks/${sessionId}`)).status).toBe(403)
+    const prompt = await work.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'Mine', requestId: randomUUID() } })
+    expect(prompt.status).toBe(403)
+    expect((await work.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).not.toContain(sessionId)
+    // Its state never reaches the stream; only the bare refresh hint that names a session, as for every private one.
+    const frames = heard.split('\n\n').filter(frame => frame.includes(sessionId))
+    expect(frames.every(frame => frame.includes('event: tasks-invalidated'))).toBe(true)
+    expect(heard).not.toContain('Hello')
+
+    // It carries no project, worktree or fork; and a device that cannot read 通用 cannot start one.
+    const project = await owner.request('tasks', { method: 'POST', body: { ...body, requestId: randomUUID(), workspaceId: 'wsp_other' } })
+    expect(project.status).toBe(400)
+    expect(await project.json()).toMatchObject({ error: 'general-chat-project' })
+    const refused = await work.request('tasks', { method: 'POST', body: { ...body, requestId: randomUUID() } })
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toMatchObject({ error: 'agent-scope-required' })
+  } finally {
+    controller.abort()
+    await reading
+  }
+})
+
 test('a 通用 skill whose plugin went away drops out rather than stopping ordinary work', async () => {
   const seen: ModelMessage[][] = []
   const extra: HarnessPlugin = {

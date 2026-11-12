@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, CustomAgentSummary, TaskSummary } from '@latch/protocol'
+import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { readSpace, spaceKey, spaceOf, waitingCount, writeSpace, type Space } from '../sessions.ts'
 import type { MyAgentTarget, ShellEntry, ShellRoute } from './routes.ts'
 
@@ -18,7 +18,7 @@ export function currentSpace({
   agents: boolean
   entry: ShellEntry
   selectedId: string | null
-  selected: Pick<TaskSummary, 'agent'> | undefined
+  selected: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined
   remembered: Space
 }): Space {
   if (!agents) return 'code'
@@ -132,15 +132,9 @@ export function useSpaces({
 }
 
 /**
- * Where a phone goes back to from a session: a delegation to its Agent's page, or to 我的 Agent's list once that Agent
- * is gone; anything else (or without 我的 Agent) to Code's list, which is null here.
+ * Where a phone goes back to from a session: a conversation in 我的 Agent to its list, where its Agent's row opens it
+ * again; anything else (or without 我的 Agent) to Code's list, which is null here.
  */
-export function backRoute(
-  task: Pick<TaskSummary, 'agent'> | undefined,
-  agents: readonly Pick<CustomAgentSummary, 'id'>[] | undefined,
-  hasAgents: boolean,
-): ShellRoute | null {
-  const id = hasAgents ? task?.agent?.customAgentId : undefined
-  if (!id) return null
-  return agents?.some(agent => agent.id === id) ? { entry: 'agents', myAgent: { id, tab: 'delegate' } } : { entry: 'agents' }
+export function backRoute(task: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined, hasAgents: boolean): ShellRoute | null {
+  return hasAgents && task && spaceOf(task) === 'agents' ? { entry: 'agents' } : null
 }

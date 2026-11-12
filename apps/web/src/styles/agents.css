@@ -52,6 +52,8 @@
 }
 .space-group ul {
   display: grid;
+  /* A long state word shortens the title instead of pushing the row past the column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   margin: 0;
   padding: 0;
@@ -582,7 +584,7 @@ button.agents-list-row:focus-visible {
   color: var(--muted);
 }
 
-/* The conversation of a delegated session names its Agent before the title, as a way back to it. */
+/* A handed-off or imported session names where it came from before its title. */
 .topbar-agent {
   display: inline-flex;
   align-items: center;
@@ -605,6 +607,285 @@ button.agents-list-row:focus-visible {
 .topbar-agent:hover {
   background: var(--hover);
   color: var(--ink);
+}
+
+/*
+ * A conversation with an Agent: its frame stands where a session's title stands. The face (24, 28 on phones), the name
+ * and the state word open the profile; 话题 ▾ and the panel's toggles sit at the end.
+ */
+.agent-frame {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex: 1;
+  min-width: 0;
+}
+.agent-frame-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  max-width: 320px;
+  height: 32px;
+  padding: 0 var(--sp-8) 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.agent-frame-who:hover {
+  background: var(--hover);
+}
+.agent-frame-who[aria-expanded='true'] {
+  background: var(--selected);
+}
+.agent-frame-who:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.agent-frame-who > .agent-avatar {
+  flex-shrink: 0;
+}
+.agent-frame-text {
+  display: grid;
+  min-width: 0;
+}
+.agent-frame-name {
+  overflow: hidden;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-frame-topic {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-frame > .agent-activity {
+  flex-shrink: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-frame-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-inline-start: auto;
+}
+.agent-topic-trigger {
+  gap: var(--sp-4);
+}
+.agent-frame-state {
+  display: flex;
+  white-space: nowrap;
+}
+.agent-frame-state > .agent-activity {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-frame[data-phone] .agent-frame-who {
+  height: 44px;
+  max-width: none;
+  flex: 1;
+}
+.topbar-frame[data-phone] {
+  gap: var(--sp-4);
+  padding-inline: var(--sp-4) var(--sp-8);
+}
+/* On a new topic the frame takes the title row from the page. */
+.agent-chat-title {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding-inline: var(--sp-12) 0;
+}
+
+/*
+ * A new topic: the Agent in the middle while nothing is said yet, the input at the bottom where a session's stands, and
+ * on wide windows the profile beside it in the right panel's place.
+ */
+.agent-chat-panel {
+  display: flex;
+  flex-direction: column;
+}
+/* Wide, the profile floats over the conversation inside it; a phone's panel stays the pushed level it is. */
+@media (min-width: 768px) {
+  .agent-chat-panel {
+    position: relative;
+  }
+}
+.agent-chat-panel > .agent-chat {
+  flex: 1;
+  min-height: 0;
+}
+.agent-chat {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.agent-chat-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.agent-chat-body {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-24) var(--gutter);
+  overflow-y: auto;
+}
+.agent-chat-intro {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-8);
+  max-width: 420px;
+  text-align: center;
+}
+.agent-chat-intro h1 {
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.agent-chat-intro p {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agent-chat-composer {
+  width: 100%;
+  max-width: calc(var(--content-width) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding: 0 var(--gutter) var(--sp-16);
+}
+.agent-chat-profile {
+  flex-shrink: 0;
+  width: min(400px, 45%);
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--canvas);
+}
+@media (max-width: 1023.98px) {
+  .agent-chat-profile {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 2;
+    width: min(400px, 100%);
+    box-shadow: var(--sh-pop);
+  }
+}
+
+/* The profile: in the right panel's place on wide windows, in a bottom sheet on phones. */
+.agent-profile {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.agent-profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 var(--sp-8) 0 var(--sp-16);
+}
+.agent-profile-head h2 {
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.agent-profile-subhead {
+  padding: 0 var(--sp-8) var(--sp-8);
+}
+.agent-profile-body {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-20);
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-8) var(--sp-16) var(--sp-24);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.agent-profile[data-phone] .agent-profile-body {
+  padding-inline: var(--sp-16);
+}
+.agent-profile-who {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-12);
+}
+.agent-profile-who h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.agent-profile-who p {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agent-profile-section {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.agent-profile-section > h3 {
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.agent-profile-section > .ui-segmented {
+  justify-self: start;
+}
+.agent-profile-quiet {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-profile-more,
+.agent-profile-settings {
+  justify-self: start;
+}
+.agent-upcoming {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.agent-upcoming > li + li {
+  border-top: 1px solid var(--line);
+}
+.agent-upcoming > li {
+  display: grid;
+}
+.agent-upcoming-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-16);
+}
+.agent-profile .agent-memory-bar .ui-hint {
+  max-width: 100%;
 }
 
 @media (max-width: 767.98px) {
@@ -830,10 +1111,19 @@ button.agents-list-row:focus-visible {
   vertical-align: 1px;
 }
 
-/* A phone's 我的 Agent tab: 最近委托 and 已归档 under the Agents, in the page's own flow. */
+/* A phone's 我的 Agent tab: 最近对话 and 已归档 under the Agents, in the page's own flow. */
 .phone-delegations {
   flex: none;
   margin: var(--sp-16) 0 0;
   padding: 0;
   overflow: visible;
+}
+/* The narrowest phones keep the state word whole: 话题 ▾ keeps its chevron, and its name is read out and in the tooltip. */
+@media (max-width: 359.98px) {
+  .agent-frame[data-phone] .agent-topic-trigger > span {
+    display: none;
+  }
+  .agent-frame[data-phone] {
+    gap: var(--sp-4);
+  }
 }

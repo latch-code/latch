@@ -34,6 +34,31 @@ describe('session workflow routes', () => {
     expect((await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.archived).toBe(true)
     expect((await owner.request('search', { method: 'POST', body: { q: '' } })).status).toBe(400)
   })
+  it('never gives a device with the work scope a conversation with 通用 in search, even while 通用 is empty', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const work = await host.enroll({ listener: 'loopback-tcp' })
+    await owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    const settled = async (id: string) => expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+    const talk = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '私下 zxqvwk 话题', mode: 'chat', customAgentId: 'general', requestId: randomUUID() },
+    })
+    const plain = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '公开 zxqvwk 会话', mode: 'chat', requestId: randomUUID() },
+    })
+    await settled(talk.sessionId)
+    await settled(plain.sessionId)
+    // The owner finds both; the smaller scope finds only the ordinary one, and nothing of the conversation's text.
+    const mine = await owner.json<SearchResults>('search', { method: 'POST', body: { q: 'zxqvwk' } })
+    expect(mine.hits.map(hit => hit.sessionId)).toEqual(expect.arrayContaining([talk.sessionId, plain.sessionId]))
+    const theirs = await work.json<SearchResults>('search', { method: 'POST', body: { q: 'zxqvwk' } })
+    expect(theirs.hits.map(hit => hit.sessionId)).toContain(plain.sessionId)
+    expect(theirs.hits.map(hit => hit.sessionId)).not.toContain(talk.sessionId)
+    expect(JSON.stringify(theirs)).not.toContain('私下')
+  })
   it('lets viewers read templates, limits changes to admin and keeps stable PUT and DELETE retries idempotent', async () => {
     const host = await startTestHost()
     hosts.push(host)

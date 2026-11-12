@@ -98,6 +98,11 @@ export interface DriverTaskSummary {
   agentPrivate?: true
   /** The automation this session is a run of. */
   automationId?: string
+  /**
+   * A conversation with 通用 in 我的 Agent (started with `customAgentId: 'general'`): it names no Agent, so 通用 applies as
+   * to any session, but it belongs to 我的 Agent rather than Code. Host metadata; a driver's claim is dropped.
+   */
+  generalChat?: true
   /** The plugin page that started this session (Host metadata; a driver's claim is dropped). */
   origin?: SessionOrigin
   /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */

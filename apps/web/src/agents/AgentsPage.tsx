@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID, type CustomAgentList, type CustomAgentSummary } from '@latch/protocol'
@@ -16,18 +16,17 @@ import {
 } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
-import type { MyAgentTab } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { NavTop, shellSpaces, ShellDelegate, ShellNavFoot } from '../shell/SpaceNav.tsx'
 import { AgentsSpaceList, Delegations } from './AgentsSpaceList.tsx'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
-import { askDelegateFocus, takeDelegateFocus } from './delegateFocus.ts'
+import { askDelegateFocus } from './delegateFocus.ts'
 import { AgentForm } from './AgentForm.tsx'
-import { AgentPage } from './AgentPage.tsx'
+import { AgentChat } from './AgentChat.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { agentActivity, agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
 import { ActivityWord, Availability, LockedAgents } from './parts.tsx'
-import { useAgentDetail, useAgentList, type AgentRead } from './useAgentData.ts'
+import { useAgentList, type AgentRead } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
 
 const NO_PLUGINS: CustomAgentList['plugins'] = []
@@ -76,8 +75,8 @@ function ListSkeleton() {
 
 /**
  * The work panel's list (a phone's root page): each Agent with its face, name, duty, how it runs, where it works and
- * whether it can start now; 通用 first, marked as built in. One primary: 委托 the selected Agent, or 新建 Agent when there
- * is none of your own yet.
+ * whether it can start now; 通用 first, marked as built in. A row opens the conversation with it. One primary: a new
+ * topic with the selected Agent, or 新建 Agent when there is none of your own yet.
  */
 function AgentList({
   shell,
@@ -109,7 +108,7 @@ function AgentList({
         <div>
           <h1 className="settings-title">我的 Agent</h1>
           <Hint label="长期替你办事" lead={<span />} className="agents-intro">
-            每个 Agent 有职责、执行方式和默认项目；委托它就是开始一个属于它的会话。
+            每个 Agent 有职责、执行方式和默认项目；和它对话的每个话题都是一个属于它的会话。
           </Hint>
         </div>
         {target && target.kind === 'custom' && canRun && (
@@ -120,7 +119,7 @@ function AgentList({
             onClick={() => {
               onDelegate(target.id)
             }}>
-            委托{target.name}…
+            给{target.name}发消息…
           </Button>
         )}
       </div>
@@ -223,72 +222,51 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const offline = connection === 'offline'
   const target = route.myAgent
   const id = target?.id
+  const chat = id !== undefined && id !== 'new'
   const { read, reload } = useAgentList(snapshot)
   const frozen = useLastConfirmed(connection, snapshot)
-  const detail = useAgentDetail(snapshot, id ?? null)
-  const settle = useCallback(() => {
-    reload()
-    detail.reload()
-    void shell.refresh()
-  }, [reload, detail.reload, shell.refresh])
-  const writes = useAgentWrites(settle)
-  const refreshShell = shell.refresh
-  const scheduleWrites = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
-  // The Agent last opened is the list's selection, for its 委托 button.
-  const [selected, setSelected] = useState<string | undefined>(id && id !== 'new' ? id : undefined)
+  const writes = useAgentWrites(reload)
+  // The Agent last opened is the list's selection, for its primary.
+  const [selected, setSelected] = useState<string | undefined>(chat ? id : undefined)
   useEffect(() => {
-    if (id && id !== 'new' && id !== GENERAL_AGENT_ID) setSelected(id)
-  }, [id])
-  const open = (next?: string, tab?: MyAgentTab) => {
-    writes.clear()
-    shell.setRoute({ entry: 'agents', ...(next ? { myAgent: { id: next, ...(tab ? { tab } : {}) } } : {}) })
-  }
+    if (chat && id !== GENERAL_AGENT_ID) setSelected(id)
+  }, [chat, id])
   const back = () => {
-    open()
+    writes.clear()
+    shell.setRoute({ entry: 'agents' })
   }
   const pushed = phone && id !== undefined
   useBackLayer(pushed, back)
   const list = 'value' in read ? read.value : undefined
-  const name =
-    id === 'new'
-      ? '新建 Agent'
-      : id === GENERAL_AGENT_ID
-        ? GENERAL_NAME
-        : (list?.agents.find(agent => agent.id === id)?.name ?? snapshot.customAgents?.find(agent => agent.id === id)?.name ?? '')
   const escape = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape' || !phone || !pushed || event.defaultPrevented) return
     if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
     back()
   }
-  // A list page or the sidebar asked to delegate: the Agent's page opens on 委托 with its input ready, once it is drawn.
-  useEffect(() => {
-    if (target?.tab !== 'delegate') return
-    requestAnimationFrame(() => {
-      takeDelegateFocus()
-    })
-  })
   const locked = read.state === 'locked'
+  const agentList = (
+    <AgentList
+      shell={shell}
+      read={read}
+      selected={selected}
+      offline={offline}
+      onOpen={next => {
+        writes.clear()
+        shell.openMyAgent({ id: next })
+      }}
+      onDelegate={next => {
+        askDelegateFocus()
+        shell.openMyAgent({ id: next, topic: 'new' })
+      }}
+      onNew={() => {
+        shell.openMyAgent({ id: 'new' })
+      }}
+      onRetry={reload}
+    />
+  )
   const panel = (
     <>
-      {id === undefined && (
-        <AgentList
-          shell={shell}
-          read={read}
-          selected={selected}
-          offline={offline}
-          onOpen={next => {
-            open(next)
-          }}
-          onDelegate={next => {
-            askDelegateFocus()
-            open(next, 'delegate')
-          }}
-          onNew={() => {
-            open('new')
-          }}
-          onRetry={reload}
-        />
-      )}
+      {id === undefined && agentList}
       {id === 'new' && snapshot.catalog && (
         <div className="agent-page">
           {!phone && <h1 className="settings-title">新建 Agent</h1>}
@@ -299,44 +277,28 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             writes={writes}
             disabled={offline || locked}
             onSaved={agent => {
-              open(agent.id, 'delegate')
+              writes.clear()
+              void shell.refresh()
+              askDelegateFocus()
+              shell.setRoute({ entry: 'agents', myAgent: { id: agent.id, topic: 'new' } })
             }}
             onCancel={back}
             {...(shell.owner ? { onManageProviders: shell.manageProviders } : {})}
           />
         </div>
       )}
-      {id !== undefined && id !== 'new' && locked && <LockedAgents />}
-      {id !== undefined && id !== 'new' && !locked && detail.read.state === 'missing' && (
-        <EmptyState title="找不到这个 Agent" description="它可能已在别处删除。" action={<Button onClick={back}>回到列表</Button>} />
-      )}
-      {id !== undefined && id !== 'new' && !locked && detail.read.state !== 'missing' && (
-        <AgentPage
-          shell={shell}
-          id={id}
-          tab={target?.tab}
-          value={detail.value}
-          loading={detail.read.state === 'loading' || (detail.read.state === 'ready' && !detail.value)}
-          {...(detail.read.state === 'failed' ? { failed: detail.read.message } : {})}
-          plugins={list?.plugins ?? NO_PLUGINS}
-          writes={writes}
-          scheduleWrites={scheduleWrites}
-          offline={offline}
-          onTab={tab => {
-            open(id, tab)
-          }}
-          onReload={settle}
-          onDeleted={() => {
-            open()
-          }}
-        />
-      )}
     </>
   )
   return (
-    <section aria-label="我的 Agent" className="settings-page agents-page" data-entry="agents" onKeyDown={escape}>
+    <section
+      aria-label="我的 Agent"
+      className="settings-page agents-page"
+      data-entry="agents"
+      data-chat={chat ? '' : undefined}
+      onKeyDown={escape}>
       {!phone
         && titleSlot
+        && !chat
         && createPortal(
           <div className="agents-crumb">
             {id === undefined ? (
@@ -347,7 +309,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                   我的 Agent
                 </button>
                 <span aria-hidden="true">/</span>
-                <span className="titlebar-page-title">{name}</span>
+                <span className="titlebar-page-title">新建 Agent</span>
               </>
             )}
             {offline && (
@@ -375,25 +337,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               </header>
               <div className="settings-scroll">
                 <div className="settings-content">
-                  {
-                    <AgentList
-                      shell={shell}
-                      read={read}
-                      selected={selected}
-                      offline={offline}
-                      onOpen={next => {
-                        open(next)
-                      }}
-                      onDelegate={next => {
-                        askDelegateFocus()
-                        open(next, 'delegate')
-                      }}
-                      onNew={() => {
-                        open('new')
-                      }}
-                      onRetry={reload}
-                    />
-                  }
+                  {agentList}
                   {read.state !== 'locked' && (
                     <div className="space-list phone-delegations">
                       <Delegations shell={shell} frozen={frozen} />
@@ -406,25 +350,35 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             <AgentsNav shell={shell} />
           )}
         </div>
-        <section
-          className="settings-panel"
-          aria-label={id === undefined ? '我的 Agent' : name}
-          aria-hidden={(phone && !pushed) || undefined}
-          inert={(phone && !pushed) || undefined}>
-          {phone && (
-            <header className="settings-bar">
-              <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
-              <h2>{name}</h2>
-            </header>
-          )}
-          <div className="settings-scroll">
-            {(!phone || pushed) && (
-              <div key={id ?? 'list'} className="settings-content agents-content settings-enter">
-                {panel}
-              </div>
+        {chat ? (
+          <section
+            className="settings-panel agent-chat-panel"
+            aria-label={id === GENERAL_AGENT_ID ? GENERAL_NAME : (snapshot.customAgents?.find(agent => agent.id === id)?.name ?? 'Agent')}
+            aria-hidden={(phone && !pushed) || undefined}
+            inert={(phone && !pushed) || undefined}>
+            {(!phone || pushed) && <AgentChat key={id} shell={shell} owner={id} onBack={back} />}
+          </section>
+        ) : (
+          <section
+            className="settings-panel"
+            aria-label={id === undefined ? '我的 Agent' : '新建 Agent'}
+            aria-hidden={(phone && !pushed) || undefined}
+            inert={(phone && !pushed) || undefined}>
+            {phone && (
+              <header className="settings-bar">
+                <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
+                <h2>新建 Agent</h2>
+              </header>
             )}
-          </div>
-        </section>
+            <div className="settings-scroll">
+              {(!phone || pushed) && (
+                <div key={id ?? 'list'} className="settings-content agents-content settings-enter">
+                  {panel}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </section>
   )

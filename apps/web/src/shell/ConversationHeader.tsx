@@ -1,14 +1,7 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import { FolderGit2, GitCompare } from 'lucide-react'
-import {
-  escapeSecurityText,
-  type AgentAvatar as AgentAvatarValue,
-  type ChangeTotals,
-  type HarnessInfo,
-  type RunLive,
-  type TaskSummary,
-} from '@latch/protocol'
+import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -43,8 +36,8 @@ import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
-import { sessionAgent } from '../agents/model.ts'
-import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { topicOwner } from '../agents/chat.ts'
+import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
@@ -235,26 +228,6 @@ function ProjectCrumb({
   )
 }
 
-/** The Agent a session was delegated to, as 「为 <Agent> 委托」, which goes back to the Agent's page. */
-export interface HeaderAgent {
-  name: string
-  /** Absent once the Agent is deleted: the face is grey. */
-  avatar?: AgentAvatarValue | undefined
-  onOpen: () => void
-  /** 我的 Agent's list, the crumb's first step on wide windows. */
-  onHome?: (() => void) | undefined
-}
-function AgentLink({ agent }: { agent: HeaderAgent }) {
-  return (
-    <button type="button" className="topbar-agent" title={`回到 ${agent.name}`} onClick={agent.onOpen}>
-      <AgentAvatar avatar={agent.avatar ?? 'general'} size={24} />
-      <span>
-        为 <VisibleText text={agent.name} /> 委托
-      </span>
-    </button>
-  )
-}
-
 /** Where a handed-off session came from: 「来自 <来源会话>」, a link when this device lists the source. */
 export interface HeaderSource {
   title?: string | undefined
@@ -321,12 +294,12 @@ function PhoneTopBar({
   connection,
   onRefresh,
   changes,
-  agent,
+  frame,
   from,
   imported,
 }: {
   changes?: HeaderToggle | undefined
-  agent?: HeaderAgent | undefined
+  frame?: ReactNode
   from?: HeaderSource | undefined
   imported?: HeaderImported | undefined
   summary?: TaskSummary
@@ -345,6 +318,14 @@ function PhoneTopBar({
   const state = summary && sessionPill(summary, cancelling)
   const where = summary && source
   const branch = summary?.worktree ? `工作树 · ${summary.branch ?? summary.worktree.branch}` : summary?.branch
+  // A conversation in 我的 Agent: its Agent's frame stands in the title's place, the topic under the name.
+  if (frame)
+    return (
+      <header className="topbar topbar-frame" data-phone="">
+        {onBack && <IconButton size="lg" className="topbar-back" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
+        {frame}
+      </header>
+    )
   return (
     <header className="topbar" data-phone="">
       {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeftGlyph} onClick={onBack} />}
@@ -352,9 +333,8 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || agent || from || imported || connectionProblem(connection)) && (
+        {(where || state || branch || demo || from || imported || connectionProblem(connection)) && (
           <div className="topbar-subline">
-            {agent && <AgentLink agent={agent} />}
             {from && <SourceLink source={from} />}
             {imported && <ImportedMark mark={imported} />}
             {where && <span className="topbar-source-text">{where}</span>}
@@ -423,14 +403,14 @@ export function SessionHeader({
   slots = {},
   crumb,
   changesTotals,
-  agent,
+  frame,
   from,
   imported,
 }: {
   /** The session was brought in from a harness's own earlier session. */
   imported?: HeaderImported | undefined
-  /** The session belongs to one of 我的 Agent. */
-  agent?: HeaderAgent | undefined
+  /** The session is a topic of a conversation in 我的 Agent: its Agent's frame stands in the title's place. */
+  frame?: ReactNode
   /** The session received a handoff. */
   from?: HeaderSource | undefined
   /** The session's change totals, once the page has read them. */
@@ -480,7 +460,7 @@ export function SessionHeader({
         connection={connection}
         onRefresh={onRefresh}
         changes={slots.changes}
-        agent={agent}
+        frame={frame}
         from={from}
         imported={imported}
       />
@@ -489,32 +469,13 @@ export function SessionHeader({
   return (
     <header className="topbar">
       <div className="topbar-title">
-        {/* A delegation lives in 我的 Agent: its crumb is 我的 Agent / the Agent, where Code's sessions name their project. */}
-        {summary && agent && (
-          <span className="topbar-crumb">
-            <button type="button" className="topbar-agent topbar-agents-home" onClick={agent.onHome}>
-              我的 Agent
-            </button>
-            <span className="topbar-crumb-separator" aria-hidden="true">
-              /
-            </span>
-            <button type="button" className="topbar-agent" title={`回到 ${agent.name}`} onClick={agent.onOpen}>
-              <AgentAvatar avatar={agent.avatar ?? 'general'} size={16} />
-              <span>
-                <VisibleText text={agent.name} />
-              </span>
-            </button>
-            <span className="topbar-crumb-separator" aria-hidden="true">
-              /
-            </span>
-          </span>
-        )}
-        {summary && !agent && (project || (summary.mode !== 'chat' && summary.cwd)) && (
+        {summary && frame}
+        {summary && !frame && (project || (summary.mode !== 'chat' && summary.cwd)) && (
           <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
             {crumb?.folders}
           </ProjectCrumb>
         )}
-        {summary && from && (
+        {summary && !frame && from && (
           <span className="topbar-crumb">
             <SourceLink source={from} />
             <span className="topbar-crumb-separator" aria-hidden="true">
@@ -522,7 +483,7 @@ export function SessionHeader({
             </span>
           </span>
         )}
-        {summary && imported && (
+        {summary && !frame && imported && (
           <span className="topbar-crumb">
             <ImportedMark mark={imported} />
             <span className="topbar-crumb-separator" aria-hidden="true">
@@ -530,13 +491,15 @@ export function SessionHeader({
             </span>
           </span>
         )}
-        {summary && (
+        {summary && !frame && (
           <h1 title={title}>
             <TitleMenu title={title} sections={sessionMenu} />
           </h1>
         )}
-        {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
-        {summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
+        {summary && !frame && onRename && (
+          <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />
+        )}
+        {summary && !frame && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>
       <div className="topbar-actions">
         <ConnectionPill connection={connection} onRefresh={onRefresh} />
@@ -609,10 +572,11 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     snapshot,
     owner,
     openSettings,
-    openMyAgent,
+    entries,
   } = shell
   const desktop = currentShell() !== null
-  const delegated = sessionAgent(snapshot, summary)
+  const topicOf = entries.includes('agents') ? topicOwner(summary) : undefined
+  const panelShown = (columnOpen && !shell.profileColumn) || (pageMode && infoPage)
   const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
   const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
   const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
@@ -665,20 +629,40 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
             },
           }
         : {})}
-      panelOpen={columnOpen || (pageMode && infoPage)}
+      panelOpen={panelShown}
       changesTotals={shell.changesTotals}
-      {...(delegated
+      {...(topicOf && summary
         ? {
-            agent: {
-              name: delegated.name,
-              avatar: delegated.avatar,
-              onOpen: () => {
-                openMyAgent({ id: delegated.id, tab: 'delegate' })
-              },
-              onHome: () => {
-                openMyAgent()
-              },
-            },
+            frame: (
+              <TopicFrame
+                shell={shell}
+                owner={topicOf}
+                current={summary.id}
+                title={summary.title || '未命名会话'}
+                actions={
+                  phone ? (
+                    <>
+                      <IconButton
+                        ref={panelToggle}
+                        size="lg"
+                        label="侧边面板"
+                        icon={PanelRightGlyph}
+                        pressed={panelShown}
+                        onClick={togglePanel}
+                      />
+                      {topMenu.length > 0 && (
+                        <Menu
+                          label="会话操作"
+                          placement="bottom-end"
+                          sections={topMenu}
+                          trigger={props => <IconButton {...props} size="lg" label="会话操作" icon={MoreGlyph} />}
+                        />
+                      )}
+                    </>
+                  ) : undefined
+                }
+              />
+            ),
           }
         : {})}
       {...(handedFrom

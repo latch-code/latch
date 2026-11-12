@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { FolderPlus, Send } from 'lucide-react'
-import type { AppSnapshot } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AppSnapshot } from '@latch/protocol'
 import {
   Button,
   ICON_STROKE,
@@ -131,8 +131,8 @@ export function NewSessionRow({ onNew, active, drawer }: { onNew: () => void; ac
 }
 
 /**
- * 我的 Agent's primary: 委托…, a choice of your Agents (通用 takes no delegation); choosing one opens its page on 委托 with
- * the input ready. Without an Agent of your own the choice is 新建 Agent. The same key as 新会话 opens it.
+ * 我的 Agent's primary: 新对话…, a choice of Agent (通用 first); choosing one opens a new topic with it, the input ready.
+ * Without an Agent of your own the choice still has 通用, and 新建 Agent. The same key as 新会话 opens it.
  */
 function DelegateRow({
   snapshot,
@@ -143,7 +143,7 @@ function DelegateRow({
   onNew,
   compact = false,
 }: {
-  snapshot: Pick<AppSnapshot, 'customAgents'>
+  snapshot: Pick<AppSnapshot, 'customAgents' | 'device'>
   drawer: boolean
   canRun: boolean
   offline: boolean
@@ -156,19 +156,34 @@ function DelegateRow({
   const sections: MenuSection[] = [
     {
       id: 'agents',
-      items: agents.map(agent => ({
-        id: agent.id,
-        label: agent.name,
-        leading: <AgentAvatar avatar={agent.avatar} size={16} />,
-        ...(offline
-          ? { disabled: true, disabledReason: 'Mac 不在线' }
-          : agent.available
-            ? {}
-            : { disabled: true, disabledReason: agent.unavailableReason ?? '现在不能开始' }),
-        onSelect: () => {
-          onDelegate(agent.id)
-        },
-      })),
+      items: [
+        ...(snapshot.device.dataScope === 'all'
+          ? [
+              {
+                id: GENERAL_AGENT_ID,
+                label: '通用',
+                leading: <AgentAvatar avatar="general" size={16} />,
+                ...(offline ? { disabled: true, disabledReason: 'Mac 不在线' } : {}),
+                onSelect: () => {
+                  onDelegate(GENERAL_AGENT_ID)
+                },
+              },
+            ]
+          : []),
+        ...agents.map(agent => ({
+          id: agent.id,
+          label: agent.name,
+          leading: <AgentAvatar avatar={agent.avatar} size={16} />,
+          ...(offline
+            ? { disabled: true, disabledReason: 'Mac 不在线' }
+            : agent.available
+              ? {}
+              : { disabled: true, disabledReason: agent.unavailableReason ?? '现在不能开始' }),
+          onSelect: () => {
+            onDelegate(agent.id)
+          },
+        })),
+      ],
     },
     ...(canRun
       ? [
@@ -190,11 +205,11 @@ function DelegateRow({
   if (!canRun || sections.length === 0) return null
   return (
     <Menu
-      label="委托给"
+      label="和谁对话"
       sections={sections}
       trigger={props =>
         compact ? (
-          <IconButton {...props} data-delegate-trigger="" data-space-primary="" label="委托…" icon={Send} />
+          <IconButton {...props} data-delegate-trigger="" data-space-primary="" label="新对话…" icon={Send} />
         ) : (
           <Button
             {...props}
@@ -204,7 +219,7 @@ function DelegateRow({
             data-space-primary=""
             {...capsOf('new', drawer)}>
             <Send size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>委托…</span>
+            <span>新对话…</span>
           </Button>
         )
       }
@@ -348,7 +363,7 @@ export function shellSpaces(shell: Pick<ShellState, 'entries' | 'space' | 'goSpa
   return { space: shared ? null : shell.space, onSpace: shell.goSpace, waits: shell.waits }
 }
 
-/** 委托… as the shell draws it: a choice of Agent, which opens the Agent's page on 委托 with the input ready. */
+/** 新对话… as the shell draws it: a choice of Agent, which opens a new topic with it, the input ready. */
 export function ShellDelegate({ shell, compact = false }: { shell: ShellState; compact?: boolean }) {
   return (
     <DelegateRow
@@ -359,7 +374,7 @@ export function ShellDelegate({ shell, compact = false }: { shell: ShellState; c
       compact={compact}
       onDelegate={id => {
         askDelegateFocus()
-        shell.openMyAgent({ id, tab: 'delegate' })
+        shell.openMyAgent({ id, topic: 'new' })
       }}
       onNew={() => {
         shell.openMyAgent({ id: 'new' })

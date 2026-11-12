@@ -38,11 +38,14 @@ export interface AppTarget {
   appId: string
 }
 
+/** The profile's section a link opens at (`agents/:id/memory` …); `delegate`, the old 委托 tab, opens the conversation. */
 export type MyAgentTab = 'delegate' | 'memory' | 'schedules' | 'settings'
 export interface MyAgentTarget {
   /** An Agent's ID, `general` for 通用, or `new` for the form that creates one. */
   id: string
   tab?: MyAgentTab
+  /** A new topic: the next message starts a new session of the Agent instead of continuing the current one. */
+  topic?: 'new'
 }
 
 /** 设置's sections on wide windows, in their order; 设备 is one of them, its devices pages inside it. */
