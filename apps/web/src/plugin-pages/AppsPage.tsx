@@ -59,6 +59,7 @@ import type { AppTarget } from '../shell/routes.ts'
 import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFrame.tsx'
 import { appRef, fallbackVersion, findApp, listedApps, openStep, shellTheme, type PageVersion } from './model.ts'
 import { useSecureCover } from './secureCover.ts'
+import { harnessName } from '../composerChoice.ts'
 
 const ICONS: Record<string, LucideIcon> = {
   'list-checks': ListChecks,
@@ -453,7 +454,9 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           },
         ]),
   ]
-  const info = hostInfo(theme, online, canRun)
+  const info = hostInfo(theme, online, canRun, {
+    harnesses: (snapshot.catalog?.harnesses ?? []).map(harness => ({ id: harness.id, name: harnessName(harness) })),
+  })
   // Esc in the frame is the page's way back on a phone, and nothing else.
   const escapeFrame = () => {
     if (onBack && !document.querySelector('dialog[open], :popover-open')) onBack()

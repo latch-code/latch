@@ -56,6 +56,15 @@ export interface AppHostInfo {
   offline: boolean
   /** This device may start sessions and write page data (`run`). */
   canRun: boolean
+  /** The Harnesses this device sees, by ID and display name only: no commands, paths or settings. */
+  harnesses: AppHarness[]
+  /** The page runs in a draft's preview: nothing it does reaches the Host. */
+  preview?: true
+}
+
+export interface AppHarness {
+  id: string
+  name: string
 }
 
 export interface AppStartInput {

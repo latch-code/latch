@@ -1,13 +1,14 @@
 // Deterministic ACP v1 agent for tests. No model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
 // FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
-// turn, which writes two files in the session's working directory, and the edits a test queues in FAKE_ACP_EDIT_QUEUE. Its only network use is the `model` turn, which calls
+// turn, which writes two files in the session's working directory, and the edits a test queues in FAKE_ACP_EDIT_QUEUE
+// (FAKE_ACP_REPLY_QUEUE queues whole replies the same way). Its only network use is the `model` turn, which calls
 // the model service a client pointed it at, as Codex (`providers/set`) and Gemini CLI (its gateway variables) would.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 
 const env = process.env
 // Like an agent's own CLI: `login status` answers from the login file, `login` writes it. FAKE_ACP_LOGIN_FILE also makes a
@@ -716,7 +717,8 @@ async function prompt({ sessionId, prompt: blocks }) {
   const think = value => update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: value } })
   const tool = (value, kind = 'tool_call') => update(sessionId, { sessionUpdate: kind, ...value })
   const permission = (toolCall, options = ALLOW_OPTIONS) => request('session/request_permission', { sessionId, toolCall, options })
-  const scenario = scenarios[keyword] ?? scenarios.echo
+  const queued = queuedReply()
+  const scenario = queued ? replying(queued) : (scenarios[keyword] ?? scenarios.echo)
   queuedEdit(session, tool)
   const steers = []
   running.set(sessionId, steers)
@@ -729,26 +731,51 @@ async function prompt({ sessionId, prompt: blocks }) {
 }
 
 /**
- * FAKE_ACP_EDIT_QUEUE names a JSON file of `{ path, content }` edits: each prompt takes the first, writes it in the
- * session's folder through the agent's own edit (reported with its diff) and leaves the rest, so a test decides what the
- * agent changes on its next turn.
+ * FAKE_ACP_EDIT_QUEUE names a JSON file of edits: each prompt takes the first entry, a `{ path, content }` or a list of
+ * them, writes each in the session's folder (making its folders) through the agent's own edit (reported with its diff)
+ * and leaves the rest, so a test decides what the agent changes on its next turn.
  */
 function queuedEdit(session, tool) {
   if (!env.FAKE_ACP_EDIT_QUEUE || !existsSync(env.FAKE_ACP_EDIT_QUEUE)) return
-  const [edit, ...rest] = JSON.parse(readFileSync(env.FAKE_ACP_EDIT_QUEUE, 'utf8'))
-  if (!edit) return
+  const [entry, ...rest] = JSON.parse(readFileSync(env.FAKE_ACP_EDIT_QUEUE, 'utf8'))
+  if (!entry) return
   writeFileSync(env.FAKE_ACP_EDIT_QUEUE, JSON.stringify(rest))
-  const target = join(session.cwd, edit.path)
-  const before = existsSync(target) ? readFileSync(target, 'utf8') : null
-  writeFileSync(target, edit.content)
-  tool({
-    toolCallId: `edit_${randomUUID()}`,
-    title: `Edit ${edit.path}`,
-    kind: 'edit',
-    status: 'completed',
-    locations: [{ path: target }],
-    content: [{ type: 'diff', path: target, oldText: before, newText: edit.content }],
-  })
+  for (const edit of Array.isArray(entry) ? entry : [entry]) {
+    const target = join(session.cwd, edit.path)
+    const before = existsSync(target) ? readFileSync(target, 'utf8') : null
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, edit.content)
+    tool({
+      toolCallId: `edit_${randomUUID()}`,
+      title: `Edit ${edit.path}`,
+      kind: 'edit',
+      status: 'completed',
+      locations: [{ path: target }],
+      content: [{ type: 'diff', path: target, oldText: before, newText: edit.content }],
+    })
+  }
+}
+
+/**
+ * FAKE_ACP_REPLY_QUEUE names a JSON file of replies: each prompt takes the first, a text or `{ text, until, error }`, and
+ * says it instead of the prompt's scenario; with `until` the turn runs until that file exists, so a test sees it running;
+ * `error` fails the turn with that message, as an agent that is not signed in does.
+ */
+function queuedReply() {
+  if (!env.FAKE_ACP_REPLY_QUEUE || !existsSync(env.FAKE_ACP_REPLY_QUEUE)) return undefined
+  const [entry, ...rest] = JSON.parse(readFileSync(env.FAKE_ACP_REPLY_QUEUE, 'utf8'))
+  if (entry === undefined) return undefined
+  writeFileSync(env.FAKE_ACP_REPLY_QUEUE, JSON.stringify(rest))
+  return typeof entry === 'string' ? { text: entry } : entry
+}
+
+function replying({ text, until, error }) {
+  return async ({ say }) => {
+    while (until && !existsSync(until)) await delay(50)
+    if (error) throw rpcError(-32000, error)
+    say(text)
+    return END
+  }
 }
 
 /**

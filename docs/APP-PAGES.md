@@ -18,6 +18,7 @@ sources:
   - apps/host/src/app-builds.ts
   - apps/host/src/app-sdk-types.ts
   - apps/web/src/settings/NewAppCard.tsx
+  - examples/release-check
 ---
 # 插件页面
 
@@ -163,7 +164,7 @@ Host 声明 `catalog.features.appPages: 1`。
 
 **应用。** `POST /plugin-packages/:id/apply` 与 `/rollback` 对有 `.ts`/`.tsx` 入口的修订要求该修订有成功的构建（409 `plugin-package-not-built`），信任规则不变（见「信任」）。`GET /link/api/app-modules/...` 提供的就是这次构建的产物。已应用的页面在草稿有新修订时由人点「应用新版本」，之后各设备经 `app.updated` 重建框。
 
-**预览。** 同一个页面框、同一份产物，产物经 `GET /plugin-packages/:id/builds/:bundleHash.js`（同样的管理设备规则；`application/octet-stream`、`nosniff`，`sec-fetch-dest` 不是 `empty` 时 403）。父页面接的是预览桥（`previewBridge.ts`），它从不调用 Host：`tasks.list/subscribe` 给清单的 `preview.tasks` 或三条固定样例，`tasks.start/continue` 与 `nav.openSession` 回答 `preview`（壳层写「预览里不会开会话」），`tasks.lookup` 为 `not-found`，存储在这个桥的内存里，关掉预览就没了，`diag.report` 什么都不发；能力照常按清单核对。框外是虚线边框与「预览」标记；运行时错误不上报。
+**预览。** 同一个页面框、同一份产物，产物经 `GET /plugin-packages/:id/builds/:bundleHash.js`（同样的管理设备规则；`application/octet-stream`、`nosniff`，`sec-fetch-dest` 不是 `empty` 时 403）。父页面接的是预览桥（`previewBridge.ts`），它从不调用 Host：`tasks.list/subscribe` 给清单的 `preview.tasks` 或三条固定样例，`tasks.start/continue` 与 `nav.openSession` 回答 `preview`（壳层写「预览里不会开会话」），`tasks.lookup` 为 `not-found`，存储在这个桥的内存里，关掉预览就没了，`diag.report` 什么都不发，`host.info()` 带 `preview: true`、`canRun` 为假、没有 Harness；能力照常按清单核对。框外是虚线边框与「预览」标记；运行时错误不上报。
 
 **开发中。** 新应用卡片的「开发中」开关（`POST /plugin-packages/:id/dev` `{ requestId, dev }`，记下开启它的设备）：来源会话每轮结束（`runSettled`）后 Host 再读 `latch-app/`，修订变了就导入并构建，身份是开启它的设备：那台设备被移除时开发中立即关掉；它过期或不再是这台 Mac 拥有完整数据范围的管理设备时，下一轮不导入，并关掉开发中（审计 `plugin.package.changed`，`operation: dev`，执行者为 Host）。构建失败时卡片显示诊断，预览仍是上一个成功的构建；「交回 Agent」把诊断放进那个会话的草稿（只在这个标签页的内存里，打开会话时追加），不发送。导入被拒绝也记成页面的 `build` 诊断。
 
@@ -203,7 +204,7 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 | `view.getState/setState` | 无 | 只收 JSON 值，按 JSON 计 ≤ 64 KiB，只在这个标签页的内存里，按页面保存；重新加载与新版本带过去 |
 | `nav.openSession(id)` | 无 | 只限这台设备列出的会话；壳层盖着框时、父页面没有刚发生的用户手势时、或会话等你处理（审批或提问）时回答 `forbidden`，等你处理的会话只从列表打开 |
 | `diag.report(message)` | 无 | `POST /apps/:pluginId/diagnostics`，来源 `bridge` |
-| `host.info()` | 无 | SDK 版本、主题、是否离线、能否开始会话（`run`） |
+| `host.info()` | 无 | SDK 版本、主题、是否离线、能否开始会话（`run`）、这台设备看得到的 Harness（只有 `{ id, name }`，名称是界面上的显示名，不含命令、路径与设置）；预览里另有 `preview: true`（`canRun` 为假） |
 
 - 父页面先查：形状、清单里的能力（不在清单里的直接 `capability-denied`，不问 Host）、页面仍挂着；再用自己的凭据问 Host。写请求的 `requestId` 由 SDK 生成，结果未知（`unknown`）时错误里带回它，用同一个重试。
 - 限速在父页面也镜像一份（开始与继续每分钟 6 次、写入 60 次、上报 20 次），只为让页面早点知道；Host 仍是权威。
@@ -218,6 +219,20 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 - 框里画不出安全界面：审批、本机确认、登记与 Toast 都由壳层画在框外。壳层有 `[data-secure]` 界面、打开的对话框或 Toast 时，框设 `inert`。会话从页面下面回到眼前（页面的 `nav.openSession`、切回 Code、标签页重新显示）时，审批与提问卡重新经过 320 ms 的待命，双击的第二下落不到「允许」上。
 - 框里的按键：运行时只转发真实按下的 Cmd/Ctrl 组合键与 Esc；父页面只在框有焦点、没被盖住、不在迁移时收，Cmd/Ctrl 还要有刚发生的用户手势。它们作为调用交给壳层，不在壳层里派发事件：Esc 只是手机上的返回，Cmd/Ctrl 只能开关侧栏或打开设置，从不打开新会话、输入框、命令面板或查找，焦点不会被带进壳层的输入框。`ui` 原语没有 `secure` 变体，也没有对话框、面板、菜单或 Toast。
 - 页面开始的会话在会话列表与页头写「来自 <页面名>」；页面还在时点它回到页面。
+
+## 示例：发布检查
+
+[`examples/release-check/`](../examples/release-check/) 是一个完整的页面插件，按会话导入时的样子摆放：`latch-app.json` 与 `src/`（`index.tsx` 画页面，`checklist.ts` 是清单、提示词与回复的解析，`style.css` 只排版）。把这个文件夹的内容放进会话的 `latch-app/`，就能走「作为应用草稿 › 构建 › 预览 › 应用」。它用到的写法：
+
+- **选项目与 Harness。** 桥不给项目列表，页面从 `tasks.subscribe({ limit: 200 })` 的会话里取项目（`projectId`、`projectName`）与 Harness（`harnessId`），新的在前，一个都没有时用 `default`；Harness 显示 `host.info().harnesses` 里的名称。
+- **共享数据带版本写。** 清单是 `project:<id>` 的 `checklist` 文档，`storage.put(…, { ifVersion })`；版本不对时错误带当前 `version`，页面写「清单在别处改过」，由人选「用那边的」或「保留我的」，不悄悄覆盖。
+- **先记下再开始。** 「开始检查」先把 requestId 写进 `view.setState` 与 `plugin` 的 `pending` 文档，再用同一个 requestId 调 `tasks.start`；回答丢了（`unknown`）时写「开始结果未知」与 requestId，「查询结果」走 `tasks.lookup`，「重试同一请求」重用 requestId，都不会多开会话。拿到会话 ID 后写回 `pending`。
+- **重开接上。** 页面打开时读 `pending`：有会话 ID 就接着跟；没有就 `tasks.lookup`（`pending` 时稍后再问，`not-found` 时显示结果未知）。另一台设备的 `pending` 变化经 `storage.onChange` 到来，页面也跟上。
+- **跟会话、读回复。** 跟 `tasks.subscribe` 里那个会话，`running` 为假且有 `runOutcome`（或状态是失败、取消、中断）时用 `tasks.readReply` 取最后的回复，解析末尾 ```` ```latch-release-check ```` 代码块里的 JSON（每项 `pass`、`fail`、`unknown` 与依据），存成 `project:<id>` 的 `runs/<sessionId>`（`ifVersion: 0`：另一台设备先存了就用它的），再删 `pending`。读不出代码块时存回复正文，页面标「没有结构化结果」。
+- **意见。** 结果文档里的 `note`，输入后 800 ms 保存（同样带 `ifVersion`），写「正在保存」「已保存」；结果未知时「重试」重用同一个 requestId。
+- **离线与只能看。** `host.info()` 的 `offline` 或订阅的 `offline` 为真时清单只读、不能开始；`canRun` 为假时写「这台设备只能查看」，`preview` 为真时写「预览」。
+
+失败的开始只得到七个码之一（见「失败码」），页面按码写原因；Harness 没登录等 Host 的原因不交给页面，会话本身失败时页面写「检查没有完成」，由人打开会话看。
 
 ## 失败码
 

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, cp, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { realpathSync } from 'node:fs'
@@ -171,6 +171,17 @@ describe('building a page draft with the Host tools', () => {
     expect(code).toContain('globalThis.__latchModules["@latch/app-sdk"]')
     expect(code).toContain('data:image/png;base64,')
     expect(code).toMatch(/^export \{/mu)
+  })
+
+  it('imports and builds examples/release-check with no diagnostics, as a session would hand it over', async () => {
+    const folder = await temp('latch-release-check-')
+    await cp(join(import.meta.dirname, '../../../examples/release-check'), join(folder, 'latch-app'), { recursive: true })
+    const draft = await readSessionDraft(folder)
+    expect(draft.bundle.manifest).toMatchObject({ formatVersion: 2, id: 'release-check', apps: [{ entry: 'src/index.tsx' }] })
+    expect(draft.bundle.manifest).not.toHaveProperty('host')
+    const outcome = await buildPages(draft.bundle)
+    expect(outcome.diagnostics).toEqual([])
+    expect(outcome).toMatchObject({ status: 'ok', typeChecked: true })
   })
 
   it('reports type errors and refused imports as file:line:col diagnostics, redacted', async () => {

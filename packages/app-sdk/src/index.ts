@@ -6,7 +6,7 @@ import type { AppUi } from './ui.tsx'
 export { AppBridgeError, type Latch, type TaskUpdate } from './bridge.ts'
 export type { AppUi } from './ui.tsx'
 export { APP_SDK_VERSION } from '@latch/protocol'
-export type { AppHostInfo, AppLastReply, AppLookup, AppStorageDocument, AppTask, AppTaskFilter } from '@latch/protocol'
+export type { AppHarness, AppHostInfo, AppLastReply, AppLookup, AppStorageDocument, AppTask, AppTaskFilter } from '@latch/protocol'
 
 /** What a page component receives: the bridge and the primitives it draws with. */
 export interface PageProps {

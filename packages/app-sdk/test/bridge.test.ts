@@ -8,7 +8,7 @@ import { defineApp, isAppDefinition } from '../src/index.ts'
 import { createAppUi, type AppPrimitives } from '../src/ui.tsx'
 import { removeSockets } from '../src/runtime.tsx'
 
-const INFO: AppHostInfo = { sdk: '1.0.0', appProtocol: 1, theme: 'light', offline: false, canRun: true }
+const INFO: AppHostInfo = { sdk: '1.0.0', appProtocol: 1, theme: 'light', offline: false, canRun: true, harnesses: [] }
 
 function client() {
   const posted: AppFrameMessage[] = []
@@ -135,6 +135,13 @@ describe('page definitions and primitives', () => {
     )
     expect(seen.mock.lastCall?.[0]).not.toHaveProperty('icon')
     expect(seen.mock.lastCall?.[0]).not.toHaveProperty('shortcut')
+    // A hint with a detail has the primitive's ⓘ button, so no lead glyph (whose default is the same ⓘ); a label alone keeps it.
+    renderToStaticMarkup(
+      createElement(ui.Hint as ComponentType<Record<string, unknown>>, { label: '开一个真实会话', lead: 'x', children: '说明' }),
+    )
+    expect(seen.mock.lastCall?.[0]).toEqual({ label: '开一个真实会话', lead: false, children: '说明' })
+    renderToStaticMarkup(createElement(ui.Hint as ComponentType<Record<string, unknown>>, { label: '只有标签' }))
+    expect(seen.mock.lastCall?.[0]).toEqual({ label: '只有标签' })
   })
 })
 

@@ -6,7 +6,7 @@ import { joinDraft, handDraft, takeHandedDraft } from '../src/core/draftHandoff.
 import { fallbackVersion } from '../src/plugin-pages/model.ts'
 import { reachLabel } from '../src/settings/PluginsSettings.tsx'
 
-const INFO = { sdk: '1.0.0', appProtocol: 1, theme: 'light' as const, offline: false, canRun: false }
+const INFO = { sdk: '1.0.0', appProtocol: 1, theme: 'light' as const, offline: false, canRun: false, harnesses: [], preview: true as const }
 
 function bridge(capabilities = { 'tasks.read': true as const, 'tasks.start': { projects: 'any' as const }, storage: ['plugin' as const] }) {
   const sent: AppShellMessage[] = []

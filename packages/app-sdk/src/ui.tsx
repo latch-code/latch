@@ -132,7 +132,9 @@ export function createAppUi(ui: AppPrimitives): AppUi {
     Count: ({ value }) => h(ui.Count, { value }),
     // Never the security variant, whatever a page passes.
     Notice: ({ tone = 'neutral', title, children, action }) => h(ui.InlineNotice, { tone, title, action, secure: false }, children),
-    Hint: ({ label, children }) => h(ui.Hint, { label }, children),
+    // With a detail the primitive draws its own ⓘ button; its default lead glyph is that same ⓘ, so a page's hint
+    // takes no lead and shows one ⓘ, after the label.
+    Hint: ({ label, children }) => h(ui.Hint, children === undefined || children === null ? { label } : { label, lead: false }, children),
     Loading: ({ label }) => h(ui.Loading, { label }),
     Empty: ({ title, description, action }) => h(ui.EmptyState, { title, description, action }),
     Progress: ({ active, label }) => h(ui.ProgressBar, label === undefined ? { active } : { active, label }),

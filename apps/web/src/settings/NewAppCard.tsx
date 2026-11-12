@@ -257,7 +257,7 @@ function AppDraftCard({
               page={pagePreview}
               snapshot={snapshot}
               online
-              info={hostInfo(theme, true, false)}
+              info={hostInfo(theme, true, false, { preview: true })}
               covered={covered}
               onOutcome={outcome => {
                 if (outcome.kind === 'failed') setNotice(`预览没有打开：${outcome.message}`)

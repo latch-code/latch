@@ -90,6 +90,24 @@ function bridge(overrides: Partial<ParentBridgeDeps> = {}) {
   }
 }
 
+describe('the host facts a page reads', () => {
+  it('gives each Harness the device sees by ID and name only, and says when the page is a preview', () => {
+    const seen = [
+      { id: 'codex', name: 'Codex', command: '/usr/local/bin/codex', env: { OPENAI_API_KEY: 'sk-x' }, cwd: '/Users/me', status: 'ready' },
+      { id: 'standard', name: 'Standard', description: 'built in', modes: ['agent'] },
+    ]
+    const info = hostInfo('dark', true, true, { harnesses: seen as unknown as Array<{ id: string; name: string }> })
+    expect(info.harnesses).toEqual([
+      { id: 'codex', name: 'Codex' },
+      { id: 'standard', name: 'Standard' },
+    ])
+    for (const harness of info.harnesses) expect(Object.keys(harness).sort()).toEqual(['id', 'name'])
+    expect(info).not.toHaveProperty('preview')
+    expect(Object.keys(info).sort()).toEqual(['appProtocol', 'canRun', 'harnesses', 'offline', 'sdk', 'theme'])
+    expect(hostInfo('light', true, false, { preview: true })).toMatchObject({ preview: true, canRun: false, harnesses: [] })
+  })
+})
+
 describe('the page frame element', () => {
   it('is an opaque frame of the fixed runtime with no features of the browser and inert while covered', () => {
     const html = renderToStaticMarkup(

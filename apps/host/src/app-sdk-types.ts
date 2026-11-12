@@ -49,6 +49,10 @@ declare module '@latch/app-sdk' {
     theme: 'light' | 'dark'
     offline: boolean
     canRun: boolean
+    /** The Harnesses this device sees: ID and display name. */
+    harnesses: Array<{ id: string; name: string }>
+    /** The page runs in a draft's preview: nothing it does reaches Latch. */
+    preview?: true
   }
   export interface AppStorageDocument {
     scope: string

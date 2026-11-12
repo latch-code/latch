@@ -287,7 +287,7 @@ export function AppFrame({
   )
   useEffect(() => {
     bridge.current?.hostChanged()
-  }, [info.theme, info.offline, info.canRun])
+  }, [info.theme, info.offline, info.canRun, JSON.stringify(info.harnesses), info.preview])
 
   return (
     <iframe
@@ -305,7 +305,24 @@ export function AppFrame({
   )
 }
 
-/** The host facts a page may read: the SDK, the theme, whether this shell is offline and whether this device may run. */
-export function hostInfo(theme: 'light' | 'dark', online: boolean, canRun: boolean): AppHostInfo {
-  return { sdk: APP_SDK_VERSION, appProtocol: APP_PROTOCOL, theme, offline: !online, canRun }
+/**
+ * The host facts a page may read: the SDK, the theme, whether this shell is offline, whether this device may run, the
+ * Harnesses it sees (ID and name, nothing else) and whether this is a draft's preview.
+ */
+export function hostInfo(
+  theme: 'light' | 'dark',
+  online: boolean,
+  canRun: boolean,
+  options: { harnesses?: ReadonlyArray<{ id: string; name: string }>; preview?: boolean } = {},
+): AppHostInfo {
+  const harnesses = (options.harnesses ?? []).slice(0, 64).map(harness => ({ id: String(harness.id), name: String(harness.name) }))
+  return {
+    sdk: APP_SDK_VERSION,
+    appProtocol: APP_PROTOCOL,
+    theme,
+    offline: !online,
+    canRun,
+    harnesses,
+    ...(options.preview ? { preview: true as const } : {}),
+  }
 }
