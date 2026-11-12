@@ -159,7 +159,7 @@ public enum PhoneAgents {
     /** The snapshot with what only a content window may show taken out, for when a window closes. */
     public static func withoutPrivate(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
-        value.removeValue(forKey: "customAgents"); value.removeValue(forKey: "automations"); value.removeValue(forKey: "agentProposals")
+        for key in ["customAgents", "automations", "agentProposals", "agentResults"] { value.removeValue(forKey: key) }
         return .object(value)
     }
     public static func validId(_ id: String) -> Bool { id == generalId || LinkBytes.matches(id, "agt_[a-f0-9-]{36}") }
@@ -362,6 +362,10 @@ public enum PhonePendingKind: Equatable, Sendable {
     case memory(owner: String)
     case proposal(owner: String)
     case schedule(id: String)
+    /** 立即运行 of a schedule. */
+    case run(id: String)
+    /** A schedule saved from a proposal. */
+    case scheduleCreate
     case session(id: String)
     case other
 }
@@ -376,6 +380,8 @@ public enum PhonePending {
         if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "memories" { return .memory(owner: parts[3]) }
         if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "proposals" { return .proposal(owner: parts[3]) }
         if parts.count == 5, parts[2] == "automations", parts[4] == "enabled" { return .schedule(id: parts[3]) }
+        if parts.count == 5, parts[2] == "automations", parts[4] == "run" { return .run(id: parts[3]) }
+        if parts.count == 3, parts[2] == "automations", write.method == "POST" { return .scheduleCreate }
         if parts.count >= 4, parts[2] == "tasks" { return .session(id: parts[3]) }
         return .other
     }
@@ -384,8 +390,10 @@ public enum PhonePending {
         switch kind(write) {
         case .topic: return "新话题结果待确认"
         case .memory: return "记忆的修改结果待确认"
-        case .proposal: return "记忆提议的结果待确认"
+        case .proposal: return "提议的结果待确认"
         case .schedule: return "定时任务的开关结果待确认"
+        case .run: return "立即运行结果待确认"
+        case .scheduleCreate: return "定时任务的保存结果待确认"
         case .start: return (try? NativeJSON.decode(write.body))?["forkOf"] != .null ? "分叉结果待确认" : "提交结果待确认"
         case .session:
             return write.path.hasSuffix("/config") ? "切换结果待确认" : "提交结果待确认"

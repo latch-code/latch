@@ -47,6 +47,8 @@ import { shapeContent, textShape } from '../src/files/edit.ts'
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 /** Every request the Hosts' native listeners received, by the device that sent it, as the Host saw it. */
 const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: string; path: string }>)
+/** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
+const nativeDrop = vi.hoisted(() => new Set<string>())
 vi.mock('../src/native.ts', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/native.ts')>()
   return {
@@ -56,6 +58,11 @@ vi.mock('../src/native.ts', async importOriginal => {
         ...options,
         handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
+          const key = `${req.method ?? ''} ${req.url ?? ''}`
+          if (nativeDrop.delete(key)) {
+            res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"unavailable","message":"unavailable"}')
+            return
+          }
           return options.handler(req, res, opening)
         },
       }),
@@ -1631,6 +1638,76 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('runs a schedule now, shows its card and run, saves a schedule proposal after an unknown try and reads 动态 and 资料库 from the actual Swift workspace against a real Host', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      // The fake ACP Agent: `shell-edit` writes files, `schedule …` proposes a schedule through the skills server.
+      const saved = await owner.request('agents', {
+        method: 'POST',
+        body: { id: 'fake-news', name: 'Fake News', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
+      })
+      expect(saved.status).toBe(201)
+      const folder = join(host.root, 'news')
+      await mkdir(folder, { recursive: true })
+      expect((await owner.addFolders({ paths: [folder], name: 'news' })).status).toBeLessThan(300)
+      const project = (await owner.json<{ workspaces: Array<{ id: string; name: string }> }>('workspaces')).workspaces.find(
+        item => item.name === 'news',
+      )!
+      const agent = await owner.json<{ id: string }>('custom-agents', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '资讯',
+          description: '整理新闻',
+          harnessId: 'fake-news',
+          mode: 'agent',
+          defaultProjectId: project.id,
+        },
+      })
+      const automation = await owner.json<{ id: string }>('automations', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '早间精选',
+          customAgentId: agent.id,
+          projectId: project.id,
+          prompt: 'shell-edit',
+          schedule: { kind: 'daily', time: '09:00' },
+          notify: false,
+        },
+      })
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      // The phone's first schedule save never reaches the Host.
+      nativeDrop.add('POST /link/api/automations')
+      const result = await invoke(
+        {
+          operation: 'nativeAgentActivity',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          agentId: agent.id,
+          automationId: automation.id,
+        },
+        60_000,
+      )
+      expect(result).toEqual({
+        ranOnce: true,
+        card: true,
+        openRun: true,
+        unknownThenRetry: true,
+        proposalSaved: true,
+        decided: true,
+        activity: true,
+        library: true,
+        private: true,
+      })
+      expect(nativeDrop.size).toBe(0)
+    } finally {
+      nativeDrop.clear()
+      await host.close()
+    }
+  }, 90_000)
   it('stops a subagent, steers, retries, forks, changes a setting, clears context, searches and manages sessions from the actual Swift workspace', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
@@ -3274,7 +3351,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(decisions[0]).toMatchObject({
       method: 'POST',
       path: `/link/api/custom-agents/${review}/proposals/prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d/save`,
-      words: '记忆提议的结果待确认',
+      words: '提议的结果待确认',
       kind: `proposal(owner: "${review}")`,
     })
     expect(decisions[1]).toMatchObject({
@@ -3387,6 +3464,339 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.store).toEqual([false, true, true, false, true, false, true])
     // After the window expires, the sheet closes what it showed and never reads (and so never verifies) again.
     expect(result.contentChange).toEqual(['close', 'reload', 'none'])
+  })
+  it('words, places and stacks result cards, schedule proposals, 动态 and 资料库 as the web does, and drops them with the window', async () => {
+    const owner = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
+    const schedule = `auto_${'a'.repeat(8)}-aaaa-4aaa-8aaa-${'a'.repeat(12)}`
+    const memory = `prp_${'3'.repeat(8)}-3333-4333-8333-${'3'.repeat(12)}`
+    const proposed = `prp_${'4'.repeat(8)}-4444-4444-8444-${'4'.repeat(12)}`
+    const on = (day: string, time: string) => `2026-11-${day}T${time}:00.000Z`
+    const card = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      automationId: schedule,
+      owner,
+      name: '早间‮精选',
+      trigger: 'manual',
+      runAt: on('13', '09:00'),
+      ...extra,
+    })
+    const snapshot = {
+      catalog: {
+        sessionFolders: true,
+        workspaces: [
+          { id: 'default', name: '默认文件夹' },
+          { id: 'app', name: 'App' },
+          { id: 'off', name: 'Off', unavailable: 'removed' },
+        ],
+      },
+      customAgents: [{ id: owner, defaultProjectId: 'app', canAutomate: true, available: true, revision: 2, memoryCount: 1 }],
+      automations: [{ id: schedule, customAgentId: owner, state: 'ready', revision: 1, enabled: true }],
+      agentResults: { [owner]: { unbound: 2, at: on('13', '11:00') } },
+      agentProposals: { [owner]: { pending: 1, at: on('13', '11:30') } },
+      tasks: [
+        { id: 't1', agent: { customAgentId: owner }, status: 'idle', updatedAt: on('13', '10:11') },
+        { id: 'run1', agent: { customAgentId: owner }, automationId: schedule, status: 'idle', updatedAt: on('13', '10:04') },
+        {
+          id: 'generalRun',
+          automationId: `auto_${'c'.repeat(8)}-cccc-4ccc-8ccc-${'c'.repeat(12)}`,
+          status: 'idle',
+          updatedAt: on('13', '10:04'),
+        },
+      ],
+    }
+    const projects = [
+      { id: 'default', name: '默认文件夹' },
+      { id: 'app', name: 'App' },
+      { id: 'multi', name: 'Multi', folders: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
+      { id: 'code', name: 'Latch', codeRoot: true },
+    ]
+    const result = await invoke({
+      operation: 'phoneAgentActivity',
+      owner,
+      now: on('13', '12:00'),
+      snapshot,
+      savedProposals: {
+        proposals: [
+          {
+            id: proposed,
+            kind: 'schedule',
+            schedule: { name: '早间精选', plan: { kind: 'weekly', day: 1, time: '20:30' } },
+            content: '整理',
+            origin: 'agent',
+            external: false,
+            state: 'saved',
+            automationId: schedule,
+            source: { sessionId: 't1' },
+          },
+        ],
+      },
+      locationCases: [
+        {
+          catalog: { sessionFolders: false, workspaces: projects },
+          harness: { id: 'codex', projectFolders: { access: 'all', max: 2 }, capabilities: { display: { label: 'Codex' } } },
+        },
+        { catalog: { sessionFolders: true, workspaces: projects }, harness: null },
+      ],
+      sameNames: [
+        {
+          id: 'same',
+          automationId: schedule,
+          owner,
+          name: 'n',
+          outcome: 'completed',
+          at: on('13', '10:00'),
+          files: [
+            { root: 'a', path: 'f.md', change: 'created' },
+            { root: 'b', path: 'f.md', change: 'created' },
+          ],
+        },
+      ],
+      streaming: { ...snapshot, tasks: [{ ...snapshot.tasks[0], status: 'running' }, snapshot.tasks[1]] },
+      results: [
+        card('r3', { outcome: 'failed', at: on('13', '10:20'), failure: { reason: '没有权限', code: 'http-401' } }),
+        card('r1', {
+          outcome: 'completed',
+          at: on('13', '10:05'),
+          sessionId: 'run1',
+          topicId: 't1',
+          reply: '一\n二\n三\n四\n五',
+          files: [
+            { root: 'r', path: 'a​b.md', change: 'created' },
+            { root: 'r', path: 'gone.md', change: 'deleted' },
+          ],
+          filesMore: 2,
+        }),
+        card('r2', { outcome: 'failed', at: on('13', '10:15'), sessionId: 'missing', failure: { reason: '超时' } }),
+        card('r4', {
+          outcome: 'interrupted',
+          at: on('13', '09:00'),
+          automationId: `auto_${'b'.repeat(8)}-bbbb-4bbb-8bbb-${'b'.repeat(12)}`,
+          contentRemoved: true,
+        }),
+        { id: 'broken', owner },
+      ],
+      detail: {
+        summary: { id: 't1' },
+        messages: [
+          { id: 'm1', role: 'user', text: '你好', createdAt: on('13', '10:00') },
+          { id: 'a1', role: 'assistant', text: '在', createdAt: on('13', '10:01') },
+          { id: 'm2', role: 'user', text: '再来', createdAt: on('13', '10:10') },
+          { id: 'a2', role: 'assistant', text: '好', createdAt: on('13', '10:11') },
+        ],
+      },
+      proposals: {
+        proposals: [
+          { id: memory, content: '用 pnpm', origin: 'user', external: false, state: 'pending', source: { sessionId: 't1' } },
+          {
+            id: proposed,
+            kind: 'schedule',
+            schedule: { name: '早间精选', plan: { kind: 'weekly', day: 1, time: '20:30' } },
+            content: '\n  整理今天的 AI 新闻\n第二行',
+            origin: 'agent',
+            external: true,
+            state: 'pending',
+            source: { sessionId: 't1' },
+          },
+          {
+            id: `prp_${'5'.repeat(8)}-5555-4555-8555-${'5'.repeat(12)}`,
+            kind: 'later',
+            content: 'x',
+            origin: 'agent',
+            state: 'pending',
+            source: { sessionId: 't1' },
+          },
+        ],
+      },
+      activity: {
+        items: [
+          { kind: 'result', id: 'e1', at: on('13', '11:00'), resultId: 'r1', name: '早间精选', outcome: 'completed', topicId: 't1' },
+          { kind: 'run', id: 'e2', at: on('13', '10:00'), automationId: schedule, name: '早间精选', state: 'running', sessionId: 'run1' },
+          { kind: 'memory', id: 'e3', at: on('10', '08:00'), change: 'deleted', memoryId: 'mem_1' },
+          {
+            kind: 'proposal',
+            id: 'e4',
+            at: on('10', '07:00'),
+            proposalId: proposed,
+            proposal: 'schedule',
+            state: 'pending',
+            sessionId: 't1',
+          },
+          { kind: 'topic', id: 'e5', at: '2026-10-24T08:00:00.000Z', sessionId: 't1', title: '' },
+          { kind: 'run', id: 'e6', at: '2026-10-23T08:00:00.000Z', automationId: schedule, name: '周报', state: 'missed' },
+          { kind: 'later', id: 'e7', at: '2026-10-22T08:00:00.000Z' },
+        ],
+      },
+      library: {
+        groups: [
+          {
+            sessionId: 'run1',
+            title: '早间精选',
+            at: on('13', '10:05'),
+            automationId: schedule,
+            items: [
+              { kind: 'file', sessionId: 'run1', root: 'r', path: 'out/news.md', change: 'created', at: on('13', '10:05') },
+              { kind: 'file', sessionId: 'run1', root: 'r', path: 'old.md', change: 'deleted', at: on('13', '10:05') },
+              {
+                kind: 'attachment',
+                sessionId: 'run1',
+                messageId: 'm1',
+                attachment: { id: 'att_1', name: '图.png', kind: 'image' },
+                at: on('13', '10:00'),
+              },
+            ],
+            more: 3,
+          },
+          { sessionId: 't1', title: '', at: on('13', '10:00'), items: [] },
+        ],
+      },
+    })
+    const step = `runNow(automationId: "${schedule}")`
+    expect(result.results).toEqual([
+      expect.objectContaining({ id: 'r4', outcome: '已中断', tone: 'warn', removed: true, run: null, step: null }),
+      expect.objectContaining({
+        id: 'r1',
+        name: '早间\\u{202E}精选',
+        outcome: '已完成',
+        tone: 'done',
+        preview: ['一\n二\n三\n四…', true],
+        files: [
+          ['a\\u{200B}b.md', '新增', ''],
+          ['gone.md', '已删除', 'deleted'],
+        ],
+        more: 2,
+        run: 'run1',
+        step: null,
+      }),
+      expect.objectContaining({
+        id: 'r2',
+        outcome: '失败',
+        tone: 'failed',
+        reason: '超时',
+        run: null,
+        step,
+        stepOffline: true,
+        stepViewOnly: true,
+      }),
+      expect.objectContaining({ id: 'r3', outcome: '失败', reason: '没有权限', step: null }),
+    ])
+    // Each card after the last turn that began before its run settled; one before every turn stands first.
+    expect(result.placed).toEqual({ '': ['r4'], m1: ['r1'], m2: ['r2', 'r3'] })
+    // At most three in one place, the rest counted for 「还有 N 条结果」.
+    expect(result.stack).toEqual([1, ['r1', 'r2', 'r3']])
+    expect(result.runNow).toEqual([
+      expect.objectContaining({
+        method: 'POST',
+        path: `/link/api/automations/${schedule}/run`,
+        words: '立即运行结果待确认',
+        kind: `run(id: "${schedule}")`,
+      }),
+      'refused',
+    ])
+    expect(result.signature).toEqual([`2:${on('13', '11:00')}:present`, '0::absent'])
+    expect(result.waiting).toEqual([true, false])
+    // A proposal of an unknown kind is left out; a schedule proposal is no memory and 记忆 does not list it.
+    expect(result.proposals).toEqual([
+      [memory, 'memory', '用 pnpm'],
+      [proposed, 'schedule', '早间精选 · 每周一 20:30'],
+    ])
+    expect(result.memoryPending).toEqual([memory])
+    expect(result.inputLine).toBe('整理今天的 AI 新闻')
+    expect(result.locations).toEqual(['app', 'off', 'default'])
+    expect(result.location).toBe('app')
+    expect(result.formBlockers).toEqual(['先选工作位置', '这个项目已不可用。', '', 'Mac 不在线，恢复后再改'])
+    const creates = result.creates as Array<{ body: Record<string, unknown> } | string>
+    expect(creates[0]).toMatchObject({
+      method: 'POST',
+      path: '/link/api/automations',
+      words: '定时任务的保存结果待确认',
+      kind: 'scheduleCreate',
+      body: {
+        name: '早间精选',
+        prompt: '整理今天的 AI 新闻\n第二行',
+        schedule: { kind: 'weekly', day: 1, time: '20:30' },
+        notify: true,
+        proposalId: proposed,
+        customAgentId: owner,
+        projectId: 'app',
+      },
+    })
+    expect((creates[1] as { body: Record<string, unknown> }).body).not.toHaveProperty('customAgentId')
+    expect((creates[1] as { body: Record<string, unknown> }).body).not.toHaveProperty('projectId')
+    expect(creates[2]).toBe('refused')
+    expect(result.heldCreate).toEqual([true, true])
+    // 动态: words and states only, never a memory's or a proposal's text; each row leads where it happened.
+    expect(result.activity).toEqual([
+      ['定时结果', '早间精选', '已完成', 'done', 'session:t1'],
+      ['定时', '早间精选', '运行中', 'running', 'session:run1'],
+      ['记忆 −1', '', '', 'neutral', 'memory'],
+      ['提议定时', '', '等你决定', 'warn', 'session:t1'],
+      ['新话题', '未命名会话', '', 'neutral', 'session:t1'],
+      ['定时', '周报', '错过', 'warn', ''],
+    ])
+    expect(result.buckets).toEqual([
+      ['今天', ['e1', 'e2']],
+      ['本周', ['e3', 'e4']],
+      ['更早', ['e5', 'e6']],
+    ])
+    expect(result.library).toEqual([
+      [
+        '早间精选',
+        true,
+        [
+          ['out/news.md', '新增', 'r', 'out/news.md', true, false],
+          ['old.md', '已删除', 'r', 'old.md', false, false],
+          ['图.png', '你给的', '@attachment', 'att_1', true, true],
+        ],
+        3,
+      ],
+      ['未命名会话', false, [], 0],
+    ])
+    expect(result.paths).toEqual([
+      `/link/api/custom-agents/${owner}/activity`,
+      `/link/api/custom-agents/${owner}/library?before=2026-11-01T10%3A00%3A00.000Z%7Cres%3Aauto_1%7Cx`,
+      'refused',
+      'refused',
+      'refused',
+    ])
+    expect(result.readable).toEqual([true, false, false])
+    const [still, streaming] = result.activitySignature as string[]
+    expect(streaming).toContain('t1:live')
+    expect(still).not.toContain('live')
+    // A later page joins only the load it continues; a closed window adopts nothing, and a lock drops what was read.
+    expect(result.paged).toEqual([true, true, false, true, ['a2', 'c'], false, true])
+    expect(result.storeAfterClear).toBe(false)
+    // 加载更多 right after a reload began asks for nothing; the reload's own next page can be read once it lands.
+    expect(result.reload).toEqual([true, true])
+    // A retry settles only on a replayed receipt, or agent-proposal-decided for a proposal's own writes; the Host's words
+    // are shown for every other refusal, and a save the Host shows as saved is done.
+    expect(result.writes).toEqual({
+      handles: [true, true, true, true, false],
+      answered: [true, true, false, true, false, false],
+      outcomes: ['done', 'changed', 'changed', '最多保存 64 个定时任务。', 'changed', 'changed', '没有完成。'],
+      check: ['已保存为定时任务', '没有保存，可以再保存一次', '这条提议已不在了', '还没有处理，可以再选一次', '已按电脑上现在的状态显示'],
+      words: ['记忆提议的结果待确认', '定时提议的结果待确认', '提议的结果待确认', '定时任务的保存结果待确认', '立即运行结果待确认'],
+      owners: [owner, owner, ''],
+    })
+    // Each run's own folder only where the Host makes one; a project with more folders than the Harness takes is not offered.
+    expect(result.locations2).toEqual([
+      [
+        ['app', '', false],
+        ['multi', 'Codex 最多使用 2 个文件夹', false],
+        ['code', '', true],
+      ],
+      [
+        ['app', '', false],
+        ['multi', '', false],
+        ['code', '', true],
+        ['default', '', false],
+      ],
+    ])
+    // A run of 通用's schedule names no Agent: it opens in Code.
+    expect(result.home).toEqual(['agents', 'code', 'code'])
+    expect(result.fileIds).toBe(2)
+    // Taking the window down drops the Agents, schedules, counts, proposals and waiting cards, and a read in flight.
+    expect(result.takeDown).toEqual([true, true, true, true, true, true, true, true])
+    expect(result.private).toBe(true)
   })
   it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
     const harness = (id: string, extra: Record<string, unknown> = {}) => ({

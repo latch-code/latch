@@ -56,6 +56,13 @@ const AGENTS = process.env.LATCH_IOS_LIVE_AGENTS === '1'
  * (names, kinds, sizes and types, never bytes) to `<file>.received.json`.
  */
 const ATTACH = process.env.LATCH_IOS_LIVE_ATTACH === '1'
+/**
+ * `LATCH_IOS_LIVE_ACTIVITY=1`: also 资讯, an Agent on the fake ACP Agent in a project of its own, with a schedule whose run
+ * edits a file, for result cards, schedule proposals (`schedule <name> <when> <HH:MM> <input>`), 动态 and 资料库. With
+ * hold, `<file>.run` runs that schedule now, as its owner would, and `<file>.fail` runs a second one whose agent exits
+ * mid-run, so its card offers 立即运行.
+ */
+const ACTIVITY = process.env.LATCH_IOS_LIVE_ACTIVITY === '1'
 type Simulators = { devices: Record<string, Array<{ name: string; udid: string; state?: string }>> }
 const listSimulators = (): Simulators['devices'][string] =>
   Object.values(
@@ -286,6 +293,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       }
       if (HISTORY) await addHistory(host, owner)
       if (AGENTS) await addAgent(owner)
+      const scheduled = ACTIVITY ? await addActivityAgent(host, owner) : undefined
       other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
       const otherOwner = other ? await prepare(other) : undefined
 
@@ -343,6 +351,16 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
             const why = await place(other, otherOwner).catch((error: unknown) => `no code: ${String(error).slice(0, 200)}`)
             await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
           }
+          for (const [flag, id] of scheduled
+            ? ([
+                ['run', scheduled.edits],
+                ['fail', scheduled.fails],
+              ] as const)
+            : []) {
+            if (!existsSync(`${HOLD}.${flag}`)) continue
+            await rm(`${HOLD}.${flag}`, { force: true })
+            await owner.request(`automations/${id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+          }
           if (ATTACH && existsSync(`${HOLD}.received`)) {
             await rm(`${HOLD}.received`, { force: true })
             const { tasks } = await owner.json<{ tasks: Array<{ id: string }> }>('snapshot')
@@ -387,6 +405,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await rm(`${HOLD}.info`, { force: true })
         await rm(`${HOLD}.pair2`, { force: true })
         await rm(`${HOLD}.received.json`, { force: true })
+        await rm(`${HOLD}.run`, { force: true })
+        await rm(`${HOLD}.fail`, { force: true })
       } else if (PAIR_MS) {
         const deadline = Date.now() + PAIR_MS
         while (host.host.security.devices.nativeCandidates().length === 0 && Date.now() < deadline) {
@@ -472,4 +492,43 @@ async function addAgent(owner: TestDevice): Promise<void> {
       notify: false,
     },
   })
+}
+
+/** 资讯 on the fake ACP Agent with a project of its own, a schedule whose run edits files and one whose agent exits. */
+async function addActivityAgent(host: TestHost, owner: TestDevice): Promise<{ edits: string; fails: string }> {
+  const saved = await owner.request('agents', {
+    method: 'POST',
+    body: { id: 'fake-news', name: 'Fake News', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
+  })
+  expect(saved.status).toBe(201)
+  const folder = join(host.root, 'news')
+  await mkdir(folder, { recursive: true })
+  expect((await owner.addFolders({ paths: [folder], name: 'news' })).status).toBeLessThan(300)
+  const { workspaces } = await owner.json<{ workspaces: Array<{ id: string; name: string }> }>('workspaces')
+  const project = workspaces.find(item => item.name === 'news')!
+  const agent = await owner.json<{ id: string }>('custom-agents', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name: '资讯',
+      description: '整理新闻',
+      harnessId: 'fake-news',
+      mode: 'agent',
+      defaultProjectId: project.id,
+    },
+  })
+  const add = (name: string, prompt: string, time: string) =>
+    owner.json<{ id: string }>('automations', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name,
+        customAgentId: agent.id,
+        projectId: project.id,
+        prompt,
+        schedule: { kind: 'daily', time },
+        notify: false,
+      },
+    })
+  return { edits: (await add('早间精选', 'shell-edit', '08:00')).id, fails: (await add('夜间检查', 'crash', '21:00')).id }
 }

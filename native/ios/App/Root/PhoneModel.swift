@@ -42,6 +42,8 @@ import UIKit
     @Published var agentPath: [String] = []
     /** Memory proposals by owner, read inside a content window and dropped with it. */
     @Published var proposals = PhoneProposalStore()
+    /** Result cards waiting for an owner's next topic, read inside a content window and dropped with it. */
+    @Published var agentResults = PhoneResultStore()
     @Published var appPath: [String] = []
     /** The clipboard's change count when a pairing code was pasted, so a successful pairing clears it only if it still holds that code. */
     var pastedPairing: Int?
@@ -192,7 +194,7 @@ import UIKit
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        agentPath = []; appPath = []; proposals.clear(); resetSessionActions(); resetReview()
+        agentPath = []; appPath = []; proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear(); clearAttachments()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
@@ -574,7 +576,7 @@ import UIKit
         // Diffs, notes and handoffs are content: they go with the window, and the review page with them.
         reviewTarget = nil; sessionHandoffs = nil; handoffSignature = ""; handoffDraft = nil
         // Agents' names, duties and schedules came with the window and go with it.
-        snapshot = PhoneAgents.withoutPrivate(snapshot); proposals.clear()
+        snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
     }
     private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,

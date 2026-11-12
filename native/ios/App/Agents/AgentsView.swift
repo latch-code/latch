@@ -192,17 +192,28 @@ struct MemoryDraft: Identifiable, Hashable {
 
 /** A write's state: refused, changed meanwhile, or unknown with a retry of the same request. */
 struct WriteNotice: View {
+    @EnvironmentObject private var model: PhoneModel
     let state: PhoneAgentWrite
     var retry: (() -> Void)? = nil
     var reload: (() -> Void)? = nil
+    /** The unconfirmed write itself, for 核对并放下: what the Host now says is shown and the write is let go. */
+    var held: NativePendingWrite? = nil
+    @State private var checked: String?
     var body: some View {
         switch state {
         case .done: EmptyView()
         case .unknown:
-            HStack {
-                Label("结果未知", systemImage: "questionmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
-                Spacer()
-                if let retry { Button("重试同一请求", action: retry).font(PhoneTheme.caption) }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Label("结果未知", systemImage: "questionmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    Spacer()
+                    if let held {
+                        Button("核对并放下") { Task { checked = await model.checkAgentWrite(held) ?? "没能核对，稍后再试" } }
+                            .font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    }
+                    if let retry { Button("重试同一请求", action: retry).font(PhoneTheme.caption).disabled(model.busy || !model.connected) }
+                }
+                if let checked { Text(checked).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
             }
         case .changed:
             HStack {
@@ -236,7 +247,7 @@ struct MemoryEditor: View {
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
                     .disabled(write != nil)
                 if draft.text.count > PhoneMemoryWrite.maximum { Text("最多 \(PhoneMemoryWrite.maximum) 字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
-                if let state { WriteNotice(state: state, retry: { save() }, reload: { saved(); dismiss() }) }
+                if let state { WriteNotice(state: state, retry: { save() }, reload: { saved(); dismiss() }, held: write.flatMap { held in model.pending.first { $0.requestId == held.requestId } }) }
                 // In the content rather than the bar: a pushed page's bar items do not follow its state inside a sheet.
                 HStack(spacing: 10) {
                     Spacer()

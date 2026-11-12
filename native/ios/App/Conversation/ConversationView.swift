@@ -117,7 +117,9 @@ struct ConversationView: View {
                 let returned = PhoneHandoffs.place(PhoneHandoffs.results(model.openHandoffs, sessionId: id), turns: turns)
                 ForEach(returned[""] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
                 let proposals = placedProposals(turns)
-                ForEach(proposals[""] ?? []) { ProposalRow(owner: frame?.owner ?? "", proposal: $0, effect: effect) }
+                let results = placedResults(turns)
+                if let lead = results[""] { resultStack(lead) }
+                ForEach(proposals[""] ?? []) { proposalRow($0) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
@@ -125,9 +127,10 @@ struct ConversationView: View {
                         mark: model.engineMark(summary["harnessId"].string), engine: engine,
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
-                        index: index, open: openFile).equatable()
+                        index: index, open: { openFile($0, $1) }).equatable()
                     ForEach(returned[turn.id] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
-                    ForEach(proposals[turn.id] ?? []) { ProposalRow(owner: frame?.owner ?? "", proposal: $0, effect: effect) }
+                    if let placed = results[turn.id] { resultStack(placed) }
+                    ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
                 }
                 if running { RunStatusLine().id("status") }
                 else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
@@ -206,6 +209,20 @@ struct ConversationView: View {
             messages: model.detail["messages"].array, turnIds: turns.map(\.id))
     }
     private var effect: String { PhoneProposals.effectWords(model.engineInfo(summary["harnessId"].string)) }
+    /** A memory proposal, or a schedule proposal with its own row and form. */
+    @ViewBuilder private func proposalRow(_ proposal: PhoneProposal) -> some View {
+        if proposal.schedule != nil { ScheduleProposalRow(owner: frame?.owner ?? "", proposal: proposal) }
+        else { ProposalRow(owner: frame?.owner ?? "", proposal: proposal, effect: effect) }
+    }
+    /** This topic's result cards, each where its run settled; none outside 我的 Agent. */
+    private func placedResults(_ turns: [PhoneTurn]) -> [String: [PhoneScheduleResult]] {
+        guard frame != nil, hasContent else { return [:] }
+        return PhoneResults.place(PhoneResults.parse(model.detail["results"]), turns: turns)
+    }
+    private func resultStack(_ results: [PhoneScheduleResult]) -> some View {
+        ResultStack(results: results, openActivity: { frame?.openProfile() }, openRun: { frame?.openTopic($0) },
+            openFile: { file, run in openFile(file.path, file.root, session: run) })
+    }
     private var sessionFiles: [PhoneChangedFile] {
         guard hasContent else { return [] }
         var seen = Set<String>(), result: [PhoneChangedFile] = []
@@ -218,14 +235,15 @@ struct ConversationView: View {
     private func cancelFile() {
         previewTask?.cancel(); previewTask = nil; previewRequest = nil; model.cancelPreview()
     }
-    private func openFile(_ path: String, _ root: String?) {
+    /** A file of this session, or of a run's (`session`) from a result card, under that session's file rules. */
+    private func openFile(_ path: String, _ root: String?, session: String? = nil) {
         cancelFile()
         let selected = id, generation = model.contentGeneration, request = UUID()
         previewRequest = request
         previewTask = Task {
             defer { if previewRequest == request { previewTask = nil; previewRequest = nil } }
             do {
-                let item = try await model.preview(reference: path, root: root)
+                let item = try await model.preview(reference: path, root: root, session: session)
                 guard !Task.isCancelled, previewRequest == request, model.sessionId == selected, model.contentGeneration == generation, item.lease.valid else { PreviewFiles.discard(item); return }
                 preview = item
             }

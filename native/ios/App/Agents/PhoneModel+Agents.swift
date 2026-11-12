@@ -71,11 +71,26 @@ extension PhoneModel {
             guard pending.allSatisfy({ $0.requestId == write.requestId }) else { return .refused("上一项提交结果待确认，先确认它。") }
             busy = true; defer { if generation == current { busy = false } }
             if !pending.contains(where: { $0.requestId == write.requestId }) { pending.append(write) }
-            _ = try await workspace.submit(write)
+            _ = try await workspace.submit(write, explain: true, retryAnswered: PhoneAgentWrites.retryAnswered(write))
             guard current == generation else { return .done }
             pending.removeAll { $0.requestId == write.requestId }
             _ = await refresh()
             return .done
+        } catch is NativeUnsettledRefusal {
+            // A retry the Host's words do not settle: still unknown, with the same request.
+            return .unknown
+        } catch let refusal as NativeHostRefusal {
+            guard current == generation else { return .unknown }
+            pending.removeAll { $0.requestId == write.requestId }
+            // A schedule save is done when its proposal is saved and names the schedule, whatever this request heard.
+            var proposals: [PhoneProposal]?
+            if let owner = PhoneAgentWrites.owner(write), refusal.code == "agent-proposal-decided" { proposals = await readProposals(owner) }
+            _ = await refresh()
+            switch PhoneAgentWrites.outcome(write, refusal: refusal, proposals: proposals) {
+            case .done: return .done
+            case .changed: return .changed
+            case let .refused(words): return .refused(words)
+            }
         } catch {
             guard current == generation else { return .unknown }
             let failure = error as? NativeFailure
@@ -86,6 +101,32 @@ extension PhoneModel {
             return .refused(failure?.errorDescription ?? "没有保存，请重试。")
         }
     }
+    /** An owner's proposals as the Host lists them now, without touching what the pages show. */
+    func readProposals(_ owner: String) async -> [PhoneProposal]? {
+        guard PhoneAgents.validId(owner), case let .ready(value) = await readAgentPart("/link/api/custom-agents/" + owner + "/proposals") else { return nil }
+        return PhoneProposals.parse(value)
+    }
+    /**
+     * 核对并放下 for a write of 我的 Agent: the Host's state decides what is shown, and this device's copy goes, so the one
+     * pending write never blocks the others. Nil when nothing was dropped (busy, the Mac away, the window closed).
+     */
+    func checkAgentWrite(_ write: NativePendingWrite) async -> String? {
+        guard pending.contains(where: { $0.requestId == write.requestId }), !busy, let workspace, connected else { return nil }
+        let current = generation
+        // Busy for the whole check, so no retry of the same request starts meanwhile.
+        busy = true; defer { if generation == current { busy = false } }
+        var proposals: [PhoneProposal]?
+        if let owner = PhoneAgentWrites.owner(write) ?? PhoneAgentWrites.decisionOwner(write) {
+            guard let read = await readProposals(owner) else { return nil }
+            proposals = read
+        }
+        guard current == generation else { return nil }
+        do { try await workspace.settlePending(write.requestId) } catch { return nil }
+        pending.removeAll { $0.requestId == write.requestId }
+        _ = await refresh()
+        if let owner = PhoneAgentWrites.owner(write) ?? PhoneAgentWrites.decisionOwner(write) { await loadProposals(owner) }
+        return PhoneAgentWrites.checkWords(write, proposals: proposals)
+    }
     /** An owner's proposals, read again when the snapshot says they changed; nothing outside a window. */
     func loadProposals(_ owner: String) async {
         guard PhoneAgents.validId(owner), agentAccess == .ready else { proposals.drop(owner); return }
@@ -94,6 +135,21 @@ extension PhoneModel {
         if case let .ready(value) = await readAgentPart("/link/api/custom-agents/" + owner + "/proposals") {
             proposals.finish(owner, token: token, list: value, windowOpen: verifiedUntil != nil)
         }
+    }
+    /** Result cards waiting for the owner's next topic, read when the snapshot says some wait; nothing outside a window. */
+    func loadResults(_ owner: String) async {
+        guard PhoneAgents.validId(owner), agentAccess == .ready, PhoneResults.waiting(snapshot, owner: owner), let path = try? PhoneResults.path(owner: owner) else {
+            agentResults.drop(owner); return
+        }
+        let token = agentResults.begin(owner)
+        if case let .ready(value) = await readAgentPart(path) {
+            agentResults.finish(owner, token: token, value: PhoneResults.parse(value["results"]), windowOpen: verifiedUntil != nil)
+        }
+    }
+    /** One page of 动态 or 资料库, the first or the one after the Host's cursor. */
+    func readAgentPage(owner: String, part: String, before: String?) async -> PhoneAgentRead {
+        guard let path = try? PhoneActivity.path(owner: owner, part: part, before: before) else { return .missing }
+        return await readAgentPart(path)
     }
     /**
      * A new topic: the first message to an Agent (or 通用) starts its session through the same start as 新会话, with the same

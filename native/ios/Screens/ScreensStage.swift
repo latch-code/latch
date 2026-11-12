@@ -92,6 +92,13 @@ import UIKit
             model.sessionId = "ses_brief"
             model.detail = json(approvalText.replacingOccurrences(of: "\"id\":\"ses_wait\",\"title\":\"升级 swift-nio 到 2.104\"", with: "\"id\":\"ses_brief\",\"title\":\"汇总本周依赖更新\""))
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
+        case "agent-results", "agent-activity", "agent-library":
+            // 每日简报's topic with its runs' cards (one more than a place shows), a failure 立即运行 can retry, and a schedule proposal.
+            model.tab = .agents; model.agentPath = [daily]
+            model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(dailyTopic)]) }
+            model.sessionId = "ses_daily_talk"; model.detail = json(dailyConversation)
+            var store = PhoneProposalStore(); let token = store.begin(daily); store.finish(daily, token: token, list: json(scheduleProposals), windowOpen: true); model.proposals = store
+            profile = name != "agent-results"; profilePart = name == "agent-library" ? .library : .activity
         case "agent-unavailable": model.tab = .agents; model.agentPath = [docs]
         case "general": model.tab = .agents; model.agentPath = [PhoneAgents.generalId]
         case "apps": model.tab = .apps
@@ -166,7 +173,12 @@ import UIKit
     }
     static func read(_ path: String) -> PhoneAgentRead {
         if locked { return .locked }
-        if path.hasSuffix("/proposals") { return .ready(path.contains(review) ? json(proposalsText) : json(#"{"proposals":[]}"#)) }
+        if path.contains("/activity") { return .ready(json(activityText)) }
+        if path.contains("/library") { return .ready(json(libraryText)) }
+        if path.hasSuffix("/results") { return .ready(json(#"{"results":[]}"#)) }
+        if path.hasSuffix("/proposals") {
+            return .ready(path.contains(review) ? json(proposalsText) : path.contains(daily) ? json(scheduleProposals) : json(#"{"proposals":[]}"#))
+        }
         let id = String(path.split(separator: "/").last ?? "")
         if id == PhoneAgents.generalId { return .ready(json(general)) }
         if id == review { return .ready(json(reviewDetail)) }
@@ -309,6 +321,50 @@ import UIKit
      {"id":"prp_7a8b9c0d-1e2f-4a3b-8c4d-6e7f80910213","content":"复核时先跑 swift build 再下结论。","origin":"user","external":false,"state":"pending","source":{"sessionId":"ses_review","messageId":"m1"},"createdAt":"{{-990}}","updatedAt":"{{-990}}"},
      {"id":"prp_8b9c0d1e-2f3a-4b4c-8d5e-7f8091021324","content":"relay 的默认超时是 15 秒。","reason":"在 relay.json 的注释里读到的。","origin":"agent","external":true,"state":"pending","source":{"sessionId":"ses_review","messageId":"m1"},"createdAt":"{{-950}}","updatedAt":"{{-950}}"}]}
     """
+    private static var dailyTopic: String { """
+    {"id":"ses_daily_talk","title":"依赖更新怎么看","status":"idle","updatedAt":"{{-300}}","harnessId":"standard","mode":"chat","agent":{"customAgentId":"\(daily)"}}
+    """ }
+    private static func card(_ id: String, _ outcome: String, _ at: Int, _ extra: String) -> String {
+        #"{"id":"\#(id)","automationId":"\#(checks)","owner":"\#(daily)","name":"每日依赖检查","outcome":"\#(outcome)","trigger":"schedule","runAt":"{{\#(at - 60)}}","at":"{{\#(at)}}","topicId":"ses_daily_talk"\#(extra)}"#
+    }
+    private static var dailyConversation: String { """
+    {"summary":{"id":"ses_daily_talk","title":"依赖更新怎么看","status":"idle","harnessId":"standard","mode":"chat","agent":{"customAgentId":"\(daily)"}},
+     "sync":{"instanceId":"screens","revision":42},"approvals":[],"questions":[],"queue":[],
+     "messages":[
+      {"id":"d1","role":"user","text":"以后每天的依赖检查有问题再叫我。","createdAt":"{{-90000}}"},
+      {"id":"d2","role":"assistant","text":"好的。没问题的日子我只在这里留一张结果卡。","createdAt":"{{-89900}}"},
+      {"id":"d3","role":"user","text":"工作日晚上也帮我看一眼 CI。","createdAt":"{{-600}}"},
+      {"id":"d4","role":"assistant","text":"可以，我提议一个工作日 20:00 的定时，你看看。","createdAt":"{{-560}}"}],
+     "results":[
+      \(card("res_a", "completed", -86000, ""))  ,
+      \(card("res_b", "completed", -43000, #","sessionId":"ses_daily","reply":"今天有 3 个依赖更新：\n- swift-nio 2.104：修复了 TLS 关闭时的竞态\n- zod 4.2：只是类型调整\n- vitest 5.0.6：修了 watch 模式\n都可以直接合并。","files":[{"root":"latch","path":"docs/deps/2026-11-13.md","change":"created"},{"root":"latch","path":"pnpm-workspace.yaml","change":"modified"}]"#)),
+      \(card("res_c", "failed", -20000, #","failure":{"reason":"模型服务没有回答，连接超时。"}"#)),
+      \(card("res_d", "interrupted", -1200, #","failure":{"reason":"Host 重启时这次运行还没有结束。","code":"harness-session-lost"},"sessionId":"ses_daily""#))]}
+    """ }
+    private static var scheduleProposals: String { """
+    {"proposals":[
+     {"id":"prp_9c0d1e2f-3a4b-4c5d-8e6f-809102132435","kind":"schedule","schedule":{"name":"晚间 CI 检查","plan":{"kind":"weekdays","time":"20:00"}},"content":"看一下今天 main 上的 CI：\\n1. 失败的任务和原因\\n2. 变慢超过 20% 的任务\\n只列需要我处理的。","reason":"你说工作日晚上也要看 CI。","origin":"agent","external":false,"state":"pending","source":{"sessionId":"ses_daily_talk","messageId":"d3"},"createdAt":"{{-550}}","updatedAt":"{{-550}}"}]}
+    """ }
+    private static var activityText: String { """
+    {"items":[
+     {"kind":"proposal","id":"act_1","at":"{{-550}}","proposalId":"prp_9c0d1e2f-3a4b-4c5d-8e6f-809102132435","proposal":"schedule","state":"pending","sessionId":"ses_daily_talk"},
+     {"kind":"result","id":"act_2","at":"{{-1200}}","resultId":"res_d","name":"每日依赖检查","outcome":"interrupted","topicId":"ses_daily_talk"},
+     {"kind":"result","id":"act_3","at":"{{-20000}}","resultId":"res_c","name":"每日依赖检查","outcome":"failed","topicId":"ses_daily_talk"},
+     {"kind":"memory","id":"act_4","at":"{{-30000}}","change":"added","memoryId":"mem_1"},
+     {"kind":"result","id":"act_5","at":"{{-43000}}","resultId":"res_b","name":"每日依赖检查","outcome":"completed","topicId":"ses_daily_talk"},
+     {"kind":"topic","id":"act_6","at":"{{-90000}}","sessionId":"ses_daily_talk","title":"依赖更新怎么看"},
+     {"kind":"run","id":"act_7","at":"{{-400000}}","automationId":"\(checks)","name":"每日依赖检查","state":"missed"}],
+     "next":"2026-11-01T00:00:00.000Z|act_7"}
+    """ }
+    private static var libraryText: String { """
+    {"groups":[
+     {"sessionId":"ses_daily","title":"每日依赖检查","at":"{{-43000}}","automationId":"\(checks)","items":[
+      {"kind":"file","sessionId":"ses_daily","root":"latch","path":"docs/deps/2026-11-13.md","change":"created","at":"{{-43000}}"},
+      {"kind":"file","sessionId":"ses_daily","root":"latch","path":"pnpm-workspace.yaml","change":"modified","at":"{{-43000}}"},
+      {"kind":"file","sessionId":"ses_daily","root":"latch","path":"docs/deps/old.md","change":"deleted","at":"{{-43000}}"}]},
+     {"sessionId":"ses_daily_talk","title":"依赖更新怎么看","at":"{{-90000}}","items":[
+      {"kind":"attachment","sessionId":"ses_daily_talk","messageId":"d1","attachment":{"id":"att0000000000000000009","name":"ci-截图.png","kind":"image","mime":"image/png","size":120000},"at":"{{-90000}}"}]}]}
+    """ }
     private static let runs = """
     {"automation":{"id":"auto_9a1c3d40-5f7e-4b0d-8e4f-3d4e5f607182","name":"每日依赖检查"},
      "runs":[{"at":"{{-21600}}","state":"completed","trigger":"schedule","sessionId":"ses_daily"},{"at":"{{-108000}}","state":"missed","trigger":"schedule"},

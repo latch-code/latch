@@ -10,8 +10,9 @@ extension PhoneModel {
         if [.expired, .forbidden, .contextChanged].contains(failure as? NativeFailure) { report(failure) }
         else { error = "此文件暂不能在手机预览。文本与 PNG/JPEG 可用；PDF、Office 和网页格式尚未完成 iOS 预览验证。" }
     }
-    func preview(reference: String, root: String?) async throws -> PreviewItem {
-        guard !previewing, let workspace, let sessionId else { throw NativeFailure.unavailable }
+    /** A file of the open session, or of `session` (a run's, from a result card or 资料库) under that session's file rules. */
+    func preview(reference: String, root: String?, session: String? = nil) async throws -> PreviewItem {
+        guard !previewing, let workspace, let sessionId = session ?? sessionId else { throw NativeFailure.unavailable }
         let job = UUID(), current = generation, reading = contentGeneration
         previewJob = job; previewing = true; previewProgress = PhonePreviewProgress(completed: 0, total: 0)
         defer { if previewJob == job { cancelPreview() } }

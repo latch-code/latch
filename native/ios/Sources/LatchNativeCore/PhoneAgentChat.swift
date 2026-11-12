@@ -24,6 +24,10 @@ public enum PhoneAgentChat {
         topics(tasks, id: id).open.first { $0["automationId"] == .null }
     }
     public static func placeholder(_ name: String) -> String { "给 " + name + " 发消息…" }
+    /** Where a session opened from an Agent's page goes: its conversation when it is this owner's, else Code. */
+    public static func home(_ tasks: [NativeJSON], session: String, owner: String) -> PhoneSpace {
+        tasks.first { $0["id"].string == session }.map { self.owner($0) == owner ? .agents : .code } ?? .code
+    }
     /** A topic's state in the session list's words; a topic at rest says nothing. */
     public static func topicWords(_ task: NativeJSON, frozen: Bool) -> String? {
         switch PhoneSessions.rowStatus(task, frozen: frozen) {
@@ -75,11 +79,21 @@ public enum PhoneAgentChat {
     }
 }
 
-/** A memory proposal as a row draws it: its text and reason already made visible, never acted on. */
+/** A memory or schedule proposal as a row draws it: its text and reason already made visible, never acted on. */
 public struct PhoneProposal: Equatable, Sendable, Identifiable {
     public enum State: String, Sendable { case pending, saved, dismissed }
+    /** A schedule proposal's name (as shown and as sent) and its plan, the Host's own shape. */
+    public struct Schedule: Equatable, Sendable {
+        public let name: String
+        public let rawName: String
+        public let plan: NativeJSON
+    }
     public let id: String
     public let content: String
+    /** Each run's input as the Agent wrote it, for the schedule it may become; the same as `content` before marking. */
+    public let prompt: String
+    /** Set on a schedule proposal; nil on a memory proposal. */
+    public let schedule: Schedule?
     public let reason: String?
     /** `user`: the person's own 「记住…」; `agent`: the Agent proposed it. */
     public let origin: String
@@ -90,6 +104,8 @@ public struct PhoneProposal: Equatable, Sendable, Identifiable {
     public let state: State
     /** A 「记住…」 the Host did not keep: `content` is its reason; it has no buttons. */
     public let refused: Bool
+    /** A schedule proposal saved: the schedule the Host made from it. */
+    public var automationId: String? = nil
 }
 
 public enum PhoneProposals {
@@ -99,9 +115,19 @@ public enum PhoneProposals {
         list["proposals"].array.compactMap { item in
             guard let id = item["id"].string, validId(id), let content = item["content"].string, let session = item["source"]["sessionId"].string,
                   let state = item["state"].string.flatMap(PhoneProposal.State.init(rawValue:)) else { return nil }
-            return PhoneProposal(id: id, content: PhoneConversation.visible(content), reason: item["reason"].string.map(PhoneConversation.visible),
+            var schedule: PhoneProposal.Schedule?
+            switch item["kind"] {
+            case .null: schedule = nil
+            case .string("schedule"):
+                let plan = item["schedule"]["plan"]
+                guard let name = item["schedule"]["name"].string, ["daily", "weekdays", "weekly"].contains(plan["kind"].string ?? "") else { return nil }
+                schedule = PhoneProposal.Schedule(name: PhoneConversation.visible(name), rawName: name, plan: plan)
+            default: return nil
+            }
+            return PhoneProposal(id: id, content: PhoneConversation.visible(content), prompt: content, schedule: schedule, reason: item["reason"].string.map(PhoneConversation.visible),
                 origin: item["origin"].string == "user" ? "user" : "agent", external: item["external"].bool, sessionId: session,
-                messageId: item["source"]["messageId"].string, requestId: item["source"]["requestId"].string, state: state, refused: false)
+                messageId: item["source"]["messageId"].string, requestId: item["source"]["requestId"].string, state: state, refused: false,
+                automationId: item["automationId"].string.flatMap { PhoneAgents.validAutomation($0) ? $0 : nil })
         }
     }
     /** The person's 「记住…」 the Host did not keep, from the session's detail: each on its own turn, with why. */
@@ -109,11 +135,12 @@ public enum PhoneProposals {
         guard let session = detail["summary"]["id"].string else { return [] }
         return detail["memoryRefusals"].array.compactMap { refusal in
             guard let request = refusal["requestId"].string, let reason = refusal["reason"].string else { return nil }
-            return PhoneProposal(id: "refused:" + request, content: PhoneConversation.visible(reason), reason: nil, origin: "user", external: false,
+            return PhoneProposal(id: "refused:" + request, content: PhoneConversation.visible(reason), prompt: "", schedule: nil, reason: nil, origin: "user", external: false,
                 sessionId: session, messageId: nil, requestId: request, state: .dismissed, refused: true)
         }
     }
-    public static func pending(_ proposals: [PhoneProposal]) -> [PhoneProposal] { proposals.filter { $0.state == .pending } }
+    /** Pending memory proposals, for 记忆: a schedule proposal is no memory and is not listed there. */
+    public static func pending(_ proposals: [PhoneProposal]) -> [PhoneProposal] { proposals.filter { $0.state == .pending && $0.schedule == nil } }
     public static func originWords(_ origin: String) -> String { origin == "user" ? "你说的" : "它推断的" }
     /** When a saved memory reaches the Agent: the built-in Harness reads memories each turn; an external one with a topic's first turn. */
     public static func effectWords(_ harness: NativeJSON) -> String { harness["agentContext"].string == "private" ? "已生效" : "从下一个话题起" }
@@ -251,27 +278,47 @@ extension PhonePending {
 }
 
 /**
- * Memory proposals read inside a content window, by owner. Each read takes a token and only the owner's latest read is
- * adopted, so a slow earlier answer never replaces a newer list; `clear` (lock, window closed, scope changed) drops the
- * lists and every token, so a read still in flight is dropped too.
+ * What was read inside a content window, by owner (memory proposals, result cards waiting for a topic). Each read takes
+ * a token and only the owner's latest read is adopted, so a slow earlier answer never replaces a newer list; `clear`
+ * (lock, window closed, scope changed) drops the lists and every token, so a read still in flight is dropped too.
  */
-public struct PhoneProposalStore: Equatable, Sendable {
-    private var lists: [String: [PhoneProposal]] = [:]
+public struct PhoneOwnerStore<Value: Equatable & Sendable>: Equatable, Sendable {
+    private var lists: [String: Value] = [:]
     private var tokens: [String: UUID] = [:]
     public init() {}
-    public subscript(owner: String) -> [PhoneProposal]? { lists[owner] }
+    public subscript(owner: String) -> Value? { lists[owner] }
     public var isEmpty: Bool { lists.isEmpty && tokens.isEmpty }
+    /** Every owner's list, in no order. */
+    public var all: [Value] { Array(lists.values) }
     public mutating func begin(_ owner: String) -> UUID {
         let token = UUID(); tokens[owner] = token; return token
     }
     /** True when adopted. */
-    @discardableResult public mutating func finish(_ owner: String, token: UUID, list: NativeJSON, windowOpen: Bool) -> Bool {
+    @discardableResult public mutating func finish(_ owner: String, token: UUID, value: Value, windowOpen: Bool) -> Bool {
         guard windowOpen, tokens[owner] == token else { return false }
-        lists[owner] = PhoneProposals.parse(list)
+        lists[owner] = value
         return true
     }
     public mutating func drop(_ owner: String) { lists[owner] = nil; tokens[owner] = nil }
     public mutating func clear() { lists = [:]; tokens = [:] }
+}
+public typealias PhoneProposalStore = PhoneOwnerStore<[PhoneProposal]>
+extension PhoneOwnerStore where Value == [PhoneProposal] {
+    @discardableResult public mutating func finish(_ owner: String, token: UUID, list: NativeJSON, windowOpen: Bool) -> Bool {
+        finish(owner, token: token, value: PhoneProposals.parse(list), windowOpen: windowOpen)
+    }
+}
+public typealias PhoneResultStore = PhoneOwnerStore<[PhoneScheduleResult]>
+
+extension PhoneAgents {
+    /**
+     * What a closing window (lock, revoke, expiry, a scope change) takes from 我的 Agent: the snapshot's Agents, schedules,
+     * proposal and card counts, the proposals read, and the cards waiting for a topic, with every read still in flight.
+     */
+    public static func takeDown(_ snapshot: NativeJSON, proposals: inout PhoneProposalStore, results: inout PhoneResultStore) -> NativeJSON {
+        proposals.clear(); results.clear()
+        return withoutPrivate(snapshot)
+    }
 }
 
 /** What a page showing a window's content does when the content generation changes. */

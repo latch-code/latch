@@ -321,6 +321,7 @@ public actor NativeWorkspace {
         guard !query.isEmpty, !query.contains("#"), !query.contains("?"), path.utf8.count <= 4096 else { return false }
         return LinkBytes.matches(base, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/changes(/file)?") || base == "/link/api/handoffs"
             || base == "/link/api/history/sources"
+            || (LinkBytes.matches(base, "/link/api/custom-agents/(general|agt_[a-f0-9-]{36})/(activity|library)") && query.hasPrefix("before=") && !query.contains("&"))
     }
     public func read(_ path: String, body: Bool) async throws -> NativeJSON {
         guard Self.readable(path) else { throw NativeFailure.invalidRecord }

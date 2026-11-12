@@ -131,7 +131,7 @@ struct AgentChat: View {
         // A pushed conversation on a phone needs the room, a new topic as much as a topic.
         .toolbar(width == .compact && model.agentAccess == .ready ? .hidden : .automatic, for: .tabBar)
         .sheet(isPresented: $profile) {
-            AgentProfileSheet(id: id, openTopic: { topic in profile = false; pick = .session(topic) }).presentationCornerRadius(28)
+            AgentProfileSheet(id: id, openTopic: { topic in profile = false; reach(topic) }).presentationCornerRadius(28)
         }
         // The topic shown is the one this page keeps open; a topic opened elsewhere meanwhile is replaced when it shows again.
         .task(id: [shown ?? "", model.verifiedUntil == nil ? "closed" : "open"]) { await follow() }
@@ -140,6 +140,14 @@ struct AgentChat: View {
         #if LATCH_SCREENS
         .onAppear { if ScreensStage.profile { profile = true }; if ScreensStage.newTopic { pick = .new } }
         #endif
+    }
+    /**
+     * Opens a session from this page: one of this Agent's own stays in its conversation; any other (a run of 通用's schedule
+     * names no Agent and is Code's) opens in Code, as the web's `choose` does.
+     */
+    private func reach(_ session: String) {
+        if PhoneAgentChat.home(tasks, session: session, owner: id) == .agents { pick = .session(session); return }
+        Task { model.tab = .code; await model.openSession(session) }
     }
     private func follow() async {
         guard model.agentAccess == .ready else { return }
@@ -150,7 +158,7 @@ struct AgentChat: View {
         } else if model.sessionId != nil { model.closeSession() }
     }
     @ViewBuilder private func chat(_ entry: PhoneAgentEntry) -> some View {
-        let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, newTopic: { pick = .new }, openTopic: { pick = .session($0) })
+        let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, newTopic: { pick = .new }, openTopic: { reach($0) })
         if let shown { ConversationView(id: shown, frame: frame) }
         else { NewTopicView(frame: frame, started: { pick = .session($0) }) }
     }
@@ -172,6 +180,7 @@ private struct NewTopicView: View {
     @State private var focused = false
     /** The picker the ＋ opened. */
     @State private var attachSource: AttachSource?
+    @StateObject private var files = SessionFilePreview()
     private var attachKey: String { PhoneModel.topicTray(frame.owner) }
     /** Checked against this one topic's Harness, project and model, as the start will send them. */
     private var attachSelection: NativeJSON? {
@@ -191,14 +200,26 @@ private struct NewTopicView: View {
     private var canSend: Bool {
         blocker == nil && mine.isEmpty && !sending && !model.busy && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
     }
+    /** Cards of runs that settled while the Agent had no topic: here until the next topic keeps them. */
+    private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
     var body: some View {
-        VStack(spacing: 10) {
-            AgentFace(avatar: frame.entry.avatar, size: 56, face: frame.entry.face)
-            Text(frame.entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
-            if !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center) }
-            if !frame.entry.available { Unavailable(reason: frame.entry.unavailableReason) }
+        Group {
+            if waiting.isEmpty { intro.padding(.horizontal, 24).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            else {
+                ScrollView {
+                    VStack(spacing: 20) {
+                        intro
+                        ResultStack(results: waiting, openActivity: frame.openProfile, openRun: frame.openTopic,
+                            openFile: { file, run in files.open(model, reference: file.path, root: file.root, session: run) })
+                            .frame(maxWidth: 760)
+                    }.padding(.horizontal, 16).padding(.vertical, 32).frame(maxWidth: .infinity)
+                }
+            }
         }
-        .padding(.horizontal, 24).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sessionFilePreview(files)
+        .task(id: [frame.owner, PhoneResults.signature(model.snapshot, owner: frame.owner), model.verifiedUntil == nil ? "closed" : "open"]) {
+            await model.loadResults(frame.owner)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { AgentFrameItems(frame: frame, topic: .null, shown: nil) }
         .safeAreaInset(edge: .bottom, spacing: 0) { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
@@ -211,6 +232,14 @@ private struct NewTopicView: View {
         // Leaving the new topic lets go of what was attached here, unless a start that carries them is still unconfirmed.
         .onDisappear {
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: sending, verifying: model.verifying, covered: false) { model.dropAttachments(attachKey) }
+        }
+    }
+    private var intro: some View {
+        VStack(spacing: 10) {
+            AgentFace(avatar: frame.entry.avatar, size: 56, face: frame.entry.face)
+            Text(frame.entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
+            if !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center) }
+            if !frame.entry.available { Unavailable(reason: frame.entry.unavailableReason) }
         }
     }
     private var dock: some View {

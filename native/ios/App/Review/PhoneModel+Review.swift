@@ -92,6 +92,14 @@ extension PhoneModel {
             }
             return
         }
+        if PhoneAgentWrites.handles(request) {
+            switch await writeAgent(request) {
+            case let .refused(words): error = words
+            case .changed: error = "已在别处修改"
+            case .done, .unknown: break
+            }
+            return
+        }
         let special = PhoneDelivery.pendingWords(request) ?? PhoneFileEdit.pendingWords(request) ?? PhoneHandoffs.pendingWords(request) ?? PhoneReview.pendingWords(request)
         guard special != nil else { await submit(request); return }
         switch await write(request, timeout: PhoneDelivery.timeout(request), retryAnswered: PhoneDelivery.retryAnswered(request)) {

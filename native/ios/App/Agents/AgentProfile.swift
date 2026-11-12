@@ -2,7 +2,7 @@ import LatchNativeCore
 import SwiftUI
 
 /**
- * An Agent's profile, as a bottom sheet: its face, name and duty; 动态 · 记忆; 即将进行 with each schedule's switch; the
+ * An Agent's profile, as a bottom sheet: its face, name and duty; 动态 · 资料库 · 记忆; 即将进行 with each schedule's switch; the
  * computer and where it works; Harness · 模型; then 设置. Editing the Agent or a schedule is not built here.
  */
 struct AgentProfileSheet: View {
@@ -10,12 +10,13 @@ struct AgentProfileSheet: View {
     @Environment(\.dismiss) private var dismiss
     let id: String
     let openTopic: (String) -> Void
-    enum Part: String, CaseIterable { case activity = "动态", memory = "记忆" }
+    enum Part: String, CaseIterable { case activity = "动态", library = "资料库", memory = "记忆" }
     @State private var part = Part.activity
     @State private var read = PhoneAgentRead.loading
     @State private var reading = UUID()
     /** The memory being written, held here with the sheet's navigation so a reread of the section never drops it. */
     @State private var editing: MemoryDraft?
+    @StateObject private var files = SessionFilePreview()
     private var general: Bool { id == PhoneAgents.generalId }
     private var summary: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == id } ?? .null }
     private var entry: PhoneAgentEntry? { PhoneAgents.entry(model.snapshot, id: id, windowOpen: model.verifiedUntil != nil) }
@@ -30,6 +31,7 @@ struct AgentProfileSheet: View {
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly) } }
             .navigationDestination(item: $editing) { draft in MemoryEditor(owner: id, draft: draft, saved: reload) }
         }
+        .sessionFilePreview(files)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         // A reload keeps what is shown until the answer comes, so the memory editor pushed over it stays alive.
@@ -60,9 +62,12 @@ struct AgentProfileSheet: View {
             VStack(alignment: .leading, spacing: 22) {
                 header(entry)
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("动态 · 记忆", selection: $part) { ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
+                    Picker("动态 · 资料库 · 记忆", selection: $part) { ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
                     switch part {
-                    case .activity: activity
+                    case .activity: ActivitySection(owner: id, openTopic: openTopic, openMemory: { part = .memory })
+                    case .library:
+                        LibrarySection(owner: id, openTopic: openTopic,
+                            openFile: { files.open(model, reference: $0.reference, root: $0.root == PhoneActivity.attachmentRoot ? PreviewFiles.attachmentRoot : $0.root, session: $0.sessionId) })
                     case .memory: detailed { MemorySection(owner: id, detail: $0, reload: reload, openTopic: openTopic, editing: $editing) }
                     }
                 }
@@ -106,15 +111,6 @@ struct AgentProfileSheet: View {
             if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink2) }
             if !entry.available { Unavailable(reason: entry.unavailableReason) }
             else if !model.connected { Label("Mac 不在线", systemImage: "wifi.slash").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
-        }
-    }
-    /** 动态: the latest topics; one tap opens it in the conversation. */
-    @ViewBuilder private var activity: some View {
-        let topics = Array(PhoneAgentChat.topics(model.snapshot["tasks"].array, id: id).open.prefix(8))
-        if topics.isEmpty { Text("还没有话题").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 16) }
-        ForEach(topics, id: \.id) { task in
-            Button { openTopic(task.id) } label: { InboxRow(task: task, frozen: !model.connected, inWaiting: false, project: nil) }.buttonStyle(.plain)
-            Divider().overlay(PhoneTheme.line)
         }
     }
     private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -176,6 +172,7 @@ struct ProposalRow: View {
                 HStack {
                     Label("结果未知", systemImage: "questionmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
+                    Button("核对并放下") { Task { if await model.checkAgentWrite(held.write) == nil { failure = "没能核对，稍后再试" } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                     Button("重试同一请求") { run(held.write, saving: held.saving) }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
             }
@@ -272,9 +269,9 @@ private struct MemorySection: View {
                     .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink).disabled(!canWrite || !held.isEmpty)
             }
             ForEach(held.filter { $0.requestId != step?.write.requestId }, id: \.requestId) { pending in
-                WriteNotice(state: .unknown, retry: { Task { if await model.writeAgent(pending) == .done { reload() } } })
+                WriteNotice(state: .unknown, retry: { Task { if await model.writeAgent(pending) == .done { reload() } } }, held: pending)
             }
-            if let step, let state = step.state { WriteNotice(state: state, retry: { send(step.memoryId, step.write) }, reload: { self.step = nil; reload() }) }
+            if let step, let state = step.state { WriteNotice(state: state, retry: { send(step.memoryId, step.write) }, reload: { self.step = nil; reload() }, held: model.pending.first { $0.requestId == step.write.requestId }) }
             if memories.isEmpty { Text("还没有记忆").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 20) }
             ForEach(memories, id: \.id) { memory in
                 memoryRow(memory)
@@ -367,7 +364,7 @@ private struct UpcomingSection: View {
             } else if !model.connected {
                 Text("Mac 不在线，连上后可以查看").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
             } else { ConfirmingAgents() }
-            NotYet(text: "新建与修改定时任务")
+            NotYet(text: "修改与手动新建定时任务")
         }
     }
     private func row(_ item: NativeJSON) -> some View {
@@ -387,7 +384,7 @@ private struct UpcomingSection: View {
             }
             if !on, let block, model.connected, model.canRun { Text(block).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(2) }
             if let held, !working.contains(automationId) {
-                WriteNotice(state: .unknown, retry: { send(automationId, held) })
+                WriteNotice(state: .unknown, retry: { send(automationId, held) }, held: held)
             } else if let state = states[automationId] {
                 WriteNotice(state: state, reload: { states[automationId] = nil; Task { await model.refresh() } })
             }

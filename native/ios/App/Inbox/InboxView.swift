@@ -272,10 +272,12 @@ private struct PendingWritesBar: View {
         }
         ForEach(model.pending, id: \.requestId) { pending in
             HStack {
-                Label(PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                Label(PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhoneAgentWrites.words(pending, proposals: model.proposals.all.flatMap { $0 }), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
                 if PhoneHistory.isImport(pending) {
                     Button("核对并放下") { Task { checked = await model.checkImportFromList(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                } else if PhoneAgentWrites.handles(pending) {
+                    Button("核对并放下") { Task { checked = await model.checkAgentWrite(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 } else if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
