@@ -1958,3 +1958,14 @@
     height: 300px;
   }
 }
+
+/* 设置 › 电脑: a row's 打开 and 移除, the group's two ways to add, and the code compared while adding. */
+.computers-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.computers-code {
+  font-family: var(--mono);
+}

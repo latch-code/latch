@@ -10,6 +10,38 @@ const HOST_ID = /^[a-z2-7]{52}$/
 const DEVICE_ID = /^dev_[A-Za-z0-9_-]{22}$/
 const CREDENTIAL = /^ldc1\.dev_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/
 const NO_SECURE_STORAGE = '此系统没有可用的安全存储，Latch 桌面端拒绝保存设备凭据。'
+const FINGERPRINT = /^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/u
+
+/** Exactly an HTTPS origin, as `URL.origin` writes it. */
+function isHttpsOrigin(value) {
+  if (typeof value !== 'string' || value.length > 512) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.origin === value
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Where another computer's credential may go: its HTTPS origin and the SHA-256 of its certificate. Kept inside the
+ * encrypted record and tied to the device key by an HMAC, so neither `computers.json` nor a changed ciphertext can
+ * redirect the credential.
+ */
+function bindingMac(privatePem, hostId, binding) {
+  const key = crypto.createHash('sha256').update(privatePem).digest()
+  return crypto.createHmac('sha256', key).update(`latch-binding-v1|${hostId}|${binding.origin}|${binding.certificate}`).digest('base64url')
+}
+
+function validBinding(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && isHttpsOrigin(value.origin)
+    && typeof value.certificate === 'string'
+    && FINGERPRINT.test(value.certificate),
+  )
+}
 
 function base32(bytes) {
   let output = ''
@@ -120,8 +152,9 @@ async function ensurePrivateDirectory(directory, uid) {
 }
 
 /**
- * `<directory>/<hostId>.json` (0600): `{ v: 1, hostId, deviceId?, privateKey, credential? }` where
- * `privateKey` and `credential` are base64(safeStorage.encryptString(...)). A record that cannot be
+ * `<directory>/<hostId>.json` (0600): `{ v: 1, hostId, deviceId?, privateKey, credential?, binding? }` where
+ * `privateKey`, `credential` and `binding` are base64(safeStorage.encryptString(...)). `binding` is another computer's
+ * origin and certificate pin (`bindingMac`); this Mac's own Host has none. A record that cannot be
  * read back (foreign file, other keychain, tampering) is ignored and replaced at the next enrollment.
  * A renewed credential is written before it is used: the Host keeps the stored one current until the
  * new one is first presented, so a renewal whose answer or write is lost leaves the file valid.
@@ -138,9 +171,12 @@ async function openCredentialStore({
   if (!HOST_ID.test(hostId)) throw new Error('hostId 格式不正确')
   await ensurePrivateDirectory(directory, uid)
   const file = join(directory, `${hostId}.json`)
+  /** @typedef {{ key: ReturnType<typeof deviceKeyFrom>, deviceId?: string, credential?: string, binding?: { origin: string, certificate: string } }} StoredRecord */
+  /** @type {StoredRecord | undefined} */
   let record = await load()
   let writes = Promise.resolve()
 
+  /** @returns {Promise<StoredRecord | undefined>} */
   async function load() {
     let stats
     try {
@@ -156,12 +192,24 @@ async function openCredentialStore({
     try {
       const value = JSON.parse(await readFile(file, 'utf8'))
       if (value?.v !== 1 || value.hostId !== hostId || typeof value.privateKey !== 'string') throw new Error('format')
-      const key = deviceKeyFrom(crypto.createPrivateKey(safeStorage.decryptString(Buffer.from(value.privateKey, 'base64'))))
+      const pem = safeStorage.decryptString(Buffer.from(value.privateKey, 'base64'))
+      const key = deviceKeyFrom(crypto.createPrivateKey(pem))
       if (value.credential === undefined) return { key }
       const credential = safeStorage.decryptString(Buffer.from(value.credential, 'base64'))
       if (!DEVICE_ID.test(value.deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${value.deviceId}.`))
         throw new Error('format')
-      return { key, deviceId: value.deviceId, credential }
+      let binding
+      if (value.binding !== undefined) {
+        try {
+          const parsed = JSON.parse(safeStorage.decryptString(Buffer.from(String(value.binding), 'base64')))
+          const candidate = { origin: parsed?.origin, certificate: parsed?.certificate }
+          if (validBinding(candidate) && parsed.mac === bindingMac(pem, hostId, candidate)) binding = candidate
+          else log('另一台电脑的地址与证书记录无法核对，已忽略')
+        } catch {
+          log('另一台电脑的地址与证书记录无法读取，已忽略')
+        }
+      }
+      return { key, deviceId: value.deviceId, credential, ...(binding ? { binding } : {}) }
     } catch {
       log('设备凭据文件无法读取，需要重新连接')
       return undefined
@@ -173,6 +221,10 @@ async function openCredentialStore({
     if (next.credential !== undefined) {
       value.deviceId = next.deviceId
       value.credential = safeStorage.encryptString(next.credential).toString('base64')
+    }
+    if (next.binding !== undefined) {
+      const sealed = { ...next.binding, mac: bindingMac(next.key.exportPem(), hostId, next.binding) }
+      value.binding = safeStorage.encryptString(JSON.stringify(sealed)).toString('base64')
     }
     const temporary = join(directory, `.${hostId}-${crypto.randomUUID()}.tmp`)
     const handle = await open(temporary, 'wx', 0o600)
@@ -232,13 +284,24 @@ async function openCredentialStore({
       const current = requireCredential()
       return current.key.sign(foldersSigningText(hostId, current.deviceId, body.nonce, foldersBodyHash(body)))
     },
-    /** Replaces key and credential after a completed enrollment (each enrollment uses a fresh key). */
-    commit({ key, deviceId, credential }) {
+    /** Another computer's origin and certificate pin, as the encrypted record holds them; undefined for this Mac's Host. */
+    binding() {
+      return record?.binding === undefined ? undefined : { ...record.binding }
+    },
+    /** Replaces key and credential after a completed enrollment (each enrollment uses a fresh key), with the binding. */
+    /** @param {{ key: ReturnType<typeof deviceKeyFrom>, deviceId: string, credential: string, binding?: { origin: string, certificate: string } }} input */
+    commit({ key, deviceId, credential, binding }) {
       if (!DEVICE_ID.test(deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${deviceId}.`)) {
         return Promise.reject(new Error('Host 返回的设备凭据格式不正确'))
       }
+      if (binding !== undefined && !validBinding(binding)) return Promise.reject(new Error('电脑地址或证书格式不正确'))
       return serialized(async () => {
-        const next = { key, deviceId, credential }
+        const next = {
+          key,
+          deviceId,
+          credential,
+          ...(binding ? { binding: { origin: binding.origin, certificate: binding.certificate } } : {}),
+        }
         await persist(next)
         record = next
       })
@@ -252,7 +315,17 @@ async function openCredentialStore({
         const current = requireCredential()
         if (!CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${current.deviceId}.`))
           throw new Error('Host 返回的设备凭据格式不正确')
-        const next = { key: current.key, deviceId: current.deviceId, credential }
+        const next = { ...current, credential }
+        await persist(next)
+        record = next
+      })
+    },
+    /** Pins another certificate for the same origin, after the Host proved it serves it (remote-proxy.cjs). */
+    setBinding(binding) {
+      return serialized(async () => {
+        const current = requireCredential()
+        if (!validBinding(binding)) throw new Error('电脑地址或证书格式不正确')
+        const next = { ...current, binding: { origin: binding.origin, certificate: binding.certificate } }
         await persist(next)
         record = next
       })

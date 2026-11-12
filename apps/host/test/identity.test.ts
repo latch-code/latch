@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { sha256Hex } from '@latch/core/node-kit'
-import { P256_VECTOR } from '@latch/testkit'
+import { HOST_PROOF_SIGNING_VECTOR, P256_VECTOR } from '@latch/testkit'
 import { base32 } from '../src/crypto.ts'
-import { hostIdFromSpki, loadOrCreateHostIdentity } from '../src/identity.ts'
+import { certificateProofText, hostIdFromSpki, loadOrCreateHostIdentity } from '../src/identity.ts'
 
 const cleanups: string[] = []
 afterEach(() => {
@@ -88,5 +88,24 @@ describe('host identity', () => {
     writeFileSync(elsewhere, p384, { mode: 0o600 })
     symlinkSync(elsewhere, join(linked, 'identity', 'host-key.pem'))
     await expect(loadOrCreateHostIdentity(linked)).rejects.toEqual(invalid)
+  })
+})
+
+describe('the certificate proof', () => {
+  it('signs the shared text with the identity key that the hostId names (security vector)', async () => {
+    const vector = HOST_PROOF_SIGNING_VECTOR.example
+    const dir = dataDir()
+    mkdirSync(join(dir, 'identity'), { mode: 0o700 })
+    const pem = createPrivateKey({ key: P256_VECTOR.privateJwk, format: 'jwk' }).export({ format: 'pem', type: 'pkcs8' }) as string
+    writeFileSync(join(dir, 'identity', 'host-key.pem'), pem, { mode: 0o600 })
+    const identity = await loadOrCreateHostIdentity(dir)
+    expect(identity.hostId).toBe(vector.hostId)
+    expect(identity.publicKeySpki.toString('base64url')).toBe(vector.publicKey)
+    const text = certificateProofText(vector.hostId, vector.nonce, vector.certificate)
+    expect(text).toBe(vector.text)
+    const key = { key: identity.publicKeySpki, format: 'der' as const, type: 'spki' as const, dsaEncoding: 'ieee-p1363' as const }
+    // ECDSA is randomized: the Host's own signature verifies, and so does the vector's.
+    expect(verify('sha256', Buffer.from(text), key, identity.sign(Buffer.from(text)))).toBe(true)
+    expect(verify('sha256', Buffer.from(text), key, Buffer.from(vector.signature, 'base64url'))).toBe(true)
   })
 })

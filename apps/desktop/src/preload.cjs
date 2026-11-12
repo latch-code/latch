@@ -243,200 +243,347 @@ function diskPaths(files) {
   return paths
 }
 
+// `computers`: the computers this app reaches (computers.cjs). Only this checked view crosses: hostIds, names, states,
+// times and versions, and on this Mac's own page each address and an addition in progress. Never a link, a code or a
+// credential: main reads a link from the clipboard or a code file itself.
+const HOST_ID = /^[a-z2-7]{52}$/
+const COMPUTER_STATES = new Set([
+  'online',
+  'connecting',
+  'offline',
+  'stopping',
+  'sleeping',
+  'revoked',
+  'wrong-host',
+  'cert-error',
+  'cert-changed',
+  'outdated',
+])
+const HOST_STATE_REASONS = new Set(['restart', 'update', 'sleep', 'shutdown'])
+const ADD_STAGES = new Set(['checking', 'waiting'])
+const FINGERPRINT = /^[A-Z2-7]{4}(?: [A-Z2-7]{4}){4}$/
+const httpsOriginText = value => {
+  if (!shortText(value, 512)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.origin === value
+  } catch {
+    return false
+  }
+}
+function computerItem(value) {
+  if (!value || typeof value !== 'object' || typeof value.hostId !== 'string' || !HOST_ID.test(value.hostId)) return undefined
+  if (!shortText(value.name, 90) || value.name.length === 0 || typeof value.local !== 'boolean' || !COMPUTER_STATES.has(value.state))
+    return undefined
+  const item = { hostId: value.hostId, name: value.name, local: value.local, state: value.state }
+  if (value.lastSeenAt !== undefined) {
+    if (!shortText(value.lastSeenAt, 40)) return undefined
+    item.lastSeenAt = value.lastSeenAt
+  }
+  if (value.version !== undefined) {
+    if (!shortText(value.version, 48)) return undefined
+    item.version = value.version
+  }
+  if (value.reason !== undefined) {
+    if (!HOST_STATE_REASONS.has(value.reason)) return undefined
+    item.reason = value.reason
+  }
+  if (value.origin !== undefined) {
+    if (!httpsOriginText(value.origin)) return undefined
+    item.origin = value.origin
+  }
+  return item
+}
+function computersView(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.computers) || value.computers.length > 17) return undefined
+  const computers = value.computers.map(computerItem)
+  if (computers.some(item => item === undefined)) return undefined
+  const view = { computers }
+  if (value.problem !== undefined) {
+    if (value.problem !== 'credentials') return undefined
+    view.problem = 'credentials'
+  }
+  if (value.adding !== undefined) {
+    const adding = value.adding
+    if (adding === null) view.adding = null
+    else if (
+      adding
+      && typeof adding === 'object'
+      && ADD_STAGES.has(adding.stage)
+      && httpsOriginText(adding.origin)
+      && (adding.fingerprint === undefined || (typeof adding.fingerprint === 'string' && FINGERPRINT.test(adding.fingerprint)))
+    )
+      view.adding = { stage: adding.stage, origin: adding.origin, ...(adding.fingerprint ? { fingerprint: adding.fingerprint } : {}) }
+    else return undefined
+  }
+  return view
+}
+/** A refusal or an outcome from main, as plain fields. */
+function computerResult(value) {
+  if (!value || typeof value !== 'object' || typeof value.ok !== 'boolean') return { ok: false, error: 'failed', message: '' }
+  if (value.ok)
+    return {
+      ok: true,
+      ...(typeof value.hostId === 'string' && HOST_ID.test(value.hostId) ? { hostId: value.hostId } : {}),
+      ...(typeof value.revokedThere === 'boolean' ? { revokedThere: value.revokedThere } : {}),
+    }
+  return {
+    ok: false,
+    error: typeof value.error === 'string' && /^[a-z0-9-]{1,40}$/.test(value.error) ? value.error : 'failed',
+    message: shortText(value.message, 200) ? value.message : '',
+  }
+}
+function computersApi(full) {
+  const api = {
+    list: () => ipcRenderer.invoke('latch:computers:list').then(computersView),
+    /** Main pushes each change; returns the function that stops listening. */
+    subscribe: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, value) => {
+        const view = computersView(value)
+        if (view) callback(view)
+      }
+      ipcRenderer.on('latch:computers:changed', listener)
+      return () => ipcRenderer.removeListener('latch:computers:changed', listener)
+    },
+    /** Opens (or brings forward) that computer's window. */
+    open: hostId =>
+      typeof hostId === 'string' && HOST_ID.test(hostId)
+        ? ipcRenderer.invoke('latch:computers:open', hostId).then(computerResult)
+        : Promise.resolve(computerResult(undefined)),
+  }
+  if (full) {
+    /** `clipboard`: the link another computer's 复制链接 put there; `file`: a code file chosen in the system's panel. */
+    api.add = source => ipcRenderer.invoke('latch:computers:add', source === 'file' ? 'file' : 'clipboard').then(computerResult)
+    api.cancelAdd = () => ipcRenderer.invoke('latch:computers:cancel-add').then(computerResult)
+    /** 信任新证书 of a computer whose certificate changed: main pins it only when that Host proves it serves it. */
+    api.trustCertificate = hostId =>
+      typeof hostId === 'string' && HOST_ID.test(hostId)
+        ? ipcRenderer.invoke('latch:computers:trust-certificate', hostId).then(computerResult)
+        : Promise.resolve(computerResult(undefined))
+    api.remove = hostId =>
+      typeof hostId === 'string' && HOST_ID.test(hostId)
+        ? ipcRenderer.invoke('latch:computers:remove', hostId).then(computerResult)
+        : Promise.resolve(computerResult(undefined))
+  }
+  return Object.freeze(api)
+}
+
+/** Which computer this page belongs to: `app` (this Mac), `h-<hostId>` (another computer's Host) or neither. */
+const HOME = (() => {
+  try {
+    const url = new URL(String(Reflect.get(Reflect.get(globalThis, 'location') ?? {}, 'href')))
+    return url.protocol === 'latch:' ? url.hostname : ''
+  } catch {
+    return ''
+  }
+})()
+const REMOTE = /^h-[a-z2-7]{52}$/.test(HOME)
+
+// Another computer's page: none of this Mac's folders, files, preview browser, lifecycle, notifications or updates,
+// which all act on this Mac. It behaves as the page does without a shell for them, as in a browser.
+if (REMOTE)
+  contextBridge.exposeInMainWorld(
+    'latchShell',
+    Object.freeze({ kind: 'electron', remote: true, devMode: true, platform: process.platform, computers: computersApi(false) }),
+  )
+
 // The channels are OPEN_IN_BROWSER and COPY_COMPUTER_LINK in proxy.cjs, LIFECYCLE_CHANNELS in lifecycle.cjs and CHANNELS in browser.cjs, which
 // a sandboxed preload cannot load, and the latch:folders:* handlers in main.cjs; main accepts each only from the
 // latch://app/ page in a window's top frame.
-contextBridge.exposeInMainWorld(
-  'latchShell',
-  Object.freeze({
-    kind: 'electron',
-    devMode: true,
-    platform: process.platform,
-    previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
-    folders: Object.freeze({
-      protocolVersion: 1,
-      /** No project: a new project. A project: more folders for it; with a folder, that folder chosen again. */
-      pick: (projectId, replaceFolderId) => {
-        const project = optionalId(projectId, PROJECT_ID)
-        const replace = optionalId(replaceFolderId, FOLDER_ID)
-        if (project === undefined || replace === undefined || (replace !== null && project === null)) return Promise.resolve(INVALID)
-        return ipcRenderer.invoke('latch:folders:pick', { projectId: project, replaceFolderId: replace })
-      },
-      /** `drop(files)` makes a new project of the dropped folders; `drop(projectId, files)` adds them to that project. */
-      drop: (projectOrFiles, maybeFiles) => {
-        const named = projectOrFiles === undefined || projectOrFiles === null || typeof projectOrFiles === 'string'
-        const project = named ? optionalId(projectOrFiles, PROJECT_ID) : null
-        if (project === undefined) return Promise.resolve(INVALID)
-        const paths = diskPaths(named ? maybeFiles : projectOrFiles)
-        return paths.length === 0 ? Promise.resolve(CANCELED) : ipcRenderer.invoke('latch:folders:drop', { projectId: project, paths })
-      },
-      /** Finder shows one of the project's folders; without a folder, its primary folder. */
-      reveal: (projectId, folderId) => {
-        const folder = optionalId(folderId, FOLDER_ID)
-        if (typeof projectId !== 'string' || !PROJECT_ID.test(projectId) || folder === undefined) return Promise.resolve(INVALID)
-        return ipcRenderer.invoke('latch:folders:reveal', { projectId, folderId: folder })
-      },
-      /** 存为项目: the folder the Host made for this session becomes a new project's primary folder. */
-      saveSessionFolder: sessionId => {
-        if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return Promise.resolve(INVALID)
-        return ipcRenderer.invoke('latch:folders:save-session', { sessionId })
-      },
+if (!REMOTE)
+  contextBridge.exposeInMainWorld(
+    'latchShell',
+    Object.freeze({
+      kind: 'electron',
+      devMode: true,
+      computers: computersApi(true),
+      platform: process.platform,
+      previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
+      folders: Object.freeze({
+        protocolVersion: 1,
+        /** No project: a new project. A project: more folders for it; with a folder, that folder chosen again. */
+        pick: (projectId, replaceFolderId) => {
+          const project = optionalId(projectId, PROJECT_ID)
+          const replace = optionalId(replaceFolderId, FOLDER_ID)
+          if (project === undefined || replace === undefined || (replace !== null && project === null)) return Promise.resolve(INVALID)
+          return ipcRenderer.invoke('latch:folders:pick', { projectId: project, replaceFolderId: replace })
+        },
+        /** `drop(files)` makes a new project of the dropped folders; `drop(projectId, files)` adds them to that project. */
+        drop: (projectOrFiles, maybeFiles) => {
+          const named = projectOrFiles === undefined || projectOrFiles === null || typeof projectOrFiles === 'string'
+          const project = named ? optionalId(projectOrFiles, PROJECT_ID) : null
+          if (project === undefined) return Promise.resolve(INVALID)
+          const paths = diskPaths(named ? maybeFiles : projectOrFiles)
+          return paths.length === 0 ? Promise.resolve(CANCELED) : ipcRenderer.invoke('latch:folders:drop', { projectId: project, paths })
+        },
+        /** Finder shows one of the project's folders; without a folder, its primary folder. */
+        reveal: (projectId, folderId) => {
+          const folder = optionalId(folderId, FOLDER_ID)
+          if (typeof projectId !== 'string' || !PROJECT_ID.test(projectId) || folder === undefined) return Promise.resolve(INVALID)
+          return ipcRenderer.invoke('latch:folders:reveal', { projectId, folderId: folder })
+        },
+        /** 存为项目: the folder the Host made for this session becomes a new project's primary folder. */
+        saveSessionFolder: sessionId => {
+          if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return Promise.resolve(INVALID)
+          return ipcRenderer.invoke('latch:folders:save-session', { sessionId })
+        },
+      }),
+      // Main makes a one-time invitation and opens the browser with it; the renderer only learns whether that worked.
+      openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),
+      // Main makes a one-time link for another computer and puts it on the clipboard; the renderer never sees the link.
+      copyComputerLink: () => ipcRenderer.invoke('latch:copy-computer-link'),
+      // Login item, keeping the Mac awake and the Host's restarts (Settings › 通用); main owns all of them.
+      lifecycle: Object.freeze({
+        get: () => ipcRenderer.invoke('latch:lifecycle'),
+        setLoginItem: enabled => ipcRenderer.invoke('latch:lifecycle:login-item', enabled === true),
+        setKeepAwake: enabled => ipcRenderer.invoke('latch:lifecycle:keep-awake', enabled === true),
+        restartHost: () => ipcRenderer.invoke('latch:lifecycle:restart-host'),
+        subscribe: callback => {
+          const listener = (_event, value) => callback(value)
+          ipcRenderer.on('latch:lifecycle:changed', listener)
+          return () => ipcRenderer.removeListener('latch:lifecycle:changed', listener)
+        },
+      }),
+      notifications: Object.freeze({
+        get: () => ipcRenderer.invoke('latch:notifications:get').then(notificationState),
+        set: value =>
+          value
+          && Object.keys(value).length === 3
+          && ['completion', 'approval', 'title'].every(key => Object.hasOwn(value, key) && typeof value[key] === 'boolean')
+            ? ipcRenderer
+                .invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
+                .then(notificationState)
+            : Promise.resolve(undefined),
+        subscribeState: callback => {
+          if (typeof callback !== 'function') return () => {}
+          const listener = (_event, value) => {
+            const state = notificationState(value)
+            if (state) callback(state)
+          }
+          ipcRenderer.on('latch:notifications:state', listener)
+          return () => ipcRenderer.removeListener('latch:notifications:state', listener)
+        },
+        subscribe: callback => {
+          const listener = (_event, sessionId) => {
+            if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
+          }
+          ipcRenderer.removeListener('latch:notifications:open', holdEarlySession)
+          ipcRenderer.on('latch:notifications:open', listener)
+          const early = earlySession
+          earlySession = undefined
+          if (early !== undefined) callback(early)
+          return () => ipcRenderer.removeListener('latch:notifications:open', listener)
+        },
+      }),
+      // This app's own updates (Settings › 关于). Main owns the feed, the files and the install; the page gets the view.
+      updates: Object.freeze({
+        get: () => updateCall('latch:updates'),
+        check: () => updateCall('latch:updates:check'),
+        download: () => updateCall('latch:updates:download'),
+        /** 'now' (重启并安装) or 'at-quit' (下次退出时安装). */
+        install: when => updateCall('latch:updates:install', when === 'at-quit' ? 'at-quit' : 'now'),
+        cancelWaiting: () => updateCall('latch:updates:cancel-waiting'),
+        setAutoDownload: enabled => updateCall('latch:updates:auto-download', enabled === true),
+        onChange: callback => {
+          if (typeof callback !== 'function') return () => {}
+          const listener = (_event, value) => {
+            const view = updateView(value)
+            if (view) callback(view)
+          }
+          ipcRenderer.on('latch:updates:changed', listener)
+          return () => ipcRenderer.removeListener('latch:updates:changed', listener)
+        },
+        /** 「检查更新…」 was chosen in the menu: the page shows Settings › 关于. */
+        onShow: callback => {
+          if (typeof callback !== 'function') return () => {}
+          const listener = () => callback()
+          ipcRenderer.removeListener('latch:updates:show', holdEarlyShow)
+          ipcRenderer.on('latch:updates:show', listener)
+          if (earlyShow) {
+            earlyShow = false
+            callback()
+          }
+          return () => ipcRenderer.removeListener('latch:updates:show', listener)
+        },
+      }),
+      files: Object.freeze({
+        protocolVersion: 2,
+        inspect: (sessionId, path) =>
+          typeof path === 'string' ? fileCall('latch:files:inspect')(sessionId, path) : Promise.resolve(INVALID),
+        known: (sessionId, paths) => {
+          const input = knownInput(sessionId, paths)
+          return input ? ipcRenderer.invoke('latch:files:known', input) : Promise.resolve(INVALID)
+        },
+        reveal: fileCall('latch:files:reveal'),
+        quickLook: fileCall('latch:files:quicklook'),
+        open: fileCall('latch:files:open'),
+      }),
+      // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
+      // could reach the shell or the Host shut.
+      browser: Object.freeze({
+        protocolVersion: 1,
+        /** A new tab in the project's own partition, empty or at an address as typed in the address field. */
+        open: (projectId, url) => {
+          const project = browserProject(projectId)
+          const address = url === undefined || url === null ? null : browserAddress(url)
+          return browserCall('latch:browser:open', project && address !== undefined ? { projectId: project, url: address } : undefined)
+        },
+        close: tabId => browserCall('latch:browser:close', browserTab(tabId)),
+        navigate: (tabId, url) => {
+          const tab = browserTab(tabId)
+          const address = browserAddress(url)
+          return browserCall('latch:browser:navigate', tab && address ? { tabId: tab.tabId, url: address } : undefined)
+        },
+        back: browserGo('back'),
+        forward: browserGo('forward'),
+        reload: browserGo('reload'),
+        stop: browserGo('stop'),
+        /** The panel's rectangle in CSS pixels of the page; null hides the tab. */
+        setBounds: (tabId, bounds) => {
+          const tab = browserTab(tabId)
+          const rect = bounds === null ? null : browserRect(bounds)
+          return browserCall('latch:browser:bounds', tab && rect !== undefined ? { tabId: tab.tabId, bounds: rect } : undefined)
+        },
+        /** While an overlay of the page covers the panel: the tab hides, and the frame it showed comes back to stand in. */
+        occlude: (tabId, occluded) => {
+          const tab = browserTab(tabId)
+          return browserCall('latch:browser:occlude', tab && typeof occluded === 'boolean' ? { tabId: tab.tabId, occluded } : undefined)
+        },
+        focus: tabId => browserCall('latch:browser:focus', browserTab(tabId)),
+        capture: tabId => browserCall('latch:browser:capture', browserTab(tabId)),
+        /** 标注: the element at a point of the tab, in CSS pixels of the page from the tab's top-left corner. */
+        annotate: (tabId, point) => {
+          const tab = browserTab(tabId)
+          const valid =
+            point
+            && typeof point === 'object'
+            && Object.keys(point).length === 2
+            && browserNumber(point.x, 0, 100_000)
+            && browserNumber(point.y, 0, 100_000)
+          return browserCall('latch:browser:annotate', tab && valid ? { tabId: tab.tabId, point: { x: point.x, y: point.y } } : undefined)
+        },
+        zoom: (tabId, direction) => {
+          const tab = browserTab(tabId)
+          const valid = direction === 'in' || direction === 'out' || direction === 'reset'
+          return browserCall('latch:browser:zoom', tab && valid ? { tabId: tab.tabId, direction } : undefined)
+        },
+        devTools: tabId => browserCall('latch:browser:devtools', browserTab(tabId)),
+        /** 清除数据 of a project's partition: its storage, cookies, cache and saved credentials. */
+        clearData: projectId => {
+          const project = browserProject(projectId)
+          return browserCall('latch:browser:clear-data', project && { projectId: project })
+        },
+        state: tabId => browserCall('latch:browser:state', browserTab(tabId)),
+        subscribe: callback => {
+          if (typeof callback !== 'function') return () => {}
+          const listener = (_event, value) => {
+            const event = browserEvent(value)
+            if (event) callback(event)
+          }
+          ipcRenderer.on('latch:browser:event', listener)
+          return () => ipcRenderer.removeListener('latch:browser:event', listener)
+        },
+      }),
     }),
-    // Main makes a one-time invitation and opens the browser with it; the renderer only learns whether that worked.
-    openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),
-    // Main makes a one-time link for another computer and puts it on the clipboard; the renderer never sees the link.
-    copyComputerLink: () => ipcRenderer.invoke('latch:copy-computer-link'),
-    // Login item, keeping the Mac awake and the Host's restarts (Settings › 通用); main owns all of them.
-    lifecycle: Object.freeze({
-      get: () => ipcRenderer.invoke('latch:lifecycle'),
-      setLoginItem: enabled => ipcRenderer.invoke('latch:lifecycle:login-item', enabled === true),
-      setKeepAwake: enabled => ipcRenderer.invoke('latch:lifecycle:keep-awake', enabled === true),
-      restartHost: () => ipcRenderer.invoke('latch:lifecycle:restart-host'),
-      subscribe: callback => {
-        const listener = (_event, value) => callback(value)
-        ipcRenderer.on('latch:lifecycle:changed', listener)
-        return () => ipcRenderer.removeListener('latch:lifecycle:changed', listener)
-      },
-    }),
-    notifications: Object.freeze({
-      get: () => ipcRenderer.invoke('latch:notifications:get').then(notificationState),
-      set: value =>
-        value
-        && Object.keys(value).length === 3
-        && ['completion', 'approval', 'title'].every(key => Object.hasOwn(value, key) && typeof value[key] === 'boolean')
-          ? ipcRenderer
-              .invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
-              .then(notificationState)
-          : Promise.resolve(undefined),
-      subscribeState: callback => {
-        if (typeof callback !== 'function') return () => {}
-        const listener = (_event, value) => {
-          const state = notificationState(value)
-          if (state) callback(state)
-        }
-        ipcRenderer.on('latch:notifications:state', listener)
-        return () => ipcRenderer.removeListener('latch:notifications:state', listener)
-      },
-      subscribe: callback => {
-        const listener = (_event, sessionId) => {
-          if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
-        }
-        ipcRenderer.removeListener('latch:notifications:open', holdEarlySession)
-        ipcRenderer.on('latch:notifications:open', listener)
-        const early = earlySession
-        earlySession = undefined
-        if (early !== undefined) callback(early)
-        return () => ipcRenderer.removeListener('latch:notifications:open', listener)
-      },
-    }),
-    // This app's own updates (Settings › 关于). Main owns the feed, the files and the install; the page gets the view.
-    updates: Object.freeze({
-      get: () => updateCall('latch:updates'),
-      check: () => updateCall('latch:updates:check'),
-      download: () => updateCall('latch:updates:download'),
-      /** 'now' (重启并安装) or 'at-quit' (下次退出时安装). */
-      install: when => updateCall('latch:updates:install', when === 'at-quit' ? 'at-quit' : 'now'),
-      cancelWaiting: () => updateCall('latch:updates:cancel-waiting'),
-      setAutoDownload: enabled => updateCall('latch:updates:auto-download', enabled === true),
-      onChange: callback => {
-        if (typeof callback !== 'function') return () => {}
-        const listener = (_event, value) => {
-          const view = updateView(value)
-          if (view) callback(view)
-        }
-        ipcRenderer.on('latch:updates:changed', listener)
-        return () => ipcRenderer.removeListener('latch:updates:changed', listener)
-      },
-      /** 「检查更新…」 was chosen in the menu: the page shows Settings › 关于. */
-      onShow: callback => {
-        if (typeof callback !== 'function') return () => {}
-        const listener = () => callback()
-        ipcRenderer.removeListener('latch:updates:show', holdEarlyShow)
-        ipcRenderer.on('latch:updates:show', listener)
-        if (earlyShow) {
-          earlyShow = false
-          callback()
-        }
-        return () => ipcRenderer.removeListener('latch:updates:show', listener)
-      },
-    }),
-    files: Object.freeze({
-      protocolVersion: 2,
-      inspect: (sessionId, path) =>
-        typeof path === 'string' ? fileCall('latch:files:inspect')(sessionId, path) : Promise.resolve(INVALID),
-      known: (sessionId, paths) => {
-        const input = knownInput(sessionId, paths)
-        return input ? ipcRenderer.invoke('latch:files:known', input) : Promise.resolve(INVALID)
-      },
-      reveal: fileCall('latch:files:reveal'),
-      quickLook: fileCall('latch:files:quicklook'),
-      open: fileCall('latch:files:open'),
-    }),
-    // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
-    // could reach the shell or the Host shut.
-    browser: Object.freeze({
-      protocolVersion: 1,
-      /** A new tab in the project's own partition, empty or at an address as typed in the address field. */
-      open: (projectId, url) => {
-        const project = browserProject(projectId)
-        const address = url === undefined || url === null ? null : browserAddress(url)
-        return browserCall('latch:browser:open', project && address !== undefined ? { projectId: project, url: address } : undefined)
-      },
-      close: tabId => browserCall('latch:browser:close', browserTab(tabId)),
-      navigate: (tabId, url) => {
-        const tab = browserTab(tabId)
-        const address = browserAddress(url)
-        return browserCall('latch:browser:navigate', tab && address ? { tabId: tab.tabId, url: address } : undefined)
-      },
-      back: browserGo('back'),
-      forward: browserGo('forward'),
-      reload: browserGo('reload'),
-      stop: browserGo('stop'),
-      /** The panel's rectangle in CSS pixels of the page; null hides the tab. */
-      setBounds: (tabId, bounds) => {
-        const tab = browserTab(tabId)
-        const rect = bounds === null ? null : browserRect(bounds)
-        return browserCall('latch:browser:bounds', tab && rect !== undefined ? { tabId: tab.tabId, bounds: rect } : undefined)
-      },
-      /** While an overlay of the page covers the panel: the tab hides, and the frame it showed comes back to stand in. */
-      occlude: (tabId, occluded) => {
-        const tab = browserTab(tabId)
-        return browserCall('latch:browser:occlude', tab && typeof occluded === 'boolean' ? { tabId: tab.tabId, occluded } : undefined)
-      },
-      focus: tabId => browserCall('latch:browser:focus', browserTab(tabId)),
-      capture: tabId => browserCall('latch:browser:capture', browserTab(tabId)),
-      /** 标注: the element at a point of the tab, in CSS pixels of the page from the tab's top-left corner. */
-      annotate: (tabId, point) => {
-        const tab = browserTab(tabId)
-        const valid =
-          point
-          && typeof point === 'object'
-          && Object.keys(point).length === 2
-          && browserNumber(point.x, 0, 100_000)
-          && browserNumber(point.y, 0, 100_000)
-        return browserCall('latch:browser:annotate', tab && valid ? { tabId: tab.tabId, point: { x: point.x, y: point.y } } : undefined)
-      },
-      zoom: (tabId, direction) => {
-        const tab = browserTab(tabId)
-        const valid = direction === 'in' || direction === 'out' || direction === 'reset'
-        return browserCall('latch:browser:zoom', tab && valid ? { tabId: tab.tabId, direction } : undefined)
-      },
-      devTools: tabId => browserCall('latch:browser:devtools', browserTab(tabId)),
-      /** 清除数据 of a project's partition: its storage, cookies, cache and saved credentials. */
-      clearData: projectId => {
-        const project = browserProject(projectId)
-        return browserCall('latch:browser:clear-data', project && { projectId: project })
-      },
-      state: tabId => browserCall('latch:browser:state', browserTab(tabId)),
-      subscribe: callback => {
-        if (typeof callback !== 'function') return () => {}
-        const listener = (_event, value) => {
-          const event = browserEvent(value)
-          if (event) callback(event)
-        }
-        ipcRenderer.on('latch:browser:event', listener)
-        return () => ipcRenderer.removeListener('latch:browser:event', listener)
-      },
-    }),
-  }),
-)
+  )

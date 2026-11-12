@@ -172,7 +172,7 @@ Host 声明 `catalog.features.appPages: 1`。
 
 ## 页面框
 
-页面框是一个固定的引导页：Host 在 `/link/app-frame/runtime.html` 提供（不需要凭据；别的设备只在 `sec-fetch-dest: iframe` 时得到它），桌面端在 `latch-frame://app/runtime.html` 经 `host.sock` 取来并核对。引导页里只有一个内联脚本：React、设计系统的令牌与原语、`@latch/app-sdk` 的桥与运行时。`pnpm build:web` 把它构建进 `app-frame/`，同样的源码得到同样的字节，脚本的哈希写在 `runtime.json` 里，Host 与桌面端读文件时再算一次，不一致就不提供。响应头：
+页面框是一个固定的引导页：Host 在 `/link/app-frame/runtime.html` 提供（不需要凭据；别的设备只在 `sec-fetch-dest: iframe` 时得到它），桌面端在 `latch-frame://app/runtime.html` 经 `host.sock` 取来并核对；另一台电脑的窗口用 `latch-frame://h-<hostId>/app/runtime.html`，主进程经 HTTPS 从那台 Host 取来，同样核对，`frame-ancestors` 只是那台电脑的来源（[ARCHITECTURE.md](./ARCHITECTURE.md#桌面端与其他电脑)）。引导页里只有一个内联脚本：React、设计系统的令牌与原语、`@latch/app-sdk` 的桥与运行时。`pnpm build:web` 把它构建进 `app-frame/`，同样的源码得到同样的字节，脚本的哈希写在 `runtime.json` 里，Host 与桌面端读文件时再算一次，不一致就不提供。响应头：
 
 ```
 sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data:; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'

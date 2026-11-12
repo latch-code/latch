@@ -429,7 +429,7 @@ export function ProjectEditor({
       </SettingsGroup>
       {!shell && (
         <p className="settings-caption">
-          {currentShell() && owner
+          {currentShell() && currentShell()?.remote !== true && owner
             ? '重新启动 Latch 后，可以在这里添加和重新选择文件夹。'
             : `添加项目和添加文件夹要在 ${computerName(snapshot.hostName)} 上的 Latch 里完成。`}
         </p>

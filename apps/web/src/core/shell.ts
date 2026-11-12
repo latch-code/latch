@@ -167,8 +167,70 @@ export interface ShellUpdates {
   onShow(callback: () => void): () => void
 }
 
+/**
+ * A computer the desktop app reaches: this Mac's Host over host.sock (`local`) or another computer's over HTTPS.
+ * `stopping`/`sleeping` come from that Host's own announcement; `revoked`: that computer removed this device;
+ * `wrong-host`: another Host answers at its address; `cert-error`: its certificate is not trusted; `cert-changed`: its
+ * trusted certificate is not the one it was added with (renewed, or another server); `outdated`: its
+ * Latch is too old to say who it is.
+ */
+export type ComputerState =
+  | 'online'
+  | 'connecting'
+  | 'offline'
+  | 'stopping'
+  | 'sleeping'
+  | 'revoked'
+  | 'wrong-host'
+  | 'cert-error'
+  | 'cert-changed'
+  | 'outdated'
+
+export interface ComputerView {
+  hostId: string
+  name: string
+  local: boolean
+  state: ComputerState
+  lastSeenAt?: string
+  version?: string
+  reason?: 'restart' | 'update' | 'sleep' | 'shutdown'
+  /** Only on this Mac's own page. */
+  origin?: string
+}
+
+export interface ComputersView {
+  computers: ComputerView[]
+  /** Only on this Mac's own page: an addition in progress, and the code to compare once it waits on the other computer. */
+  adding?: { stage: 'checking' | 'waiting'; origin: string; fingerprint?: string } | null
+  /** Only on this Mac's own page: another computer's credentials could not be opened, so the list is read-only. */
+  problem?: 'credentials'
+}
+
+export type ComputerResult = { ok: true; hostId?: string; revokedThere?: boolean } | { ok: false; error: string; message: string }
+
+/**
+ * The computers this desktop app reaches (apps/desktop/src/computers.cjs). Every page may list and open them; only this
+ * Mac's own page adds (main reads the link from the clipboard or a code file, never the page) and removes.
+ */
+export interface ShellComputers {
+  list(): Promise<ComputersView | undefined>
+  subscribe(callback: (view: ComputersView) => void): () => void
+  open(hostId: string): Promise<ComputerResult>
+  add?(source: 'clipboard' | 'file'): Promise<ComputerResult>
+  cancelAdd?(): Promise<ComputerResult>
+  trustCertificate?(hostId: string): Promise<ComputerResult>
+  remove?(hostId: string): Promise<ComputerResult>
+}
+
 /** What the Electron preload exposes; nothing else crosses into the renderer. */
 export interface LatchShell {
+  /**
+   * Another computer's page in the desktop app: none of this Mac's folders, files, preview browser, lifecycle or
+   * updates, only `computers`.
+   */
+  remote?: true
+  /** Shells from before several computers do not have it. */
+  computers?: ShellComputers
   /** Opaque HTML frames with main-process network and WebRTC restrictions. */
   previews?: { protocolVersion: 1; htmlScripts: true }
   notifications?: {
@@ -238,6 +300,21 @@ export function shellFiles(): ShellFiles | null {
     && typeof files.open === 'function'
     ? files
     : null
+}
+
+/** The shell's computers, when it has them. */
+export function shellComputers(): ShellComputers | null {
+  const computers = currentShell()?.computers
+  return computers && typeof computers.list === 'function' && typeof computers.subscribe === 'function' ? computers : null
+}
+
+/**
+ * Where the desktop app serves this page's fixed frames: `latch-frame://preview/` and `latch-frame://app/` for this
+ * Mac's page, `latch-frame://h-<hostId>/preview/` and `…/app/` for another computer's (each reaches only its own Host).
+ */
+export function shellFrameUrl(kind: 'preview' | 'app', file: string): string {
+  const home = typeof location === 'undefined' ? 'app' : location.hostname
+  return /^h-[a-z2-7]{52}$/u.test(home) ? `latch-frame://${home}/${kind}/${file}` : `latch-frame://${kind}/${file}`
 }
 
 /** What showing a folder is called on this computer's system. */

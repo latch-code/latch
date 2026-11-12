@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { InlineNotice, Loading } from '@latch/ui'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, shellFrameUrl } from '../core/shell.ts'
 import { isFrameCommand, isFrameEvent, type FrameInput } from './types.ts'
 
 /** Untrusted document bytes have no access to Host objects or trusted demand-package React panels. */
@@ -34,7 +34,9 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
   const scale = canvas && room ? Math.min(room.width / canvas.width, room.height / canvas.height) : 0
   const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [kind, data, versionKey, options?.theme, options?.showChanges])
   const name = kind === 'html' || kind === 'html-script' ? kind : kind === 'mermaid' ? 'diagram' : 'office'
-  const src = currentShell() ? `latch-frame://preview/${name}.html#nonce=${nonce}` : `/link/preview-frame/${name}.html#nonce=${nonce}`
+  const src = currentShell()
+    ? `${shellFrameUrl('preview', `${name}.html`)}#nonce=${nonce}`
+    : `/link/preview-frame/${name}.html#nonce=${nonce}`
   useEffect(() => {
     setError('')
     setReady(false)

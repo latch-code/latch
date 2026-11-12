@@ -15,9 +15,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `apps/host/` | Host 组合根、插件与命令 |
 | `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
-| `packages/link-wire/` | 原生连接的纯编码、KDF 与恢复日志 |
-| `packages/link-client/` | 原生 TLS、Go 组件与中继 |
-| `apps/relay/` | 自建盲中继底座 |
+| `packages/link-wire/`、`packages/link-client/`、`apps/relay/` | 原生连接：编码与 KDF、TLS 与 Go、盲中继 |
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
@@ -25,7 +23,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `packages/core/` | Cordis、执行循环、快照与 Node 工具 `./node-kit` |
 | `packages/harness-acp/` | ACP 驱动与权限预设 |
 | `packages/testkit/` | Host、确认后端、安全向量与假 ACP 测试夹具 |
-| `e2e/` | `@latch/e2e`：全部 `*.e2e.ts`，Vitest 内用 Playwright 驱动浏览器与 Electron |
+| `e2e/` | `@latch/e2e`：全部 `*.e2e.ts`（Playwright 驱动浏览器与 Electron） |
 | `tests/` | 根项目的用例：`@latch/core`、`@latch/sdk`、兼容入口与仓库脚本 |
 | `src/` | `latch/plugin-sdk`、`latch/harness-sdk`，再导出 `@latch/sdk` |
 | `scripts/` | 仓库工具：检查、文档与技能、安全扫描、依赖边界、供应链、工作流 |
@@ -38,7 +36,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 ## 命令
 
-需要 Node.js 24.22.1（`.node-version`；`engines` 只接受含 2026-10-20 安全修复的版本，用 `fnm use` 切换）与 pnpm 11.28.6（`packageManager` 固定版本），构建原生组件需要 Go 1.26.10（`.go-version`）。
+需要 Node.js 24.22.1（`.node-version`，`fnm use` 切换；`engines` 拒收缺安全修复的版本）与 pnpm 11.28.6（`packageManager` 固定版本），构建原生组件需要 Go 1.26.10（`.go-version`）。
 
 ```sh
 pnpm install
@@ -83,6 +81,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 都经受限运行器（钩子含配置钩子、filter、传输都关闭）；只有人按下的提交、推送与有 filter 的暂存以你的账户运行 Git：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框中运行、不拿凭据，草稿只经 Host 固定工具在沙箱中构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **外部会话只经适配器。** Latch 不读写 CLI 自己的存储，只经该 Harness 的 ACP 适配器接入；接入的会话一律私有，删除或清空从不删原会话（[文档](docs/HARNESSES.md)）。
+- **其他电脑互不相通。** 桌面端经各自来源与分区，凭据按来源选取，绑定证书与身份（[文档](docs/ARCHITECTURE.md#桌面端与其他电脑)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（[格式](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`。
 - **共享安全编码。** 修改 base32、指纹、`canonicalJson`、确认预览与 previewHash、`hashDisplay`、`escapeSecurityText` 或签名文本时，同时更新 `packages/testkit/vectors/security-v1.json`、`native/macos/LatchPresence.swift` 与各处实现（`apps/host/src/crypto.ts`、`auth.ts`（签名文本）、`presence*.ts`（确认预览）、`packages/core/src/node-kit/digest.ts`、`packages/protocol/src/text.ts`、`apps/web/src/core/deviceKey.ts`、`contentHash.ts`、`apps/desktop/src/credentials.cjs`），再 `pnpm build:presence` 并运行 `presence.test.ts`（自检用例对旧组件失败）。
@@ -112,7 +111,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 ## 产品规则
 
-- 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`。应用图标为 `apps/web/public/icon.png`（源图 `build/icon.png`），不改动图形。
+- 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`；应用图标不改动图形（[DESIGN](docs/DESIGN.md)）。
 - 模型密钥只在这台 Mac 上填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
 - Harness 预设只收录开源 Agent 或厂商官方命令，记录许可证或条款，不下载不修改，不碰凭据；只给命令自己的登录命令，Claude Agent 不给。
 - 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。
@@ -128,9 +127,9 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 ## 约定
 
 - 测试只用 Vitest（Playwright 仅作驱动）；为新行为添加聚焦用例；不为配置、清单或文档的字面内容写测试。
-- 代码风格：严格 TypeScript，边界处用 zod 校验，错误用 `AppError(status, code, 中文消息)`；标识符与注释用英文，注释只写不显而易见的原因。只用作类型的导入写 `import type`（`verbatimModuleSyntax`）。格式以 `pnpm fmt` 的结果为准；只改格式的提交单独提交，并把它的完整哈希加入 `.git-blame-ignore-revs`。
+- 代码风格：严格 TypeScript，边界处用 zod 校验，错误用 `AppError(status, code, 中文消息)`；标识符与注释用英文，注释只写不显而易见的原因。只用作类型的导入写 `import type`。格式以 `pnpm fmt` 的结果为准；只改格式的提交单独提交，并把它的完整哈希加入 `.git-blame-ignore-revs`。
 - 运行环境：每个项目在 `package.json` 中声明 `latch.env`，只用该环境有的全局变量与模块；`apps/desktop/src/*.cjs` 是 CommonJS，其余是 ES 模块。新增目录时加入对应的 `tsconfig.*.json` 与 `.oxlintrc.json` 覆盖规则；新增 workspace 项目时另写 `latch.env` 并登记到 `PROJECTS`，规则与上层不同时写 `AGENTS.md` 与内容为 `@AGENTS.md` 的 `CLAUDE.md`。
 - workspace 项目只经包名导入（不用相对路径进入 `apps/`、`packages/`、`e2e/`），依赖写成 `workspace:*`；只有 `packages/core/src/registry.ts` 导入 `cordis`。用例放在所测项目的 `test/`，由 `vitest.config.ts` 的 project 运行。
 - 工程技能只写在 `.agents/skills/<名称>/SKILL.md`，改动后运行 `pnpm agents:sync`；技能只调用脚本，规则以脚本为准。包示例放 `examples/<包>/SKILL.md`。
 - Git 只跟踪产品代码与机制文档：分析报告、设计稿、工作记录与安全分析不进入 Git，不引用其他产品作设计参考。提交信息只写改动与原因。
-- 提交信息使用 Conventional Commits（`feat`、`fix`、`docs`、`design`、`refactor`、`test`、`chore`），scope 为项目名。
+- 提交信息使用 Conventional Commits（`feat`、`fix`、`docs` 等），scope 为项目名。

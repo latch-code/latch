@@ -17,6 +17,15 @@ export interface HostIdentity {
 const DIRECTORY = 'identity'
 const KEY_FILE = 'host-key.pem'
 
+/**
+ * What the Host signs with its identity key for `POST /host-proof`: that it serves the certificate with this SHA-256
+ * (Node's `fingerprint256`) on the connection that asked, for the asker's nonce. The desktop app checks the signature
+ * with the public key whose hash is the hostId (apps/desktop/src/remote-proxy.cjs `certificateProofText`).
+ */
+export function certificateProofText(hostId: string, nonce: string, certificate: string): string {
+  return `latch-cert-proof-v1\n${hostId}\n${nonce}\n${certificate}`
+}
+
 /** The Host ID derived from its public key. */
 export function hostIdFromSpki(spkiDer: Uint8Array): string {
   return base32(createHash('sha256').update(spkiDer).digest())

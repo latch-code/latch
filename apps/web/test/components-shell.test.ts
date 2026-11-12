@@ -174,8 +174,18 @@ describe('shell routes', () => {
   })
 
   it('lists 设备 among the sections, before 快捷键, which a phone does not have', () => {
-    expect(settingsSectionsAt(false)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'shortcuts', 'about'])
-    expect(settingsSectionsAt(true)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'about'])
+    expect(settingsSectionsAt(false)).toEqual([
+      'general',
+      'providers',
+      'engines',
+      'workspaces',
+      'plugins',
+      'devices',
+      'computers',
+      'shortcuts',
+      'about',
+    ])
+    expect(settingsSectionsAt(true)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'computers', 'about'])
   })
 })
 

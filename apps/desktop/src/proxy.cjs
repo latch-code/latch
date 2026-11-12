@@ -95,91 +95,106 @@ class ProxyError extends Error {
 }
 
 /**
- * The renderer has no network of its own: every request it makes must use the `latch:` scheme, which
- * main answers over host.sock. `devtools:` is allowed only in unpackaged development runs.
+ * Which computer a window shows: `app` is the Host on this Mac's host.sock (`latch://app/`), `h-<hostId>` another
+ * computer's Host over HTTPS (`latch://h-<hostId>/`, remote-proxy.cjs), each in its own session partition.
  */
-function isAllowedRendererRequest(raw, { packaged }) {
+const LOCAL_HOME = 'app'
+const REMOTE_HOME = /^h-[a-z2-7]{52}$/
+
+/**
+ * The renderer has no network of its own: every request it makes must use the `latch:` scheme of its own computer
+ * (`home`), which main answers. `devtools:` is allowed only in unpackaged development runs.
+ */
+function isAllowedRendererRequest(raw, { packaged, home = LOCAL_HOME }) {
   let url
   try {
     url = new URL(raw)
   } catch {
     return false
   }
-  if (url.protocol === 'latch:') return true
+  if (url.protocol === 'latch:') return url.hostname === home
   return url.protocol === 'devtools:' && !packaged
 }
 
-/** Only fixed document bootstraps can load as subframes. */
-function isPreviewFrameUrl(raw) {
+function frameUrl(raw) {
   try {
     const url = new URL(raw)
-    return (
-      url.protocol === 'latch-frame:'
-      && url.hostname === 'preview'
-      && !url.port
-      && !url.username
-      && !url.password
-      && !url.search
-      && /^\/(?:office|diagram|html|html-script)\.html$/u.test(url.pathname)
-    )
+    return url.protocol === 'latch-frame:' && !url.port && !url.username && !url.password && !url.search ? url : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
-/** The plugin page runtime: one fixed file, framed only by the app page. */
-function isAppFrameUrl(raw) {
-  try {
-    const url = new URL(raw)
-    return (
-      url.protocol === 'latch-frame:'
-      && url.hostname === 'app'
-      && !url.port
-      && !url.username
-      && !url.password
-      && !url.search
-      && url.pathname === '/runtime.html'
-    )
-  } catch {
-    return false
-  }
+/**
+ * Only fixed document bootstraps can load as subframes: `latch-frame://preview/<name>.html` on this Mac,
+ * `latch-frame://h-<hostId>/preview/<name>.html` on another computer, which never runs scripts the page did not bring.
+ */
+function isPreviewFrameUrl(raw, home = LOCAL_HOME) {
+  return previewFrameName(raw, home) !== undefined
+}
+
+/** The bootstrap a preview frame URL names (`office`, `html`…), or undefined. */
+function previewFrameName(raw, home = LOCAL_HOME) {
+  const url = frameUrl(raw)
+  if (!url) return undefined
+  const match =
+    home === LOCAL_HOME
+      ? url.hostname === 'preview' && /^\/(office|diagram|html|html-script)\.html$/u.exec(url.pathname)
+      : url.hostname === home && /^\/preview\/(office|diagram|html)\.html$/u.exec(url.pathname)
+  return match ? match[1] : undefined
+}
+
+/** The plugin page runtime: one fixed file, framed only by the app page of the same computer. */
+function isAppFrameUrl(raw, home = LOCAL_HOME) {
+  const url = frameUrl(raw)
+  if (!url) return false
+  return home === LOCAL_HOME
+    ? url.hostname === 'app' && url.pathname === '/runtime.html'
+    : url.hostname === home && url.pathname === '/app/runtime.html'
 }
 
 /**
  * The plugin page frame's policy, the same as the Host's (`apps/host/src/app-frame.ts`) with the app page as the only
  * ancestor: an opaque origin, the runtime's script by hash and page code only from the Blob it checked.
  */
-function appFrameCsp(scriptHash) {
-  return `sandbox allow-scripts; default-src 'none'; script-src '${scriptHash}' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data:; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`
+function appFrameCsp(scriptHash, home = LOCAL_HOME) {
+  return `sandbox allow-scripts; default-src 'none'; script-src '${scriptHash}' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data:; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://${home}`
+}
+
+/** A preview bootstrap's policy: its one script by hash (html-script: the document's own), framed only by the app page. */
+function previewFrameCsp(name, scriptHash, home = LOCAL_HOME) {
+  return `sandbox allow-scripts; default-src 'none'; script-src ${name === 'html-script' ? "'unsafe-inline' 'unsafe-eval'" : `'${scriptHash}'`}; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://${home}`
 }
 
 function isAllowedRendererDetails(details, options) {
-  if (isPreviewFrameUrl(details.url) || isAppFrameUrl(details.url)) return details.resourceType === 'subFrame'
+  const home = options.home ?? LOCAL_HOME
+  if (isPreviewFrameUrl(details.url, home) || isAppFrameUrl(details.url, home)) return details.resourceType === 'subFrame'
   if (details.resourceType === 'subFrame') return false
   // A page's module: only the Blob the runtime made from the bytes the app page handed it.
-  if (details.frame?.parent && isAppFrameUrl(details.frame.url) && details.resourceType === 'script') return details.url.startsWith('blob:')
+  if (details.frame?.parent && isAppFrameUrl(details.frame.url, home) && details.resourceType === 'script')
+    return details.url.startsWith('blob:')
   if (details.frame?.parent) return ['image', 'font', 'media'].includes(details.resourceType) && /^(?:blob:|data:)/u.test(details.url)
   if (details.initiatorOrigin === 'null') return false
   try {
     const url = new URL(details.url)
-    if (isAppUrl(url.href) && url.pathname.startsWith('/link/api/')) {
-      return details.frame !== undefined && details.frame !== null && details.frame.parent === null && isAppUrl(details.frame.url)
+    if (isAppUrl(url.href, home) && url.pathname.startsWith('/link/api/')) {
+      return details.frame !== undefined && details.frame !== null && details.frame.parent === null && isAppUrl(details.frame.url, home)
     }
   } catch {
     return false
   }
-  return isAllowedRendererRequest(details.url, options)
+  return isAllowedRendererRequest(details.url, { ...options, home })
 }
 
-/** Navigation and redirects stay inside `latch://app/`. */
-function isAppUrl(raw) {
+/** Navigation and redirects stay inside the window's own computer: `latch://app/`, or `latch://h-<hostId>/`. */
+function isAppUrl(raw, home = LOCAL_HOME) {
   let url
   try {
     url = new URL(raw)
   } catch {
     return false
   }
-  return url.protocol === 'latch:' && url.hostname === 'app' && !url.port && !url.username && !url.password
+  return url.protocol === 'latch:' && url.hostname === home && !url.port && !url.username && !url.password
 }
 
 /**
@@ -463,15 +478,15 @@ function unexpectedArguments(args) {
   return problems
 }
 
-/** Maps `latch://app/link/...` to the Host path. Anything outside `/link` is not served. */
-function upstreamTarget(raw) {
+/** Maps `latch://<home>/link/...` to the Host path. Anything outside `/link` is not served. */
+function upstreamTarget(raw, home = LOCAL_HOME) {
   let url
   try {
     url = new URL(raw)
   } catch {
     return undefined
   }
-  if (url.protocol !== 'latch:' || url.hostname !== 'app' || url.port || url.username || url.password) return undefined
+  if (url.protocol !== 'latch:' || url.hostname !== home || url.port || url.username || url.password) return undefined
   if (url.pathname !== '/link' && !url.pathname.startsWith('/link/')) return undefined
   return { path: url.pathname + url.search, pathname: url.pathname }
 }
@@ -677,8 +692,11 @@ function bufferedResponse(result, method) {
   return new Response(body, { status: result.status, headers: forwardResponseHeaders(result.headers) })
 }
 
-/** Streams the upstream body; cancelling the renderer's reader destroys the socket to the Host. */
-function streamedResponse({ request: upstreamRequest, response }, method) {
+/**
+ * Streams the upstream body; cancelling the renderer's reader destroys the socket to the Host. `observe` sees each
+ * chunk as it passes (remote-proxy.cjs reads the Host's own `host-state` frames from the event stream).
+ */
+function streamedResponse({ request: upstreamRequest, response }, method, observe) {
   const status = response.statusCode
   const headers = forwardResponseHeaders(response.headers)
   if (method === 'HEAD' || NULL_BODY_STATUS.has(status)) {
@@ -690,6 +708,7 @@ function streamedResponse({ request: upstreamRequest, response }, method) {
     start(controller) {
       response.on('data', chunk => {
         if (finished) return
+        observe?.(chunk)
         controller.enqueue(new Uint8Array(chunk))
         if ((controller.desiredSize ?? 1) <= 0) response.pause()
       })
@@ -1198,7 +1217,7 @@ function createShellProxy(options) {
           'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
-          'content-security-policy': `sandbox allow-scripts; default-src 'none'; script-src ${name === 'html-script.html' ? "'unsafe-inline' 'unsafe-eval'" : `'${hash}'`}; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`,
+          'content-security-policy': previewFrameCsp(name.replace(/\.html$/u, ''), hash),
         },
       })
     } catch {
@@ -1252,6 +1271,13 @@ function createShellProxy(options) {
 
 module.exports = {
   APP_ORIGIN,
+  LOCAL_HOME,
+  REMOTE_HOME,
+  CLEARING_CODES,
+  JSON_RESPONSE_LIMIT,
+  PLUGIN_DRAFT_BODY_LIMIT,
+  FILE_EDIT_BODY_LIMIT,
+  FILE_EDIT_PATH,
   HTML_CSP,
   OPEN_IN_BROWSER,
   COPY_COMPUTER_LINK,
@@ -1270,7 +1296,9 @@ module.exports = {
   isAllowedRendererDetails,
   isPreviewFrameUrl,
   isAppFrameUrl,
+  previewFrameName,
   appFrameCsp,
+  previewFrameCsp,
   isAppUrl,
   externalUrl,
   externalLinkDialog,
@@ -1294,6 +1322,14 @@ module.exports = {
   stripCredential,
   authFailureAction,
   errorBody,
+  errorResponse,
+  jsonResponse,
+  readRequestBody,
+  discardRequestBody,
+  bufferUpstream,
+  bufferedResponse,
+  streamedResponse,
+  refusal,
   htmlErrorPage,
   escapeHtml,
   createShellProxy,

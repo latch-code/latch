@@ -42,7 +42,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 层 | 职责 | 源码 |
 | --- | --- | --- |
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
-| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
+| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告）、其他电脑（见「桌面端与其他电脑」） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`remote-proxy.cjs`、`computers.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、提交、推送与 PR 在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
@@ -362,6 +362,19 @@ Standard 的 `RuntimeStore` 提供 `load / commit / close`；默认实现是完�
 
 已确认的消息持久化；流式中的文字与思考暂存在内存，崩溃可能丢失尚未结算的部分。快照存储没有历史压缩、分页或自动备份。
 
+## 桌面端与其他电脑
+
+桌面端除了经 `host.sock` 连接这台 Mac 的 Host，还可以经 HTTPS 连接其他电脑的 Host（`apps/desktop/src/computers.cjs`、`remote-proxy.cjs`）。每台 Host 仍是自己会话的唯一权威，Host 之间互不登记，也没有跨电脑的会话。
+
+- **列表属于桌面端。** `userData/computers.json`（0600，原子写入，严格校验，最多 16 条，不含凭据）记录每台电脑的 hostId、HTTPS 地址、名称、添加时间、上次在线与版本；无法解析的文件不猜，按空列表处理，下次写入前移到 `computers.json.damaged`；写入只写通过校验的记录，名称按码点截到 80 个字符。启动时某台电脑的凭据无法打开时，列表只读（不写文件、不删分区、不能添加或移除），页面说明原因，直到下次启动。这台 Mac 不写入列表，由 `host.json` 决定；只有经 `host.sock` 的 Host 叫「这台 Mac」。
+- **添加。** 在另一台电脑的 设置 › 设备 点「复制链接」（该 Host 需已配置 HTTPS），回到这台 Mac 的 设置 › 电脑 点「添加电脑」；或选择 `pnpm latch device invite --code-file` 写出的文件。主进程读剪贴板或文件，只接受 `https://<地址>/link/#pair=<码>`，页面看不到链接与码；添加与移除只接受这台 Mac 页面上一秒内的真实点按或按键（主进程检查）。主进程先读那台 Host 的 `GET /health` 得到 hostId（这台 Mac 自己与已添加的电脑被拒绝），再为它**新生成**设备密钥，按现有流程登记（名称「<这台 Mac 名称> 上的 Latch」，权限由邀请决定），确认在那台电脑上用它自己的本机确认完成，校验码在这台 Mac 的页面上同时显示。凭据存入 `latch-devices/<hostId>.json`（safeStorage，0600），一台电脑一份，从不复制给另一台。成功后剪贴板里仍是这条链接时清除。
+- **来源与分区。** 每台其他电脑的窗口是 `latch://h-<hostId>/`，在自己的会话分区 `persist:latch-host-<hostId>` 里：页面存储、缓存与协议处理互不相通。分区里的 `latch:` 只转发到这台 Host（`latch://app/` 与其他电脑的来源都得不到应答），渲染进程的请求、导航与子框都限制在自己的来源；预览与插件页面运行环境走 `latch-frame://h-<hostId>/preview/…` 与 `…/app/runtime.html`，只能被同一来源的页面嵌入，`html-script` 预览只在这台 Mac 的页面上提供。页面来自那台 Host 自己的 `dist/web`。
+- **转发与证书固定。** 主进程用 Node 的 HTTPS（Node 自带根证书加系统信任库，不复用连接）按请求的来源选凭据，只附加那台 Host 的 Cookie `__Host-latch_<hostId8>`；页面带来的 Cookie、`Authorization`、`Origin`、`Referer` 与 `sec-*` 一律丢弃，响应里的 `Set-Cookie` 不交给页面。把凭据绑定到那台 Host 的是证书：添加时记下它的 SHA-256，与地址一起存在 safeStorage 加密的凭据文件里（`latch-devices/<hostId>.json` 的 `binding`，另有以设备私钥派生的 HMAC），`computers.json` 只用于列表显示，地址与加密记录不一致时按加密记录恢复；没有记录的证书时不按第一次见到的证书信任，状态为「证书变了」。之后每个请求由主进程先完成 TLS 握手，证书不是这一张就断开，请求（连同凭据）一个字节也不写出，所以地址在两次核对之间被换到另一台服务器也拿不到凭据。证书系统不信任或与地址不符时为「证书不受信任」，没有「仍然信任」。不带凭据的 `GET /health` 核对 hostId（每 60 秒最多一次，连接出错或证书不符后立即重来）：不一致时状态为「不是这台电脑」，不自动替换。证书换了（例如续期）时状态为「证书变了」，不发凭据。点「信任新证书」时，主进程经只接受这张新证书的连接请求 `POST /host-proof { nonce }`（不带凭据）：Host 返回自己身份密钥的公钥与签名，签的是 `latch-cert-proof-v1\n<hostId>\n<nonce>\n<Host 在这条连接上实际出示的证书的 fingerprint256>`（ECDSA P-256，IEEE P1363；共享向量 `packages/testkit/vectors/security-v1.json` 的 `signing.hostProof`）。hostId 本来就是这把公钥 SPKI 的 SHA-256（base32），所以主进程先核对公钥的哈希就是添加时的 hostId，再用看到的证书核对签名，一致才固定新证书并写回加密记录。没有身份私钥的服务器签不出；把请求转给真 Host 的中间人得到的是对真证书的签名。证明只依赖 Host 的身份私钥（`identity/host-key.pem`，0600，不进备份），不依赖设备凭据的哈希，所以泄露的 `auth/` 不足以让别人的证书被固定。没有这个路由（404）一律拒绝：报告 hostId 的 Host 都有它，所以界面写「请先更新那台电脑上的 Latch」，不提供跳过证明的办法。持有被固定证书私钥或 Host 身份私钥的一方不在防御范围内。事件流按流转发，主进程从中读取那台 Host 自己的 `host-state` 帧。主进程在 `renewAfter` 时续期（新凭据经 `Set-Cookie` 回到主进程）。写请求不重放：只在 Host 以 `renewal-required` 拒绝后重发一次。
+- **远程页面能做的事。** 凭据、登记、配对链接、睡眠与停止报告、更新、会话文件与添加文件夹的路由在远程来源上一律 403 `shell-managed`。远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open } }`：没有文件夹、文件、预览浏览器、生命周期、通知与更新，页面按没有本机外壳处理（与浏览器一致）；那台 Host 判定 `access.local` 为 false。这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`，列表里带地址与进行中的添加。`open`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。其他电脑的页面得不到生命周期与更新的推送，打开外部链接总要先确认；Dock 图标总会找回这台 Mac 的窗口。跨电脑交给页面的只有电脑名、状态、上次在线、版本与 Host 宣布的停止原因。
+- **状态。** `online`、`connecting`、`offline`（带上次在线）、`stopping` / `sleeping`（来自 `host-state`，到 `retryAfter` 前不算离线）、`revoked`（那台 Host 撤销或凭据过期，本地凭据随即删除，只剩「移除」）、`wrong-host`、`cert-error`、`cert-changed`、`outdated`（`health` 没有 hostId 的旧版 Host，不发凭据）。主进程每分钟看一次在线的电脑（`health` 后读快照，更新名称与版本），离线时从 15 秒退避到 5 分钟，`revoked` 不再看。
+- **移除。** 能以原身份连上时先 `DELETE /devices/current` 撤销这台设备；然后删除凭据文件、列表记录与分区存储，并关闭这个分区里的所有窗口。没能撤销时页面写「在 <名称> 的 设置 › 设备 里移除这台设备」。不在列表中的 `Partitions/latch-host-*` 在下次启动时删除。
+- **更新与确认。** 桌面端只更新这台 Mac 的 Host；其他电脑的更新、重启、插件与模型密钥都在那台电脑上进行。本机确认留在各自的电脑上。
+
 ## 多端同步
 
 Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推送给订阅它的连接；其他会话只在摘要或审批变化时通知列表失效。客户端用 Host 实例、传输版本与当前选择过滤迟到数据，重连时通过 HTTP 重新同步。事件流随打开它的凭据结束。SSE 没有事件日志或历史重放，断开连接不会取消任务。完整机制见 [STREAMING.md](./STREAMING.md)。
@@ -376,7 +389,8 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 
 | 方法与路径 | 权限 | 说明 |
 | --- | --- | --- |
-| `GET /health` | 无 | `{"ok":true}` |
+| `POST /host-proof` | 无（只在 HTTPS 入口；按对端地址限流） | `{ nonce }` → `{ publicKey, signature }`：Host 身份密钥对本连接证书的签名，见「桌面端与其他电脑」的证书固定 |
+| `GET /health` | 无 | `{"ok":true,"hostId":"…"}`；hostId 本来就公开（回环主机名与 `enrollment-info` 都带它），桌面端向另一台电脑发送凭据前用它核对身份 |
 | `GET /host-info` | 无（仅 `host.sock`） | Host 实例信息 |
 | `POST /host/state` | 无（仅 `host.sock`；桌面端页面经转发时主进程返回 403） | 报告睡眠、唤醒与即将停止的原因（见「Host 的生命周期」） |
 | `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接允许申请的权限，其中是否有 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记。新设备报的名称与一台未移除的设备相同时，Host 在创建请求时给它加「 (2)」等序号，再交给系统确认表单；名称加上序号超过表单设备名称的 20 个字符时，先截短序号前面的部分，序号总在表单里可见。迁移旧设备的名称不加序号 |
@@ -453,6 +467,8 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | 项目 | 原因 |
 | --- | --- |
 | `host.sock` 对端进程身份检查、按会话标记识别进程 | 需要签名的原生扩展 |
+| 桌面端的侧栏电脑菜单、所有电脑合并的等你处理、其他电脑的通知与 Dock 角标、关于页的远程版本行；iOS 同时连多台电脑 | 尚未实现：分步构建中；目前在 设置 › 电脑 里打开每台电脑自己的窗口 |
+| 浏览器里的多台电脑、桌面端经原生链路或中继连接其他电脑、跨电脑会话 | 不提供或尚未实现：浏览器保持严格同源；桌面端只走运营者证书的 HTTPS |
 | 回环请求的额外绑定值或设备签名 | 未实现（见「不防御的情况」） |
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |

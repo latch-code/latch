@@ -1890,6 +1890,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       devices: {
         authenticate,
+        identity,
         tls,
         loopbackOrigin: () => loopbackOrigin,
         pairingNearby: (opening, gatewayHash) => nativeRoutes.pairingNearby(opening, gatewayHash),
@@ -4890,7 +4891,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       method: string,
     ): Promise<boolean> {
       if (path === '/link/api/health' && method === 'GET') {
-        json(res, { ok: true })
+        // The hostId is public (the loopback name and enrollment-info carry it): a desktop app checks it before it sends
+        // another computer's Host a credential.
+        json(res, { ok: true, hostId })
         return true
       }
       if (path === '/link/api/host/state') {

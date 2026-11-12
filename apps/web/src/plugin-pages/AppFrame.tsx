@@ -13,7 +13,7 @@ import {
 } from '@latch/protocol'
 import { api } from '../core/api.ts'
 import { onAppData } from '../core/appEvents.ts'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, shellFrameUrl } from '../core/shell.ts'
 import { acceptFrameKey, appRef, storageDocument } from './model.ts'
 import { createParentBridge, type ParentBridge } from './parentBridge.ts'
 import { createPreviewBridge } from './previewBridge.ts'
@@ -36,7 +36,7 @@ export type FrameOutcome =
 
 /** The frame's address: the fixed runtime, with the nonce it must say back in its `ready`. */
 export function frameSource(nonce: string, desktop = currentShell() !== null): string {
-  return desktop ? `latch-frame://app/runtime.html#nonce=${nonce}` : `/link/app-frame/runtime.html#nonce=${nonce}`
+  return desktop ? `${shellFrameUrl('app', 'runtime.html')}#nonce=${nonce}` : `/link/app-frame/runtime.html#nonce=${nonce}`
 }
 
 /** Only the frame this shell made, from an opaque origin, with its nonce, says `ready` once. */

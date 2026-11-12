@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { TLSSocket } from 'node:tls'
+import { certificateProofText, type HostIdentity } from '../identity.ts'
 import { z } from 'zod'
 import {
   isLocalListener,
@@ -65,6 +67,7 @@ const enrollmentSchema = z.object({
     .optional(),
 })
 const invitationOfferSchema = z.object({ invitation: z.string().min(1).max(64) })
+const certificateProofSchema = z.strictObject({ nonce: z.string().regex(/^[A-Za-z0-9_-]{22,64}$/u) })
 export const signatureSchema = z.object({ signature: z.string().min(1).max(256) })
 const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.string().min(1).max(256) })
 const deviceScopesSchema = z
@@ -96,6 +99,8 @@ export interface DeviceRouteDeps {
   pairingNearby: (opening: NativeOpening, gatewayHash: Uint8Array) => Promise<string | false>
   /** A phone proven on this network has paired. */
   rememberNetwork: (networkHash: string) => void
+  /** Signs `POST /host-proof`. */
+  identity: Pick<HostIdentity, 'publicKeySpki' | 'sign'>
   /** This computer's name, which a newly paired phone shows. */
   hostName: () => string
 }
@@ -147,6 +152,23 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       }
       const info = await enrollments.info(connection, legacyName)
       json(res, isLocalListener(connection.listener) ? { ...info, hostName: deps.hostName().replace(/\.local$/u, '') } : info)
+      return true
+    }
+    if (path === '/link/api/host-proof' && method === 'POST') {
+      // A desktop app that saw a new certificate at this Host's HTTPS address asks the Host to prove it serves it: a
+      // signature by the Host's identity key (whose hash is the hostId) over the certificate this connection uses.
+      if (listener.listener !== 'lan-tls' && listener.listener !== 'tailnet-tls') throw new AppError(404, 'not-found', '接口不存在')
+      limits.certificateProof.take(connection.remoteAddress)
+      const input = certificateProofSchema.parse(await jsonBody(req))
+      const certificate = (req.socket as TLSSocket).getCertificate?.()
+      const fingerprint = certificate && 'fingerprint256' in certificate ? certificate.fingerprint256 : undefined
+      if (typeof fingerprint !== 'string') throw new AppError(404, 'not-found', '接口不存在')
+      json(res, {
+        publicKey: deps.identity.publicKeySpki.toString('base64url'),
+        signature: deps.identity
+          .sign(Buffer.from(certificateProofText(context.hostId, input.nonce, fingerprint), 'utf8'))
+          .toString('base64url'),
+      })
       return true
     }
     if (path === '/link/api/enrollment-invitation' && method === 'POST') {

@@ -345,6 +345,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             openInBrowser: typeof shell.openInBrowser,
             copyComputerLink: typeof shell.copyComputerLink,
             updates: Object.keys(shell.updates as object),
+            computers: Object.keys(shell.computers as object),
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
           }
         }),
@@ -360,6 +361,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
+        computers: ['list', 'subscribe', 'open', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
         browser: [
           'protocolVersion',
           'open',

@@ -353,7 +353,7 @@ describe('listeners and request context', () => {
     for (const address of ['127.0.0.1', '::1']) {
       const health = await rawHttp(address, port, '/link/api/health', { host })
       expect(health.status).toBe(200)
-      expect(health.text).toBe('{"ok":true}')
+      expect(JSON.parse(health.text)).toEqual({ ok: true, hostId: t.host.hostId })
     }
     for (const loose of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]) {
       for (const path of ['/', '/link']) {
@@ -384,7 +384,7 @@ describe('listeners and request context', () => {
     ).toBe(403)
     const unix = await t.raw('unix', 'api/health', { headers: { host: 'anything.example', origin: 'https://attacker.example' } })
     expect(unix.status).toBe(200)
-    expect(await unix.text()).toBe('{"ok":true}')
+    expect(await unix.text()).toBe(`{"ok":true,"hostId":"${t.host.hostId}"}`)
     const forwarded = await rawHttp('127.0.0.1', t.host.loopbackPort, '/link/api/health', {
       host: 'attacker.example',
       'x-forwarded-host': host,
@@ -393,10 +393,10 @@ describe('listeners and request context', () => {
     expect(forwarded.status).toBe(403)
   })
 
-  it('answers health with exactly {"ok":true}, sends the common headers, and serves host-info only on the socket', async () => {
+  it('answers health with exactly ok and the public hostId, sends the common headers, and serves host-info only on the socket', async () => {
     const t = await testHost()
     const health = await t.raw('loopback-tcp', 'api/health')
-    expect(await health.text()).toBe('{"ok":true}')
+    expect(await health.text()).toBe(`{"ok":true,"hostId":"${t.host.hostId}"}`)
     expect(
       Object.fromEntries(
         ['x-content-type-options', 'referrer-policy', 'x-frame-options', 'cache-control'].map(name => [name, health.headers.get(name)]),

@@ -68,11 +68,28 @@ async function readHostStateFile(path) {
  * @param {string} socketPath
  * @param {{ method?: string, path?: string, headers?: Record<string, string>, body?: Buffer, bodyStream?: ReadableStream<Uint8Array>, bodyLimit?: number, check?: () => void, signal?: AbortSignal, timeoutMs?: number }} [options]
  */
-function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, bodyStream, bodyLimit, check, signal, timeoutMs } = {}) {
+function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, ...rest } = {}) {
+  const outgoing = { ...headers, host: SOCKET_HOST }
+  if (body !== undefined) outgoing['content-length'] = String(body.length)
+  return exchange(() => request({ socketPath, method, path, headers: outgoing }), { body, ...rest })
+}
+
+/**
+ * Sends one request that `open()` creates (Node's http or https `ClientRequest`, not yet ended) and resolves with it and
+ * its response once the headers arrive. The body is a Buffer, or a stream bounded by `bodyLimit` that `check` may stop.
+ * @param {() => import('node:http').ClientRequest} open
+ * @param {{ body?: Buffer, bodyStream?: ReadableStream<Uint8Array>, bodyLimit?: number, check?: () => void, signal?: AbortSignal, timeoutMs?: number }} options
+ * @returns {Promise<{ request: import('node:http').ClientRequest, response: import('node:http').IncomingMessage }>}
+ */
+function exchange(open, { body, bodyStream, bodyLimit, check, signal, timeoutMs }) {
   return new Promise((resolve, reject) => {
-    const outgoing = { ...headers, host: SOCKET_HOST }
-    if (body !== undefined) outgoing['content-length'] = String(body.length)
-    const req = request({ socketPath, method, path, headers: outgoing })
+    let req
+    try {
+      req = open()
+    } catch (error) {
+      reject(error)
+      return
+    }
     let timer
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => req.destroy(Object.assign(new Error('Latch 服务响应超时'), { code: 'ETIMEDOUT' })), timeoutMs)
@@ -258,6 +275,7 @@ async function verifyHostState(state, options) {
 module.exports = {
   SOCKET_HOST,
   parseHostState,
+  exchange,
   readHostStateFile,
   socketRequest,
   readBody,

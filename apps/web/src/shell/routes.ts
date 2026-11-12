@@ -1,4 +1,13 @@
-export type SettingsSection = 'general' | 'providers' | 'engines' | 'workspaces' | 'plugins' | 'devices' | 'shortcuts' | 'about'
+export type SettingsSection =
+  | 'general'
+  | 'providers'
+  | 'engines'
+  | 'workspaces'
+  | 'plugins'
+  | 'devices'
+  | 'computers'
+  | 'shortcuts'
+  | 'about'
 
 /**
  * Where the shell can be: the sessions (Code), 我的 Agent, 应用 (plugin pages) or 设置; a page takes the panel's place
@@ -44,6 +53,7 @@ const WIDE_SECTIONS: readonly SettingsSection[] = [
   'workspaces',
   'plugins',
   'devices',
+  'computers',
   'shortcuts',
   'about',
 ]

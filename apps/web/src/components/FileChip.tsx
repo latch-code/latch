@@ -229,8 +229,9 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
 /** Phones, other computers and the browser: the menu copies the path and says where the file can be opened. */
 function CopyFileChip(props: ChipProps) {
   const { state, copy } = useCopy()
-  // A desktop shell from before file actions can do it once it is restarted.
-  const outdated = currentShell() !== null && shellFiles() === null
+  // A desktop shell from before file actions can do it once it is restarted; another computer's page never has them.
+  const shell = currentShell()
+  const outdated = shell !== null && shell.remote !== true && shellFiles() === null
   return (
     <>
       <ChipMenu

@@ -33,6 +33,11 @@ export interface SecurityVectors {
     }
     enroll: { format: string; example: { hostId: string; enrollmentId: string; nonce: string; text: string; signature: string } }
     renew: { format: string; example: { hostId: string; deviceId: string; nonce: string; text: string; signature: string } }
+    /** `POST /host-proof`: the Host's identity key signs the certificate it serves (the publicKey is that key's SPKI). */
+    hostProof: {
+      format: string
+      example: { hostId: string; nonce: string; certificate: string; publicKey: string; text: string; signature: string }
+    }
     folders: {
       format: string
       bodyHash: string
@@ -67,6 +72,7 @@ export const PRESENCE_REQUEST_VECTORS = SECURITY_VECTORS.presenceRequest
 export const ENROLL_SIGNING_VECTOR = SECURITY_VECTORS.signing.enroll
 export const RENEW_SIGNING_VECTOR = SECURITY_VECTORS.signing.renew
 export const FOLDERS_SIGNING_VECTOR = SECURITY_VECTORS.signing.folders
+export const HOST_PROOF_SIGNING_VECTOR = SECURITY_VECTORS.signing.hostProof
 
 export function enrollSigningText(hostId: string, enrollmentId: string, nonce: string): string {
   return `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}`

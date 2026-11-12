@@ -31,10 +31,15 @@ const {
   WebContentsView,
 } = electron
 const { constants: fsConstants } = require('node:fs')
-const { lstat, open: openFile, realpath, stat } = require('node:fs/promises')
+const { createHash } = require('node:crypto')
+const { lstat, open: openFile, readdir, readFile, realpath, rm, stat } = require('node:fs/promises')
+const { hostname } = require('node:os')
 const { dirname, join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState, readBody, socketRequest } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
+// Through the module objects, so the multi-computer end-to-end test's bootstrap can trust its test certificate.
+const remotes = require('./remote-proxy.cjs')
+const { createComputers, createWindowOpener } = require('./computers.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   createNotifications,
@@ -79,6 +84,7 @@ const {
   isAppFrameUrl,
   isAppSender,
   isAppUrl,
+  LOCAL_HOME,
   unexpectedArguments,
 } = require('./proxy.cjs')
 
@@ -147,7 +153,8 @@ let ready = false
 // Below the page's phone breakpoint it drops the title row, and with it what moves the window.
 const DESKTOP_MIN_WIDTH = 768
 
-function createWindow({ width = 1250, height = 850, preload = true } = {}) {
+/** @param {{ width?: number, height?: number, preload?: boolean, partition?: string }} [options] */
+function createWindow({ width = 1250, height = 850, preload = true, partition } = {}) {
   return new BrowserWindow({
     width,
     height,
@@ -164,6 +171,8 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
     ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 27 } } : {}),
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
+      // Another computer's window: its own storage, cache and scheme handlers, shared with nothing else.
+      ...(partition ? { partition } : {}),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -185,6 +194,17 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
 let mainWindow
 const refusedFolders = { status: 'failed', code: 'shell-refused' }
 const trusted = event => isTrustedSender(event, mainWindow?.webContents)
+/**
+ * Which computer each window's page belongs to: `app` (this Mac, the default) or `h-<hostId>`. Navigation, frames and
+ * the renderer's requests stay inside it.
+ */
+const homes = new WeakMap()
+const homeOf = contents => homes.get(contents) ?? LOCAL_HOME
+/** Each page's last native click or key, which main checks before an action only a person may start. */
+const gestures = new WeakMap()
+/** Other computers' windows by hostId; each in its own partition. */
+const remoteWindows = new Map()
+const partitionOf = hostId => `persist:latch-host-${hostId}`
 
 function openWindow() {
   mainWindow = createWindow()
@@ -207,13 +227,13 @@ function fatal(message) {
   void createWindow({ width: 560, height: 280, preload: false }).loadURL(APP_URL)
 }
 
-async function hardenSession(target) {
+async function hardenSession(target, home = LOCAL_HOME) {
   target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   target.setPermissionCheckHandler(() => false)
   target.setDevicePermissionHandler(() => false)
-  // The renderer has no network of its own; every Host connection goes through main.
+  // The renderer has no network of its own; every Host connection goes through main, and only to its own computer.
   target.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !isAllowedRendererDetails(details, { packaged: app.isPackaged }) })
+    callback({ cancel: !isAllowedRendererDetails(details, { packaged: app.isPackaged, home }) })
   })
   const sink = await createNetworkSink()
   app.once('will-quit', () => {
@@ -249,30 +269,33 @@ app.on('web-contents-created', (_event, contents) => {
     return
   }
   const gesture = createExternalGesture()
+  gestures.set(contents, gesture)
   contents.on('before-mouse-event', (_event, input) => gesture.mouse(input))
   contents.on('before-input-event', (_event, input) => gesture.key(input))
   contents.on('blur', () => gesture.clear())
   contents.on('did-start-navigation', () => gesture.clear())
   contents.setWindowOpenHandler(({ url }) => {
+    // Only this Mac's own page opens a clicked link without a confirmation; another computer's page always confirms.
     const userGesture = contents === mainWindow?.webContents && isAppUrl(contents.getURL()) && gesture.take()
     void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined, { userGesture })
     return { action: 'deny' }
   })
   const guard = (event, url) => {
-    if (!isAppUrl(event.url ?? url)) event.preventDefault()
+    if (!isAppUrl(event.url ?? url, homeOf(contents))) event.preventDefault()
   }
   contents.on('will-navigate', guard)
   contents.on('will-redirect', guard)
   contents.on('will-frame-navigate', event => {
+    const home = homeOf(contents)
     if (event.isMainFrame) {
-      if (!isAppUrl(event.url)) event.preventDefault()
-    } else if (event.frame && isAppFrameUrl(event.frame.url)) {
+      if (!isAppUrl(event.url, home)) event.preventDefault()
+    } else if (event.frame && isAppFrameUrl(event.frame.url, home)) {
       // A plugin page frame never navigates, not even to itself or to another fixed bootstrap.
       event.preventDefault()
-    } else if (isAppFrameUrl(event.url)) {
+    } else if (isAppFrameUrl(event.url, home)) {
       // Only the app page itself points a frame at the page runtime.
-      if (!event.initiator || event.initiator.parent !== null || !isAppUrl(event.initiator.url)) event.preventDefault()
-    } else if (!isPreviewFrameUrl(event.url)) event.preventDefault()
+      if (!event.initiator || event.initiator.parent !== null || !isAppUrl(event.initiator.url, home)) event.preventDefault()
+    } else if (!isPreviewFrameUrl(event.url, home)) event.preventDefault()
   })
   contents.on('will-attach-webview', event => event.preventDefault())
 })
@@ -386,9 +409,8 @@ async function startLifecycle({ supervisor, hooks }) {
   const lifecycleView = () => ({ loginItem: loginItem.view(), keepAwake: keepAwake.view(), host: supervisor.view() })
   const broadcast = () => {
     if (!started) return
-    const value = lifecycleView()
-    for (const window of BrowserWindow.getAllWindows())
-      if (!window.isDestroyed()) window.webContents.send(LIFECYCLE_CHANNELS.changed, value)
+    // This Mac's lifecycle is for this Mac's page alone; another computer's window has no lifecycle.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(LIFECYCLE_CHANNELS.changed, lifecycleView())
   }
   const loginItem = createLoginItem({ app, platform: process.platform, packaged: app.isPackaged })
   const keepAwake = createKeepAwake({
@@ -472,8 +494,7 @@ async function startUpdates({ proxy, supervisor }) {
   const unsupported = updates.unsupportedReason({ packaged: app.isPackaged, platform: process.platform, source: config })
   const appVersion = app.isPackaged ? app.getVersion() : DESKTOP_VERSION
   const broadcast = view => {
-    for (const window of BrowserWindow.getAllWindows())
-      if (!window.isDestroyed()) window.webContents.send(updates.UPDATE_CHANNELS.changed, view)
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(updates.UPDATE_CHANNELS.changed, view)
   }
   const source = unsupported
     ? {
@@ -625,6 +646,217 @@ function handleFiles(proxy) {
   ipcMain.handle('latch:files:open', (event, input) => (trusted(event) ? actions.openFile(input) : refusedFolders))
 }
 
+/** This Mac's name as other computers list this app: `<name> 上的 Latch`, one plain line. */
+function deviceNameHere() {
+  const name = hostname()
+    .replace(/\.local$/u, '')
+    .replace(/[^\p{L}\p{N} ._-]/gu, '')
+    .trim()
+    .slice(0, 40)
+  return name ? `${name} 上的 Latch` : 'Mac 上的 Latch'
+}
+
+const COMPUTER_CHANNELS = Object.freeze({
+  list: 'latch:computers:list',
+  open: 'latch:computers:open',
+  add: 'latch:computers:add',
+  cancelAdd: 'latch:computers:cancel-add',
+  trustCertificate: 'latch:computers:trust-certificate',
+  remove: 'latch:computers:remove',
+  changed: 'latch:computers:changed',
+})
+const CODE_FILE_LIMIT = 4096
+
+/**
+ * Other computers (computers.cjs, remote-proxy.cjs): their windows, each in a partition of its own whose `latch:` and
+ * `latch-frame:` schemes reach only that computer's Host, and `latchShell.computers`. This Mac's page may list, open,
+ * add and remove; another computer's page may only list and open. Adding and removing need a native click or key on
+ * this Mac's page a moment before; main alone reads the link from the clipboard or a code file.
+ */
+async function startComputers({ localHostId, localState }) {
+  const userData = app.getPath('userData')
+  /** Each partition is hardened and given its handlers once, however many opens race for it. */
+  const prepared = new Map()
+  /** @type {ReturnType<typeof createComputers>} */
+  let computers
+
+  function prepareSession(hostId) {
+    let pending = prepared.get(hostId)
+    if (!pending) {
+      const target = session.fromPartition(partitionOf(hostId))
+      pending = (async () => {
+        await hardenSession(target, `h-${hostId}`)
+        // Removed while this ran: its handlers are not registered, so a later add starts clean.
+        if (prepared.get(hostId) !== pending) throw new Error('这台电脑已移除')
+        for (const scheme of ['latch', 'latch-frame']) if (target.protocol.isProtocolHandled(scheme)) target.protocol.unhandle(scheme)
+        const missing = () => new Response(null, { status: 404 })
+        target.protocol.handle('latch', request => computers.proxyFor(hostId)?.handle(request) ?? missing())
+        target.protocol.handle('latch-frame', request => computers.proxyFor(hostId)?.previewFrame(request) ?? missing())
+        return target
+      })()
+      prepared.set(hostId, pending)
+      pending.catch(() => prepared.delete(hostId))
+    }
+    return pending
+  }
+
+  function broadcast() {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(COMPUTER_CHANNELS.changed, computers.view({ full: true }))
+    for (const window of remoteWindows.values())
+      if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.changed, computers.view())
+  }
+
+  function focus(window) {
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+
+  async function openComputer(hostId) {
+    if (hostId === localHostId) {
+      if (!mainWindow || mainWindow.isDestroyed()) openWindow()
+      else focus(mainWindow)
+      return { ok: true }
+    }
+    if (!computers.proxyFor(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    try {
+      await openRemote(hostId)
+    } catch {
+      return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    }
+    return { ok: true }
+  }
+
+  // One window per computer: opens that race share one attempt, and an open window is brought forward.
+  const openRemote = createWindowOpener({
+    existing: hostId => {
+      const window = remoteWindows.get(hostId)
+      return window && !window.isDestroyed() ? window : undefined
+    },
+    focus,
+    async create(hostId) {
+      await prepareSession(hostId)
+      if (!computers.proxyFor(hostId)) throw new Error('这台电脑已移除')
+      const window = createWindow({ partition: partitionOf(hostId) })
+      homes.set(window.webContents, `h-${hostId}`)
+      remoteWindows.set(hostId, window)
+      window.on('closed', () => {
+        if (remoteWindows.get(hostId) === window) remoteWindows.delete(hostId)
+      })
+      void window.loadURL(`latch://h-${hostId}/link/`)
+      return window
+    },
+  })
+
+  computers = createComputers({
+    directory: userData,
+    localHostId,
+    local: () => ({ name: hostname().replace(/\.local$/u, ''), state: localState() }),
+    openStore: hostId => openCredentialStore({ directory: join(userData, 'latch-devices'), hostId, safeStorage, log }),
+    makeProxy: input => remotes.createRemoteProxy({ ...input, log }),
+    enroll: (link, hooks) => remotes.enrollRemote({ link, name: deviceNameHere(), ...hooks }),
+    parseLink: text => remotes.parseComputerLink(text),
+    async forgetPartition(hostId) {
+      const target = session.fromPartition(partitionOf(hostId))
+      remoteWindows.delete(hostId)
+      // Every window of that computer's partition goes, not only the one in the list.
+      for (const window of BrowserWindow.getAllWindows())
+        if (!window.isDestroyed() && window.webContents.session === target) window.destroy()
+      await target.clearStorageData()
+      await target.clearCache()
+      // A first open may still be preparing the partition: let it finish (it then registers nothing), then unregister.
+      const preparing = prepared.get(hostId)
+      prepared.delete(hostId)
+      await preparing?.catch(() => {})
+      for (const scheme of ['latch', 'latch-frame']) if (target.protocol.isProtocolHandled(scheme)) target.protocol.unhandle(scheme)
+      // Chromium may still write a file or two after the session is cleared; the folder goes again a moment later, and
+      // any that is left is removed at the next start (below).
+      const folder = join(userData, 'Partitions', `latch-host-${hostId}`)
+      await rm(folder, { recursive: true, force: true }).catch(() => {})
+      setTimeout(() => {
+        if (!computers.known(hostId)) void rm(folder, { recursive: true, force: true }).catch(() => {})
+      }, 2_000).unref()
+    },
+    onChange: broadcast,
+    log,
+  })
+
+  /** `full` for this Mac's page, `remote` for a listed computer's own window, otherwise undefined. */
+  function senderOf(event) {
+    const frame = event?.senderFrame
+    const contents = event?.sender
+    if (!frame || frame.parent || !contents) return undefined
+    const home = homeOf(contents)
+    if (!isAppUrl(frame.url, home)) return undefined
+    if (home === LOCAL_HOME) return contents === mainWindow?.webContents ? 'full' : undefined
+    const window = remoteWindows.get(home.slice(2))
+    return window && !window.isDestroyed() && window.webContents === contents && computers.has(home.slice(2)) ? 'remote' : undefined
+  }
+  const refused = { ok: false, error: 'forbidden', message: '只接受 Latch 页面的请求。' }
+  const noGesture = { ok: false, error: 'gesture-required', message: '请在 Latch 页面上点按后再试。' }
+  const gestureOf = event => gestures.get(event.sender)?.take() === true
+
+  ipcMain.handle(COMPUTER_CHANNELS.list, event => {
+    const sender = senderOf(event)
+    return sender ? computers.view({ full: sender === 'full' }) : refused
+  })
+  ipcMain.handle(COMPUTER_CHANNELS.open, (event, hostId) => {
+    if (!senderOf(event)) return refused
+    // A page may not pull a window to the front on its own: only after a click or key on it.
+    if (!gestureOf(event)) return noGesture
+    if (typeof hostId !== 'string' || !computers.has(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    return openComputer(hostId)
+  })
+  ipcMain.handle(COMPUTER_CHANNELS.add, async (event, source) => {
+    if (senderOf(event) !== 'full') return refused
+    if (!gestureOf(event)) return noGesture
+    let text
+    if (source === 'file') {
+      if (!dialogGate.enter()) return { ok: false, error: 'busy', message: '另一个对话框正在打开。' }
+      try {
+        const picked = await dialog.showOpenDialog(mainWindow, { title: '选择连接文件', properties: ['openFile', 'dontAddToRecent'] })
+        if (picked.canceled || picked.filePaths.length !== 1) return { ok: false, error: 'canceled', message: '' }
+        const path = picked.filePaths[0]
+        const info = await lstat(path)
+        if (!info.isFile() || info.size > CODE_FILE_LIMIT) return { ok: false, error: 'invalid-link', message: '这个文件不是连接文件。' }
+        text = await readFile(path, 'utf8')
+      } catch {
+        return { ok: false, error: 'invalid-link', message: '无法读取这个文件。' }
+      } finally {
+        dialogGate.leave()
+      }
+    } else text = await clipboard.readText()
+    const result = await computers.add(text)
+    // A link that added its computer is spent: the clipboard forgets it if it still holds it.
+    if (result.ok && source !== 'file') {
+      const digest = value => createHash('sha256').update(value).digest('hex')
+      const used = digest(text)
+      if (digest(String(await clipboard.readText())) === used) await clipboard.clear()
+    }
+    return result
+  })
+  ipcMain.handle(COMPUTER_CHANNELS.cancelAdd, event => (senderOf(event) === 'full' ? computers.cancelAdd() : refused))
+  ipcMain.handle(COMPUTER_CHANNELS.trustCertificate, (event, hostId) => {
+    if (senderOf(event) !== 'full') return refused
+    if (!gestureOf(event)) return noGesture
+    return computers.trustCertificate(hostId)
+  })
+  ipcMain.handle(COMPUTER_CHANNELS.remove, (event, hostId) => {
+    if (senderOf(event) !== 'full') return refused
+    if (!gestureOf(event)) return noGesture
+    return computers.remove(hostId)
+  })
+  app.on('will-quit', () => computers.stop())
+  await computers.start()
+  // The page storage of a computer that is no longer listed (removed while Chromium still wrote to it).
+  const partitions = await readdir(join(userData, 'Partitions')).catch(() => [])
+  for (const name of partitions) {
+    const match = /^latch-host-([a-z2-7]{52})$/u.exec(name)
+    if (match && !computers.known(match[1])) await rm(join(userData, 'Partitions', name), { recursive: true, force: true }).catch(() => {})
+  }
+  return computers
+}
+
 async function start() {
   await hardenSession(session.defaultSession)
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
@@ -720,6 +952,10 @@ async function start() {
   )
   handleFiles(proxy)
   handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
+  await startComputers({
+    localHostId: state.hostId,
+    localState: () => (['running', 'unresponsive'].includes(supervisor.view().status) ? 'online' : 'offline'),
+  })
   const notifications = createNotifications({
     save: value => writeNotificationPreferences(app.getPath('userData'), value),
     changed: value => {
@@ -774,18 +1010,18 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    const [window] = BrowserWindow.getAllWindows()
-    if (window) {
-      if (window.isMinimized()) window.restore()
-      window.focus()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
     } else if (ready) openWindow()
   })
   app
     .whenReady()
     .then(start)
     .catch(error => fatal(`启动失败：${error instanceof Error ? error.message : '未知错误'}`))
+  // The Dock brings back this Mac's window, also while only other computers' windows are open.
   app.on('activate', () => {
-    if (ready && BrowserWindow.getAllWindows().length === 0) openWindow()
+    if (ready && (!mainWindow || mainWindow.isDestroyed())) openWindow()
   })
   // On macOS closing the last window leaves the app running, as Mac apps do, so crash restarts and keeping the Mac
   // awake go on; the Dock icon opens the window again and Quit ends the app. The Host keeps running either way. The

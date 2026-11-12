@@ -378,6 +378,19 @@
         "text": "latch-folders-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\ndev_IiIiIiIiIiIiIiIiIiIiIg\nBAUGBwgJCgsMDQ4PEBESEw\n7754b77bf0489c65cccd34de6dd7882815750c6f930b89d86e61cebb78b67e20",
         "signature": "kD1naFrowEoSAN2O4u9QycaV-db5FGrZ9xFj12v0z6RRzUs2OPCJILREMX3EueTtM0xI6B6UbvUs6gd2Kb027w"
       }
+    },
+    "hostProof": {
+      "format": "latch-cert-proof-v1\n<hostId>\n<nonce>\n<certificate>",
+      "signer": "The Host's identity key, whose SPKI's SHA-256 (base32) is the hostId; publicKey in the answer is that SPKI, base64url",
+      "certificate": "Node's fingerprint256 of the certificate the Host serves on that connection: 32 upper-case hex bytes joined by ':'",
+      "example": {
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+        "certificate": "00:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10:11:12:13:14:15:16:17:18:19:1A:1B:1C:1D:1E:1F",
+        "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEf83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEXH8UTNG72bfocs3-257rn0s2ldbqkLJK2KRiMohYjlrQ",
+        "text": "latch-cert-proof-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY\n00:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10:11:12:13:14:15:16:17:18:19:1A:1B:1C:1D:1E:1F",
+        "signature": "G8qmvOMu0rWRRQPFeLUDG9wZyg7npcWQwElj429bEpmvAFBQUsUoarkGAJNCnSwfDp0L7BBbURFngYJTQ4ndDA"
+      }
     }
   },
   "presenceReason": [

@@ -71,7 +71,8 @@ const SCAN_RULES: readonly ScanRule[] = [
     id: 'electron-navigation',
     applies: under('apps/desktop/src/'),
     matches: line => /\bshell\.openExternal\s*\(|\.loadURL\s*\(|\bwindow\.open\s*\(/u.test(line),
-    message: '窗口只加载 latch://app/，外链只经主进程的确认对话框交给系统浏览器',
+    message:
+      '窗口只加载所属电脑的来源（latch://app/ 或 latch://h-<hostId>/，各在自己的分区）；外链只经主进程交给系统浏览器，其他电脑的页面与脚本外链先确认',
   },
   {
     id: 'html-injection',

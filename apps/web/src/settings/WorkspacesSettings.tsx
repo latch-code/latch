@@ -194,7 +194,8 @@ export function WorkspacesSettings({
 }) {
   const owner = access.admin
   const folders = owner ? shellFolders() : null
-  const desktop = currentShell() !== null
+  // Another computer's page in the desktop app has no folder panel to restart into: it says where to add, as a browser does.
+  const desktop = currentShell() !== null && currentShell()?.remote !== true
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[] | null>(snapshot.catalog?.workspaces ?? null)
   const [error, setError] = useState('')
   const [removing, setRemoving] = useState<WorkspaceInfo | null>(null)

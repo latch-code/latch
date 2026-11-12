@@ -140,6 +140,8 @@ export const RATE_LIMITS = {
   classC: { capacity: 60, refill: 1, perMs: 1_000 },
   anonymousRevoke: { capacity: 10, refill: 1, perMs: 6_000 },
   confirmationPoll: { capacity: 5, refill: 2, perMs: 1_000 },
+  /** `POST /host-proof`, per peer address: no credential travels, so the address is all there is to count. */
+  certificateProof: { capacity: 10, refill: 1, perMs: 6_000 },
   /** The desktop app's file routes, per device. */
   files: { capacity: 60, refill: 20, perMs: 1_000 },
 } as const satisfies Record<string, BucketSpec>

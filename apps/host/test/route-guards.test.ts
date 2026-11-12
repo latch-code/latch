@@ -147,6 +147,13 @@ describe('route guards', () => {
       ['GET', 'enrollment-info', undefined, { anonymous: [200], loopback: [200], tls: [200] }],
       [
         'POST',
+        'host-proof',
+        { nonce: 'n'.repeat(22) },
+        { anonymous: [404, 'not-found'], loopback: [404, 'not-found'], tls: [200], browser: [404, 'not-found'] },
+      ],
+      ['POST', 'host-proof', { nonce: 'short' }, { tls: [400, 'invalid-input'] }],
+      [
+        'POST',
         'enrollment-invitation',
         { invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' },
         { anonymous: [403, 'invitation-invalid'], loopback: [403, 'invitation-invalid'], tls: [403, 'invitation-invalid'] },

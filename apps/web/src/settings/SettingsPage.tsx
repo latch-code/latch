@@ -8,6 +8,7 @@ import {
   Folder,
   Info,
   Keyboard,
+  Laptop,
   LockKeyhole,
   MonitorSmartphone,
   Puzzle,
@@ -17,7 +18,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { computerName, SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, shellComputers } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
@@ -32,6 +33,7 @@ const PhoneDevicesPage = deferredComponent(
   async () => ({ default: (await import('./devices/PhoneDevicesPage.tsx')).PhoneDevicesPage }),
   '设备',
 )
+const ComputersSettings = deferredComponent(async () => ({ default: (await import('./ComputersSettings.tsx')).ComputersSettings }), '电脑')
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
 const ProvidersSettings = deferredComponent(
@@ -56,6 +58,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',
   devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
+  computers: '添加电脑 其他电脑 移除 切换 打开',
   about: '版本 许可与条款',
 }
 
@@ -68,7 +71,8 @@ export function searchSections<T extends { id: SettingsSection; label: string }>
 
 /**
  * `admin`: needs the device's 管理此 Host scope. `catalog`: needs the Host APIs that come with a snapshot catalog.
- * `secured`: needs a Host with device confirmation (its policy and device APIs); older Hosts lack them.
+ * `secured`: needs a Host with device confirmation (its policy and device APIs); older Hosts lack them. `shell`: needs the
+ * desktop app's list of computers.
  */
 const sections: Array<{
   id: SettingsSection
@@ -77,6 +81,7 @@ const sections: Array<{
   admin: boolean
   catalog?: boolean
   secured?: boolean
+  shell?: boolean
 }> = [
   { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
   { id: 'providers', label: '模型', icon: Box, admin: true, catalog: true },
@@ -84,6 +89,7 @@ const sections: Array<{
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
   { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
+  { id: 'computers', label: '电脑', icon: Laptop, admin: false, shell: true },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
@@ -100,7 +106,13 @@ export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAcces
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {
   return sections
-    .filter(section => (access.admin || !section.admin) && (snapshot.catalog || !section.catalog) && (!access.legacy || !section.secured))
+    .filter(
+      section =>
+        (access.admin || !section.admin)
+        && (snapshot.catalog || !section.catalog)
+        && (!access.legacy || !section.secured)
+        && (!section.shell || shellComputers() !== null),
+    )
     .map(section => section.id)
 }
 
@@ -362,6 +374,7 @@ export function SettingsPage({
                       />
                     )}
                     {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'computers' && <ComputersSettings />}
                     {panel === 'about' && (
                       <AboutSettings
                         snapshot={snapshot}
