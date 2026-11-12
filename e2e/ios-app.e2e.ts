@@ -51,6 +51,10 @@ it.skipIf(process.platform !== 'darwin')(
       const application = join(directory, 'Build/Products/Debug-iphonesimulator/Latch.app')
       const binary = await readFile(join(application, 'Latch'))
       expect(binary.readUInt32LE(0)).toBe(0xfeedfacf)
+      // The notices and licences of the marks the App carries, shown under 设置 › 关于 › 开源许可.
+      const bundled = await readdir(application)
+      for (const name of ['NOTICE-brands.txt', 'SOURCES.txt', 'LICENSE-Apache-2.0.txt', 'LICENSE-lobe-icons.txt'])
+        expect(bundled).toContain(name)
       const libraries = (await readdir(application)).filter(name => name.endsWith('.dylib'))
       const product = Buffer.concat([binary, ...(await Promise.all(libraries.map(name => readFile(join(application, name)))))])
       // The screenshot scenes live only in the LatchScreens target (`ios-screens.e2e.ts`).

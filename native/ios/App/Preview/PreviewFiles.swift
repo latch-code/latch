@@ -12,6 +12,16 @@ struct PreviewItem: Identifiable {
     let text: String?
     let url: URL?
     let lease: BodyLease
+    /** A text file the Host offers to edit, with the version this read fixed. */
+    var edit: PreviewEdit? = nil
+}
+
+struct PreviewEdit: Equatable {
+    let sessionId: String
+    let handle: String
+    let baseHash: String
+    let reference: String
+    let root: String?
 }
 
 @MainActor enum PreviewFiles {
@@ -57,7 +67,9 @@ struct PreviewItem: Identifiable {
         try Task.checkCancellation(); try lease.requireValid()
         if text {
             guard let value = String(data: data, encoding: .utf8) else { throw NativeFailure.unsupported }
-            return PreviewItem(name: name, text: value, url: nil, lease: lease)
+            let edit = PhoneFileEdit.offered(meta, canRun: true, wholeText: data.count == Int(size), text: value)
+                ? PreviewEdit(sessionId: session, handle: handle, baseHash: PhoneFileEdit.baseHash(data), reference: reference, root: root) : nil
+            return PreviewItem(name: name, text: value, url: nil, lease: lease, edit: edit)
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary), CGImageSourceGetCount(source) > 0,
               let actualType = CGImageSourceGetType(source) as String?, [UTType.png.identifier, UTType.jpeg.identifier].contains(actualType),
@@ -84,8 +96,11 @@ struct PreviewItem: Identifiable {
 }
 
 struct NativePreviewView: View {
-    let item: PreviewItem
+    @EnvironmentObject private var model: PhoneModel
+    @State var item: PreviewItem
     @Environment(\.dismiss) private var dismiss
+    @State private var editing = false
+    @State private var saved = false
     var body: some View {
         NavigationStack {
             Group {
@@ -94,7 +109,23 @@ struct NativePreviewView: View {
                 else if item.url != nil { RasterQuickLook(item: item) }
             }
             .navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+                if let edit = item.edit, item.text != nil, model.canRun, item.lease.valid {
+                    let running = ["running", "waiting-approval"].contains(model.summary(of: edit.sessionId)["status"].string ?? "")
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(saved ? "已保存" : "编辑") { editing = true }.disabled(running || saved)
+                            .accessibilityLabel(running ? "Agent 运行中，不能编辑" : "编辑")
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $editing) {
+                if let edit = item.edit, let text = item.text {
+                    FileEditorView(name: item.name, edit: edit, original: text) { next in
+                        if let next { item = next; saved = true; Task { try? await Task.sleep(for: .seconds(2)); saved = false } }
+                    }
+                }
+            }
         }
     }
 }

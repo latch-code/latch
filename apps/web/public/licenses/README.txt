@@ -6,7 +6,8 @@ their texts are in the folders beside this file.
 Brand icons
 
 Sources, licences and the trademark statement are in brands/SOURCES.txt; the icon set's licence is in
-brands/LICENSE-lobe-icons.txt.
+brands/LICENSE-lobe-icons.txt, each project's copyright lines in brands/NOTICE-brands.txt and the Apache License 2.0
+in brands/LICENSE-Apache-2.0.txt.
 
 Document previews
 

@@ -1,0 +1,64 @@
+Brand marks: copyright and notices
+
+Each mark below is shipped unmodified (see SOURCES.txt). For each project this file records the copyright line(s) of
+its LICENSE at the commit SOURCES.txt names, and any NOTICE file. Read on 2026-11-12 from the github.com pages linked;
+"no NOTICE" means the top-level file listing at that commit showed none (GitHub's listing may be partial).
+
+Apache License 2.0 (full text in LICENSE-Apache-2.0.txt)
+
+- Gemini CLI (gemini-cli.png)
+  https://github.com/google-gemini/gemini-cli/blob/cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005/LICENSE
+  Copyright: the LICENSE has no copyright line; its appendix keeps the template "Copyright [yyyy] [name of copyright owner]".
+  NOTICE: none at that commit.
+- goose (goose.png)
+  https://github.com/aaif-goose/goose/blob/0276d567aa00d426161c51e9c0f52baabe5958ea/LICENSE
+  Copyright 2024 Block, Inc.
+  NOTICE: none at that commit.
+- Qwen Code (qwen-code.svg)
+  https://github.com/QwenLM/qwen-code/blob/e4eb0183ff56becfc6913ccb67cad8587e8ba6b0/LICENSE
+  Copyright 2025 Google LLC
+  Copyright 2025 Qwen
+  NOTICE: none at that commit.
+
+MIT License (terms below)
+
+- pi (pi.svg)
+  https://github.com/earendil-works/pi/blob/main/LICENSE (SOURCES.txt pins no commit for pi; read from the default branch)
+  Copyright (c) 2025 Mario Zechner
+  NOTICE: none.
+- OpenCode (opencode-light.svg, opencode-dark.svg)
+  https://github.com/anomalyco/opencode/blob/6806c6e29a7d2087335794d8b86c6031cdb5f6dd/LICENSE
+  Copyright (c) 2025 opencode
+  NOTICE: none at that commit.
+- DeepSeek Harness (deepseek-harness.svg)
+  https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/LICENSE
+  Copyright (c) 2026 DeepSeek
+  NOTICE: none at that commit (the repository has a THIRD_PARTY_NOTICES.md about its own dependencies).
+- LobeHub Icons (Codex and the other icon-set marks listed in SOURCES.txt)
+  https://github.com/lobehub/lobe-icons/blob/8a1b2821bb768c484fe8da20c5e1838b6bf551a9/LICENSE
+  Copyright (c) 2023 LobeHub
+  NOTICE: none at that commit. Full licence in LICENSE-lobe-icons.txt.
+- Ollama (ollama.svg; web only, not in the iPhone app)
+  https://github.com/ollama/ollama/blob/675150d6ad2747df1e218ef59de9194bc4a7e538/LICENSE
+  Copyright (c) Ollama
+  NOTICE: none at that commit.
+
+The MIT License terms, which follow each copyright line above:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -62,8 +62,15 @@ struct TurnActionBar: View {
     @EnvironmentObject private var model: PhoneModel
     let actions: PhoneTurnActions
     let index: Int
+    let turn: PhoneTurn
     @State private var confirming = false
     @State private var copied = false
+    /** The turn's last message: 复制到这里为止的记录 ends there. */
+    private var end: String? { (turn.replies.last ?? turn.user)?["id"].string.flatMap { $0.hasPrefix("live:") ? nil : $0 } }
+    private var canHandOff: Bool {
+        model.canRun && model.connected && model.snapshot["catalog"]["features"]["handoffs"].bool && model.currentSummary["personal"] == .null
+            && !PhoneHandoffs.materials(turn).isEmpty
+    }
     var body: some View {
         HStack(spacing: 4) {
             if let text = actions.copy {
@@ -77,6 +84,20 @@ struct TurnActionBar: View {
                     .disabled(model.busy || !model.pending.isEmpty)
             }
             if let end = actions.forkFrom { icon("arrow.triangle.branch", label: "从这里分叉") { model.beginFork(turn: index, upTo: end) } }
+            if canHandOff || end != nil {
+                Menu {
+                    if canHandOff, let id = model.sessionId {
+                        Button("交给代码任务…", systemImage: "arrow.turn.down.right") { model.handoffDraft = PhoneHandoffDraft(sourceSessionId: id, materials: PhoneHandoffs.materials(turn)) }
+                    }
+                    if let end {
+                        Button("复制到这里为止的记录", systemImage: "doc.on.doc") {
+                            LocalClipboard.copy(PhoneMarkdown.transcript(model.detail, harness: model.engineName(model.currentSummary["harnessId"].string), upTo: end))
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted).frame(width: 32, height: 32).contentShape(Rectangle())
+                }.accessibilityLabel("更多")
+            }
         }
         .confirmationDialog("重试", isPresented: $confirming, titleVisibility: .hidden) {
             if let retry = actions.retry { Button("重试") { resend(retry) } }
@@ -110,7 +131,8 @@ struct SessionMenuButtons: View {
     var body: some View {
         let clear = open ? (offered: model.detail["clearContext"].bool && model.detail["summary"]["id"].string == task["id"].string,
             clearing: task["id"].string.map { model.clearing.contains($0) } ?? false) : nil
-        ForEach(Array(PhoneSessionMenu.sections(task, canRun: model.canRun, clear: clear).enumerated()), id: \.offset) { _, section in
+        let copy = open && model.detail["summary"]["id"].string == task["id"].string && !model.detail["messages"].array.isEmpty
+        ForEach(Array(PhoneSessionMenu.sections(task, canRun: model.canRun, clear: clear, copy: copy).enumerated()), id: \.offset) { _, section in
             Section {
                 ForEach(section) { item in
                     Button(role: item.action == .delete ? .destructive : nil) { Task { await model.choose(item.action, task: task) } } label: {

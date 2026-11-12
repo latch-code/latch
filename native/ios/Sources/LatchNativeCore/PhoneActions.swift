@@ -249,7 +249,7 @@ public enum PhoneSessionConfig {
 }
 
 public struct PhoneMenuItem: Equatable, Sendable, Identifiable {
-    public enum Action: String, Sendable { case rename, pin, clear, archive, delete }
+    public enum Action: String, Sendable { case rename, pin, copy, clear, archive, delete }
     public let action: Action
     public let label: String
     public let symbol: String
@@ -265,13 +265,15 @@ public struct PhoneMenuItem: Equatable, Sendable, Identifiable {
  */
 public enum PhoneSessionMenu {
     public static func active(_ task: NativeJSON) -> Bool { ["running", "waiting-approval"].contains(task["status"].string ?? "") }
-    public static func sections(_ task: NativeJSON, canRun: Bool, clear: (offered: Bool, clearing: Bool)? = nil) -> [[PhoneMenuItem]] {
+    /** `copy`: the open session's transcript is on screen, so 复制为 Markdown can copy it. */
+    public static func sections(_ task: NativeJSON, canRun: Bool, clear: (offered: Bool, clearing: Bool)? = nil, copy: Bool = false) -> [[PhoneMenuItem]] {
         guard canRun, task["personal"] == .null else { return [] }
         let busy = active(task)
         var result: [[PhoneMenuItem]] = [[
             PhoneMenuItem(action: .rename, label: "重命名", symbol: "pencil", disabledReason: nil),
             PhoneMenuItem(action: .pin, label: task["pinned"].bool ? "取消置顶" : "置顶", symbol: task["pinned"].bool ? "pin.slash" : "pin", disabledReason: nil),
         ]]
+        if copy { result.append([PhoneMenuItem(action: .copy, label: "复制为 Markdown", symbol: "doc.on.doc", disabledReason: nil)]) }
         if let clear, clear.offered || clear.clearing {
             result.append([PhoneMenuItem(action: .clear, label: clear.clearing ? "保留上下文" : "清空上下文", symbol: "eraser",
                 disabledReason: !clear.clearing && busy ? "这一轮结束后才能清空上下文" : nil)])

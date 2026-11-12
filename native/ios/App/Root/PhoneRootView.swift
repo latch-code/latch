@@ -18,6 +18,12 @@ struct PhoneRootView: View {
                 PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460)
             } else { RootTabs(addComputer: { scan = true }) }
         }
+        #if LATCH_SCREENS
+        .overlay {
+            if ScreensStage.scene == "brands" { BrandsSheet() }
+            else if ScreensStage.scene == "licenses" { NavigationStack { LicensesView() } }
+        }
+        #endif
         .fullScreenCover(isPresented: Binding(get: { scan || model.pairing != nil }, set: { if !$0 { scan = false } })) {
             // A cover is its own presentation; it is handed the model rather than trusting inheritance.
             PairingView { scan = false }.environmentObject(model)
@@ -67,8 +73,10 @@ private struct RootTabs: View {
                         // Not a count and not the system's red badge: amber says something waits on you in Code.
                         if entry.id == .code && dot { Label { Text(entry.label) } icon: { Self.dotted(entry.symbol, scheme: scheme) }.accessibilityValue("有等你处理") }
                         else if entry.id == .agents { Label { Text(entry.label) } icon: { Self.agentsMark } }
-                        else { Label(entry.label, systemImage: entry.symbol) }
+                        else { Label { Text(entry.label) } icon: { Self.symbol(entry.symbol) } }
                     }
+                    // One family of line icons: the bar does not fill the selected one.
+                    .environment(\.symbolVariants, .none)
                     .tag(entry.id)
             }
         }
@@ -82,22 +90,37 @@ private struct RootTabs: View {
         case .settings: PhoneSettingsView(addComputer: addComputer)
         }
     }
+    /** The bar's icons are drawn at one size and weight, so the drawn face and the SF Symbols beside it match. */
+    private static let barSymbol = UIImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+    private static func symbol(_ name: String) -> Image {
+        Image(uiImage: (UIImage(systemName: name, withConfiguration: barSymbol) ?? UIImage()).withRenderingMode(.alwaysTemplate))
+    }
     /**
-     * 我的 Agent's mark, the face as one still line drawing `(··)` as on the web, drawn once as a template image so the bar
-     * tints it like its other icons.
+     * 我的 Agent's tab glyph, in this one place: the avatar's curly-brace face with dot eyes, `{··}`, as a monochrome
+     * template the bar tints. Its paths are the avatar's (`FaceGeometry`), cropped to the face itself so its height is the symbols' cap height and stroked at
+     * the SF Symbols' regular weight beside it.
      */
+    private enum AgentsGlyph {
+        static let brackets = FaceGeometry.brackets["curly"] ?? []
+        /** The avatar's dot eyes, set a little low as there, sized to the thinner line. */
+        static let eyes = FaceGeometry.eyeX.map { FaceGeometry.dot($0, 21.2, 1.6) }
+        /** The face's own box on the 40 grid, its stroke included: as tall as the gear's cap height. */
+        static let box = CGRect(x: 7.9, y: 11.1, width: 24.2, height: 18.8)
+        /** In points: the line SF Symbols draw at regular weight at the bar's 18 pt, so the face has the symbols' weight. */
+        static let strokePoints: CGFloat = 1.6
+    }
     private static let agentsMark: Image = {
-        let size = CGSize(width: 24, height: 24)
-        let image = UIGraphicsImageRenderer(size: size).image { _ in
-            UIColor.black.setStroke(); UIColor.black.setFill()
-            for (top, control, bottom) in [((8.2, 5.6), (3.6, 12.0), (8.2, 18.4)), ((15.8, 5.6), (20.4, 12.0), (15.8, 18.4))] {
-                let path = UIBezierPath()
-                path.move(to: CGPoint(x: top.0, y: top.1))
-                path.addQuadCurve(to: CGPoint(x: bottom.0, y: bottom.1), controlPoint: CGPoint(x: control.0, y: control.1))
-                path.lineWidth = 1.9; path.lineCapStyle = .round
-                path.stroke()
-            }
-            for x in [10.1, 13.9] { UIBezierPath(ovalIn: CGRect(x: x - 1.4, y: 12.6 - 1.4, width: 2.8, height: 2.8)).fill() }
+        let reference = UIImage(systemName: "gearshape", withConfiguration: barSymbol) ?? UIImage()
+        let unit = max(reference.size.height, 20) / AgentsGlyph.box.height
+        let grid = CGRect(x: 0, y: 0, width: 40 * unit, height: 40 * unit)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: AgentsGlyph.box.width * unit, height: AgentsGlyph.box.height * unit)).image { context in
+            let cg = context.cgContext
+            // The 40 grid at this size, moved so the face's box is the image.
+            cg.translateBy(x: -AgentsGlyph.box.minX * unit, y: -AgentsGlyph.box.minY * unit)
+            cg.setStrokeColor(UIColor.black.cgColor); cg.setFillColor(UIColor.black.cgColor)
+            cg.setLineWidth(AgentsGlyph.strokePoints); cg.setLineCap(.round); cg.setLineJoin(.round)
+            for d in AgentsGlyph.brackets { cg.addPath(GridPath(d: d).path(in: grid).cgPath); cg.strokePath() }
+            for d in AgentsGlyph.eyes { cg.addPath(GridPath(d: d).path(in: grid).cgPath); cg.fillPath() }
         }
         return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
     }()
@@ -105,7 +128,7 @@ private struct RootTabs: View {
     /** The tab's symbol in the bar's unselected ink with an amber dot at its corner; drawn, since a tab item takes one image. */
     private static func dotted(_ symbol: String, scheme: ColorScheme) -> Image {
         let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
-        let base = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)) ?? UIImage()
+        let base = UIImage(systemName: symbol, withConfiguration: barSymbol) ?? UIImage()
         let ink = UIColor.label.resolvedColor(with: traits), amber = UIColor(PhoneTheme.amberIcon).resolvedColor(with: traits)
         let dot: CGFloat = 7, size = CGSize(width: base.size.width + dot / 2, height: base.size.height + dot / 2)
         let image = UIGraphicsImageRenderer(size: size).image { _ in

@@ -310,7 +310,19 @@ public actor NativeWorkspace {
         try lease.requireValid()
         return value
     }
+    /** Read-only GETs whose query the Host needs: their path before `?` is fixed and the query only names a scope, file or session. */
+    public static func readable(_ path: String) -> Bool {
+        let base = path.firstIndex(of: "?").map { String(path[..<$0]) } ?? path
+        // A `..` segment never leaves the route; a file named `[...slug].tsx` is encoded in the query and is fine.
+        guard !base.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == ".." || $0 == "." }) else { return false }
+        guard let mark = path.firstIndex(of: "?") else { return !path.contains("#") }
+        let query = String(path[path.index(after: mark)...])
+        guard !query.isEmpty, !query.contains("#"), !query.contains("?"), path.utf8.count <= 4096 else { return false }
+        return LinkBytes.matches(base, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/changes(/file)?") || base == "/link/api/handoffs"
+            || base == "/link/api/history/sources"
+    }
     public func read(_ path: String, body: Bool) async throws -> NativeJSON {
+        guard Self.readable(path) else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
         let lease = await verification.currentLease()
         if body { guard let lease else { throw NativeFailure.expired }; try lease.requireValid() }
@@ -462,15 +474,23 @@ public actor NativeWorkspace {
               let size = range.split(separator: "/").last.flatMap({ Int($0) }), size >= start + amount else { throw NativeFailure.invalidRecord }
         return (response.body, size)
     }
-    public func submit(_ pending: NativePendingWrite) async throws -> NativeJSON {
+    /**
+     * `timeoutSeconds`: how long this write may take on the Host, at most eleven minutes (a commit's hooks). `explain`: a
+     * refusal comes back as the Host's own code, words and details. `retryAnswered`: which refusals of a retry of this write
+     * the Host answered from its receipt, so they settle it rather than leave it unknown.
+     */
+    public func submit(_ pending: NativePendingWrite, timeoutSeconds: Int64 = 15, explain: Bool = false, retryAnswered: (@Sendable (NativeHostRefusal) -> Bool)? = nil) async throws -> NativeJSON {
+        guard (1...660).contains(timeoutSeconds) else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
+        // In flight from before the first await, so settlePending refuses it for the whole of this attempt.
+        guard writes.isEmpty else { throw NativeFailure.expired }
+        writes.insert(pending.requestId); defer { writes.remove(pending.requestId) }
         guard let lease = await verification.currentLease(), let method = NativeHTTPMethod(rawValue: pending.method),
-              method != .get && method != .head, writes.isEmpty else { throw NativeFailure.expired }
+              method != .get && method != .head else { throw NativeFailure.expired }
         try lease.requireValid()
         let decoded = try NativeJSON.decode(pending.body)
         let queueEdit = method == .patch && LinkBytes.matches(pending.path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")
         guard queueEdit || decoded["requestId"].string == pending.requestId else { throw NativeFailure.invalidRecord }
-        writes.insert(pending.requestId); defer { writes.remove(pending.requestId) }
         var index = try await pendingIndex()
         let retry = index.contains(pending.requestId)
         if retry {
@@ -483,7 +503,7 @@ public actor NativeWorkspace {
         try await vault.storeMetadata(JSONEncoder().encode(index), name: "pending-index")
         guard epoch == current, lease.valid else { throw NativeFailure.resultUnknown }
         let response: NativeHTTPResponse
-        do { response = try await connection.request(method, path: pending.path, body: pending.body) }
+        do { response = try await connection.request(method, path: pending.path, body: pending.body, timeoutSeconds: timeoutSeconds) }
         catch { throw NativeFailure.resultUnknown }
         // Even a path replacement leaves the original write unknown; it must never become a new request.
         guard epoch == current else { throw NativeFailure.resultUnknown }
@@ -493,10 +513,38 @@ public actor NativeWorkspace {
             return value
         }
         if response.status == 408 || response.status >= 500 { throw NativeFailure.resultUnknown }
-        // A retry's denial says nothing about whether the first submission ran before permissions changed.
-        if retry { throw NativeFailure.resultUnknown }
+        let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
+        // A retry's denial says nothing about whether the first submission ran before permissions changed, unless the
+        // Host answered it from the first one's receipt.
+        if retry, !(refusal.map { retryAnswered?($0) ?? false } ?? false) {
+            // Still unknown; with `explain` the Host's words come along for the line under the row.
+            if explain, let refusal { throw NativeUnsettledRefusal(refusal: refusal) }
+            throw NativeFailure.resultUnknown
+        }
         try? await removePending(pending.requestId)
-        throw await responseFailure(response, lease: lease)
+        let failure = await responseFailure(response, lease: lease)
+        if explain, let refusal, failure != .expired { throw refusal }
+        throw failure
+    }
+    /**
+     * Drops this device's copy of a write the Host now holds and answers itself (an open review-note send). The caller
+     * shows what the Host lists; nothing is sent again from here.
+     */
+    public func settlePending(_ requestId: String) async throws {
+        guard LinkBytes.matches(requestId, "[A-Za-z0-9_-]{16,80}"), !writes.contains(requestId) else { throw NativeFailure.invalidRecord }
+        try await removePending(requestId)
+    }
+    /** What this device has looked at on this computer, kept in its encrypted vault and never on the Host. */
+    public func seen() async throws -> PhoneSeen {
+        guard revocation == nil else { throw NativeFailure.revoked }
+        if let data = try await vault.metadata(name: "review-seen"), let value = PhoneSeen.decode(data) { return value }
+        let fresh = PhoneSeen.fresh()
+        try await vault.storeMetadata(JSONEncoder().encode(fresh), name: "review-seen")
+        return fresh
+    }
+    public func storeSeen(_ value: PhoneSeen) async throws {
+        guard revocation == nil, value.seen.count <= PhoneSeen.limit else { throw NativeFailure.invalidRecord }
+        try await vault.storeMetadata(JSONEncoder().encode(value), name: "review-seen")
     }
     public func pendingWrites() async throws -> [NativePendingWrite] {
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }

@@ -83,6 +83,7 @@ import UIKit
         case "apps": model.tab = .apps
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
+        case _ where stageReview(model, name, snapshot: value): break
         default: model.tab = .code
         }
     }
@@ -239,6 +240,79 @@ import UIKit
             PhoneRootView().environmentObject(model).tint(.blue).preferredColorScheme(theme)
                 .task { ScreensStage.stage(model); ScreensStage.fitWindow() }
         }
+    }
+}
+
+/** Review, 提交, handoffs and the Host's notices. */
+extension ScreensStage {
+    static var reviewSelection: PhoneLineSelection?
+    static var delivering = false
+    static var deliveryRefusal: (kind: String, value: NativeHostRefusal)?
+    fileprivate static func stageReview(_ model: PhoneModel, _ name: String, snapshot value: NativeJSON) -> Bool {
+        let withNotes = patched(value) { object in
+            var features = object["catalog"]!["features"].object
+            for key in ["changes", "reviewNotes", "gitDelivery", "handoffs"] { features[key] = .bool(true) }
+            var catalog = object["catalog"]!.object; catalog["features"] = .object(features); object["catalog"] = .object(catalog)
+            object["reviewNotes"] = json(#"[{"sessionId":"ses_review","pending":2,"sent":1,"claimed":0,"reviewed":0,"revision":3}]"#)
+            object["handoffs"] = json(#"[{"id":"hof_1","sourceSessionId":"ses_actions","targetSessionId":"ses_site","status":"started","returnScope":"summary","updatedAt":"{{-300}}"},{"id":"hof_2","sourceSessionId":"ses_review","targetSessionId":"ses_site","status":"returned","returnScope":"summary","updatedAt":"{{-200}}"}]"#)
+        }
+        switch name {
+        case "review-list":
+            model.tab = .code; model.snapshot = withNotes; model.reviewShortcuts = ["ses_review": "复核 3 处改动", "ses_actions": "复核改动"]
+        case "updating":
+            model.tab = .code; model.snapshot = withNotes; model.connected = false; model.offline = true
+            model.hostNotice = PhoneHostNotice.parse(Data(#"{"type":"host-state","instanceId":"screens","state":"stopping","reason":"update","retryAfter":5,"at":"2026-11-12T10:00:00.000Z"}"#.utf8))
+        case "review", "review-locked":
+            model.tab = .code
+            model.snapshot = name == "review" ? withNotes : patched(withNotes) { object in
+                var device = object["device"]!.object; device["dataScope"] = .string("work"); object["device"] = .object(device)
+            }
+            reviewSelection = name == "review" ? PhoneLineSelection(side: .new, start: 13, end: 14, anchor: 13) : nil
+            model.reviewTarget = PhoneReviewTarget(sessionId: "ses_review", file: "native/ios/Sources/LatchNativeCore/PhoneAgents.swift")
+        case "commit", "commit-hook", "commit-unknown":
+            model.tab = .code; model.snapshot = withNotes; delivering = true
+            if name == "commit-hook" {
+                deliveryRefusal = ("commit", NativeHostRefusal(status: 409, code: "git-hook-failed", message: "提交钩子没通过",
+                    details: json(#"{"hook":"pre-commit","exitCode":1,"tail":"> lint\nnative/ios/App/Review/ReviewView.swift:12: trailing whitespace\n1 problem (1 error, 0 warnings)"}"#)))
+            }
+            if name == "commit-unknown", let write = try? PhoneDelivery.commit(sessionId: "ses_review", message: "fix(ios): only send a model the service owns", skipHooks: false) {
+                model.pending = [write]
+            }
+            model.reviewTarget = PhoneReviewTarget(sessionId: "ses_review")
+        case "handoff":
+            model.tab = .code; model.snapshot = withNotes; model.sessionId = "ses_site"
+            model.detail = json(#"{"summary":{"id":"ses_site","title":"官网首页换新截图","status":"idle","harnessId":"standard","workspaceId":"site","mode":"agent"},"sync":{"instanceId":"screens","revision":42},"approvals":[],"questions":[],"queue":[],"messages":[{"id":"h1","role":"user","text":"把首页截图换成新的深色版本。","createdAt":"{{-600}}"},{"id":"h2","role":"assistant","text":"换好了：hero.png 与 hero-dark.png 都已更新，尺寸不变。","createdAt":"{{-500}}"}]}"#)
+            model.sessionHandoffs = ("ses_site", json(#"[{"id":"hof_1","requestId":"r1","sourceSessionId":"ses_actions","targetSessionId":"ses_site","target":{"kind":"new-session"},"returnScope":"summary","locale":"zh-CN","status":"started","createdAt":"{{-700}}","updatedAt":"{{-300}}"}]"#).array)
+        case "about", "licenses": model.tab = .settings
+        case "returned":
+            model.tab = .code; model.snapshot = withNotes; model.sessionId = "ses_review"; model.detail = conversation()
+            model.sessionHandoffs = ("ses_review", json(#"[{"id":"hof_2","requestId":"r2","sourceSessionId":"ses_review","targetSessionId":"ses_site","target":{"kind":"new-session"},"returnScope":"summary","locale":"zh-CN","status":"returned","createdAt":"{{-900}}","updatedAt":"{{-200}}","result":{"summary":"首页截图已换成深色版本，hero.png 与 hero-dark.png 尺寸不变。","evidence":[],"at":"{{-200}}","requestId":"r3"}}]"#).array)
+        default: return false
+        }
+        return true
+    }
+    /** The review's canned Host answers, by route. */
+    static func review(_ path: String) throws -> NativeJSON {
+        if path.contains("/changes/file") {
+            var lines: [String] = []
+            for index in 1...12 { lines.append(#"{"kind":"context","text":"    line \#(index)","oldLine":\#(index),"newLine":\#(index)}"#) }
+            lines.append(#"{"kind":"remove","text":"    if harness.usesServices { send(model) }","oldLine":13}"#)
+            lines.append(#"{"kind":"add","text":"    if PhoneStart.usesServices(harness), let model {","newLine":13}"#)
+            lines.append(#"{"kind":"add","text":"        fields[\"model\"] = model.json","newLine":14}"#)
+            lines.append(#"{"kind":"add","text":"    }","newLine":15}"#)
+            for index in 14...24 { lines.append(#"{"kind":"context","text":"    tail \#(index)","oldLine":\#(index),"newLine":\#(index + 2)}"#) }
+            return json(#"{"scope":"turn","file":{"root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M"},"hunks":[{"oldStart":1,"oldLines":24,"newStart":1,"newLines":26,"lines":["# + lines.joined(separator: ",") + "]}]}")
+        }
+        if path.contains("/changes") {
+            return json(#"{"scope":"turn","turnId":"turn_1","totals":{"files":3,"add":12,"del":4},"files":[{"root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M","add":3,"del":1},{"root":"latch","path":"native/ios/App/Agents/AgentsView.swift","status":"M","add":8,"del":3},{"root":"latch","path":"docs/CUSTOM-AGENTS.md","status":"M","add":1,"del":0,"byCommand":true}]}"#)
+        }
+        if path.contains("/review-notes") {
+            return json(##"{"revision":3,"notes":[{"id":"n1","root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","range":{"start":15,"end":15},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    }"]},"text":"这里漏了 else：模型服务不可用时应该报错，而不是静默不发。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"},{"id":"n2","root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","range":{"start":3,"end":3},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    let removed = something that is not here anymore"]},"text":"这一行后来被删了吗？","status":"sent","messageId":"m9","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-600}}","updatedAt":"{{-500}}"},{"id":"n3","root":"latch","path":"docs/OTHER.md","range":{"start":1,"end":1},"side":"new","anchor":{"scope":"session","linesHash":"h","lines":["# 其他"]},"text":"这份文档也要跟着改。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"}]}"##)
+        }
+        if path.hasSuffix("/git") {
+            return json(#"{"branch":"step/ios-review","head":"f36f0060aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","upstream":"origin/step/ios-review","ahead":0,"behind":0,"staged":[{"path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M"}],"unstaged":[{"path":"native/ios/App/Agents/AgentsView.swift","status":"M"}],"untracked":["native/ios/App/Review/Notes.swift"],"conflicted":[],"hooks":["pre-commit"],"filters":false,"remote":"origin"}"#)
+        }
+        throw NativeFailure.unsupported
     }
 }
 

@@ -36,6 +36,9 @@ struct ConversationView: View {
             SessionFilesSheet(files: fileList ?? [], open: { path, root in fileList = nil; openFile(path, root) })
         }
         .sheet(item: $model.forkDraft) { draft in NewSessionSheet(fork: draft).presentationCornerRadius(28) }
+        .sheet(item: $model.handoffDraft) { draft in HandoffSheet(draft: draft).presentationCornerRadius(28) }
+        // The handoffs this session is part of, read again when the snapshot says they changed.
+        .task(id: [id, PhoneHandoffs.involved(model.snapshot, sessionId: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadHandoffs(id) }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
         .onChange(of: model.contentGeneration) { _, _ in preview = nil; cancelFile() }
         .onDisappear { cancelFile(); preview = nil; PreviewFiles.clear() }
@@ -95,6 +98,13 @@ struct ConversationView: View {
                         Label(origin.words, systemImage: "arrow.triangle.branch").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
                     }.buttonStyle(.plain).disabled(!model.snapshot["tasks"].array.contains { $0["id"].string == origin.taskId }).accessibilityHint("返回来源会话")
                 }
+                if let crumb = PhoneHandoffs.crumb(model.snapshot, sessionId: id) {
+                    Button { Task { await model.openSession(crumb.sourceId) } } label: {
+                        Label(crumb.words, systemImage: "arrow.turn.down.right").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                    }.buttonStyle(.plain).disabled(!crumb.listed).accessibilityHint("返回来源会话")
+                }
+                let returned = PhoneHandoffs.place(PhoneHandoffs.results(model.openHandoffs, sessionId: id), turns: turns)
+                ForEach(returned[""] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
@@ -103,6 +113,7 @@ struct ConversationView: View {
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: openFile).equatable()
+                    ForEach(returned[turn.id] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
                 }
                 if running { RunStatusLine().id("status") }
                 else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
@@ -137,6 +148,7 @@ struct ConversationView: View {
                 }
                 if !model.detail["queue"].array.isEmpty { QueueChips(items: model.detail["queue"].array, sessionId: id) }
                 ClearingDrawer(sessionId: id, engine: engine)
+                if let handoff = PhoneHandoffs.returnable(model.openHandoffs, sessionId: id, status: summary["status"].string) { HandBackDrawer(handoff: handoff) }
             }
             // A stop needs no window, so it stays in reach while the content is closed.
             PromptComposer(draftId: id, gate: hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)

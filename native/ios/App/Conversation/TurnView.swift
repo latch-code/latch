@@ -79,7 +79,7 @@ struct TurnView: View, Equatable {
         case "interrupted": Text("回复中断").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
         default: EmptyView()
         }
-        if !actions.isEmpty && (latest || tapped) { TurnActionBar(actions: actions, index: index).padding(.leading, -8) }
+        if !actions.isEmpty && (latest || tapped) { TurnActionBar(actions: actions, index: index, turn: turn).padding(.leading, -8) }
     }
 }
 

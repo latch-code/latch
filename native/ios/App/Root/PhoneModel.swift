@@ -25,7 +25,7 @@ import UIKit
     @Published var removedByMac = false
     @Published var status = "选择一台电脑"
     @Published var error: String?
-    @Published var connected = false { didSet { if connected { offline = false; lastConfirmed = Date() } } }
+    @Published var connected = false { didSet { if connected { offline = false; hostNotice = nil; lastConfirmed = Date() } } }
     /** The store has answered, so an empty host list means this phone has none. */
     @Published var storeReady = false
     /** Reaching the Mac has failed at least once; the list shows what it last knew. */
@@ -61,8 +61,28 @@ import UIKit
     @Published var contentSearch = PhoneContentSearch()
     /** The list shows 已归档 in place of the shelves. */
     @Published var showArchived = false
+    /** The review page over the list, and 提交 over it. */
+    @Published var reviewTarget: PhoneReviewTarget?
+    /** 「复核 N 处改动」 by session, worked out from the turn records read for the list. */
+    @Published var reviewShortcuts: [String: String] = [:]
+    /** Turn records by session and `updatedAt`; nil where they could not be read. */
+    var turnRecords: [String: [NativeJSON]?] = [:]
+    var turnReads: Set<String> = []
+    /** What this device looked at on this computer; from the vault. */
+    var seenState: PhoneSeen?
+    /** The Host said it will not answer for a while: the list says why and reconnects by its `retryAfter`. */
+    @Published var hostNotice: PhoneHostNotice?
+    /** The open session's handoffs as this device may see them, and the signature they were read for. */
+    @Published var sessionHandoffs: (sessionId: String, list: [NativeJSON])?
+    var handoffSignature = ""
+    /** The handoff being drafted from a turn. */
+    @Published var handoffDraft: PhoneHandoffDraft?
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
     var heldDrafts: [String: String] = [:]
+    /** Text put into a session's draft from the commit page or a returned result, not yet in its composer. In memory only. */
+    @Published var draftInserts: [String: String] = [:]
+    /** Where a pending file save's text was meant to go, for 核对并放下. In memory only. */
+    var editPaths: [String: (reference: String, root: String?)] = [:]
     private var shelfCache: (query: String, shelves: [PhoneShelf])?
     private var hostClockOffset: TimeInterval = 0
     /** Where to come back to after the App returns from the background: within this process only. */
@@ -141,8 +161,8 @@ import UIKit
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        agentPath = []; appPath = []; resetSessionActions()
-        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
+        agentPath = []; appPath = []; resetSessionActions(); resetReview()
+        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
     }
@@ -153,7 +173,7 @@ import UIKit
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); resetSessionActions(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
+        clearPrivateContent(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
@@ -313,6 +333,7 @@ import UIKit
                 for try await event in stream.events {
                     guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
                     if try await workspace.accepts(event, from: stream, sessionId: selected) {
+                        if event.type == "host-state" { hostNotice = PhoneHostNotice.parse(event.data) }
                         pendingEvent = (event, stream, selected)
                         scheduleEventRefresh(workspace: workspace, generation: current, stream: streamId)
                     }
@@ -360,8 +381,12 @@ import UIKit
             defer { reconnectTask = nil }
             for attempt in 0..<1000 {
                 do {
-                    let delay = min(30.0, 0.5 * pow(2, Double(min(attempt, 6))))
-                    try await Task.sleep(for: .seconds(delay + Double.random(in: 0...delay / 4)))
+                    // An announced restart, update, stop or sleep says when to look again, as the web's: not a failure to back off from.
+                    if let notice = hostNotice { try await Task.sleep(for: .seconds(Double(notice.retryAfter))) }
+                    else {
+                        let delay = min(30.0, 0.5 * pow(2, Double(min(attempt, 6))))
+                        try await Task.sleep(for: .seconds(delay + Double.random(in: 0...delay / 4)))
+                    }
                     guard current == generation else { return }
                     let available = try await candidates(host)
                     let value = try await paths.migrate(available, workspace: workspace)
@@ -512,7 +537,9 @@ import UIKit
     private func clearPrivateContent() {
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
-        contentSearch = PhoneContentSearch(); forkDraft = nil
+        contentSearch = PhoneContentSearch(); forkDraft = nil; draftInserts = [:]; editPaths = [:]
+        // Diffs, notes and handoffs are content: they go with the window, and the review page with them.
+        reviewTarget = nil; sessionHandoffs = nil; handoffSignature = ""; handoffDraft = nil
         // Agents' names, duties and schedules came with the window and go with it.
         snapshot = PhoneAgents.withoutPrivate(snapshot)
     }
@@ -522,6 +549,7 @@ import UIKit
         let keys = ["status", "scopes", "dataScope"]
         if snapshot != .null, keys.contains(where: { snapshot["device"][$0] != value["device"][$0] }) { clearPrivateContent(); heldDrafts = [:] }
         snapshot = value
+        if live { refreshReviewShortcuts() }
         if let hostTime = PhoneTime.parse(value["hostTime"]) {
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.
             if live { hostClockOffset = hostTime.timeIntervalSinceNow; lastConfirmed = Date() } else { lastConfirmed = hostTime }

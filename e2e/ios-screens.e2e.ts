@@ -39,6 +39,18 @@ const SCENES = [
   'apps',
   'app-page',
   'pairing',
+  'review-list',
+  'updating',
+  'review',
+  'review-locked',
+  'commit',
+  'commit-hook',
+  'commit-unknown',
+  'handoff',
+  'returned',
+  'brands',
+  'about',
+  'licenses',
 ]
 /** A narrow and a wide iPhone, and an iPad; the first device type of each list that this Xcode has. */
 const DEVICES = [
@@ -146,5 +158,5 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
       await rm(derived, { recursive: true, force: true })
     }
   },
-  1_800_000,
+  2_700_000,
 )

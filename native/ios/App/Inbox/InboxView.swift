@@ -7,6 +7,7 @@ struct InboxView: View {
     @State private var query = ""
     @State private var creating = false
     @State private var showConnecting = false
+    @State private var column = NavigationSplitViewColumn.sidebar
     private var frozen: Bool { !model.connected }
     private var selection: Binding<String?> {
         Binding(get: { model.sessionId }, set: { id in
@@ -14,14 +15,15 @@ struct InboxView: View {
         })
     }
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $column) {
             let workspaces = model.snapshot["catalog"]["workspaces"].array
             let tasks = model.snapshot["tasks"].array
             let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
             let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
             List(selection: selection) {
                 if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
-                if model.offline, let host = model.selectedHost { OfflineBanner(host: host.name).plainRow() }
+                if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost?.name ?? "Mac")).plainRow() }
+                else if model.offline, let host = model.selectedHost { OfflineBanner(host: host.name).plainRow() }
                 if model.showArchived {
                     Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
                 }
@@ -66,10 +68,16 @@ struct InboxView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { VStack(spacing: 6) { PendingWritesBar(); ControlPendingBar() } }
         } detail: {
-            if let id = model.sessionId { ConversationView(id: id) }
+            // The review is the detail column's own stack, so 提交 is pushed on top of it; a destination of the list
+            // replaces the detail column and cannot push again.
+            if let target = model.reviewTarget { NavigationStack { ReviewView(target: target) }.id(target.sessionId) }
+            else if let id = model.sessionId { ConversationView(id: id) }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
         .sheet(isPresented: $creating) { NewSessionSheet().presentationCornerRadius(28) }
+        .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
+        // Back to the list from the review leaves it.
+        .onChange(of: column) { _, now in if now == .sidebar, model.reviewTarget != nil { model.reviewTarget = nil } }
         .modifier(SessionDialogs())
         #if LATCH_SCREENS
         .onAppear { if model.staged, !ScreensStage.query.isEmpty { query = ScreensStage.query } }
@@ -170,6 +178,22 @@ private struct OfflineBanner: View {
     }
 }
 
+/** The Host said it is installing an update or asleep: a plain line, not a failure; it reconnects by itself. */
+private struct HostNoticeBanner: View {
+    let words: (title: String, body: String)
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small).tint(PhoneTheme.muted)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(PhoneConversation.visible(words.title)).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
+                Text(words.body).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }.padding(.horizontal, 12).frame(minHeight: 52).background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityElement(children: .combine)
+    }
+}
+
 struct InboxRow: View {
     @EnvironmentObject private var model: PhoneModel
     let task: NativeJSON
@@ -189,8 +213,20 @@ struct InboxRow: View {
                 EngineTile(mark: model.engineMark(task["harnessId"].string), size: 14)
                 Text(([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
                     .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                if let id = task["id"].string, PhoneHandoffs.awaiting(model.snapshot).contains(id) {
+                    Spacer(minLength: 4)
+                    Text("待交回").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                }
             }
-        }.frame(minHeight: 48, alignment: .center).accessibilityElement(children: .combine)
+            if let id = task["id"].string, let label = model.reviewShortcuts[id] {
+                Button { model.openReview(id) } label: {
+                    HStack(spacing: 4) {
+                        Text(label).font(.system(size: 13, weight: .medium))
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    }.foregroundStyle(PhoneTheme.ink).padding(.horizontal, 10).frame(minHeight: 30).background(PhoneTheme.bubble, in: Capsule())
+                }.buttonStyle(.borderless).padding(.top, 2).accessibilityHint("打开复核页")
+            }
+        }.frame(minHeight: 48, alignment: .center).accessibilityElement(children: .contain)
     }
 }
 
@@ -230,12 +266,20 @@ struct TightLabel: LabelStyle {
  */
 private struct PendingWritesBar: View {
     @EnvironmentObject private var model: PhoneModel
+    @State private var checked: String?
     var body: some View {
+        if let checked {
+            Label(checked, systemImage: "info.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.horizontal, 16)
+                .task { try? await Task.sleep(for: .seconds(6)); self.checked = nil }
+        }
         ForEach(model.pending, id: \.requestId) { pending in
             HStack {
-                Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                Label(PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
-                Button("重试这次提交") { Task { await model.submit(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
+                    Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                }
+                Button("重试这次提交") { Task { await model.retryPending(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
             }.padding(.horizontal, 16).padding(.vertical, 6)
         }
     }

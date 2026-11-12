@@ -52,7 +52,9 @@ struct PromptComposer: View {
         }
         .padding(.bottom, 8).padding(.top, 4)
         .animation(.easeOut(duration: 0.2), value: focused)
-        .onAppear { if let held = model.takeDraft(for: draftId) { text = held } }
+        .onAppear { if let held = model.takeDraft(for: draftId) { text = held }; insert() }
+        // 加入对话 and 带入输入框 put text after what is written, never send it.
+        .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
         .onDisappear { model.holdDraft(text, for: draftId) }
         // An iPad keeps this composer while the session beside the list changes.
         .onChange(of: draftId) { old, new in model.holdDraft(text, for: old); text = model.takeDraft(for: new) ?? ""; nextModel = nil }
@@ -63,6 +65,10 @@ struct PromptComposer: View {
             if value == nil { model.holdDraft(text, for: draftId); text = "" }
             else if old == nil, let held = model.takeDraft(for: draftId) { text = held }
         }
+    }
+    private func insert() {
+        guard let added = model.takeInsert(for: draftId) else { return }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? added : text + "\n\n" + added
     }
     private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {

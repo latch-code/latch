@@ -79,6 +79,9 @@ extension PhoneModel {
             let archiving = !task["archived"].bool
             if await sessionAction({ try PhoneSessionWrite.archive(id, archived: archiving) }), archiving, sessionId == id { closeSession() }
         case .delete: deleting = task
+        case .copy:
+            guard detail["summary"]["id"].string == id else { return }
+            LocalClipboard.copy(PhoneMarkdown.transcript(detail, harness: engineName(task["harnessId"].string)))
         }
     }
     @discardableResult func rename(_ task: NativeJSON, title: String) async -> Bool {

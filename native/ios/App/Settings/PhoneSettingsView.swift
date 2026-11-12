@@ -46,6 +46,7 @@ struct PhoneSettingsView: View {
                             options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
                         copied = true
                     }
+                    NavigationLink("开源许可") { LicensesView() }
                 }
             }
             .navigationTitle("设置")
@@ -120,5 +121,32 @@ actor NativeAppAttestHook {
     static func persistToken(_ token: Data, in vault: EncryptedVault) async throws {
         guard (16...256).contains(token.count) else { throw NativeFailure.invalidRecord }
         try await vault.storeMetadata(token, name: "apns-token")
+    }
+}
+
+/** 开源许可: the notices and licence texts of what the App carries, read from its own bundle. */
+struct LicensesView: View {
+    static let files = [("版权与声明", "NOTICE-brands"), ("来源", "SOURCES"), ("Apache License 2.0", "LICENSE-Apache-2.0"), ("LobeHub Icons（MIT）", "LICENSE-lobe-icons")]
+    var body: some View {
+        List(Self.files, id: \.1) { title, name in
+            NavigationLink(title) { LicenseText(title: title, name: name) }
+        }.navigationTitle("开源许可").navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct LicenseText: View {
+    let title: String
+    let name: String
+    var body: some View {
+        Group {
+            if let text = Bundle.main.url(forResource: name, withExtension: "txt").flatMap({ try? String(contentsOf: $0, encoding: .utf8) }), !text.isEmpty {
+                ScrollView {
+                    Text(text).font(.system(size: 12, design: .monospaced)).foregroundStyle(PhoneTheme.ink2).frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                        .textSelection(.enabled)
+                }
+            } else {
+                ContentUnavailableView("读不到这份文本", systemImage: "doc.questionmark", description: Text("这个安装缺少 \(name).txt"))
+            }
+        }.navigationTitle(title).navigationBarTitleDisplayMode(.inline)
     }
 }

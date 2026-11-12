@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
@@ -41,10 +42,11 @@ import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { base32 } from '../src/crypto.ts'
+import { shapeContent, textShape } from '../src/files/edit.ts'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 let binary = ''
-async function invoke(input: unknown): Promise<Record<string, unknown>> {
+async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, LANG: 'en_US.UTF-8' } })
     let output = '',
@@ -52,7 +54,7 @@ async function invoke(input: unknown): Promise<Record<string, unknown>> {
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       reject(new Error('Swift fixture timeout'))
-    }, 15_000)
+    }, timeoutMs)
     child.stdout.on('data', (data: Buffer) => {
       output += data.toString()
       if (output.length > 1_048_576) child.kill('SIGKILL')
@@ -1925,6 +1927,573 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { allow: '这个会话都允许这类操作', option: 'o2', more: [], hidden: true, places: ['src/a\\u{200B}.ts'] },
     ])
   })
+  it('derives the review, 提交, editing, handoff and notice decisions the phone shows and the writes it sends for them', async () => {
+    const at = (m: string) => `2026-11-01T${m}:00.000Z`
+    const counts = (sessionId: string, pending: number, sent = 0, claimed = 0) => ({
+      sessionId,
+      pending,
+      sent,
+      claimed,
+      reviewed: 0,
+      revision: 3,
+    })
+    const task = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      title: id,
+      status: 'idle',
+      mode: 'agent',
+      updatedAt: at('12:00'),
+      ...extra,
+    })
+    const note = (id: string, extra?: Record<string, unknown>) => ({
+      id,
+      root: 'default',
+      path: 'a.ts',
+      range: { start: 2, end: 3 },
+      side: 'new',
+      anchor: { scope: 'turn', linesHash: 'h', lines: ['two', 'three'] },
+      text: '改这里',
+      status: 'pending',
+      createdBy: { deviceId: 'd', name: 'n' },
+      createdAt: at('10:00'),
+      updatedAt: at('10:00'),
+      ...extra,
+    })
+    const lines = [
+      ...Array.from({ length: 10 }, (_, i) => ({
+        kind: 'context',
+        text: i === 1 ? 'two' : i === 2 ? 'three' : `line ${i + 1}`,
+        oldLine: i + 1,
+        newLine: i + 1,
+      })),
+      { kind: 'remove', text: 'old eleven', oldLine: 11 },
+      { kind: 'add', text: 'new eleven', newLine: 11 },
+      ...Array.from({ length: 10 }, (_, i) => ({ kind: 'context', text: `tail ${i + 12}`, oldLine: i + 12, newLine: i + 12 })),
+    ]
+    const current = ['a', 'unique line that is long enough here', 'x', 'y', '}', 'z', '}', 'w']
+    const result = await invoke({
+      operation: 'phoneReview',
+      snapshot: {
+        catalog: { features: { changes: true } },
+        device: { dataScope: 'all' },
+        tasks: [
+          task('ses_new'),
+          task('ses_old', { updatedAt: at('10:30') }),
+          task('ses_notes', { updatedAt: at('09:00') }),
+          task('ses_chat', { mode: 'chat' }),
+          task('ses_running', { status: 'running' }),
+          task('ses_target', { title: '目标' }),
+          task('ses_source', { title: '来源会话' }),
+          task('ses_target2'),
+          task('ses_archived', { archived: true }),
+        ],
+        reviewNotes: [counts('ses_notes', 0, 1)],
+        handoffs: [
+          {
+            id: 'h1',
+            sourceSessionId: 'ses_source',
+            targetSessionId: 'ses_target',
+            status: 'started',
+            returnScope: 'summary',
+            updatedAt: at('11:00'),
+          },
+          {
+            id: 'h2',
+            sourceSessionId: 'ses_gone',
+            targetSessionId: 'ses_target2',
+            status: 'started',
+            returnScope: 'none',
+            updatedAt: at('11:00'),
+          },
+        ],
+      },
+      shortcuts: [
+        { task: task('a'), unread: true, turns: [{ turnId: 't', state: 'settled', files: 3 }], counts: null },
+        { task: task('a'), unread: false, turns: [{ turnId: 't', state: 'settled', files: 3 }], counts: null },
+        { task: task('a'), unread: true, turns: [{ turnId: 't', state: 'settled', files: 3, undone: true }], counts: null },
+        { task: task('a'), unread: false, turns: null, counts: counts('a', 2) },
+        { task: task('a'), unread: false, turns: [{ turnId: 't', state: 'running' }], counts: counts('a', 0, 0, 1) },
+        { task: task('a', { status: 'running' }), unread: true, turns: [{ turnId: 't', state: 'settled', files: 3 }], counts: null },
+        { task: task('a', { mode: 'chat' }), unread: true, turns: [{ turnId: 't', state: 'settled', files: 3 }], counts: null },
+      ],
+      current,
+      locate: [
+        { start: 2, end: 2, lines: ['unique line that is long enough here'] },
+        { start: 4, end: 4, lines: ['unique line that is long enough here'] },
+        { start: 6, end: 6, lines: ['}'] },
+        { start: 1, end: 1, lines: ['gone entirely from the file now'] },
+        { start: 6, end: 6, lines: ['y'] },
+      ],
+      fileDetail: { hunks: [{ oldStart: 1, oldLines: 21, newStart: 1, newLines: 21, lines }] },
+      notes: {
+        notes: [
+          note('n1'),
+          note('n2', {
+            range: { start: 40, end: 41 },
+            anchor: { scope: 'turn', linesHash: 'h', lines: ['nowhere at all in this file', 'x'] },
+          }),
+          note('n3', { status: 'sent', messageId: 'm' }),
+          note('n4', { sending: true }),
+          note('n5', { queueId: 'q1' }),
+          note('n6', { status: 'agent-claimed', messageId: 'm' }),
+          note('n7', { status: 'reviewed', messageId: 'm' }),
+        ],
+        revision: 3,
+        openSends: [
+          { id: 'send_1', noteIds: ['n4'] },
+          { id: 'send_2', noteIds: ['n5'], queue: true, queueId: 'q1' },
+        ],
+      },
+      list: {
+        scope: 'turn',
+        files: [
+          { root: 'default', path: 'src/z.ts', status: 'M', add: 1, del: 1 },
+          { root: 'default', path: 'a.ts', status: 'M', byCommand: true },
+          { root: 'default', path: 'src/deep/b.ts', status: 'A', secret: true },
+          { root: 'default', path: 'README.md', status: 'M', large: true },
+        ],
+        totals: { files: 4, add: 1, del: 1 },
+      },
+      empties: [
+        { scope: 'turn', files: [], running: true },
+        { scope: 'turn', files: [] },
+        { scope: 'uncommitted', files: [] },
+        { scope: 'session', files: [], unavailable: 'git-failed' },
+        { scope: 'turn', files: [{ root: 'r', path: 'p' }] },
+      ],
+      git: {
+        branch: 'main',
+        head: 'abc',
+        upstream: 'origin/main',
+        ahead: 0,
+        behind: 0,
+        staged: [{ path: 'a.ts', status: 'M' }],
+        unstaged: [{ path: 'b.ts', status: 'D' }],
+        untracked: ['c.ts'],
+        conflicted: [],
+        hooks: ['pre-commit'],
+        filters: false,
+        remote: 'origin',
+      },
+      gitClean: {
+        branch: 'main',
+        head: 'abc',
+        upstream: 'origin/main',
+        ahead: 2,
+        behind: 0,
+        staged: [],
+        unstaged: [{ path: 'b.ts', status: 'M' }],
+        untracked: [],
+        conflicted: [],
+        hooks: [],
+        filters: false,
+        remote: 'origin',
+      },
+      gitUnstaged: {
+        branch: 'main',
+        head: 'abc',
+        ahead: 0,
+        behind: 0,
+        staged: [],
+        unstaged: [
+          { path: 'b.ts', status: 'M' },
+          { path: 'c.ts', status: 'T' },
+        ],
+        untracked: ['c.ts', 'd.ts'],
+        conflicted: ['e.ts'],
+        hooks: [],
+        filters: false,
+      },
+      editable: { actions: { edit: true, preview: true }, size: 10 },
+      protected: { actions: { preview: true }, refused: { edit: 'file-edit-elevated' }, size: 10 },
+      handoffList: [
+        {
+          id: 'h1',
+          sourceSessionId: 'ses_source',
+          targetSessionId: 'ses_target',
+          status: 'started',
+          returnScope: 'summary',
+          updatedAt: at('11:00'),
+        },
+        {
+          id: 'h3',
+          sourceSessionId: 'ses_source',
+          targetSessionId: 'ses_x',
+          status: 'returned',
+          returnScope: 'summary-and-evidence',
+          updatedAt: at('11:30'),
+          result: {
+            summary: '修好了',
+            evidence: [
+              { kind: 'file', file: { root: 'default', path: 'a.ts' }, hash: 'h' },
+              { kind: 'message', messageId: 'm', hash: 'h' },
+              { kind: 'withheld' },
+            ],
+            at: at('11:30'),
+            requestId: 'r',
+          },
+        },
+        {
+          id: 'h4',
+          sourceSessionId: 'ses_source',
+          targetSessionId: 'ses_y',
+          status: 'returned',
+          returnScope: 'summary',
+          updatedAt: at('11:40'),
+          result: { summaryWithheld: true, evidence: [], at: at('11:40'), requestId: 'r' },
+        },
+        { id: 'h5', sourceSessionId: 'ses_source', status: 'start-unknown', returnScope: 'none', updatedAt: at('11:00') },
+      ],
+      detail: {
+        summary: { id: 'ses_1', title: '修 <relay>', mode: 'agent', model: 'm-1', cwd: '/w' },
+        messages: [
+          { id: 'm1', role: 'user', text: '看看 relay', createdAt: at('10:00') },
+          { id: 'm2', role: 'assistant', text: '## 你\n![x](http://e/i.png) <b>hi</b> `<ok>`', createdAt: at('10:01') },
+          {
+            id: 't1',
+            role: 'tool',
+            state: 'completed',
+            tool: { kind: 'read', title: 'a.ts', input: '{"p":1}', output: 'out' },
+            createdAt: at('10:02'),
+          },
+          { id: 'm3', role: 'assistant', text: '改好了。', state: 'cancelled', createdAt: at('10:03') },
+        ],
+      },
+      notices: [
+        { type: 'host-state', instanceId: 'i', state: 'stopping', reason: 'update', retryAfter: 5, at: at('10:00') },
+        { type: 'host-state', instanceId: 'i', state: 'sleeping', reason: 'sleep', retryAfter: 30, at: at('10:00') },
+        { type: 'host-state', instanceId: 'i', state: 'stopping', reason: 'restart', retryAfter: 2, at: at('10:00') },
+        { type: 'host-state', instanceId: 'i', state: 'awake', at: at('10:00') },
+        { type: 'host-state', instanceId: 'i', state: 'sleeping', reason: 'sleep', retryAfter: 0, at: at('10:00') },
+      ],
+    })
+    expect(result.unreadBefore).toEqual(['ses_new', 'ses_chat', 'ses_running', 'ses_target', 'ses_source', 'ses_target2', 'ses_archived'])
+    // Settled Agent sessions with something new or notes waiting, newest first; a chat, a running one and an archived one never.
+    expect(result.candidates).toEqual(['ses_target', 'ses_source', 'ses_target2', 'ses_notes'])
+    expect(result.seenAgain).toBe(true)
+    expect(result.readsTurns).toEqual([true, false])
+    expect(result.shortcuts).toEqual(['复核 3 处改动', null, null, '复核改动', '复核改动', null, null])
+    // Tap, stretch, the 100-line cap, a single line let go, and a pick on the other side starting afresh.
+    expect(result.taps).toEqual([
+      ['new', 5, 5, 5, '第 5 行'],
+      ['new', 5, 9, 5, '第 5–9 行'],
+      ['new', 5, 104, 5, '第 5–104 行'],
+      ['old', 7, 7, 7, '第 7 行'],
+      null,
+      ['new', 3, 3, 3, '第 3 行'],
+    ])
+    expect(result.located).toEqual(['exact 2-2', 'moved 2-2', 'stale', 'stale', 'stale'])
+    expect(result.placed).toEqual({ under: ['new:3'], stale: ['n2'] })
+    // Lines a note is on stay in view; unchanged lines away from a change fold.
+    expect(result.segments).toEqual(['lines 6', 'gap 1', 'lines 8', 'gap 7'])
+    expect(result.cards).toEqual([
+      'n1:待发:true',
+      'n2:待发:true',
+      'n3:已发送:false',
+      'n4:发送中:false',
+      'n5:已排队:true',
+      'n6:Agent 称已修:false',
+      'n7:你已复核:false',
+    ])
+    expect(result.tally).toEqual([['n1', 'n2', 'n5'], 1, 1, 1, 2])
+    expect(result.open).toEqual(['send_1', 'n4'])
+    expect(result.feet).toEqual([
+      'note(label: "第 2–3 行")',
+      'send(label: "发给 Agent (3)", count: 3, disabled: false)',
+      'send(label: "排到下一轮", count: 3, disabled: false)',
+      'send(label: "本轮结束后发", count: 3, disabled: true)',
+      'send(label: "发给 Agent (3)", count: 3, disabled: true)',
+      'unknown(sending: 1)',
+      'deliver(status: nil, running: false)',
+      'deliver(status: Optional("Agent 在修订 2 条反馈"), running: true)',
+      'none(status: nil, running: false)',
+      'deliver(status: nil, running: false)',
+    ])
+    expect(result.files).toEqual(['src/deep/b.ts', 'src/z.ts', 'a.ts', 'README.md'])
+    expect(result.empty).toEqual([
+      ['还没有改动文件', ''],
+      ['这一轮没有改动文件', ''],
+      ['没有未提交的改动', ''],
+      ['读不到 Git 状态', '本轮和这个会话不受影响。'],
+      [],
+    ])
+    expect(result.paths).toEqual([
+      '/link/api/tasks/ses_1/changes?scope=uncommitted',
+      '/link/api/tasks/ses_1/changes/file?scope=turn&turn=t%201&root=default&path=src%2Fa%20b%26c.ts&context=100000',
+      'refused',
+    ])
+    const writes = result.noteWrites as unknown[]
+    expect(writes[0]).toEqual({
+      method: 'POST',
+      path: '/link/api/tasks/ses_1/review-notes',
+      body: {
+        requestId: '<id>',
+        root: 'default',
+        path: 'a.ts',
+        range: { start: 2, end: 3 },
+        side: 'new',
+        scope: 'turn',
+        turnId: 'turn_1',
+        lines: ['two', 'three'],
+        text: '这里不对',
+      },
+    })
+    // A snippet that does not match the range, an empty note and a status only a person may not set are never sent.
+    expect([writes[1], writes[2], writes[5], writes[8]]).toEqual(['refused', 'refused', 'refused', 'refused'])
+    expect(writes.slice(9).map(write => (write as { path: string }).path)).toEqual([
+      '/link/api/tasks/ses_1/review-notes/sends/send_1/retry',
+      '/link/api/tasks/ses_1/review-notes/sends/send_1/abandon',
+    ])
+    expect((writes[7] as { body: unknown }).body).toEqual({ requestId: '<id>', noteIds: ['n1', 'n2'], queue: true })
+    // Another session's send is never settled by this list, nor is one whose note the list does not have.
+    expect(result.held).toEqual([true, false, false, false, true])
+    // Hidden, format and bidirectional characters are drawn, as the web's VisibleText; a tab stays a tab.
+    expect(result.visible).toEqual(['a\\u{200B}b', '\\u{61C}x', '\\u{FEFF}y', '\\u{202E}evil', '\\u{2066}i\\u{2069}', 'tab\tok', '\\u{1}'])
+    // `..` in an encoded file name is fine; a `..` segment, or a query on another route, is not.
+    expect(result.readable).toEqual([true, false, false, true])
+    // The Host's shaping (files/edit.ts shapeContent), ported: its own cases, a CRLF file keeps one CR per line, and
+    // 核对并放下 says 已保存 only when the shaped bytes are the file, else only that the file is not this text now.
+    expect(result.shapes).toEqual([
+      true,
+      true,
+      true,
+      'a\\r\\nb\\r\\nc\\r\\n',
+      'a\\nb\\nc',
+      [0xef, 0xbb, 0xbf],
+      0,
+      true,
+      'x\\r\\ny\\r\\n',
+      true,
+      true,
+      true,
+      false,
+      '已保存',
+      '文件现在不是你的修改',
+      '不能核对，到电脑上看',
+    ])
+    const delivery = result.delivery as Record<string, unknown>
+    expect(delivery.groups).toEqual([['修改 a.ts'], ['删除 b.ts'], ['未跟踪 c.ts'], []])
+    expect(delivery.primary).toEqual(['提交 1 个文件', '暂存全部', '推送 2 个提交', '暂存全部'])
+    expect(delivery.stageAll).toEqual(['b.ts', 'c.ts', 'd.ts', 'e.ts'])
+    expect(delivery.foot).toEqual(['只提交已暂存的 · 未暂存的 2 个文件不提交', '1 个文件未暂存'])
+    expect(delivery.copy).toEqual(['Agent 正在改这个文件夹', '变基进行中，在终端里完成', '这台电脑正在安装更新', ''])
+    // The draft gets the hook's last 80 lines in a fence its own backticks cannot close.
+    const excerpt = delivery.excerpt as string
+    expect(excerpt.startsWith('提交钩子 pre-commit 没通过，退出码 1，没有生成提交：\n\n````text\nline 12\n')).toBe(true)
+    expect(excerpt.endsWith('line 90\n```\n````')).toBe(true)
+    expect((delivery.writes as unknown[])[2]).toEqual({
+      method: 'POST',
+      path: '/link/api/tasks/ses_1/git/commit',
+      body: { requestId: '<id>', message: 'fix: a', skipHooks: true },
+    })
+    expect((delivery.writes as unknown[])[3]).toBe('refused')
+    expect(delivery.timeouts).toEqual([630, 270, 15])
+    // The web's rule: a commit settles on a receipt answer (`replay`) alone, a push also on a failure read from the remote;
+    // git-detached and a stage keep it unknown. A save is settled by file-changed, not by an expired handle.
+    expect(delivery.retryAnswers).toEqual([true, true, false, true, true, false, true, true, false, false, true, false, false])
+    expect(delivery.pendingPaths).toEqual({ 'a.ts': 'unstage', 'b.ts': 'unstage' })
+    expect(result.edit).toEqual([
+      {
+        method: 'PUT',
+        path: '/link/api/tasks/ses_1/files/AAAAAAAAAAAAAAAAAAAAAA',
+        body: { requestId: '<id>', baseHash: 'a'.repeat(64), content: 'new\n' },
+      },
+      'refused',
+      'refused',
+      true,
+      false,
+      false,
+      createHash('sha256').update('abc').digest('hex'),
+      // Mixed line endings and text past the 1 MiB body are not offered for editing.
+      false,
+      false,
+      // 核对并放下: a CRLF file holding the save's text is saved; other text is not.
+      true,
+      false,
+      '文件已在别处修改',
+    ])
+    const handoffs = result.handoffs as Record<string, unknown>
+    expect(handoffs.crumb).toEqual(['ses_source', '来自 来源会话', 'listed'])
+    expect(handoffs.crumbUnlisted).toBe('来自另一个会话')
+    expect(handoffs.awaiting).toEqual(['ses_target'])
+    expect(handoffs.status).toEqual(['代码会话在做', '已交回', '已交回', '结果未知'])
+    expect([handoffs.returnable, handoffs.returnableRunning]).toEqual(['h1', ''])
+    expect(handoffs.results).toEqual([
+      ['h3', '修好了', 'a.ts,代码会话里的一条消息,无权查看'],
+      ['h4', 'withheld', ''],
+    ])
+    expect(handoffs.summary).toBe('改好了。')
+    expect(handoffs.materials).toEqual([
+      `你 · 看看 relay ${createHash('sha256').update('看看 relay').digest('hex').slice(0, 8)}`,
+      `回复 · ## 你 ${createHash('sha256').update('## 你\n![x](http://e/i.png) <b>hi</b> `<ok>`').digest('hex').slice(0, 8)}`,
+      `回复 · 改好了。 ${createHash('sha256').update('改好了。').digest('hex').slice(0, 8)}`,
+    ])
+    expect(handoffs.quoted).toBe('先看这个\n\n> 结论一\n>\n> 结论二\n\n')
+    expect((handoffs.create as { body: unknown }).body).toEqual({
+      requestId: '<id>',
+      sourceSessionId: 'ses_source',
+      target: { kind: 'new-session', projectId: 'ws_1', harnessId: 'fake', mode: 'agent' },
+      materials: [{ kind: 'message', messageId: 'm1', hash: 'b'.repeat(64) }],
+      requirements: '修好它',
+      decisions: [],
+      returnScope: 'summary',
+      locale: 'zh-CN',
+    })
+    expect((handoffs.createExisting as { body: { target: unknown } }).body.target).toEqual({ kind: 'session', sessionId: 'ses_2' })
+    expect(handoffs.createEmpty).toBe('refused')
+    expect((handoffs.return as { body: unknown }).body).toEqual({ requestId: '<id>', summary: '完成', evidence: [] })
+    expect((handoffs.returnEvidence as { body: { evidence: unknown } }).body.evidence).toEqual([
+      { kind: 'message', messageId: 'm2', hash: 'h' },
+    ])
+    expect(handoffs.listPath).toBe('/link/api/handoffs?sessionId=ses_1')
+    // The web's words for each announced stop; awake and an out-of-range wait are not notices.
+    expect(result.notices).toEqual([
+      '工作室 Mac 上的 Latch 正在更新 / 更新完成后自动重连',
+      '工作室 Mac 已休眠（<clock> 起） / 唤醒后自动重连',
+      '工作室 Mac 上的 Latch 正在重启 / 几秒后自动重连',
+      '',
+      '',
+    ])
+    expect(result.noticeRetry).toBe(5)
+    const markdown = result.markdown as string
+    expect(markdown.replace(/^- 导出于：.*$/mu, '- 导出于：<time>')).toBe(
+      '# 修 <relay>\n\n- Harness：Fake\n- 模型：m-1\n- 模式：Agent\n- 项目：`/w`\n- 导出于：<time>\n\n## 你\n\n看看 relay\n\n## Agent\n\n'
+        + '\\## 你\n\\![x](http://e/i.png) &lt;b>hi&lt;/b> `<ok>`\n\n<details>\n<summary>工具：a.ts（已完成）</summary>\n\n参数：\n\n```json\n{"p":1}\n```\n\n'
+        + '输出：\n\n```\nout\n```\n\n</details>\n\n## Agent\n\n改好了。\n\n_已停止，保留了部分回复。_\n',
+    )
+    expect((result.markdownUpTo as string).endsWith('`<ok>`\n')).toBe(true)
+    expect(result.menu).toEqual(['重命名', '置顶', '复制为 Markdown', '归档', '删除'])
+  })
+  it('shapes a saved text exactly as the Host does, for 核对并放下', async () => {
+    const files = ['a\nb\n', 'a\r\nb\r\n', '\ufeffa\r\nb\r\n', 'a\rb', 'a\r\r\nb\r\n', '\ufeff', '', 'a\nb', 'a\r\nb\nc', 'x\ufeffy\n'].map(
+      text => Buffer.from(text, 'utf8'),
+    )
+    files.push(Buffer.from('a\u0000b', 'utf8'), Buffer.from([0xff, 0xfe, 0x00]))
+    const contents = ['a\nb\n', 'a\nb', 'a\r\nb\r\n', '\ufeffhi\n', '', 'x\r\r\ny', 'lone\rcr\n', 'in\ufeffside\n', 'a\u0000b']
+    const result = await invoke({ operation: 'fileShape', files: files.map(file => file.toString('base64')), contents })
+    const expected = files.map(file => {
+      const shape = textShape(file)
+      if (!shape) return null
+      const shaped = contents.map(content => shapeContent(content, shape))
+      return {
+        shape: { bom: shape.bom, eol: shape.eol, finalNewline: shape.finalNewline, mixed: shape.mixed },
+        shaped: shaped.map(bytes => bytes.toString('base64')),
+        settled: shaped.map(bytes => Buffer.compare(bytes, file) === 0),
+      }
+    })
+    expect(result.files).toEqual(expected)
+  })
+  it('reviews a turn, writes and sends a note, stages, sees a hook refuse a commit, commits, edits a file and hands off from the actual Swift workspace', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'latch-swift-review-'))
+    const home = join(scratch, 'home')
+    await mkdir(home)
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      gitDelivery: {
+        home,
+        hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch },
+        shell: async () => ({ file: '/bin/sh', argv: ['-sh'] }),
+      },
+    })
+    try {
+      const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: host.workspaceRoot, env, stdio: ['ignore', 'pipe', 'pipe'] })
+      git('init', '-q', '-b', 'main')
+      git('config', 'user.name', 'Tester')
+      git('config', 'user.email', 'tester@example.invalid')
+      await writeFile(join(host.workspaceRoot, 'tracked.txt'), 'committed\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'first')
+      // Slow enough that a one-second wait loses the answer, so a commit stays truly pending.
+      await writeFile(
+        join(host.workspaceRoot, '.git', 'hooks', 'pre-commit'),
+        '#!/bin/sh\nsleep 3\necho "phone hook says no" >&2\nexit 1\n',
+      )
+      await chmod(join(host.workspaceRoot, '.git', 'hooks', 'pre-commit'), 0o755)
+      // A remote whose hook is slow enough that a push's answer can be lost.
+      const remote = join(scratch, 'remote.git')
+      execFileSync('git', ['init', '-q', '--bare', remote], { env })
+      await writeFile(join(remote, 'hooks', 'pre-receive'), '#!/bin/sh\nsleep 3\nexit 0\n')
+      await chmod(join(remote, 'hooks', 'pre-receive'), 0o755)
+      git('remote', 'add', 'origin', remote)
+      const owner = await host.enroll({ listener: 'unix' })
+      await owner.json('agents', {
+        method: 'POST',
+        body: { id: 'fake', name: 'Fake agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
+      })
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      // Between the fixture's steps this side takes the phone's run scope away and gives it back.
+      const handshake = join(scratch, 'handshake')
+      await mkdir(handshake)
+      let done = false
+      const devices = host.host.security.devices
+      const phone = () => devices.list().find(device => device.name === 'Swift review fixture')!
+      let scopes: string[] = []
+      const watch = (async () => {
+        const seen = new Set<string>()
+        while (!done) {
+          for (const [name, answer] of [
+            ['drop-run', 'dropped'],
+            ['restore-run', 'restored'],
+            ['drop-run-push', 'dropped-push'],
+            ['restore-run-push', 'restored-push'],
+            ['detach', 'detached'],
+          ] as const) {
+            if (seen.has(name) || !existsSync(join(handshake, name))) continue
+            seen.add(name)
+            if (name === 'detach') git('checkout', '-q', '--detach')
+            else if (name.startsWith('drop-run')) {
+              scopes = [...phone().scopes]
+              await devices.setScopes(phone().id, { scopes: ['view'] }, { listener: 'unix' }, 'lpc-local')
+            } else await devices.setScopes(phone().id, { scopes: scopes as never }, { listener: 'unix' }, 'lpc-local')
+            await writeFile(join(handshake, answer), '')
+          }
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+      })()
+      const result = await invoke(
+        { operation: 'nativeReview', payload: invitation.payload, port: host.host.nativePort, handshake },
+        60_000,
+      ).finally(() => {
+        done = true
+      })
+      await watch
+      expect(result).toMatchObject({
+        shortcut: '复核 2 处改动',
+        notes: ['已发送'],
+        // The same send again is the Host's receipt: one message, not two.
+        feedbackMessages: 1,
+        claimed: ['Agent 称已修'],
+        primary: '暂存全部',
+        primaryStaged: '提交 1 个文件',
+        hooks: ['pre-commit'],
+        // Unknown, then refused without run (still unknown), then answered from the receipt and settled.
+        lostCommit: ['refused-or-unknown', 'pending', 'refused git-hook-failed replay', 'settled'],
+        // A 403 keeps the push unknown; with HEAD detached the retry is answered from the receipt, not `git-detached`.
+        lostPush: ['refused-unknown', 'pending', 'done', 'settled'],
+        checked: [true, false],
+        hook: ['git-hook-failed', 'pre-commit', 1, true],
+        excerpt: true,
+        replay: 'git-hook-failed',
+        commit: true,
+        pendingAfter: 0,
+        editOffered: true,
+        saved: 'ok',
+        stale: ['file-changed', '文件已在别处修改'],
+        handoff: ['started', 'target'],
+        handoffListed: 1,
+        window: true,
+      })
+      expect(result.stagedAfterHook).toEqual(result.staged)
+      // The commit made from the phone is the repository's; the web reads the same.
+      expect(git('log', '-1', '--format=%s').toString().trim()).toBe('fix: phone')
+      expect((await owner.json<{ tasks: Array<{ id: string }> }>('snapshot')).tasks.length).toBe(2)
+    } finally {
+      await host.close()
+      await rm(scratch, { recursive: true, force: true })
+    }
+  }, 90_000)
   it('derives the tabs, 我的 Agent and 应用 the phone shows, and the memory writes it sends', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
     const review = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
