@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DriverTaskDetail } from '@latch/protocol'
-import type { Bridge, HarnessDriver, HarnessPlugin, HarnessSecurityEvent, HostProject } from '@latch/sdk'
+import type { Bridge, HarnessDriver, HarnessHostOptions, HarnessPlugin, HarnessSecurityEvent, HostProject, ToolGateway } from '@latch/sdk'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import {
   createAcpAgentPlugin,
@@ -61,7 +61,12 @@ interface LogEntry {
 }
 
 /** A computer whose only `codex` is the fake app-server, found as the start script finds programs. */
-async function computer(env: Record<string, string> = {}, extra: string[] = [], options: AcpAgentOptions = {}) {
+async function computer(
+  env: Record<string, string> = {},
+  extra: string[] = [],
+  options: AcpAgentOptions = {},
+  host: Pick<HarnessHostOptions, 'toolGateway'> = {},
+) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const bin = join(root, 'bin')
@@ -100,6 +105,7 @@ async function computer(env: Record<string, string> = {}, extra: string[] = [], 
   const events: HarnessSecurityEvent[] = []
   const open = async (): Promise<Bridge> => {
     const bridge = driver.create({
+      ...host,
       dataDir,
       workspaceRoot: main,
       tmpRoot,
@@ -178,6 +184,46 @@ describe('Codex over its app-server', () => {
     })
     expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe('read-only')
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
+  })
+
+  it('gives the thread latch-browser as Codex config with paths only, and a fresh token file when it resumes', async () => {
+    const leases: Array<{ token: string; tokenFile: string; closed: boolean }> = []
+    const toolGateway: ToolGateway = {
+      open() {
+        const lease = {
+          token: `lbt1.${String(leases.length).repeat(43)}`,
+          tokenFile: `/tmp/latch-test/tools/${leases.length}.lbt`,
+          closed: false,
+        }
+        leases.push(lease)
+        return {
+          socketPath: '/tmp/latch-test/tools/gateway.sock',
+          tokenFile: lease.tokenFile,
+          token: lease.token,
+          active: () => !lease.closed,
+          cancel() {},
+          settled: async () => ({ resultUnknown: false }),
+          close: () => void (lease.closed = true),
+        }
+      },
+    }
+    const t = await computer({}, [], {}, { toolGateway })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo hello')
+    await settled(bridge, id)
+    const started = sent(await t.log(), 'thread/start')[0]!.params as { config: { mcp_servers: Record<string, any> } }
+    const server = started.config.mcp_servers['latch-browser']
+    expect(server).toMatchObject({ command: process.execPath, env: {} })
+    expect(server.args.slice(-2)).toEqual(['/tmp/latch-test/tools/gateway.sock', leases[0]!.tokenFile])
+    // Codex may keep the thread's config in its own files: only the paths are in it.
+    expect(JSON.stringify(started)).not.toContain('lbt1.')
+    await bridge.close()
+    expect(leases[0]!.closed).toBe(true)
+    const again = await t.open()
+    await again.prompt(id, 'echo again', rid())
+    await settled(again, id)
+    const resumed = sent(await t.log(), 'thread/resume')[0]!.params as { config: { mcp_servers: Record<string, any> } }
+    expect(resumed.config.mcp_servers['latch-browser'].args.at(-1)).toBe(leases[1]!.tokenFile)
   })
 
   it('puts Codex’s approvals to the person with one-time answers, and tells Codex what they chose', async () => {

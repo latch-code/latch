@@ -77,6 +77,10 @@ export interface ToolState {
   final?: { state: 'cancelled' | 'failed'; note: string }
   /** How the latest permission request for this call ended. */
   decision?: ToolDecision
+  /** The approval that allowed it, while the process runs; never stored. */
+  approvalId?: string
+  /** A call of the Host's tool gateway was matched to it, so no second one is. */
+  gatewayMatched?: true
   /** Decided without asking the person; `recorded` once its audit row was written. */
   judged?: ToolJudgement & { recorded?: true }
   /** The harness refused the call itself before it ran; kept once reported, since later reports leave it out. */

@@ -9,6 +9,7 @@ import {
   skillsServer,
   writeSessionSkills,
 } from './skills-server.ts'
+import { browserServer } from './browser-server.ts'
 import type { AttachmentRef, QuestionResult } from '@latch/protocol'
 import {
   CURSOR_DECLINE_REPLY,
@@ -59,13 +60,15 @@ import {
   type ExternalSessionPlace,
   type LaunchPreview,
   type ModelGatewayLease,
+  type ToolGatewayCallContext,
+  type ToolGatewayLease,
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
-import { isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
+import { canonicalJson, isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { errorCodeOf, interruptedNote, runEndRecord } from '@latch/core/run-end'
 import {
   catalogueReadOf,
@@ -238,6 +241,12 @@ interface Live {
   heldNotes?: string[]
   /** The process's token to the Host's gateway, for a session on a route; revoked when the process ends. */
   gateway?: ModelGatewayLease
+  /**
+   * The token of the session's `latch-browser` server to the Host's tool gateway: a fresh one each time the session is
+   * opened, resumed, loaded or forked on a process; revoked when the next is issued, when the process ends and when the
+   * turn is stopped its calls end.
+   */
+  tools?: ToolGatewayLease
 }
 
 interface Segment {
@@ -398,6 +407,9 @@ const LOOKING_KINDS = new Set(['read', 'search', 'think', 'fetch'])
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
+/** How long a turn waits for its browser calls to settle: the broker's 5 s for the desktop app, and a margin. */
+const TOOL_SETTLE_MS = 7_000
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -3020,6 +3032,7 @@ export class AgentRuntime implements Bridge {
       status = this.failure(run, error, notes)
     } finally {
       await run.imageChain
+      await this.toolsSettled(run, notes)
       this.finishTurn(run, status, [...run.notes, ...notes])
     }
   }
@@ -3155,6 +3168,28 @@ export class AgentRuntime implements Bridge {
     return `${name} 进程意外退出（${describeExit(info)}）；${turn}。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入日志。' : ''}`
   }
 
+  /**
+   * A turn ends only once the browser calls its agent's server has in flight are settled: a stop waits for the desktop
+   * app to report each, as the built-in harness's does, so a click cannot land after the stop is confirmed. Bounded by
+   * the broker's own wait for the desktop app and a margin; past it, or when a call may have acted, the turn says so.
+   */
+  private async toolsSettled(run: Run, notes: string[]): Promise<void> {
+    const tools = run.live?.tools
+    if (!tools) return
+    // A call still out when the turn ends belongs to no turn any more.
+    tools.cancel()
+    const answer = await Promise.race([
+      tools.settled(),
+      sleep(TOOL_SETTLE_MS, undefined, { ref: false }).then(() => ({ resultUnknown: true, late: true })),
+    ])
+    if (answer.resultUnknown)
+      notes.push(
+        'late' in answer
+          ? `停止时 ${this.agent.name} 的浏览器调用没有在 ${TOOL_SETTLE_MS / 1000} 秒内结算，结果未知：动作可能已经执行，请在「浏览器」里核对页面。`
+          : `停止时 ${this.agent.name} 的浏览器调用结果未知：动作可能已经执行，请在「浏览器」里核对页面。`,
+      )
+  }
+
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
     clearTimeout(run.graceTimer)
     for (const asking of run.asking ?? []) asking.abort()
@@ -3284,6 +3319,8 @@ export class AgentRuntime implements Bridge {
         if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
       }
       for (const asking of run.asking ?? []) asking.abort()
+      // The browser calls its server has in flight stop too; the Host settles each with the desktop app.
+      run.live?.tools?.cancel()
       this.notify(run.taskId)
     }
     // Only a sent turn can keep the process busy; a turn cancelled earlier never sends its prompt.
@@ -3531,6 +3568,7 @@ export class AgentRuntime implements Bridge {
 
   private onExit(live: Live, info: ExitInfo): void {
     if (this.lives.get(live.key) === live) this.lives.delete(live.key)
+    live.tools?.close()
     this.auth.forget(live)
     clearTimeout(live.idleTimer)
     live.sessions.clear()
@@ -3606,6 +3644,92 @@ export class AgentRuntime implements Bridge {
     }
   }
 
+  /**
+   * Whether this harness takes MCP servers in `session/new`: every ACP agent does, except where its preset says it does
+   * not (pi, whose RPC mode takes none).
+   */
+  private takesMcpServers(): boolean {
+    return this.selection.profile?.wire !== 'pi' && this.selection.preset?.skillServer !== false
+  }
+
+  /**
+   * A fresh token of the Host's tool gateway for the session's browser tools on this process, revoking the one before it;
+   * none for a harness that takes no MCP servers, for a session without a project (of 我的 Agent, or a conversation with
+   * 通用), when the Host has no gateway, or when the Host declines (no browser provider registered now): the next open,
+   * resume, load or fork asks again. The Host checks the session again on every call.
+   */
+  private openTools(taskId: string, live: Live): ToolGatewayLease | undefined {
+    live.tools?.close()
+    delete live.tools
+    const gateway = this.options.toolGateway
+    const task = this.task(taskId)
+    if (!gateway || !this.takesMcpServers() || task.acp.proposals || task.summary.agent || task.summary.agentPrivate) return undefined
+    let lease: ToolGatewayLease | undefined
+    try {
+      lease = gateway.open({ sessionId: taskId, describe: (tool, args) => this.describeToolCall(taskId, tool, args) })
+    } catch (error) {
+      this.limits.log(`${this.agent.name} 会话 ${taskId} 没有拿到浏览器工具：${clip(this.redact(message(error)), 200)}`)
+      return undefined
+    }
+    if (!lease) return undefined
+    this.tokens.add(lease.token)
+    live.tools = lease
+    // A token outlives neither its process nor the next one issued for the session.
+    void live.wire.exited.then(() => lease.close())
+    return lease
+  }
+
+  /**
+   * The session's own row of a call that reached the tool gateway: the oldest unmatched call of this turn whose name or
+   * title is exactly `tool` of the `latch-browser` server (as `mcp__latch-browser__<tool>`, Codex's
+   * `latch-browser.<tool>`, or `latch-browser: <tool>`) and whose input is `args`. Its approval is named only when that row
+   * is the only such call, since two identical calls cannot be told apart. Nothing when the agent reports no such row (it
+   * need not); the records then carry the gateway's call alone. And whether the session's turn runs, so the Host refuses
+   * a call between turns or while a stop settles.
+   */
+  private describeToolCall(taskId: string, tool: string, args: Record<string, unknown>): ToolGatewayCallContext {
+    const run = this.runs.get(taskId)
+    const context: ToolGatewayCallContext = { turn: !run?.sent ? 'none' : run.cancelRequested ? 'stopping' : 'running' }
+    if (run) {
+      const key = `tools:${randomUUID()}`
+      context.waitForUser = () => {
+        run.clock.openWait(key)
+        return () => run.clock.closeWait(key)
+      }
+    }
+    const calls = this.tools.get(taskId)?.calls
+    if (!calls) return context
+    let wanted: string
+    try {
+      wanted = canonicalJson(args)
+    } catch {
+      return context
+    }
+    const sameInput = (input: unknown) => {
+      try {
+        return canonicalJson(input) === wanted
+      } catch {
+        return false
+      }
+    }
+    const names = new Set([`mcp__latch-browser__${tool}`, `latch-browser.${tool}`, `latch-browser: ${tool}`])
+    const matches = [...calls.values()].filter(
+      state =>
+        !state.gatewayMatched
+        && !state.final
+        && state.status !== 'completed'
+        && state.status !== 'failed'
+        && [state.name, state.title].some(value => typeof value === 'string' && names.has(value.trim()))
+        && sameInput(state.rawInput),
+    )
+    const [oldest] = matches
+    if (!oldest) return context
+    oldest.gatewayMatched = true
+    context.toolCallId = oldest.id.slice('tool:'.length)
+    if (matches.length === 1 && oldest.decision?.outcome === 'allowed' && oldest.approvalId) context.approvalId = oldest.approvalId
+    return context
+  }
+
   private async session(taskId: string, live: Live, signal: AbortSignal): Promise<Binding> {
     const wire = live.wire
     // Opening a session is bounded more tightly than other requests: an agent that never answers is stopped and the
@@ -3626,10 +3750,12 @@ export class AgentRuntime implements Bridge {
     const passed = storedFolders(task.acp)
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
     if (task.acp.proposals) await this.clearProposals(taskId)
-    const mcpServers =
+    const mcpServers: unknown[] =
       task.acp.skills || task.acp.proposals
         ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0)]
         : []
+    const tools = this.openTools(taskId, live)
+    if (tools) mcpServers.push(browserServer(tools))
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
       void live.wire.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)
@@ -5172,7 +5298,10 @@ export class AgentRuntime implements Bridge {
     if (!this.permissions.delete(permission.approval.id)) return
     permission.claimed = true
     permission.tool.awaiting = Math.max(0, permission.tool.awaiting - 1)
-    if (decision && permission.tool.decision?.outcome !== 'allowed') permission.tool.decision = decision
+    if (decision && permission.tool.decision?.outcome !== 'allowed') {
+      permission.tool.decision = decision
+      if (decision.outcome === 'allowed') permission.tool.approvalId = permission.approval.id
+    }
     if (permission.statusAfter && !this.runs.has(permission.taskId)) settleAskedTool(permission.tool, decision?.outcome === 'allowed')
     if (result instanceof Error) permission.fail(result)
     else permission.answer(result)

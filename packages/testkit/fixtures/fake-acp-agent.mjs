@@ -271,6 +271,18 @@ function mcpProcess(server, cwd) {
     tell(method) {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`)
     },
+    // A request whose ID the caller keeps, to cancel it with `notifications/cancelled`.
+    request(method, params, ms = 5_000) {
+      const id = next++
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })}\n`)
+      return {
+        id,
+        reply: Promise.race([new Promise(resolve => replies.set(id, resolve)), gone, delay(ms).then(() => ({ timeout: true }))]),
+      }
+    },
+    cancel(id) {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } })}\n`)
+    },
   }
 }
 
@@ -937,6 +949,86 @@ const scenarios = {
     const reply = await server.ask('tools/call', { name: 'propose_schedule', arguments: { name, plan, prompt: rest.join(' ') } })
     tool({ toolCallId: id, status: reply.result?.isError ? 'failed' : 'completed' }, 'tool_call_update')
     say(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
+    return END
+  },
+  // `browser <steps>`: calls the session's `latch-browser` server once per step, as an agent calling an MCP tool would,
+  // and says what each call returned. `<steps>` is JSON: `[{ "tool": "browser_open", "args": { "url": "5173" }, "ask": true }]`.
+  // In arguments, `"$tab"` stands for the latest tab ID a result named and `"$ref:<words>"` for the reference the latest
+  // read gave the line holding `<words>`. Each call is reported as a tool row titled `mcp__latch-browser__<tool>` with its
+  // arguments as input; `ask` first asks the person through session/request_permission, as an agent in a mode that asks
+  // before MCP tools does. `cancelAfterMs` sends `notifications/cancelled` for the call after that long. `title` reports
+  // the row under another name (another server's tool); `twin` reports a second, identical row that is never called.
+  browser: async ({ sessionId, input, say, tool, permission }) => {
+    const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-browser')
+    if (!server) {
+      say('no latch-browser')
+      return END
+    }
+    let steps
+    try {
+      steps = JSON.parse(input.trim().replace(/^browser\s*/u, ''))
+    } catch {
+      say('steps are not JSON')
+      return END
+    }
+    const seen = []
+    const tabOf = () =>
+      [...seen]
+        .reverse()
+        .map(text => /brw_[A-Za-z0-9_-]{22}/u.exec(text)?.[0])
+        .find(Boolean) ?? ''
+    const refOf = words => {
+      const read = [...seen].reverse().find(text => text.includes('[e')) ?? ''
+      const line = read.split('\n').find(item => item.includes(words)) ?? ''
+      return /\[(e\d+)\]/u.exec(line)?.[1] ?? 'e999'
+    }
+    const resolve = value =>
+      value === '$tab' ? tabOf() : typeof value === 'string' && value.startsWith('$ref:') ? refOf(value.slice(5)) : value
+    const lines = []
+    for (const [index, step] of steps.entries()) {
+      if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
+      const args = Object.fromEntries(Object.entries(step.args ?? {}).map(([key, value]) => [key, resolve(value)]))
+      const toolCallId = `browser_${index}_${Date.now()}`
+      const call = { toolCallId, title: step.title ?? `mcp__latch-browser__${step.tool}`, kind: 'other', status: 'pending', rawInput: args }
+      tool(call)
+      if (step.twin) tool({ ...call, toolCallId: `${toolCallId}_twin` })
+      if (step.ask) {
+        const { result } = await permission(call)
+        if (result.outcome.outcome === 'cancelled') return { stopReason: 'cancelled' }
+        if (result.outcome.optionId === 'reject') {
+          tool({ toolCallId, status: 'failed' }, 'tool_call_update')
+          lines.push(`${step.tool}: rejected`)
+          continue
+        }
+      }
+      tool({ toolCallId, status: 'in_progress' }, 'tool_call_update')
+      const asked = server.request('tools/call', { name: step.tool, arguments: args }, 60_000)
+      if (step.cancelAfterMs !== undefined) setTimeout(() => server.cancel(asked.id), step.cancelAfterMs)
+      const reply = await Promise.race([asked.reply, waitCancel(sessionId).then(() => ({ cancelled: true }))])
+      if (reply.cancelled) {
+        server.cancel(asked.id)
+        tool({ toolCallId, status: 'failed' }, 'tool_call_update')
+        return { stopReason: 'cancelled' }
+      }
+      const content = reply.result?.content ?? []
+      const text =
+        content
+          .filter(item => item.type === 'text')
+          .map(item => item.text)
+          .join('\n') || JSON.stringify(reply.error ?? reply)
+      const images = content.filter(item => item.type === 'image').length
+      seen.push(text)
+      tool(
+        {
+          toolCallId,
+          status: reply.result?.isError ? 'failed' : 'completed',
+          content: [{ type: 'content', content: { type: 'text', text } }],
+        },
+        'tool_call_update',
+      )
+      lines.push(`${step.tool}: ${reply.result?.isError ? 'error' : 'ok'}${images ? ` [${images} image]` : ''}: ${text}`)
+    }
+    say(lines.join('\n'))
     return END
   },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.

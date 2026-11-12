@@ -2,6 +2,8 @@ import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
@@ -18,6 +20,8 @@ import type {
   HostProject,
   ModelGateway,
   ModelRoute,
+  ToolGateway,
+  ToolGatewayCallContext,
   ProjectFolder,
 } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
@@ -128,7 +132,15 @@ async function setup(
   overrides: Partial<AgentRecord> = {},
   attachmentOptions: Pick<
     HarnessHostOptions,
-    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway' | 'proposeMemory' | 'proposeSchedule'
+    | 'readAttachment'
+    | 'saveAttachment'
+    | 'trackFiles'
+    | 'clock'
+    | 'securityEvent'
+    | 'modelGateway'
+    | 'proposeMemory'
+    | 'proposeSchedule'
+    | 'toolGateway'
   > = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
@@ -5803,5 +5815,291 @@ describe('a new context in a session', () => {
     expect(Object.keys(await fixture.agentSessions())).toHaveLength(2)
     await bridge.remove!(sessionId)
     await vi.waitFor(async () => expect(await fixture.agentSessions()).toEqual({}), { timeout: 5_000, interval: 10 })
+  })
+})
+
+/**
+ * A stand-in for the Host's tool gateway: real tokens in real 0600 files, on a real socket. `browser_wait` holds until the
+ * call is stopped, answered `stopMs` later and, with `unknown`, as a call whose result is unknown; any other tool
+ * answers at once with a tab. Every call records what `describe` said of it.
+ */
+async function recordingToolGateway(options: { admit?: { now: boolean }; stopMs?: number; unknown?: boolean } = {}) {
+  const admit = options.admit ?? { now: true }
+  const directory = await mkdtemp(join(tmpdir(), 'lbt-'))
+  cleanups.push(() => rm(directory, { recursive: true, force: true }))
+  const socketPath = join(directory, 'g.sock')
+  interface Lease {
+    sessionId: string
+    token: string
+    tokenFile: string
+    closed: boolean
+    cancels: number
+    inflight: number
+    unknown: boolean
+    idle: Set<() => void>
+    stops: Set<() => void>
+    describe?: any
+  }
+  const leases: Lease[] = []
+  const calls: Array<{ tool: string; args: Record<string, unknown>; context: ToolGatewayCallContext }> = []
+  const refused: string[] = []
+  const settle = (lease: Lease) => {
+    if (!lease.inflight) for (const done of [...lease.idle]) done()
+  }
+  const server = createServer(socket => {
+    let buffer = ''
+    socket.setEncoding('utf8').on('data', chunk => {
+      buffer += chunk
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const request = JSON.parse(buffer.slice(0, end))
+        buffer = buffer.slice(end + 1)
+        const write = (message: unknown) => socket.write(`${JSON.stringify(message)}\n`)
+        const lease = leases.find(item => item.token === request.token && !item.closed)
+        if (!lease) {
+          refused.push(request.method)
+          write({ id: request.id, error: { code: -32001, message: 'token not valid' } })
+          continue
+        }
+        if (request.method === 'tools/list') {
+          write({ id: request.id, result: { tools: [{ name: 'browser_tabs', description: 'tabs', inputSchema: { type: 'object' } }] } })
+          continue
+        }
+        if (request.method !== 'tools/call') continue
+        const { name, arguments: args } = request.params
+        const { waitForUser: _wait, ...context } = lease.describe?.(name, args) ?? {}
+        calls.push({ tool: name, args, context })
+        if (name !== 'browser_wait') {
+          write({ id: request.id, result: { content: [{ type: 'text', text: `tab brw_${'A'.repeat(22)}` }] } })
+          continue
+        }
+        lease.inflight++
+        const stop = () =>
+          setTimeout(() => {
+            if (options.unknown) lease.unknown = true
+            write({ id: request.id, result: { content: [{ type: 'text', text: 'stopped' }], isError: true } })
+            lease.inflight--
+            settle(lease)
+          }, options.stopMs ?? 0)
+        lease.stops.add(stop)
+      }
+    })
+  })
+  await new Promise<void>(resolve => server.listen(socketPath, resolve))
+  cleanups.push(() => new Promise<void>(resolve => server.close(() => resolve())))
+  const toolGateway: ToolGateway = {
+    open({ sessionId, describe }) {
+      if (!admit.now) return undefined
+      const token = `lbt1.${randomUUID().replaceAll('-', '').padEnd(43, 'x')}`
+      const tokenFile = join(directory, `${randomUUID()}.lbt`)
+      writeFileSync(tokenFile, token, { mode: 0o600 })
+      const lease: Lease = {
+        sessionId,
+        token,
+        tokenFile,
+        closed: false,
+        cancels: 0,
+        inflight: 0,
+        unknown: false,
+        idle: new Set(),
+        stops: new Set(),
+        describe,
+      }
+      leases.push(lease)
+      const stopAll = () => {
+        for (const stop of lease.stops) stop()
+        lease.stops.clear()
+      }
+      return {
+        socketPath,
+        tokenFile,
+        token,
+        active: () => !lease.closed,
+        cancel: () => {
+          lease.cancels++
+          stopAll()
+        },
+        settled: () =>
+          new Promise(resolve => {
+            const done = () => {
+              lease.idle.delete(done)
+              resolve({ resultUnknown: lease.unknown })
+            }
+            if (!lease.inflight) done()
+            else lease.idle.add(done)
+          }),
+        close: () => {
+          lease.closed = true
+          stopAll()
+        },
+      }
+    },
+  }
+  return { toolGateway, leases, calls, refused, socketPath }
+}
+
+const browserEntry = (entry: LogEntry) =>
+  (entry.params as { mcpServers: Array<{ name: string; args: string[]; env: unknown[] }> }).mcpServers.find(
+    server => server.name === 'latch-browser',
+  )
+const TAB = `brw_${'A'.repeat(22)}`
+
+describe('the browser tools for ACP sessions', () => {
+  it('gives a session latch-browser with a fresh token file, revoked when its process ends or the session resumes', async () => {
+    const gateway = await recordingToolGateway()
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh', FAKE_ACP_CAPS: 'resume' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'browser [{"tool":"browser_tabs"}]', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    expect(assistants(first).at(-1)?.text).toBe(`browser_tabs: ok: tab ${TAB}`)
+    expect(gateway.leases).toHaveLength(1)
+    const [lease] = gateway.leases
+    expect(lease!.sessionId).toBe(sessionId)
+    const opened = received(await fixture.log(), 'session/new')[0]!
+    const entry = browserEntry(opened)!
+    // Only the paths travel: no token in the arguments, the environment or anything the agent was sent.
+    expect(entry.args.slice(-2)).toEqual([gateway.socketPath, lease!.tokenFile])
+    expect(entry.env).toEqual([])
+    expect(JSON.stringify(opened)).not.toContain('lbt1.')
+    // The server that listed the tools took the token and deleted its file.
+    await expect(stat(lease!.tokenFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.stringify(first)).not.toContain(lease!.token)
+    expect(fixture.diagnostics.join('\n')).not.toContain(lease!.token)
+
+    // The process ends with the bridge: its token goes with it. The session resumes on a new process with a new token.
+    await bridge.close()
+    expect(lease!.closed).toBe(true)
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'browser [{"tool":"browser_tabs"}]', rid(), {})
+    await settled(restored, sessionId)
+    expect(gateway.leases).toHaveLength(2)
+    const second = gateway.leases[1]!
+    expect(second.token).not.toBe(lease!.token)
+    expect(second.closed).toBe(false)
+    expect(browserEntry(received(await fixture.log(), 'session/resume')[0]!)!.args.at(-1)).toBe(second.tokenFile)
+    expect(gateway.refused).toEqual([])
+  })
+
+  it('mints a new token on the same process when the context is cleared, and revokes the old one', async () => {
+    const gateway = await recordingToolGateway()
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'browser [{"tool":"browser_tabs"}]', rid(), { freshContext: true })
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe(`browser_tabs: ok: tab ${TAB}`)
+    const opens = received(await fixture.log(), 'session/new')
+    expect(opens).toHaveLength(2)
+    expect(new Set(opens.map(entry => entry.pid)).size).toBe(1)
+    expect(gateway.leases.map(lease => lease.closed)).toEqual([true, false])
+    expect(browserEntry(opens[1]!)!.args.at(-1)).toBe(gateway.leases[1]!.tokenFile)
+  })
+
+  it('attaches no server while the Host declines, and attaches it when the session next resumes', async () => {
+    const admit = { now: false }
+    const gateway = await recordingToolGateway({ admit })
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh', FAKE_ACP_CAPS: 'resume' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'browser [{"tool":"browser_tabs"}]', requestId: rid() })
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('no latch-browser')
+    expect((received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: unknown[] }).mcpServers).toEqual([])
+    expect(gateway.leases).toEqual([])
+    // The desktop app is open now; the session's process is not new, so nothing changes until the session resumes.
+    admit.now = true
+    await bridge.prompt(sessionId, 'browser [{"tool":"browser_tabs"}]', rid(), {})
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('no latch-browser')
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'browser [{"tool":"browser_tabs"}]', rid(), {})
+    expect(assistants(await settled(restored, sessionId)).at(-1)?.text).toBe(`browser_tabs: ok: tab ${TAB}`)
+    expect(browserEntry(received(await fixture.log(), 'session/resume')[0]!)!.args.at(-1)).toBe(gateway.leases[0]!.tokenFile)
+  })
+
+  it("names the agent's own ask on the one call it then makes, and says the turn runs", async () => {
+    const gateway = await recordingToolGateway()
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: `browser [{"tool":"browser_click","args":{"tabId":"${TAB}","ref":"e1"},"ask":true}]`,
+      requestId: rid(),
+    })
+    const approval = await vi.waitFor(async () => {
+      const [first] = await bridge.approvals()
+      expect(first).toBeDefined()
+      return first!
+    })
+    expect(approval).toMatchObject({ toolName: 'mcp__latch-browser__browser_click', advisory: true })
+    await bridge.decide(approval.id, 'allow')
+    await settled(bridge, sessionId)
+    expect(gateway.calls).toEqual([
+      {
+        tool: 'browser_click',
+        args: { tabId: TAB, ref: 'e1' },
+        context: { turn: 'running', toolCallId: approval.toolCallId, approvalId: approval.id },
+      },
+    ])
+  })
+
+  it('names no approval when two identical calls cannot be told apart, and none from another server’s tool of the same name', async () => {
+    const gateway = await recordingToolGateway()
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const allow = async () => {
+      const approval = await vi.waitFor(async () => {
+        const [first] = await bridge.approvals()
+        expect(first).toBeDefined()
+        return first!
+      })
+      await bridge.decide(approval.id, 'allow')
+      return approval
+    }
+    const click = { tool: 'browser_click', args: { tabId: TAB, ref: 'e1' }, ask: true }
+    const { sessionId } = await bridge.createTask({ prompt: `browser ${JSON.stringify([{ ...click, twin: true }])}`, requestId: rid() })
+    const twin = await allow()
+    await settled(bridge, sessionId)
+    // The oldest row is named; the approval is not, since its twin could be the call that ran.
+    expect(gateway.calls[0]!.context).toEqual({ turn: 'running', toolCallId: twin.toolCallId })
+    await bridge.prompt(sessionId, `browser ${JSON.stringify([{ ...click, title: 'mcp__playwright__browser_click' }])}`, rid(), {})
+    await allow()
+    await settled(bridge, sessionId)
+    expect(gateway.calls[1]!.context).toEqual({ turn: 'running' })
+  })
+
+  it('confirms a stop only once the browser call settled, and says when its result is unknown', async () => {
+    const gateway = await recordingToolGateway({ stopMs: 600, unknown: true })
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: `browser [{"tool":"browser_wait","args":{"tabId":"${TAB}","text":"never"}}]`,
+      requestId: rid(),
+    })
+    await vi.waitFor(() => expect(gateway.calls).toHaveLength(1))
+    const asked = Date.now()
+    let confirmed = false
+    const cancel = bridge.cancel(sessionId).then(() => void (confirmed = true))
+    // The agent answered the stop at once; the stop is not confirmed while the gateway's call has not ended.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(confirmed).toBe(false)
+    expect((await bridge.detail(sessionId)).summary.status).not.toBe('cancelled')
+    await cancel
+    expect(Date.now() - asked).toBeGreaterThanOrEqual(550)
+    const stopped = await settled(bridge, sessionId)
+    expect(stopped.summary.status).toBe('cancelled')
+    expect(gateway.leases[0]!.cancels).toBeGreaterThanOrEqual(1)
+    expect(systemText(stopped)).toContain('浏览器调用结果未知')
+  })
+
+  it('gives none to a session of 我的 Agent, whose server is latch-skills alone', async () => {
+    const gateway = await recordingToolGateway()
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway, proposeMemory: async () => {} })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      agentContext: { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64), proposals: true },
+    })
+    await settled(bridge, sessionId)
+    expect(gateway.leases).toEqual([])
+    const servers = (received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ name: string }> }).mcpServers
+    expect(servers.map(server => server.name)).toEqual(['latch-skills'])
   })
 })

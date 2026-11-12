@@ -20,6 +20,7 @@ describe('redactSecrets', () => {
     ['invite lpi1-ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'invite [redacted]'],
     ['offline lpo1-ABCDEFGHIJKLMNOPQRSTUVWX23', 'offline [redacted]'],
     [`GEMINI_API_KEY=lmg1.${'g-'.repeat(21)}x end`, 'GEMINI_API_KEY=[redacted] end'],
+    [`LATCH_TOOL_TOKEN=lbt1.${'b_'.repeat(21)}x end`, 'LATCH_TOOL_TOKEN=[redacted] end'],
     ['cookie: harness_link=abc-DEF_123; Path=/link', 'cookie: [redacted]; Path=/link'],
     [`set-cookie: latch_abcdefgh=${credential}; HttpOnly`, 'set-cookie: [redacted]; HttpOnly'],
     ['__Host-latch_abcd2345=xyz other', '[redacted] other'],
@@ -95,6 +96,7 @@ describe('redactSecrets', () => {
     expect(containsSecret(`lnw1.${'W'.repeat(43)}`)).toBe(true)
     expect(containsSecret(`lnp1.${'P'.repeat(43)}`)).toBe(true)
     expect(containsSecret(`lmg1.${'T'.repeat(43)}`)).toBe(true)
+    expect(containsSecret(`lbt1.${'T'.repeat(43)}`)).toBe(true)
     expect(containsSecret(`LATCHBOOK1.${'B'.repeat(128)}`)).toBe(true)
   })
 

@@ -74,7 +74,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 **安全**
 
-- **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。网关凭据 `lmg1.` 只给所属 Agent 进程，不进参数、URL 与日志。
+- **秘密不外泄。** 设备凭据、邀请码、离线连接码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。网关凭据 `lmg1.`、`lbt1.` 只给所属 Agent 进程，不进参数、URL、日志与 SSE。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存中、也只存哈希。模型密钥只在数据目录的 0600 文件中，不返回浏览器；`LATCH_API_KEY` 只在内存中使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只通过 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录中的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、改 Harness 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码与页面能力变宽；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
@@ -90,7 +90,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 - 不停止、重启或向已运行的 Host 发信号，不读取、修改或删除 `.runtime*/`。
 - 每个命令都显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时会落到用户的数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/Library/Application Support/Latch/Host`）、`~/Latch/workspace` 与端口 4317。
-- 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
+- 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（[文档](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户的数据，后者还会把它们写进对象库。
 - 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`，因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
 - 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调用付费模型，不对真实 Agent CLI 发送提示。不运行 `pnpm desktop`（它使用系统钥匙串与默认桌面端数据目录），桌面端用 Electron e2e 验证。

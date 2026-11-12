@@ -1,4 +1,4 @@
-// The broker between the built-in harness's browser tools and the desktop app's preview tabs. The desktop app's main
+// The broker between the browser tools (the built-in harness's, and external harnesses' through the tool gateway) and the desktop app's preview tabs. The desktop app's main
 // process registers as the one provider over host.sock and keeps a stream open; each call goes down that stream and
 // comes back as a result main posts. Nothing queues: with no provider a call fails at once, and the Host never starts the
 // desktop app. A call is audited before it is sent, and a stop is confirmed only once main says the call settled. The
@@ -166,6 +166,8 @@ export interface BrowserCallInput {
   signal: AbortSignal
   /** Marks time spent waiting for the person (a takeover) as waiting. */
   waitForUser?: () => () => void
+  /** The call came from an external harness's `latch-browser` server through the tool gateway. */
+  via?: 'mcp'
 }
 
 export interface BrowserAuditInput {
@@ -178,6 +180,7 @@ export interface BrowserAuditInput {
   risk: 'R0' | 'R1' | 'R2'
   toolCallId?: string
   approvalId?: string
+  via?: 'mcp'
 }
 
 export interface BrowserBrokerOptions {
@@ -481,6 +484,7 @@ export class BrowserBroker {
         risk: input.risk,
         ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
         ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+        ...(input.via ? { via: input.via } : {}),
       })
     } catch {
       return refused('audit-failed')

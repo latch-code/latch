@@ -101,6 +101,54 @@ export interface ModelGateway {
   open(input: { sessionId: string; route: ModelRoute }): ModelGatewayLease
 }
 
+/** What the Host may learn from a driver about a tool call that reached its tool gateway. */
+export interface ToolGatewayCallContext {
+  /** The driver's ID of the call, as its row and `approval.decided` name it, when the driver can tell which call it is. */
+  toolCallId?: string
+  /** The approval the person gave that call through the harness's own ask. */
+  approvalId?: string
+  /** Marks time spent waiting for the person (a takeover) as waiting; returns the function that ends the wait. */
+  waitForUser?: () => () => void
+  /** The session's turn as the driver sees it: the Host refuses a call unless it is `running`. */
+  turn?: 'running' | 'stopping' | 'none'
+}
+
+/**
+ * One agent process's way to the Host's tool gateway: a private Unix socket and a token only this process holds, for the
+ * Host's browser tools served over MCP. The token is a credential: it never goes into arguments, the environment, a URL,
+ * a log, a message or a recording. The MCP server gets `tokenFile`, a 0600 file it reads once and deletes; the driver
+ * keeps `token` only to replace it in what the agent says.
+ */
+export interface ToolGatewayLease {
+  socketPath: string
+  tokenFile: string
+  token: string
+  /** False once the token stops working. */
+  active(): boolean
+  /** Stops the calls this token has in flight, as a stop of the turn does; the token stays valid. */
+  cancel(): void
+  /**
+   * Resolves once no call of this token is in flight, saying whether one ended with its result unknown since the last
+   * answer (it may have acted). A stopped turn is confirmed only after this.
+   */
+  settled(): Promise<{ resultUnknown: boolean }>
+  /** Revokes the token and stops its calls. Idempotent. */
+  close(): void
+}
+
+export interface ToolGateway {
+  /**
+   * A token bound to the session and one agent process. `describe` names the driver's call that matches a gateway call,
+   * so the Host's records can link the two. Undefined when the session gets no tools now (no browser provider, the
+   * desktop app on this Mac, is registered): the driver then attaches no server and asks again at the next open.
+   * Throws when the gateway cannot be used.
+   */
+  open(input: {
+    sessionId: string
+    describe?: (tool: string, args: Record<string, unknown>) => ToolGatewayCallContext
+  }): ToolGatewayLease | undefined
+}
+
 /** Host capabilities offered to a driver, without prescribing its loop or persistence. */
 export interface HarnessHostOptions {
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
@@ -138,6 +186,8 @@ export interface HarnessHostOptions {
   clock?: () => number
   /** Drivers that declare `models.wires`: the Host's forwarding to its model services. */
   modelGateway?: ModelGateway
+  /** ACP drivers: the Host's tool gateway, through which the agent's `latch-browser` MCP server reaches the browser tools. */
+  toolGateway?: ToolGateway
   /**
    * A session whose context has `proposals` (one of 我的 Agent's, or a conversation with 通用): its agent proposed a
    * memory. The Host keeps it pending for the person and never saves it by itself; it finds the owner from its own

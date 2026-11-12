@@ -3,7 +3,7 @@ import { hex64, opaqueId } from './fields.ts'
 import { BROWSER_TOOLS } from '../browser-broker.ts'
 
 /**
- * The built-in harness's browser calls, each written before it is sent to the desktop app, and the desktop app taking
+ * The browser calls of the built-in harness and, through the tool gateway, of external harnesses, each written before it is sent to the desktop app, and the desktop app taking
  * and leaving the provider's place. Never what was typed, a selector or an address: where the tab was is a class and the
  * SHA-256 of its origin.
  */
@@ -22,6 +22,8 @@ export const BROWSER_ACTIONS = {
     /** The runtime's tool call ID, which `approval.decided` names too, and the approval the person gave it. */
     toolCallId: opaqueId.optional(),
     approvalId: opaqueId.optional(),
+    /** From an external harness's `latch-browser` server, through the tool gateway; absent for the built-in harness. */
+    via: z.literal('mcp').optional(),
   }),
   'browser.provider.registered': z.strictObject({}),
   'browser.provider.ended': z.strictObject({}),

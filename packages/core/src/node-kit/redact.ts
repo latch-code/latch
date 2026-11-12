@@ -1,4 +1,4 @@
-/** Latch's own credentials: device credentials, invitation and offline enrolment codes, and model gateway tokens. */
+/** Latch's own credentials: device credentials, invitation and offline enrolment codes, and model and tool gateway tokens. */
 const LATCH_CREDENTIALS: readonly RegExp[] = [
   /lnw1\.[A-Za-z0-9_-]{43}/gu,
   /lnp1\.[A-Za-z0-9_-]{43}/gu,
@@ -9,6 +9,7 @@ const LATCH_CREDENTIALS: readonly RegExp[] = [
   /ldc1\.dev_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/gu,
   /lp[io]1-[A-Z2-7]{26}/gu,
   /lmg1\.[A-Za-z0-9_-]{43}/gu,
+  /lbt1\.[A-Za-z0-9_-]{43}/gu,
 ]
 
 /** Where a credential travels: the cookies, the device header, URL parameters and userinfo, whatever value they carry. */

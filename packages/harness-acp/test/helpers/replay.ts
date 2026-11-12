@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AGENT_PRESETS } from '@latch/protocol'
-import type { Bridge, HarnessDriver, HarnessPlugin } from '@latch/sdk'
+import type { Bridge, HarnessDriver, HarnessHostOptions, HarnessPlugin } from '@latch/sdk'
 import { playScenario, readReplayStatus, readTranscript, REPLAY_AGENT, replayEnv } from '@latch/testkit'
 import { createAcpAgentPlugin, setCommandSearch, type AcpAgentOptions, type AgentRecord } from '../../src/index.ts'
 
@@ -36,8 +36,10 @@ export async function openBridge(
   driver: HarnessDriver,
   paths: { dataDir: string; workspace: string; tmpRoot: string },
   cleanups: Cleanups,
+  host: Pick<HarnessHostOptions, 'toolGateway'> = {},
 ): Promise<Bridge> {
   const bridge = driver.create({
+    ...host,
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspace,
     tmpRoot: paths.tmpRoot,
@@ -75,7 +77,7 @@ const FAST: AcpAgentOptions = { cancelGraceMs: 2_000, stopGraceMs: 300, restartD
  * Plays a transcript's scenario through the real driver against the replay agent. Bare command names resolve only to
  * fake programs, so a preset's programs are never what this computer has installed.
  */
-export async function replayTranscript(path: string, cleanups: Cleanups) {
+export async function replayTranscript(path: string, cleanups: Cleanups, host: Pick<HarnessHostOptions, 'toolGateway'> = {}) {
   const transcript = readTranscript(path)
   const root = await mkdtemp(join(tmpdir(), 'latch-replay-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -100,7 +102,7 @@ export async function replayTranscript(path: string, cleanups: Cleanups) {
   }
   const driver = await activate(createAcpAgentPlugin(record, FAST), cleanups)
   const played = await playScenario({
-    open: () => openBridge(driver, paths, cleanups),
+    open: () => openBridge(driver, paths, cleanups, host),
     steps: transcript.header.steps,
     cwd: paths.workspace,
     stopped: () => {

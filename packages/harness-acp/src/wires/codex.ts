@@ -76,7 +76,11 @@ const optionParams = z.object({ sessionId: text, configId: text, value: text.max
 const mcpServer = z.object({
   name: text.min(1).max(128),
   command: text.min(1).max(4096),
-  args: z.array(text.max(4096)).max(64).default([]),
+  // Latch's own servers pass their source to `node -e` as one argument (`latch-skills` about 8 KiB).
+  args: z
+    .array(text.max(32 * 1024))
+    .max(64)
+    .default([]),
   env: z
     .array(z.object({ name: text.min(1).max(256), value: text.max(16384) }))
     .max(64)

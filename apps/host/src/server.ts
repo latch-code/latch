@@ -162,7 +162,8 @@ import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
 import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
 import { BROWSER_PLUGIN, classifyStandardCall, targetFolder, type BrowserCallFacts, type CallFolder } from './risk.ts'
 import { BrowserBroker, isBrowserTool, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
-import { createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
+import { BROWSER_TOOL_DEFINITIONS, browserFailure, browserResultText, createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
+import { MAX_SOCKET_PATH, ToolGatewayServer, gatewayRefusal, type GatewayCall, type GatewayResult } from './tool-gateway.ts'
 import {
   authFailure,
   createRateLimits,
@@ -1471,6 +1472,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       revision: executionBuildRevision(BROWSER_PLUGIN),
     })
     await registry.enable(BROWSER_PLUGIN)
+    // External harnesses reach the same tools through their `latch-browser` MCP server and this socket, in a private
+    // directory of the runtime directory, whose short path fits a Unix socket's limit as host.sock's does.
+    const toolGatewayPath = join(runtime.runtimeDir, 'tools', 'gateway.sock')
+    const toolGateway =
+      Buffer.byteLength(toolGatewayPath) <= MAX_SOCKET_PATH
+        ? new ToolGatewayServer({
+            socketPath: toolGatewayPath,
+            // Only while this Mac's desktop app is the browser provider: a session opened without it gets the server
+            // when it next resumes. Sessions without a project are left out by the driver, and refused on every call.
+            admits: () => browserBroker.available(),
+            tools: () =>
+              BROWSER_TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters })),
+            call: input => gatewayBrowserCall(input),
+            log,
+          })
+        : undefined
+    await toolGateway?.start()
+    startupCleanup.push(() => toolGateway?.close())
     /** Names and schedules of private definitions: for a device that may read them, and on a phone only while verified. */
     function agentSummaries(
       caller: Caller,
@@ -2640,6 +2659,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
     startupCleanup.push(() => reviewNotes.close())
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
+    // A session that ended keeps no way to the browser tools, whatever process of it is still running.
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => toolGateway?.revokeSession(sessionId, 'deleted'))
+    lifecycleListeners.on('sessionArchived', ({ sessionId }) => toolGateway?.revokeSession(sessionId, 'archived'))
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
       void automations.sessionDeleted(sessionId).catch(error => log(`会话 ${sessionId} 删除后定时结果没有更新：${errorText(error)}`))
     })
@@ -3367,6 +3389,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return outcome.ok ? { ...outcome, text: redactSecrets(outcome.text) } : outcome
     }
 
+    /**
+     * One browser call of an external harness, from its `latch-browser` server through the tool gateway. Only a session of
+     * a project on an ACP harness, during a turn that runs and is not being stopped (`gatewayRefusal`). Such a session is
+     * full access (L3): what only looks (R0) and what acts on this Mac's own
+     * addresses (R1) run without Latch asking, since full access is the oversight the person chose, and are audited,
+     * taken over and stopped as the built-in harness's are; typing into a password, one-time-code, card or hidden field,
+     * or one never read (R2), is refused (`elevated-refused`), whatever the agent's own ask said. The agent's own ask
+     * stays its own: an approval given there is named in the audit.
+     */
+    async function gatewayBrowserCall({ sessionId, tool, args, signal, context }: GatewayCall): Promise<GatewayResult> {
+      const failed = (outcome: Extract<BrokerOutcome, { ok: false }>): GatewayResult => ({
+        content: [{ type: 'text', text: browserFailure(outcome) }],
+        isError: true,
+      })
+      if (!isBrowserTool(tool)) return failed({ ok: false, error: 'invalid', dispatched: false })
+      const summary = await hub!
+        .detail(sessionId)
+        .then(detail => detail.summary)
+        .catch(() => undefined)
+      const refusal = gatewayRefusal(summary, summary && hub!.trustOf(summary.harnessId), context.turn)
+      if (refusal || !summary) return failed({ ok: false, error: refusal ?? 'no-project', dispatched: false })
+      const { risk } = classifyStandardCall({
+        pluginId: BROWSER_PLUGIN,
+        toolName: tool,
+        args,
+        demo: false,
+        folders: [],
+        browser: browserFacts({ toolName: tool, arguments: args, sessionId }),
+      })
+      if (risk === 'R2') return failed({ ok: false, error: 'elevated-refused', dispatched: false })
+      const outcome = await browserBroker.call({
+        sessionId,
+        projectId: projectIdOf(summary),
+        tool,
+        args,
+        risk,
+        ...(context.toolCallId && opaqueId.safeParse(context.toolCallId).success ? { toolCallId: context.toolCallId } : {}),
+        ...(context.approvalId && opaqueId.safeParse(context.approvalId).success ? { approvalId: context.approvalId } : {}),
+        signal,
+        ...(context.waitForUser ? { waitForUser: context.waitForUser } : {}),
+        via: 'mcp',
+      })
+      if (!outcome.ok)
+        return {
+          // Main found the field sensitive only when typing: in a full-access session nobody is asked, so it says so.
+          ...failed(outcome.error === 'sensitive-field' ? { ...outcome, error: 'elevated-refused' } : outcome),
+          ...(outcome.error === 'result-unknown' ? { unknown: true as const } : {}),
+        }
+      return {
+        content: [
+          { type: 'text', text: browserResultText(tool, redactSecrets(outcome.text)) },
+          ...(outcome.image ? [{ type: 'image' as const, data: outcome.image.toString('base64'), mimeType: 'image/png' as const }] : []),
+        ],
+      }
+    }
+
     async function classifyToolCall(input: ToolRiskInput): Promise<RiskLevel> {
       const { risk } = await classifyCall(input)
       // Right before the call: the class it is approved at goes with it to main.
@@ -3458,6 +3536,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             proposeSchedule: input => proposeScheduleFromAgent(driver, input),
             // Only a driver that says it can be pointed at a service gets tokens for one.
             ...(hub!.info(driver.id)?.capabilities.models.wires.length ? { modelGateway } : {}),
+            // Only ACP harnesses, which take MCP servers: their agent's `latch-browser` server reaches the browser tools.
+            ...(toolGateway?.listening && kindOf(driver) === 'acp' ? { toolGateway } : {}),
             trackFiles: async input => {
               await runStarting(driver.id, input)
               return fileTracking.start(input)
@@ -7938,6 +8018,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => modelGateway.close(),
+            () => toolGateway?.close(),
             () => questions.close(),
             () => clearInterval(purgeTimer),
             () => customAgents.close(),

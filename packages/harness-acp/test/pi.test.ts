@@ -217,7 +217,16 @@ describe('pi over its own RPC', () => {
         ...stats,
       ],
     )
-    const { detail, status, marks } = await replayTranscript(path, cleanups)
+    // pi takes no MCP servers, so it gets no browser tools: the Host's tool gateway is never asked for a token.
+    const asked: string[] = []
+    const toolGateway = {
+      open: ({ sessionId }: { sessionId: string }) => {
+        asked.push(sessionId)
+        throw new Error('pi takes no MCP servers')
+      },
+    }
+    const { detail, status, marks } = await replayTranscript(path, cleanups, { toolGateway })
+    expect(asked).toEqual([])
     expect(status?.failure).toBeUndefined()
     expect(status).toMatchObject({ cursor: status?.total })
     expect(marks).toEqual([])
