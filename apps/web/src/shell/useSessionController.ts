@@ -63,7 +63,7 @@ import { type RunState } from '../composer/Composer.tsx'
 import { type MenuSection } from '../components/overlays.tsx'
 import { type ApprovalStatus } from '../composer/ApprovalDrawer.tsx'
 import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
-import { deliveredSubmission, sendingMessageFor } from '../core/sendingMessage.ts'
+import { deliveredSubmission, queuedTwin, sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
 import { rebuiltFrom } from '../history/model.ts'
 
@@ -324,41 +324,74 @@ export function useSessionController({
       setFileMentions([])
     }
   }
-  /** The Host lists the pending submission in its session: it was delivered, so it stops holding the input. */
-  const settleDelivered = useStableCallback((held: NonNullable<typeof submission.pending>) => {
+  /** Requests with attachments this page has already sent once more because their session listed them. */
+  const listedRetries = useRef(new Set<string>())
+  /**
+   * The Host lists the pending submission in its session, so it was delivered and stops holding the input. With
+   * attachments the Host may list it before it has recorded them and ask for the same request again
+   * (`attachment-publish-unknown`): that request goes once more, silently, and is settled only by its answer, or by
+   * the person giving up (`givingUp`).
+   */
+  const settleListed = useStableCallback(async (held: NonNullable<typeof submission.pending>, givingUp: boolean) => {
+    if (held.attachmentIds?.length) {
+      if (!listedRetries.current.has(held.requestId)) {
+        listedRetries.current.add(held.requestId)
+        await settingsLanded()
+        if ((await submission.submit(held)) && held.sessionId === selectedId) {
+          attachmentDraft.clear()
+          setFileMentions([])
+        }
+        return
+      }
+      if (!givingUp) return
+    }
     if (!submission.delivered(held)) return
     if (held.sessionId === selectedId) {
       attachmentDraft.clear()
       setFileMentions([])
-    }
+    } else if (held.sessionId !== undefined && sessionDrafts.current.read(held.sessionId, privateVisible).trim() === held.prompt.trim())
+      // The text waiting as that session's draft is what was just delivered, as a sent message takes it away.
+      sessionDrafts.current.remove(held.sessionId)
     setToast({ text: '已送达', tone: 'ok' })
   })
   const held = submission.pending
   useEffect(() => {
-    if (held && !submission.sending && deliveredSubmission(held, current)) settleDelivered(held)
-  }, [held, submission.sending, current, settleDelivered])
+    if (held && !submission.sending && deliveredSubmission(held, current)) void settleListed(held, false)
+  }, [held, submission.sending, current, settleListed])
+  /** The open session's queue holds the same text as the pending queued submission, perhaps another device's. */
+  const pendingQueued = queuedTwin(held, current)
   /**
-   * 放弃这次提交. The session is read once first, where it can be: a submission it already lists was delivered and is
-   * settled as such. Otherwise this device lets go of it and keeps its text as a draft of where it was written.
+   * 放弃这次提交. The session is read afresh first (the copy on screen only when that read fails): a submission it lists
+   * was delivered. Otherwise this device lets go of it and keeps its text as a draft of where it was written;
+   * attachments and file references are added again. A queue item with the same text stays, and the person is told.
    */
   const abandonPending = async () => {
     const pending = submission.pending
-    if (!pending || submission.sending || abandoning) return
+    if (!pending || submission.sending || submission.sendingElsewhere || abandoning) return
     setAbandoning(true)
+    let twin: ReturnType<typeof queuedTwin> = null
     try {
       if (pending.sessionId !== undefined) {
         const id = pending.sessionId
-        const detail =
-          current?.summary.id === id
-            ? current
-            : await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`, { timeoutMs: 5_000 }).catch(() => null)
+        const fresh = await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`, { timeoutMs: 5_000 }).catch(() => null)
+        const detail = fresh ?? (current?.summary.id === id ? current : null)
         if (deliveredSubmission(pending, detail)) {
-          settleDelivered(pending)
+          await settleListed(pending, true)
           return
         }
+        twin = queuedTwin(pending, detail)
       }
       const dropped = submission.abandon()
-      if (!dropped || dropped.restored || !dropped.text) return
+      if (!dropped) return
+      const attached = (pending.attachmentIds?.length ?? 0) > 0
+      if (dropped.restored && (attached || pending.fileRefs?.length)) {
+        // They were reserved for the request just given up; the Host refuses them for a new one (`attachment-claimed`).
+        attachmentDraft.clear()
+        setFileMentions([])
+      }
+      if (twin) setToast({ text: '队列里同样文字的一条还在，在队列里发送或移除', tone: 'ok' })
+      else if (attached || pending.fileRefs?.length) setToast({ text: '附件和文件引用需要重新添加', tone: 'ok' })
+      if (dropped.restored || !dropped.text) return
       const home = dropped.sessionId ?? NEW_SESSION_DRAFT
       if (!sessionDrafts.current.read(home, privateVisible))
         sessionDrafts.current.save(
@@ -1097,6 +1130,7 @@ export function useSessionController({
     retryDraft,
     abandonPending,
     abandoning,
+    pendingQueued,
     askProject,
     projectAsk: {
       request: projectRequest,

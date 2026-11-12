@@ -3,10 +3,12 @@ import { AppError, type CreateTaskInput } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AttachmentRef, TaskDetail } from '@latch/protocol'
-import type { ModelMessage, HarnessPlugin } from '@latch/sdk'
+import type { Bridge, ModelMessage, HarnessPlugin } from '@latch/sdk'
+import { AttachmentStore, ATTACHMENT_CLAIM_TTL } from '../src/attachments.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 const hosts: TestHost[] = []
 afterEach(async () => {
@@ -356,5 +358,70 @@ describe('authenticated attachment routes', () => {
     await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'))
     expect(starts).toBe(1)
     expect((await host.host.bridge.listTasks()).filter(task => task.harnessId === 'unknown-harness')).toHaveLength(1)
+  })
+
+  it('keeps at startup every reserved draft whose session it could not read, and lets go only of one a listed session does not name', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'latch-claims-'))
+    try {
+      const first = await startTestHost({ dataDir })
+      const owner = await first.enroll({ listener: 'unix' })
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { body: { prompt: '会话', requestId: randomUUID() } })
+      await vi.waitFor(async () => expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'))
+      await first.close()
+      // Drafts reserved by given-up prompts: to the listed session, to a session of a Harness that cannot list, and to
+      // a session no Harness knows.
+      const store = await AttachmentStore.open(dataDir, { deferPrune: true })
+      const reserve = async (text: string, session: string) => {
+        const requestId = randomUUID()
+        const ref = await store.add({
+          owner: 'device-a',
+          requestId,
+          name: 'note.txt',
+          size: Buffer.byteLength(text),
+          remote: false,
+          stream: (async function* () {
+            yield Buffer.from(text)
+          })(),
+          recheck: () => {},
+          accept: () => {},
+        })
+        await store.claim('device-a', [ref.id], randomUUID(), session)
+        return ref
+      }
+      const unused = await reserve('given up', sessionId),
+        failing = await reserve('Harness cannot list', 'task-of-broken-harness'),
+        unknown = await reserve('no Harness knows it', 'task-unknown')
+      const broken: Bridge = {
+        start: async () => {},
+        close: async () => {},
+        listTasks: async () => {
+          throw new Error('cannot list')
+        },
+        detail: async () => {
+          throw new Error('cannot read')
+        },
+        createTask: async () => ({ sessionId: 'task-of-broken-harness' }),
+        prompt: async () => {},
+        cancel: async () => {},
+        approvals: () => [],
+        decide: async () => false,
+        subscribe: () => () => {},
+      }
+      const plugin: HarnessPlugin = {
+        id: 'broken-harness',
+        name: 'Broken',
+        version: '1',
+        description: 'test',
+        activate: ctx => ctx.registerHarness({ id: 'broken', name: 'Broken', version: '1', create: () => broken }),
+      }
+      const later = await startTestHost({ dataDir, plugins: [plugin], now: () => Date.now() + ATTACHMENT_CLAIM_TTL + 60_000 })
+      await later.close()
+      const after = await AttachmentStore.open(dataDir, { deferPrune: true })
+      expect(after.get(unused.id)).toBeUndefined()
+      expect(after.get(failing.id)).toBeDefined()
+      expect(after.get(unknown.id)).toBeDefined()
+    } finally {
+      await rm(dataDir, { recursive: true, force: true })
+    }
   })
 })

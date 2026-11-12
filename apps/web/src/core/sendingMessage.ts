@@ -54,6 +54,61 @@ export function unconfirmedReason(cause: unknown): string | null {
  * its text goes back to where it was written. The Host's record, if it got it, stays as it is.
  */
 export function abandonSubmission(key: string, submission: PendingSubmission): { sessionId: string | null; text: string } {
-  if (readPending(key)?.requestId === submission.requestId) writePending(key, null)
+  releaseStored(key, submission.requestId)
   return { sessionId: submission.sessionId ?? null, text: submission.prompt }
 }
+
+/** Removes the stored submission only while it is still this one: another window of this device may have stored a newer one. */
+export function releaseStored(key: string, requestId: string): void {
+  if (readPending(key)?.requestId === requestId) writePending(key, null)
+}
+
+/**
+ * A queue item of the session with the same text as this queued submission: `waiting` goes out by itself when the turn
+ * ends (`sending` is shown as waiting), `parked` only when someone sends it. The queue lists neither request IDs nor
+ * devices, so the item may be another device's: this says only that the same text is there and never keeps 放弃 away.
+ */
+export function queuedTwin(pending: PendingSubmission | null, detail: TaskDetail | null): 'waiting' | 'parked' | null {
+  if (!(pending?.queue === true || pending?.steer === true) || pending.sessionId === undefined || detail?.summary.id !== pending.sessionId)
+    return null
+  const items = (detail.queue ?? []).filter(item => item.text === pending.prompt)
+  return items.some(item => item.state === 'waiting') ? 'waiting' : items.some(item => item.state === 'parked') ? 'parked' : null
+}
+
+/** How long a window's send or retry is taken to be in flight: past the 15 s request timeout, so a closed window holds nothing. */
+export const FLIGHT_MS = 20_000
+const flightKey = (key: string) => `${key}.sending`
+
+/** A window of this device is sending or retrying this submission now; other windows do not offer 放弃 meanwhile. */
+export function readFlight(key: string, now = Date.now()): { requestId: string; until: number } | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(flightKey(key)) ?? 'null')
+    if (typeof value !== 'object' || value === null) return null
+    const { requestId, until } = value as Record<string, unknown>
+    return typeof requestId === 'string' && typeof until === 'number' && until > now && until <= now + FLIGHT_MS
+      ? { requestId, until }
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function markFlight(key: string, requestId: string, now = Date.now()): void {
+  try {
+    localStorage.setItem(flightKey(key), JSON.stringify({ requestId, until: now + FLIGHT_MS }))
+  } catch {
+    /* Without storage there is no other window to tell. */
+  }
+}
+
+export function endFlight(key: string, requestId: string): void {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(flightKey(key)) ?? 'null')
+    if (typeof value === 'object' && value !== null && (value as Record<string, unknown>).requestId === requestId)
+      localStorage.removeItem(flightKey(key))
+  } catch {
+    /* Nothing was marked. */
+  }
+}
+
+export const isFlightKey = (key: string | null, pendingKey: string) => key === flightKey(pendingKey)

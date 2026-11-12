@@ -23,7 +23,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `packages/core/` | Cordis、执行循环、快照与 Node 工具 `./node-kit` |
 | `packages/harness-acp/` | ACP 驱动与权限预设 |
 | `packages/testkit/` | Host、确认后端、安全向量与假 ACP 测试夹具 |
-| `e2e/` | `@latch/e2e`：全部 `*.e2e.ts`（Playwright 驱动浏览器与 Electron） |
+| `e2e/` | `@latch/e2e`：全部 `*.e2e.ts`（Playwright） |
 | `tests/` | 根项目的用例：`@latch/core`、`@latch/sdk`、兼容入口与仓库脚本 |
 | `src/` | `latch/plugin-sdk`、`latch/harness-sdk`，再导出 `@latch/sdk` |
 | `scripts/` | 仓库工具：检查、文档与技能、安全扫描、依赖边界、供应链、工作流 |
@@ -36,7 +36,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 ## 命令
 
-需要 Node.js 24.22.1（`.node-version`，`fnm use` 切换；`engines` 拒收缺安全修复的版本）与 pnpm 11.28.6（`packageManager` 固定版本），构建原生组件需要 Go 1.26.10（`.go-version`）。
+需要 Node.js 24.22.1（`.node-version`；`engines` 拒收缺安全修复的版本）与 pnpm 11.28.6（`packageManager` 固定版本），构建原生组件需要 Go 1.26.10（`.go-version`）。
 
 ```sh
 pnpm install
@@ -65,7 +65,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 **会话与界面**
 
 - Host 是会话状态的唯一权威；网络连接、任务执行与客户端阅读位置分别建模。
-- 取消必须等执行端真实结算后才确认；写请求超时保持「结果未知」并复用原 `requestId`，审批与取消回执随会话持久化。
+- 取消必须等执行端真实结算后才确认；写请求超时保持「结果未知」并复用原 `requestId`，只由 Host 的证据或人放弃结束，审批与取消回执随会话持久化。
 - 流式消息在完成、失败、取消时沿用同一 ID；切换会话、重连与迟到的响应不得回滚新状态或重复追加历史。
 - 真实 Provider 失败必须报错，不得回退到演示模型；演示模式必须显式启用并在界面标注。
 - 会话与审批 ID 全局唯一；新增的持久化字段必须加入对应 zod schema：多数 schema 会丢弃未知字段，`policy.json`、设备与登记文件、审计 detail 的 schema 是 strict，会拒绝未知字段。

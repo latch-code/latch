@@ -157,11 +157,21 @@ extension PhoneModel {
         guard let workspace, !busy, let text = PhonePending.prompt(request), pending.contains(where: { $0.requestId == request.requestId }) else { return nil }
         let current = generation
         busy = true; defer { if generation == current { busy = false } }
-        let delivered = PhonePending.delivered(request, detail: detail)
+        // The session read afresh; the copy on screen only when that read fails.
+        var seen = NativeJSON.null
+        if case let .session(id) = PhonePending.kind(request) {
+            if let fresh = try? await workspace.detail(id) { seen = fresh }
+            else if detail["summary"]["id"].string == id { seen = detail }
+            guard generation == current else { return nil }
+        }
+        let twin = PhonePending.queuedTwin(request, detail: seen)
+        let delivered = PhonePending.delivered(request, detail: seen)
         do { try await workspace.settlePending(request.requestId) } catch { report(error); return nil }
         guard generation == current else { return nil }
         pending.removeAll { $0.requestId == request.requestId }
-        return delivered ? .delivered : .text(text)
+        // Delivered, it took its 清空上下文 with it, as an answered send does.
+        if delivered, case let .session(id) = PhonePending.kind(request) { clearing.remove(id) }
+        return delivered ? .delivered : .text(text, queuedTwin: twin != nil)
     }
     @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
         let current = generation, reading = contentGeneration
@@ -210,5 +220,10 @@ extension PhoneModel {
 /** What 放弃这次提交 left: the message was already in its session, or its text to put back into the input. */
 enum PhoneAbandoned: Equatable {
     case delivered
-    case text(String)
+    /** `queuedTwin`: the session's queue holds an item with the same text, perhaps another device's; it stays there. */
+    case text(String, queuedTwin: Bool)
+}
+
+extension PhoneAbandoned {
+    static let queuedTwinWords = "队列里同样文字的一条还在，在队列里发送或移除"
 }

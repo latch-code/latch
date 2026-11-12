@@ -145,7 +145,8 @@ test('an unconfirmed message says so in another session, opens from there and is
   }
 }, 60_000)
 
-const SHOTS = '/tmp/latch-acceptance/2026-11-12-pending-escape'
+// Acceptance screenshots go where the person running it says, else beside the other test results.
+const SHOTS = resolve(process.env.LATCH_PENDING_SHOTS ?? 'test-results/pending-escape')
 
 test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of it here or from another session', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),
@@ -242,47 +243,101 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
   }
 }, 90_000)
 
-test('a message the Host already lists by its requestId is settled as 已送达 although the answer was lost', async () => {
+test('only a message the Host lists by this requestId counts as delivered, from here, from another session and with attachments', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),
     browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
-      method: 'POST',
-      body: { prompt: '送达核对', requestId: randomUUID() },
-    })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    const start = async (title: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: title, requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      return sessionId
+    }
+    const home = await start('送达核对')
+    const other = await start('别处')
+    const path = `tasks/${home}`
+    const texts = async (text: string) => (await owner.json<TaskDetail>(path)).messages.filter(message => message.text === text).length
+    // The same words are already in the session, under another requestId.
+    await owner.json(`${path}/prompt`, { method: 'POST', body: { prompt: '同样的文字', requestId: randomUUID() } })
+    await expect.poll(async () => (await owner.json<TaskDetail>(path)).summary.status).toBe('idle')
     const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' }),
       page = await context.newPage()
     await enrollBrowser(page, host, { name: '已送达' })
-    let held!: () => void
-    const answered = new Promise<void>(resolve => {
-      held = resolve
+    let mode: 'refuse' | 'lose' | 'publish-unknown' = 'refuse'
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
     })
-    // The Host takes the message, but its answer never reaches this page.
-    await page.route(`**/link/api/tasks/${sessionId}/prompt`, async route => {
+    const requests: Array<{ requestId: string; prompt: string; attachmentIds?: string[] }> = []
+    await page.route(`**/link/api/${path}/prompt`, async route => {
+      const body = route.request().postDataJSON() as { requestId: string; prompt: string; attachmentIds?: string[] }
+      requests.push(body)
+      const fail = (status: number, error: string) =>
+        route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error, message: '没有答复' }) })
+      if (mode === 'refuse') return fail(502, 'bad-gateway')
+      if (mode === 'lose') {
+        await route.fetch()
+        await gate
+        return fail(504, 'gateway')
+      }
+      // The Host takes it, then asks for the same request again (attachment-publish-unknown); the second goes through.
+      if (requests.filter(item => item.requestId === body.requestId).length > 1) return route.continue()
       await route.fetch()
-      await answered
-      await route.fulfill({ status: 504, contentType: 'application/json', body: JSON.stringify({ error: 'gateway', message: '没有答复' }) })
+      return fail(503, 'attachment-publish-unknown')
     })
-    await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+    await page.locator(`[data-task-id="${home}"]`).first().click()
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    const card = page.locator('.pending-submission')
+
+    // Same text, another requestId: never taken for this one.
+    await input.fill('同样的文字')
+    await input.press('Enter')
+    await card.getByRole('button', { name: '放弃这次提交', exact: true }).waitFor()
+    await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
+    await expect.poll(() => card.count()).toBe(0)
+    expect(await input.inputValue()).toBe('同样的文字')
+    expect(await page.getByText('已送达', { exact: true }).count()).toBe(0)
+    expect(await texts('同样的文字')).toBe(1)
+
+    // The Host has it, the answer is lost, and 放弃 is pressed from another session: its fresh read finds it.
+    mode = 'lose'
     await input.fill('丢了答复的消息')
     await input.press('Enter')
-    await expect
-      .poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.some(message => message.text === '丢了答复的消息'))
-      .toBe(true)
-    held()
+    await expect.poll(() => texts('丢了答复的消息')).toBe(1)
+    await page.locator(`[data-task-id="${other}"]`).first().click()
+    await page.locator('.user-bubble').getByText('别处', { exact: true }).waitFor()
+    release()
+    await card.getByText('另一个会话有消息未确认送达', { exact: true }).waitFor()
+    await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
     await page.getByText('已送达', { exact: true }).waitFor()
-    await expect.poll(() => page.locator('.pending-submission').count()).toBe(0)
+    await expect.poll(() => card.count()).toBe(0)
+    await page.locator(`[data-task-id="${home}"]`).first().click()
+    await page.locator('.user-bubble').getByText('丢了答复的消息', { exact: true }).waitFor()
+    // The draft that still held the delivered text went with it.
     expect(await input.inputValue()).toBe('')
-    expect(await page.locator('.user-bubble').getByText('丢了答复的消息', { exact: true }).count()).toBe(1)
+    expect(await texts('丢了答复的消息')).toBe(1)
+
+    // With an attachment, a listed message is sent once more with the same requestId instead of being settled.
+    mode = 'publish-unknown'
+    await page.getByLabel('选择附件').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('附件内容') })
+    await expect.poll(() => page.getByRole('button', { name: 'notes.txt', exact: true }).isEnabled()).toBe(true)
+    await input.fill('带附件的消息')
+    await input.press('Enter')
+    await expect.poll(() => requests.filter(item => item.prompt === '带附件的消息').length).toBe(2)
+    const [first, second] = requests.filter(item => item.prompt === '带附件的消息')
+    expect(second).toEqual(first)
+    expect(first!.attachmentIds).toHaveLength(1)
+    await expect.poll(() => card.count()).toBe(0)
+    expect(await texts('带附件的消息')).toBe(1)
     await context.close()
   } finally {
     await browser.close()
     await host.close()
   }
-}, 60_000)
+}, 90_000)
 
 test('a new full-access session shows what was sent at once, as any other start does', async () => {
   // Only this empty directory is searched, and nothing is detected: no agent installed here can be found or started.

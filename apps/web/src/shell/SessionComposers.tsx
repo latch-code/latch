@@ -129,6 +129,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     retryDraft,
     abandonPending,
     abandoning,
+    pendingQueued,
     setConfig,
     refreshConfig,
     block,
@@ -456,6 +457,10 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
         void abandonPending()
       }}
       abandoning={abandoning}
+      abandonHeld={submission.sendingElsewhere ? '另一个窗口正在重试' : undefined}
+      pendingNote={
+        pendingQueued === 'waiting' ? '队列里有同样的一条在等待' : pendingQueued === 'parked' ? '队列里有同样的一条已暂停' : undefined
+      }
       canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined)}
       blockReason={block?.message ?? sessionBlock}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
@@ -686,6 +691,7 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
         void abandonPending()
       }}
       abandoning={abandoning}
+      abandonHeld={submission.sendingElsewhere ? '另一个窗口正在重试' : undefined}
       canSend={gate.kind === 'open' && block === null}
       blockReason={block?.message}
       readOnly={gate.kind === 'read-only' ? gate.text : undefined}

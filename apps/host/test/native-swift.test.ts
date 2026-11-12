@@ -3036,6 +3036,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     // 放弃这次提交 settles a message its session already lists by requestId as delivered; nothing else counts.
     expect(result.delivered).toEqual([true, false, false, false, false])
+    // A queue item with the same text is only named (it may be another device's); returned text never replaces what was typed.
+    expect(result.queued).toEqual(['waiting', 'parked', '', '', ''])
+    expect(result.joined).toEqual(['回来的', '新写的\n\n回来的'])
   })
   it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
     const harness = (id: string, extra: Record<string, unknown> = {}) => ({

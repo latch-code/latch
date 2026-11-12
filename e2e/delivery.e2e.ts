@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { appendFile, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
@@ -381,14 +381,14 @@ touch '${control}/commit-ran'`,
   }
 })
 
-const ACCEPTANCE = '/tmp/latch-acceptance/2026-11-12-git-retry'
+// Acceptance screenshots go where the person running it says, else beside the other test results.
+const ACCEPTANCE = resolve(process.env.LATCH_GIT_RETRY_SHOTS ?? 'test-results/git-retry')
 
 /**
  * The page as it is, light and dark, with motion frozen, for acceptance outside the repository (skipped elsewhere). The
  * width is the page's own: a page crossing the phone width remounts its panel, which keeps nothing of this page's state.
  */
 async function acceptance(page: Page, name: string) {
-  if (!existsSync('/tmp/latch-acceptance')) return
   await mkdir(ACCEPTANCE, { recursive: true })
   const { width } = page.viewportSize()!
   await page.emulateMedia({ reducedMotion: 'reduce' })

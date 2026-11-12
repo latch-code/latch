@@ -4,6 +4,12 @@ import { ApiError, ApiTimeoutError, readPending, writePending, type PendingSubmi
 import {
   abandonSubmission,
   deliveredSubmission,
+  endFlight,
+  FLIGHT_MS,
+  markFlight,
+  queuedTwin,
+  readFlight,
+  releaseStored,
   sendingMessageFor,
   unconfirmedReason,
   type SendingMessage,
@@ -141,4 +147,61 @@ test('a submission the Host lists in its session by requestId counts as delivere
   // A new session's ID comes only with the answer, so nothing can be checked.
   expect(deliveredSubmission({ requestId: 'request', prompt: '你好' }, listed)).toBe(false)
   expect(deliveredSubmission(null, listed)).toBe(false)
+})
+
+const memoryStore = () => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+    removeItem: (key: string) => {
+      store.delete(key)
+    },
+  })
+  return store
+}
+
+test('a window settles only the submission it sent, never a newer one another window stored', () => {
+  memoryStore()
+  try {
+    writePending('k', { requestId: 'newer-request', prompt: '新的' })
+    releaseStored('k', 'older-request')
+    expect(readPending('k')?.requestId).toBe('newer-request')
+    releaseStored('k', 'newer-request')
+    expect(readPending('k')).toBeNull()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a send or retry in flight is marked for the other windows, only while it lasts and only by its own request', () => {
+  const store = memoryStore()
+  try {
+    markFlight('k', 'request', 1_000)
+    expect(readFlight('k', 1_000)).toEqual({ requestId: 'request', until: 1_000 + FLIGHT_MS })
+    expect(readFlight('k', 1_000 + FLIGHT_MS)).toBeNull()
+    endFlight('k', 'another')
+    expect(readFlight('k', 1_000)).not.toBeNull()
+    endFlight('k', 'request')
+    expect(readFlight('k', 1_000)).toBeNull()
+    // A mark that claims to last longer than any request is not believed.
+    store.set('k.sending', JSON.stringify({ requestId: 'request', until: 1_000 + FLIGHT_MS * 10 }))
+    expect(readFlight('k', 1_000)).toBeNull()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a queue item with the same text is named for what it is, waiting or parked, and only for a queued submission', () => {
+  const queued: PendingSubmission = { requestId: 'request', prompt: '排队的话', sessionId: 'session', queue: true }
+  const item = { id: 'queue-1', text: '排队的话', queuedAt: '2026-11-12T00:00:00.000Z', state: 'waiting' as const }
+  expect(queuedTwin(queued, { ...detail, queue: [item] })).toBe('waiting')
+  // A parked item goes out only when someone sends it.
+  expect(queuedTwin(queued, { ...detail, queue: [{ ...item, state: 'parked' }] })).toBe('parked')
+  expect(queuedTwin(queued, { ...detail, queue: [{ ...item, state: 'dropped' }] })).toBeNull()
+  expect(queuedTwin(queued, { ...detail, queue: [{ ...item, text: '别的' }] })).toBeNull()
+  expect(queuedTwin({ ...queued, queue: undefined }, { ...detail, queue: [item] })).toBeNull()
+  expect(queuedTwin(queued, null)).toBeNull()
 })

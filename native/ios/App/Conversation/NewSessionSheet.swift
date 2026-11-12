@@ -63,9 +63,9 @@ struct NewSessionSheet: View {
                         Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending); if model.pending.isEmpty { dismiss() } } else if await model.submit(pending), model.pending.isEmpty { dismiss() } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                         if PhonePending.prompt(pending) != nil, PhonePending.kind(pending) == .start {
                             Button("放弃这次提交") {
-                                Task { if case let .text(back) = await model.abandonPrompt(pending), prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { prompt = back } }
+                                Task { if case let .text(back, _) = await model.abandonPrompt(pending) { prompt = PhonePending.joined(prompt, back) } }
                             }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
-                            InfoHint(text: PromptComposer.abandonHint)
+                            InfoHint(text: PromptComposer.abandonStartHint)
                         }
                     }
                 }

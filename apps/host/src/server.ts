@@ -1692,11 +1692,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     for (const driver of registry.harnesses()) await mount(driver, driver.id === requiredHarness)
     await questions.reconcile(id => harnessHub.detail(id))
-    if (attachmentStore.hasDrafts())
+    if (attachmentStore.hasDrafts()) {
+      // Only sessions a mounted Harness listed and whose messages were read here: one whose Harness is off or failed to
+      // list is absent, so its reserved drafts are kept.
+      const listed = new Map<string, ReadonlySet<string>>()
       for (const task of await hub!.listTasks()) {
         const refs = (await hub!.detail(task.id)).messages.flatMap(message => message.attachments ?? [])
         if (refs.length) await attachmentStore.recoverSession(task.id, refs)
+        listed.set(task.id, new Set(refs.map(ref => ref.id)))
       }
+      await attachmentStore.pruneAbandonedClaims(listed)
+    }
     await attachmentStore.prune()
 
     let revision = 0

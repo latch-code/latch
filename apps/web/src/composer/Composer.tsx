@@ -66,6 +66,8 @@ export function Composer({
   onRetry,
   onAbandon,
   abandoning = false,
+  abandonHeld,
+  pendingNote,
   canSend,
   blockReason,
   onSubmit,
@@ -119,6 +121,10 @@ export function Composer({
   onAbandon?: () => void
   /** The session is read before the submission is let go. */
   abandoning?: boolean
+  /** Why 放弃这次提交 is not offered now: another window of this device is retrying it. */
+  abandonHeld?: string
+  /** What else the session holds with the same text (a queue item, perhaps another device's); 放弃 stays. */
+  pendingNote?: string
   canSend: boolean
   blockReason?: string
   onSubmit: () => void
@@ -360,10 +366,13 @@ export function Composer({
             <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
             <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
             <Hint className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
-              重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。
+              {pending.sessionId === undefined
+                ? '重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。'
+                : '重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框，附件和文件引用要重新添加；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。'}
             </Hint>
           </div>
           <div className="pending-submission-actions">
+            {pendingNote && <span className="pending-submission-held">{pendingNote}</span>}
             {onOpenPending ? (
               <Button onClick={onOpenPending}>打开</Button>
             ) : (
@@ -371,11 +380,14 @@ export function Composer({
                 重试这次提交
               </Button>
             )}
-            {onAbandon && (
-              <Button variant="ghost" loading={abandoning} loadingLabel="核对中…" disabled={sending} onClick={onAbandon}>
-                放弃这次提交
-              </Button>
-            )}
+            {onAbandon
+              && (abandonHeld ? (
+                <span className="pending-submission-held">{abandonHeld}</span>
+              ) : (
+                <Button variant="ghost" loading={abandoning} loadingLabel="核对中…" disabled={sending} onClick={onAbandon}>
+                  放弃这次提交
+                </Button>
+              ))}
           </div>
         </div>
       )}

@@ -369,4 +369,19 @@ public enum PhonePending {
         guard case let .session(id) = kind(write), prompt(write) != nil, detail["summary"]["id"].string == id else { return false }
         return detail["messages"].array.contains { $0["role"].string == "user" && $0["requestId"].string == write.requestId }
     }
+    /**
+     * A queue item of the session with the same text as this queued (or steered) message: `waiting` goes out by itself
+     * when the turn ends, `parked` only when someone sends it. The queue lists neither request IDs nor devices, so the
+     * item may be another device's: this only names it, and never keeps 放弃 away.
+     */
+    public static func queuedTwin(_ write: NativePendingWrite, detail: NativeJSON) -> String? {
+        guard case let .session(id) = kind(write), let text = prompt(write), detail["summary"]["id"].string == id,
+              let body = try? NativeJSON.decode(write.body), body["queue"].bool || body["steer"].bool else { return nil }
+        let states = detail["queue"].array.filter { $0["text"].string == text }.compactMap { $0["state"].string }
+        return states.contains("waiting") ? "waiting" : states.contains("parked") ? "parked" : nil
+    }
+    /** Text 放弃这次提交 gives back, after what is already in the input and never in its place. */
+    public static func joined(_ typed: String, _ back: String) -> String {
+        typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? back : typed + "\n\n" + back
+    }
 }

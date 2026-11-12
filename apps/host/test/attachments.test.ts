@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import { AttachmentStore, ATTACHMENT_TTL } from '../src/attachments.ts'
+import { AttachmentStore, ATTACHMENT_CLAIM_TTL, ATTACHMENT_TTL } from '../src/attachments.ts'
 const directories: string[] = []
 const directory = async () => {
   const path = await mkdtemp(join(tmpdir(), 'latch-attachments-'))
@@ -53,6 +53,47 @@ describe('private attachment store', () => {
     expect(reopened.get(ref.id)?.taskId).toBe('task-failed')
     expect(reopened.refs('device-a', [ref.id], undefined, creationRequestId)).toEqual([ref])
     expect((await reopened.read(ref)).text).toBe('retained')
+  })
+  it('lets go at startup only of week-old drafts a listed session proves unused, and keeps every one it cannot prove', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path)
+    const add = async (text: string, sessionId?: string) => {
+      const ref = await store.add(input(text))
+      await store.claim('device-a', [ref.id], randomUUID(), sessionId)
+      return ref
+    }
+    const abandoned = await add('given up', 'task-listed'),
+      named = await add('named by a message', 'task-listed'),
+      harnessOff = await add('Harness disabled', 'task-of-disabled-harness'),
+      listFailed = await add('Harness failed to list', 'task-of-failed-harness'),
+      unknown = await add('unknown session', 'task-unknown'),
+      start = await add('a new session’s request')
+    // task-listed was listed and read; its message names one draft by ID (even with a ref recovery would not bind).
+    const listed = new Map([['task-listed', new Set([named.id])]])
+    const soon = await AttachmentStore.open(path, { now: () => Date.now() + ATTACHMENT_TTL * 2, deferPrune: true })
+    await soon.pruneAbandonedClaims(listed)
+    expect(soon.get(abandoned.id)).toBeDefined()
+    const later = await AttachmentStore.open(path, { now: () => Date.now() + ATTACHMENT_CLAIM_TTL + 100, deferPrune: true })
+    // A disabled Harness's sessions and those of a Harness whose list failed are absent from what was listed.
+    await later.pruneAbandonedClaims(listed)
+    expect(later.get(abandoned.id)).toBeUndefined()
+    expect(() => later.refs('device-a', [abandoned.id], 'task-listed', randomUUID())).toThrow('附件已过期')
+    for (const kept of [named, harnessOff, listFailed, unknown, start]) {
+      expect(later.get(kept.id)).toBeDefined()
+      expect((await later.read(kept)).text?.length).toBeGreaterThan(0)
+    }
+  })
+  it('lets go of the drafts reserved for a session when that session is deleted', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path)
+    const reserved = await store.add(input('for a deleted session')),
+      other = await store.add(input('for another session'))
+    await store.claim('device-a', [reserved.id], randomUUID(), 'task-gone')
+    await store.claim('device-a', [other.id], randomUUID(), 'task-kept')
+    await store.removeTask('task-gone')
+    expect(store.get(reserved.id)).toBeUndefined()
+    expect(await readdir(join(path, 'attachments', '_drafts'))).not.toContain(reserved.id)
+    expect(store.get(other.id)).toBeDefined()
   })
   it('binds a draft to one device, preserves immutable hashes across a restart, and removes session blobs with the session', async () => {
     const path = await directory(),

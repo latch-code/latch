@@ -284,7 +284,9 @@ private struct PendingWritesBar: View {
                         Task {
                             switch await model.abandonPrompt(pending) {
                             case .delivered: checked = "已送达"
-                            case let .text(back): model.addToDraft(back, session: id)
+                            case let .text(back, twin):
+                                model.addToDraft(back, session: id)
+                                if twin { checked = PhoneAbandoned.queuedTwinWords }
                             case nil: break
                             }
                         }

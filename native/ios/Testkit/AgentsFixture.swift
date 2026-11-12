@@ -64,6 +64,8 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/config", fields: ["configId": .string("model")]) },
         ],
         "delivered": try deliveredCases(),
+        "queued": try queuedCases(),
+        "joined": [PhonePending.joined("  ", "回来的"), PhonePending.joined("新写的", "回来的")],
     ]
 }
 
@@ -194,4 +196,22 @@ func faceSlots() -> [String: Any] {
     let fourthWaits = !released.take("d", now: 1, for: 6)
     released.release("a")
     return ["peak": peak, "turns": turns.count, "fourthWaits": fourthWaits, "afterRelease": released.take("d", now: 1, for: 6)]
+}
+
+/** A queue item with the same text is named, waiting or parked; the queue shows no request IDs or devices. */
+private func queuedCases() throws -> [String] {
+    let queued = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("排队的话"), "queue": .bool(true)])
+    let plain = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("排队的话")])
+    func detail(_ state: String, text: String) throws -> NativeJSON {
+        try NativeJSON.decode(JSONSerialization.data(withJSONObject: [
+            "summary": ["id": "ses_1"], "messages": [], "queue": [["id": "queue-1", "text": text, "queuedAt": "2026-11-12T00:00:00.000Z", "state": state]],
+        ]))
+    }
+    return [
+        PhonePending.queuedTwin(queued, detail: try detail("waiting", text: "排队的话")) ?? "",
+        PhonePending.queuedTwin(queued, detail: try detail("parked", text: "排队的话")) ?? "",
+        PhonePending.queuedTwin(queued, detail: try detail("dropped", text: "排队的话")) ?? "",
+        PhonePending.queuedTwin(queued, detail: try detail("waiting", text: "别的")) ?? "",
+        PhonePending.queuedTwin(plain, detail: try detail("waiting", text: "排队的话")) ?? "",
+    ]
 }

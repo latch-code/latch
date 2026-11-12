@@ -26,7 +26,16 @@ import {
 } from '../composerChoice.ts'
 import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { abandonSubmission, unconfirmedReason, type SendingMessage } from '../core/sendingMessage.ts'
+import {
+  abandonSubmission,
+  endFlight,
+  isFlightKey,
+  markFlight,
+  readFlight,
+  releaseStored,
+  unconfirmedReason,
+  type SendingMessage,
+} from '../core/sendingMessage.ts'
 
 /**
  * A new session forked from another. `choice`: what it borrows from its source and what the person picks in the draft,
@@ -90,6 +99,8 @@ export function useSubmission({
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
   /** Why the pending submission is still unconfirmed after this page's last try; '' before one. */
   const [pendingReason, setPendingReason] = useState('')
+  /** Another window of this device is sending or retrying the pending submission now. */
+  const [sendingElsewhere, setSendingElsewhere] = useState(false)
   const sendingRef = useRef(false)
   const mounted = useRef(true)
   const destination = useRef({ selectedId, epoch: 0 })
@@ -195,6 +206,26 @@ export function useSubmission({
     } else if (stored.model) {
       const { sessionId, model } = stored
       setOverrides(previous => ({ ...previous, [sessionId]: model }))
+    }
+  }, [pendingKey])
+
+  // Another window's send or retry: no 放弃 here until it ends or its mark runs out.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const check = () => {
+      clearTimeout(timer)
+      const flight = sendingRef.current ? null : readFlight(pendingKey)
+      setSendingElsewhere(flight !== null)
+      if (flight) timer = setTimeout(check, flight.until - Date.now() + 50)
+    }
+    check()
+    const onStorage = (event: StorageEvent) => {
+      if (isFlightKey(event.key, pendingKey)) check()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('storage', onStorage)
     }
   }, [pendingKey])
 
@@ -315,6 +346,19 @@ export function useSubmission({
     if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
     requestOrigins.current.set(submission.requestId, origin)
+    // Another window of this device may have stored its own unconfirmed message meanwhile: that one is shown, and this
+    // one is not sent, so the device never holds two.
+    const elsewhere = readPending(pendingKey)
+    if (elsewhere && elsewhere.requestId !== submission.requestId) {
+      requestOrigins.current.delete(submission.requestId)
+      setPending(elsewhere)
+      setSendingMessage(
+        elsewhere.queue || elsewhere.steer
+          ? null
+          : { submission: elsewhere, sessionId: elsewhere.sessionId ?? null, state: 'unknown', startedAt: Date.now() },
+      )
+      return false
+    }
     try {
       writePending(pendingKey, submission)
     } catch {
@@ -323,6 +367,7 @@ export function useSubmission({
       return false
     }
     sendingRef.current = true
+    markFlight(pendingKey, submission.requestId)
     setSending(true)
     setPending(submission)
     setSendingMessage(
@@ -342,7 +387,7 @@ export function useSubmission({
       if (foreground) select(sessionId)
       if (mounted.current) onSent(sessionId, submission, { foreground, consumedDraft: origin.consumedDraft })
       requestOrigins.current.delete(submission.requestId)
-      writePending(pendingKey, null)
+      releaseStored(pendingKey, submission.requestId)
       setPending(null)
       setPendingReason('')
       // A resent prompt never came from the composer, so whatever is being drafted stays.
@@ -368,7 +413,7 @@ export function useSubmission({
       )
       if (!uncertain) {
         requestOrigins.current.delete(submission.requestId)
-        writePending(pendingKey, null)
+        releaseStored(pendingKey, submission.requestId)
         setPending(null)
       }
       setPendingReason(reason ?? '')
@@ -380,6 +425,7 @@ export function useSubmission({
       setError(uncertain || handled ? '' : inlineError(cause))
       return false
     } finally {
+      endFlight(pendingKey, submission.requestId)
       sendingRef.current = false
       setSending(false)
     }
@@ -398,7 +444,7 @@ export function useSubmission({
    * screen (`restored`); otherwise the caller keeps it as that session's draft. Sending it again is a new message.
    */
   const abandon = (): { sessionId: string | null; text: string; restored: boolean } | null => {
-    if (sendingRef.current || pending === null) return null
+    if (sendingRef.current || pending === null || readFlight(pendingKey)?.requestId === pending.requestId) return null
     const home = abandonSubmission(pendingKey, pending)
     release(pending)
     const restored = storedOwnsInput(pending, destination.current.selectedId)
@@ -431,6 +477,7 @@ export function useSubmission({
     setFork,
     pending,
     pendingReason,
+    sendingElsewhere,
     abandon,
     delivered,
     sending,

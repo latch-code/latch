@@ -9,6 +9,8 @@ import { canonicalJson, redactSecrets, syncDirectory, writeFileAtomic } from '@l
 import { fileFormat, imageDimensions } from './files/metadata.ts'
 import { hasSecretContent, isSecretPath } from './files/secrets.ts'
 export const ATTACHMENT_TTL = 60 * 60_000
+/** How long a draft reserved for a request its session proved not to hold stays, counted from its upload. */
+export const ATTACHMENT_CLAIM_TTL = 7 * 24 * 60 * 60_000
 export const ATTACHMENT_FILE_LIMIT = 25 * 1024 * 1024
 export const ATTACHMENT_REMOTE_LIMIT = 10 * 1024 * 1024
 export const ATTACHMENT_IMAGE_LIMIT = 5 * 1024 * 1024
@@ -394,10 +396,47 @@ export class AttachmentStore {
   async removeTask(sessionId: string): Promise<void> {
     taskId.parse(sessionId)
     await this.mutate(async () => {
-      const next = structuredClone(this.state)
-      for (const [id, entry] of Object.entries(next.entries)) if (entry.taskId === sessionId) delete next.entries[id]
+      const next = structuredClone(this.state),
+        reserved: Entry[] = []
+      for (const [id, entry] of Object.entries(next.entries)) {
+        // A draft reserved for a prompt to this session is needed by no message once the session is gone.
+        if (!entry.taskId && entry.claim?.sessionId === sessionId) reserved.push(entry)
+        else if (entry.taskId !== sessionId) continue
+        delete next.entries[id]
+      }
       await this.commit(next)
+      for (const entry of reserved) {
+        this.leases.delete(entry.ref.id)
+        await rm(this.path(entry), { force: true })
+      }
       await rm(join(this.directory, taskId.parse(sessionId)), { recursive: true, force: true })
+    })
+  }
+  /**
+   * Drafts reserved for a request to an existing session that this startup proved no message needs: the session was
+   * listed and read (`listed`, each session's message attachment IDs) and none of its messages names the draft. A device
+   * gave that request up (放弃这次提交), and the draft would otherwise count against its quota for good. Anything not
+   * proved is kept: a session whose Harness is off, failed to list or is unknown, and a new session's request, whose
+   * session is unknown. Only at startup: while the Host runs, a reserved draft may belong to a request still under way.
+   * A retry of the old request then hears `attachment-missing`, which is true: its session holds no such message.
+   */
+  async pruneAbandonedClaims(listed: ReadonlyMap<string, ReadonlySet<string>>): Promise<void> {
+    await this.mutate(async () => {
+      const next = structuredClone(this.state),
+        removed: Entry[] = []
+      for (const [id, entry] of Object.entries(next.entries)) {
+        const sessionId = entry.claim?.sessionId,
+          named = sessionId === undefined ? undefined : listed.get(sessionId)
+        if (entry.taskId || !named || named.has(id) || entry.createdAt + ATTACHMENT_CLAIM_TTL > this.now()) continue
+        removed.push(entry)
+        delete next.entries[id]
+      }
+      if (!removed.length) return
+      await this.commit(next)
+      for (const entry of removed) {
+        this.leases.delete(entry.ref.id)
+        await rm(this.path(entry), { force: true })
+      }
     })
   }
   async prune(): Promise<void> {

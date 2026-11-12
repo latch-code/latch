@@ -37,6 +37,11 @@
   flex-wrap: wrap;
   gap: var(--sp-8);
 }
+.pending-submission-held {
+  align-self: center;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
 .pending-submission-text > p {
   overflow: hidden;
   text-overflow: ellipsis;

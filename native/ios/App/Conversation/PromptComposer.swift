@@ -51,7 +51,7 @@ struct PromptComposer: View {
                 }.padding(.horizontal, 16)
             }
             if let settled {
-                Label(settled, systemImage: "checkmark").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                Label(settled, systemImage: settled == "已送达" ? "checkmark" : "info.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
                     .task { try? await Task.sleep(for: .seconds(4)); self.settled = nil }
             }
             if noteTooLong {
@@ -175,11 +175,14 @@ struct PromptComposer: View {
 
 extension PromptComposer {
     static let abandonHint = "重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。"
-    /** The text goes back here only when nothing new was written meanwhile. */
+    static let abandonStartHint = "重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。"
+    /** The text goes back after whatever was written meanwhile. */
     fileprivate func abandon(_ pending: NativePendingWrite) async {
         switch await model.abandonPrompt(pending) {
         case .delivered: settled = "已送达"
-        case let .text(back): if trimmed.isEmpty { text = back }
+        case let .text(back, twin):
+            text = PhonePending.joined(text, back)
+            if twin { settled = PhoneAbandoned.queuedTwinWords }
         case nil: break
         }
     }
