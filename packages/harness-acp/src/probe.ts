@@ -10,6 +10,7 @@ import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
+import { assertVersion } from './version.ts'
 import { AUTH_STATUS_METHOD, clientCapabilities, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
 
 interface ProbeOptions {
@@ -86,6 +87,10 @@ export async function probeAgent(
   const shortPattern = shortSecrets.length ? new RegExp(shortSecrets.join('|'), 'gu') : undefined
   const redact = (text: string) => redactSecrets(mask(shortPattern ? text.replace(shortPattern, '[redacted]') : text))
   const bounded = (text: string, bytes = 4096) => Buffer.from(redact(text), 'utf8').subarray(-bytes).toString('utf8')
+  // A command older than its profile supports is refused as a session start is (409 `harness-version-unsupported`),
+  // before anything else; the checks below stay the last before the spawn, so a cancel meanwhile starts nothing.
+  await assertVersion(agent, preview.command)
+  if (options.signal?.aborted) throw new AppError(409, 'probe-cancelled', '测试启动已取消。')
   const selection = selectProfile(agent)
   const profile = selection.profile
   const materializedEnv = await profile?.materialize?.({ dataDir: options.dataDir })

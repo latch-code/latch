@@ -362,7 +362,7 @@ export interface HandoffOptions {
   /** The Harness a new session without one gets. */
   defaultHarnessId(): string
   /** Before anything is on record: the Harness is ready and the project exists. The start checks them again. */
-  checkNewTarget(target: Extract<Target, { kind: 'new-session' }>): void
+  checkNewTarget(target: Extract<Target, { kind: 'new-session' }>): Promise<void>
   /** The folders a new session's file references resolve in. */
   newTargetRoots(target: Extract<Target, { kind: 'new-session' }>): FileRoot[]
   /** The session start path of `POST /tasks`. */
@@ -507,7 +507,7 @@ export class Handoffs {
     const files = input.materials.filter(item => item.kind === 'file')
     if (files.length && this.options.dataScope(caller) !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
     if (input.target.kind === 'new-session') {
-      this.options.checkNewTarget(input.target)
+      await this.options.checkNewTarget(input.target)
       if (files.length && input.target.worktree)
         throw new AppError(
           400,

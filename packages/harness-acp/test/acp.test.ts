@@ -5052,14 +5052,14 @@ describe('sessions on a model service through the gateway', () => {
     }
   }
 
-  async function routed(presetId: string, env: Record<string, string>, route: Omit<ModelRoute, 'origin'>) {
+  async function routed(presetId: string, env: Record<string, string>, route: Omit<ModelRoute, 'origin'>, options: AcpAgentOptions = {}) {
     const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
     cleanups.push(() => models.close())
     const stub = gateway(models)
     const events: HarnessSecurityEvent[] = []
     const fixture = await setup(
       { ...env, FAKE_ACP_DUMP_ENV: '1' },
-      { idleMs: 60_000 },
+      { idleMs: 60_000, ...options },
       { presetId },
       { modelGateway: stub.access, securityEvent: event => void events.push(event) },
     )
@@ -5305,6 +5305,24 @@ describe('sessions on a model service through the gateway', () => {
     expect(envOf(log)[0]).not.toHaveProperty('CODEX_PATH')
     expect(JSON.stringify(envOf(log))).not.toContain(lease!.token)
     expect(fixture.diagnostics.join('\n')).not.toContain(lease!.token)
+  })
+
+  it('names the setup step that timed out after initialize, stops the process and keeps no token open', async () => {
+    const { fixture, stub, route } = await routed(
+      'codex',
+      { ...CODEX, FAKE_ACP_PROVIDERS: '1', FAKE_ACP_PROVIDERS_SILENT: '1' },
+      { providerId: 'openai-svc', model: 'fake-model', wire: 'responses' },
+      { requestTimeoutMs: 400 },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(systemText(detail)).toContain('Fake 1 秒内没有完成启动设置（providers/list），已停止它。')
+    const [started] = (await fixture.log()).filter(entry => entry.event === 'start')
+    await vi.waitFor(() => expect(alive(started!.pid)).toBe(false))
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
   })
 
   it('refuses a Codex route the agent cannot take, saying why, and keeps no token open', async () => {

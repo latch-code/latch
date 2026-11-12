@@ -978,6 +978,11 @@ export class HarnessHub implements Bridge {
     return accepted
   }
 
+  /** Something outside a session changed what the catalog says, such as a harness found too old: clients read it again. */
+  changed(): void {
+    if (!this.closing) this.emit()
+  }
+
   subscribe(listener: (sessionId?: string) => void): () => void {
     this.listeners.add(listener)
     return () => {

@@ -37,9 +37,9 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 | 预设 | 命令 | 许可证 | 说明 |
 | --- | --- | --- | --- |
 | Codex | `codex-acp` | Apache-2.0 | `npm i -g @agentclientprotocol/codex-acp`；登录、模型与沙箱由 Codex 管理 |
-| pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本；不用适配器；pi 执行工具前不请求审批，扩展要求确认时交给人 |
+| pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本（与 1.5.0 核对过握手）；不用适配器；pi 执行工具前不请求审批，扩展要求确认时交给人 |
 | OpenCode | `opencode acp` | MIT | `npm i -g opencode-ai`；支持 1.x 与 2.x |
-| DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.1-rc.2 或更高；按完整消息回复 |
+| DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.1-rc.1 或更高（`acp` 配置自 0.1.2 起随包提供；0.2.1-rc.1 起它的 ACP 一轮等子 Agent 结束才结算、取消等真实停止，见 `@deepseek-ai/dsh-acp` 0.2.0-rc.2 与 0.2.1-rc.1 的 README；2026-11 的 latest 是 0.2.2-rc.1，参数不变）；它要求 Node.js 24.9 或更高；按完整消息回复 |
 | Gemini CLI | `gemini --acp --approval-mode default` | Apache-2.0 | `npm i -g @google/gemini-cli` |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` |
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
@@ -53,6 +53,14 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 启动脚本让 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
 
 预设可以声明 `agentCommand`：适配器驱动的那个人熟悉的程序（codex-acp 驱动 codex）。Host 用同样的规则查找它，只装了程序时「设置 → Harness」与选择器写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」；适配器才是启动的命令，没有它这个 Agent 不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
+
+### 版本门槛
+
+profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本，用 `<命令> --version` 读出：只读标准输出的第一行，整行是版本号（可带 `v`）才算，夹着更新提示等其他文字的不算。不经过 shell，不发提示，10 秒上限，程序退出后还占着输出的子进程被结束；与登录检查同一规则，只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序，也只读登录检查会运行的那个文件：定义的命令就是预设的命令名，或是指向同一文件的路径；其他命令（经 `node` 等运行时启动的、项目文件夹里的同名文件）不读，也不挡。现在有 DeepSeek Harness（0.2.1-rc.1，见上表）与 pi（0.84.4，RPC 的 `clear_queue` 检查仍保留给读不出版本的 pi）。
+
+- 只读已保存且启用的定义：Host 启动时、开始监听之前读一次（最多 5 秒），`GET /link/api/agents`（「重新检测」）清掉缓存后等新的结果（最多 5 秒）再回答；没添加过的预设与停用的定义不读。从新会话或「添加 Harness」选中一个预设时，保存它的定义之前读一次：太旧就以同一个 409 拒绝，不保存定义、不开会话，草稿留在输入框；这个结果保留下来，之后菜单不再提供它、「添加 Harness」写「需要升级」，「重新检测」也重读这样选过的预设。读到的结果按文件缓存（文件被替换或改动、「重新检测」时重读）；缓存说太旧时，新会话、已有会话的下一轮与进程启动前都再读一次（同一次读取共用），因为 Volta、asdf、mise 的 shim 在升级后还是同一个文件。读完发现变化时 Host 发一次 `refresh`，已打开的页面重新读取目录。
+- 低于门槛时：定义状态是 `unavailable`，文字是「<名称> 需要 <最低> 或更高版本（当前 <版本>）。升级：<命令>」；检测结果（`CommandDetection.outdated`）带 `need` 与 `upgrade`，设置写「需要升级」并给出升级命令与「重新检测」，新会话的 Harness 菜单不提供它。新会话、已有会话的下一轮（已在运行的进程也不再接收）与「测试启动」都在启动进程之前拒绝，同一个 409 `harness-version-unsupported` 与同一句话；「测试启动」在读版本之后、启动之前再查一次是否已取消；这不记为它的「上次运行异常」。读版本发生在启动前的项目配置复查之前，复查仍是启动前的最后一步。
+- 读不出版本（命令失败、超时、没有打印版本）不挡任何事；这时由下面「进程与环境」的握手时限兜底。
 
 ## 预设的权限配置
 
@@ -142,7 +150,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 `POST /link/api/agents/:id/probe { requestId }` 接受同时持有 `admin` 与 `run` 的设备，不弹确认。
 
-探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
+低于版本门槛的命令不运行探测（见「版本门槛」）。探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
 
 适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
 
@@ -170,6 +178,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
   没有预设的自定义定义只继承代理、CA 与 `__MISE_DIFF`。`inheritEnv` 不能点名 `*_KEY`、`*_TOKEN` 这类秘密（`test/login.test.ts`）；读登录 shell 时只取点名的变量，其余输出丢弃，不记日志，shell 也拿不到 `LATCH_*` 与 `NODE_OPTIONS`。
 - 启动指纹只计 `inheritEnv` 的名字和 `programEnv` 找到的路径，不计任何值：`launchHash` 会发给客户端，代理地址可能带密码。代理与 CA 的名字是固定的，不进指纹；换代理不影响已有会话。诊断与预览不显示值，带账号密码的代理地址在诊断里被遮盖。
 - 会话用 Harness 自己的登录与模型时，模型服务的密钥、地址等在 Agent 自己的配置里设置，或写进 Agent 定义的环境变量。会话用设置里保存的模型服务时，Agent 拿到的是网关凭据，不是密钥，见「经 Latch 使用模型服务」。
+- **握手时限。** `initialize` 最多等 30 秒（`handshakeTimeoutMs`），`session/new`、`session/resume`、`session/load` 与分叉最多 60 秒（`sessionSetupTimeoutMs`），都不超过一般请求的 120 秒；到时 Latch 结束整个进程组，这一轮失败并写「<名称> 30 秒内没有完成启动握手（initialize），已停止它。确认它是 <最低版本> 或更高版本、能在终端里正常运行后重试。」（504 `agent-handshake-timeout`；没有版本门槛的预设不写版本那半句）。这样太旧或坏掉的 Agent 不会让会话一直停在运行中，排在后面的消息也不会一直等。提示词一轮本身不设时限，长任务照常运行。
 - `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；声明 `session.notices` 与 `session.compaction`，见「通知与压缩」；除写了 `signIn` 的预设外声明 `auth.terminal`，见「登录」。`session/new`、`session/resume`、`session/load` 只在会话带着技能时传一个 MCP 服务器：Latch 的只读技能服务器（`skills-server.ts`，列出并读取技能，不写、不联网），其余情况传空列表；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」（预设写了 `signIn` 的用它：Claude Agent 是「在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。」），并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。这一轮的 `runEnd` 是 `login-required`，页面给出登录命令和「重试」；已有 ACP 会话时下一轮走 `session/resume`，不用新建会话。见「登录」。
 - 空闲 10 分钟且 Agent 支持恢复会话时，进程会被优雅停止，下次需要时再启动。
 - 进程崩溃时，该会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）；之后的重启从 250 ms 开始按最近的崩溃次数加倍延迟（最多 5 秒），同一定义一分钟内崩溃 3 次会暂停自动重启一分钟（503 `agent-paused`）。
@@ -198,7 +207,7 @@ Harness 说某个模型服务的协议时，会话可以不用它自己的登录
 
 pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接在定义的参数后面，启动预览里也列出），把运行时的 ACP 方法换成 pi 的命令，把 pi 的事件换成 ACP 的会话更新，所以启动指纹、项目配置、取消、审批与持久化和其他 Harness 是同一份代码。依据 pi 自己的 `rpc-types.ts`、`rpc-mode.ts` 与 `docs/rpc*.md`、`docs/json.md`。
 
-- **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。pi 的 RPC 不报告版本，所以进程启动时 `get_state` 之后先发一次 `clear_queue`（刚启动的进程没有排队的内容）：pi 答「Unknown command」时它早于 0.84.4，会话与测试启动都拒绝并写「pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。」（409 `harness-version-unsupported`），不会开会话，也不会停在一轮永远不结束的运行里。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
+- **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。pi 的 RPC 不报告版本，所以进程启动时 `get_state` 之后先发一次 `clear_queue`（刚启动的进程没有排队的内容）：pi 答「Unknown command」时它早于 0.84.4，会话与测试启动都拒绝并写「pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。」（409 `harness-version-unsupported`），不会开会话，也不会停在一轮永远不结束的运行里。pi 1.5 的 RPC 与 0.84.x 相同（公开 changelog 中 1.0 到 1.5 的不兼容改动都在扩展与界面，不在 RPC）：在临时 HOME 下对 1.5.0 做的不调用模型的握手里，`get_state`、`clear_queue`、`get_available_models`（没有登录时为空，按未登录处理）、`get_available_thinking_levels` 的形状不变；它在回答第一条命令前先发一条 `queue_update` 事件，`new_session` 的回答可能晚于其后发出的命令，wire 按 `id` 对应，忽略不认识的事件（假 pi 以 `FAKE_PI_SHAPE=1.5` 重现）。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
 - **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件，再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。pi 没有删除会话的命令，删除 Latch 的会话时留下 pi 自己的副本。pi 不接收 MCP 服务器。
 - **模型与思考。** `get_available_models` 列出模型（值写作 `provider/model`），一个都没有说明 pi 还没有可用的登录或密钥，按未登录处理；`get_available_thinking_levels` 列出当前模型的思考深度，换模型后重读，读回 `get_state` 才算换好。列表只在人点「读取 pi 的模型列表」时读，因为 pi 启动时会加载这个人的扩展、运行会话钩子。
 - **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
@@ -389,7 +398,7 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | `project-config-changed`（409） | 项目中计入启动指纹的 Agent 配置在会话启动后有增删或修改 |
 | `permission-unverified`（409） | 无法确认 Agent 已进入预期的权限模式，本轮未发送 |
 | `permission-drift`（409） | 该会话检测到权限模式漂移，不再接收输入 |
-| `harness-version-unsupported`（409） | Agent 版本未经验证（目前用于 OpenCode） |
+| `harness-version-unsupported`（409） | Agent 版本未经验证（OpenCode 的版本规则），或低于预设的版本门槛（DeepSeek Harness、pi，见「版本门槛」） |
 | `workspace-unavailable`（400） | 工作目录不是 Host 登记的项目目录，或所选项目的文件夹与 Host 登记的不一致 |
 | `workspace-folder-chars`（400） | 要以参数交给 Agent 的文件夹路径含逗号 |
 | `workspace-changed`（409） | 会话使用的文件夹已不在项目中、被替换或找不到，或项目已不在 Host 的项目列表中；新建会话的过程中交给 Agent 的文件夹变了 |
@@ -403,7 +412,8 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | `terminal-open-failed`（502） | 没有打开终端；自己在终端里运行这条命令 |
 | `harness-session-lost`（409） | Agent 无法恢复该会话 |
 | `agent-not-found`、`agent-start-failed`、`agent-paused`、`agent-busy`、`agent-exited`（503） | 命令缺失、启动失败、连续崩溃后暂停、同时运行的进程过多、进程已退出或正在停止 |
-| `agent-timeout`（504） | Agent 长时间没有响应会话建立或设置请求（初始化超时属于 `agent-start-failed`） |
+| `agent-handshake-timeout`（504） | Agent 在时限内没有回答 `initialize`（30 秒）、建立会话（`session/new`、`session/resume`、`session/load`、分叉，60 秒）或握手之后的启动设置（如经 Latch 使用模型服务时的 `providers/list`，120 秒）；Latch 停止它、等进程真实退出后这一轮才失败，并写明哪一步、建议核对版本 |
+| `agent-timeout`（504） | Agent 长时间没有响应其他设置请求（120 秒） |
 | `not-supported`（501） | Agent 不支持修改该选项 |
 
 ## 尚未实现
@@ -430,7 +440,7 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 
 ## 测试
 
-`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。测试从不启动真实 Agent。
+`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。测试从不启动真实 Agent。
 
 ### 会话命令
 

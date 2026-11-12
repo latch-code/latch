@@ -5,7 +5,9 @@
 // turn runs gets its own reply in that turn. `compact` summarizes after a short wait; before any reply it fails as pi does
 // with too little to compact, instructions with "cancel" have an extension cancel it and with "slow" it takes three
 // seconds, until stopped. FAKE_PI_LOG names a JSONL file of what it received; FAKE_PI_NO_MODELS=1
-// lists no models, as pi does with no login; FAKE_PI_TOO_OLD=1 answers as a pi older than 0.84.4.
+// lists no models, as pi does with no login; FAKE_PI_TOO_OLD=1 answers as a pi older than 0.84.4. FAKE_PI_SHAPE=1.5
+// behaves as pi 1.5 did in a handshake against the real program: a `queue_update` event before any command is answered,
+// and `new_session` answered after commands sent behind it, since pi handles commands concurrently.
 // It keeps each session's entries as pi does, a tree with IDs, parents and times, in a JSONL file under FAKE_PI_SESSIONS
 // when that is set, so another process can switch to it, list it and fork or clone it. "recall" replies with the user
 // messages on the branch before it; a session whose first message says "no-fork" has an extension cancel its forks.
@@ -312,6 +314,7 @@ function handle(record) {
       sessionFile = newFile()
       entries = []
       leafId = null
+      if (env.FAKE_PI_SHAPE === '1.5') return void setTimeout(() => ok(type, id, { cancelled: false }), 50)
       return ok(type, id, { cancelled: false })
     case 'get_entries': {
       const from = record.since === undefined ? 0 : entries.findIndex(item => item.id === record.since) + 1
@@ -371,6 +374,8 @@ function handle(record) {
       return refuse(type ?? 'parse', id, `Unknown command: ${type}`)
   }
 }
+
+if (env.FAKE_PI_SHAPE === '1.5') process.stdout.write(`${JSON.stringify({ type: 'queue_update', steering: [], followUp: [] })}\n`)
 
 let buffered = ''
 process.stdin.setEncoding('utf8')

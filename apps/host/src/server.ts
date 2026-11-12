@@ -103,8 +103,13 @@ import {
 import { PluginRegistry } from '@latch/core'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import {
+  assertCommandVersion,
   createAcpAgentPlugin,
   forgetCommandLookups,
+  onVersionChange,
+  outdatedCommand,
+  outdatedRefusal,
+  recheckVersions,
   presetOffer,
   presetRecord,
   resolveCommand,
@@ -911,19 +916,30 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
 }
 
 /** What this computer has of a command and, for an adapter, of the program it drives. */
-function detectCommand(command: string, agent?: string): CommandDetection {
+function detectCommand(command: string, agent?: string, record?: AgentRecord): CommandDetection {
   const path = resolveCommand(command)
+  const outdated = record && path ? outdatedCommand(record, path) : undefined
   return {
     ...(path ? { found: true, path } : { found: false }),
     ...(agent ? { agent: { command: agent, found: resolveCommand(agent) !== undefined } } : {}),
+    ...(outdated ? { outdated } : {}),
   }
 }
 
 /** What this computer has of a preset's commands. */
 export const detectPresetCommands = (preset: AgentPreset): CommandDetection => detectCommand(preset.command, preset.agentCommand)
 
+/** A preset's detection with what its command's version says, whichever way it was found. */
+function withVersion(preset: AgentPreset, detected: CommandDetection): CommandDetection {
+  const record = presetRecord(preset.id)
+  const outdated = detected.found && record ? outdatedCommand(record, detected.path ?? resolveCommand(preset.command)) : undefined
+  return outdated ? { ...detected, outdated } : detected
+}
+
 /** PATH lookups touch the file system and the catalog is read often; as long as a driver's own status keeps one. */
 const PRESET_LOOKUP_TTL_MS = 5_000
+/** How long reading the agent settings waits for commands to print their versions. */
+const VERSION_RECHECK_MS = 5_000
 
 function agentSettings(agent: AgentRecord): AgentSettings {
   const verdict = validateAgentDefinition(agent)
@@ -935,7 +951,7 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
     enabled: agent.enabled,
-    detected: detectCommand(agent.command, AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.agentCommand),
+    detected: detectCommand(agent.command, AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.agentCommand, agent),
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
     ...(agent.startedHash === undefined ? {} : { started: agent.startedHash === definitionHash(agent) }),
@@ -1862,6 +1878,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       terminalBinary,
     )
     setLoginPrograms(options.loginPrograms)
+    // A command found too old after a client read the catalog: clients read it again.
+    onVersionChange(() => hub?.changed())
+    // Read before the first catalog, so that a client never starts with a Harness too old to run as ready.
+    if (options.loginPrograms)
+      await recheckVersions(
+        config.settings().agents.filter(agent => agent.enabled),
+        VERSION_RECHECK_MS,
+      )
     const historyImports = new HistoryImports(routeContext, await HistoryReceipts.open(dataDir), {
       project: id => savedProject(id),
       async assertProjectUsable(id) {
@@ -2206,12 +2230,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       assertSessionInput: (caller, id) => routeContext.assertSessionInput(caller, id),
       sessionRoots,
       defaultHarnessId: () => defaultHarnessId(),
-      checkNewTarget(target) {
-        const harnessId = target.harnessId ?? defaultHarnessId(),
+      async checkNewTarget(target) {
+        const id = target.harnessId ?? defaultHarnessId()
+        await rereadOutdated(id)
+        const harnessId = id,
           harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
-        if (harness.status !== 'ready')
+        if (harness.status !== 'ready') {
+          refuseOutdated(harnessId)
           throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
+        }
         if (target.projectId && target.projectId !== 'default' && !savedProject(target.projectId))
           throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
         if (target.worktree && (!target.projectId || target.projectId === 'default'))
@@ -4198,6 +4226,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
+    /**
+     * A saved definition the cache says is too old is read once more before a start is judged by it: a shim stays the
+     * same file when the program behind it is upgraded. Still too old, it is refused (409 `harness-version-unsupported`).
+     */
+    async function rereadOutdated(id: string): Promise<void> {
+      const record = config.settings().agents.find(agent => agent.id === id)
+      if (record && outdatedRefusal(record)) await assertCommandVersion(record)
+    }
+
+    /** A saved definition whose command is too old is refused as a running session would refuse it: one code, one sentence. */
+    function refuseOutdated(id: string): void {
+      const record = config.settings().agents.find(agent => agent.id === id)
+      const refused = record && outdatedRefusal(record)
+      if (refused) throw refused
+    }
+
     let presetLookup: { at: number; found: AgentPreset[] } | undefined
     /** Presets found on this computer that have no definition and whose id is free. */
     function presetsToOffer(): HarnessInfo[] {
@@ -4209,15 +4253,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           found: AGENT_PRESETS.filter(preset => detect(preset).found),
         }
       const saved = new Set(config.settings().agents.map(agent => agent.presetId))
-      return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)
+      // One found too old is not offered: the list of Harnesses to add says what it needs instead.
+      return presetLookup.found
+        .filter(preset => !saved.has(preset.id) && !hub!.info(preset.id))
+        .filter(preset => !outdatedCommand(presetRecord(preset.id)!, resolveCommand(preset.command)))
+        .map(presetOffer)
     }
 
     /** A saved Harness definition this Host runs and that can start now. */
     function editableHarness(id: string): HarnessInfo {
       const harness = hub!.info(id)
       if (!harness?.editable || !hub!.has(id)) throw new AppError(404, 'agent-not-found', '找不到该 Harness')
-      if (harness.status !== 'ready')
+      if (harness.status !== 'ready') {
+        refuseOutdated(id)
         throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
+      }
       return harness
     }
 
@@ -5182,10 +5232,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
             : undefined)
           ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
+        await rereadOutdated(harnessId)
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
-        if (harness.status !== 'ready')
+        if (harness.status !== 'ready') {
+          refuseOutdated(harnessId)
           throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.capabilities.display.label} 当前不可用`)
+        }
         if (input.mode && !harness.modes.includes(input.mode))
           throw new AppError(400, 'mode-unsupported', `${harness.capabilities.display.label} 不支持该会话模式`)
         if (input.model) assertModel(input.model)
@@ -5554,7 +5607,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') return 'steered'
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, input) }
-      const harnessId = await hub!.harnessOf(id),
+      // An existing session whose Harness is now too old is refused as a new one would be, before the turn is recorded.
+      const sessionHarness = await hub!.harnessOf(id)
+      await rereadOutdated(sessionHarness)
+      refuseOutdated(sessionHarness)
+      const harnessId = sessionHarness,
         agentTurn = turnContext(id, harnessId, withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope),
         attachments = await promptAttachments(
           caller,
@@ -6269,11 +6326,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'admin')
         // Reading the agent settings is a re-check: the next catalog looks for every command again.
         forgetCommandLookups()
+        // A command too old for its preset says so in this answer, and in the catalog read after it.
+        await recheckVersions(
+          config.settings().agents.filter(agent => agent.enabled),
+          VERSION_RECHECK_MS,
+          // A preset chosen from a draft but refused, so never saved; one with a definition follows that definition.
+          AGENT_PRESETS.filter(preset => !config.settings().agents.some(agent => agent.presetId === preset.id)).flatMap(
+            preset => presetRecord(preset.id) ?? [],
+          ),
+        )
         // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
         presetLookup = undefined
         const presets: AgentPresetSettings[] = AGENT_PRESETS.map(preset => ({
           ...preset,
-          detected: (options.detectPreset ?? detectPresetCommands)(preset),
+          detected: withVersion(preset, (options.detectPreset ?? detectPresetCommands)(preset)),
         }))
         json(res, { agents: config.settings().agents.map(agentSettings), presets })
         return true
@@ -6303,6 +6369,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           startedHash: null,
         }
         const hash = checkAgent(next)
+        // Choosing a Harness is the moment its version is read, once: one too old for its preset is refused before
+        // anything is saved or started, and the result is kept, so the picker then says it needs an upgrade.
+        if (next.enabled) {
+          await assertCommandVersion(next)
+          recheck(caller, 'admin')
+        }
         const record = await serial(caller, 'admin', async () => {
           if (config.settings().agents.some(agent => agent.id === id)) throw new AppError(409, 'agent-exists', `标识 ${id} 已被占用`)
           const seq = await audited({

@@ -6,8 +6,15 @@ export interface AcpAgentOptions {
   cancelGraceMs?: number
   /** A resumable agent process without a running turn stops after this long. Default 10 min. */
   idleMs?: number
-  /** Limit for `initialize` and session setup requests. Default 120 s. */
+  /** Limit for other setup and configuration requests. Default 120 s. */
   requestTimeoutMs?: number
+  /**
+   * Limit for `initialize`: an agent that has not answered by then is stopped and the start refused
+   * (`agent-handshake-timeout`), so a too-old or broken agent never holds a session open. Default 30 s.
+   */
+  handshakeTimeoutMs?: number
+  /** The same for `session/new`, `session/resume` and `session/load`. Default 60 s. */
+  sessionSetupTimeoutMs?: number
   /** Wait between stdin end, SIGTERM and SIGKILL when stopping a process. Default 5 s. */
   stopGraceMs?: number
   /** Longest accepted stdout line; a longer one kills the process. Default 64 MiB. */
@@ -24,6 +31,8 @@ export interface ResolvedOptions {
   cancelGraceMs: number
   idleMs: number
   requestTimeoutMs: number
+  handshakeTimeoutMs: number
+  sessionSetupTimeoutMs: number
   stopGraceMs: number
   maxLineBytes: number
   restartDelayMs: number
@@ -41,6 +50,8 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
     requestTimeoutMs: pick(options.requestTimeoutMs, 120_000),
+    handshakeTimeoutMs: pick(options.handshakeTimeoutMs, 30_000),
+    sessionSetupTimeoutMs: pick(options.sessionSetupTimeoutMs, 60_000),
     stopGraceMs: pick(options.stopGraceMs, 5_000),
     maxLineBytes: pick(options.maxLineBytes, 64 * 1024 * 1024),
     restartDelayMs: pick(options.restartDelayMs, 250),

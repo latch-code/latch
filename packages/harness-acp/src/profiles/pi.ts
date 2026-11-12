@@ -1,3 +1,4 @@
+import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
 
 export const piProfile: HarnessProfile = {
@@ -20,4 +21,12 @@ export const piProfile: HarnessProfile = {
   projectConfigManaged: { skip: ['.pi/npm', '.pi/git'] },
   // Starting pi loads the person's extensions and runs their session hooks, so its lists are read only on request.
   catalogueRead: { when: 'request' },
+  // `pi --version` prints the bare version and exits before loading extensions. The wire's own `clear_queue` check
+  // stays for a pi that prints none.
+  minimumVersion: {
+    args: ['--version'],
+    read: bareVersion,
+    minimum: '0.84.4',
+    upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
+  },
 }

@@ -126,7 +126,7 @@ function Elsewhere({ children }: { children: ReactNode }) {
 /** What the Host found of a preset's commands, in one line: found with its path, or what is still missing. */
 function Detected({ preset, detected }: { preset: AgentPresetSettings; detected?: CommandDetection }) {
   if (!detected) return null
-  const missing = missingText({ command: preset.command, detected })
+  const missing = missingText({ command: preset.command, detected }) ?? detected.outdated?.need
   if (missing)
     return (
       <span className="detect is-warn">
@@ -179,7 +179,7 @@ export function AgentPresetList({
             <span className="setup-list-description">{preset.description}</span>
           </span>
           <span className="setup-list-end">
-            {preset.detected?.found ? '已找到' : '添加'}
+            {preset.detected?.outdated ? '需要升级' : preset.detected?.found ? '已找到' : '添加'}
             <Icon icon={ChevronRightGlyph} size={12} />
           </span>
         </button>
@@ -212,6 +212,9 @@ export function AgentSetupPanel({
   const [error, setError] = useState('')
   const computer = useComputerName(!canAdd)
   const missing = preset.detected ? missingText({ command: preset.command, detected: preset.detected }) : undefined
+  // Here but too old: its upgrade command takes the install command's place.
+  const upgrade = preset.detected?.outdated?.upgrade
+  const command = upgrade ?? preset.install
   const add = async () => {
     setBusy('add')
     setError('')
@@ -252,11 +255,11 @@ export function AgentSetupPanel({
       }>
       <p className="setup-panel-text">{preset.description}</p>
       <Detected preset={preset} detected={preset.detected} />
-      {(missing !== undefined || !preset.detected) && preset.install && (
+      {(missing !== undefined || !preset.detected || upgrade) && command && (
         <div className="agent-install">
           <span className="agent-install-command">
-            <code>{preset.install}</code>
-            <CopyButton text={preset.install} label="复制安装命令" size="xs" />
+            <code>{command}</code>
+            <CopyButton text={command} label={upgrade ? '复制升级命令' : '复制安装命令'} size="xs" />
           </span>
           {onRecheck && (
             <Button

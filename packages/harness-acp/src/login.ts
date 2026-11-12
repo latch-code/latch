@@ -12,6 +12,8 @@ import type { LoginCheck } from './profiles/index.ts'
 
 const STATUS_TIMEOUT_MS = 10_000
 const MAX_OUTPUT = 16 * 1024
+/** How long output may stay open after the program exited. */
+const EXIT_CLOSE_MS = 500
 
 let locate: ((command: string) => string | undefined) | undefined
 
@@ -116,7 +118,7 @@ function runProgram(
   path: string,
   args: readonly string[],
   options: RunOptions,
-): Promise<{ code: number | null; output: string } | undefined> {
+): Promise<{ code: number | null; output: string; stdout: string } | undefined> {
   if (options.signal?.aborted) return Promise.resolve(undefined)
   const env = agentEnvironment({
     resolvedCommand: path,
@@ -127,6 +129,7 @@ function runProgram(
   return new Promise(resolve => {
     const child = spawn(path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
     let output = ''
+    let stdout = ''
     const keep = (chunk: string) => {
       if (output.length < MAX_OUTPUT) output += chunk
     }
@@ -140,18 +143,37 @@ function runProgram(
     // A caller may shorten the wait, never lengthen it.
     const timer = setTimeout(kill, Math.min(options.timeoutMs ?? STATUS_TIMEOUT_MS, STATUS_TIMEOUT_MS))
     options.signal?.addEventListener('abort', kill, { once: true })
-    child.stdout.setEncoding('utf8').on('data', keep)
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      keep(chunk)
+      if (stdout.length < MAX_OUTPUT) stdout += chunk
+    })
     child.stderr.setEncoding('utf8').on('data', keep)
-    const done = (result: { code: number | null; output: string } | undefined) => {
+    let fallback: NodeJS.Timeout | undefined
+    let settled = false
+    const done = (result: { code: number | null; output: string; stdout: string } | undefined) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      clearTimeout(fallback)
       options.signal?.removeEventListener('abort', kill)
       resolve(result)
     }
     child.once('error', () => {
       done(undefined)
     })
+    // A helper the program left behind may hold its output open: once the program itself exited, what it printed by
+    // then is its answer, and the rest of its group is stopped.
+    child.once('exit', (code, signal) => {
+      kill()
+      fallback = setTimeout(() => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        done(signal ? undefined : { code, output, stdout })
+      }, EXIT_CLOSE_MS)
+      fallback.unref()
+    })
     child.once('close', (code, signal) => {
-      done(signal ? undefined : { code, output })
+      done(signal ? undefined : { code, output, stdout })
     })
   })
 }
@@ -198,6 +220,22 @@ export async function readProgramVersion(record: AgentRecord, options: RunOption
   const version = result?.code === 0 ? read.read(result.output) : undefined
   return { found: true, ...(version ? { version } : {}) }
 }
+
+/**
+ * The version the agent's own command prints with the profile's `minimumVersion.args`, by the rules a login check
+ * follows: only once the start script has let the Host run the person's programs, never through a shell. Undefined: not
+ * allowed, failed, timed out or printed none.
+ */
+export async function readOwnVersion(record: AgentRecord, path: string, options: RunOptions = {}): Promise<string | undefined> {
+  const gate = selectProfile(record).profile?.minimumVersion
+  if (!gate || !locate) return undefined
+  const result = await runProgram(record, path, gate.args, options)
+  // Standard output only: a notice on standard error (an update available, a deprecation) may name other versions.
+  return result?.code === 0 ? gate.read(result.stdout) : undefined
+}
+
+/** Where the Host finds one of the person's programs for version and login reads; undefined while it may not run them. */
+export const locateProgram = (command: string): string | undefined => locate?.(command)
 
 const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`
 

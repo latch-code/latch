@@ -477,6 +477,8 @@ async function handle(method, params) {
   switch (method) {
     case 'initialize':
       clientCapabilities = params.clientCapabilities ?? {}
+      // Like an agent too old for the arguments it was given: it runs and reads stdin but never answers.
+      if (env.FAKE_ACP_INIT_SILENT === '1') await new Promise(() => {})
       if (env.FAKE_ACP_INIT_DELAY) await delay(Number(env.FAKE_ACP_INIT_DELAY))
       if (env.FAKE_ACP_INIT_AUTH === '1') throw rpcError(-32000, 'Authentication required')
       if (env.FAKE_ACP_INIT_ERROR) {
@@ -511,6 +513,7 @@ async function handle(method, params) {
         ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
       }
     case 'session/new': {
+      if (env.FAKE_ACP_NEW_SILENT === '1') await new Promise(() => {})
       if (env.FAKE_ACP_AUTH === 'new' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
@@ -572,6 +575,7 @@ async function handle(method, params) {
       return prompt(params)
     case 'providers/list':
       if (env.FAKE_ACP_PROVIDERS !== '1') throw rpcError(-32601, `Method not found: ${method}`)
+      if (env.FAKE_ACP_PROVIDERS_SILENT === '1') await new Promise(() => {})
       return {
         providers: [
           {

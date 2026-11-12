@@ -95,7 +95,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
     description: '按完整消息回复，不逐字流式输出。',
     install: 'npm i -g @deepseek-ai/dsh',
-    installNote: '0.2.1-rc.2 或更高版本',
+    installNote: '0.2.1-rc.1 或更高版本',
   },
   {
     id: 'gemini',

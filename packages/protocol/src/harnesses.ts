@@ -224,6 +224,8 @@ export interface CommandDetection {
   path?: string
   /** Display only, see `AgentPreset.agentCommand`. */
   agent?: { command: string; found: boolean }
+  /** The command is here but older than Latch supports: what it needs, and the command that upgrades it. Older Hosts omit it. */
+  outdated?: { need: string; upgrade: string }
 }
 
 /** A preset as the agent settings list it: with what the Host found of its commands. Older Hosts send no `detected`. */

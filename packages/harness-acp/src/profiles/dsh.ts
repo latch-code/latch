@@ -1,3 +1,4 @@
+import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
 
 export const dshProfile: HarnessProfile = {
@@ -13,4 +14,14 @@ export const dshProfile: HarnessProfile = {
   },
   // DeepSeek Harness refuses additionalDirectories and keeps to the session directory.
   folderAccess: 'primary',
+  // `dsh --version` prints the bare version. Before 0.1.2 there is no `acp` profile: `dsh --profile acp` exits with
+  // "profile does not exist", or a profile of that name made by hand boots something that never answers ACP. Until
+  // 0.2.1-rc.1, @deepseek-ai/dsh-acp settled a prompt when the root agent went idle, with subagents still running, and a
+  // cancel did not wait for them (its README of 0.2.0-rc.2 and 0.2.1-rc.1); a stop then is not a real settlement.
+  minimumVersion: {
+    args: ['--version'],
+    read: bareVersion,
+    minimum: '0.2.1-rc.1',
+    upgrade: 'npm i -g @deepseek-ai/dsh@latest',
+  },
 }

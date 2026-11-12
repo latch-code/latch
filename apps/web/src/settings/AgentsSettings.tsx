@@ -74,6 +74,14 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
         </span>
       </span>
     )
+  const outdated = agent.detected.outdated
+  if (outdated)
+    return (
+      <span className="detect is-warn">
+        <Icon icon={AlertGlyph} size={12} />
+        <span>{outdated.need}</span>
+      </span>
+    )
   if (harness?.status === 'unavailable' && harness.statusMessage)
     return (
       <span className="detect is-warn">
@@ -616,17 +624,26 @@ function AgentPage({
           </Button>
         }>
         <SettingsRow
-          leading={<IconTile icon={missing ? AlertGlyph : CircleCheckGlyph} />}
-          title={missing ? '还不能启动' : '已找到命令'}
+          leading={<IconTile icon={missing || agent.detected.outdated ? AlertGlyph : CircleCheckGlyph} />}
+          title={missing ? '还不能启动' : agent.detected.outdated ? '需要升级' : '已找到命令'}
           description={
-            missing || harness?.status === 'unavailable' ? (
+            missing || agent.detected.outdated || harness?.status === 'unavailable' ? (
               <Detection agent={agent} preset={preset} harness={harness} />
             ) : (
               <MiddleEllipsis text={agent.detected.path ?? agent.command} className="settings-mono" />
             )
           }
-          trailing={!missing && agent.detected.path ? <CopyButton text={agent.detected.path} label="复制命令路径" /> : undefined}
+          trailing={
+            missing ? undefined : agent.detected.outdated ? (
+              <CopyButton text={agent.detected.outdated.upgrade} label="复制升级命令" />
+            ) : agent.detected.path ? (
+              <CopyButton text={agent.detected.path} label="复制命令路径" />
+            ) : undefined
+          }
         />
+        {agent.detected.outdated && (
+          <SettingsRow title="升级命令" description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
+        )}
         {agent.problem && (
           <SettingsRow
             leading={<IconTile icon={AlertGlyph} />}
@@ -716,7 +733,7 @@ function EngineStatus({ agent, harness }: { agent: AgentSettings; harness?: Harn
     const reason = missing ?? agent.problem ?? harness?.statusMessage
     return (
       <span className="service-status" data-tone="warn" title={reason}>
-        {missing !== undefined ? '未安装' : '需要处理'}
+        {missing !== undefined ? '未安装' : agent.detected.outdated ? '需要升级' : '需要处理'}
       </span>
     )
   }
@@ -793,15 +810,25 @@ export function AgentRow({
  * so it is not drawn as ready. The row opens its start form, for a person who wants to change how it starts.
  */
 function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () => void }) {
+  const outdated = preset.detected?.outdated
   return (
     <NavRow
       className="agent-row"
       leading={<MarkTile mark={preset.id} size={24} />}
       record
       title={preset.name}
-      description={<MiddleEllipsis text={preset.detected?.path ?? preset.command} className="settings-mono" />}
-      value="已找到"
-      label={`${preset.name}，已找到，${CUSTOM_START}`}
+      description={
+        outdated ? (
+          <span className="detect is-warn">
+            <Icon icon={AlertGlyph} size={12} />
+            <span>{outdated.need}</span>
+          </span>
+        ) : (
+          <MiddleEllipsis text={preset.detected?.path ?? preset.command} className="settings-mono" />
+        )
+      }
+      value={outdated ? '需要升级' : '已找到'}
+      label={`${preset.name}，${outdated ? '需要升级' : '已找到'}，${CUSTOM_START}`}
       onClick={onOpen}
     />
   )

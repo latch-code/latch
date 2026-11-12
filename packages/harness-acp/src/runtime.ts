@@ -166,6 +166,7 @@ import {
 } from './history.ts'
 import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
+import { assertVersion } from './version.ts'
 
 export const CLIENT_VERSION = '0.1.0'
 const CANCELLED_OUTCOME = { outcome: { outcome: 'cancelled' } }
@@ -3224,7 +3225,11 @@ export class AgentRuntime implements Bridge {
     const paused = this.health.pausedUntil()
     if (paused) throw new AppError(503, 'agent-paused', `${name} 在一分钟内连续崩溃 3 次，已暂停自动重启。请检查安装与登录状态，稍后再试。`)
     // Every start reads the project configuration again: the agent loads it now, not when the session was confirmed.
-    await this.assertLaunch(cwd, confirmed)
+    const first = await this.assertLaunch(cwd, confirmed)
+    // A command older than its profile supports would not start, or would start and never answer: refused before it
+    // runs. Not recorded as the harness's last error: it says so itself, and an upgrade ends it. Before the re-check
+    // below, which stays the last await before the spawn.
+    await assertVersion(this.agent, first.command)
     const wait = this.health.restartDelay(this.limits.restartDelayMs)
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
     this.assertOpen()
@@ -3309,7 +3314,7 @@ export class AgentRuntime implements Bridge {
             clientCapabilities: clientCapabilities(this.selection.preset?.signIn === undefined),
             clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
           },
-          this.limits.requestTimeoutMs,
+          Math.min(this.limits.handshakeTimeoutMs, this.limits.requestTimeoutMs),
         ),
       )
       if (!result.success) throw new Error('initialize 响应无效')
@@ -3357,6 +3362,15 @@ export class AgentRuntime implements Bridge {
       }
       const exited = error instanceof ConnectionClosed || error instanceof ConnectionStopping ? info : undefined
       if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
+      if (error instanceof RequestTimeout) {
+        // The step that timed out: `initialize`, or a setup request after it (the gateway's `providers/*`).
+        const refused =
+          error.method === 'initialize'
+            ? this.handshakeTimeout('initialize', Math.min(this.limits.handshakeTimeoutMs, this.limits.requestTimeoutMs))
+            : this.handshakeTimeout(error.method, this.limits.requestTimeoutMs)
+        this.health.lastError = clip(refused.message, 300)
+        throw refused
+      }
       // The agent's own error text can echo configured secrets; its stderr goes only to the Host log.
       const detail = clip(
         this.redact(
@@ -3454,7 +3468,16 @@ export class AgentRuntime implements Bridge {
 
   private async session(taskId: string, live: Live, signal: AbortSignal): Promise<Binding> {
     const wire = live.wire
-    const setup = (method: string, params: unknown): Promise<unknown> => wire.request(method, params, this.limits.requestTimeoutMs, signal)
+    // Opening a session is bounded more tightly than other requests: an agent that never answers is stopped and the
+    // start refused, so the session fails with a reason instead of running until the general timeout.
+    const setupMs = Math.min(this.limits.sessionSetupTimeoutMs, this.limits.requestTimeoutMs)
+    const setup = (method: string, params: unknown): Promise<unknown> =>
+      wire.request(method, params, setupMs, signal).catch(async (error: unknown) => {
+        if (!(error instanceof RequestTimeout)) throw error
+        // The turn fails once the process is gone, as after an initialize that timed out: stdin closed, then signals.
+        await wire.stop('stop', this.limits.stopGraceMs)
+        throw this.handshakeTimeout(method, setupMs)
+      })
     const task = this.task(taskId)
     const cwd = task.acp.cwd
     const current = task.acp.acpSessionId
@@ -3741,6 +3764,19 @@ export class AgentRuntime implements Bridge {
       return new AppError(502, 'agent-error', `${name} 返回错误：${clip(this.redact(error.message), 1000)}`)
     }
     return new AppError(500, 'agent-error', `${name} 运行失败：${clip(this.redact(message(error)), 1000)}`)
+  }
+
+  /**
+   * The refusal for an agent that did not answer `initialize` or opening a session in time; its process is already
+   * being stopped. Often a version too old for the arguments the preset passes, so the line says where to look.
+   */
+  private handshakeTimeout(method: string, ms: number): AppError {
+    const seconds = Math.max(1, Math.round(ms / 1000))
+    const step =
+      method === 'initialize' ? '启动握手' : method.startsWith('session/') || method.startsWith('_latch/') ? '建立会话' : '启动设置'
+    const minimum = this.selection.profile?.minimumVersion?.minimum
+    const hint = minimum ? `确认它是 ${minimum} 或更高版本、能在终端里正常运行后重试。` : '确认它能在终端里正常运行后重试。'
+    return new AppError(504, 'agent-handshake-timeout', `${this.agent.name} ${seconds} 秒内没有完成${step}（${method}），已停止它。${hint}`)
   }
 
   /** An agent may read its login once at startup, so a retry after logging in has to reach a new process. */

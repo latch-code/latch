@@ -7,11 +7,13 @@ import { resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
 import { selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
+import { assertVersion, forgetVersions, knownVersion, settleVersions, tooOld, tooOldText, versionRefusal, wasRead } from './version.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
 
 export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
 export { loadLoginShell } from './login-shell.ts'
+export { onVersionChange } from './version.ts'
 export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
@@ -24,6 +26,47 @@ let lookupEpoch = 0
 /** Drops every agent's cached command lookup; the next status looks again. */
 export function forgetCommandLookups(): void {
   lookupEpoch++
+  forgetVersions()
+}
+
+/**
+ * Why a found command cannot run yet, by the version it printed, and how to upgrade it: undefined when it is new enough,
+ * unknown or not read yet. It reads nothing itself; a re-check, a start or choosing the preset does.
+ */
+export function outdatedCommand(record: AgentRecord, path: string | undefined): { need: string; upgrade: string } | undefined {
+  return path ? tooOld(record, knownVersion(record, path)) : undefined
+}
+
+/** The refusal a saved definition gets while its command is known to be too old. */
+export function outdatedRefusal(record: AgentRecord) {
+  const path = resolveCommand(record.command)
+  return path ? versionRefusal(record, knownVersion(record, path)) : undefined
+}
+
+/**
+ * Reads the version of a definition's command now and refuses one too old for its preset (409
+ * `harness-version-unsupported`); an unreadable version, or a command not found, passes.
+ */
+export async function assertCommandVersion(record: AgentRecord): Promise<void> {
+  const path = resolveCommand(record.command)
+  if (path) await assertVersion(record, path)
+}
+
+/** The same as one line, with the upgrade command. */
+const outdatedLine = (record: AgentRecord, path: string | undefined): string | undefined =>
+  path ? tooOldText(record, knownVersion(record, path)) : undefined
+
+/**
+ * Reads the versions of these definitions' commands, and of these presets' when one was read before (chosen once), at
+ * most `timeoutMs`, so that a re-check answers with them. A preset never chosen is not run.
+ */
+export function recheckVersions(records: readonly AgentRecord[], timeoutMs: number, chosen: readonly AgentRecord[] = []): Promise<void> {
+  const items = records.map(record => ({ record, path: resolveCommand(record.command) }))
+  for (const record of chosen) {
+    const path = resolveCommand(record.command)
+    if (path && wasRead(record, path)) items.push({ record, path })
+  }
+  return settleVersions(items, timeoutMs)
 }
 
 /**
@@ -101,10 +144,11 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
   const { profile } = selectProfile(record)
   const login = harnessLogin(record)
   const folders = folderDeclaration(profile)
+  const outdated = outdatedLine(record, resolveCommand(record.command))
   return {
     id: preset.id,
     description: preset.description,
-    status: 'ready',
+    ...(outdated ? { status: 'unavailable' as const, statusMessage: `${preset.name} ${outdated}` } : { status: 'ready' as const }),
     capabilities: agentFacts(preset.name, preset.id, profile),
     modes: [...ACP_CAPABILITIES.modes],
     attachments: { ...ACP_CAPABILITIES.attachments },
@@ -164,6 +208,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           // The preset's install command installs its own command, so it is offered only while that one is missing.
           const install = !found && preset?.install ? `。安装：${preset.install}` : ''
           if (missing) return { status: 'unavailable', statusMessage: `${missing}${install}` }
+          const outdated = outdatedLine(record, located())
+          if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}` }
           if (health.pausedUntil())
             return { status: 'unavailable', statusMessage: `${record.name} 在一分钟内连续崩溃 3 次，已暂停自动重启，请稍后再试` }
           return health.lastError ? { status: 'ready', statusMessage: `上次运行异常：${health.lastError}` } : { status: 'ready' }

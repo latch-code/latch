@@ -25,7 +25,7 @@ Latch 用 Harness 自己的登录，不需要 API 密钥。在这台 Mac 上装�
 | Codex | 先装 Codex，再 `npm i -g @agentclientprotocol/codex-acp`（让 Latch 连接它的适配器） | `codex login` |
 | pi | `npm i -g @earendil-works/pi-coding-agent`（0.84.4 或更高版本） | 运行 `pi`，输入 `/login` |
 | OpenCode | `npm i -g opencode-ai` | `opencode auth login` |
-| DeepSeek Harness | `npm i -g @deepseek-ai/dsh`（0.2.1-rc.2 或更高版本） | 在 DeepSeek Harness 里配置 |
+| DeepSeek Harness | `npm i -g @deepseek-ai/dsh`（0.2.1-rc.1 或更高版本） | 在 DeepSeek Harness 里配置 |
 | Gemini CLI | `npm i -g @google/gemini-cli` | 运行 `gemini` 按提示登录 |
 | Qwen Code | `npm i -g @qwen-code/qwen-code` | 运行 `qwen` 按提示登录 |
 | goose | `brew install block-goose-cli` | `goose configure` |

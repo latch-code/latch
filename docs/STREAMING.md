@@ -58,7 +58,7 @@ Provider.stream             Standard Runtime             Host                   
 | --- | --- | --- |
 | `task-state` | 某任务变化，且此连接选中了该任务 | 校验事件和版本，替换当前 detail；同时合并该任务的摘要和审批 |
 | `tasks-invalidated` | 未选中的任务摘要或审批变化 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
-| `refresh` | 设备、配置等整体变化，流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
+| `refresh` | 设备、配置等整体变化（含 Harness 的版本检测结果变化），流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
 | `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
 | `app.data` | 插件页面的一个文档变了：`{ type, instanceId, pluginId, scope, key, version }`（删除时 `version` 为 0）；只发给能读那个作用域的连接，私有会话的文档只给数据范围 `all` 的设备 | 打开着该插件页面的客户端只把本插件、页面声明过的作用域的变化经桥转给页面（`storage.onChange`），页面自己决定是否重读；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#存储)） |
 | `app.updated` | 插件的已应用页面变了（应用、回退、启停、删除）：`{ type, instanceId, pluginId }`，发给每条仍被接受的流 | 客户端重读快照；快照里页面的修订或 `bundleHash` 变了，打开着的框带着 `view` 状态重建；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#桥)） |

@@ -221,6 +221,18 @@ export interface HarnessProfile {
     readonly checked: ReadonlyArray<{ readonly adapter: string; readonly program: string }>
   }
   /**
+   * The oldest version of the preset's own command this profile works with, read by running the command with `args`
+   * (no shell, no prompt, the rules `loginStatus` follows). An older one is not ready: detection says so with `upgrade`,
+   * and a session refuses to start. A version that cannot be read blocks nothing; the bounded handshake still applies.
+   */
+  readonly minimumVersion?: {
+    readonly args: readonly string[]
+    read(output: string): string | undefined
+    readonly minimum: string
+    /** The command a person runs to upgrade; Latch never runs it. */
+    readonly upgrade: string
+  }
+  /**
    * How a draft's lists are read before a session. Absent: an empty session in a private folder, once, when a draft
    * first selects the harness with nothing known. `request`: the same, only when a person asks, because the process loads
    * more than the harness when it starts. `codexModels`: Codex's own `model/list` through the adapter's bundled CLI, with

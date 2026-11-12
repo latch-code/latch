@@ -109,7 +109,7 @@ async function fake(): Promise<Fake> {
         },
         async assertSessionInput() {},
         sessionRoots: async () => [],
-        checkNewTarget() {},
+        async checkNewTarget() {},
         newTargetRoots: () => [],
         async start(_caller, input) {
           state.starts.push({ requestId: input.requestId, prompt: input.prompt })
