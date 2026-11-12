@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Check, CircleAlert, MessageSquare, X } from 'lucide-react'
+
 import { noteLinesLabel, type ReviewNote } from '@latch/protocol'
-import { Button, Hint, IconButton, StatusWord } from '@latch/ui'
+import { Button, Hint, IconButton, StatusWord, CheckGlyph, AlertGlyph, MessageGlyph, CloseGlyph } from '@latch/ui'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { NOTE_STATUS_LABEL } from './notes.ts'
 import type { ReviewNoteActions } from './useReviewNotes.ts'
@@ -158,7 +158,7 @@ export function NoteCard({
         </span>
         {stale && (
           <span className="review-note-stale">
-            <CircleAlert size={12} aria-hidden="true" />
+            <AlertGlyph size={12} aria-hidden="true" />
             位置可能过期
           </span>
         )}
@@ -167,7 +167,7 @@ export function NoteCard({
         {writing && !note.sending && (
           <IconButton
             size="xs"
-            icon={X}
+            icon={CloseGlyph}
             label="删除反馈"
             disabled={writing.busy}
             onClick={() => {
@@ -211,7 +211,7 @@ export function NoteCard({
             <Button
               size="xs"
               variant="outline"
-              icon={Check}
+              icon={CheckGlyph}
               disabled={writing.busy}
               onClick={() => {
                 void writing.actions.status(note.id, 'reviewed')
@@ -255,7 +255,7 @@ export function NotesFoot({
     return (
       <div className="review-notes-foot" data-tone="amber" role="status">
         <span className="review-notes-foot-text">
-          <CircleAlert size={14} aria-hidden="true" />
+          <AlertGlyph size={14} aria-hidden="true" />
           发送结果未知 · {notes.sending} 条反馈仍待发
         </span>
         <span className="review-notes-foot-space" />
@@ -271,7 +271,7 @@ export function NotesFoot({
     return (
       <div className="review-notes-foot" role="status">
         <span className="review-notes-count">
-          <MessageSquare size={14} aria-hidden="true" />
+          <MessageGlyph size={14} aria-hidden="true" />
           待发反馈 {notes.ready} 条
         </span>
         <Hint lead={<></>} label="发送后 Agent 修订">

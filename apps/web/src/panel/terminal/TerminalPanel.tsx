@@ -1,9 +1,25 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { Globe, MessageSquarePlus, Shield, Plus, RotateCcw, SquareActivity, SquareTerminal, SquareX } from 'lucide-react'
+import { MessageSquarePlus, RotateCcw, SquareActivity, SquareX } from 'lucide-react'
 import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary } from '@latch/protocol'
-import { Button, ConfirmDialog, Hint, Icon, IconButton, InlineNotice, Loading, PanelTabs, Spinner, Tooltip, type PanelTab } from '@latch/ui'
+import {
+  Button,
+  ConfirmDialog,
+  Hint,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Loading,
+  PanelTabs,
+  Spinner,
+  Tooltip,
+  type PanelTab,
+  GlobeGlyph,
+  ShieldGlyph,
+  PlusGlyph,
+  TerminalGlyph,
+} from '@latch/ui'
 import { errorMessage } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabLabel, type TerminalTab } from './model.ts'
@@ -42,7 +58,7 @@ function measuredSize(element: HTMLElement | null): TerminalSize {
   }
 }
 
-const tabIcon = (summary: TerminalSummary) => (summary.status !== 'running' ? SquareX : summary.busy ? SquareActivity : SquareTerminal)
+const tabIcon = (summary: TerminalSummary) => (summary.status !== 'running' ? SquareX : summary.busy ? SquareActivity : TerminalGlyph)
 
 /**
  * The 终端 tab: the session's terminals, 终端 1, 2…, each a login shell in the session's folder that the Host chose. The
@@ -114,7 +130,7 @@ export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProp
             {services.map(service => (
               <Tooltip key={service.origin} content={`在浏览器中打开 ${service.origin}`}>
                 <a className="terminal-service" href={service.origin} target="_blank" rel="noopener noreferrer">
-                  <Icon icon={Globe} size={12} />
+                  <Icon icon={GlobeGlyph} size={12} />
                   {serviceLabel(service)}
                 </a>
               </Tooltip>
@@ -132,7 +148,7 @@ export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProp
             )}
             <IconButton
               size="xs"
-              icon={Plus}
+              icon={PlusGlyph}
               label="新终端"
               {...(full ? { tooltip: `每个会话最多 ${TERMINALS_PER_SESSION} 个终端` } : {})}
               disabled={full || opening}
@@ -180,7 +196,7 @@ export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProp
                 {read.text}
               </InlineNotice>
             ) : (
-              <Button size="sm" icon={SquareTerminal} onClick={() => void terminals.open()}>
+              <Button size="sm" icon={TerminalGlyph} onClick={() => void terminals.open()}>
                 打开终端
               </Button>
             )}
@@ -211,7 +227,7 @@ export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProp
             </span>
           )}
           <span className="terminal-space" />
-          <Hint className="terminal-hint" lead={<Icon icon={Shield} size={12} />} label="你的账户，不是沙箱">
+          <Hint className="terminal-hint" lead={<Icon icon={ShieldGlyph} size={12} />} label="你的账户，不是沙箱">
             终端是这台 Mac 上以你的账户运行的登录 shell，和「终端」App 相同。Latch 的审批、路径检查与出站策略都不适用于其中的命令。
           </Hint>
         </footer>

@@ -2,21 +2,21 @@ import { useState } from 'react'
 import { describe, expect, it } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
-import { Plus, Puzzle } from 'lucide-react'
-import { Tile, TileAction, TileChoice, type TileChoiceOption } from '../src/index.ts'
+
+import { Tile, TileAction, TileChoice, type TileChoiceOption, PlusGlyph, PluginsGlyph } from '../src/index.ts'
 import { press } from './helpers.ts'
 
 const OPTIONS: Array<TileChoiceOption<string>> = [
-  { value: 'agent', label: 'Latch 内置', note: 'Agent', tile: <Tile size={40} icon={Puzzle} />, description: '可以读写文件' },
-  { value: 'chat', label: 'Latch 内置', note: '只对话', tile: <Tile size={40} icon={Puzzle} />, description: '不读写文件' },
+  { value: 'agent', label: 'Latch 内置', note: 'Agent', tile: <Tile size={40} icon={PluginsGlyph} />, description: '可以读写文件' },
+  { value: 'chat', label: 'Latch 内置', note: '只对话', tile: <Tile size={40} icon={PluginsGlyph} />, description: '不读写文件' },
   {
     value: 'codex',
     label: 'Codex',
     note: '仅本机桌面端',
-    tile: <Tile size={40} icon={Puzzle} />,
+    tile: <Tile size={40} icon={PluginsGlyph} />,
     disabledReason: '只能在执行端电脑上开启',
   },
-  { value: 'goose', label: 'goose', note: '完全访问', tile: <Tile size={40} icon={Puzzle} /> },
+  { value: 'goose', label: 'goose', note: '完全访问', tile: <Tile size={40} icon={PluginsGlyph} /> },
 ]
 
 function Harnesses({ initial = 'agent', compact = false }: { initial?: string; compact?: boolean }) {
@@ -25,7 +25,7 @@ function Harnesses({ initial = 'agent', compact = false }: { initial?: string; c
     <>
       <button type="button">之前</button>
       <TileChoice label="Agent" variant={compact ? 'compact' : 'tiles'} value={value} options={OPTIONS} onValueChange={setValue}>
-        <TileAction variant={compact ? 'compact' : 'tiles'} icon={Plus} label="添加 Agent" note="5 个可添加" />
+        <TileAction variant={compact ? 'compact' : 'tiles'} icon={PlusGlyph} label="添加 Agent" note="5 个可添加" />
       </TileChoice>
     </>
   )

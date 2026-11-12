@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Copy } from 'lucide-react'
+
 import type { FileEditResult, FileMetadata } from '@latch/protocol'
-import { Button, ConfirmDialog, InlineNotice, StatusWord, useCopy } from '@latch/ui'
+import { Button, ConfirmDialog, InlineNotice, StatusWord, useCopy, CopyGlyph } from '@latch/ui'
 import { ApiError, api, errorMessage, fileBytes, isUncertain, newRequestId } from '../core/api.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { useVisualViewportFit } from '../hooks/useVisualViewportFit.ts'
@@ -215,7 +215,7 @@ export function FileEditor({
                 <Button
                   variant="ghost"
                   size="xs"
-                  icon={Copy}
+                  icon={CopyGlyph}
                   onClick={() => {
                     void copied.copy(draft)
                   }}>

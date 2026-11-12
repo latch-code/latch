@@ -1,7 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Cpu, Download, FileText, Info, Lock, MonitorSmartphone, Shield, Upload } from 'lucide-react'
+import { Cpu, Upload } from 'lucide-react'
 import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
-import { Button, ConfirmDialog, Dialog, Hint, Icon, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
+import {
+  Button,
+  ConfirmDialog,
+  Dialog,
+  Hint,
+  Icon,
+  InlineNotice,
+  StatusPill,
+  Switch,
+  Tabs,
+  TextAreaField,
+  TextField,
+  DownloadGlyph,
+  FileGlyph,
+  InfoGlyph,
+  LockGlyph,
+  DevicesGlyph,
+  ShieldGlyph,
+} from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
@@ -30,7 +48,7 @@ export const packageState = (record: PluginPackageSummary) =>
           ? '已开启'
           : '未开启'
 
-const REACH_ICONS = { page: MonitorSmartphone, host: Cpu, text: FileText } as const
+const REACH_ICONS = { page: DevicesGlyph, host: Cpu, text: FileGlyph } as const
 
 /**
  * Where a plugin's parts run and which devices receive them: each part's glyph, its name and where it runs (with 不隔离
@@ -47,7 +65,7 @@ export function PluginReachGroup({ reach, onRetryRead }: { reach: PluginReach[];
           leading={<IconTile icon={REACH_ICONS[item.id]} />}
           title={item.title}
           description={
-            <Hint lead={<Icon icon={item.id === 'text' ? Info : Shield} size={12} />} label={item.label}>
+            <Hint lead={<Icon icon={item.id === 'text' ? InfoGlyph : ShieldGlyph} size={12} />} label={item.label}>
               {item.body}
             </Hint>
           }
@@ -278,7 +296,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
             </Button>
           </>
         }>
-        <NoteLine icon={Shield} brief={{ label: PLUGIN_REACH_COPY.host.label, detail: PLUGIN_REACH_COPY.host.body }} />
+        <NoteLine icon={ShieldGlyph} brief={{ label: PLUGIN_REACH_COPY.host.label, detail: PLUGIN_REACH_COPY.host.body }} />
       </Dialog>
       <Dialog
         open={editor !== null}
@@ -331,7 +349,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
               )}
               {record && (
                 <Button
-                  icon={Download}
+                  icon={DownloadGlyph}
                   disabled={locked || dirty}
                   onClick={() => {
                     void exportBundle()
@@ -468,7 +486,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   maxLength={64}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
                 />
-                <NoteLine icon={Lock} brief={{ label: '含代码的插件要在这台 Mac 上确认' }} />
+                <NoteLine icon={LockGlyph} brief={{ label: '含代码的插件要在这台 Mac 上确认' }} />
               </details>
             </fieldset>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}

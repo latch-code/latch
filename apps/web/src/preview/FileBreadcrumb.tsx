@@ -1,7 +1,7 @@
 import { Fragment, useRef, useState } from 'react'
-import { Check, ChevronRight, Info } from 'lucide-react'
+
 import { escapeSecurityText, isFileDirectoryListing, type FileContext, type FileDirectoryListing } from '@latch/protocol'
-import { Icon, Menu, MenuFooterNote } from '@latch/ui'
+import { Icon, Menu, MenuFooterNote, CheckGlyph, ChevronRightGlyph, InfoGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -60,7 +60,7 @@ function FolderCrumb({
   return (
     <Menu
       label={`${name} 里的文件`}
-      {...(state ? { footer: <MenuFooterNote icon={Info}>{state}</MenuFooterNote> } : {})}
+      {...(state ? { footer: <MenuFooterNote icon={InfoGlyph}>{state}</MenuFooterNote> } : {})}
       sections={[
         {
           id: 'files',
@@ -69,7 +69,7 @@ function FolderCrumb({
             return {
               id: path,
               label: escapeSecurityText(entry.name),
-              icon: path === current ? Check : referenceIcon(entry.name),
+              icon: path === current ? CheckGlyph : referenceIcon(entry.name),
               onSelect: () => {
                 onOpen(path)
               },
@@ -91,7 +91,7 @@ function FolderCrumb({
             props.onKeyDown(event)
           }}>
           <VisibleText text={name} />
-          <Icon icon={ChevronRight} size={12} />
+          <Icon icon={ChevronRightGlyph} size={12} />
         </button>
       )}
     />
@@ -124,7 +124,7 @@ export function FileBreadcrumb({
       {attachment ? (
         <>
           <span className="file-crumb-plain">消息附件</span>
-          <Icon icon={ChevronRight} size={12} />
+          <Icon icon={ChevronRightGlyph} size={12} />
         </>
       ) : (
         breadcrumbFolders(rootName, path).map(folder =>
@@ -143,7 +143,7 @@ export function FileBreadcrumb({
               <span className="file-crumb-plain">
                 <VisibleText text={folder.name} />
               </span>
-              <Icon icon={ChevronRight} size={12} />
+              <Icon icon={ChevronRightGlyph} size={12} />
             </Fragment>
           ),
         )

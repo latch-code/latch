@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRightGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx } from './internal.ts'
 
@@ -32,7 +32,7 @@ export function FoldHeader({
         onClick?.(event)
         if (!event.defaultPrevented) onOpenChange(!open)
       }}>
-      <Icon icon={ChevronRight} size={12} className="ui-fold-chevron" />
+      <Icon icon={ChevronRightGlyph} size={12} className="ui-fold-chevron" />
       <span className="ui-fold-label">{children}</span>
       {meta !== undefined && <span className="ui-fold-meta">{meta}</span>}
     </button>

@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { Folder, FolderGit2, GitBranch } from 'lucide-react'
+import { FolderGit2 } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, ProviderSummary, TaskSummary } from '@latch/protocol'
-import { ICON_STROKE, Meter, Tooltip } from '@latch/ui'
+import { ICON_STROKE, Meter, Tooltip, FolderGlyph, BranchGlyph } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
@@ -64,9 +64,9 @@ export function FolderSegment({ name, tip, worktree = false }: { name: string; t
       <Tooltip content={escapeHiddenCharacters(tip)}>
         <span className="composer-status-cut" tabIndex={0}>
           {worktree ? (
-            <FolderGit2 size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+            <FolderGit2 size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           ) : (
-            <Folder size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+            <FolderGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           )}
           <span className="composer-status-value">
             <VisibleText text={name} />
@@ -110,7 +110,7 @@ export function BranchSegment({
     <StatusSegment kind="branch">
       <Tooltip content={tip}>
         <span className="composer-status-cut composer-branch" tabIndex={0}>
-          <GitBranch size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <BranchGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           <span className="composer-status-value composer-branch-name" data-worktree={worktree ? '' : undefined}>
             {worktree && lead}
             <VisibleText text={branch} />

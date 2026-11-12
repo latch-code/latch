@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from 'react'
-import { ChevronLeft, RefreshCw, TextCursorInput, X } from 'lucide-react'
+import { TextCursorInput } from 'lucide-react'
 import { AGENT_PRESETS, type HarnessInfo } from '@latch/protocol'
-import { Button, IconButton, MenuFooterLink, TextField, useLayerClose } from '@latch/ui'
+import { Button, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
 import { api, ApiError, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
@@ -142,7 +142,7 @@ export function CatalogueRows({
       )}
       {read && canRun && !running && (
         <MenuFooterLink
-          icon={RefreshCw}
+          icon={RefreshGlyph}
           chevron={false}
           onClick={() => {
             void run()
@@ -204,7 +204,7 @@ export function TypedModelsPanel({
   return (
     <div className="permission-list typed-models">
       <header className="permission-list-head">
-        <IconButton size="xs" icon={ChevronLeft} label="返回" onClick={onBack} />
+        <IconButton size="xs" icon={ChevronLeftGlyph} label="返回" onClick={onBack} />
         <span>填写模型 ID</span>
       </header>
       {/* Not a form: the composer around it is one, and its submit would reach the composer too. */}
@@ -245,7 +245,7 @@ export function TypedModelsPanel({
               <VisibleText text={model} />
               <IconButton
                 size="xs"
-                icon={X}
+                icon={CloseGlyph}
                 label={`移除 ${model}`}
                 disabled={busy}
                 onClick={() => {

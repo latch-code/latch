@@ -1,5 +1,5 @@
-import { ArrowLeft, Inbox, PanelLeft, SquarePen } from 'lucide-react'
-import { Count, IconButton, useLivePrevious } from '@latch/ui'
+import { ArrowLeft } from 'lucide-react'
+import { Count, IconButton, useLivePrevious, InboxGlyph, PanelLeftGlyph, NewSessionGlyph } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -51,7 +51,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           <IconButton
             ref={sidebarToggle}
             label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-            icon={PanelLeft}
+            icon={PanelLeftGlyph}
             shortcut={desktop ? '⌘B' : 'Alt B'}
             aria-controls="session-navigation"
             aria-expanded={!sidebarCollapsed}
@@ -63,7 +63,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           sessions && (
             <IconButton
               label="打开会话列表"
-              icon={PanelLeft}
+              icon={PanelLeftGlyph}
               aria-controls="session-navigation"
               aria-expanded={drawer.open}
               onClick={() => {
@@ -79,7 +79,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             {placed && shell.space === 'agents' ? (
               <ShellDelegate shell={shell} compact />
             ) : sessions ? (
-              <IconButton label="新建会话" data-space-primary="" icon={SquarePen} pressed={selectedId === null} onClick={startNew} />
+              <IconButton label="新建会话" data-space-primary="" icon={NewSessionGlyph} pressed={selectedId === null} onClick={startNew} />
             ) : (
               <IconButton
                 label="返回会话"
@@ -92,7 +92,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             {approvals > 0 && (
               <IconButton
                 label={`${approvals} 项等你处理`}
-                icon={Inbox}
+                icon={InboxGlyph}
                 badge={<Count tone="warn" value={approvals} from={approvalsBefore} />}
                 onClick={openApprovals}
               />

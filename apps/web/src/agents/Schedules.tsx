@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlarmClock, ChevronDown, CircleAlert, CirclePause, CircleSlash, Folder, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import { AlarmClock, CirclePause, Play } from 'lucide-react'
 import type {
   Automation,
   AutomationDetail,
@@ -23,6 +23,13 @@ import {
   TextAreaField,
   TextField,
   ValuePicker,
+  ChevronDownGlyph,
+  AlertGlyph,
+  BlockedGlyph,
+  FolderGlyph,
+  EditGlyph,
+  PlusGlyph,
+  TrashGlyph,
 } from '@latch/ui'
 import { ProjectPicker } from '../components/Pickers.tsx'
 import { api, errorMessage } from '../core/api.ts'
@@ -239,7 +246,7 @@ function RunRow({ run, onOpen }: { run: AutomationRun; onOpen: (id: string) => v
         <span className="agent-schedule-meta">{reason ? '没有运行' : run.trigger === 'manual' ? '立即运行' : '按时运行'}</span>
       </span>
       {reason ? (
-        <Hint label={RUN_WORDS[run.state]} lead={<Icon icon={CircleSlash} size={12} />} moreLabel="为什么没有运行">
+        <Hint label={RUN_WORDS[run.state]} lead={<Icon icon={BlockedGlyph} size={12} />} moreLabel="为什么没有运行">
           {reason}
         </Hint>
       ) : (
@@ -338,7 +345,7 @@ function ScheduleCard({
             {automation.lastRun ? ` · 上次 ${whenWords(automation.lastRun.at)} ${RUN_WORDS[automation.lastRun.state]}` : ''}
           </span>
           <span className="agent-schedule-meta agent-schedule-uses">
-            <Icon icon={Folder} size={12} />
+            <Icon icon={FolderGlyph} size={12} />
             <span>{scheduleWhere(catalog, automation)}</span>
             {detail && (
               <>
@@ -355,7 +362,7 @@ function ScheduleCard({
             <Hint
               className="agent-schedule-missed"
               label={`错过 ${missed.length} 次`}
-              lead={<Icon icon={CircleAlert} size={12} />}
+              lead={<Icon icon={AlertGlyph} size={12} />}
               moreLabel="错过的时间">
               {missed.map(run => `${whenWords(run.at)}：${runReason(run)}`).join(' ')}
             </Hint>
@@ -374,13 +381,13 @@ function ScheduleCard({
           <IconButton
             size="sm"
             label="编辑"
-            icon={Pencil}
+            icon={EditGlyph}
             disabled={locked || running || !detail}
             onClick={() => {
               if (detail) onEdit(detail.automation)
             }}
           />
-          <IconButton size="sm" label="删除" icon={Trash2} disabled={locked || running} onClick={onDelete} />
+          <IconButton size="sm" label="删除" icon={TrashGlyph} disabled={locked || running} onClick={onDelete} />
           <span className="agent-form-spacer" />
           {on ? (
             <Button
@@ -417,7 +424,7 @@ function ScheduleCard({
           }}>
           <span>运行记录</span>
           {detail && <span className="agent-schedule-count">{runs.length}</span>}
-          <Icon icon={ChevronDown} size={14} className="agent-schedule-chevron" />
+          <Icon icon={ChevronDownGlyph} size={14} className="agent-schedule-chevron" />
         </button>
         {expanded
           && (read.state === 'loading' ? (
@@ -515,7 +522,7 @@ export function SchedulesTab({
         <span className="agent-form-spacer" />
         {canRun && !form && (
           <Button
-            icon={Plus}
+            icon={PlusGlyph}
             disabled={block !== undefined || writes.saving || writes.held || !catalog}
             onClick={() => {
               writes.clear()

@@ -2,13 +2,26 @@ import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMention
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ArrowUp, CornerDownRight, ListPlus, LockKeyhole } from 'lucide-react'
+import { CornerDownRight, ListPlus } from 'lucide-react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
-import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
+import {
+  Button,
+  Collapse,
+  EASING,
+  ICON_STROKE,
+  InlineNotice,
+  MOTION,
+  Spinner,
+  Swap,
+  Tooltip,
+  useLiveChange,
+  LockGlyph,
+  SendGlyph,
+} from '@latch/ui'
 
 /**
  * What a running session's input needs to know. What the run is doing and for how long is said in the conversation (the
@@ -255,7 +268,7 @@ export function Composer({
   const input =
     readOnly !== undefined ? (
       <p className="composer-readonly" role="note">
-        <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>{readOnly}</span>
       </p>
     ) : variant === 'sheet' ? (
@@ -289,7 +302,7 @@ export function Composer({
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
-            <CornerDownRight size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <CornerDownRight size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             追加
           </button>
         </Tooltip>
@@ -303,7 +316,7 @@ export function Composer({
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
-            <ListPlus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <ListPlus size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             排队
           </button>
         </Tooltip>
@@ -319,7 +332,7 @@ export function Composer({
               if (!sendable) event.preventDefault()
             }}>
             <Swap value={sending ? 'sending' : 'idle'}>
-              {sending ? <Spinner size={14} /> : <ArrowUp size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
+              {sending ? <Spinner size={14} /> : <SendGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
             </Swap>
           </button>
         </Tooltip>

@@ -1,6 +1,6 @@
 import { useContext } from 'react'
-import { FileText, Image } from 'lucide-react'
-import { Button, Icon } from '@latch/ui'
+import { Image } from 'lucide-react'
+import { Button, Icon, FileGlyph } from '@latch/ui'
 import type { AttachmentRef } from '@latch/protocol'
 import { FileSession } from './FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
@@ -20,7 +20,7 @@ export function MessageAttachments({ attachments }: { attachments?: AttachmentRe
           onClick={() => {
             if (session) open?.({ sessionId: session.id, reference: ref.name, attachmentId: ref.id })
           }}>
-          <Icon icon={ref.kind === 'image' ? Image : FileText} size={14} />
+          <Icon icon={ref.kind === 'image' ? Image : FileGlyph} size={14} />
           <span className="attachment-name">
             <VisibleText text={ref.name} />
           </span>

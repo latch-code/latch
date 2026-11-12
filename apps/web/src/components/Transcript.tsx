@@ -1,5 +1,5 @@
 import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Eraser, RotateCcw, X } from 'lucide-react'
+import { Eraser, RotateCcw } from 'lucide-react'
 import {
   splitChangeNote,
   type Approval,
@@ -53,7 +53,7 @@ import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
-import { Button, Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, useLivePrevious, ChevronRightGlyph, CloseGlyph } from '@latch/ui'
 
 /** What resending the latest turn takes, when this device may send now. */
 export interface RetryAccess {
@@ -105,7 +105,7 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
         <span className="process-label">
           <span className="process-verb">读取</span> <span className="process-object">{messages.length} 个文件</span>
         </span>
-        <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
       <Collapse
         open={open}
@@ -213,7 +213,7 @@ function TimelineDivider({ icon: Glyph, text }: { icon?: typeof Eraser; text: st
   return (
     <div className="timeline-divider" role="note">
       <span>
-        {Glyph && <Glyph size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+        {Glyph && <Glyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
         {text}
       </span>
     </div>
@@ -229,7 +229,7 @@ function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOu
     <p className={`turn-record outcome-${outcome}`}>
       {outcome === 'failed' && (
         <span className="process-slot" aria-hidden="true">
-          <X size={12} strokeWidth={ICON_STROKE[12]} />
+          <CloseGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
         </span>
       )}
       <span>{[...words.slice(0, 1), ...(at !== undefined ? [messageTime(at, Date.now())] : []), ...words.slice(1)].join(' · ')}</span>
@@ -343,7 +343,7 @@ const TurnView = memo(function TurnView({
                 setFoldChoice(!workOpen)
               }}>
               <span>{foldWords(turn)}</span>
-              <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+              <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
             </button>
           )}
           {plan && plan.length > 0 && <PlanRow plan={plan} active={trailingLive} />}

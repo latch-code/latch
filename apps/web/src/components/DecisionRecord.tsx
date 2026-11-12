@@ -1,6 +1,6 @@
-import { CircleSlash, TimerOff } from 'lucide-react'
+import { TimerOff } from 'lucide-react'
 import type { ToolDecision } from '@latch/protocol'
-import { Hint, Icon, type LucideIcon } from '@latch/ui'
+import { Hint, Icon, type IconComponent, BlockedGlyph } from '@latch/ui'
 import { decisionLine } from '../conversation.ts'
 import { useTicker } from '../core/hostClock.ts'
 import { DECISION_COPY } from '../core/securityCopy.ts'
@@ -20,10 +20,10 @@ export function DecisionWords({ decision }: { decision: ToolDecision }) {
   )
 }
 
-const ICONS: Record<Exclude<ToolDecision['outcome'], 'allowed'>, LucideIcon> = {
-  rejected: CircleSlash,
+const ICONS: Record<Exclude<ToolDecision['outcome'], 'allowed'>, IconComponent> = {
+  rejected: BlockedGlyph,
   expired: TimerOff,
-  cancelled: CircleSlash,
+  cancelled: BlockedGlyph,
 }
 
 /**

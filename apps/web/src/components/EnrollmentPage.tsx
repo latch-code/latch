@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Laptop, KeyRound, RefreshCw } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
 import { isLocalListener, type EnrollmentView } from '@latch/protocol'
 import {
   acceptableName,
@@ -13,7 +13,7 @@ import {
 import { useViewport } from '../breakpoints.ts'
 import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
-import { Button, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize } from '@latch/ui'
+import { Button, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize, LaptopGlyph, RefreshGlyph } from '@latch/ui'
 import { ConnectionDetails } from './ConnectionDetails.tsx'
 import { BrandMark } from './ui.tsx'
 
@@ -102,7 +102,7 @@ function Waiting({ enrollment, compare, onCancel }: { enrollment: EnrollmentView
     <section className="enroll-waiting" aria-labelledby="enroll-waiting-title">
       <div className="enroll-status">
         <span className="presence-icon" data-tone="warn" aria-hidden="true">
-          <Laptop size={20} strokeWidth={ICON_STROKE[20]} />
+          <LaptopGlyph size={20} nonScalingStroke strokeWidth={ICON_STROKE[20]} />
         </span>
         <h2 id="enroll-waiting-title">{COPY.waiting}</h2>
       </div>
@@ -327,7 +327,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               variant="primary"
               size={size}
               block
-              icon={outcome ? RefreshCw : undefined}
+              icon={outcome ? RefreshGlyph : undefined}
               loading={busy}
               disabled={chosenName === null || blocked}>
               {legacy ? COPY.legacySubmit : electron ? COPY.desktopSubmit : COPY.connectBrowser}

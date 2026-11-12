@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
-import { Folder, FolderOpen, FolderPlus, Pencil, Trash } from 'lucide-react'
+import { FolderPlus } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type WorkspaceInfo } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage } from '../core/api.ts'
@@ -9,7 +9,18 @@ import { basename } from '../format.ts'
 import { ProjectIcon, projectFolders } from '../projects.tsx'
 import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Button, InlineNotice, Menu, PromptDialog, StatusPill, type ActionMenuSection } from '@latch/ui'
+import {
+  Button,
+  InlineNotice,
+  Menu,
+  PromptDialog,
+  StatusPill,
+  type ActionMenuSection,
+  FolderGlyph,
+  FolderOpenGlyph,
+  EditGlyph,
+  TrashGlyph,
+} from '@latch/ui'
 import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { ProjectEditor } from './ProjectEditor.tsx'
 import { SettingsPages } from './navigation.tsx'
@@ -63,7 +74,7 @@ export function ProjectRow({
               {
                 id: 'rename',
                 label: '重命名…',
-                icon: Pencil,
+                icon: EditGlyph,
                 onSelect: () => {
                   onRename(workspace)
                 },
@@ -76,14 +87,14 @@ export function ProjectRow({
               {
                 id: 'reveal',
                 label,
-                icon: FolderOpen,
+                icon: FolderOpenGlyph,
                 onSelect: () => {
                   void folders.reveal(workspace.id)
                 },
               },
             ]
           : []),
-        ...(onEdit ? [{ id: 'edit', label: '编辑…', icon: Pencil, onSelect: onEdit }] : []),
+        ...(onEdit ? [{ id: 'edit', label: '编辑…', icon: EditGlyph, onSelect: onEdit }] : []),
       ],
     },
     ...(owner
@@ -94,7 +105,7 @@ export function ProjectRow({
               {
                 id: 'remove',
                 label: '移除…',
-                icon: Trash,
+                icon: TrashGlyph,
                 danger: true,
                 onSelect: () => {
                   onRemove(workspace)
@@ -312,7 +323,7 @@ export function WorkspacesSettings({
             )}
             {projects.length === 0 && (
               <SettingsRow
-                leading={<IconTile icon={Folder} />}
+                leading={<IconTile icon={FolderGlyph} />}
                 title="还没有项目"
                 {...(folders ? { description: '选择一个文件夹，或把文件夹拖到这里' } : {})}
               />
@@ -342,7 +353,7 @@ export function WorkspacesSettings({
                 <ObjectRow
                   className="project-row"
                   label="默认文件夹"
-                  leading={<IconTile icon={Folder} />}
+                  leading={<IconTile icon={FolderGlyph} />}
                   title={<span className="settings-row-name">默认文件夹</span>}
                   description={<MiddleEllipsis text={escapeSecurityText(start.path)} />}
                   trailing={

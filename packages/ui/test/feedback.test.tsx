@@ -156,7 +156,7 @@ describe('empty, loading and error states', () => {
     )
     const card = screen.getByRole('alert')
     await expect.element(screen.getByRole('heading', { name: '界面出错，当前内容无法显示。' })).toBeVisible()
-    expect(color(card.element().querySelector('.lucide-triangle-alert'))).toBe('rgb(180, 35, 31)')
+    expect(color(card.element().querySelector('.latch-glyph-warning'))).toBe('rgb(180, 35, 31)')
     expect(card.element().querySelectorAll('button')).toHaveLength(2)
   })
 })
@@ -220,13 +220,13 @@ describe('tiles', () => {
         <Tile size={16} plain icon={ShieldCheck} />
       </div>,
     )
-    // The line as drawn: the stroke in the 24-unit viewBox scaled to the glyph's rendered width.
-    const lines = Array.from(screen.container.querySelectorAll<SVGSVGElement>('.ui-tile-face svg'), glyph => {
-      const width = glyph.getBoundingClientRect().width
-      return Math.round(((Number(glyph.getAttribute('stroke-width')) * width) / 24) * 100) / 100
-    })
-    // A glyph is 60% of its tile: 9.6, 12, 14.4, 19.2, 24 and 33.6, at stroke 2.2 in the smallest tile and 1.75 otherwise.
-    expect(lines).toEqual([0.88, 0.88, 1.05, 1.4, 1.75, 2.45, 1.17])
+    // A glyph is 60% of its tile (9.6 to 33.6px), but its line is set on the screen, not scaled with it: a Lucide glyph
+    // draws every line with a non-scaling stroke at the width the tile gives.
+    const glyphs = Array.from(screen.container.querySelectorAll<SVGSVGElement>('.ui-tile-face svg'))
+    expect(glyphs.map(glyph => Number(glyph.getAttribute('stroke-width')))).toEqual([1.25, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+    for (const glyph of glyphs) {
+      expect([...glyph.querySelectorAll('path')].every(line => line.getAttribute('vector-effect') === 'non-scaling-stroke')).toBe(true)
+    }
   })
 
   it("shows the brand's own dark file in the dark theme, by preference or by choice", async () => {

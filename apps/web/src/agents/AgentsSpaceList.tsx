@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { Archive, ChevronLeft, Plus } from 'lucide-react'
+
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
-import { ICON_STROKE, StatusWord } from '@latch/ui'
+import { ICON_STROKE, StatusWord, ArchiveGlyph, ChevronLeftGlyph, PlusGlyph } from '@latch/ui'
 import { SessionStatus, useLastConfirmed } from '../components/SessionStatus.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { relativeTime } from '../format.ts'
@@ -106,7 +106,7 @@ export function AgentsSpaceList({ shell }: { shell: ShellState }) {
                     if (!offline) shell.openMyAgent({ id: 'new' })
                   }}>
                   <span className="space-new-glyph" aria-hidden="true">
-                    <Plus size={16} strokeWidth={ICON_STROKE[16]} />
+                    <PlusGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} />
                   </span>
                   <span className="space-agent-name">新建 Agent</span>
                 </button>
@@ -163,7 +163,7 @@ export function Delegations({ shell, frozen }: { shell: ShellState; frozen: stri
           onClick={() => {
             setAgentsFilter('all')
           }}>
-          <ChevronLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <ChevronLeftGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <span>已归档</span>
           <span className="archived-count">{archivedCount}</span>
         </button>
@@ -200,7 +200,7 @@ export function Delegations({ shell, frozen }: { shell: ShellState; frozen: stri
             setAgentsFilter('archived')
           }}>
           <span className="sidebar-row-icon">
-            <Archive size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <ArchiveGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           </span>
           <span>已归档</span>
           <span className="archived-count">{archivedCount}</span>

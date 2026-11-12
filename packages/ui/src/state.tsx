@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react'
-import { TriangleAlert } from 'lucide-react'
+import { WarningGlyph } from './glyphs/index.tsx'
 import { Icon, Spinner } from './icon.tsx'
 import { cx } from './internal.ts'
 import { MOTION, usePausedOffscreen, usePresence } from './motion.tsx'
@@ -86,7 +86,7 @@ export function ErrorState({
 }) {
   return (
     <div className={cx('ui-error-state', className)} role="alert">
-      <Icon icon={TriangleAlert} size={20} className="ui-error-state-glyph" />
+      <Icon icon={WarningGlyph} size={20} className="ui-error-state-glyph" />
       <h2 className="ui-error-state-title">{title}</h2>
       {description && <p className="ui-error-state-description">{description}</p>}
       {actions && <div className="ui-error-state-actions">{actions}</div>}

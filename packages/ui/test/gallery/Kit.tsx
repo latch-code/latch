@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bot, FileText, GitCommitHorizontal, Globe, Plus, Trash2, Fingerprint, Ellipsis, Archive } from 'lucide-react'
+import { Fingerprint } from 'lucide-react'
 import {
   Button,
   Collapse,
@@ -24,6 +24,14 @@ import {
   StatusSlot,
   Tile,
   type PanelTab,
+  FileGlyph,
+  CommitGlyph,
+  GlobeGlyph,
+  PlusGlyph,
+  TrashGlyph,
+  MoreGlyph,
+  ArchiveGlyph,
+  ModelGlyph,
 } from '../../src/index.ts'
 import { Cell, Row, Section } from './parts.tsx'
 
@@ -32,7 +40,7 @@ const GIT_MENU = [
     id: 'git',
     items: [
       { id: 'push', label: '推送', onSelect: () => {} },
-      { id: 'branch', label: '新建分支', icon: Plus, onSelect: () => {} },
+      { id: 'branch', label: '新建分支', icon: PlusGlyph, onSelect: () => {} },
     ],
   },
 ]
@@ -42,7 +50,7 @@ function Actions() {
     <Section title="动作的进行与完成">
       <Row label="分体按钮">
         <Cell caption="描边">
-          <SplitButton icon={GitCommitHorizontal} menuLabel="更多 Git 操作" sections={GIT_MENU}>
+          <SplitButton icon={CommitGlyph} menuLabel="更多 Git 操作" sections={GIT_MENU}>
             提交
           </SplitButton>
         </Cell>
@@ -86,10 +94,10 @@ function Actions() {
       </Row>
       <Row label="设置行的值">
         <Cell caption="图块">
-          <SelectButton leading={<Tile size={16} icon={Bot} />}>通用</SelectButton>
+          <SelectButton leading={<Tile size={16} icon={ModelGlyph} />}>通用</SelectButton>
         </Cell>
         <Cell caption="图标">
-          <SelectButton icon={Globe}>简体中文</SelectButton>
+          <SelectButton icon={GlobeGlyph}>简体中文</SelectButton>
         </Cell>
         <Cell caption="需要处理">
           <SelectButton tone="warn">模型已不可用</SelectButton>
@@ -118,10 +126,10 @@ function Actions() {
 }
 
 const TABS: Array<PanelTab<string>> = [
-  { value: 'changes', label: '改动', icon: GitCommitHorizontal, stat: { added: 60, removed: 6 } },
-  { value: 'files', label: '文件', icon: FileText },
-  { value: 'deck', label: 'presentation-template.html', icon: FileText, closeLabel: '关闭 presentation-template.html', fresh: true },
-  { value: 'notes', label: 'notes.md', icon: FileText, closeLabel: '关闭 notes.md' },
+  { value: 'changes', label: '改动', icon: CommitGlyph, stat: { added: 60, removed: 6 } },
+  { value: 'files', label: '文件', icon: FileGlyph },
+  { value: 'deck', label: 'presentation-template.html', icon: FileGlyph, closeLabel: '关闭 presentation-template.html', fresh: true },
+  { value: 'notes', label: 'notes.md', icon: FileGlyph, closeLabel: '关闭 notes.md' },
 ]
 
 function Panels() {
@@ -139,7 +147,7 @@ function Panels() {
             onClose={closed => {
               setTabs(list => list.filter(tab => tab.value !== closed))
             }}
-            actions={<IconButton label="关闭面板" icon={Trash2} size="xs" />}
+            actions={<IconButton label="关闭面板" icon={TrashGlyph} size="xs" />}
           />
         </Cell>
         <Cell caption="悬停：图标变为 ×" force="hover" at=".ui-panel-tab[data-closable]">
@@ -271,8 +279,8 @@ function Slots() {
               running="运行中 1:12"
               actions={
                 <>
-                  <IconButton label="归档" icon={Archive} size="xs" />
-                  <IconButton label="更多" icon={Ellipsis} size="xs" />
+                  <IconButton label="归档" icon={ArchiveGlyph} size="xs" />
+                  <IconButton label="更多" icon={MoreGlyph} size="xs" />
                 </>
               }
             />
@@ -286,8 +294,8 @@ function Slots() {
               time="2 分钟"
               actions={
                 <>
-                  <IconButton label="归档" icon={Archive} size="xs" />
-                  <IconButton label="更多" icon={Ellipsis} size="xs" />
+                  <IconButton label="归档" icon={ArchiveGlyph} size="xs" />
+                  <IconButton label="更多" icon={MoreGlyph} size="xs" />
                 </>
               }
             />
@@ -386,8 +394,8 @@ function Settings() {
           <GroupRow title="主题" description="跟随系统时随系统切换">
             <SelectButton>跟随系统</SelectButton>
           </GroupRow>
-          <GroupRow title="默认模型" leading={<Tile size={24} icon={Bot} />}>
-            <SelectButton leading={<Tile size={16} icon={Bot} />}>通用</SelectButton>
+          <GroupRow title="默认模型" leading={<Tile size={24} icon={ModelGlyph} />}>
+            <SelectButton leading={<Tile size={16} icon={ModelGlyph} />}>通用</SelectButton>
           </GroupRow>
           <p className="gallery-note">不是行的内容也有内边距。</p>
         </Group>

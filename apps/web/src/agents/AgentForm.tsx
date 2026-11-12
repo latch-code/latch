@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Trash2 } from 'lucide-react'
+
 import type { CustomAgent, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostCatalog } from '@latch/protocol'
-import { Button, Checkbox, ConfirmDialog, Hint, InlineNotice, TextAreaField, TextField, ValuePicker } from '@latch/ui'
+import { Button, Checkbox, ConfirmDialog, Hint, InlineNotice, TextAreaField, TextField, ValuePicker, TrashGlyph } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
@@ -375,7 +375,7 @@ export function AgentForm({
         {agent && onDeleted && (
           <Button
             variant="ghost"
-            icon={Trash2}
+            icon={TrashGlyph}
             disabled={locked}
             onClick={() => {
               setDeleting(true)

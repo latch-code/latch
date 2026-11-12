@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { FileText, Image, Plus, X } from 'lucide-react'
-import { Button, ConfirmDialog, Icon, IconButton, InlineNotice, Modal, ModalHeader, Spinner, TextAreaField } from '@latch/ui'
+import { Image } from 'lucide-react'
+import {
+  Button,
+  ConfirmDialog,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Modal,
+  ModalHeader,
+  Spinner,
+  TextAreaField,
+  FileGlyph,
+  PlusGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
@@ -52,7 +65,7 @@ export function AttachmentButton({ controller, disabled = false }: { controller:
         }}
       />
       <IconButton
-        icon={Plus}
+        icon={PlusGlyph}
         label="添加文件…"
         disabled={disabled || !available}
         tooltip={disabled ? '等待这次提交完成' : available ? '添加文件…' : (controller.caps?.reason ?? '正在检查附件能力…')}
@@ -135,7 +148,7 @@ export function AttachmentDrafts({
                 size="sm"
                 disabled={locked || (item.status !== 'ready' && item.status !== 'confirm')}
                 onClick={() => setPreview(item.key)}>
-                <Icon icon={item.ref?.kind === 'image' ? Image : FileText} size={14} />
+                <Icon icon={item.ref?.kind === 'image' ? Image : FileGlyph} size={14} />
                 <span className="attachment-name">
                   <VisibleText
                     text={item.pastedText === undefined ? item.file.name : `已粘贴 ${item.pastedText.length.toLocaleString()} 字`}
@@ -162,7 +175,12 @@ export function AttachmentDrafts({
                   {item.status === 'confirm' ? '确认内容…' : '重试上传'}
                 </Button>
               )}
-              <IconButton label={`移除附件 ${item.file.name}`} icon={X} disabled={locked} onClick={() => controller.remove(item.key)} />
+              <IconButton
+                label={`移除附件 ${item.file.name}`}
+                icon={CloseGlyph}
+                disabled={locked}
+                onClick={() => controller.remove(item.key)}
+              />
             </div>
           ))}
         </div>

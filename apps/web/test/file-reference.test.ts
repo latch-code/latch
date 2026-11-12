@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
-import { File, FileImage, FileSpreadsheet, FileText, Folder, Presentation } from 'lucide-react'
+import { FileImage, FileSpreadsheet, Presentation } from 'lucide-react'
+import { FileGlyph, FolderGlyph, PageGlyph } from '@latch/ui'
 import { MessageContent } from '../src/MessageContent.tsx'
 import { FileSession } from '../src/components/FileChip.tsx'
 import { FILE_COPY, fileNote, fileRefusalText } from '../src/core/securityCopy.ts'
@@ -86,9 +87,9 @@ describe('link targets in replies', () => {
     expect(referenceIcon('deck.pptx')).toBe(Presentation)
     expect(referenceIcon('chart.svg')).toBe(FileImage)
     expect(referenceIcon('data.CSV')).toBe(FileSpreadsheet)
-    expect(referenceIcon('report.md')).toBe(FileText)
-    expect(referenceIcon('src/')).toBe(Folder)
-    expect(referenceIcon('Makefile')).toBe(File)
+    expect(referenceIcon('report.md')).toBe(FileGlyph)
+    expect(referenceIcon('src/')).toBe(FolderGlyph)
+    expect(referenceIcon('Makefile')).toBe(PageGlyph)
   })
 })
 
@@ -132,7 +133,7 @@ describe('path chips', () => {
     expect(html.match(/aria-haspopup="menu"/g)).toHaveLength(6)
     expect(html).toContain('aria-label="文件：report.md"')
     expect(html.match(new RegExp(FILE_COPY.elsewhere(), 'gu'))).toHaveLength(6)
-    expect(html).toContain('lucide-lock')
+    expect(html).toContain('latch-glyph-lock')
     expect(html).toContain('<span>bad</span>')
   })
 
@@ -153,8 +154,8 @@ describe('path chips', () => {
     expect(shellFiles()).toBeNull()
     const older = render('[deck.pptx](out/deck.pptx)', 'task-1')
     expect(older).toContain(FILE_COPY.shellOutdated)
-    expect(older).toContain('lucide-info')
-    expect(older).not.toContain('lucide-lock')
+    expect(older).toContain('latch-glyph-info')
+    expect(older).not.toContain('latch-glyph-lock')
   })
 
   it('copy the whole path on the computer that runs Latch, and split a path label before its file name', () => {

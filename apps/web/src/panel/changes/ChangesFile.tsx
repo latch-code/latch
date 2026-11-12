@@ -1,7 +1,20 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
-import { ChevronRight, CircleAlert, Copy, FileText, MessageSquare, Plus, Undo2 } from 'lucide-react'
+
 import { noteLinesLabel, type ChangedFile, type ChangeScope, type FileChangeDetail, type ReviewNote } from '@latch/protocol'
-import { Button, Collapse, ICON_STROKE, IconButton, useCopy } from '@latch/ui'
+import {
+  Button,
+  Collapse,
+  ICON_STROKE,
+  IconButton,
+  useCopy,
+  ChevronRightGlyph,
+  AlertGlyph,
+  CopyGlyph,
+  FileGlyph,
+  MessageGlyph,
+  PlusGlyph,
+  UndoGlyph,
+} from '@latch/ui'
 import { DiffLines, type DiffViewFile } from '../../components/DiffView.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage } from '../../core/api.ts'
@@ -288,7 +301,7 @@ function FileReview({
                 return number === undefined ? null : (
                   <IconButton
                     size="xs"
-                    icon={Plus}
+                    icon={PlusGlyph}
                     label={side === 'old' ? `反馈修改前第 ${number} 行` : `反馈第 ${number} 行`}
                     className="changes-comment-add"
                     pressed={inSelection(selection, line)}
@@ -351,12 +364,12 @@ function NoteFacts({ count, stale }: { count: number; stale: number }) {
   return (
     <>
       <span className="changes-note review-note-count" title={`${count} 条反馈`}>
-        <MessageSquare size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <MessageGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         {count}
       </span>
       {stale > 0 && (
         <span className="changes-note changes-note-warn">
-          <CircleAlert size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <AlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           位置可能过期
         </span>
       )}
@@ -402,7 +415,7 @@ export function ChangesFile({
           setTouched(true)
         }}>
         <button type="button" className="changes-file-toggle" aria-expanded={open} disabled={Boolean(hidden)} onClick={onToggle}>
-          <ChevronRight className="changes-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <ChevronRightGlyph className="changes-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           {twoLines ? (
             <span className="changes-file-lines">
               <span className="changes-file-line">
@@ -433,11 +446,11 @@ export function ChangesFile({
         </button>
         {showActions && (
           <span className="changes-file-actions">
-            <IconButton size="xs" icon={FileText} label="打开文件" onClick={onOpenFile} />
-            {onUndo && <IconButton size="xs" icon={Undo2} label="撤销此文件" onClick={onUndo} />}
+            <IconButton size="xs" icon={FileGlyph} label="打开文件" onClick={onOpenFile} />
+            {onUndo && <IconButton size="xs" icon={UndoGlyph} label="撤销此文件" onClick={onUndo} />}
             <IconButton
               size="xs"
-              icon={Copy}
+              icon={CopyGlyph}
               label={copyState === 'copied' ? '已复制' : '复制路径'}
               onClick={() => {
                 void copy(file.path)

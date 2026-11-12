@@ -1,24 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  Ellipsis,
-  FolderTree,
-  GitBranch,
-  Info,
-  Redo2,
-  TriangleAlert,
-  Undo2,
-  WrapText,
-  type LucideIcon,
-} from 'lucide-react'
+import { FolderTree, Redo2, WrapText } from 'lucide-react'
 import type { ChangedFile, ChangeList, Message, NotRestoredFile, ReviewNote, TaskSummary, TurnChanges } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
   Hint,
   ICON_STROKE,
+  type IconComponent,
   IconButton,
   Menu,
   MenuFooterNote,
@@ -27,6 +15,14 @@ import {
   Spinner,
   useLayerClose,
   type MenuSection,
+  ChevronDownGlyph,
+  ChevronRightGlyph,
+  AlertGlyph,
+  MoreGlyph,
+  BranchGlyph,
+  InfoGlyph,
+  WarningGlyph,
+  UndoGlyph,
 } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage } from '../../core/api.ts'
@@ -138,7 +134,7 @@ function Line({
   action,
 }: {
   tone?: 'plain' | 'muted' | 'amber'
-  icon?: LucideIcon
+  icon?: IconComponent
   children: ReactNode
   /** A list under the line. */
   sub?: ReactNode
@@ -149,7 +145,7 @@ function Line({
   if (detail)
     return (
       <div className="changes-line" data-tone={tone}>
-        <Hint {...(Glyph ? { lead: <Glyph size={14} strokeWidth={ICON_STROKE[14]} /> } : {})} label={children}>
+        <Hint {...(Glyph ? { lead: <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} /> } : {})} label={children}>
           {detail}
         </Hint>
         {action}
@@ -157,7 +153,7 @@ function Line({
     )
   return (
     <div className="changes-line" data-tone={tone}>
-      {Glyph && <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
+      {Glyph && <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
       <span className="changes-line-text">{children}</span>
       {action}
       {sub && <span className="changes-line-sub">{sub}</span>}
@@ -200,7 +196,7 @@ function UndoTurn({ list, onUndo, busy }: { list: ChangeList; onUndo: () => void
       <Button
         size="xs"
         variant="ghost"
-        icon={Undo2}
+        icon={UndoGlyph}
         loading={busy}
         loadingLabel="撤销中…"
         tooltip="写回这一轮开始时的内容"
@@ -214,7 +210,7 @@ function UndoTurn({ list, onUndo, busy }: { list: ChangeList; onUndo: () => void
       width={360}
       align="start"
       trigger={props => (
-        <Button {...props} size="xs" variant="ghost" icon={Undo2} loading={busy} loadingLabel="撤销中…">
+        <Button {...props} size="xs" variant="ghost" icon={UndoGlyph} loading={busy} loadingLabel="撤销中…">
           撤销本轮
         </Button>
       )}>
@@ -230,7 +226,7 @@ function UndoWarning({ warning, onUndo }: { warning: ReturnType<typeof undoWarni
       <p className="changes-warning-title">撤销本轮</p>
       <p>{writtenWords(warning.restore, warning.remove)}</p>
       <p className="changes-warning-miss">
-        <TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         不会恢复 {warning.missed.length} 个文件
       </p>
       <MissedList files={warning.missed} />
@@ -294,7 +290,7 @@ function ScopeOptions({
     )
   if (action.kind === 'discard')
     return (
-      <Button size="xs" variant="ghost" icon={Undo2} loading={busy === 'discard'} loadingLabel="撤销中…" onClick={onDiscard}>
+      <Button size="xs" variant="ghost" icon={UndoGlyph} loading={busy === 'discard'} loadingLabel="撤销中…" onClick={onDiscard}>
         撤销未提交的改动…
       </Button>
     )
@@ -325,11 +321,11 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
     told = restored + removed > 0 && result.result.noteNextTurn
   }
   const missed = missedFiles(notRestored, notCovered, skipped)
-  const Glyph = result.kind === 'turn' && result.receipt.action === 'redo' ? Redo2 : Undo2
+  const Glyph = result.kind === 'turn' && result.receipt.action === 'redo' ? Redo2 : UndoGlyph
   return (
     <div className="changes-receipt" role="status">
       <p className="changes-receipt-title">
-        <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>
           <VisibleText text={title} />
         </span>
@@ -350,7 +346,7 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
         onClick={() => {
           setMore(!more)
         }}>
-        <ChevronRight size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <ChevronRightGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         撤销的范围
       </button>
       {more && <p>{SCOPE_NOTE}</p>}
@@ -406,10 +402,11 @@ function TreeRows({
                 else next.delete(row.id)
                 setClosed(next)
               }}>
-              <ChevronRight
+              <ChevronRightGlyph
                 className="changes-chevron"
                 data-open={row.open ? '' : undefined}
                 size={12}
+                nonScalingStroke
                 strokeWidth={ICON_STROKE[12]}
                 aria-hidden="true"
               />
@@ -438,7 +435,7 @@ function TreeRows({
               {undoable(row.file) && (
                 <IconButton
                   size="xs"
-                  icon={Undo2}
+                  icon={UndoGlyph}
                   label={`撤销 ${row.file.path}`}
                   tooltip="撤销此文件"
                   className="changes-tree-undo"
@@ -476,19 +473,19 @@ function LineFor({
       )
     case 'interrupted':
       return (
-        <Line tone="muted" icon={CircleAlert}>
+        <Line tone="muted" icon={AlertGlyph}>
           这一轮中断了 · 对比到此刻
         </Line>
       )
     case 'partial':
       return (
-        <Line tone="amber" icon={TriangleAlert} detail={PARTIAL_NOTE.detail}>
+        <Line tone="amber" icon={WarningGlyph} detail={PARTIAL_NOTE.detail}>
           {PARTIAL_NOTE.label}
         </Line>
       )
     case 'conflict':
       return (
-        <Line tone="amber" icon={TriangleAlert}>
+        <Line tone="amber" icon={WarningGlyph}>
           {line.text}
         </Line>
       )
@@ -497,7 +494,7 @@ function LineFor({
       return (
         <Line
           tone="amber"
-          icon={TriangleAlert}
+          icon={WarningGlyph}
           action={
             other && onOpenSession ? (
               <Button
@@ -516,13 +513,13 @@ function LineFor({
     }
     case 'not-git':
       return (
-        <Line tone="muted" icon={Info}>
+        <Line tone="muted" icon={InfoGlyph}>
           <VisibleText text={line.names.join('、')} /> 不是仓库顶层，未提交的不列出
         </Line>
       )
     case 'base':
       return (
-        <Line tone="muted" icon={GitBranch}>
+        <Line tone="muted" icon={BranchGlyph}>
           {line.branch ? (
             <>
               <VisibleText text={line.branch} /> 与 {line.base ?? '主分支'} 的分叉点比较
@@ -783,12 +780,12 @@ function ReadableChanges({
           align="start"
           sections={[...(turns.length ? [keptTurns] : []), others]}
           footer={
-            dropped > 0 ? <MenuFooterNote icon={Info}>{`还有 ${dropped} 轮 · 只保留最近 ${KEPT_TURNS} 轮`}</MenuFooterNote> : undefined
+            dropped > 0 ? <MenuFooterNote icon={InfoGlyph}>{`还有 ${dropped} 轮 · 只保留最近 ${KEPT_TURNS} 轮`}</MenuFooterNote> : undefined
           }
           trigger={props => (
             <button {...props} type="button" className="changes-scope-button">
               <span>{label}</span>
-              <ChevronDown size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+              <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
             </button>
           )}
         />
@@ -859,18 +856,18 @@ function ReadableChanges({
               : []),
             { id: 'copy', items: [{ id: 'patch', label: '复制补丁', onSelect: copyPatch }] },
           ]}
-          trigger={menu => <IconButton {...menu} size="xs" icon={Ellipsis} label="更多" />}
+          trigger={menu => <IconButton {...menu} size="xs" icon={MoreGlyph} label="更多" />}
         />
       </div>
       {result && <Receipt result={result} engine={engine} />}
       {actionError && (
-        <Line tone="amber" icon={TriangleAlert}>
+        <Line tone="amber" icon={WarningGlyph}>
           {actionError}
         </Line>
       )}
       {undone && (
         <>
-          <Line icon={Undo2}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
+          <Line icon={UndoGlyph}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
           {!!list.notCovered?.length && (
             <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: NOT_COVERED_WHY }))} />}>
               {list.notCovered.length} 个文件不在撤销范围
@@ -887,7 +884,7 @@ function ReadableChanges({
           onClick={() => {
             void reload()
           }}>
-          <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
         </button>
       )}
@@ -1007,7 +1004,7 @@ function ReadableChanges({
         </div>
       )}
       {reviewNotes && review.readError && !review.notes && (
-        <Line tone="muted" icon={CircleAlert}>
+        <Line tone="muted" icon={AlertGlyph}>
           读不到反馈 · {review.readError}
         </Line>
       )}

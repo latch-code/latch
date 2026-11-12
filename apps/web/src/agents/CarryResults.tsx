@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { History } from 'lucide-react'
+
 import type { FileMention, TaskDetail, TaskSummary } from '@latch/protocol'
-import { Badge, Button, Checkbox, Dialog, EmptyState, Loading, Sheet } from '@latch/ui'
+import { Badge, Button, Checkbox, Dialog, EmptyState, Loading, Sheet, HistoryGlyph } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { relativeTime } from '../format.ts'
 import { fileName, messageLine, sessionFiles } from '../handoffs/model.ts'
@@ -172,7 +172,7 @@ export function CarryResults({
       <Button
         variant="ghost"
         size="sm"
-        icon={History}
+        icon={HistoryGlyph}
         disabled={disabled || sessions.length === 0}
         onClick={() => {
           setOpen(true)

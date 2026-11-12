@@ -1,39 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
-import {
-  ArrowUp,
-  Bot,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  ChevronsUpDown,
-  Circle,
-  CircleAlert,
-  CircleDot,
-  Code2,
-  Copy,
-  Download,
-  Ellipsis,
-  Fingerprint,
-  Folder,
-  Info,
-  Lock,
-  PanelRight,
-  Pencil,
-  Plug,
-  Plus,
-  Puzzle,
-  RotateCcw,
-  Search,
-  Settings,
-  Shield,
-  ShieldAlert,
-  SquarePen,
-  Terminal,
-  Trash2,
-  TriangleAlert,
-  Undo2,
-  X,
-} from 'lucide-react'
+import { ArrowUp, Circle, CircleDot, Fingerprint, Plug, RotateCcw } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -98,6 +64,35 @@ import {
   type IconSize,
   type PermissionLevel,
   type SlotStatus,
+  CheckGlyph,
+  ChevronDownGlyph,
+  ChevronRightGlyph,
+  UpDownGlyph,
+  AlertGlyph,
+  CodeGlyph,
+  CopyGlyph,
+  DownloadGlyph,
+  MoreGlyph,
+  FolderGlyph,
+  InfoGlyph,
+  LockGlyph,
+  PanelRightGlyph,
+  EditGlyph,
+  PlusGlyph,
+  PluginsGlyph,
+  SearchGlyph,
+  SettingsGlyph,
+  ShieldGlyph,
+  ShieldAlertGlyph,
+  NewSessionGlyph,
+  TerminalGlyph,
+  TrashGlyph,
+  WarningGlyph,
+  UndoGlyph,
+  CloseGlyph,
+  defineGlyph,
+  LATCH_GLYPHS,
+  BranchGlyph,
 } from '../../src/index.ts'
 import { Cell, Row, Section } from './parts.tsx'
 import { Kit } from './Kit.tsx'
@@ -128,41 +123,104 @@ const STATES: Array<[string, string | undefined]> = [
   ['焦点', 'focus-visible'],
 ]
 
+/** The 我的 Agent mark as drawn in the web client (the face lives there); here only to show it beside the set. */
+const AgentsSample = defineGlyph(
+  'agents',
+  <>
+    <path
+      d="M4.13 2.73 C2.27 2.73 2.6 4.07 2.6 5.6 C2.6 6.93 2.2 8 0.93 8 C2.2 8 2.6 9.07 2.6 10.4 C2.6 11.93 2.27 13.27 4.13 13.27"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M11.87 2.73 C13.73 2.73 13.4 4.07 13.4 5.6 C13.4 6.93 13.8 8 15.07 8 C13.8 8 13.4 9.07 13.4 10.4 C13.4 11.93 13.73 13.27 11.87 13.27"
+      strokeLinejoin="round"
+    />
+    <circle cx="5.93" cy="8.47" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="10.07" cy="8.47" r="1.3" fill="currentColor" stroke="none" />
+  </>,
+)
+
+const SET = [...Object.values(LATCH_GLYPHS), AgentsSample]
+
+/** Every Latch glyph at one size, outline or solid: the sheet the set is checked on. */
+function GlyphSheet({ size, solid = false }: { size: IconSize; solid?: boolean }) {
+  return (
+    <span className="gallery-icons gallery-glyph-sheet">
+      {SET.map(glyph => (
+        <Icon key={glyph.displayName} icon={glyph} size={size} solid={solid} />
+      ))}
+    </span>
+  )
+}
+
 function Icons() {
   const sizes: IconSize[] = [12, 14, 16, 20, 24]
   return (
     <Section title="图标">
+      {sizes.map(size => (
+        <Row key={size} label={`Latch · ${size}`}>
+          <Cell caption={`线 ${ICON_STROKE[size]}px`}>
+            <GlyphSheet size={size} />
+          </Cell>
+        </Row>
+      ))}
+      {([16, 20, 24] as const).map(size => (
+        <Row key={size} label={`实心 · ${size}`}>
+          <Cell caption="选中或当前项">
+            <GlyphSheet size={size} solid />
+          </Cell>
+        </Row>
+      ))}
+      <Row label="与文字">
+        <Cell caption="12 / 14 / 16">
+          <span className="gallery-icons">
+            <Icon icon={BranchGlyph} size={12} />
+            main
+            <Icon icon={FolderGlyph} size={14} />
+            latch
+            <Icon icon={TerminalGlyph} size={16} />
+            终端
+          </span>
+        </Cell>
+        <Cell caption="Lucide 长尾（同一线宽）">
+          <span className="gallery-icons">
+            <Icon icon={RotateCcw} size={16} />
+            <Icon icon={Plug} size={16} />
+            <Icon icon={Fingerprint} size={16} />
+          </span>
+        </Cell>
+      </Row>
       <Row label="尺寸 / 描边">
         {sizes.map(size => (
           <Cell key={size} caption={`${size} / ${ICON_STROKE[size]}`}>
             <span className="gallery-icons">
-              <Icon icon={SquarePen} size={size} />
-              <Icon icon={Search} size={size} />
-              <Icon icon={Settings} size={size} />
+              <Icon icon={NewSessionGlyph} size={size} />
+              <Icon icon={SearchGlyph} size={size} />
+              <Icon icon={SettingsGlyph} size={size} />
             </span>
           </Cell>
         ))}
       </Row>
       <Row label="箭头">
         <Cell caption="进入下一层">
-          <Icon icon={ChevronRight} size={12} />
+          <Icon icon={ChevronRightGlyph} size={12} />
         </Cell>
         <Cell caption="原地选值">
-          <Icon icon={ChevronsUpDown} size={12} />
+          <Icon icon={UpDownGlyph} size={12} />
         </Cell>
         <Cell caption="下拉动作">
-          <Icon icon={ChevronDown} size={12} />
+          <Icon icon={ChevronDownGlyph} size={12} />
         </Cell>
       </Row>
       <Row label="状态">
         <Cell caption="失败">
           <span className="gallery-err">
-            <Icon icon={TriangleAlert} size={14} />
+            <Icon icon={WarningGlyph} size={14} />
           </span>
         </Cell>
         <Cell caption="完全访问（已选中）">
           <span className="gallery-warn">
-            <Icon icon={ShieldAlert} size={14} />
+            <Icon icon={ShieldAlertGlyph} size={14} />
           </span>
         </Cell>
         <Cell caption="转圈 12 / 14 / 16 / 20">
@@ -199,7 +257,7 @@ function Buttons() {
       <Row label="尺寸">
         {sizes.map(size => (
           <Cell key={size} caption={`${size} · ${{ xs: 24, sm: 28, md: 32, lg: 44 }[size]}`}>
-            <Button variant="secondary" size={size} icon={Plus}>
+            <Button variant="secondary" size={size} icon={PlusGlyph}>
               添加
             </Button>
           </Cell>
@@ -232,7 +290,7 @@ function Buttons() {
         </Cell>
         <Cell caption="红 · 悬停" force="hover" at=".ui-button">
           <div className="gallery-tint" data-tint="err">
-            <Button variant="secondary" icon={Lock}>
+            <Button variant="secondary" icon={LockGlyph}>
               在本机允许
             </Button>
           </div>
@@ -241,7 +299,7 @@ function Buttons() {
       <Row label="卡片按钮行">
         <Cell caption="最多两个按钮，其余进 ⋯">
           <div className="gallery-actions">
-            <IconButton label="更多批准选项" icon={Ellipsis} />
+            <IconButton label="更多批准选项" icon={MoreGlyph} />
             <Button variant="outline">拒绝</Button>
             <Button variant="primary" shortcut="mod+enter">
               允许一次
@@ -291,26 +349,26 @@ function Buttons() {
       <Row label="图标按钮">
         {(['xs', 'sm', 'md', 'lg'] as const).map(size => (
           <Cell key={size} caption={size}>
-            <IconButton label="复制" icon={Copy} size={size} />
+            <IconButton label="复制" icon={CopyGlyph} size={size} />
           </Cell>
         ))}
         <Cell caption="悬停" force="hover">
-          <IconButton label="会话信息" icon={PanelRight} />
+          <IconButton label="会话信息" icon={PanelRightGlyph} />
         </Cell>
         <Cell caption="开">
-          <IconButton label="会话信息" icon={PanelRight} pressed />
+          <IconButton label="会话信息" icon={PanelRightGlyph} pressed />
         </Cell>
         <Cell caption="菜单打开">
-          <IconButton label="更多批准选项" icon={Ellipsis} aria-haspopup="menu" aria-expanded />
+          <IconButton label="更多批准选项" icon={MoreGlyph} aria-haspopup="menu" aria-expanded />
         </Cell>
         <Cell caption="焦点" force="focus-visible">
-          <IconButton label="设置" icon={Settings} />
+          <IconButton label="设置" icon={SettingsGlyph} />
         </Cell>
         <Cell caption="禁用">
-          <IconButton label="复制" icon={Copy} disabled />
+          <IconButton label="复制" icon={CopyGlyph} disabled />
         </Cell>
         <Cell caption="计数">
-          <IconButton label="2 项待批准" icon={ShieldAlert} badge={<Count value={2} tone="warn" />} />
+          <IconButton label="2 项待批准" icon={ShieldAlertGlyph} badge={<Count value={2} tone="warn" />} />
         </Cell>
         <Cell caption="圆形">
           <span className="gallery-send">
@@ -454,7 +512,7 @@ function Pickers() {
         <Cell caption="前导即标签">
           <ValuePicker
             label="项目"
-            leading={Folder}
+            leading={FolderGlyph}
             value="latch-app"
             options={[
               { value: 'latch-app', label: 'latch-app' },
@@ -472,10 +530,18 @@ function Pickers() {
           <ValuePicker label="模型" value={undefined} placeholder="选择模型" options={MODELS} onValueChange={() => {}} />
         </Cell>
         <Cell caption="等待验证">
-          <PermissionMenu label="权限" leading={Shield} levels={LEVELS} value="L2" defaultValue="L1" pending onValueChange={() => {}} />
+          <PermissionMenu
+            label="权限"
+            leading={ShieldGlyph}
+            levels={LEVELS}
+            value="L2"
+            defaultValue="L1"
+            pending
+            onValueChange={() => {}}
+          />
         </Cell>
         <Cell caption="工具栏：为「等待验证…」留宽">
-          <PermissionMenu label="权限" leading={Shield} levels={LEVELS} value="L0" defaultValue="L1" onValueChange={() => {}} />
+          <PermissionMenu label="权限" leading={ShieldGlyph} levels={LEVELS} value="L0" defaultValue="L1" onValueChange={() => {}} />
         </Cell>
         <Cell caption="风险值 · 设置行">
           <PermissionMenu label="权限" align="end" levels={LEVELS} value="L3" defaultValue="L1" onValueChange={() => {}} />
@@ -608,16 +674,16 @@ function Pickers() {
               <MenuPanel
                 label="文件"
                 header={{ title: 'deck.pptx' }}
-                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
-                footer={<MenuFooterNote icon={Info}>重新启动 Host 后可以在这里打开文件。</MenuFooterNote>}
+                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: CopyGlyph, onSelect: () => {} }] }]}
+                footer={<MenuFooterNote icon={InfoGlyph}>重新启动 Host 后可以在这里打开文件。</MenuFooterNote>}
               />
             </div>
             <div className="ui-popover">
               <MenuPanel
                 label="文件"
                 header={{ title: 'missing.md' }}
-                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
-                footer={<MenuFooterNote icon={CircleAlert}>找不到这个文件。</MenuFooterNote>}
+                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: CopyGlyph, onSelect: () => {} }] }]}
+                footer={<MenuFooterNote icon={AlertGlyph}>找不到这个文件。</MenuFooterNote>}
               />
             </div>
           </div>
@@ -680,9 +746,9 @@ function Pickers() {
                 {
                   id: 'actions',
                   items: [
-                    { id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} },
-                    { id: 'export', label: '导出 Markdown', icon: Download, meta: <Kbd>⌘E</Kbd>, onSelect: () => {} },
-                    { id: 'delete', label: '删除…', icon: Trash2, danger: true, onSelect: () => {} },
+                    { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+                    { id: 'export', label: '导出 Markdown', icon: DownloadGlyph, meta: <Kbd>⌘E</Kbd>, onSelect: () => {} },
+                    { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
                   ],
                 },
               ]}
@@ -712,7 +778,7 @@ function Pickers() {
                       id: 'agent',
                       label: '本地 Agent',
                       description: '完全访问',
-                      media: <Tile size={20} icon={Puzzle} />,
+                      media: <Tile size={20} icon={PluginsGlyph} />,
                       onSelect: () => {},
                     },
                   ],
@@ -720,10 +786,10 @@ function Pickers() {
               ]}
               footer={
                 <>
-                  <MenuFooterLink icon={Undo2} chevron={false} onClick={() => {}}>
+                  <MenuFooterLink icon={UndoGlyph} chevron={false} onClick={() => {}}>
                     撤销切换，继续使用 fixture-large
                   </MenuFooterLink>
-                  <MenuFooterLink icon={Plus} chevron={false} onClick={() => {}}>
+                  <MenuFooterLink icon={PlusGlyph} chevron={false} onClick={() => {}}>
                     添加模型服务…
                   </MenuFooterLink>
                   <MenuFooterLink onClick={() => {}}>管理模型服务…</MenuFooterLink>
@@ -896,11 +962,11 @@ function Choices() {
             value="code"
             onValueChange={() => {}}
             options={[
-              { value: 'code', label: 'Code', icon: <Code2 size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" /> },
+              { value: 'code', label: 'Code', icon: <Icon icon={CodeGlyph} size={16} solid /> },
               {
                 value: 'agents',
                 label: '我的 Agent',
-                icon: <Bot size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />,
+                icon: <Icon icon={AgentsSample} size={16} />,
                 badge: <span className="gallery-dot" aria-hidden="true" />,
                 title: '我的 Agent 里有等你处理的会话',
               },
@@ -929,7 +995,7 @@ function Choices() {
               { value: 'args', label: '参数' },
               { value: 'output', label: '输出' },
             ]}
-            actions={<IconButton label="复制" icon={Copy} size="xs" />}
+            actions={<IconButton label="复制" icon={CopyGlyph} size="xs" />}
           />
         </Cell>
         <Cell caption="筛选胶囊">
@@ -1046,7 +1112,7 @@ function Choices() {
         <Cell caption="视图：中性">
           <span className="gallery-icons">
             <FilterPills label="视图" value="a" onValueChange={() => {}} options={[{ value: 'a', label: '全部' }]} />
-            <IconButton label="切换" icon={PanelRight} pressed />
+            <IconButton label="切换" icon={PanelRightGlyph} pressed />
           </span>
         </Cell>
         <Cell caption="列表的选中行：中性">
@@ -1084,7 +1150,7 @@ function LiveLayers() {
         placement="dock"
         secure
         bare
-        icon={<Fingerprint size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+        icon={<Fingerprint size={20} nonScalingStroke strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
         title="为设备增加权限"
         footer={
           <Button
@@ -1246,7 +1312,7 @@ function Layers() {
           <DialogSurface
             bare
             placement="dock"
-            icon={<Fingerprint size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+            icon={<Fingerprint size={20} nonScalingStroke strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
             title="为设备增加权限"
             footer={
               <Button variant="secondary" size="md">
@@ -1260,7 +1326,7 @@ function Layers() {
           <DialogSurface
             bare
             placement="dock"
-            icon={<X size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+            icon={<CloseGlyph size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
             title="为设备增加权限"
             footer={
               <Button variant="secondary" size="md">
@@ -1289,7 +1355,7 @@ function Layers() {
         <Cell caption="计数 · 浮层上">
           <div className="ui-popover">
             <span className="gallery-icons">
-              <IconButton label="2 项待批准" icon={ShieldAlert} badge={<Count value={2} tone="warn" />} />
+              <IconButton label="2 项待批准" icon={ShieldAlertGlyph} badge={<Count value={2} tone="warn" />} />
               <Tile mark={MONO_MARK} size={24} state="failed" label="goose：上次启动失败" />
             </span>
           </div>
@@ -1328,9 +1394,9 @@ function Layers() {
                 {
                   id: 'actions',
                   items: [
-                    { id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} },
-                    { id: 'export', label: '导出 Markdown', icon: Download, onSelect: () => {} },
-                    { id: 'delete', label: '删除…', icon: Trash2, danger: true, onSelect: () => {} },
+                    { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+                    { id: 'export', label: '导出 Markdown', icon: DownloadGlyph, onSelect: () => {} },
+                    { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
                   ],
                 },
               ]}
@@ -1405,7 +1471,7 @@ function Notices() {
         tone="error"
         title="模型服务出错"
         action={
-          <Button size="xs" icon={Copy}>
+          <Button size="xs" icon={CopyGlyph}>
             复制错误
           </Button>
         }>
@@ -1423,7 +1489,7 @@ function States() {
           title="还没有会话"
           description="新建会话后，会话会保存在这里。"
           action={
-            <Button size="xs" icon={SquarePen}>
+            <Button size="xs" icon={NewSessionGlyph}>
               新建会话
             </Button>
           }
@@ -1483,7 +1549,7 @@ function TileChoices() {
       <Row label="一行">
         <Cell caption="选中、可选、不可选，加一项动作">
           <TileChoice label="Agent" value={value} options={options} onValueChange={setValue}>
-            <TileAction icon={Plus} label="添加 Agent" note="5 个可添加" />
+            <TileAction icon={PlusGlyph} label="添加 Agent" note="5 个可添加" />
           </TileChoice>
         </Cell>
       </Row>
@@ -1495,7 +1561,7 @@ function TileChoices() {
             value={value}
             options={options.map(option => ({ ...option, tile: <Tile size={20} mark={APP_ICON} /> }))}
             onValueChange={setValue}>
-            <TileAction variant="compact" icon={Plus} label="添加 Agent" />
+            <TileAction variant="compact" icon={PlusGlyph} label="添加 Agent" />
           </TileChoice>
         </Cell>
       </Row>
@@ -1507,7 +1573,7 @@ function TileChoices() {
           <TileChoice label="Agent 聚焦" value="agent" options={options.slice(0, 2)} onValueChange={() => {}} />
         </Cell>
         <Cell caption="动作展开">
-          <TileAction icon={Plus} label="添加 Agent" note="5 个可添加" aria-expanded />
+          <TileAction icon={PlusGlyph} label="添加 Agent" note="5 个可添加" aria-expanded />
         </Cell>
         <Cell caption="按下不可选的一项：原因在行下展开">
           <Explained options={options} />
@@ -1566,7 +1632,7 @@ function Tiles() {
           <Tile size={32} icon={Plug} />
         </Cell>
         <Cell caption="20">
-          <Tile size={20} icon={Puzzle} />
+          <Tile size={20} icon={PluginsGlyph} />
         </Cell>
         <Cell caption="plain 16">
           <Tile size={16} plain icon={Plug} />
@@ -1706,7 +1772,7 @@ function ProcessRow({ state }: { state: ProcessState }) {
   return (
     <span className="gallery-process">
       <StatusGlyph running={state === 'running'}>
-        <Icon icon={Terminal} size={14} />
+        <Icon icon={TerminalGlyph} size={14} />
       </StatusGlyph>
       <span>运行测试</span>
       <StatusWords state={state} className={state === 'failed' ? 'gallery-err' : undefined}>
@@ -1723,7 +1789,7 @@ function PlanStep({ state }: { state: PlanState }) {
   return (
     <span className="gallery-process">
       <StatusGlyph state={state}>
-        <Icon icon={state === 'completed' ? Check : state === 'in_progress' ? CircleDot : Circle} size={14} />
+        <Icon icon={state === 'completed' ? CheckGlyph : state === 'in_progress' ? CircleDot : Circle} size={14} />
       </StatusGlyph>
       <span>补充回归用例</span>
     </span>
@@ -1854,7 +1920,7 @@ function Disclosure({ initial }: { initial: boolean }) {
         onClick={() => {
           setOpen(!open)
         }}>
-        <Icon icon={open ? ChevronDown : ChevronRight} size={14} />
+        <Icon icon={open ? ChevronDownGlyph : ChevronRightGlyph} size={14} />
         运行测试
       </button>
       <Collapse
@@ -1882,7 +1948,7 @@ function Motion() {
       <Row label="替换">
         <Cell caption="复制 → 已复制：缩放淡入">
           <Replay before={false} after>
-            {copied => <IconButton label={copied ? '已复制' : '复制'} icon={copied ? Check : Copy} swap />}
+            {copied => <IconButton label={copied ? '已复制' : '复制'} icon={copied ? CheckGlyph : CopyGlyph} swap />}
           </Replay>
         </Cell>
         <Cell caption="文字：原地淡入">
@@ -1908,7 +1974,7 @@ function Focus() {
         </Cell>
         <Cell caption="侧栏" force="focus-visible" at=".ui-button">
           <div className="gallery-ground">
-            <Button variant="ghost" icon={X}>
+            <Button variant="ghost" icon={CloseGlyph}>
               关闭
             </Button>
           </div>

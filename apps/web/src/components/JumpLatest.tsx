@@ -33,7 +33,7 @@ export function JumpLatest({
     return (
       <button type="button" className="jump-latest is-waiting" data-leaving={leaving ? '' : undefined} onClick={onRevealWaiting}>
         {waiting}
-        <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <ArrowDown size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       </button>
     )
   }
@@ -45,7 +45,7 @@ export function JumpLatest({
       aria-label={fresh > 0 ? `回到最新，${fresh} 条新内容` : '回到最新'}
       title="回到最新"
       onClick={onJump}>
-      <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+      <ArrowDown size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       {fresh > 0 && <span className="jump-latest-count">{fresh}</span>}
     </button>
   )

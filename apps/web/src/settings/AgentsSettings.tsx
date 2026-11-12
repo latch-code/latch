@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
-import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, Shield, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
+import { ShieldCheck, ShieldQuestion } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -24,6 +24,13 @@ import {
   TextAreaField,
   TextField,
   CopyButton,
+  AlertGlyph,
+  CircleCheckGlyph,
+  ExternalGlyph,
+  PlusGlyph,
+  RefreshGlyph,
+  ShieldGlyph,
+  CloseGlyph,
 } from '@latch/ui'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, NavRow, NoteLine, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
@@ -42,7 +49,7 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 /** Where the Harnesses run, as a person on this device names that computer: 「这台 Mac」 in its own app, else its name. */
 const onComputer = (local: boolean, hostName?: string) => (local ? '这台 Mac 上' : ` ${computerName(hostName)} 上`)
 /** A session started with a definition is an external Harness's session: it decides its own reach, Latch does not isolate it. */
-const FULL_ACCESS_NOTE = <NoteLine icon={Shield} brief={SETUP_COPY.externalNote} />
+const FULL_ACCESS_NOTE = <NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalNote} />
 const CUSTOM_START = '自定义启动方式'
 /** Environment values: kept on this Mac and never shown again. */
 const ENV_HELD = '只存在这台 Mac 上，不再显示'
@@ -60,7 +67,7 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
   if (missing)
     return (
       <span className="detect is-warn">
-        <Icon icon={CircleAlert} size={12} />
+        <Icon icon={AlertGlyph} size={12} />
         <span>
           {missing}
           {preset ? '；安装后点「重新检测」' : ''}
@@ -70,13 +77,13 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
   if (harness?.status === 'unavailable' && harness.statusMessage)
     return (
       <span className="detect is-warn">
-        <Icon icon={CircleAlert} size={12} />
+        <Icon icon={AlertGlyph} size={12} />
         <span>{harness.statusMessage}</span>
       </span>
     )
   return (
     <span className="detect is-ok">
-      <Icon icon={CircleCheck} size={12} />
+      <Icon icon={CircleCheckGlyph} size={12} />
       <span className="detect-label">已找到</span>
       <MiddleEllipsis text={agent.detected.path ?? agent.command} className="detect-path" />
     </span>
@@ -105,7 +112,7 @@ function InstallRows({ preset }: { preset: AgentPreset }) {
             rel="noopener noreferrer"
             aria-label={`打开 ${preset.name} 的项目主页`}>
             打开
-            <Icon icon={ExternalLink} size={12} />
+            <Icon icon={ExternalGlyph} size={12} />
           </ButtonLink>
         }
       />
@@ -149,7 +156,7 @@ function EnvFields({
           />
           <IconButton
             label="删除此变量"
-            icon={X}
+            icon={CloseGlyph}
             onClick={() => {
               onChange(entries.filter((_, i) => i !== index))
             }}
@@ -604,12 +611,12 @@ function AgentPage({
       <SettingsGroup
         title="检测"
         meta={
-          <Button variant="ghost" size="xs" icon={RefreshCw} loading={checking} onClick={onRecheck}>
+          <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
             重新检测
           </Button>
         }>
         <SettingsRow
-          leading={<IconTile icon={missing ? CircleAlert : CircleCheck} />}
+          leading={<IconTile icon={missing ? AlertGlyph : CircleCheckGlyph} />}
           title={missing ? '还不能启动' : '已找到命令'}
           description={
             missing || harness?.status === 'unavailable' ? (
@@ -622,7 +629,7 @@ function AgentPage({
         />
         {agent.problem && (
           <SettingsRow
-            leading={<IconTile icon={CircleAlert} />}
+            leading={<IconTile icon={AlertGlyph} />}
             title="定义有问题"
             description={<span className="detect is-warn">{agent.problem}</span>}
           />
@@ -850,7 +857,7 @@ function InstallRow({
             )}
             <span className="agent-how-actions">
               {preset.install && <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />}
-              <Button size="xs" variant="ghost" icon={RefreshCw} loading={checking} onClick={onRecheck}>
+              <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
                 重新检测
               </Button>
             </span>
@@ -965,14 +972,14 @@ export function AgentsSettings({
         meta={
           <Button
             variant="outline"
-            icon={Plus}
+            icon={PlusGlyph}
             onClick={() => {
               setEditing({ kind: 'new' })
             }}>
             自定义 Harness
           </Button>
         }
-        note={<NoteLine icon={Shield} brief={RUNS_AS_YOU_COPY.engines(on)} />}>
+        note={<NoteLine icon={ShieldGlyph} brief={RUNS_AS_YOU_COPY.engines(on)} />}>
         {builtin && (
           <SettingsRow
             className="agent-row"

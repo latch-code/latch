@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDownGlyph } from './glyphs/index.tsx'
 import { Button, type ButtonSize } from './button.tsx'
-import { Icon, type LucideIcon } from './icon.tsx'
+import { Icon, type IconComponent } from './icon.tsx'
 import { cx } from './internal.ts'
 import { Menu, type MenuSection } from './menu.tsx'
 import { Tooltip } from './tooltip.tsx'
@@ -52,7 +52,7 @@ export function SplitButton({
               aria-disabled={menuDisabled || undefined}
               onClick={menuDisabled ? undefined : menu.onClick}
               onKeyDown={menuDisabled ? undefined : menu.onKeyDown}>
-              <Icon icon={ChevronDown} size={size === 'xs' ? 12 : 14} />
+              <Icon icon={ChevronDownGlyph} size={size === 'xs' ? 12 : 14} />
             </button>
           </Tooltip>
         )}
@@ -79,7 +79,7 @@ export function SelectButton({
   /** A 16px tile. */
   leading?: ReactNode
   /** A 14px glyph, where there is no tile. */
-  icon?: LucideIcon
+  icon?: IconComponent
   /** warn: the value needs attention, for example a model that is gone; the words beside it say so. */
   tone?: 'warn'
   disabled?: boolean
@@ -97,7 +97,7 @@ export function SelectButton({
       onKeyDown={disabled ? undefined : onKeyDown}>
       {lead}
       <span className="ui-select-button-label">{children}</span>
-      <Icon icon={ChevronDown} size={14} className="ui-select-button-chevron" />
+      <Icon icon={ChevronDownGlyph} size={14} className="ui-select-button-chevron" />
     </button>
   )
 }

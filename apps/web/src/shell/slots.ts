@@ -1,10 +1,10 @@
-import type { LucideIcon } from '@latch/ui'
+import type { IconComponent } from '@latch/ui'
 import type { ReactNode } from 'react'
 
 /** A 28px ghost toggle in the conversation header. A surface supplies one only once what it opens works. */
 export interface HeaderToggle {
   label: string
-  icon: LucideIcon
+  icon: IconComponent
   shortcut?: string
   pressed: boolean
   /** A 6px ink dot: what it opens has something new. */

@@ -1,19 +1,24 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import {
-  Code,
-  Copy,
-  Download,
-  Ellipsis,
-  ExternalLink,
-  Eye,
-  FolderOpen,
-  GitCompare,
-  MessageSquareQuote,
-  Pencil,
-  RefreshCw,
-} from 'lucide-react'
+import { GitCompare, MessageSquareQuote } from 'lucide-react'
 import { isFileMetadata, type FileMetadata, type FileMention } from '@latch/protocol'
-import { Button, IconButton, InlineNotice, Loading, Menu, useCopy, type MenuItem } from '@latch/ui'
+import {
+  Button,
+  IconButton,
+  InlineNotice,
+  Loading,
+  Menu,
+  useCopy,
+  type MenuItem,
+  CodeGlyph,
+  CopyGlyph,
+  DownloadGlyph,
+  MoreGlyph,
+  ExternalGlyph,
+  EyeGlyph,
+  FolderOpenGlyph,
+  EditGlyph,
+  RefreshGlyph,
+} from '@latch/ui'
 import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { describeFailure, fileRefusalText } from '../core/securityCopy.ts'
@@ -475,13 +480,13 @@ export function FilePreview({
         )}
         <span className="file-preview-actions">
           {editRefusal && (
-            <IconButton size="xs" label={describeFailure(403, editRefusal, '不能在这里编辑这个文件')} icon={Pencil} disabled />
+            <IconButton size="xs" label={describeFailure(403, editRefusal, '不能在这里编辑这个文件')} icon={EditGlyph} disabled />
           )}
           {canEdit && (
             <IconButton
               size="xs"
               label={running ? 'Agent 运行中，不能编辑' : '编辑'}
-              icon={Pencil}
+              icon={EditGlyph}
               disabled={running}
               onClick={() => {
                 if (file && editBase) setEditing({ file, text: editBase.text, hash: editBase.hash })
@@ -492,7 +497,7 @@ export function FilePreview({
             <IconButton
               size="xs"
               label="源码"
-              icon={Code}
+              icon={CodeGlyph}
               pressed={viewer.source ? viewer.source.showing : sourceMode}
               onClick={() => {
                 if (viewer.source) viewer.source.onToggle()
@@ -514,7 +519,7 @@ export function FilePreview({
             <IconButton
               size="xs"
               label={revealLabel(currentShell()?.platform)}
-              icon={FolderOpen}
+              icon={FolderOpenGlyph}
               onClick={() => {
                 void native('reveal')
               }}
@@ -524,7 +529,7 @@ export function FilePreview({
             <IconButton
               size="xs"
               label="用默认应用打开"
-              icon={ExternalLink}
+              icon={ExternalGlyph}
               onClick={() => {
                 void native('open')
               }}
@@ -534,7 +539,7 @@ export function FilePreview({
             <Menu
               label="文件操作"
               align="end"
-              trigger={props => <IconButton {...props} size="xs" label="文件操作" icon={Ellipsis} />}
+              trigger={props => <IconButton {...props} size="xs" label="文件操作" icon={MoreGlyph} />}
               sections={[
                 { id: 'renderer', items: [...viewer.menu] },
                 {
@@ -545,7 +550,7 @@ export function FilePreview({
                           {
                             id: 'quicklook',
                             label: '快速查看',
-                            icon: Eye,
+                            icon: EyeGlyph,
                             onSelect: () => {
                               void native('quickLook')
                             },
@@ -558,7 +563,7 @@ export function FilePreview({
                           {
                             id: 'copy',
                             label: '复制路径',
-                            icon: Copy,
+                            icon: CopyGlyph,
                             onSelect: () => {
                               void copied.copy(fullPath)
                             },
@@ -570,7 +575,7 @@ export function FilePreview({
                           {
                             id: 'download',
                             label: downloading ? '正在下载' : '下载文件',
-                            icon: Download,
+                            icon: DownloadGlyph,
                             ...(downloading ? { disabledReason: '下载还未结束' } : {}),
                             onSelect: () => {
                               void download()
@@ -578,7 +583,7 @@ export function FilePreview({
                           },
                         ]
                       : []),
-                    { id: 'refresh', label: '更新预览', icon: RefreshCw, onSelect: refresh },
+                    { id: 'refresh', label: '更新预览', icon: RefreshGlyph, onSelect: refresh },
                   ] satisfies MenuItem[],
                 },
               ]}

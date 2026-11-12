@@ -1,4 +1,5 @@
-import { Archive, ArchiveRestore, Download, Eraser, FolderPlus, FolderX, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
+import { ArchiveRestore, Eraser, FolderPlus, FolderX, Mail } from 'lucide-react'
+import { ArchiveGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph, UnpinGlyph, TrashGlyph } from '@latch/ui'
 import type { TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
@@ -28,20 +29,20 @@ export interface SessionActions {
  * remains there.
  */
 export function sessionMenuSections(task: TaskSummary, actions: SessionActions, manage: boolean): MenuSection[] {
-  const exportItem = { id: 'export', label: '导出 Markdown', icon: Download, onSelect: actions.export }
+  const exportItem = { id: 'export', label: '导出 Markdown', icon: DownloadGlyph, onSelect: actions.export }
   if (!manage) return [{ id: 'manage', items: [exportItem] }]
   return [
     {
       id: 'manage',
       items: [
-        { id: 'rename', label: '重命名', icon: PenLine, onSelect: actions.rename },
-        { id: 'pin', label: task.pinned ? '取消置顶' : '置顶', icon: task.pinned ? PinOff : Pin, onSelect: actions.pin },
+        { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: actions.rename },
+        { id: 'pin', label: task.pinned ? '取消置顶' : '置顶', icon: task.pinned ? UnpinGlyph : PinGlyph, onSelect: actions.pin },
         ...(actions.unread ? [{ id: 'unread', label: '标为未读', icon: Mail, onSelect: actions.unread }] : []),
       ],
     },
     {
       id: 'share',
-      items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: Copy, onSelect: actions.copy }] : []), exportItem],
+      items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],
     },
     ...(actions.saveProject || actions.clear
       ? [
@@ -71,7 +72,7 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
         {
           id: 'archive',
           label: task.archived ? '取消归档' : '归档',
-          icon: task.archived ? ArchiveRestore : Archive,
+          icon: task.archived ? ArchiveRestore : ArchiveGlyph,
           onSelect: actions.archive,
         },
         // Archiving keeps the worktree; removing it is its own step.
@@ -95,7 +96,7 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
         {
           id: 'delete',
           label: '删除',
-          icon: Trash,
+          icon: TrashGlyph,
           danger: true,
           disabled: isActive(task.status),
           disabledReason: '运行中的会话需要先停止',

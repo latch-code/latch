@@ -6,29 +6,21 @@ import {
   Bug,
   Calendar,
   ChartColumn,
-  ChevronLeft,
-  ChevronRight,
   ClipboardList,
-  Code2,
-  Ellipsis,
-  FileText,
-  FlaskConical,
   Gauge,
   GitPullRequest,
-  Inbox,
   LayoutDashboard,
   ListChecks,
   MessagesSquare,
   NotebookPen,
   Package,
   Rocket,
-  Search,
   ShieldCheck,
-  Sparkles,
+  Star,
   SquareCheckBig,
   SquareKanban,
   Table,
-  WifiOff,
+  TestTubeDiagonal,
   Wrench,
 } from 'lucide-react'
 import {
@@ -43,7 +35,15 @@ import {
   Modal,
   ModalHeader,
   type ActionMenuSection,
-  type LucideIcon,
+  type IconComponent,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  CodeGlyph,
+  MoreGlyph,
+  FileGlyph,
+  InboxGlyph,
+  SearchGlyph,
+  OfflineGlyph,
 } from '@latch/ui'
 import type { AppDiagnostic, AppMigrationLease, AppSummary, PluginPackageDetail } from '@latch/protocol'
 import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
@@ -59,12 +59,12 @@ import { appRef, fallbackVersion, findApp, listedApps, openStep, shellTheme, typ
 import { useSecureCover } from './secureCover.ts'
 import { harnessName } from '../composerChoice.ts'
 
-const ICONS: Record<string, LucideIcon> = {
+const ICONS: Record<string, IconComponent> = {
   'list-checks': ListChecks,
   'clipboard-list': ClipboardList,
   'layout-dashboard': LayoutDashboard,
   'chart-column': ChartColumn,
-  'file-text': FileText,
+  'file-text': FileGlyph,
   'git-pull-request': GitPullRequest,
   bug: Bug,
   rocket: Rocket,
@@ -73,22 +73,22 @@ const ICONS: Record<string, LucideIcon> = {
   table: Table,
   gauge: Gauge,
   'square-kanban': SquareKanban,
-  search: Search,
-  sparkles: Sparkles,
-  'flask-conical': FlaskConical,
+  search: SearchGlyph,
+  sparkles: Star,
+  'flask-conical': TestTubeDiagonal,
   'shield-check': ShieldCheck,
   package: Package,
   wrench: Wrench,
   'square-check-big': SquareCheckBig,
   'messages-square': MessagesSquare,
-  inbox: Inbox,
+  inbox: InboxGlyph,
   'book-open': BookOpen,
 }
 
 /** A page's icon from its manifest when Latch carries it, otherwise the neutral window. */
 function AppIcon({ name, size = 16 }: { name: string | undefined; size?: 14 | 16 | 20 }) {
   const Glyph = (name && ICONS[name]) || AppWindow
-  return <Glyph size={size} strokeWidth={ICON_STROKE[size]} aria-hidden="true" />
+  return <Glyph size={size} nonScalingStroke strokeWidth={ICON_STROKE[size]} aria-hidden="true" />
 }
 
 /** The sidebar's 「应用」 group: one row per page, its icon and title. Gone the moment a page is disabled or removed. */
@@ -147,7 +147,7 @@ function AppsNav({ shell, current }: { shell: ShellState; current: AppTarget | u
           onClick={() => {
             shell.goEntry('sessions')
           }}>
-          <Code2 size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <CodeGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span>Code</span>
         </button>
       )}
@@ -207,7 +207,7 @@ export function AppsPage({ shell }: { shell: ShellState }) {
                           <span className="apps-list-title">{item.title}</span>
                           <span className="apps-list-meta">{`插件 · ${item.pluginName}`}</span>
                         </span>
-                        <ChevronRight size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+                        <ChevronRightGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
                       </button>
                     </li>
                   ))}
@@ -596,7 +596,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   return (
     <div className="app-page" data-phase={phase.kind} data-covered={covered ? '' : undefined}>
       <header className="app-page-head">
-        {onBack && <IconButton size="lg" label="返回" icon={ChevronLeft} onClick={onBack} />}
+        {onBack && <IconButton size="lg" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
         <span className="app-page-icon">
           <AppIcon name={page.icon} />
         </span>
@@ -606,7 +606,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
         </div>
         {!online && (
           <span className="app-page-offline">
-            <WifiOff size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+            <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
             不在线
           </span>
         )}
@@ -614,7 +614,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           label="页面操作"
           placement="bottom-end"
           sections={sections}
-          trigger={props => <IconButton {...props} icon={Ellipsis} label="页面操作" />}
+          trigger={props => <IconButton {...props} icon={MoreGlyph} label="页面操作" />}
         />
       </header>
       {error && (

@@ -118,7 +118,7 @@ describe('top bar', () => {
     // The title opens the session's menu (a sheet on a phone); 同步最新状态 is the connection notice's 重试, not an item.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
     expect(html).toMatch(
-      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span>/u,
+      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*latch-glyph-alert[^>]*>.*?<\/svg>失败<\/span>/u,
     )
     expect(html).toMatch(/<button[^>]*aria-label="侧边面板"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')

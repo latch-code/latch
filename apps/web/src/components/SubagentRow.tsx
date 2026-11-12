@@ -1,11 +1,11 @@
 import { createContext, memo, useContext, useEffect, useState } from 'react'
-import { Bot, ChevronRight } from 'lucide-react'
+import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import type { Message, Subagent } from '@latch/protocol'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { MessageContent } from '../MessageContent.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone, ChevronRightGlyph } from '@latch/ui'
 
 /** How a subagent last said it was doing, in the words a row uses. Nothing said, nothing shown. */
 const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
@@ -49,7 +49,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
           }}>
           <span className="process-verb">子 Agent</span>
           <span className="subagent-icon" aria-hidden="true">
-            <Bot size={16} strokeWidth={ICON_STROKE[16]} />
+            <AgentsGlyph size={16} />
           </span>
           <span className="process-object subagent-name">
             <VisibleText text={agent.title} />
@@ -61,7 +61,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
           ) : (
             <span />
           )}
-          <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         </button>
         {/* The stop column keeps its width whether it holds 停止 or not, so every row's status lines up. */}
         <span className="subagent-stop">

@@ -1,6 +1,5 @@
 import { useRef } from 'react'
-import type { LucideIcon } from 'lucide-react'
-import { ICON_STROKE } from './icon.tsx'
+import { ICON_STROKE, type IconComponent } from './icon.tsx'
 import { cx } from './internal.ts'
 import { usePausedOffscreen } from './motion.tsx'
 
@@ -68,16 +67,16 @@ function Mark({ mark }: { mark: TileMark }) {
 }
 
 /** What the tile shows: a brand's mark, or a glyph where the thing has no icon of its own. Never a letter. */
-export type TileArt = { mark: TileMark; icon?: undefined } | { icon: LucideIcon; mark?: undefined }
+export type TileArt = { mark: TileMark; icon?: undefined } | { icon: IconComponent; mark?: undefined }
 
 /** The tile holds a glyph at 60% of its size; a plain tile is the glyph alone. */
 const glyphSize = (size: TileSize, plain: boolean) => (plain ? size : size * 0.6)
 
-/** A glyph's stroke follows the icon scale; in the smallest tiles it is 2.2, so a 10px glyph still reads. */
-const glyphStroke = (size: TileSize, plain: boolean) => (size <= 16 && !plain ? 2.2 : ICON_STROKE[16])
+/** A glyph's line is the icon scale's on the screen: 1.5px, and 1.25px in the smallest tiles, where it is 10px across. */
+const glyphStroke = (size: TileSize, plain: boolean) => (size <= 16 && !plain ? ICON_STROKE[12] : ICON_STROKE[16])
 
-function Glyph({ icon: Drawn, size, strokeWidth }: { icon: LucideIcon; size: number; strokeWidth: number }) {
-  return <Drawn size={size} strokeWidth={strokeWidth} aria-hidden="true" />
+function Glyph({ icon: Drawn, size, strokeWidth }: { icon: IconComponent; size: number; strokeWidth: number }) {
+  return <Drawn size={size} strokeWidth={strokeWidth} nonScalingStroke aria-hidden="true" />
 }
 
 /** The progress ring around an arriving tile; its arc pauses out of view. */

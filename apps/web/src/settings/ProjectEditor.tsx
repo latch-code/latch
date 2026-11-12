@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
-import { ArrowDown, ArrowUp, Copy, FolderOpen, FolderPlus, GripVertical, Pencil, Send, Shield, Trash } from 'lucide-react'
+import { ArrowDown, ArrowUp, FolderPlus, GripVertical, Send } from 'lucide-react'
 import {
   escapeSecurityText,
   PROJECT_GLYPHS,
@@ -8,7 +8,21 @@ import {
   type WorkspaceFolder,
   type WorkspaceInfo,
 } from '@latch/protocol'
-import { Badge, Button, Icon, IconButton, InlineNotice, Menu, ValuePicker, useCopy } from '@latch/ui'
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Menu,
+  ValuePicker,
+  useCopy,
+  CopyGlyph,
+  FolderOpenGlyph,
+  EditGlyph,
+  ShieldGlyph,
+  TrashGlyph,
+} from '@latch/ui'
 import { api, errorMessage, isUncertain } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
@@ -150,7 +164,7 @@ export function ProjectEditor({
           description={<VisibleText text={name} />}
           trailing={
             owner ? (
-              <Button onClick={() => setRenaming(true)} disabled={busy} icon={Pencil}>
+              <Button onClick={() => setRenaming(true)} disabled={busy} icon={EditGlyph}>
                 重命名…
               </Button>
             ) : undefined
@@ -302,7 +316,7 @@ export function ProjectEditor({
                   />
                 )}
                 <SettingsRow
-                  leading={<IconTile icon={FolderOpen} />}
+                  leading={<IconTile icon={FolderOpenGlyph} />}
                   title={
                     <span className="settings-row-name">
                       <VisibleText text={base} />
@@ -333,7 +347,7 @@ export function ProjectEditor({
                                   {
                                     id: 'reveal',
                                     label,
-                                    icon: FolderOpen,
+                                    icon: FolderOpenGlyph,
                                     onSelect: () => {
                                       void execute(async () => {
                                         const result = await shell.reveal(project.id, folder.id)
@@ -346,7 +360,7 @@ export function ProjectEditor({
                             {
                               id: 'copy',
                               label: '复制路径',
-                              icon: Copy,
+                              icon: CopyGlyph,
                               onSelect: () => {
                                 void copy.copy(folder.path)
                               },
@@ -395,7 +409,7 @@ export function ProjectEditor({
                                         {
                                           id: 'replace',
                                           label: '重新选择…',
-                                          icon: FolderOpen,
+                                          icon: FolderOpenGlyph,
                                           disabledReason: busy ? '正在保存项目' : inUse ? '有正在运行或等待批准的会话使用它' : undefined,
                                           onSelect: () => pick(folder.id),
                                         },
@@ -409,7 +423,7 @@ export function ProjectEditor({
                                   {
                                     id: 'remove',
                                     label: '从项目中移除…',
-                                    icon: Trash,
+                                    icon: TrashGlyph,
                                     danger: true,
                                     disabledReason: busy ? '正在保存项目' : removeReason,
                                     onSelect: () => setRemoving(folder),
@@ -435,7 +449,7 @@ export function ProjectEditor({
         </p>
       )}
       {folders.length > 1 && (
-        <SettingsGroup title="各 Harness 使用的文件夹" note={<NoteLine icon={Shield} brief={SETUP_COPY.externalFolders} />}>
+        <SettingsGroup title="各 Harness 使用的文件夹" note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalFolders} />}>
           {snapshot.catalog?.harnesses
             .filter(harness => harness.status === 'ready')
             .map(harness => (

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
-import { Plus, Settings } from 'lucide-react'
-import { Button, Count, IconButton, InlineNotice } from '../src/index.ts'
+
+import { Button, Count, IconButton, InlineNotice, PlusGlyph, SettingsGlyph } from '../src/index.ts'
 import { onTouchScreen, press } from './helpers.ts'
 
 const style = (element: Element, pseudo?: string) => getComputedStyle(element, pseudo)
@@ -45,21 +45,21 @@ describe('buttons', () => {
   it('keeps its width, swaps the label and the leading glyph, and takes no clicks while it runs', async () => {
     const clicked = vi.fn()
     const screen = await render(
-      <Button variant="primary" icon={Plus} onClick={clicked}>
+      <Button variant="primary" icon={PlusGlyph} onClick={clicked}>
         添加服务
       </Button>,
     )
     const button = screen.getByRole('button')
     const before = button.element().getBoundingClientRect().width
-    expect(button.element().querySelector('.lucide-plus')).not.toBeNull()
+    expect(button.element().querySelector('.latch-glyph-plus')).not.toBeNull()
     await screen.rerender(
-      <Button variant="primary" icon={Plus} loading loadingLabel="中" onClick={clicked}>
+      <Button variant="primary" icon={PlusGlyph} loading loadingLabel="中" onClick={clicked}>
         添加服务
       </Button>,
     )
     await expect.element(button).toHaveAttribute('aria-busy', 'true')
     await expect.element(button).toHaveTextContent('中')
-    expect(button.element().querySelector('.lucide-plus')).toBeNull()
+    expect(button.element().querySelector('.latch-glyph-plus')).toBeNull()
     expect(button.element().querySelector('.ui-spinner')).not.toBeNull()
     expect(Math.abs(button.element().getBoundingClientRect().width - before)).toBeLessThan(1)
     press(button)
@@ -161,8 +161,8 @@ describe('buttons', () => {
   it('shows a tooltip after 400ms of hover, glides it to a neighbour at once, and hides it on leaving', async () => {
     const screen = await render(
       <div>
-        <IconButton label="设置" icon={Settings} />
-        <IconButton label="添加" icon={Plus} />
+        <IconButton label="设置" icon={SettingsGlyph} />
+        <IconButton label="添加" icon={PlusGlyph} />
         <span>别处</span>
       </div>,
     )
@@ -190,7 +190,7 @@ describe('buttons', () => {
   })
 
   it('names icon buttons by their label, shows a toggle as a neutral press and makes them 44px targets on touch', async () => {
-    const screen = await render(<IconButton label="会话信息" icon={Settings} pressed />)
+    const screen = await render(<IconButton label="会话信息" icon={SettingsGlyph} pressed />)
     const button = screen.getByRole('button', { name: '会话信息' })
     await expect.element(button).toHaveAttribute('aria-pressed', 'true')
     // On: the hover fill and ink, never the accent.
@@ -208,8 +208,8 @@ describe('buttons', () => {
   it('shows the trigger of an open menu as a neutral press, like a toggle that is on', async () => {
     const screen = await render(
       <>
-        <IconButton label="更多" icon={Settings} aria-haspopup="menu" aria-expanded />
-        <IconButton label="收起" icon={Settings} aria-haspopup="menu" aria-expanded={false} />
+        <IconButton label="更多" icon={SettingsGlyph} aria-haspopup="menu" aria-expanded />
+        <IconButton label="收起" icon={SettingsGlyph} aria-haspopup="menu" aria-expanded={false} />
       </>,
     )
     const open = screen.getByRole('button', { name: '更多' }).element()
@@ -221,7 +221,7 @@ describe('buttons', () => {
 
   it('keeps a 44px target around a box a dense row keeps small, and sets a count past the corner on the surface', async () => {
     const screen = await render(
-      <IconButton label="2 项待批准" icon={Settings} style={{ minWidth: 0, minHeight: 0 }} badge={<Count value={2} tone="warn" />} />,
+      <IconButton label="2 项待批准" icon={SettingsGlyph} style={{ minWidth: 0, minHeight: 0 }} badge={<Count value={2} tone="warn" />} />,
     )
     const button = screen.getByRole('button', { name: '2 项待批准' }).element()
     const face = button.getBoundingClientRect()

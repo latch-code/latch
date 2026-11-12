@@ -1,6 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react'
-import { createLucideIcon, type IconNode } from 'lucide-react'
-import { Icon, type IconSize } from '@latch/ui'
+import { defineGlyph } from '@latch/ui'
 import type { AgentAvatar as Avatar } from '@latch/protocol'
 import {
   avatarName,
@@ -157,41 +156,46 @@ export function AgentAvatar({
   )
 }
 
-/** The mark's line, a little heavier than the face's own so the braces hold up at 16px. */
-const MARK_STROKE = 2.5
-/** The face's dot eyes at the mark's size: a touch smaller, so the heavier braces do not crowd them. */
-const MARK_EYE = 1.95
-/** The face is cropped out of its 40 grid onto an icon's 24 one: this corner of the grid becomes the icon's origin. */
+/** The face's dot eyes at the mark's size: a touch smaller, so the braces do not crowd them. */
+const MARK_EYE = 1.3
+/** The face is cropped out of its 40 grid: this corner becomes the glyph's origin, and 24 units of the face fill its 16. */
 const MARK_ORIGIN = { x: 8, y: 8.5 }
+const MARK_SCALE = 16 / 24
 const round2 = (value: number) => Math.round(value * 100) / 100
-/** A path of the face moved onto the icon's grid; its numbers are all absolute x, y pairs. */
+/** A path of the face moved onto the glyph's grid; its numbers are all absolute x, y pairs. */
 const cropped = (d: string) => {
   let index = 0
   return d.replace(/-?\d+(?:\.\d+)?/gu, number => {
-    const value = Number(number) - (index++ % 2 === 0 ? MARK_ORIGIN.x : MARK_ORIGIN.y)
+    const value = (Number(number) - (index++ % 2 === 0 ? MARK_ORIGIN.x : MARK_ORIGIN.y)) * MARK_SCALE
     return String(round2(value))
   })
 }
 
 /**
  * The 我的 Agent entry as an icon, wherever it is drawn (the switch, the shut sidebar's title row, the palette, a phone's
- * tab bar): the face of the Agents, curly braces around dot eyes (`{··}`), cropped to the face and in one colour. It is
- * a Lucide icon, so it takes the sizes and places every other glyph does; its braces keep their own, heavier line.
+ * tab bar, a subagent's row): the face of the Agents, curly braces around dot eyes (`{··}`), cropped to the face and in
+ * one colour. It is a Latch glyph, so it takes the sizes, the line and the solid variant (a heavier line) of the rest of
+ * the set; the braces' tips are rounded where they turn, as on the face.
  */
-const MARK_NODES: IconNode = [
-  ...BRACKET_PATHS.curly.map((d): IconNode[number] => ['path', { d: cropped(d), strokeWidth: MARK_STROKE, key: d }]),
-  ...EYE_X.map((x): IconNode[number] => {
-    const eye = eyeShape('dot', x)
-    const [cx, cy] = eye.kind === 'circle' ? [eye.cx, eye.cy] : [x, 21.2]
-    return [
-      'circle',
-      { cx: round2(cx - MARK_ORIGIN.x), cy: round2(cy - MARK_ORIGIN.y), r: MARK_EYE, fill: 'currentColor', stroke: 'none', key: String(x) },
-    ]
-  }),
-]
-export const AgentsGlyph = createLucideIcon('latch-agents', MARK_NODES)
-
-/** The entry's glyph at an icon size; it stands still. */
-export function AgentsMark({ size = 16 }: { size?: IconSize }) {
-  return <Icon icon={AgentsGlyph} size={size} />
-}
+export const AgentsGlyph = defineGlyph(
+  'agents',
+  <>
+    {BRACKET_PATHS.curly.map(d => (
+      <path key={d} d={cropped(d)} strokeLinejoin="round" />
+    ))}
+    {EYE_X.map(x => {
+      const eye = eyeShape('dot', x)
+      const [cx, cy] = eye.kind === 'circle' ? [eye.cx, eye.cy] : [x, 21.2]
+      return (
+        <circle
+          key={x}
+          cx={round2((cx - MARK_ORIGIN.x) * MARK_SCALE)}
+          cy={round2((cy - MARK_ORIGIN.y) * MARK_SCALE)}
+          r={MARK_EYE}
+          fill="currentColor"
+          stroke="none"
+        />
+      )
+    })}
+  </>,
+)

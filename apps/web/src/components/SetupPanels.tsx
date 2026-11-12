@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, CircleAlert, CircleCheck, ExternalLink, LockKeyhole, RefreshCw, ShieldAlert } from 'lucide-react'
+
 import {
   PROVIDER_PRESETS,
   type AgentPresetSettings,
@@ -20,7 +20,25 @@ import { destinationOf, SERVICE_FORM, servicesToPick, type ProvidersResponse } f
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
-import { Badge, Button, ButtonLink, Hint, Icon, IconButton, InlineNotice, Loading, CopyButton } from '@latch/ui'
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  Hint,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Loading,
+  CopyButton,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  AlertGlyph,
+  CircleCheckGlyph,
+  ExternalGlyph,
+  LockGlyph,
+  RefreshGlyph,
+  ShieldAlertGlyph,
+} from '@latch/ui'
 import { MarkTile, ProviderTile } from './BrandTile.tsx'
 
 const ProviderAddForm = deferredComponent(
@@ -59,7 +77,7 @@ function SetupPanel({
   return (
     <section className="setup-panel" aria-label={title}>
       <header ref={head} className="setup-panel-head">
-        {onBack && <IconButton size="xs" label={backLabel} icon={ChevronLeft} onClick={onBack} />}
+        {onBack && <IconButton size="xs" label={backLabel} icon={ChevronLeftGlyph} onClick={onBack} />}
         {tile}
         <h3>{title}</h3>
       </header>
@@ -97,7 +115,7 @@ function useComputerName(needed: boolean): string {
 function Elsewhere({ children }: { children: ReactNode }) {
   return (
     <p className="setup-panel-note">
-      <Icon icon={LockKeyhole} size={12} />
+      <Icon icon={LockGlyph} size={12} />
       <span>{children}</span>
     </p>
   )
@@ -112,13 +130,13 @@ function Detected({ preset, detected }: { preset: AgentPresetSettings; detected?
   if (missing)
     return (
       <span className="detect is-warn">
-        <Icon icon={CircleAlert} size={12} />
+        <Icon icon={AlertGlyph} size={12} />
         <span>{missing}</span>
       </span>
     )
   return (
     <span className="detect is-ok">
-      <Icon icon={CircleCheck} size={12} />
+      <Icon icon={CircleCheckGlyph} size={12} />
       <span className="detect-label">已找到</span>
       <span className="detect-path">{detected.path ?? preset.command}</span>
     </span>
@@ -162,7 +180,7 @@ export function AgentPresetList({
           </span>
           <span className="setup-list-end">
             {preset.detected?.found ? '已找到' : '添加'}
-            <Icon icon={ChevronRight} size={12} />
+            <Icon icon={ChevronRightGlyph} size={12} />
           </span>
         </button>
       ))}
@@ -244,7 +262,7 @@ export function AgentSetupPanel({
             <Button
               size="xs"
               variant="ghost"
-              icon={RefreshCw}
+              icon={RefreshGlyph}
               loading={busy === 'check'}
               disabled={busy !== null}
               onClick={() => void recheck()}>
@@ -255,9 +273,9 @@ export function AgentSetupPanel({
       )}
       <ButtonLink variant="link" size="xs" href={preset.homepage} target="_blank" rel="noopener noreferrer" className="setup-panel-link">
         {`${hostOf(preset.homepage)} · ${preset.license}`}
-        <Icon icon={ExternalLink} size={12} />
+        <Icon icon={ExternalGlyph} size={12} />
       </ButtonLink>
-      <Hint className="setup-panel-caption" lead={<Icon icon={ShieldAlert} size={12} />} label={SETUP_COPY.agentFullAccess.label}>
+      <Hint className="setup-panel-caption" lead={<Icon icon={ShieldAlertGlyph} size={12} />} label={SETUP_COPY.agentFullAccess.label}>
         {SETUP_COPY.agentFullAccess.detail}
       </Hint>
       <InlineConfirm active={busy === 'add'} rank={2} />

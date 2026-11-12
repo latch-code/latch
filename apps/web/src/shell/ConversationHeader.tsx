@@ -1,19 +1,6 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
-import {
-  ChevronDown,
-  ChevronLeft,
-  CornerDownLeft,
-  Ellipsis,
-  Folder,
-  FolderGit2,
-  GitCompare,
-  History,
-  SquareTerminal,
-  PanelRight,
-  Pencil,
-  RefreshCw,
-} from 'lucide-react'
+import { FolderGit2, GitCompare } from 'lucide-react'
 import {
   escapeSecurityText,
   type AgentAvatar as AgentAvatarValue,
@@ -27,7 +14,25 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
-import { Button, ICON_STROKE, IconButton, Popover, StatusPill, StatusWord, Tooltip } from '@latch/ui'
+import {
+  Button,
+  ICON_STROKE,
+  IconButton,
+  Popover,
+  StatusPill,
+  StatusWord,
+  Tooltip,
+  ChevronDownGlyph,
+  ChevronLeftGlyph,
+  EnterGlyph,
+  MoreGlyph,
+  FolderGlyph,
+  HistoryGlyph,
+  TerminalGlyph,
+  PanelRightGlyph,
+  EditGlyph,
+  RefreshGlyph,
+} from '@latch/ui'
 import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { rowStatus, runningWords, silentWords } from '../sessions.ts'
@@ -136,7 +141,7 @@ function ConnectionPill({ connection, onRefresh }: { connection: ConnectionStatu
       {connectionLabels[connection]}
       <span className="connection-pill-retry">
         · 重试
-        <RefreshCw size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <RefreshGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </span>
     </button>
   )
@@ -154,7 +159,7 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
       trigger={props => (
         <button {...props} type="button" className="topbar-title-button">
           <span className="topbar-title-text">{title}</span>
-          <ChevronDown className="topbar-title-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <ChevronDownGlyph className="topbar-title-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         </button>
       )}
     />
@@ -198,9 +203,9 @@ function ProjectCrumb({
             title={project ?? '会话的文件夹'}
             aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，${lead} · ${escapeSecurityText(worktree)}` : ''}`}>
             {worktree ? (
-              <FolderGit2 size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              <FolderGit2 size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             ) : (
-              <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              <FolderGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             )}
             {project && (
               <span className="topbar-crumb-text">
@@ -256,7 +261,7 @@ export interface HeaderSource {
   onOpen?: (() => void) | undefined
 }
 function SourceLink({ source }: { source: HeaderSource }) {
-  const glyph = <CornerDownLeft size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+  const glyph = <EnterGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
   if (!source.title || !source.onOpen)
     return (
       <span className="topbar-agent topbar-handoff">
@@ -290,7 +295,7 @@ function ImportedMark({ mark }: { mark: HeaderImported }) {
   return (
     <Tooltip content={mark.detail}>
       <span className="topbar-agent topbar-imported" tabIndex={0} aria-label={mark.detail} data-rebuilt={mark.rebuilt ? '' : undefined}>
-        <History size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <HistoryGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         <span>{mark.label}</span>
       </span>
     </Tooltip>
@@ -342,7 +347,7 @@ function PhoneTopBar({
   const branch = summary?.worktree ? `工作树 · ${summary.branch ?? summary.worktree.branch}` : summary?.branch
   return (
     <header className="topbar" data-phone="">
-      {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeft} onClick={onBack} />}
+      {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeftGlyph} onClick={onBack} />}
       <div className="topbar-title">
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
@@ -369,7 +374,7 @@ function PhoneTopBar({
           {changes && (
             <IconButton size="lg" label={changes.label} icon={changes.icon} pressed={changes.pressed} onClick={changes.onToggle} />
           )}
-          <IconButton ref={panelRef} size="lg" label="侧边面板" icon={PanelRight} pressed={panelOpen} onClick={onPanel} />
+          <IconButton ref={panelRef} size="lg" label="侧边面板" icon={PanelRightGlyph} pressed={panelOpen} onClick={onPanel} />
         </span>
       )}
     </header>
@@ -530,7 +535,7 @@ export function SessionHeader({
             <TitleMenu title={title} sections={sessionMenu} />
           </h1>
         )}
-        {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={Pencil} size="xs" onClick={onRename} />}
+        {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
         {summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>
       <div className="topbar-actions">
@@ -544,12 +549,12 @@ export function SessionHeader({
         {slots.terminal && <Toggle toggle={slots.terminal} />}
         {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
         {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
-        {onFiles && !summary && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
+        {onFiles && !summary && <IconButton label="浏览项目文件" icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
         {summary && (
           <IconButton
             ref={panelRef}
             label="侧边面板"
-            icon={PanelRight}
+            icon={PanelRightGlyph}
             shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
             pressed={panelOpen}
             onClick={onPanel}
@@ -560,7 +565,7 @@ export function SessionHeader({
             label="会话操作"
             placement="bottom-end"
             sections={menu}
-            trigger={props => <IconButton {...props} label="会话操作" icon={Ellipsis} />}
+            trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
           />
         )}
       </div>
@@ -725,7 +730,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           ? {
               terminal: {
                 label: '终端',
-                icon: SquareTerminal,
+                icon: TerminalGlyph,
                 shortcut: desktop ? '⌘J' : 'Alt J',
                 pressed: terminalOpen && !fileTabs.active,
                 onToggle: toggleTerminal,

@@ -601,9 +601,9 @@ describe('system notes', () => {
     const failed = renderToStaticMarkup(
       createElement(MessageRow, { message: { id: 'n1', role: 'system', text: '模型服务返回错误（HTTP 503）', state: 'failed' } }),
     )
-    expect(failed).toMatch(/<article class="message message-system is-failed"[^>]*><span[^>]*><svg[^>]*lucide-x/)
+    expect(failed).toMatch(/<article class="message message-system is-failed"[^>]*><span[^>]*><svg[^>]*latch-glyph-close/)
     const note = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'n2', role: 'system', text: '已自动拒绝' } }))
-    expect(note).toMatch(/<article class="message message-system"[^>]*><span[^>]*><svg[^>]*lucide-info/)
+    expect(note).toMatch(/<article class="message message-system"[^>]*><span[^>]*><svg[^>]*latch-glyph-info/)
   })
 })
 

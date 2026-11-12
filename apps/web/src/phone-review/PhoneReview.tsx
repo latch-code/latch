@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Lock, MessageSquare, TriangleAlert } from 'lucide-react'
+import { CircleHelp } from 'lucide-react'
 import { noteLinesLabel, type AppSnapshot, type ChangedFile, type ReviewNote, type TaskSummary } from '@latch/protocol'
 import {
   Button,
@@ -12,6 +12,12 @@ import {
   Spinner,
   StatusWord,
   TextAreaField,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  AlertGlyph,
+  LockGlyph,
+  MessageGlyph,
+  WarningGlyph,
 } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { computerName, SETUP_COPY } from '../core/securityCopy.ts'
@@ -134,7 +140,7 @@ export function PhoneReview(props: PhoneReviewProps) {
             <IconButton
               ref={deliveryBack}
               size="lg"
-              icon={ChevronLeft}
+              icon={ChevronLeftGlyph}
               label={committed ? '返回会话列表' : '返回改动'}
               onClick={committed ? onClose : toChanges}
             />
@@ -273,7 +279,7 @@ function ReviewChanges({
   return (
     <section className="phone-review-level" data-state={under ? 'under' : 'top'} aria-label="改动" inert={under || undefined}>
       <header className="phone-review-bar">
-        <IconButton ref={backRef} size="lg" icon={ChevronLeft} label="返回会话列表" onClick={onClose} />
+        <IconButton ref={backRef} size="lg" icon={ChevronLeftGlyph} label="返回会话列表" onClick={onClose} />
         <div className="phone-review-title">
           <h2>改动</h2>
           <span>
@@ -302,7 +308,7 @@ function ReviewChanges({
       )}
       {canRead && file && (
         <div className="phone-review-pager">
-          <IconButton size="lg" icon={ChevronLeft} label="上一个文件" disabled={index === 0} onClick={() => go(-1)} />
+          <IconButton size="lg" icon={ChevronLeftGlyph} label="上一个文件" disabled={index === 0} onClick={() => go(-1)} />
           <div className="phone-review-file" aria-live="polite">
             <span className="phone-review-file-line">
               <span className="phone-review-file-name">
@@ -336,13 +342,13 @@ function ReviewChanges({
               {note && <span>{note.text}</span>}
               {fileNotes.length > 0 && (
                 <span className="review-note-count">
-                  <MessageSquare size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+                  <MessageGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                   {fileNotes.length}
                 </span>
               )}
               {stale > 0 && (
                 <span className="changes-note-warn">
-                  <CircleAlert size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+                  <AlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                   位置可能过期
                 </span>
               )}
@@ -351,14 +357,14 @@ function ReviewChanges({
           <span className="phone-review-count">
             {index + 1} / {files.length}
           </span>
-          <IconButton size="lg" icon={ChevronRight} label="下一个文件" disabled={index >= files.length - 1} onClick={() => go(1)} />
+          <IconButton size="lg" icon={ChevronRightGlyph} label="下一个文件" disabled={index >= files.length - 1} onClick={() => go(1)} />
         </div>
       )}
       <div className="phone-review-body">
         {!canRead ? (
           <div className="changes-empty phone-review-locked">
             <div>
-              <Lock size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />
+              <LockGlyph size={20} nonScalingStroke strokeWidth={ICON_STROKE[20]} aria-hidden="true" />
               <p className="changes-empty-title">这台设备看不到会话文件夹里的文件</p>
               <p className="changes-empty-detail">{SETUP_COPY.filesNeedScope(hostName)}</p>
             </div>
@@ -396,13 +402,13 @@ function ReviewChanges({
             )}
             {list.partial && (
               <div className="changes-line" data-tone="amber">
-                <TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 <span className="changes-line-text">{PARTIAL_NOTE.label}</span>
               </div>
             )}
             {failure?.kind === 'failed' && (
               <button type="button" className="changes-line changes-line-button" data-tone="muted" onClick={() => void reload()}>
-                <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
               </button>
             )}
@@ -442,7 +448,7 @@ function ReviewChanges({
         )}
         {reviewNotes && review.readError && !review.notes && (
           <div className="changes-line" data-tone="muted">
-            <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             <span className="changes-line-text">读不到反馈 · {review.readError}</span>
           </div>
         )}
@@ -467,7 +473,7 @@ function ReviewChanges({
           ) : action.kind === 'unknown' ? (
             <>
               <span className="phone-review-foot-text">
-                <CircleHelp size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                <CircleHelp size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 发送结果未知
               </span>
               <Button size="lg" variant="ghost" disabled={review.busy || offline} onClick={() => void review.actions.abandonSend()}>

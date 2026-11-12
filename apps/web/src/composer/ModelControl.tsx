@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Box, ChevronDown, ChevronLeft, ChevronRight, Cpu, GitFork, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
+import { GitFork } from 'lucide-react'
 import {
   modelIdKey,
   pairRoute,
@@ -13,7 +13,24 @@ import {
   type SessionConfigOption,
   type TaskSummary,
 } from '@latch/protocol'
-import { Icon, IconButton, MenuFooterLink, MenuFooterNote, Popover, ValuePicker, useLayerClose, type PickerGroup } from '@latch/ui'
+import {
+  Icon,
+  IconButton,
+  MenuFooterLink,
+  MenuFooterNote,
+  Popover,
+  ValuePicker,
+  useLayerClose,
+  type PickerGroup,
+  ChevronDownGlyph,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  PinGlyph,
+  UnpinGlyph,
+  PlusGlyph,
+  HarnessGlyph,
+  ModelGlyph,
+} from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { MODEL_MENU_COPY, SETUP_COPY, type Brief } from '../core/securityCopy.ts'
@@ -119,7 +136,7 @@ function PinChoiceRow({
         </p>
       )}
       <MenuFooterLink
-        icon={pinned ? PinOff : Pin}
+        icon={pinned ? UnpinGlyph : PinGlyph}
         chevron={false}
         onClick={() => {
           void toggle()
@@ -181,7 +198,7 @@ function EngineAddPanel({
   return (
     <div className="permission-list">
       <header className="permission-list-head">
-        <IconButton size="xs" icon={ChevronLeft} label="返回" onClick={onBack} />
+        <IconButton size="xs" icon={ChevronLeftGlyph} label="返回" onClick={onBack} />
         <span>添加 Harness</span>
       </header>
       <AgentPresetList
@@ -243,7 +260,7 @@ export function DraftHarnessControl({
       }))}
       header={{ title: '开始后不能换 Harness', ...(keys ? { meta: keys } : {}) }}
       width={adding ? 360 : 340}
-      leading={harness ? <HarnessTile harness={harness} size={16} /> : Sparkles}
+      leading={harness ? <HarnessTile harness={harness} size={16} /> : HarnessGlyph}
       className="harness-picker"
       menuChevron
       disabled={disabled}
@@ -260,7 +277,7 @@ export function DraftHarnessControl({
           {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
           {canAdd && (
             <MenuFooterLink
-              icon={Plus}
+              icon={PlusGlyph}
               chevron={false}
               onClick={() => {
                 setAdding(true)
@@ -269,7 +286,7 @@ export function DraftHarnessControl({
             </MenuFooterLink>
           )}
           {onManage && (
-            <MenuFooterLink icon={Cpu} chevron={false} closes onClick={onManage}>
+            <MenuFooterLink icon={HarnessGlyph} chevron={false} closes onClick={onManage}>
               管理 Harness…
             </MenuFooterLink>
           )}
@@ -332,7 +349,7 @@ export function SessionHarnessControl({
       <div className="model-footer">
         <MenuFooterNote>开始后不能换 Harness</MenuFooterNote>
         {fork && <ForkRow fork={fork} />}
-        <MenuFooterLink icon={Plus} chevron={false} closes onClick={onNewSession}>
+        <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
           新会话
         </MenuFooterLink>
       </div>
@@ -419,7 +436,7 @@ export function UnusableServices({ services }: { services: readonly UnusableServ
         }}>
         <span className="model-unusable-head">
           {MODEL_MENU_COPY.unusable(services.length)}
-          <Icon icon={open ? ChevronDown : ChevronRight} size={12} />
+          <Icon icon={open ? ChevronDownGlyph : ChevronRightGlyph} size={12} />
         </span>
       </MenuFooterLink>
       {open && (
@@ -610,7 +627,7 @@ export function DraftModelControl({
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const readingNow = useReading(harness)
   const manage = onManageModels && (
-    <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
+    <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
       管理模型…
     </MenuFooterLink>
   )
@@ -741,7 +758,7 @@ export function DraftModelControl({
           />
           {access.admin ? (
             <MenuFooterLink
-              icon={Plus}
+              icon={PlusGlyph}
               chevron={false}
               onClick={() => {
                 setAdding(true)
@@ -816,7 +833,7 @@ export function SessionModelControl({
   const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
   const manage = onManageModels && (
-    <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
+    <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
       管理模型…
     </MenuFooterLink>
   )

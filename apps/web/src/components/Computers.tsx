@@ -1,5 +1,4 @@
-import { ChevronsUpDown, Laptop } from 'lucide-react'
-import { ICON_STROKE, MenuFooterLink } from '@latch/ui'
+import { ICON_STROKE, MenuFooterLink, UpDownGlyph, LaptopGlyph } from '@latch/ui'
 import type { AppSnapshot, ComputerSummary } from '@latch/protocol'
 import { ATTENTION_WORDS, computerState, olderVersion, type OtherWaiting } from '../core/computers.ts'
 import { hostView } from '../core/permissions.ts'
@@ -67,10 +66,10 @@ export function ComputerMenu({
       footer={onManage ? () => <MenuFooterLink onClick={onManage}>管理电脑…</MenuFooterLink> : undefined}
       trigger={props => (
         <button {...props} type="button" className="sidebar-host sidebar-host-menu" data-computers={view.computers.length} title={title}>
-          <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="sidebar-host-name">{title}</span>
           {here && current?.state !== 'online' && <span className="sidebar-host-state">{here.text}</span>}
-          <ChevronsUpDown className="sidebar-host-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <UpDownGlyph className="sidebar-host-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         </button>
       )}
     />
@@ -108,7 +107,7 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
                         <span className="session-status ui-status-time">{relativeTime(item.since, new Date(now))}</span>
                       </span>
                       <span className="session-meta" aria-hidden="true">
-                        <Laptop className="session-computer-icon" size={12} strokeWidth={ICON_STROKE[12]} />
+                        <LaptopGlyph className="session-computer-icon" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
                         <span className="session-computer">{computer.name}</span>
                         <span className="session-wait">{`· ${words}`}</span>
                       </span>
@@ -131,7 +130,7 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
                     <span className="other-computers-stale">{`离线前 ${items.length} 项`}</span>
                   </span>
                   <span className="session-meta" aria-hidden="true">
-                    <Laptop className="session-computer-icon" size={12} strokeWidth={ICON_STROKE[12]} />
+                    <LaptopGlyph className="session-computer-icon" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
                     <span className="session-meta-rest">{computerState(computer).text}</span>
                   </span>
                   <span className="sr-only">{`，${computerState(computer).text}，不是实时`}</span>

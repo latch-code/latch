@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { CheckGlyph, CopyGlyph } from './glyphs/index.tsx'
 import { IconButton } from './button.tsx'
 import { pinLayer, setPopover } from './internal.ts'
 
@@ -69,7 +69,7 @@ export function CopyButton({
       <IconButton
         ref={button}
         label={label}
-        icon={state === 'copied' ? Check : Copy}
+        icon={state === 'copied' ? CheckGlyph : CopyGlyph}
         swap
         size={size}
         className={className ? `ui-copy-button ${className}` : 'ui-copy-button'}

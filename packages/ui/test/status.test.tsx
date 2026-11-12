@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { describe, expect, it } from 'vitest'
 import { render } from 'vitest-browser-react'
-import { Check, Circle, CircleDot, Terminal } from 'lucide-react'
+import { Circle, CircleDot } from 'lucide-react'
 import {
   Count,
   Icon,
@@ -14,6 +14,8 @@ import {
   StatusWords,
   useLivePrevious,
   type SlotStatus,
+  CheckGlyph,
+  TerminalGlyph,
 } from '../src/index.ts'
 import { emulateMedia } from './helpers.ts'
 
@@ -61,7 +63,7 @@ type ProcessState = 'running' | 'completed'
 const row = (epoch: number, state: ProcessState) => (
   <Live epoch={epoch}>
     <StatusGlyph running={state === 'running'} size={14}>
-      <Icon icon={Terminal} size={16} />
+      <Icon icon={TerminalGlyph} size={16} />
     </StatusGlyph>
     <StatusWords state={state}>{state === 'running' ? '执行中' : '完成'}</StatusWords>
   </Live>
@@ -70,7 +72,7 @@ const row = (epoch: number, state: ProcessState) => (
 const step = (epoch: number, state: 'pending' | 'in_progress' | 'completed') => (
   <Live epoch={epoch}>
     <StatusGlyph state={state}>
-      <Icon icon={state === 'completed' ? Check : state === 'in_progress' ? CircleDot : Circle} size={14} />
+      <Icon icon={state === 'completed' ? CheckGlyph : state === 'in_progress' ? CircleDot : Circle} size={14} />
     </StatusGlyph>
   </Live>
 )
@@ -103,12 +105,12 @@ describe('status words', () => {
     expect(style(words[1]!).fontVariantNumeric).toBe('tabular-nums')
     // Waiting has the shield in the amber of icons, running the spinner, failed circle-alert, done a check; the rest none.
     const glyph = (index: number) => words[index]!.querySelector('.ui-status-word-glyph')
-    expect(glyph(0)?.classList.contains('lucide-shield')).toBe(true)
+    expect(glyph(0)?.classList.contains('latch-glyph-shield')).toBe(true)
     expect(style(glyph(0)!).color).toBe('rgb(196, 111, 6)')
     expect(glyph(1)?.classList.contains('ui-spinner')).toBe(true)
     expect(glyph(1)?.getAttribute('data-size')).toBe('12')
-    expect(glyph(2)?.classList.contains('lucide-circle-alert')).toBe(true)
-    expect(glyph(3)?.classList.contains('lucide-check')).toBe(true)
+    expect(glyph(2)?.classList.contains('latch-glyph-alert')).toBe(true)
+    expect(glyph(3)?.classList.contains('latch-glyph-check')).toBe(true)
     expect([glyph(4), glyph(5)]).toEqual([null, null])
     // Glyphs are decorative: the words say the state.
     expect(
@@ -126,7 +128,7 @@ describe('status words', () => {
     const [neutral, risk] = Array.from(screen.container.querySelectorAll<HTMLElement>('.ui-status-word'))
     expect([neutral?.dataset.tone, risk?.dataset.tone]).toEqual(['neutral', 'failed'])
     expect(getComputedStyle(risk!).backgroundColor).toBe('rgba(0, 0, 0, 0)')
-    expect(risk?.querySelector('.lucide-circle-alert')).not.toBeNull()
+    expect(risk?.querySelector('.latch-glyph-alert')).not.toBeNull()
   })
 })
 
@@ -245,7 +247,7 @@ describe('the status slot', () => {
     expect(slots[8]?.querySelector('svg')).toBeNull()
     // Unread is a 12px ink check; the time is faint, at the regular weight.
     const check = slots[3]?.querySelector('.ui-status-unread')
-    expect(check?.classList.contains('lucide-check')).toBe(true)
+    expect(check?.classList.contains('latch-glyph-check')).toBe(true)
     expect(getComputedStyle(check!).color).toBe('rgb(23, 23, 26)')
     const time = slots[4]?.querySelector('time')
     expect([time?.getAttribute('dateTime'), getComputedStyle(time!).color, getComputedStyle(time!).fontWeight]).toEqual([
@@ -342,7 +344,7 @@ describe('process rows', () => {
     const leaving = glyph().querySelector('.ui-status-glyph-leaving')!
     const current = glyph().querySelector('.ui-status-glyph-current')!
     expect(leaving.querySelector('.ui-spinner')).not.toBeNull()
-    expect(current.querySelector('.lucide-terminal')).not.toBeNull()
+    expect(current.querySelector('.latch-glyph-terminal')).not.toBeNull()
     expect([animation(leaving)?.animationName, animation(current)?.animationName, animation(words())?.animationName]).toEqual([
       'ui-fade-out',
       'ui-swap-in',
@@ -372,7 +374,7 @@ describe('process rows', () => {
       glyph().querySelector('.ui-status-glyph-current .lucide-circle-dot') !== null,
     ]).toEqual([true, true])
     await screen.rerender(step(1, 'completed'))
-    expect(glyph().querySelector('.ui-status-glyph-current .lucide-check')).not.toBeNull()
+    expect(glyph().querySelector('.ui-status-glyph-current .latch-glyph-check')).not.toBeNull()
     expect(glyph().querySelector('.ui-spinner')).toBeNull()
   })
 })
@@ -385,7 +387,7 @@ it('animates nothing under reduced motion: changes show at once and every still 
         <StatusSlot status={status} time="2 分钟" />
         <Count value={value} tone="warn" />
         <StatusGlyph running={state === 'running'}>
-          <Icon icon={Terminal} size={14} />
+          <Icon icon={TerminalGlyph} size={14} />
         </StatusGlyph>
         <StatusWords state={state}>{state}</StatusWords>
       </Live>

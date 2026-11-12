@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Check, ChevronLeft } from 'lucide-react'
+
 import type { WorktreeBase, WorktreeStart } from '@latch/protocol'
-import { Hint, Icon, IconButton, SearchField, SegmentedControl, Spinner } from '@latch/ui'
+import { Hint, Icon, IconButton, SearchField, SegmentedControl, Spinner, CheckGlyph, ChevronLeftGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { BaseState } from './FolderControl.tsx'
 
@@ -88,7 +88,7 @@ export function WorktreeStartPanel({
   return (
     <div className="permission-list worktree-start">
       <header className="permission-list-head">
-        <IconButton size="xs" icon={ChevronLeft} label="返回" onClick={onBack} />
+        <IconButton size="xs" icon={ChevronLeftGlyph} label="返回" onClick={onBack} />
         <span>新工作树的起点</span>
       </header>
       <SegmentedControl<Mode>
@@ -137,7 +137,7 @@ export function WorktreeStartPanel({
                 onClick={() => {
                   if (!row.disabledReason) onPick(row.start)
                 }}>
-                <span className="worktree-start-check">{selected && <Icon icon={Check} size={14} />}</span>
+                <span className="worktree-start-check">{selected && <Icon icon={CheckGlyph} size={14} />}</span>
                 <span className="worktree-start-label">
                   <VisibleText text={row.label} />
                 </span>

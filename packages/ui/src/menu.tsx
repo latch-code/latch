@@ -11,11 +11,11 @@ import {
   type Ref,
   type RefObject,
 } from 'react'
-import { Check, ChevronDown, ChevronRight, ChevronsUpDown, CircleSlash, Lock, ShieldAlert } from 'lucide-react'
+import { CheckGlyph, ChevronDownGlyph, ChevronRightGlyph, UpDownGlyph, BlockedGlyph, LockGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
 import { Button } from './button.tsx'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
-import { Icon, Spinner, type LucideIcon } from './icon.tsx'
+import { Icon, Spinner, type IconComponent } from './icon.tsx'
 import { cx, nextIndex, onAnchorScrolled, PHONE_QUERY, pinLayer, setPopover, useMediaQuery, useTypeahead } from './internal.ts'
 import { Badge } from './pill.tsx'
 import { Tooltip } from './tooltip.tsx'
@@ -107,7 +107,7 @@ export interface MenuItem {
   /** One line under the label. */
   description?: string
   /** Action menus: a leading 14px glyph. Selection menus put the check in this slot instead. */
-  icon?: LucideIcon
+  icon?: IconComponent
   /** Right after the label, for example the 默认 small badge. */
   tag?: ReactNode
   /** The one trailing element: meta text, a small badge or a kbd. */
@@ -262,7 +262,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
   const described = [item.description ? `${id}-description` : '', disabled ? `${id}-reason` : ''].filter(Boolean).join(' ')
   const lead = selection ? (
     item.checked ? (
-      <Icon icon={Check} size={14} className="ui-menu-check" />
+      <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />
     ) : null
   ) : item.icon ? (
     <Icon icon={item.icon} size={14} />
@@ -298,7 +298,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
         )}
         {disabled && (
           <span id={`${id}-reason`} className="ui-menu-item-reason">
-            <Icon icon={CircleSlash} size={12} />
+            <Icon icon={BlockedGlyph} size={12} />
             {item.disabledReason}
           </span>
         )}
@@ -324,7 +324,7 @@ export function MenuFooterLink({
 }: {
   children: ReactNode
   onClick: () => void
-  icon?: LucideIcon
+  icon?: IconComponent
   /** Goes elsewhere (the default): ends in chevron-right. */
   chevron?: boolean
   closes?: boolean
@@ -345,7 +345,7 @@ export function MenuFooterLink({
       }}>
       {(inMenu || icon) && <span className="ui-menu-item-lead">{icon && <Icon icon={icon} size={14} />}</span>}
       <span className="ui-menu-footer-text">{children}</span>
-      {chevron && <Icon icon={ChevronRight} size={12} />}
+      {chevron && <Icon icon={ChevronRightGlyph} size={12} />}
     </button>
   )
 }
@@ -355,7 +355,7 @@ export function MenuFooterLink({
  * slot, the note on their titles' column. A note that is no restriction passes its own glyph (`info` for how to get
  * there, `circle-alert` for something that went wrong), so the lock keeps meaning a refusal.
  */
-export function MenuFooterNote({ children, icon = Lock }: { children: ReactNode; icon?: LucideIcon }) {
+export function MenuFooterNote({ children, icon = LockGlyph }: { children: ReactNode; icon?: IconComponent }) {
   return (
     <p className="ui-menu-footer-note">
       <Icon icon={icon} size={12} />
@@ -535,7 +535,7 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   /** Choosing applies at once. A returned promise (a raise that needs verification) shows 「等待验证…」 until it settles. */
   onValueChange: (value: T) => void | Promise<void>
   /** A 14px glyph that serves as the label where there is no text label (the context row), or a 16px tile or avatar. */
-  leading?: LucideIcon | ReactNode
+  leading?: IconComponent | ReactNode
   /** Shown in muted ink when nothing is chosen (「选择模型」), never in a warning colour. */
   placeholder?: string
   /** xs: 24 with 6px corners, for the inspector. */
@@ -592,7 +592,7 @@ function pickerAlign(size: ValuePickerProps<string>['size'], bleed: ValuePickerP
   return size === 'xs' || bleed !== undefined ? 'end' : 'start'
 }
 
-function isGlyph(value: unknown): value is LucideIcon {
+function isGlyph(value: unknown): value is IconComponent {
   return typeof value === 'function' || (typeof value === 'object' && value !== null && '$$typeof' in value && 'render' in value)
 }
 
@@ -703,7 +703,7 @@ export function ValuePicker<T extends string>({
   const lead = pending ? (
     <Spinner size={12} className="ui-value-picker-lead" />
   ) : risky ? (
-    <Icon icon={ShieldAlert} size={14} className="ui-value-picker-lead ui-value-picker-risk" />
+    <Icon icon={ShieldAlertGlyph} size={14} className="ui-value-picker-lead ui-value-picker-risk" />
   ) : isGlyph(leading) ? (
     <Icon icon={leading} size={14} className="ui-value-picker-lead" />
   ) : leading ? (
@@ -794,7 +794,7 @@ export function ValuePicker<T extends string>({
       {variant === 'row' && <span className="ui-value-row-label">{label}</span>}
       {lead}
       {valueLayers}
-      <Icon icon={menuChevron ? ChevronDown : ChevronsUpDown} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
+      <Icon icon={menuChevron ? ChevronDownGlyph : UpDownGlyph} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
     </button>
   )
   const trigger = <Tooltip content={disabled ? disabledReason : undefined}>{button}</Tooltip>

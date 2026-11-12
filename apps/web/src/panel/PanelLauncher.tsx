@@ -1,10 +1,9 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { FileDiff, Folder, GitCommitHorizontal, Puzzle, SquareTerminal, type LucideIcon } from 'lucide-react'
-import { Icon, Kbd } from '@latch/ui'
+import { Icon, Kbd, type IconComponent, DiffGlyph, FolderGlyph, CommitGlyph, PluginsGlyph, TerminalGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
 
-type Row = { id: string; label: string; icon: LucideIcon; letter?: string; surface: PanelSurface }
+type Row = { id: string; label: string; icon: IconComponent; letter?: string; surface: PanelSurface }
 
 /** Only what this session can open; the keys work while the launcher holds focus. */
 export function launcherRows(input: {
@@ -15,16 +14,16 @@ export function launcherRows(input: {
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): Row[] {
   return [
-    ...(input.changes ? [{ id: 'changes', label: '改动', icon: FileDiff, letter: 'D', surface: { kind: 'changes' as const } }] : []),
-    ...(input.files ? [{ id: 'files', label: '文件', icon: Folder, letter: 'F', surface: { kind: 'files' as const } }] : []),
+    ...(input.changes ? [{ id: 'changes', label: '改动', icon: DiffGlyph, letter: 'D', surface: { kind: 'changes' as const } }] : []),
+    ...(input.files ? [{ id: 'files', label: '文件', icon: FolderGlyph, letter: 'F', surface: { kind: 'files' as const } }] : []),
     ...(input.terminal
-      ? [{ id: 'terminal', label: '终端', icon: SquareTerminal, letter: 'T', surface: { kind: 'terminal' as const } }]
+      ? [{ id: 'terminal', label: '终端', icon: TerminalGlyph, letter: 'T', surface: { kind: 'terminal' as const } }]
       : []),
-    ...(input.delivery ? [{ id: 'delivery', label: '交付', icon: GitCommitHorizontal, surface: { kind: 'delivery' as const } }] : []),
+    ...(input.delivery ? [{ id: 'delivery', label: '交付', icon: CommitGlyph, surface: { kind: 'delivery' as const } }] : []),
     ...(input.plugins ?? []).map(plugin => ({
       id: `plugin:${plugin.id}`,
       label: plugin.title,
-      icon: Puzzle,
+      icon: PluginsGlyph,
       surface: { kind: 'plugin' as const, id: plugin.id },
     })),
   ]

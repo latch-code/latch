@@ -1,7 +1,7 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronLeft, Ellipsis, FolderGit2, Pin, Plus } from 'lucide-react'
+import { FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
@@ -32,7 +32,7 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
+import { Collapse, ICON_STROKE, IconButton, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
 import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
 
@@ -143,8 +143,12 @@ const SessionItem = memo(function SessionItem({
             onSelect(task.id)
           }}>
           <span className="session-line">
-            {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
-            {worktree && <FolderGit2 className="session-worktree" size={12} strokeWidth={ICON_STROKE[12]} aria-label={worktree} />}
+            {task.pinned && (
+              <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />
+            )}
+            {worktree && (
+              <FolderGit2 className="session-worktree" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={worktree} />
+            )}
             <span className="session-title">{title}</span>
             <SessionStatus
               className="session-status"
@@ -184,7 +188,7 @@ const SessionItem = memo(function SessionItem({
               size="xs"
               label={`归档：${title}`}
               tooltip="归档"
-              icon={Archive}
+              icon={ArchiveGlyph}
               onClick={() => archive.onSelect()}
             />
           )}
@@ -199,7 +203,7 @@ const SessionItem = memo(function SessionItem({
                 size="xs"
                 label={`更多操作：${title}`}
                 tooltip="更多操作"
-                icon={Ellipsis}
+                icon={MoreGlyph}
               />
             )}
           />
@@ -275,7 +279,7 @@ function SessionGroupView({
           count={(waiting && count > 0) || folded ? count : undefined}
           actions={
             group.id === 'other' && onNewWithoutProject ? (
-              <IconButton size="xs" label="新会话" tooltip="新会话" icon={Plus} onClick={onNewWithoutProject} />
+              <IconButton size="xs" label="新会话" tooltip="新会话" icon={PlusGlyph} onClick={onNewWithoutProject} />
             ) : undefined
           }
         />
@@ -525,7 +529,7 @@ function CodeList({
           onClick={() => {
             onFilter('all')
           }}>
-          <ChevronLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <ChevronLeftGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <span>已归档</span>
           <span className="archived-count">{archivedCount}</span>
         </button>
@@ -570,7 +574,7 @@ function CodeList({
             onFilter('archived')
           }}>
           <span className="sidebar-row-icon">
-            <Archive size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <ArchiveGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           </span>
           <span>已归档</span>
           <span className="archived-count">{archivedCount}</span>

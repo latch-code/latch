@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
-import { ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
+import { Presentation } from 'lucide-react'
 import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo, type WorktreeStart } from '@latch/protocol'
-import { Badge, Button, Hint, ICON_STROKE, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
+import { Badge, Button, Hint, ICON_STROKE, MOTION, Sheet, usePresence, ValuePicker, ChevronDownGlyph, ChevronUpGlyph } from '@latch/ui'
 import {
   draftConfig,
   engineEntries,
@@ -387,7 +387,15 @@ export function NewSessionSheet({
                     value: row.value,
                     label: escapeHiddenCharacters(row.name),
                     ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
-                    media: <Glyph size={16} aria-hidden="true" className={row.neverAsks ? 'permission-never' : undefined} />,
+                    media: (
+                      <Glyph
+                        size={16}
+                        nonScalingStroke
+                        strokeWidth={ICON_STROKE[16]}
+                        aria-hidden="true"
+                        className={row.neverAsks ? 'permission-never' : undefined}
+                      />
+                    ),
                   }
                 }) ?? [{ value: 'current', label: permission.label, ...(permission.line ? { description: permission.line } : {}) }]
               }
@@ -397,7 +405,7 @@ export function NewSessionSheet({
                     <Button
                       size="xs"
                       variant="ghost"
-                      icon={morePermission ? ChevronUp : ChevronDown}
+                      icon={morePermission ? ChevronUpGlyph : ChevronDownGlyph}
                       aria-expanded={morePermission}
                       onClick={() => {
                         setMorePermission(!morePermission)
@@ -430,7 +438,9 @@ export function NewSessionSheet({
       )}
       {present && demo && (
         <div className="new-sheet-note">
-          <Hint lead={<FlaskConical size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />} label={<Badge tone="warn">演示</Badge>}>
+          <Hint
+            lead={<Presentation size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
+            label={<Badge tone="warn">演示</Badge>}>
             回复由本地脚本生成，不调用模型服务。
           </Hint>
         </div>

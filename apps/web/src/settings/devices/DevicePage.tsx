@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Eye, Lock } from 'lucide-react'
+
 import { isAcceptableDeviceName, type Device } from '@latch/protocol'
-import { Button, Hint, Icon, InlineNotice, SwitchRow } from '@latch/ui'
+import { Button, Hint, Icon, InlineNotice, SwitchRow, EyeGlyph, LockGlyph } from '@latch/ui'
 import { InlineConfirm } from '../../components/InlineConfirm.tsx'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { api, errorMessage, inlineError } from '../../core/api.ts'
@@ -212,7 +212,7 @@ export function DevicePage({
               className="settings-row"
               title={COPY.manageOf(access.local, computer)}
               description={
-                <Hint lead={<Icon icon={Lock} size={12} />} label={COPY.manageNote.label}>
+                <Hint lead={<Icon icon={LockGlyph} size={12} />} label={COPY.manageNote.label}>
                   {COPY.manageNote.detail}
                 </Hint>
               }
@@ -229,7 +229,7 @@ export function DevicePage({
               className="settings-row"
               title={COPY.files}
               description={
-                <Hint lead={<Icon icon={Eye} size={12} />} label={COPY.filesNote.label}>
+                <Hint lead={<Icon icon={EyeGlyph} size={12} />} label={COPY.filesNote.label}>
                   {COPY.filesNote.detail}
                 </Hint>
               }

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { AppWindow, Laptop, Link, Lock, QrCode, Smartphone } from 'lucide-react'
+import { AppWindow, Link, QrCode } from 'lucide-react'
 import type { NativeLinkInfo } from '@latch/protocol'
-import { Button, Icon, InlineNotice } from '@latch/ui'
+import { Button, Icon, InlineNotice, LaptopGlyph, LockGlyph, PhoneGlyph } from '@latch/ui'
 import { api, inlineError } from '../../core/api.ts'
 import { describeFailure, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
@@ -123,7 +123,7 @@ export function ConnectNew({
         <SettingsRow
           title={
             <span className="device-pair-elsewhere">
-              <Icon icon={Lock} size={12} />
+              <Icon icon={LockGlyph} size={12} />
               {COPY.pairElsewhere(computer)}
             </span>
           }
@@ -170,7 +170,7 @@ function ConnectRows({
         )}
         {copyLink && (
           <ConnectRow
-            icon={Laptop}
+            icon={LaptopGlyph}
             title={COPY.otherComputer}
             note={COPY.otherComputerNote}
             action={
@@ -186,7 +186,7 @@ function ConnectRows({
           />
         )}
         <ConnectRow
-          icon={Smartphone}
+          icon={PhoneGlyph}
           title={COPY.phone}
           note={COPY.phoneNote}
           dim
@@ -271,8 +271,8 @@ function SavedRoutes() {
 export function AboutConnection({ entry, canManageRoutes }: { entry: boolean; canManageRoutes: boolean }) {
   return (
     <SettingsGroup title={COPY.about} bare>
-      {!entry && <NoteLine brief={COPY.aboutOtherComputerMissing} icon={Laptop} />}
-      <NoteLine brief={COPY.aboutPhone} icon={Lock} />
+      {!entry && <NoteLine brief={COPY.aboutOtherComputerMissing} icon={LaptopGlyph} />}
+      <NoteLine brief={COPY.aboutPhone} icon={LockGlyph} />
       {canManageRoutes && <SavedRoutes />}
     </SettingsGroup>
   )

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { FlaskConical } from 'lucide-react'
+import { Play } from 'lucide-react'
 import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentSettings } from '@latch/protocol'
 import { Button, Hint, InlineNotice, CopyButton } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -94,7 +94,7 @@ export function AgentProbe({
         description={probeRowDescription(result, busy)}
         trailing={
           <Button
-            icon={FlaskConical}
+            icon={Play}
             loading={busy}
             disabled={disabled || Boolean(disabledReason)}
             onClick={() => {

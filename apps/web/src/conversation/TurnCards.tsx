@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, TriangleAlert, Undo2 } from 'lucide-react'
+
 import type { ChangeList, ChangeReceipt, Message, TurnChanges } from '@latch/protocol'
-import { Button, Collapse, Hint, ICON_STROKE } from '@latch/ui'
+import { Button, Collapse, Hint, ICON_STROKE, ChevronDownGlyph, WarningGlyph, UndoGlyph } from '@latch/ui'
 import { OutputNotes, ProducedFiles } from '../components/FileOutputs.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { Turn } from '../conversation.ts'
@@ -116,7 +116,7 @@ function PartialNote({ list }: { list: ChangeList | undefined }) {
   if (!list?.partial) return null
   return (
     <div className="changed-files-partial">
-      <Hint lead={<TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
+      <Hint lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
         {PARTIAL_NOTE.detail}
       </Hint>
     </div>
@@ -249,7 +249,7 @@ export function TurnCards({
       <section ref={cardRef} className="undo-record" aria-label="已撤销本轮改动">
         <p className="undo-record-line">
           <span className="process-slot" aria-hidden="true">
-            <Undo2 size={14} strokeWidth={ICON_STROKE[14]} />
+            <UndoGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
           </span>
           已撤销本轮改动
           {canRedo && (
@@ -320,7 +320,7 @@ export function TurnCards({
         <Button
           size="xs"
           variant="ghost"
-          icon={Undo2}
+          icon={UndoGlyph}
           loading={phase === 'running'}
           onClick={() => {
             if (exceptions.length > 0 && phase === 'idle') setPhase('confirm')
@@ -391,7 +391,7 @@ export function TurnCards({
               setOpen(!open)
             }}>
             <span className="changed-files-toggle-word">显示文件</span>
-            <ChevronDown size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+            <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           </button>
           <span className="process-fill" />
           {undoControl}

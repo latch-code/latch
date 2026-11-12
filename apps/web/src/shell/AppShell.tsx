@@ -1,6 +1,6 @@
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
-import { ChevronLeft } from 'lucide-react'
+
 import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
@@ -10,7 +10,7 @@ import { worktreeProject } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
-import { Button, IconButton, LiveChanges, LayerHistory, ResizeHandle, Scrim } from '@latch/ui'
+import { Button, IconButton, LiveChanges, LayerHistory, ResizeHandle, Scrim, ChevronLeftGlyph } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
 import { PhoneReview } from '../phone-review/PhoneReview.tsx'
@@ -346,9 +346,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       }}>
                       <header className="info-page-head">
                         {phone ? (
-                          <IconButton ref={infoBack} size="lg" label="返回" icon={ChevronLeft} onClick={closeInfoPage} />
+                          <IconButton ref={infoBack} size="lg" label="返回" icon={ChevronLeftGlyph} onClick={closeInfoPage} />
                         ) : (
-                          <Button ref={infoBack} variant="ghost" icon={ChevronLeft} onClick={closeInfoPage}>
+                          <Button ref={infoBack} variant="ghost" icon={ChevronLeftGlyph} onClick={closeInfoPage}>
                             返回对话
                           </Button>
                         )}

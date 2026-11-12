@@ -1,22 +1,19 @@
 import { useCallback, useMemo } from 'react'
+import { ClipboardCopy, FileSearch, FolderTree, ArrowRightToLine, SunMoon } from 'lucide-react'
 import {
-  Bot,
-  ClipboardCopy,
-  Code2,
-  Download,
-  FileDiff,
-  FileSearch,
-  FolderTree,
-  File as FileIcon,
-  PanelLeft,
-  PanelRight,
-  ArrowRightToLine,
-  Search,
-  Settings,
-  SquarePen,
-  SunMoon,
-} from 'lucide-react'
-import { Icon, type LucideIcon } from '@latch/ui'
+  Icon,
+  type IconComponent,
+  CodeGlyph,
+  DownloadGlyph,
+  DiffGlyph,
+  FileGlyph,
+  PanelLeftGlyph,
+  PanelRightGlyph,
+  SearchGlyph,
+  SettingsGlyph,
+  NewSessionGlyph,
+  HarnessGlyph,
+} from '@latch/ui'
 import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
@@ -32,7 +29,7 @@ import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
 
-const glyph = (icon: LucideIcon) => <Icon icon={icon} size={16} />
+const glyph = (icon: IconComponent) => <Icon icon={icon} size={16} />
 
 /** Each settings section, in the order of the page, with the words it also answers to. */
 const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string }> = [
@@ -171,7 +168,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     id: `settings:${row.section}`,
     label: sectionLabel(row.section),
     ...(row.keywords ? { keywords: row.keywords } : {}),
-    icon: glyph(Settings),
+    icon: glyph(SettingsGlyph),
     run: () => {
       openSettings(row.section)
     },
@@ -195,7 +192,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           {
             id: 'space:code',
             label: 'Code',
-            icon: glyph(Code2),
+            icon: glyph(CodeGlyph),
             root: true,
             ...keys('space-code'),
             run: () => {
@@ -214,13 +211,13 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           },
         ]
       : []),
-    { id: 'new', label: '新会话', icon: glyph(SquarePen), root: true, ...keys('new'), run: startNew },
+    { id: 'new', label: '新会话', icon: glyph(NewSessionGlyph), root: true, ...keys('new'), run: startNew },
     ...(canViewChanges
       ? [
           {
             id: 'changes',
             label: APPROVAL_COPY.openChanges,
-            icon: glyph(FileDiff),
+            icon: glyph(DiffGlyph),
             root: true,
             ...keys('changes'),
             run: inSession(openChangesTab),
@@ -229,14 +226,14 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...(drawerMode && route.entry !== 'sessions'
       ? []
-      : [{ id: 'sidebar', label: '收起或展开侧栏', icon: glyph(PanelLeft), root: true, ...keys('sidebar'), run: toggleSidebar }]),
+      : [{ id: 'sidebar', label: '收起或展开侧栏', icon: glyph(PanelLeftGlyph), root: true, ...keys('sidebar'), run: toggleSidebar }]),
     ...(canDefineAgents
       ? [
           {
             id: 'new-agent',
             label: '添加 Harness',
             keywords: '新建 Harness',
-            icon: glyph(Bot),
+            icon: glyph(HarnessGlyph),
             root: true,
             run: () => {
               openAgentPage({ kind: 'presets' })
@@ -247,7 +244,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     {
       id: 'settings',
       label: '设置',
-      icon: glyph(Settings),
+      icon: glyph(SettingsGlyph),
       root: true,
       ...keys('settings'),
       run: () => {
@@ -259,7 +256,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           {
             id: 'find',
             label: '在当前会话中查找',
-            icon: glyph(Search),
+            icon: glyph(SearchGlyph),
             ...keys('find'),
             run: inSession(() => {
               setFindOpen(true)
@@ -269,7 +266,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...(summary
       ? [
-          { id: 'info', label: '展开或收起侧边面板', icon: glyph(PanelRight), ...keys('side-panel'), run: inSession(togglePanel) },
+          { id: 'info', label: '展开或收起侧边面板', icon: glyph(PanelRightGlyph), ...keys('side-panel'), run: inSession(togglePanel) },
           {
             id: 'copy',
             label: '复制当前会话为 Markdown',
@@ -281,7 +278,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           {
             id: 'export',
             label: '导出当前会话为 Markdown',
-            icon: glyph(Download),
+            icon: glyph(DownloadGlyph),
             run: () => {
               void exportTask(summary)
             },
@@ -308,7 +305,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     ...fileTabs.tabs.map(tab => ({
       id: `file:${tab.id}`,
       label: `切换文件：${tab.file?.name ?? tab.target.reference}`,
-      icon: glyph(FileIcon),
+      icon: glyph(FileGlyph),
       run: inSession(() => {
         fileTabs.select(tab.id)
         setInfoPage(true)

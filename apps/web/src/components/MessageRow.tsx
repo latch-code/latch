@@ -1,7 +1,7 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, CornerDownLeft, GitFork, History, Info, RotateCcw, Undo2, X } from 'lucide-react'
+import { GitFork, RotateCcw } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { ownTextStart } from '../conversation.ts'
@@ -9,7 +9,22 @@ import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { Button, Collapse, ICON_STROKE, IconButton, Shimmer, Swap, Tooltip, CopyButton } from '@latch/ui'
+import {
+  Button,
+  Collapse,
+  ICON_STROKE,
+  IconButton,
+  Shimmer,
+  Swap,
+  Tooltip,
+  CopyButton,
+  ChevronRightGlyph,
+  EnterGlyph,
+  HistoryGlyph,
+  InfoGlyph,
+  UndoGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 
 /** Times of the live reply's reasoning, which the Host reports on the detail while it streams. */
 export interface LiveReasoning {
@@ -76,7 +91,7 @@ export function ThinkingRow({
         <Swap value={live ? 'live' : 'settled'} effect="fade" className="thinking-label">
           {live ? frozen ? '思考中' : <Shimmer>思考中</Shimmer> : thought ? `思考了 ${thought}` : '思考过程'}
         </Swap>
-        <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         {elapsed && (
           <span className="process-time" aria-hidden="true">
             {elapsed}
@@ -214,7 +229,7 @@ function UserMessage({
             {message.forkContext && message.nativeFork && (
               // The harness forked its own record: the text record was not sent, so there is none to show.
               <p className="fork-context">
-                <GitFork size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 {harness ?? 'Harness'} 带着「
                 <VisibleText text={message.forkContext.title} />
                 」的前 {message.forkContext.turn} 轮
@@ -223,7 +238,7 @@ function UserMessage({
             {message.forkContext && !message.nativeFork && (
               <details className="fork-context">
                 <summary>
-                  <GitFork size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                  <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                   「<VisibleText text={message.forkContext.title} />
                   」的前 {message.forkContext.turn} 轮
                 </summary>
@@ -236,7 +251,8 @@ function UserMessage({
               // A text rebuild: what went to the model with these words, folded, and named for what it is.
               <details className="fork-context">
                 <summary>
-                  <History size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />按 {message.importContext.from} 会话的文字重建
+                  <HistoryGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />按{' '}
+                  {message.importContext.from} 会话的文字重建
                 </summary>
                 <pre>
                   <VisibleText text={message.text.slice(0, message.importContext.prefixLength)} />
@@ -269,7 +285,7 @@ function UserMessage({
           {text && <CopyButton text={text} label="复制" size="xs" />}
           {onEdit && (
             <IconButton
-              icon={Undo2}
+              icon={UndoGlyph}
               size="xs"
               label="从这里编辑"
               onClick={() => {
@@ -279,7 +295,7 @@ function UserMessage({
           )}
           {onHandoff && text && (
             <IconButton
-              icon={CornerDownLeft}
+              icon={EnterGlyph}
               size="xs"
               label="交给代码任务…"
               onClick={() => {
@@ -299,11 +315,11 @@ function UserMessage({
  */
 function SystemNote({ message, onRetry }: { message: Message; onRetry?: () => void }) {
   const failed = message.state === 'failed'
-  const Icon = failed ? X : Info
+  const Icon = failed ? CloseGlyph : InfoGlyph
   return (
     <article className={`message message-system${failed ? ' is-failed' : ''}`} data-message-id={message.id}>
       <span className="process-slot" aria-hidden="true">
-        <Icon size={12} strokeWidth={ICON_STROKE[12]} />
+        <Icon size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
       </span>
       <p>{message.text}</p>
       {failed && onRetry && (

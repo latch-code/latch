@@ -1,5 +1,4 @@
-import { LockKeyhole, TriangleAlert, WifiOff } from 'lucide-react'
-import { Hint, ICON_STROKE, StatusWord } from '@latch/ui'
+import { Hint, ICON_STROKE, StatusWord, LockGlyph, WarningGlyph, OfflineGlyph } from '@latch/ui'
 import type { AvatarState } from './avatarFace.ts'
 import { ACTIVITY_WORDS } from './model.ts'
 
@@ -18,7 +17,7 @@ export function Availability({ available, reason, offline }: { available: boolea
   if (offline)
     return (
       <span className="agent-availability" data-tone="warn">
-        <WifiOff size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         <span>Mac 不在线</span>
       </span>
     )
@@ -33,7 +32,7 @@ export function Availability({ available, reason, offline }: { available: boolea
     <Hint
       className="agent-availability"
       label="不可用"
-      lead={<TriangleAlert size={12} strokeWidth={ICON_STROKE[12]} />}
+      lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
       moreLabel="为什么不可用">
       {reason}
     </Hint>
@@ -44,7 +43,7 @@ export function Availability({ available, reason, offline }: { available: boolea
 export function LockedAgents() {
   return (
     <div className="agents-locked" role="status">
-      <Hint label="这台设备看不到 Agent" lead={<LockKeyhole size={12} strokeWidth={ICON_STROKE[12]} />}>
+      <Hint label="这台设备看不到 Agent" lead={<LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
         Agent 的指令、记忆和会话只对能读取全部数据的设备开放。在这台 Mac 的 设置 › 设备 里为这台设备打开「可以看项目文件」后可见。
       </Hint>
     </div>

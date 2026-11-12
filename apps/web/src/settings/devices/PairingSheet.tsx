@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Wifi, WifiOff } from 'lucide-react'
+import { Wifi } from 'lucide-react'
 import type { AppSnapshot, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
-import { Button, Icon, InlineNotice, Modal, ModalHeader, Spinner } from '@latch/ui'
+import { Button, Icon, InlineNotice, Modal, ModalHeader, Spinner, OfflineGlyph } from '@latch/ui'
 import { useViewport } from '../../breakpoints.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { activeFullAccess } from '../../core/blocking.ts'
@@ -265,7 +265,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
         {said}
         <Center>
           <span className="pair-glyph" aria-hidden="true">
-            <Icon icon={WifiOff} size={20} />
+            <Icon icon={OfflineGlyph} size={20} />
           </span>
           <p className="pair-note">{COPY.noNetwork}</p>
         </Center>

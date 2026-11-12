@@ -1,7 +1,19 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Ellipsis, FolderPlus, Pencil, Plus, Settings } from 'lucide-react'
+import { FolderPlus } from 'lucide-react'
 import type { WorkspaceInfo } from '@latch/protocol'
-import { Button, ICON_STROKE, IconButton, InlineNotice, Menu, TextField } from '@latch/ui'
+import {
+  Button,
+  ICON_STROKE,
+  IconButton,
+  InlineNotice,
+  Menu,
+  TextField,
+  ChevronRightGlyph,
+  MoreGlyph,
+  EditGlyph,
+  PlusGlyph,
+  SettingsGlyph,
+} from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectFolders, projectName } from '../projects.tsx'
@@ -35,7 +47,7 @@ export function ShelfHead({
     <div className={className ? `shelf-head ${className}` : 'shelf-head'} data-folded={folded ? '' : undefined}>
       <button type="button" className="shelf-toggle" aria-expanded={!folded} onClick={onFold}>
         <span className="shelf-label">{label}</span>
-        <ChevronRight className="shelf-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <ChevronRightGlyph className="shelf-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
       <span className="shelf-tail">
         {count !== undefined && <span className="shelf-count">{count}</span>}
@@ -96,13 +108,13 @@ export function ProjectGroupHeading({
   const actions = !renaming && (
     <>
       {onNew && !project.unavailable && (
-        <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} tooltip="新会话" icon={Plus} onClick={onNew} />
+        <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} tooltip="新会话" icon={PlusGlyph} onClick={onNew} />
       )}
       {onEditProject && (
         <Menu
           label={`${projectName(project)} 的项目操作`}
           align="end"
-          trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={Ellipsis} />}
+          trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={MoreGlyph} />}
           sections={[
             {
               id: 'project',
@@ -110,7 +122,7 @@ export function ProjectGroupHeading({
                 {
                   id: 'rename',
                   label: '重命名',
-                  icon: Pencil,
+                  icon: EditGlyph,
                   onSelect: () => {
                     setName(projectName(project))
                     setRenaming(true)
@@ -135,7 +147,7 @@ export function ProjectGroupHeading({
                       },
                     ]
                   : []),
-                { id: 'edit', label: '管理文件夹…', icon: Settings, onSelect: () => onEditProject(project.id) },
+                { id: 'edit', label: '管理文件夹…', icon: SettingsGlyph, onSelect: () => onEditProject(project.id) },
               ],
             },
           ]}

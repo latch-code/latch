@@ -1,7 +1,21 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ChevronLeft, ChevronRight, LockKeyhole, TriangleAlert } from 'lucide-react'
+
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, Icon, IconButton, InlineNotice, Menu, type MenuItem, type MenuTriggerProps } from '@latch/ui'
+import {
+  Button,
+  Hint,
+  ICON_STROKE,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Menu,
+  type MenuItem,
+  type MenuTriggerProps,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  LockGlyph,
+  WarningGlyph,
+} from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
@@ -433,7 +447,7 @@ function ApprovalPanel({
               <span className="approval-pager">
                 <IconButton
                   size="xs"
-                  icon={ChevronLeft}
+                  icon={ChevronLeftGlyph}
                   label="上一个"
                   disabled={position === 0}
                   onClick={() => {
@@ -443,7 +457,7 @@ function ApprovalPanel({
                 <span>{APPROVAL_COPY.drawerCount(position + 1, total)}</span>
                 <IconButton
                   size="xs"
-                  icon={ChevronRight}
+                  icon={ChevronRightGlyph}
                   label="下一个"
                   disabled={position === total - 1}
                   onClick={() => {
@@ -473,7 +487,7 @@ function ApprovalPanel({
             </p>
           )}
           {gate.note && (
-            <Hint className="approval-note" lead={<Icon icon={TriangleAlert} size={12} />} label={gate.note.label}>
+            <Hint className="approval-note" lead={<Icon icon={WarningGlyph} size={12} />} label={gate.note.label}>
               {gate.note.detail}
             </Hint>
           )}
@@ -489,7 +503,7 @@ function ApprovalPanel({
           ))}
           {gate.hint && (
             <p className="approval-hint">
-              <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              <LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
               {gate.hint}
             </p>
           )}

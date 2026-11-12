@@ -1,7 +1,20 @@
 import { useId, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Ellipsis, Info, Lock } from 'lucide-react'
+
 import { usePresence } from '../hooks/useListMotion.ts'
-import { Button, Hint, Icon, IconButton, Loading as InlineLoading, type LucideIcon, type MenuTriggerProps } from '@latch/ui'
+import {
+  Button,
+  Hint,
+  Icon,
+  IconButton,
+  Loading as InlineLoading,
+  type IconComponent,
+  type MenuTriggerProps,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  MoreGlyph,
+  InfoGlyph,
+  LockGlyph,
+} from '@latch/ui'
 import type { Brief } from '../core/securityCopy.ts'
 
 /**
@@ -26,7 +39,7 @@ export function SectionHeading({ title, description, action }: { title: string; 
  * A fact in a few words with the rest behind ⓘ (`Hint`), under a group's card or in a form: a glyph that says what kind
  * of fact it is (a lock for 「only there」), the label, and at most one action after it.
  */
-export function NoteLine({ brief, icon = Info, action }: { brief: Brief; icon?: LucideIcon; action?: ReactNode }) {
+export function NoteLine({ brief, icon = InfoGlyph, action }: { brief: Brief; icon?: IconComponent; action?: ReactNode }) {
   return (
     <div className="settings-note">
       <Hint lead={<Icon icon={icon} size={12} />} label={brief.label}>
@@ -78,7 +91,7 @@ export function SettingsGroup({
       {bare ? children : <div className="settings-card">{children}</div>}
       {caption && (
         <p className="settings-caption">
-          {captionIcon && <Icon icon={captionIcon === 'lock' ? Lock : Info} size={14} />}
+          {captionIcon && <Icon icon={captionIcon === 'lock' ? LockGlyph : InfoGlyph} size={14} />}
           <span>{caption}</span>
         </p>
       )}
@@ -88,7 +101,7 @@ export function SettingsGroup({
 }
 
 /** A 32px tile for a row that leads with an icon instead of a brand: the hover fill, a 16px glyph in ink-2. */
-export function IconTile({ icon }: { icon: LucideIcon }) {
+export function IconTile({ icon }: { icon: IconComponent }) {
   return (
     <span className="settings-icon-tile" aria-hidden="true">
       <Icon icon={icon} size={16} />
@@ -209,7 +222,7 @@ export function NavRow({
       <RowText title={title} description={description} record={record} ids={id} />
       <span className="settings-row-end">
         {value !== undefined && <span className="settings-row-value">{value}</span>}
-        <Icon icon={ChevronRight} size={12} className="settings-row-chevron" />
+        <Icon icon={ChevronRightGlyph} size={12} className="settings-row-chevron" />
       </span>
     </button>
   )
@@ -273,7 +286,7 @@ export function MiddleEllipsis({ text, className }: { text: string; className?: 
 /** The way back from a page inside a section to the section (or from a list page to 电脑); from 768px only. */
 export function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Button variant="ghost" icon={ChevronLeft} className="settings-back" onClick={onClick}>
+    <Button variant="ghost" icon={ChevronLeftGlyph} className="settings-back" onClick={onClick}>
       {label}
     </Button>
   )
@@ -281,7 +294,7 @@ export function BackLink({ label, onClick }: { label: string; onClick: () => voi
 
 /** The ⋯ button that opens a row's menu of actions; `label` names the row's object, as the menu does. */
 export function moreButton(label: string) {
-  return (props: MenuTriggerProps) => <IconButton {...props} label={label} icon={Ellipsis} />
+  return (props: MenuTriggerProps) => <IconButton {...props} label={label} icon={MoreGlyph} />
 }
 
 /** Settings sections loading their data: the design system's inline loading line. */

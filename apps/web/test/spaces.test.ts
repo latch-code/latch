@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
-import { AgentsMark } from '../src/agents/AgentAvatar.tsx'
+import { AgentsGlyph } from '../src/agents/AgentAvatar.tsx'
 import { BRACKET_PATHS } from '../src/agents/avatarFace.ts'
 import {
   filterSessions,
@@ -222,15 +222,15 @@ describe('going between the places', () => {
 })
 
 describe('the 我的 Agent mark', () => {
-  it('is the curly-brace face with dot eyes, moved onto the icon grid, in one colour', () => {
-    const html = renderToStaticMarkup(createElement(AgentsMark, { size: 16 }))
+  it('is the curly-brace face with dot eyes, moved onto the 16 grid of the glyphs, in one colour', () => {
+    const html = renderToStaticMarkup(createElement(AgentsGlyph, { size: 16 }))
     const paths = [...html.matchAll(/<path d="([^"]+)"/gu)].map(match => match[1]!)
     expect(paths).toHaveLength(2)
-    // The face's own braces, every point shifted by the same crop.
+    // The face's own braces, every point shifted by the same crop and scaled from 24 units onto the glyph's 16.
     const first = BRACKET_PATHS.curly[0].match(/-?\d+(?:\.\d+)?/gu)!.map(Number)
     const moved = paths[0]!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)
-    expect(moved.map((value, index) => Math.round((value - first[index]!) * 10) / 10)).toEqual(
-      first.map((_, index) => (index % 2 === 0 ? -8 : -8.5)),
+    expect(moved.map((value, index) => Math.round((value * 1.5 + (index % 2 === 0 ? 8 : 8.5) - first[index]!) * 10) / 10 + 0)).toEqual(
+      first.map(() => 0),
     )
     expect(html.match(/<circle /gu)).toHaveLength(2)
     expect(html).toContain('fill="currentColor"')

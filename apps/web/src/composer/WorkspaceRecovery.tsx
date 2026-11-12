@@ -1,5 +1,5 @@
 import { FolderInput } from 'lucide-react'
-import { Button, ValuePicker } from '@latch/ui'
+import { Button, ICON_STROKE, ValuePicker } from '@latch/ui'
 import { RECOVERY_COPY } from '../core/securityCopy.ts'
 import { basename, middleEllipsis } from '../format.ts'
 import { ProjectIcon, projectName } from '../projects.tsx'
@@ -20,7 +20,7 @@ export function WorkspaceRecovery(props: WorkspaceRecoveryProps) {
   return (
     <section className="composer-drawer recovery-drawer" aria-label="选择项目继续会话">
       <p className="recovery-line" role="status">
-        <FolderInput size={16} aria-hidden="true" />
+        <FolderInput size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         {RECOVERY_COPY.folderMissing(
           escapeHiddenCharacters(basename(props.source.summary.cwd ?? '') || props.source.summary.title || '这个会话'),
         )}

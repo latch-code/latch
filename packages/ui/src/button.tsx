@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ComponentProps, type MouseEvent, type ReactNode } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
-import { Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
+import { CheckGlyph, ChevronDownGlyph } from './glyphs/index.tsx'
+import { Icon, Spinner, type IconSize, type IconComponent } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
 import { Swap } from './motion.tsx'
 import { Kbd, ariaKeyShortcuts } from './pill.tsx'
@@ -24,7 +24,7 @@ type ButtonProps = Omit<ComponentProps<'button'>, 'disabled'> & {
   variant?: ButtonVariant
   size?: ButtonSize
   /** One leading icon at most. */
-  icon?: LucideIcon
+  icon?: IconComponent
   /** Ends with chevron-down: the button opens a menu of actions. Nothing else may trail a label. */
   menu?: boolean
   /** Running: the width stays, a spinner replaces the leading icon and `loadingLabel` (「检测中…」) the label. */
@@ -112,7 +112,7 @@ export function Button({
   const glyph = loading || (pending && icon) ? <Spinner size={GLYPH[size]} /> : icon ? <Icon icon={icon} size={GLYPH[size]} /> : null
   const lead = done ? (
     <Swap value="done" className="ui-button-tick">
-      <Icon icon={Check} size={GLYPH[size]} />
+      <Icon icon={CheckGlyph} size={GLYPH[size]} />
     </Swap>
   ) : (
     glyph
@@ -153,7 +153,7 @@ export function Button({
           ))}
         </span>
       )}
-      {menu && <Icon icon={ChevronDown} size={12} className="ui-button-chevron" />}
+      {menu && <Icon icon={ChevronDownGlyph} size={12} className="ui-button-chevron" />}
     </button>
   )
   // Keys drawn on the button are not repeated in its tooltip.
@@ -177,7 +177,7 @@ export function ButtonLink({
   className,
   children,
   ...props
-}: ComponentProps<'a'> & { variant?: ButtonVariant; size?: ButtonSize; icon?: LucideIcon }) {
+}: ComponentProps<'a'> & { variant?: ButtonVariant; size?: ButtonSize; icon?: IconComponent }) {
   return (
     <a {...props} className={cx('ui-button', className)} data-variant={variant} data-size={size} data-leading={icon ? '' : undefined}>
       {icon && <Icon icon={icon} size={GLYPH[size]} />}
@@ -193,7 +193,7 @@ const ICON_GLYPH: Record<IconButtonSize, IconSize> = { xs: 14, sm: 16, md: 16, l
 type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'disabled'> & {
   /** The accessible name and the tooltip. */
   label: string
-  icon: LucideIcon
+  icon: IconComponent
   size?: IconButtonSize
   /** A toggle: on is the hover fill with ink, never blue. */
   pressed?: boolean

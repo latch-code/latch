@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft } from 'lucide-react'
-import { IconButton, MOTION } from '@latch/ui'
+
+import { IconButton, MOTION, ChevronLeftGlyph } from '@latch/ui'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { BackLink } from './common.tsx'
 
@@ -158,7 +158,7 @@ function PhoneLevels({ levels, section }: { levels: SettingsLevel[]; section: st
               backs.current.set(level.key, element)
             }}
             label={`返回${previous}`}
-            icon={ChevronLeft}
+            icon={ChevronLeftGlyph}
             onClick={level.onBack}
           />
           <h2>{level.title}</h2>

@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { CircleAlert, CircleCheck, CircleHelp, LogOut, RefreshCw } from 'lucide-react'
+import { CircleHelp, LogOut } from 'lucide-react'
 import type { AgentProbeResult, HarnessInfo } from '@latch/protocol'
-import { Button } from '@latch/ui'
+import { Button, AlertGlyph, CircleCheckGlyph, RefreshGlyph } from '@latch/ui'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { HarnessLoginSteps, loginDoubted, loginEndDay, loginEndsSoon, useLoginStatus } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -58,7 +58,7 @@ export function LoginGroup({
           <Button
             variant="ghost"
             size="xs"
-            icon={RefreshCw}
+            icon={RefreshGlyph}
             loading={checking}
             onClick={() => {
               setChecking(true)
@@ -74,7 +74,7 @@ export function LoginGroup({
         leading={
           <IconTile
             icon={
-              signedIn ? (soon || doubted ? CircleAlert : CircleCheck) : status === 'unauthenticated' || left ? CircleAlert : CircleHelp
+              signedIn ? (soon || doubted ? AlertGlyph : CircleCheckGlyph) : status === 'unauthenticated' || left ? AlertGlyph : CircleHelp
             }
           />
         }

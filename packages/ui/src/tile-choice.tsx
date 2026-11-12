@@ -1,7 +1,7 @@
 import { useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react'
-import { CircleSlash } from 'lucide-react'
+import { BlockedGlyph } from './glyphs/index.tsx'
 import { cx, nextIndex } from './internal.ts'
-import { Icon, type LucideIcon } from './icon.tsx'
+import { Icon, type IconComponent } from './icon.tsx'
 import { Collapse } from './motion.tsx'
 import { Tooltip } from './tooltip.tsx'
 
@@ -113,7 +113,7 @@ export function TileChoice<T extends string>({
       {/* The line opens under the row like a disclosure and keeps its words while it folds away. */}
       <Collapse open={reason !== undefined}>
         <p className="ui-tile-choice-reason" aria-hidden="true">
-          <Icon icon={CircleSlash} size={12} />
+          <Icon icon={BlockedGlyph} size={12} />
           {said}
         </p>
       </Collapse>
@@ -132,7 +132,7 @@ export function TileAction({
   className,
   variant = 'tiles',
   ...props
-}: Omit<ComponentProps<'button'>, 'children'> & { icon: LucideIcon; label: string; note?: string; variant?: 'tiles' | 'compact' }) {
+}: Omit<ComponentProps<'button'>, 'children'> & { icon: IconComponent; label: string; note?: string; variant?: 'tiles' | 'compact' }) {
   return (
     <button {...props} type="button" data-variant={variant} className={cx('ui-tile-choice-item', 'ui-tile-action', className)}>
       <span className="ui-tile-choice-tile">

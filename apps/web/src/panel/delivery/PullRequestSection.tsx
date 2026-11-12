@@ -1,19 +1,24 @@
-import {
-  Check,
-  CircleAlert,
-  CircleDashed,
-  CircleHelp,
-  CircleMinus,
-  ExternalLink,
-  GitPullRequest,
-  Info,
-  MessageSquarePlus,
-  RefreshCw,
-  TriangleAlert,
-  X,
-} from 'lucide-react'
+import { CircleDashed, CircleHelp, CircleMinus, GitPullRequest, MessageSquarePlus } from 'lucide-react'
 import type { GitCheck, GitPrComment, GitPrState, GitPullRequest as PullRequest } from '@latch/protocol'
-import { Badge, Button, ButtonLink, ICON_STROKE, IconButton, Spinner, StatusWord, Switch, TextAreaField, TextField } from '@latch/ui'
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  ICON_STROKE,
+  IconButton,
+  Spinner,
+  StatusWord,
+  Switch,
+  TextAreaField,
+  TextField,
+  CheckGlyph,
+  AlertGlyph,
+  ExternalGlyph,
+  InfoGlyph,
+  RefreshGlyph,
+  WarningGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import {
   checkDuration,
@@ -71,10 +76,10 @@ export function prInput(form: PrForm, state: GitPrState | undefined): PrCreateIn
   }
 }
 
-function CheckGlyph({ state }: { state: GitCheck['state'] }) {
-  const props = { size: 14, strokeWidth: ICON_STROKE[14], 'aria-hidden': true as const }
-  if (state === 'pass') return <Check {...props} />
-  if (state === 'fail') return <X {...props} />
+function CheckStateGlyph({ state }: { state: GitCheck['state'] }) {
+  const props = { size: 14, strokeWidth: ICON_STROKE[14], nonScalingStroke: true, 'aria-hidden': true as const }
+  if (state === 'pass') return <CheckGlyph {...props} />
+  if (state === 'fail') return <CloseGlyph {...props} />
   if (state === 'pending') return <CircleDashed {...props} />
   return <CircleMinus {...props} />
 }
@@ -99,7 +104,7 @@ function CheckRow({
   return (
     <>
       <div className="delivery-check" data-state={check.state}>
-        <CheckGlyph state={check.state} />
+        <CheckStateGlyph state={check.state} />
         <span className="delivery-check-name" title={check.workflow ? `${check.workflow} · ${check.name}` : check.name}>
           <VisibleText text={check.name} />
         </span>
@@ -125,7 +130,7 @@ function CheckRow({
         </div>
       )}
       {job && log?.kind === 'failed' && (
-        <Line tone="red" icon={CircleAlert}>
+        <Line tone="red" icon={AlertGlyph}>
           {failureCopy(log.code)?.label ?? log.text}
         </Line>
       )}
@@ -189,16 +194,16 @@ function PrRow({ pr, onReload, loading }: { pr: PullRequest; onReload: () => voi
   return (
     <div className="delivery-pr">
       <div className="delivery-pr-line">
-        <GitPullRequest size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <GitPullRequest size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="delivery-pr-title" title={pr.title}>
           <span className="delivery-pr-number">#{pr.number}</span> <VisibleText text={pr.title} />
         </span>
         {pr.url.startsWith('https://') && (
-          <ButtonLink size="xs" variant="ghost" icon={ExternalLink} href={pr.url} target="_blank" rel="noopener noreferrer">
+          <ButtonLink size="xs" variant="ghost" icon={ExternalGlyph} href={pr.url} target="_blank" rel="noopener noreferrer">
             打开
           </ButtonLink>
         )}
-        <IconButton size="xs" label="刷新" icon={RefreshCw} disabled={loading} onClick={onReload} />
+        <IconButton size="xs" label="刷新" icon={RefreshGlyph} disabled={loading} onClick={onReload} />
       </div>
       <div className="delivery-pr-states">
         <StatusWord tone={pr.state === 'merged' ? 'done' : 'neutral'}>{PR_STATE_WORD[pr.state]}</StatusWord>
@@ -241,7 +246,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       {read.kind === 'failed' && (
         <Line
           tone={copy?.tone === 'failed' || !copy ? 'red' : copy.tone === 'warn' ? 'amber' : 'muted'}
-          icon={copy?.tone === 'neutral' ? Info : copy?.tone === 'warn' ? TriangleAlert : CircleAlert}
+          icon={copy?.tone === 'neutral' ? InfoGlyph : copy?.tone === 'warn' ? WarningGlyph : AlertGlyph}
           detail={copy?.detail}
           action={
             <Button size="xs" variant="ghost" onClick={props.onReload}>
@@ -389,7 +394,7 @@ function PrFailureLine({ failure }: { failure: PrFailure }) {
     return (
       <section className="delivery-card" data-tone="red" aria-label="PR 没有创建">
         <header className="delivery-card-head">
-          <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <strong>PR 没有创建</strong>
         </header>
         <Output text={failure.tail} label="gh 输出" />
@@ -398,7 +403,7 @@ function PrFailureLine({ failure }: { failure: PrFailure }) {
   return (
     <Line
       tone={!copy || copy.tone === 'failed' ? 'red' : copy.tone === 'warn' ? 'amber' : 'muted'}
-      icon={!copy || copy.tone === 'failed' ? CircleAlert : copy.tone === 'warn' ? TriangleAlert : Info}
+      icon={!copy || copy.tone === 'failed' ? AlertGlyph : copy.tone === 'warn' ? WarningGlyph : InfoGlyph}
       detail={copy?.detail}>
       {copy?.label ?? failure.text}
     </Line>

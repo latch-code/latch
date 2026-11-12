@@ -1,7 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CornerDownLeft, FileText, MessageSquareQuote, Plus, TextQuote, X } from 'lucide-react'
+import { MessageSquareQuote, TextQuote } from 'lucide-react'
 import type { Handoff, HandoffCreate, HandoffList, HostCatalog, Message } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, IconButton, InlineNotice, SegmentedControl, StatusWord, TextAreaField, ValuePicker } from '@latch/ui'
+import {
+  Button,
+  Hint,
+  ICON_STROKE,
+  IconButton,
+  InlineNotice,
+  SegmentedControl,
+  StatusWord,
+  TextAreaField,
+  ValuePicker,
+  EnterGlyph,
+  FileGlyph,
+  PlusGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { api, newRequestId } from '../core/api.ts'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
 import { FolderControl, HEAD_START } from '../composer/FolderControl.tsx'
@@ -291,7 +305,7 @@ export function SourceHandoffDock({
             close()
           }}>
           <header className="handoff-card-head">
-            <CornerDownLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <EnterGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <h3>交给代码任务</h3>
             <span className="handoff-spacer" />
             <SegmentedControl<Target>
@@ -307,7 +321,7 @@ export function SourceHandoffDock({
             />
             <IconButton
               label="关闭"
-              icon={X}
+              icon={CloseGlyph}
               size="xs"
               disabled={sending}
               onClick={() => {
@@ -421,7 +435,7 @@ export function SourceHandoffDock({
                       })),
                     },
                   ]}
-                  trigger={props => <IconButton {...props} label="添加文件" icon={Plus} size="xs" disabled={locked} />}
+                  trigger={props => <IconButton {...props} label="添加文件" icon={PlusGlyph} size="xs" disabled={locked} />}
                 />
               )}
               {chips.length === 0 && addable.length === 0 && <span className="handoff-muted">没有选中的材料</span>}
@@ -448,7 +462,7 @@ export function SourceHandoffDock({
               onValueChange={setScope}
               options={RETURN_SCOPES.map(item => ({ value: item.value, label: item.label }))}
             />
-            <Hint lead={<CornerDownLeft size={12} strokeWidth={ICON_STROKE[12]} />} label={SCOPE_LINES[scope]}>
+            <Hint lead={<EnterGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />} label={SCOPE_LINES[scope]}>
               {SCOPE_FACTS[scope]}
             </Hint>
           </div>
@@ -510,7 +524,7 @@ export function SourceHandoffDock({
                 </Button>
                 <Button
                   variant="primary"
-                  icon={CornerDownLeft}
+                  icon={EnterGlyph}
                   disabled={Boolean(problem) || offline || !canRun || sending}
                   pending={sending}
                   onClick={submit}>
@@ -527,7 +541,7 @@ export function SourceHandoffDock({
 
 /** A chip of 材料: what it is, its pinned version while one is being fixed, and ✕. */
 function Chip({ chip, changed, disabled, onRemove }: { chip: MaterialChip; changed: boolean; disabled: boolean; onRemove: () => void }) {
-  const Glyph = chip.kind === 'text' ? TextQuote : chip.kind === 'message' ? MessageSquareQuote : FileText
+  const Glyph = chip.kind === 'text' ? TextQuote : chip.kind === 'message' ? MessageSquareQuote : FileGlyph
   const label = chipLabel(chip)
   const state = chip.kind === 'text' ? undefined : chip.problem ? 'failed' : chip.hash ? undefined : 'pinning'
   return (
@@ -535,13 +549,13 @@ function Chip({ chip, changed, disabled, onRemove }: { chip: MaterialChip; chang
       className="handoff-chip"
       data-state={changed ? 'changed' : state}
       title={chip.kind !== 'text' && chip.hash ? `版本 ${chip.hash.slice(0, 12)}` : undefined}>
-      <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+      <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       <span className={chip.kind === 'file' ? 'handoff-chip-text is-mono' : 'handoff-chip-text'}>
         <VisibleText text={label} />
       </span>
       {changed && <span className="handoff-chip-note">已变化</span>}
       {!changed && chip.kind !== 'text' && chip.problem && <span className="handoff-chip-note">{chip.problem}</span>}
-      <IconButton label={`去掉 ${label}`} icon={X} size="xs" disabled={disabled} onClick={onRemove} />
+      <IconButton label={`去掉 ${label}`} icon={CloseGlyph} size="xs" disabled={disabled} onClick={onRemove} />
     </span>
   )
 }
@@ -565,7 +579,7 @@ function Decisions({ decisions, disabled, onChange }: { decisions: string[]; dis
           />
           <IconButton
             label={`去掉决定 ${index + 1}`}
-            icon={X}
+            icon={CloseGlyph}
             size="xs"
             disabled={disabled}
             onClick={() => {
@@ -578,7 +592,7 @@ function Decisions({ decisions, disabled, onChange }: { decisions: string[]; dis
         <Button
           size="xs"
           variant="ghost"
-          icon={Plus}
+          icon={PlusGlyph}
           disabled={disabled}
           onClick={() => {
             onChange([...decisions, ''])
@@ -658,7 +672,7 @@ function HandoffStatus({
   return (
     <section className="handoff-status" role="group" aria-label="交接" data-status={handoff.status}>
       <div className="handoff-status-line">
-        <CornerDownLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <EnterGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="handoff-status-title">交接</span>
         <StatusWord tone={words.tone}>{words.words}</StatusWord>
         {handoff.status === 'started' && handoff.targetSessionId && (
@@ -692,7 +706,7 @@ function HandoffStatus({
             )}
           </>
         )}
-        {onDismiss && handoff.status === 'started' && <IconButton label="收起" icon={X} size="xs" onClick={onDismiss} />}
+        {onDismiss && handoff.status === 'started' && <IconButton label="收起" icon={CloseGlyph} size="xs" onClick={onDismiss} />}
       </div>
       {handoff.status === 'start-unknown' && (
         <p className="handoff-status-note">

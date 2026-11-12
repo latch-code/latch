@@ -8,7 +8,7 @@ import { useSeen } from './preview/viewportGate.ts'
 import { Diagram } from './preview/Diagram.tsx'
 import type { FrameInput } from './preview/types.ts'
 import { normalizeMathDelimiters, restrictInlineMath } from './preview/math.ts'
-import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react'
+
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { FileChip, FileRootContext, FileSession } from './components/FileChip.tsx'
 import { FileOpenContext } from './preview/fileContext.ts'
@@ -18,7 +18,7 @@ import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
-import { ICON_STROKE } from '@latch/ui'
+import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph } from '@latch/ui'
 
 export interface MarkdownFiles {
   path?: string
@@ -172,9 +172,9 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           aria-label="复制代码"
           title={copied ? '已复制' : '复制'}>
           {copied ? (
-            <Check size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <CheckGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           ) : (
-            <Copy size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <CopyGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           )}
         </button>
       </div>
@@ -199,9 +199,9 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           onClick={() => setExpanded(value => !value)}>
           {expanded ? '收起代码' : `展开全部 ${lines} 行`}
           {expanded ? (
-            <ChevronUp size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <ChevronUpGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           ) : (
-            <ChevronDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <ChevronDownGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           )}
         </button>
       )}

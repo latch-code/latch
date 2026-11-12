@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import { CornerDownLeft, X } from 'lucide-react'
+
 import type { Handoff, HandoffReturn } from '@latch/protocol'
-import { Button, Checkbox, ICON_STROKE, IconButton, InlineNotice, StatusWord, TextAreaField } from '@latch/ui'
+import { Button, Checkbox, ICON_STROKE, IconButton, InlineNotice, StatusWord, TextAreaField, EnterGlyph, CloseGlyph } from '@latch/ui'
 import { api, newRequestId } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -48,7 +48,7 @@ export function TargetHandoffDock({ shell, handoffs }: { shell: ShellState; hand
   if (incoming.status === 'returned')
     return (
       <p className="handoff-status-line handoff-quiet">
-        <CornerDownLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <EnterGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <StatusWord tone="done">已交回</StatusWord>
         {source && (
           <Button size="xs" variant="ghost" onClick={() => shell.choose(source.id)}>
@@ -119,11 +119,11 @@ export function TargetHandoffDock({ shell, handoffs }: { shell: ShellState; hand
       {!open && (
         <div className="handoff-status" role="group" aria-label="交接">
           <div className="handoff-status-line">
-            <CornerDownLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <EnterGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             <span className="handoff-status-title">交接 · 回传{scopeWords(incoming.returnScope)}</span>
             {ready ? <StatusWord tone="waiting">等你交回</StatusWord> : <StatusWord tone="running">这一轮结束后可交回</StatusWord>}
             <span className="handoff-spacer" />
-            <Button size="xs" variant="primary" icon={CornerDownLeft} disabled={!ready || !canRun || offline} onClick={begin}>
+            <Button size="xs" variant="primary" icon={EnterGlyph} disabled={!ready || !canRun || offline} onClick={begin}>
               交回结果
             </Button>
           </div>
@@ -132,11 +132,11 @@ export function TargetHandoffDock({ shell, handoffs }: { shell: ShellState; hand
       {open && (
         <section className="handoff-card" role="group" aria-label="交回结果">
           <header className="handoff-card-head">
-            <CornerDownLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <EnterGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <h3>交回结果</h3>
             <span className="handoff-muted">回传{scopeWords(incoming.returnScope)}</span>
             <span className="handoff-spacer" />
-            <IconButton label="关闭" icon={X} size="xs" disabled={sending} onClick={() => setOpen(false)} />
+            <IconButton label="关闭" icon={CloseGlyph} size="xs" disabled={sending} onClick={() => setOpen(false)} />
           </header>
           <TextAreaField
             className="handoff-requirements"

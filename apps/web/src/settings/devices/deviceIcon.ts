@@ -1,9 +1,10 @@
-import { AppWindow, Laptop, Smartphone, Tablet } from 'lucide-react'
+import { AppWindow, Tablet } from 'lucide-react'
+import { LaptopGlyph, PhoneGlyph } from '@latch/ui'
 import type { Device } from '@latch/protocol'
-import type { LucideIcon } from '@latch/ui'
+import type { IconComponent } from '@latch/ui'
 
-export function deviceIcon(device: Pick<Device, 'listener' | 'name'>): LucideIcon {
+export function deviceIcon(device: Pick<Device, 'listener' | 'name'>): IconComponent {
   if (device.listener === 'native-direct' || device.listener === 'native-relay')
-    return /ipad|平板/iu.test(device.name) ? Tablet : Smartphone
-  return device.listener === 'unix' ? Laptop : AppWindow
+    return /ipad|平板/iu.test(device.name) ? Tablet : PhoneGlyph
+  return device.listener === 'unix' ? LaptopGlyph : AppWindow
 }

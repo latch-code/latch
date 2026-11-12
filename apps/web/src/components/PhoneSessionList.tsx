@@ -2,7 +2,7 @@ import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { originTitle } from '../plugin-pages/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { Archive, ChevronLeft, FileDiff, FolderGit2, Laptop, Pin, Plus, SquarePen } from 'lucide-react'
+import { FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { deviceAccess } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
@@ -27,7 +27,19 @@ import { MarkTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
 import { taskHarness, type TaskHarness } from './Sidebar.tsx'
-import { Button, ICON_STROKE, IconButton, SearchField } from '@latch/ui'
+import {
+  Button,
+  ICON_STROKE,
+  IconButton,
+  SearchField,
+  ArchiveGlyph,
+  ChevronLeftGlyph,
+  DiffGlyph,
+  LaptopGlyph,
+  PinGlyph,
+  PlusGlyph,
+  NewSessionGlyph,
+} from '@latch/ui'
 
 /** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
 const HOLD_MS = 500
@@ -150,11 +162,12 @@ const PhoneRow = memo(function PhoneRow({
           onHold(task)
         }}>
         <span className="phone-row-line">
-          {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
+          {task.pinned && <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
           {task.worktree && (
             <FolderGit2
               className="session-worktree"
               size={12}
+              nonScalingStroke
               strokeWidth={ICON_STROKE[12]}
               aria-label={`${task.worktree.removed ? '工作树已移除' : '工作树'} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
             />
@@ -184,7 +197,7 @@ const PhoneRow = memo(function PhoneRow({
           <Button
             size="sm"
             variant="secondary"
-            icon={FileDiff}
+            icon={DiffGlyph}
             data-review-task={task.id}
             aria-label={`${review} · ${title}`}
             onClick={() => {
@@ -257,7 +270,7 @@ function PhoneGroup({
               className="phone-group-new"
               size="xs"
               label={`在 ${group.label} 中新建会话`}
-              icon={Plus}
+              icon={PlusGlyph}
               onClick={() => {
                 onNewIn(workspaceId)
               }}
@@ -392,13 +405,13 @@ export function PhoneSessionList({
     <div className="phone-list-page">
       {remote && (
         <p className="phone-list-host" title={computerName(snapshot.hostName)}>
-          <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="phone-list-host-name">{computerName(snapshot.hostName)}</span>
         </p>
       )}
       <header className="phone-list-head">
         <h1>会话</h1>
-        <IconButton size="lg" label="新建会话" icon={SquarePen} onClick={onNew} />
+        <IconButton size="lg" label="新建会话" icon={NewSessionGlyph} onClick={onNew} />
       </header>
       <div className="phone-search" data-searching={searching ? '' : undefined}>
         <SearchField
@@ -426,7 +439,7 @@ export function PhoneSessionList({
             onClick={() => {
               onFilter('all')
             }}>
-            <ChevronLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <ChevronLeftGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span>已归档</span>
             <span className="phone-archived-count">{archivedCount}</span>
           </button>
@@ -480,7 +493,7 @@ export function PhoneSessionList({
             onClick={() => {
               onFilter('archived')
             }}>
-            <Archive size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <ArchiveGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span>已归档</span>
             <span className="phone-archived-count">{archivedCount}</span>
           </button>

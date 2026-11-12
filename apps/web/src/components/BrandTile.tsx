@@ -1,5 +1,5 @@
 import type { HarnessInfo, ProviderSummary } from '@latch/protocol'
-import { Tile, type LucideIcon, type TileSize, type TileState } from '@latch/ui'
+import { Tile, type IconComponent, type TileSize, type TileState } from '@latch/ui'
 import { harnessArt, providerArt, type BrandArt } from '../brands.ts'
 import { BrandMark } from './ui.tsx'
 
@@ -72,7 +72,7 @@ export function GlyphTile({
   label,
   className,
 }: {
-  icon: LucideIcon
+  icon: IconComponent
   size?: TileSize
   label?: string
   className?: string

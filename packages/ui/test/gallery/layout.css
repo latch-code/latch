@@ -92,6 +92,11 @@ body {
   gap: var(--sp-8);
   color: var(--muted);
 }
+.gallery-glyph-sheet {
+  flex-wrap: wrap;
+  gap: var(--sp-12);
+  color: var(--ink);
+}
 .gallery-inline {
   color: var(--ink-2);
   font-size: var(--fs-ui);

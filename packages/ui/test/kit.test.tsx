@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { page, userEvent } from 'vitest/browser'
-import { Check, FileText } from 'lucide-react'
+
 import {
   Button,
   Drawer,
@@ -17,6 +17,8 @@ import {
   SplitButton,
   StatusSlot,
   Tile,
+  CheckGlyph,
+  FileGlyph,
 } from '../src/index.ts'
 import { onTouchScreen, press } from './helpers.ts'
 
@@ -83,7 +85,7 @@ describe('Button pending and done', () => {
   it('morphs into a tick with the done words on success, and takes no clicks', async () => {
     const clicked = vi.fn()
     const screen = await render(
-      <Button icon={Check} done doneLabel="已允许" onClick={clicked}>
+      <Button icon={CheckGlyph} done doneLabel="已允许" onClick={clicked}>
         允许
       </Button>,
     )
@@ -98,7 +100,7 @@ describe('SelectButton and the xs segmented control', () => {
   it('draws a 28px value button that stays focusable when disabled', async () => {
     const clicked = vi.fn()
     const screen = await render(
-      <SelectButton leading={<Tile size={16} icon={FileText} />} disabled onClick={clicked}>
+      <SelectButton leading={<Tile size={16} icon={FileGlyph} />} disabled onClick={clicked}>
         通用
       </SelectButton>,
     )
@@ -153,8 +155,8 @@ describe('PanelTabs', () => {
         onValueChange={setValue}
         onClose={onClose}
         tabs={[
-          { value: 'a', label: '改动', icon: FileText, stat: { added: 60, removed: 6 } },
-          { value: 'b', label: 'notes.md', icon: FileText, closeLabel: '关闭 notes.md', fresh: true },
+          { value: 'a', label: '改动', icon: FileGlyph, stat: { added: 60, removed: 6 } },
+          { value: 'b', label: 'notes.md', icon: FileGlyph, closeLabel: '关闭 notes.md', fresh: true },
         ]}
       />
     )

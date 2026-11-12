@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { CircleX, Info, TriangleAlert, X } from 'lucide-react'
+import { CircleX } from 'lucide-react'
+import { InfoGlyph, WarningGlyph, CloseGlyph } from './glyphs/index.tsx'
 import { IconButton } from './button.tsx'
 import { Icon } from './icon.tsx'
 import { cx } from './internal.ts'
 
 export type NoticeTone = 'neutral' | 'warn' | 'error'
 
-const NOTICE_GLYPH = { neutral: Info, warn: TriangleAlert, error: CircleX } as const
+const NOTICE_GLYPH = { neutral: InfoGlyph, warn: WarningGlyph, error: CircleX } as const
 
 /**
  * An inline notice, also used as a banner at the top of the message area: the raised surface with a 1px line (an error
@@ -49,7 +50,7 @@ export function InlineNotice({
         </div>
       </div>
       {action && <div className="ui-notice-action">{action}</div>}
-      {onClose && <IconButton label={closeLabel} icon={X} size="xs" onClick={onClose} />}
+      {onClose && <IconButton label={closeLabel} icon={CloseGlyph} size="xs" onClick={onClose} />}
     </div>
   )
 }
@@ -82,13 +83,13 @@ export function Hint({
   return (
     <div className={cx('ui-hint', className)} data-open={open ? '' : undefined}>
       <span className="ui-hint-lead" aria-hidden="true">
-        {lead ?? <Icon icon={Info} size={12} />}
+        {lead ?? <Icon icon={InfoGlyph} size={12} />}
       </span>
       <span className="ui-hint-label">{label}</span>
       {children && (
         <IconButton
           label={moreLabel}
-          icon={Info}
+          icon={InfoGlyph}
           size="xs"
           aria-expanded={open}
           aria-controls={id}
@@ -107,7 +108,7 @@ export function Hint({
 }
 
 export type ToastTone = 'neutral' | 'error'
-const TOAST_GLYPH = { neutral: Info, error: CircleX } as const
+const TOAST_GLYPH = { neutral: InfoGlyph, error: CircleX } as const
 
 /**
  * A toast: a 36px floating pill, 13/18 text after a 14px glyph in its tone. Only for what happened elsewhere (「已由

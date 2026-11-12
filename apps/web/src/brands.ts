@@ -1,6 +1,7 @@
-import { Bot, FlaskConical, Plug, Puzzle } from 'lucide-react'
+import { Plug, Presentation } from 'lucide-react'
+import { PluginsGlyph, HarnessGlyph } from '@latch/ui'
 import type { ProviderSummary } from '@latch/protocol'
-import type { LucideIcon, TileMark } from '@latch/ui'
+import type { IconComponent, TileMark } from '@latch/ui'
 import anthropic from './assets/brands/anthropic.svg?no-inline'
 import bailian from './assets/brands/bailian.svg?no-inline'
 import codex from './assets/brands/codex.svg?no-inline'
@@ -27,7 +28,7 @@ import zhipu from './assets/brands/zhipu.svg?no-inline'
  * unmodified; sources and licences in public/licenses/brands), the app's own icon for the built-in harness, or a neutral glyph for
  * something that has no icon of its own. Never a letter.
  */
-export type BrandArt = { kind: 'mark'; mark: TileMark } | { kind: 'app' } | { kind: 'glyph'; icon: LucideIcon }
+export type BrandArt = { kind: 'mark'; mark: TileMark } | { kind: 'app' } | { kind: 'glyph'; icon: IconComponent }
 
 /** Every harness preset (agent-presets.ts) but those marked `brandMark: false`, which draw the neutral agent glyph; the brand test checks both. */
 export const HARNESS_MARKS: Record<string, TileMark> = {
@@ -61,7 +62,10 @@ export const PROVIDER_MARKS: Record<string, TileMark> = {
 }
 
 /** Glyphs for what has no brand: a custom agent command, a plugin, a custom OpenAI-compatible service, the demo model. */
-export const GLYPHS = { agent: Bot, plugin: Puzzle, custom: Plug, demo: FlaskConical } as const satisfies Record<string, LucideIcon>
+export const GLYPHS = { agent: HarnessGlyph, plugin: PluginsGlyph, custom: Plug, demo: Presentation } as const satisfies Record<
+  string,
+  IconComponent
+>
 
 /**
  * The preset an ID was made from. The Host names an agent or a service after its preset (`codex`, then `codex-2`, …),

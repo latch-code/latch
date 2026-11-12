@@ -1,18 +1,18 @@
-import { BookOpen, Code, Database, FlaskConical, Folder, Folders, Globe, PenTool, Server, Smartphone, Wrench } from 'lucide-react'
+import { BookOpen, Database, Folders, PenTool, Server, TestTubeDiagonal, Wrench } from 'lucide-react'
 import type { HarnessInfo, ProjectGlyph, TaskSummary, WorkspaceFolder, WorkspaceInfo } from '@latch/protocol'
-import { Icon, type LucideIcon } from '@latch/ui'
+import { Icon, type IconComponent, CodeGlyph, FolderGlyph, GlobeGlyph, PhoneGlyph } from '@latch/ui'
 import type { Brief } from './core/securityCopy.ts'
 import { basename } from './format.ts'
 
-export const PROJECT_ICONS: Record<ProjectGlyph, { label: string; icon: LucideIcon }> = {
-  folder: { label: '文件夹', icon: Folder },
-  code: { label: '代码', icon: Code },
-  globe: { label: '网页', icon: Globe },
+export const PROJECT_ICONS: Record<ProjectGlyph, { label: string; icon: IconComponent }> = {
+  folder: { label: '文件夹', icon: FolderGlyph },
+  code: { label: '代码', icon: CodeGlyph },
+  globe: { label: '网页', icon: GlobeGlyph },
   server: { label: '服务', icon: Server },
-  smartphone: { label: '移动应用', icon: Smartphone },
+  smartphone: { label: '移动应用', icon: PhoneGlyph },
   'book-open': { label: '文档', icon: BookOpen },
   database: { label: '数据', icon: Database },
-  'flask-conical': { label: '实验', icon: FlaskConical },
+  'flask-conical': { label: '实验', icon: TestTubeDiagonal },
   'pen-tool': { label: '设计', icon: PenTool },
   wrench: { label: '工具', icon: Wrench },
 }
@@ -24,7 +24,9 @@ export const projectName = (project: WorkspaceInfo) => project.name || basename(
 export function ProjectIcon({ project, size = 16 }: { project: WorkspaceInfo; size?: 12 | 14 | 16 | 20 | 24 }) {
   return (
     <Icon
-      icon={project.glyph ? (PROJECT_ICONS[project.glyph]?.icon ?? Folder) : projectFolders(project).length > 1 ? Folders : Folder}
+      icon={
+        project.glyph ? (PROJECT_ICONS[project.glyph]?.icon ?? FolderGlyph) : projectFolders(project).length > 1 ? Folders : FolderGlyph
+      }
       size={size}
     />
   )

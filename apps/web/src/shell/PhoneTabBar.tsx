@@ -1,15 +1,14 @@
-import { Code2, LayoutGrid, Settings } from 'lucide-react'
-import { AgentsMark } from '../agents/AgentAvatar.tsx'
-import { Icon, type LucideIcon } from '@latch/ui'
+import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
+import { Icon, type IconComponent, CodeGlyph, PluginsGlyph, SettingsGlyph } from '@latch/ui'
 import { waitingCount } from '../sessions.ts'
 import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
-const TABS: Partial<Record<ShellEntry, { label: string; icon: LucideIcon | 'agents' }>> = {
-  sessions: { label: 'Code', icon: Code2 },
-  agents: { label: '我的 Agent', icon: 'agents' },
-  apps: { label: '应用', icon: LayoutGrid },
-  settings: { label: '设置', icon: Settings },
+const TABS: Partial<Record<ShellEntry, { label: string; icon: IconComponent }>> = {
+  sessions: { label: 'Code', icon: CodeGlyph },
+  agents: { label: '我的 Agent', icon: AgentsGlyph },
+  apps: { label: '应用', icon: PluginsGlyph },
+  settings: { label: '设置', icon: SettingsGlyph },
 }
 
 /**
@@ -38,7 +37,7 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
             onClick={() => {
               goEntry(entry)
             }}>
-            {tab.icon === 'agents' ? <AgentsMark size={20} /> : <Icon icon={tab.icon} size={20} />}
+            <Icon icon={tab.icon} size={20} solid={route.entry === entry} />
             <span>{tab.label}</span>
             {waits && <span className="phone-tab-dot" aria-hidden="true" />}
           </button>,

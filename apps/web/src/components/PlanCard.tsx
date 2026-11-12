@@ -1,6 +1,6 @@
-import { Circle, CircleCheck, CircleDot } from 'lucide-react'
+import { Circle, CircleDot } from 'lucide-react'
 import type { PlanEntry } from '@latch/protocol'
-import { ICON_STROKE, StatusGlyph } from '@latch/ui'
+import { ICON_STROKE, StatusGlyph, CircleCheckGlyph } from '@latch/ui'
 
 /**
  * `active`: the session is still running, so the step in progress is drawn in ink; once it settles that step reads as
@@ -14,11 +14,11 @@ export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean 
         <li key={index} className={`plan-entry plan-${entry.status}`}>
           <StatusGlyph className="plan-icon" state={entry.status}>
             {entry.status === 'completed' ? (
-              <CircleCheck size={14} strokeWidth={ICON_STROKE[14]} />
+              <CircleCheckGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
             ) : entry.status === 'in_progress' ? (
-              <CircleDot size={14} strokeWidth={ICON_STROKE[14]} />
+              <CircleDot size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
             ) : (
-              <Circle size={14} strokeWidth={ICON_STROKE[14]} />
+              <Circle size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
             )}
           </StatusGlyph>
           <span className="plan-text">{entry.content}</span>

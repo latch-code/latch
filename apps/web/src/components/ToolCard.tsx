@@ -1,5 +1,5 @@
 import { Fragment, memo, useContext, useId, useMemo, useRef, useState } from 'react'
-import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, RotateCcw, TimerOff, X } from 'lucide-react'
+import { CircleDashed, RotateCcw, TimerOff } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
@@ -29,7 +29,19 @@ import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
 import { JUDGED_COPY } from '../core/securityCopy.ts'
-import { Button, Collapse, Hint, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
+import {
+  Button,
+  Collapse,
+  Hint,
+  ICON_STROKE,
+  StatusGlyph,
+  StatusWords,
+  CopyButton,
+  ChevronRightGlyph,
+  BlockedGlyph,
+  DiffGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
 import { useSeen } from '../preview/viewportGate.ts'
 import { colouredRowCount, outputGrammar, readOutputLanguage, sourceView } from './toolOutputCode.ts'
@@ -253,13 +265,13 @@ export const ToolCard = memo(
         : undefined
     // The verb says the kind; the glyph at the row's end says only a state the words do not already make plain.
     const glyph = failed ? (
-      <X className="process-failed" size={12} strokeWidth={ICON_STROKE[12]} />
+      <CloseGlyph className="process-failed" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'cancelled' || shown === 'rejected' || shown === 'blocked' ? (
-      <CircleSlash size={12} strokeWidth={ICON_STROKE[12]} />
+      <BlockedGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'expired' ? (
-      <TimerOff size={12} strokeWidth={ICON_STROKE[12]} />
+      <TimerOff size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : state === 'queued' ? (
-      <CircleDashed size={12} strokeWidth={ICON_STROKE[12]} />
+      <CircleDashed size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : null
     const openInChanges = (diff: DiffViewFile) => {
       link?.open({ path: diff.path, ...(rootId ? { root: rootId } : {}) })
@@ -353,7 +365,15 @@ export const ToolCard = memo(
                 else setChoice(!open)
               }}>
               {heading}
-              {hasDetails && <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+              {hasDetails && (
+                <ChevronRightGlyph
+                  className="process-chevron"
+                  size={12}
+                  nonScalingStroke
+                  strokeWidth={ICON_STROKE[12]}
+                  aria-hidden="true"
+                />
+              )}
               <span className="process-fill" />
               <span className="process-end">
                 <StatusGlyph className="tool-card-icon" running={running} state={shown}>
@@ -403,7 +423,7 @@ export const ToolCard = memo(
                         <Button
                           size="xs"
                           variant="ghost"
-                          icon={FileDiffIcon}
+                          icon={DiffGlyph}
                           onClick={() => {
                             openInChanges(diff)
                           }}>

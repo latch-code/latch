@@ -1,7 +1,26 @@
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, ExternalLink, Eye, Folder, FolderOpen, Link2, MessageSquareQuote, RefreshCw, Search } from 'lucide-react'
+import { Link2, MessageSquareQuote } from 'lucide-react'
 import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
-import { Button, Icon, IconButton, InlineNotice, Kbd, Loading, Menu, Tooltip, useCopy, type MenuItem } from '@latch/ui'
+import {
+  Button,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Kbd,
+  Loading,
+  Menu,
+  Tooltip,
+  useCopy,
+  type MenuItem,
+  CopyGlyph,
+  MoreGlyph,
+  ExternalGlyph,
+  EyeGlyph,
+  FolderGlyph,
+  FolderOpenGlyph,
+  RefreshGlyph,
+  SearchGlyph,
+} from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { fileRefusalText } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
@@ -389,14 +408,14 @@ export function FileTree({
             {
               id: 'copy',
               label: '复制路径',
-              icon: Copy,
+              icon: CopyGlyph,
               onSelect: () => {
                 void copy.copy(path)
               },
             },
           ]
         : []),
-      ...(reveal ? [{ id: 'reveal', label: revealLabel(currentShell()?.platform), icon: FolderOpen, onSelect: reveal }] : []),
+      ...(reveal ? [{ id: 'reveal', label: revealLabel(currentShell()?.platform), icon: FolderOpenGlyph, onSelect: reveal }] : []),
     ]
   }
   const fileItems = (row: TreeRow): MenuItem[] => {
@@ -416,11 +435,11 @@ export function FileTree({
           ]
         : []),
       full
-        ? { id: 'copy', label: '复制路径', icon: Copy, ...busy, onSelect: () => void fileAction(row, 'copy') }
+        ? { id: 'copy', label: '复制路径', icon: CopyGlyph, ...busy, onSelect: () => void fileAction(row, 'copy') }
         : {
             id: 'copy',
             label: '复制路径',
-            icon: Copy,
+            icon: CopyGlyph,
             onSelect: () => {
               void copy.copy(row.path)
             },
@@ -430,7 +449,7 @@ export function FileTree({
             {
               id: 'copy-relative',
               label: '复制相对路径',
-              icon: Copy,
+              icon: CopyGlyph,
               onSelect: () => {
                 void copy.copy(row.path)
               },
@@ -442,12 +461,12 @@ export function FileTree({
             {
               id: 'reveal',
               label: revealLabel(currentShell()?.platform),
-              icon: FolderOpen,
+              icon: FolderOpenGlyph,
               ...busy,
               onSelect: () => void fileAction(row, 'reveal'),
             },
-            { id: 'open', label: '用默认应用打开', icon: ExternalLink, ...busy, onSelect: () => void fileAction(row, 'open') },
-            { id: 'quicklook', label: '快速查看', icon: Eye, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
+            { id: 'open', label: '用默认应用打开', icon: ExternalGlyph, ...busy, onSelect: () => void fileAction(row, 'open') },
+            { id: 'quicklook', label: '快速查看', icon: EyeGlyph, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
           ]
         : []),
     ]
@@ -457,7 +476,7 @@ export function FileTree({
       <header className="file-tree-head">
         {onSearch ? (
           <button type="button" className="file-tree-search" aria-label="搜索文件" onClick={onSearch}>
-            <Icon icon={Search} size={14} />
+            <Icon icon={SearchGlyph} size={14} />
             <span>搜索文件</span>
             <Kbd keys="mod+p" />
           </button>
@@ -467,7 +486,7 @@ export function FileTree({
         <Menu
           label="文件显示选项"
           align="end"
-          trigger={props => <IconButton {...props} size="xs" label="文件显示选项" icon={Ellipsis} />}
+          trigger={props => <IconButton {...props} size="xs" label="文件显示选项" icon={MoreGlyph} />}
           sections={[
             {
               id: 'view',
@@ -479,7 +498,7 @@ export function FileTree({
                   checked: showHidden,
                   onSelect: () => setShowHidden(value => !value),
                 },
-                { id: 'refresh', label: '刷新文件树', icon: RefreshCw, onSelect: () => setGeneration(value => value + 1) },
+                { id: 'refresh', label: '刷新文件树', icon: RefreshGlyph, onSelect: () => setGeneration(value => value + 1) },
               ],
             },
           ]}
@@ -545,7 +564,7 @@ export function FileTree({
                   }}
                   onKeyDown={event => keydown(event, row)}>
                   <Icon
-                    icon={folder ? (isExpanded ? FolderOpen : Folder) : row.kind === 'symlink' ? Link2 : referenceIcon(row.name)}
+                    icon={folder ? (isExpanded ? FolderOpenGlyph : FolderGlyph) : row.kind === 'symlink' ? Link2 : referenceIcon(row.name)}
                     size={14}
                   />
                   <span className="file-tree-name">
@@ -563,7 +582,7 @@ export function FileTree({
                         label={`${row.name} 文件操作`}
                         align="end"
                         trigger={props => (
-                          <IconButton {...props} data-tree-menu="" label={`${row.name} 文件操作`} size="xs" icon={Ellipsis} />
+                          <IconButton {...props} data-tree-menu="" label={`${row.name} 文件操作`} size="xs" icon={MoreGlyph} />
                         )}
                         sections={[
                           {

@@ -1,18 +1,18 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { FileAudio, FileImage, FileText, FileVideo, Globe, Presentation, Sheet, TriangleAlert } from 'lucide-react'
+import { FileAudio, FileImage, FileVideo, Presentation, Sheet } from 'lucide-react'
 import type { FileChange } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, Icon, Tooltip, type LucideIcon } from '@latch/ui'
+import { Button, Hint, ICON_STROKE, Icon, Tooltip, type IconComponent, PageGlyph, GlobeGlyph, WarningGlyph } from '@latch/ui'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
 import { FileSession } from './FileChip.tsx'
 import { VisibleText } from './VisibleText.tsx'
 const outputSize = (size: number) =>
   size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`
-const KIND_ICONS: Record<string, LucideIcon> = {
+const KIND_ICONS: Record<string, IconComponent> = {
   pptx: Presentation,
   xlsx: Sheet,
   csv: Sheet,
-  html: Globe,
+  html: GlobeGlyph,
   svg: FileImage,
   image: FileImage,
   audio: FileAudio,
@@ -76,7 +76,7 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
   if (!truncated && !unavailable) return null
   return (
     <div className="output-notes">
-      <Hint lead={<TriangleAlert size={14} strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
+      <Hint lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
         {[
           truncated ? '只记录了部分变化；目录过大、观察中断或部分路径无法读取。' : '',
           unavailable ? '本轮未能完整观察文件变化，请在项目目录中核对结果。' : '',
@@ -102,7 +102,7 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
       </div>
       <ul>
         {files.map(file => {
-          const Glyph = KIND_ICONS[file.kind ?? ''] ?? FileText
+          const Glyph = KIND_ICONS[file.kind ?? ''] ?? PageGlyph
           const name = file.path.slice(file.path.lastIndexOf('/') + 1)
           return (
             <li key={`${file.root}\n${file.path}`}>

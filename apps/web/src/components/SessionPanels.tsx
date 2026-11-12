@@ -16,8 +16,21 @@ import {
   type UiPanelDocument,
   type UiPanelInfo,
 } from '@latch/protocol'
-import { FileDiff, Folder, GitCommitHorizontal, Maximize2, Minimize2, Puzzle, SquareTerminal, X } from 'lucide-react'
-import { Button, IconButton, InlineNotice, Loading, PanelTabs, type PanelTab } from '@latch/ui'
+import { Maximize2, Minimize2 } from 'lucide-react'
+import {
+  Button,
+  IconButton,
+  InlineNotice,
+  Loading,
+  PanelTabs,
+  type PanelTab,
+  DiffGlyph,
+  FolderGlyph,
+  CommitGlyph,
+  PluginsGlyph,
+  TerminalGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
@@ -179,15 +192,15 @@ export function SessionPanels({
           {
             value: 'changes',
             label: '改动',
-            icon: FileDiff,
+            icon: DiffGlyph,
             controls: id,
             ...(!showingChanges && changesTotals?.files ? { stat: { added: changesTotals.add, removed: changesTotals.del } } : {}),
           },
         ]
       : []),
-    ...(fileContext ? [{ value: 'files', label: '文件', icon: Folder, controls: id }] : []),
-    ...(terminal ? [{ value: 'terminal', label: '终端', icon: SquareTerminal, controls: id }] : []),
-    ...(delivery ? [{ value: 'delivery', label: '交付', icon: GitCommitHorizontal, controls: id }] : []),
+    ...(fileContext ? [{ value: 'files', label: '文件', icon: FolderGlyph, controls: id }] : []),
+    ...(terminal ? [{ value: 'terminal', label: '终端', icon: TerminalGlyph, controls: id }] : []),
+    ...(delivery ? [{ value: 'delivery', label: '交付', icon: CommitGlyph, controls: id }] : []),
     ...files.map(tab => {
       const name = escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference)
       return {
@@ -199,7 +212,7 @@ export function SessionPanels({
         ...(tab.fresh ? { fresh: true } : {}),
       }
     }),
-    ...offered.map(panel => ({ value: `plugin:${panel.id}`, label: escapeSecurityText(panel.title), icon: Puzzle, controls: id })),
+    ...offered.map(panel => ({ value: `plugin:${panel.id}`, label: escapeSecurityText(panel.title), icon: PluginsGlyph, controls: id })),
   ]
   const value = activeFile
     ? `file:${activeFile.id}`
@@ -230,7 +243,7 @@ export function SessionPanels({
             {!launcher && onExpand && (
               <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? '还原' : '铺满'} onClick={onExpand} />
             )}
-            {onClose && <IconButton size="xs" icon={X} label="关闭" shortcut={closeShortcut()} onClick={onClose} />}
+            {onClose && <IconButton size="xs" icon={CloseGlyph} label="关闭" shortcut={closeShortcut()} onClick={onClose} />}
           </>
         }
       />

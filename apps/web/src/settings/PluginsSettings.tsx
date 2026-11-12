@@ -1,9 +1,9 @@
 import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, BookOpen, Plus, Wrench } from 'lucide-react'
+import { ArrowLeftRight, BookOpen, Wrench } from 'lucide-react'
 import type { AppSnapshot, AppSummary, PluginInfo, PluginPackageManifest, PluginPackageSummary } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { Button, EmptyState, IconButton, InlineNotice, Switch, type LucideIcon } from '@latch/ui'
+import { Button, EmptyState, IconButton, InlineNotice, Switch, type IconComponent, PlusGlyph } from '@latch/ui'
 import { IconTile, Loading, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { NavigationContext, SettingsPages } from './navigation.tsx'
 import { packageState, PluginReachGroup, usePluginAssets } from './PluginAssetsSettings.tsx'
@@ -13,7 +13,7 @@ import { computerName } from '../core/securityCopy.ts'
 import { DiagnosticsDialog } from '../plugin-pages/AppsPage.tsx'
 
 type Shelf = 'tool' | 'skill' | 'connection'
-const SHELVES: Array<{ id: Shelf; label: string; icon: LucideIcon }> = [
+const SHELVES: Array<{ id: Shelf; label: string; icon: IconComponent }> = [
   { id: 'tool', label: '工具', icon: Wrench },
   { id: 'skill', label: '技能', icon: BookOpen },
   { id: 'connection', label: '连接', icon: ArrowLeftRight },
@@ -122,7 +122,7 @@ function Shelves({
           <section key={shelf.id} className="plugin-shelf" aria-label={shelf.label}>
             <header className="plugin-shelf-head">
               <h3>{shelf.label}</h3>
-              {add && <IconButton size="xs" label="添加插件…" tooltip="添加插件…" icon={Plus} onClick={add} />}
+              {add && <IconButton size="xs" label="添加插件…" tooltip="添加插件…" icon={PlusGlyph} onClick={add} />}
             </header>
             {members.map(item => (
               <button

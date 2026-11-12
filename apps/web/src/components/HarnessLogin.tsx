@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RefreshCw, SquareTerminal } from 'lucide-react'
+
 import { settleLogin, type AgentProbeResult, type HarnessInfo, type HarnessLogin, type HarnessLoginCheck } from '@latch/protocol'
-import { Button, CopyButton, Icon, InlineNotice } from '@latch/ui'
+import { Button, CopyButton, Icon, InlineNotice, RefreshGlyph, TerminalGlyph } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 
@@ -143,14 +143,14 @@ function LoginCommand({
         </code>
         <CopyButton text={command} label="复制登录命令" size="xs" />
         {terminal && (
-          <Button size="xs" variant="secondary" icon={SquareTerminal} loading={opening} onClick={() => void open()}>
+          <Button size="xs" variant="secondary" icon={TerminalGlyph} loading={opening} onClick={() => void open()}>
             在终端里登录
           </Button>
         )}
       </div>
       {opened && (
         <p>
-          <Icon icon={SquareTerminal} size={12} />
+          <Icon icon={TerminalGlyph} size={12} />
           登录后回到这里
         </p>
       )}
@@ -203,7 +203,7 @@ export function HarnessLoginSteps({
           <Button
             size="xs"
             variant="ghost"
-            icon={RefreshCw}
+            icon={RefreshGlyph}
             loading={checking}
             onClick={() => {
               setChecking(true)

@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { describe, expect, it } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { commands } from 'vitest/browser'
-import { Check, Copy } from 'lucide-react'
-import { Collapse, EASING, IconButton, MOTION, Shimmer, Swap, switchTheme, usePresence } from '../src/index.ts'
+
+import { Collapse, EASING, IconButton, MOTION, Shimmer, Swap, switchTheme, usePresence, CheckGlyph, CopyGlyph } from '../src/index.ts'
 import { emulateMedia } from './helpers.ts'
 
 const frames = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
@@ -49,7 +49,7 @@ function Copying() {
   return (
     <IconButton
       label="复制"
-      icon={copied ? Check : Copy}
+      icon={copied ? CheckGlyph : CopyGlyph}
       swap
       onClick={() => {
         setCopied(true)

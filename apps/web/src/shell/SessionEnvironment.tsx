@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { FolderOpen } from 'lucide-react'
+
 import type { AppSnapshot, HarnessInfo, HostCatalog, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
-import { Badge, CopyButton, IconButton, InlineNotice, Tooltip } from '@latch/ui'
+import { Badge, CopyButton, IconButton, InlineNotice, Tooltip, FolderOpenGlyph } from '@latch/ui'
 import { CodeRootNotice, codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { MiddleText } from '../components/ui.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
@@ -81,7 +81,7 @@ export function SessionFolders({
                 <IconButton
                   size="xs"
                   label={revealLabel(currentShell()?.platform)}
-                  icon={FolderOpen}
+                  icon={FolderOpenGlyph}
                   onClick={() => {
                     void shell
                       .reveal(project.id, known.id)

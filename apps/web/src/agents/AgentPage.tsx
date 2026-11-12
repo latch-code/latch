@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+
 import {
   GENERAL_AGENT_ID,
   type AgentMemory,
@@ -22,6 +22,9 @@ import {
   Tabs,
   TextAreaField,
   type TabOption,
+  EditGlyph,
+  PlusGlyph,
+  TrashGlyph,
 } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
@@ -326,7 +329,7 @@ function MemoryTab({
         <span className="agent-form-spacer" />
         {!adding && (
           <Button
-            icon={Plus}
+            icon={PlusGlyph}
             disabled={locked}
             onClick={() => {
               setAdding(true)
@@ -453,7 +456,7 @@ function MemoryTab({
                 <IconButton
                   size="sm"
                   label="修改"
-                  icon={Pencil}
+                  icon={EditGlyph}
                   disabled={locked}
                   onClick={() => {
                     writes.clear()
@@ -463,7 +466,7 @@ function MemoryTab({
                 <IconButton
                   size="sm"
                   label="删除"
-                  icon={Trash2}
+                  icon={TrashGlyph}
                   disabled={locked}
                   onClick={() => {
                     setDeleting(memory)

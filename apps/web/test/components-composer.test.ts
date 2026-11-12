@@ -161,7 +161,7 @@ describe('decided approvals', () => {
       /^<span class="tool-decision-words" title="[^"]*在其他设备上决定" data-outcome="rejected">已拒绝 · \d{2}:\d{2}$/u,
     )
     expect(html).toContain('state-rejected')
-    expect(html).toContain('lucide-circle-slash')
+    expect(html).toContain('latch-glyph-blocked')
     expect(html).not.toMatch(/state-failed|process-failed|tool-failure|失败/u)
     // One place says it: no second record line under the row.
     expect(html).not.toContain(' tool-decision"')

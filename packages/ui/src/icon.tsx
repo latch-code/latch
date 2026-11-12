@@ -1,34 +1,36 @@
 import { useLayoutEffect, useRef } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { ICON_STROKE, type IconComponent, type IconSize } from './glyphs/glyph.tsx'
 import { cx } from './internal.ts'
 import { usePausedOffscreen } from './motion.tsx'
 
-export type { LucideIcon }
+export { ICON_STROKE, type IconComponent, type IconSize }
 
 /**
- * Lucide (ISC) line icons come in five sizes, all at stroke 1.75 except the two smallest, which take 2 so they do not
- * thin out. A size off the scale is a type error.
+ * An icon at one of the five sizes, from either set: Latch's own glyphs (`./glyphs`, drawn on a 16 grid) or Lucide (ISC)
+ * for the long tail, both at the same on-screen line (`ICON_STROKE`). `solid` shows a Latch glyph's solid variant, for the
+ * selected or current item; a Lucide glyph has none and stays as it is. It is decorative unless it has a label, which
+ * names it for screen readers. A size off the scale is a type error.
  */
-export const ICON_STROKE = { 12: 2, 14: 2, 16: 1.75, 20: 1.75, 24: 1.75 } as const
-export type IconSize = keyof typeof ICON_STROKE
-
-/** A Lucide glyph at one of the five sizes. It is decorative unless it has a label, which names it for screen readers. */
 export function Icon({
-  icon: Glyph,
+  icon,
   size = 16,
+  solid = false,
   label,
   className,
 }: {
-  icon: LucideIcon
+  icon: IconComponent
   size?: IconSize
+  solid?: boolean
   label?: string
   className?: string
 }) {
+  const Glyph = (solid && icon.solid) || icon
   return (
     <Glyph
       className={cx('ui-icon', className)}
       size={size}
       strokeWidth={ICON_STROKE[size]}
+      nonScalingStroke
       {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}
     />
   )

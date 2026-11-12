@@ -1,18 +1,29 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Eye, ListChecks, Scale, Shield, ShieldAlert } from 'lucide-react'
-import { Button, ChoiceList, Kbd, useLayerClose } from '@latch/ui'
+import { ListChecks, Scale } from 'lucide-react'
+import {
+  Button,
+  ChoiceList,
+  Kbd,
+  useLayerClose,
+  ChevronDownGlyph,
+  ChevronUpGlyph,
+  EyeGlyph,
+  ShieldGlyph,
+  ShieldAlertGlyph,
+  ICON_STROKE,
+} from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { BriefHint } from './BriefHint.tsx'
 import { controlKeyCaps } from './modelReasoning.ts'
 import type { ModeIcon, PermissionRow, PermissionView } from './permission.ts'
 
-export const MODE_ICONS: Record<ModeIcon, typeof Shield> = {
-  eye: Eye,
-  shield: Shield,
+export const MODE_ICONS: Record<ModeIcon, typeof ShieldGlyph> = {
+  eye: EyeGlyph,
+  shield: ShieldGlyph,
   'list-checks': ListChecks,
   scale: Scale,
-  'shield-alert': ShieldAlert,
+  'shield-alert': ShieldAlertGlyph,
 }
 
 type ShownRow = Pick<PermissionRow, 'value' | 'name' | 'line' | 'icon' | 'disabledReason' | 'neverAsks' | 'more'>
@@ -57,7 +68,15 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
             value: row.value,
             title: escapeHiddenCharacters(row.name),
             ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
-            media: <Glyph size={16} aria-hidden="true" className={row.neverAsks ? 'permission-never' : undefined} />,
+            media: (
+              <Glyph
+                size={16}
+                nonScalingStroke
+                strokeWidth={ICON_STROKE[16]}
+                aria-hidden="true"
+                className={row.neverAsks ? 'permission-never' : undefined}
+              />
+            ),
             ...(row.disabledReason ? { disabledReason: row.disabledReason } : {}),
           }
         })}
@@ -70,7 +89,7 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
         <Button
           size="xs"
           variant="ghost"
-          icon={more ? ChevronUp : ChevronDown}
+          icon={more ? ChevronUpGlyph : ChevronDownGlyph}
           className="permission-list-more"
           aria-expanded={more}
           onClick={() => {

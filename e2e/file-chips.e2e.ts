@@ -149,7 +149,7 @@ describe('file references with an older Host without content preview', () => {
       await menu.waitFor({ state: 'hidden' })
       await expect.poll(() => page.evaluate(() => (window as Window & { copied?: string[] }).copied)).toEqual(['report.md'])
       // The glyph turns into a check, and the status says so.
-      await report.locator('svg.lucide-check').waitFor()
+      await report.locator('svg.latch-glyph-check').waitFor()
       await page.getByRole('status').filter({ hasText: '已复制路径' }).waitFor()
       await page.screenshot({ path: 'test-results/file-chips/copied.png', animations: 'disabled' })
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { LayoutGrid } from 'lucide-react'
-import { Button, Icon } from '@latch/ui'
+
+import { Button, Icon, PluginsGlyph } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 
 /**
@@ -53,7 +53,7 @@ export function AppDraftEntry({
   }
   return (
     <div className="changes-app-draft">
-      <Icon icon={LayoutGrid} size={14} />
+      <Icon icon={PluginsGlyph} size={14} />
       <span>latch-app</span>
       <Button size="sm" loading={busy} onClick={() => void send()}>
         {state.pluginId ? '更新应用草稿' : '作为应用草稿'}

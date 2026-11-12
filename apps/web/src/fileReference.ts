@@ -1,8 +1,9 @@
 // What a link target in a reply is. Only web and mail addresses are links; a footnote jumps inside the reply; every
 // file reference (a relative path, ../, an absolute path, a file:// URI) becomes a path chip that never navigates the
 // page. Anything else is plain text.
-import { File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, Folder, Presentation } from 'lucide-react'
-import type { LucideIcon } from '@latch/ui'
+import { FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileVideo, Presentation } from 'lucide-react'
+import { FileGlyph, FolderGlyph, PageGlyph } from '@latch/ui'
+import type { IconComponent } from '@latch/ui'
 
 export type LinkTarget =
   | { kind: 'web' }
@@ -143,13 +144,13 @@ export function splitPath(text: string): [folders: string, name: string] {
   return slash < 0 ? ['', text] : [text.slice(0, slash + 1), text.slice(slash + 1)]
 }
 
-const ICONS: Array<[RegExp, LucideIcon]> = [
+const ICONS: Array<[RegExp, IconComponent]> = [
   [/^(?:png|jpe?g|gif|webp|heic|avif|bmp|tiff?|ico|svg)$/u, FileImage],
   [/^(?:mp4|mov|m4v|webm|mkv|avi)$/u, FileVideo],
   [/^(?:mp3|m4a|wav|aac|flac|ogg|opus)$/u, FileAudio],
   [/^(?:xlsx?|csv|tsv|numbers)$/u, FileSpreadsheet],
   [/^(?:pptx?|key)$/u, Presentation],
-  [/^(?:pdf|docx?|pages|md|markdown|txt|rtf|log)$/u, FileText],
+  [/^(?:pdf|docx?|pages|md|markdown|txt|rtf|log)$/u, FileGlyph],
   [/^(?:zip|tar|gz|tgz|bz2|xz|7z|rar)$/u, FileArchive],
   [
     /^(?:ts|tsx|js|jsx|mjs|cjs|json|ya?ml|toml|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|css|scss|html?|xml|sql|ipynb)$/u,
@@ -158,10 +159,10 @@ const ICONS: Array<[RegExp, LucideIcon]> = [
 ]
 
 /** A small glyph for the kind of file a path names, by its extension; a folder for a path ending in `/`. */
-export function referenceIcon(path: string): LucideIcon {
-  if (path.trim().endsWith('/')) return Folder
+export function referenceIcon(path: string): IconComponent {
+  if (path.trim().endsWith('/')) return FolderGlyph
   const name = referenceName(path)
   const dot = name.lastIndexOf('.')
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-  return ICONS.find(([pattern]) => pattern.test(ext))?.[1] ?? File
+  return ICONS.find(([pattern]) => pattern.test(ext))?.[1] ?? PageGlyph
 }

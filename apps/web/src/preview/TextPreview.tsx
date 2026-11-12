@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, IconButton, SearchField, TextField, useCopy } from '@latch/ui'
-import { X } from 'lucide-react'
+import { Button, IconButton, SearchField, TextField, useCopy, CloseGlyph } from '@latch/ui'
+
 import { SyntaxLine, useHighlightedTokens } from './HighlightedCode.tsx'
 import { languageForPath } from './highlight-protocol.ts'
 import { useViewerMenu } from './viewerActions.tsx'
@@ -141,7 +141,7 @@ export function TextPreview({
           <IconButton
             size="xs"
             label="关闭查找"
-            icon={X}
+            icon={CloseGlyph}
             onClick={() => {
               setQuery('')
               setFinding(false)

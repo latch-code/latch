@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { Eraser, Folder, GitFork, History, ShieldAlert } from 'lucide-react'
+import { Eraser, GitFork } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
-import { Button, Collapse, Hint, Icon, InlineNotice } from '@latch/ui'
+import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
@@ -462,14 +462,14 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
             <Collapse open={codeRootChoice !== undefined}>
               <p className="composer-notice" data-tint="warn" role="note">
-                <Icon icon={ShieldAlert} size={14} />
+                <Icon icon={ShieldAlertGlyph} size={14} />
                 {codeRootChoice && CODE_ROOT_COPY.notice}
               </p>
             </Collapse>
             <Collapse open={chosenScopeCaption !== undefined}>
               <div className="composer-notice composer-scope" role="note">
                 {chosenScopeCaption && (
-                  <Hint lead={<Icon icon={Folder} size={14} />} label={<VisibleText text={chosenScopeCaption.label} />}>
+                  <Hint lead={<Icon icon={FolderGlyph} size={14} />} label={<VisibleText text={chosenScopeCaption.label} />}>
                     {chosenScopeCaption.detail && <VisibleText text={chosenScopeCaption.detail} />}
                   </Hint>
                 )}
@@ -478,7 +478,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           </>
         ) : seedService ? (
           <p className="composer-notice composer-seed" data-tint="warn" role="note">
-            <Icon icon={History} size={14} />
+            <Icon icon={HistoryGlyph} size={14} />
             <span>
               按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
             </span>
@@ -678,7 +678,7 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       below={
         codeRootChoice ? (
           <p className="composer-notice" data-tint="warn" role="note">
-            <Icon icon={ShieldAlert} size={14} />
+            <Icon icon={ShieldAlertGlyph} size={14} />
             {CODE_ROOT_COPY.notice}
           </p>
         ) : undefined

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, Lock, LockKeyhole, Network, Pencil, Plus, Trash } from 'lucide-react'
+import { KeyRound, ListRestart, Network } from 'lucide-react'
 import {
   PROVIDER_KINDS,
   type AppSnapshot,
@@ -56,6 +56,13 @@ import {
   SwitchRow,
   TextField,
   ValuePicker,
+  AlertGlyph,
+  CircleCheckGlyph,
+  InfoGlyph,
+  LockGlyph,
+  EditGlyph,
+  PlusGlyph,
+  TrashGlyph,
 } from '@latch/ui'
 import { THINKING_SETS, thinkingSetText } from '../composer/modelReasoning.ts'
 import { ProviderTile } from '../components/BrandTile.tsx'
@@ -229,17 +236,17 @@ function CheckRow({
       description={
         result === null ? undefined : local ? (
           <span className="check-result" role="status">
-            <Icon icon={Info} size={12} />
+            <Icon icon={InfoGlyph} size={12} />
             Latch 还不能访问这个地址
           </span>
         ) : unknown ? (
           <span className="check-result" role="status">
-            <Icon icon={Info} size={12} />
+            <Icon icon={InfoGlyph} size={12} />
             {PROVIDER_COPY.listingUnavailable}
           </span>
         ) : (
           <span className={`check-result ${result.ok ? 'is-ok' : 'is-error'}`} role="status">
-            <Icon icon={result.ok ? CircleCheck : CircleAlert} size={12} />
+            <Icon icon={result.ok ? CircleCheckGlyph : AlertGlyph} size={12} />
             {result.ok ? `连接正常 · ${result.latencyMs} ms · ${result.count} 个模型` : reasonBelow ? '没有通过' : result.failure.text}
           </span>
         )
@@ -288,7 +295,7 @@ function LocalAddressNotice({
         abilities.confirm ? (
           <Button
             size="xs"
-            icon={LockKeyhole}
+            icon={LockGlyph}
             disabled={busy}
             loading={waiting}
             loadingLabel={PROVIDER_COPY.waitingTouchID}
@@ -350,7 +357,7 @@ function ManualModel({
           add()
         }}
       />
-      <Button icon={Plus} aria-label="添加输入的模型 ID" disabled={disabled || !manual.trim()} onClick={add}>
+      <Button icon={PlusGlyph} aria-label="添加输入的模型 ID" disabled={disabled || !manual.trim()} onClick={add}>
         添加
       </Button>
       {problem && (
@@ -486,7 +493,7 @@ function ModelsGroups({
               <IconButton
                 label={`移除模型 ${model}`}
                 tooltip="移除"
-                icon={Trash}
+                icon={TrashGlyph}
                 disabled={disabled}
                 onClick={() => {
                   onRemove(model)
@@ -849,7 +856,7 @@ export function ProviderAddForm({
         form={compact ? undefined : formId}
         onClick={compact ? () => void save() : undefined}
         variant="primary"
-        icon={locked ? LockKeyhole : undefined}
+        icon={locked ? LockGlyph : undefined}
         disabled={busy}
         loading={saving}
         loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '保存中…'}>
@@ -929,7 +936,7 @@ export function ProviderAddForm({
           />
         ) : (
           <p className="settings-caption">
-            <Icon icon={Lock} size={14} />
+            <Icon icon={LockGlyph} size={14} />
             <span>{keyElsewhere}</span>
           </p>
         )}
@@ -1176,7 +1183,7 @@ function ProviderPage({
             abilities.confirm ? (
               <Button
                 size="xs"
-                icon={LockKeyhole}
+                icon={LockGlyph}
                 disabled={busy}
                 loading={saving}
                 loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '确认中…'}
@@ -1320,9 +1327,9 @@ function ProviderPage({
         title="密钥"
         caption={keyCaption}
         captionIcon="lock"
-        note={keyEditable ? <NoteLine icon={Lock} brief={PROVIDER_COPY.keyHeld} /> : undefined}>
+        note={keyEditable ? <NoteLine icon={LockGlyph} brief={PROVIDER_COPY.keyHeld} /> : undefined}>
         <SettingsRow
-          leading={<IconTile icon={provider.hasKey ? KeyRound : LockKeyhole} />}
+          leading={<IconTile icon={provider.hasKey ? KeyRound : LockGlyph} />}
           title={provider.hasKey ? '已保存（不回显）' : '未设置'}
           description={provider.hasKey && scope ? `只发往 ${scope}` : requiresKey ? '这个服务需要密钥才能使用' : '本地服务通常无需密钥'}
           trailing={
@@ -1675,7 +1682,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
       <SettingsGroup
         title="模型服务"
         meta={
-          <Button variant="outline" icon={Plus} onClick={addService}>
+          <Button variant="outline" icon={PlusGlyph} onClick={addService}>
             {SERVICE_FORM.title}
           </Button>
         }>
@@ -1722,7 +1729,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                           {
                             id: 'edit',
                             label: '编辑…',
-                            icon: Pencil,
+                            icon: EditGlyph,
                             onSelect: () => {
                               setSelection({ kind: 'provider', id: provider.id })
                             },
@@ -1752,7 +1759,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
                           {
                             id: 'remove',
                             label: '移除…',
-                            icon: Trash,
+                            icon: TrashGlyph,
                             danger: true,
                             onSelect: () => {
                               setRemoving(provider)

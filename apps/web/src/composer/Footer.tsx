@@ -1,6 +1,5 @@
-import { Ellipsis } from 'lucide-react'
 import type { SessionConfigOption } from '@latch/protocol'
-import { IconButton, Popover, ValuePicker } from '@latch/ui'
+import { IconButton, Popover, ValuePicker, MoreGlyph } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { agentConfigValues } from './modelReasoning.ts'
 
@@ -51,7 +50,7 @@ export function MoreMenu({
         width={272}
         side="top"
         align="end"
-        trigger={props => <IconButton {...props} size="sm" icon={Ellipsis} label="更多选项" />}>
+        trigger={props => <IconButton {...props} size="sm" icon={MoreGlyph} label="更多选项" />}>
         <div className="composer-more-body">
           <OptionRows options={options} disabled={disabled} onChoose={onOption} />
         </div>

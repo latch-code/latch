@@ -1,5 +1,5 @@
 import { useId, useRef, type ComponentProps, type ReactNode } from 'react'
-import { Search, X } from 'lucide-react'
+import { SearchGlyph, CloseGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
 
@@ -119,7 +119,7 @@ export function SearchField({
   const input = useRef<HTMLInputElement>(null)
   return (
     <div className={cx('ui-search', className)} data-variant={variant === 'ghost' ? 'ghost' : undefined}>
-      <Icon icon={Search} size={variant === 'ghost' ? 16 : 14} className="ui-search-glyph" />
+      <Icon icon={SearchGlyph} size={variant === 'ghost' ? 16 : 14} className="ui-search-glyph" />
       <input
         placeholder={label}
         {...props}
@@ -148,7 +148,7 @@ export function SearchField({
             onValueChange('')
             input.current?.focus()
           }}>
-          <Icon icon={X} size={14} />
+          <Icon icon={CloseGlyph} size={14} />
         </button>
       ) : (
         trailing

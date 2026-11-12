@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Hint, ICON_STROKE, type LucideIcon } from '@latch/ui'
+import { Hint, ICON_STROKE, type IconComponent } from '@latch/ui'
 import { VisibleText } from '../../components/VisibleText.tsx'
 
 /** One line of the 交付 tab: an icon and short words in a tone, the fine print behind a Hint, and an action. */
@@ -11,12 +11,12 @@ export function Line({
   action,
 }: {
   tone?: 'plain' | 'muted' | 'amber' | 'red'
-  icon?: LucideIcon
+  icon?: IconComponent
   children: ReactNode
   detail?: string | undefined
   action?: ReactNode
 }) {
-  const glyph = Glyph ? <Glyph size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" /> : undefined
+  const glyph = Glyph ? <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" /> : undefined
   return (
     <div className="delivery-line" data-tone={tone}>
       {detail ? (

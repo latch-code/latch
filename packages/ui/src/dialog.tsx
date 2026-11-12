@@ -11,7 +11,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { X } from 'lucide-react'
+import { CloseGlyph } from './glyphs/index.tsx'
 import { Button, IconButton } from './button.tsx'
 import { motionAllowed } from './changes.ts'
 import { cx, focusables } from './internal.ts'
@@ -305,7 +305,7 @@ export function ModalHeader({
     <header className="ui-modal-header">
       {leading}
       <h2>{title}</h2>
-      <IconButton label={closeLabel} icon={X} onClick={onClose} />
+      <IconButton label={closeLabel} icon={CloseGlyph} onClick={onClose} />
     </header>
   )
 }
@@ -424,7 +424,7 @@ export function DialogSurface({
               </h2>
               {subtitle && <p className="ui-dialog-subtitle">{subtitle}</p>}
             </div>
-            {onClose && <IconButton label={closeLabel} icon={X} onClick={onClose} />}
+            {onClose && <IconButton label={closeLabel} icon={CloseGlyph} onClick={onClose} />}
           </header>
           {children !== undefined && <div className="ui-dialog-body">{children}</div>}
           {(footer || note) && (

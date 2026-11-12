@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { X } from 'lucide-react'
-import { Icon, type LucideIcon } from './icon.tsx'
+import { CloseGlyph } from './glyphs/index.tsx'
+import { Icon, type IconComponent } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
 
 export interface TabOption<T extends string> {
@@ -9,7 +9,7 @@ export interface TabOption<T extends string> {
   /** The id of the panel this tab shows. */
   controls?: string
   /** A 12px glyph before the label. */
-  icon?: LucideIcon
+  icon?: IconComponent
 }
 
 /**
@@ -130,7 +130,7 @@ export interface PanelTab<T extends string> {
   /** The id of the panel this tab shows. */
   controls?: string
   /** A 12px glyph; on a closable tab it gives way to × on hover. A closable tab without one keeps its place for the ×. */
-  icon?: LucideIcon
+  icon?: IconComponent
   /** A line count after the label, 「+60 −6」, in the diff's tones. */
   stat?: { added: number; removed: number }
   /** Something new in it that the person has not looked at: a 6px dot after the label, named for screen readers. */
@@ -227,7 +227,7 @@ export function PanelTabs<T extends string>({
                 onClick={() => {
                   onClose?.(tab.value)
                 }}>
-                <Icon icon={X} size={12} />
+                <Icon icon={CloseGlyph} size={12} />
               </button>
             )}
           </span>

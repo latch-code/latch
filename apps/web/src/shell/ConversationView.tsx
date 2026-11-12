@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { History, ShieldAlert } from 'lucide-react'
+
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
@@ -16,7 +16,7 @@ import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
 import { renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
-import { Button, Hint, InlineNotice, Loading } from '@latch/ui'
+import { Button, Hint, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { NewSessionTitle, SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
@@ -354,7 +354,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
           <div className="composer-dock">
             {rebuiltInto && (
               <p className="composer-stop history-rebuilt" role="status">
-                <History size={14} aria-hidden="true" />
+                <HistoryGlyph size={14} aria-hidden="true" />
                 <span>已按文字重建为新会话</span>
                 <Button size="xs" onClick={() => choose(rebuiltInto.id)}>
                   打开「{rebuiltInto.title || '未命名会话'}」
@@ -367,7 +367,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                 data-secure=""
                 data-tone={stopCode === 'permission-drift' ? 'err' : stopCode === 'permission-unverified' ? 'warn' : undefined}
                 role="status">
-                <ShieldAlert size={14} aria-hidden="true" />
+                <ShieldAlertGlyph size={14} aria-hidden="true" />
                 <span>{stopText}</span>
                 {stopRetry && (
                   <Button size="xs" onClick={retryStopped}>
@@ -375,7 +375,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   </Button>
                 )}
                 {lostImport && (
-                  <Button size="xs" icon={History} onClick={() => setRebuilding(true)}>
+                  <Button size="xs" icon={HistoryGlyph} onClick={() => setRebuilding(true)}>
                     按文字重建
                   </Button>
                 )}

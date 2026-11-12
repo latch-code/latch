@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Laptop } from 'lucide-react'
-import { Button, Hint, InlineNotice, StatusWord } from '@latch/ui'
+
+import { Button, Hint, InlineNotice, StatusWord, LaptopGlyph } from '@latch/ui'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { computerState } from '../core/computers.ts'
 import { shellComputers, type ComputersView, type ComputerView } from '../core/shell.ts'
@@ -102,7 +102,7 @@ export function ComputersSettings() {
             <ObjectRow
               key={computer.hostId}
               data={{ 'data-computer': computer.hostId }}
-              leading={<IconTile icon={Laptop} />}
+              leading={<IconTile icon={LaptopGlyph} />}
               title={computer.local ? '这台 Mac' : computer.name}
               description={
                 <>

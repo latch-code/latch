@@ -51,7 +51,7 @@ describe('CopyButton', () => {
       const bubble = screen.container.querySelector<HTMLElement>('.ui-copied')!
       await expect.poll(() => bubble.matches(':popover-open')).toBe(true)
       expect(bubble.textContent).toBe('已复制')
-      expect(screen.container.querySelector('.lucide-check')).not.toBeNull()
+      expect(screen.container.querySelector('.latch-glyph-check')).not.toBeNull()
       await expect.element(screen.getByRole('status')).toHaveTextContent('已复制')
       await expect.poll(() => bubble.matches(':popover-open'), { timeout: 1600 }).toBe(false)
     } finally {
@@ -66,7 +66,7 @@ describe('CopyButton', () => {
       await screen.getByRole('button', { name: '复制' }).click()
       const bubble = screen.container.querySelector<HTMLElement>('.ui-copied')!
       await expect.poll(() => bubble.textContent).toBe('复制不可用，请手动选择')
-      expect(screen.container.querySelector('.lucide-check')).toBeNull()
+      expect(screen.container.querySelector('.latch-glyph-check')).toBeNull()
     } finally {
       writeText.mockRestore()
     }

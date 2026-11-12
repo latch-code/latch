@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
-import { Check, CircleAlert, Shield } from 'lucide-react'
+import { CheckGlyph, AlertGlyph, ShieldGlyph } from './glyphs/index.tsx'
 import { useLiveChange } from './changes.ts'
 import { Icon, Spinner, type SpinnerSize } from './icon.tsx'
 import { cx } from './internal.ts'
@@ -18,10 +18,10 @@ import { cx } from './internal.ts'
 export type StatusTone = 'neutral' | 'waiting' | 'running' | 'failed' | 'done' | 'warn'
 
 function Glyph({ tone }: { tone: StatusTone }) {
-  if (tone === 'waiting') return <Icon icon={Shield} size={12} className="ui-status-word-glyph" />
+  if (tone === 'waiting') return <Icon icon={ShieldGlyph} size={12} className="ui-status-word-glyph" />
   if (tone === 'running') return <Spinner size={12} className="ui-status-word-glyph" />
-  if (tone === 'failed') return <Icon icon={CircleAlert} size={12} className="ui-status-word-glyph" />
-  if (tone === 'done') return <Icon icon={Check} size={12} className="ui-status-word-glyph" />
+  if (tone === 'failed') return <Icon icon={AlertGlyph} size={12} className="ui-status-word-glyph" />
+  if (tone === 'done') return <Icon icon={CheckGlyph} size={12} className="ui-status-word-glyph" />
   return null
 }
 
@@ -100,7 +100,7 @@ export function StatusSlot({
     ) : shown === 'failed' ? (
       <StatusWord tone="failed">{failed}</StatusWord>
     ) : shown === 'unread' ? (
-      <Icon icon={Check} size={12} className="ui-status-unread" />
+      <Icon icon={CheckGlyph} size={12} className="ui-status-unread" />
     ) : shown === 'time' ? (
       <time className="ui-status-time" dateTime={dateTime}>
         {time}

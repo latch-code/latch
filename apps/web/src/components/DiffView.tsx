@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
-import { ChevronRight, ChevronsUpDown } from 'lucide-react'
+
 import type { FileDiff } from '@latch/protocol'
 import {
   compactLines,
@@ -16,7 +16,7 @@ import {
   type TextRange,
 } from '../diff.ts'
 import { middleEllipsis } from '../format.ts'
-import { Collapse, Icon, ICON_STROKE, StatusPill } from '@latch/ui'
+import { Collapse, Icon, ICON_STROKE, StatusPill, ChevronRightGlyph, UpDownGlyph } from '@latch/ui'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
 import { useHighlightedTokens, SyntaxLine } from '../preview/HighlightedCode.tsx'
 import { languageForPath, type SyntaxLines } from '../preview/highlight-protocol.ts'
@@ -239,7 +239,7 @@ function GapBand({ gap, hunks, tools, layout }: { gap: DiffGap; hunks: number; t
         onClick={() => {
           setOpened(opened + GAP_STEP)
         }}>
-        <Icon icon={ChevronsUpDown} size={12} />
+        <Icon icon={UpDownGlyph} size={12} />
         {hidden} 行未改动
       </button>
     ) : null
@@ -386,7 +386,7 @@ function DiffFile({
       onClick={() => {
         setOpen(!open)
       }}>
-      <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      <ChevronRightGlyph className="chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       <span className="diff-path" title={path}>
         {full && folder && (
           <span className="diff-path-folder">

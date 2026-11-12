@@ -276,7 +276,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await menu.getByRole('button', { name: '说明', exact: true }).click()
       await menu.getByText('网页和 SVG 用浏览器打开时可以联网；可以在访达中显示后自己打开。', { exact: true }).waitFor()
       // The lock marks what Latch refuses on purpose, never a plain failure.
-      expect(await menu.locator('.file-chip-note .ui-hint-lead svg').getAttribute('class')).toContain('lucide-lock')
+      expect(await menu.locator('.file-chip-note .ui-hint-lead svg').getAttribute('class')).toContain('latch-glyph-lock')
       await close()
       await open('.env')
       expect(await items()).toEqual(['在访达中显示', '复制路径'])
@@ -314,7 +314,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       ])
       await open('missing.md')
       await menu.getByText('找不到这个文件。').waitFor()
-      expect(await menu.locator('.ui-menu-footer-note svg').getAttribute('class')).toContain('lucide-circle-alert')
+      expect(await menu.locator('.ui-menu-footer-note svg').getAttribute('class')).toContain('latch-glyph-alert')
       await close()
 
       // A Host slower than 400 ms: the menu opens with 「正在检查…」 and fills in when the answer comes.
@@ -342,7 +342,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await menu.getByRole('menuitem', { name: '用默认应用打开', exact: true }).click()
       // It closes as the item is chosen and comes back with the reason once main answers.
       await menu.getByText('没有找到能打开这个文件的应用。').waitFor()
-      expect(await menu.locator('.ui-menu-footer-note svg').getAttribute('class')).toContain('lucide-circle-alert')
+      expect(await menu.locator('.ui-menu-footer-note svg').getAttribute('class')).toContain('latch-glyph-alert')
       await captureThemes(page, 'native-desktop-file-menu-failed')
       await close()
       expect(host.security.audit.lastOf('file.open')?.detail).toMatchObject({ type: 'docx' })

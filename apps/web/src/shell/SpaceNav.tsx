@@ -1,7 +1,21 @@
 import type { ReactNode } from 'react'
-import { Code2, FolderPlus, LayoutGrid, Laptop, Plus, Search, Send, Settings, SquarePen, X } from 'lucide-react'
+import { FolderPlus, Send } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
-import { Button, ICON_STROKE, Icon, IconButton, SegmentedControl } from '@latch/ui'
+import {
+  Button,
+  ICON_STROKE,
+  Icon,
+  IconButton,
+  SegmentedControl,
+  CodeGlyph,
+  PluginsGlyph,
+  LaptopGlyph,
+  PlusGlyph,
+  SearchGlyph,
+  SettingsGlyph,
+  NewSessionGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
@@ -25,8 +39,9 @@ export interface SpacesProps {
 /** The places' names and glyphs, wherever a way to them is drawn. */
 const SPACE_LABELS: Record<Space, string> = { code: 'Code', agents: '我的 Agent' }
 
-function SpaceGlyph({ space, size = 16 }: { space: Space; size?: 16 | 20 }) {
-  return <Icon icon={space === 'agents' ? AgentsGlyph : Code2} size={size} />
+/** The place's glyph; `solid` where it is the place you are in. */
+function SpaceGlyph({ space, size = 16, solid = false }: { space: Space; size?: 16 | 20; solid?: boolean }) {
+  return <Icon icon={space === 'agents' ? AgentsGlyph : CodeGlyph} size={size} solid={solid} />
 }
 
 /** The amber dot on the other place while something waits for you there. */
@@ -45,7 +60,7 @@ function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
       // The dot rides the glyph's corner, as on the shut sidebar's buttons, so the place's name keeps its room.
       icon: (
         <span className="space-glyph">
-          <SpaceGlyph space={value} />
+          <SpaceGlyph space={value} solid={value === space} />
           {dot && <span className="space-dot" aria-hidden="true" />}
         </span>
       ),
@@ -78,7 +93,7 @@ export function SpaceButtons({ space, onSpace, waits }: SpacesProps) {
           <IconButton
             key={value}
             label={SPACE_LABELS[value]}
-            icon={value === 'agents' ? AgentsGlyph : Code2}
+            icon={value === 'agents' ? AgentsGlyph : CodeGlyph}
             pressed={value === space}
             {...(dot ? { tooltip: WAITS_TITLE[value], badge: <span className="space-dot" /> } : {})}
             {...(desktop ? { shortcut: value === 'code' ? '⇧⌘1' : '⇧⌘2' } : {})}
@@ -109,7 +124,7 @@ export function NewSessionRow({ onNew, active, drawer }: { onNew: () => void; ac
       aria-pressed={drawer ? undefined : active}
       {...capsOf('new', drawer)}
       onClick={onNew}>
-      <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+      <NewSessionGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
       <span>新会话</span>
     </Button>
   )
@@ -163,7 +178,7 @@ function DelegateRow({
               {
                 id: 'new-agent',
                 label: '新建 Agent',
-                leading: <Plus size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />,
+                leading: <PlusGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />,
                 ...(offline ? { disabled: true, disabledReason: 'Mac 不在线' } : {}),
                 onSelect: onNew,
               },
@@ -188,7 +203,7 @@ function DelegateRow({
             data-delegate-trigger=""
             data-space-primary=""
             {...capsOf('new', drawer)}>
-            <Send size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <Send size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span>委托…</span>
           </Button>
         )
@@ -232,7 +247,7 @@ export function NavTop({
       ) : (
         remote && (
           <p className="sidebar-host" title={computerName(snapshot.hostName)}>
-            <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
           </p>
         )
@@ -240,15 +255,15 @@ export function NavTop({
       {spaces && (
         <div className="sidebar-nav-line">
           <SpaceSwitch {...spaces} />
-          {drawer && onClose && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
+          {drawer && onClose && <IconButton label="关闭会话列表" icon={CloseGlyph} onClick={onClose} />}
         </div>
       )}
       <div className="sidebar-nav-line">
         {primary}
-        {drawer && onClose && !spaces && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
+        {drawer && onClose && !spaces && <IconButton label="关闭会话列表" icon={CloseGlyph} onClick={onClose} />}
       </div>
       <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette', drawer)} onClick={onSearch}>
-        <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+        <SearchGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         <span>搜索</span>
       </Button>
     </div>
@@ -286,7 +301,7 @@ export function NavFoot({
     <nav className="sidebar-foot" aria-label="主导航">
       {onCreateProject && (
         <button type="button" className="sidebar-nav-row sidebar-add-project" onClick={onCreateProject}>
-          <FolderPlus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <FolderPlus size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span>添加项目</span>
         </button>
       )}
@@ -296,7 +311,7 @@ export function NavFoot({
           className="sidebar-nav-row sidebar-foot-row"
           aria-current={apps.current ? 'page' : undefined}
           onClick={apps.onOpen}>
-          <LayoutGrid size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <PluginsGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span>应用</span>
         </button>
       )}
@@ -306,7 +321,7 @@ export function NavFoot({
             <Button
               variant="ghost"
               className="sidebar-nav-row sidebar-settings"
-              icon={Settings}
+              icon={SettingsGlyph}
               shortcut={desktop ? '⌘,' : 'Alt ,'}
               onClick={settings}>
               设置

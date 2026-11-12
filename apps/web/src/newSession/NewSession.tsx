@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
-import { ChevronRight, PlugZap, RefreshCw, TriangleAlert } from 'lucide-react'
+import { PlugZap } from 'lucide-react'
 import { AGENT_PRESETS, type AgentPresetSettings, type AppSnapshot, type ModelRef, type TaskSummary } from '@latch/protocol'
-import { Button, Collapse, CopyButton, ICON_STROKE, Icon } from '@latch/ui'
+import { Button, Collapse, CopyButton, ICON_STROKE, Icon, ChevronRightGlyph, RefreshGlyph, WarningGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { foundWithoutAdapter, presetsFound } from '../core/agentDetection.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -43,7 +43,11 @@ export function SetupCard({
     <div className="setup-card" role="status">
       <div className="setup-card-row">
         <span className="setup-card-icon" aria-hidden="true">
-          {model ? <PlugZap size={16} strokeWidth={ICON_STROKE[16]} /> : <TriangleAlert size={16} strokeWidth={ICON_STROKE[16]} />}
+          {model ? (
+            <PlugZap size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} />
+          ) : (
+            <WarningGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} />
+          )}
         </span>
         <div className="setup-card-text">
           <strong>{block.message}</strong>
@@ -160,7 +164,7 @@ export function HarnessInstallCard({
       <div className="harness-install-foot">
         <Button
           size="sm"
-          icon={RefreshCw}
+          icon={RefreshGlyph}
           loading={checking}
           onClick={() => {
             setChecking(true)
@@ -212,7 +216,7 @@ function HowToInstall({ preset, checking, onRecheck }: { preset: AgentPresetSett
       <code>{preset.install}</code>
       <span className="harness-found-how-actions">
         <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />
-        <Button size="xs" variant="ghost" icon={RefreshCw} loading={checking} onClick={onRecheck}>
+        <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
           重新检测
         </Button>
       </span>
@@ -271,7 +275,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
         <strong>
           在这台 Mac 上找到 <span className="harness-found-count">{found.length}</span> 个 Harness
         </strong>
-        <Button size="xs" variant="ghost" icon={RefreshCw} loading={checking} onClick={recheck}>
+        <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={recheck}>
           重新检测
         </Button>
       </div>
@@ -308,7 +312,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
               setMore(!more)
               setHow(null)
             }}>
-            <Icon icon={ChevronRight} size={14} />
+            <Icon icon={ChevronRightGlyph} size={14} />
             还可以装 <span className="harness-found-count">{rest.length}</span> 个
           </button>
           <Collapse open={more} lazy>

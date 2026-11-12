@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import { History } from 'lucide-react'
+
 import type { HistoryImportResult, HostCatalog, TaskSummary } from '@latch/protocol'
-import { Button, Icon, Modal, ModalHeader } from '@latch/ui'
+import { Button, Icon, Modal, ModalHeader, HistoryGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { TargetChoice } from './HistoryImport.tsx'
@@ -66,7 +66,7 @@ export function RebuildLostDialog({
       <ModalHeader title="按文字重建" onClose={onClose} />
       <div className="history-rebuild-body">
         <p className="history-rebuild-from">
-          <Icon icon={History} size={14} />
+          <Icon icon={HistoryGlyph} size={14} />
           <span>
             从「
             <VisibleText text={summary.title || '未命名会话'} />

@@ -1,7 +1,21 @@
 import { useMemo, useState } from 'react'
 import { AGENT_PRESETS, type AppSnapshot, type TaskSummary } from '@latch/protocol'
-import { CircleAlert, Shield, SquareTerminal, TriangleAlert } from 'lucide-react'
-import { Button, ButtonLink, DevMark, Hint, Icon, InlineNotice, Meter, StatusWord, SwitchRow } from '@latch/ui'
+
+import {
+  Button,
+  ButtonLink,
+  DevMark,
+  Hint,
+  Icon,
+  InlineNotice,
+  Meter,
+  StatusWord,
+  SwitchRow,
+  AlertGlyph,
+  ShieldGlyph,
+  TerminalGlyph,
+  WarningGlyph,
+} from '@latch/ui'
 import type { UpdateView } from '../core/shell.ts'
 import { computerState, olderVersion, useComputers } from '../core/computers.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
@@ -362,7 +376,7 @@ export function AboutSettings({
             {dev && <DevMark description={DEV_MODE_TEXT} />}
           </h2>
           {snapshot.version && !desktop && <p>版本 {snapshot.version}</p>}
-          {dev && <Hint lead={<Icon icon={TriangleAlert} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
+          {dev && <Hint lead={<Icon icon={WarningGlyph} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
         </div>
       </header>
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
@@ -387,7 +401,7 @@ export function AboutSettings({
                     {computer.state !== 'online' && <StatusWord tone={state.tone}>{state.text}</StatusWord>}
                     {computer.version && <span className="settings-row-value">{computer.version}</span>}
                     {older && (
-                      <Hint className="about-older" lead={<Icon icon={CircleAlert} size={12} />} label={UPDATE_COPY.older}>
+                      <Hint className="about-older" lead={<Icon icon={AlertGlyph} size={12} />} label={UPDATE_COPY.older}>
                         {UPDATE_COPY.olderDetail}
                       </Hint>
                     )}
@@ -414,7 +428,10 @@ export function AboutSettings({
       )}
       <SettingsGroup
         note={
-          <NoteLine icon={Shield} brief={RUNS_AS_YOU_COPY.about(access.local ? '这台 Mac 上' : ` ${computerName(snapshot.hostName)} 上`)} />
+          <NoteLine
+            icon={ShieldGlyph}
+            brief={RUNS_AS_YOU_COPY.about(access.local ? '这台 Mac 上' : ` ${computerName(snapshot.hostName)} 上`)}
+          />
         }>
         <SettingsRow
           title="许可与条款"
@@ -430,7 +447,7 @@ export function AboutSettings({
         />
       </SettingsGroup>
       {!snapshot.catalog?.features?.terminal && (
-        <SettingsGroup bare note={<NoteLine icon={SquareTerminal} brief={TERMINAL_ELSEWHERE} />}>
+        <SettingsGroup bare note={<NoteLine icon={TerminalGlyph} brief={TERMINAL_ELSEWHERE} />}>
           {null}
         </SettingsGroup>
       )}

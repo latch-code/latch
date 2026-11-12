@@ -1,16 +1,17 @@
-import { ArrowLeftRight, Brain, FilePen, FileSearch, Globe, Search, Terminal, Trash, Wrench, X } from 'lucide-react'
+import { ArrowLeftRight, FilePen, FileSearch, Wrench } from 'lucide-react'
+import { ReasonGlyph, GlobeGlyph, SearchGlyph, TerminalGlyph, TrashGlyph, CloseGlyph } from '@latch/ui'
 import type { Message, ToolKind } from '@latch/protocol'
-import type { LucideIcon } from '@latch/ui'
+import type { IconComponent } from '@latch/ui'
 
-export const toolKindIcons: Record<ToolKind, LucideIcon> = {
+export const toolKindIcons: Record<ToolKind, IconComponent> = {
   read: FileSearch,
   edit: FilePen,
-  delete: Trash,
+  delete: TrashGlyph,
   move: ArrowLeftRight,
-  search: Search,
-  execute: Terminal,
-  think: Brain,
-  fetch: Globe,
+  search: SearchGlyph,
+  execute: TerminalGlyph,
+  think: ReasonGlyph,
+  fetch: GlobeGlyph,
   other: Wrench,
 }
 
@@ -27,4 +28,4 @@ export function toolKind(message: Pick<Message, 'tool' | 'toolName'>): ToolKind 
   return 'other'
 }
 
-export { X as CloseIcon }
+export { CloseGlyph as CloseIcon }

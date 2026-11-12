@@ -1,5 +1,5 @@
 import { useId, useRef, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react'
-import { CircleSlash, ShieldAlert } from 'lucide-react'
+import { BlockedGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
 
@@ -133,12 +133,12 @@ export function ChoiceList<T extends string>({
                 {option.description && (
                   <span className="ui-choice-description">
                     {option.description}
-                    {checked && option.risk && <Icon icon={ShieldAlert} size={12} className="ui-choice-risk" />}
+                    {checked && option.risk && <Icon icon={ShieldAlertGlyph} size={12} className="ui-choice-risk" />}
                   </span>
                 )}
                 {disabled && (
                   <span className="ui-choice-reason">
-                    <Icon icon={CircleSlash} size={12} />
+                    <Icon icon={BlockedGlyph} size={12} />
                     {option.disabledReason}
                   </span>
                 )}

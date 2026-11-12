@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { CircleAlert, TriangleAlert } from 'lucide-react'
+
 import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
-import { Button, ICON_STROKE, Icon } from '@latch/ui'
+import { Button, ICON_STROKE, Icon, AlertGlyph, WarningGlyph } from '@latch/ui'
 import { runEndLine, runStatus, type RunStatus } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -82,7 +82,7 @@ export function StatusLine({
   const live = detail.summary.live
   return (
     <div className={`status-line is-${status.tone}`}>
-      {status.tone === 'amber' && <Icon icon={TriangleAlert} size={14} />}
+      {status.tone === 'amber' && <Icon icon={WarningGlyph} size={14} />}
       <span role="status" aria-live="polite">
         <VisibleText text={status.text} />
       </span>
@@ -155,7 +155,7 @@ export function RunEndNote({
   return (
     <div className={`run-end is-${line.tone}`}>
       <div className="run-end-line">
-        <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>{line.text}</span>
         {line.retry && onRetry && (
           <Button size="xs" variant="secondary" onClick={onRetry}>

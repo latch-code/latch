@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft, Plus, WifiOff } from 'lucide-react'
+
 import { GENERAL_AGENT_ID, type CustomAgentList, type CustomAgentSummary } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, IconButton, InlineNotice, Skeleton, EmptyState } from '@latch/ui'
+import {
+  Button,
+  Hint,
+  ICON_STROKE,
+  IconButton,
+  InlineNotice,
+  Skeleton,
+  EmptyState,
+  ChevronLeftGlyph,
+  PlusGlyph,
+  OfflineGlyph,
+} from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { MyAgentTab } from '../shell/routes.ts'
@@ -166,7 +177,7 @@ function AgentList({
           title="还没有自己的 Agent"
           action={
             canRun ? (
-              <Button variant="primary" icon={Plus} disabled={offline} onClick={onNew}>
+              <Button variant="primary" icon={PlusGlyph} disabled={offline} onClick={onNew}>
                 新建 Agent
               </Button>
             ) : undefined
@@ -174,7 +185,7 @@ function AgentList({
         />
       )}
       {list && own.length > 0 && canRun && (
-        <Button variant="ghost" icon={Plus} className="agents-new" disabled={offline} onClick={onNew}>
+        <Button variant="ghost" icon={PlusGlyph} className="agents-new" disabled={offline} onClick={onNew}>
           新建 Agent
         </Button>
       )}
@@ -341,7 +352,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             )}
             {offline && (
               <span className="agents-offline">
-                <WifiOff size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+                <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                 Mac 不在线
               </span>
             )}
@@ -357,7 +368,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                 <h2>我的 Agent</h2>
                 {offline && (
                   <span className="agents-offline">
-                    <WifiOff size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+                    <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                     不在线
                   </span>
                 )}
@@ -402,7 +413,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           inert={(phone && !pushed) || undefined}>
           {phone && (
             <header className="settings-bar">
-              <IconButton label="返回" icon={ChevronLeft} onClick={back} />
+              <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
               <h2>{name}</h2>
             </header>
           )}

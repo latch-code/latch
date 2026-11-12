@@ -1,6 +1,6 @@
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { createContext, useContext, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
-import { AppWindow, Check, CircleAlert, Copy, Eye, FolderOpen, Info, Lock } from 'lucide-react'
+import { AppWindow } from 'lucide-react'
 import {
   Hint,
   Icon,
@@ -8,11 +8,18 @@ import {
   MenuFooterNote,
   Swap,
   Tooltip,
-  type LucideIcon,
+  type IconComponent,
   type MenuItem,
   type MenuSection,
   type MenuTriggerProps,
   useCopy,
+  CheckGlyph,
+  AlertGlyph,
+  CopyGlyph,
+  EyeGlyph,
+  FolderOpenGlyph,
+  InfoGlyph,
+  LockGlyph,
 } from '@latch/ui'
 import { FILE_COPY, fileNote, type FileNote } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
@@ -30,7 +37,7 @@ export const FileSession = createContext<FileSessionInfo | undefined>(undefined)
 
 /** How long the desktop menu waits for the Host's answer before it opens with 「正在检查…」. */
 const INSPECT_WAIT_MS = 400
-const TONE_ICON: Record<FileNote['tone'], LucideIcon> = { lock: Lock, info: Info, alert: CircleAlert }
+const TONE_ICON: Record<FileNote['tone'], IconComponent> = { lock: LockGlyph, info: InfoGlyph, alert: AlertGlyph }
 
 interface ChipProps {
   /** The reference as the reader sees it (what the Host is asked about). */
@@ -143,7 +150,7 @@ function CopyStatus({ state }: { state: 'idle' | 'copied' | 'failed' }) {
 
 const copySection = (onCopy: () => void): MenuSection => ({
   id: 'copy',
-  items: [{ id: 'copy', label: FILE_COPY.copy, icon: Copy, onSelect: onCopy }],
+  items: [{ id: 'copy', label: FILE_COPY.copy, icon: CopyGlyph, onSelect: onCopy }],
 })
 
 interface ChipMenuProps extends ChipProps {
@@ -214,7 +221,7 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
                 {...props}
                 icon={
                   <Swap value={copied} className="file-chip-icon">
-                    <Icon icon={copied ? Check : referenceIcon(props.path)} size={12} />
+                    <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={12} />
                   </Swap>
                 }
               />
@@ -332,9 +339,9 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
     {
       id: 'system',
       items: [
-        ...item('quickLook', FILE_COPY.quickLook, Eye),
+        ...item('quickLook', FILE_COPY.quickLook, EyeGlyph),
         ...item('open', FILE_COPY.open, AppWindow),
-        ...item('reveal', revealLabel(platform), FolderOpen),
+        ...item('reveal', revealLabel(platform), FolderOpenGlyph),
       ],
     },
     // On the computer that runs Latch the path to copy is the whole one, ready for Finder's 「前往文件夹」 or a terminal.

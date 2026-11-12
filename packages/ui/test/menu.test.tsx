@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { press } from './helpers.ts'
-import { CircleAlert, Copy, Ellipsis, Info, Pencil, Plus, Puzzle, Shield, Trash2, Undo2 } from 'lucide-react'
+
 import {
   IconButton,
   Menu,
@@ -16,6 +16,16 @@ import {
   ValuePicker,
   useLayerClose,
   type PermissionLevel,
+  AlertGlyph,
+  CopyGlyph,
+  MoreGlyph,
+  InfoGlyph,
+  EditGlyph,
+  PlusGlyph,
+  PluginsGlyph,
+  ShieldGlyph,
+  TrashGlyph,
+  UndoGlyph,
 } from '../src/index.ts'
 
 const MODELS = [
@@ -170,7 +180,7 @@ describe('value picker', () => {
     )
     await expect.element(screen.getByText('latch-app')).toBeVisible()
     expect(screen.container.querySelector('button')).toBeNull()
-    expect(screen.container.querySelector('.lucide-chevrons-up-down')).toBeNull()
+    expect(screen.container.querySelector('.latch-glyph-up-down')).toBeNull()
   })
 
   it('ends in chevrons-up-down and writes an unchosen value in muted ink, never in a warning colour', async () => {
@@ -178,8 +188,8 @@ describe('value picker', () => {
       <ValuePicker label="模型" value={undefined} placeholder="选择模型" options={MODELS} onValueChange={() => {}} />,
     )
     const trigger = screen.getByRole('button', { name: '模型：选择模型' })
-    expect(trigger.element().querySelector('.lucide-chevrons-up-down')).not.toBeNull()
-    expect(trigger.element().querySelector('.lucide-chevron-down')).toBeNull()
+    expect(trigger.element().querySelector('.latch-glyph-up-down')).not.toBeNull()
+    expect(trigger.element().querySelector('.latch-glyph-chevron-down')).toBeNull()
     const text = trigger.element().querySelector('.ui-value-picker-text[data-shown]')
     expect(text && getComputedStyle(text).color).toBe('rgb(86, 86, 95)')
   })
@@ -198,7 +208,7 @@ function Ceiling({ verify }: { verify: (level: Level) => Promise<void> }) {
   return (
     <PermissionMenu
       label="权限"
-      leading={Shield}
+      leading={ShieldGlyph}
       header={{ title: '在这台电脑上发起的会话' }}
       levels={LEVELS}
       defaultValue="L1"
@@ -230,10 +240,10 @@ describe('value picker spacing', () => {
   it('spaces its glyph, value and arrow 6 apart, and keeps room for 「等待验证…」 only in a toolbar permission menu', async () => {
     const screen = await render(
       <div>
-        <PermissionMenu label="工具栏权限" leading={Shield} levels={LEVELS} value="L0" onValueChange={() => {}} />
+        <PermissionMenu label="工具栏权限" leading={ShieldGlyph} levels={LEVELS} value="L0" onValueChange={() => {}} />
         <PermissionMenu label="设置行权限" align="end" levels={LEVELS} value="L3" onValueChange={() => {}} />
         <ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={() => {}} />
-        <ValuePicker label="项目" leading={Shield} value="L0" options={SHORT_LEVELS} onValueChange={() => {}} />
+        <ValuePicker label="项目" leading={ShieldGlyph} value="L0" options={SHORT_LEVELS} onValueChange={() => {}} />
       </div>,
     )
     const [toolbar, setting, model, project] = Array.from(screen.container.querySelectorAll('.ui-value-picker'))
@@ -290,7 +300,7 @@ describe('permission menu', () => {
     await expect
       .element(screen.getByRole('menuitemradio', { name: '逐项询问 默认' }))
       .toHaveAccessibleDescription('改文件、运行命令前先问你')
-    expect(menu.element().querySelector('.lucide-shield-alert')).toBeNull()
+    expect(menu.element().querySelector('.latch-glyph-shield-alert')).toBeNull()
     // The layer itself is 320 wide, its 4px inside included.
     expect(getComputedStyle(menu.element().closest('.ui-popover')!).width).toBe('320px')
   })
@@ -310,7 +320,7 @@ describe('permission menu', () => {
     verification.resolve()
     await expect.element(screen.getByRole('button', { name: '权限：完全访问' })).not.toHaveAttribute('aria-busy')
     expect(screen.getByRole('button', { name: '权限：完全访问' }).element().getBoundingClientRect().width).toBe(width)
-    const shield = screen.getByRole('button', { name: '权限：完全访问' }).element().querySelector('.lucide-shield-alert')
+    const shield = screen.getByRole('button', { name: '权限：完全访问' }).element().querySelector('.latch-glyph-shield-alert')
     expect(shield && getComputedStyle(shield).color).toBe('rgb(196, 111, 6)')
   })
 
@@ -350,7 +360,9 @@ describe('menu rows', () => {
       return box.top + box.height / 2
     }
     const chosen = screen.getByRole('menuitemradio', { name: '完全访问' }).element()
-    expect(Math.abs(middle(chosen.querySelector('.lucide-check')) - middle(chosen.querySelector('.ui-menu-item-title')))).toBeLessThan(1)
+    expect(Math.abs(middle(chosen.querySelector('.latch-glyph-check')) - middle(chosen.querySelector('.ui-menu-item-title')))).toBeLessThan(
+      1,
+    )
     const blocked = screen.getByRole('menuitemradio', { name: '自动编辑' }).element()
     const reason = blocked.querySelector('.ui-menu-item-reason')
     expect(Math.round(rect(reason).top - rect(blocked.querySelector('.ui-menu-item-description')).bottom)).toBe(4)
@@ -397,7 +409,7 @@ describe('menu rows', () => {
         <div className="ui-popover">
           <MenuPanel
             label="会话"
-            sections={[{ id: 'actions', items: [{ id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} }] }]}
+            sections={[{ id: 'actions', items: [{ id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} }] }]}
           />
         </div>
       </div>,
@@ -443,8 +455,8 @@ describe('menu rows', () => {
               {
                 id: 'actions',
                 items: [
-                  { id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} },
-                  { id: 'delete', label: '删除…', icon: Trash2, danger: true, onSelect: () => {} },
+                  { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+                  { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
                 ],
               },
             ]}
@@ -459,21 +471,21 @@ describe('menu rows', () => {
     expect(getComputedStyle(link!).color).toBe(getComputedStyle(document.documentElement).color)
     const note = actions?.querySelector('.ui-menu-footer-note')
     expect(left(note?.querySelector('.ui-menu-footer-text') ?? null)).toBe(left(actions?.querySelector('.ui-menu-item-title') ?? null))
-    expect(centre(note?.querySelector('.lucide-lock') ?? null)).toBe(centre(actions?.querySelector('.ui-menu-item-lead') ?? null))
+    expect(centre(note?.querySelector('.latch-glyph-lock') ?? null)).toBe(centre(actions?.querySelector('.ui-menu-item-lead') ?? null))
     const danger = screen.getByRole('menuitem', { name: '删除…' }).element()
-    expect(getComputedStyle(danger.querySelector('.lucide-trash-2')!).color).toBe(getComputedStyle(danger).color)
+    expect(getComputedStyle(danger.querySelector('.latch-glyph-trash')!).color).toBe(getComputedStyle(danger).color)
     expect(getComputedStyle(danger).color).toBe('rgb(180, 35, 31)')
   })
 
   it('draws a footer note with the lock unless it is no restriction, which keeps its own glyph in the same slot', async () => {
     const screen = await render(
       <div>
-        {[undefined, Info, CircleAlert].map((icon, index) => (
+        {[undefined, InfoGlyph, AlertGlyph].map((icon, index) => (
           <div key={index} className="ui-popover">
             <MenuPanel
               label={`文件 ${index}`}
               header={{ title: 'deck.pptx' }}
-              sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
+              sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: CopyGlyph, onSelect: () => {} }] }]}
               footer={icon ? <MenuFooterNote icon={icon}>说明</MenuFooterNote> : <MenuFooterNote>说明</MenuFooterNote>}
             />
           </div>
@@ -482,9 +494,9 @@ describe('menu rows', () => {
     )
     const notes = Array.from(screen.container.querySelectorAll('.ui-menu-footer-note'))
     expect(notes.map(note => note.querySelector('svg')?.getAttribute('class'))).toEqual([
-      expect.stringContaining('lucide-lock'),
-      expect.stringContaining('lucide-info'),
-      expect.stringContaining('lucide-circle-alert'),
+      expect.stringContaining('latch-glyph-lock'),
+      expect.stringContaining('latch-glyph-info'),
+      expect.stringContaining('latch-glyph-alert'),
     ])
     for (const note of notes) {
       const menu = note.closest('.ui-menu')!
@@ -501,8 +513,8 @@ describe('menu rows', () => {
             {
               id: 'actions',
               items: [
-                { id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} },
-                { id: 'delete', label: '删除…', icon: Trash2, danger: true, onSelect: () => {} },
+                { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+                { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
               ],
             },
           ]}
@@ -510,13 +522,13 @@ describe('menu rows', () => {
       </div>,
     )
     const rename = screen.getByRole('menuitem', { name: '重命名' })
-    const glyph = () => getComputedStyle(rename.element().querySelector('.lucide-pencil')!).color
+    const glyph = () => getComputedStyle(rename.element().querySelector('.latch-glyph-edit')!).color
     expect(glyph()).toBe('rgb(86, 86, 95)')
     await userEvent.hover(rename)
     await expect.poll(glyph).toBe(getComputedStyle(document.documentElement).color)
     const danger = screen.getByRole('menuitem', { name: '删除…' })
     await userEvent.hover(danger)
-    expect(getComputedStyle(danger.element().querySelector('.lucide-trash-2')!).color).toBe('rgb(180, 35, 31)')
+    expect(getComputedStyle(danger.element().querySelector('.latch-glyph-trash')!).color).toBe('rgb(180, 35, 31)')
   })
 
   it('names a menu by its label and whom it acts on, and describes it with the header meta', async () => {
@@ -553,12 +565,12 @@ describe('action menu', () => {
           {
             id: 'actions',
             items: [
-              { id: 'delete', label: '删除…', icon: Trash2, danger: true, onSelect: () => {} },
-              { id: 'rename', label: '重命名', icon: Pencil, onSelect: renamed },
+              { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
+              { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: renamed },
             ],
           },
         ]}
-        trigger={props => <IconButton {...props} label="更多" icon={Ellipsis} />}
+        trigger={props => <IconButton {...props} label="更多" icon={MoreGlyph} />}
       />,
     )
     const trigger = screen.getByRole('button', { name: '更多' })
@@ -646,7 +658,7 @@ describe('on phones', () => {
       const sheet = screen.getByRole('dialog', { name: '权限' }).element()
       await expect.element(screen.getByRole('radio', { name: '逐项询问 默认' })).toHaveFocus()
       const note = sheet.querySelector('.ui-menu-footer-note')
-      expect(centre(note?.querySelector('.lucide-lock') ?? null)).toBe(centre(sheet.querySelector('.ui-choice-radio')))
+      expect(centre(note?.querySelector('.latch-glyph-lock') ?? null)).toBe(centre(sheet.querySelector('.ui-choice-radio')))
       expect(left(note?.querySelector('.ui-menu-footer-text') ?? null)).toBe(left(sheet.querySelector('.ui-choice-title')))
     } finally {
       await page.viewport(1280, 800)
@@ -721,10 +733,10 @@ function Adding({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
         {
           id: 'local',
           label: '本地',
-          media: <Tile size={16} icon={Puzzle} />,
+          media: <Tile size={16} icon={PluginsGlyph} />,
           options: [...MODELS, ...extra.map(item => ({ value: item, label: item }))].map(option => ({
             ...option,
-            media: <Tile size={16} icon={Puzzle} />,
+            media: <Tile size={16} icon={PluginsGlyph} />,
           })),
         },
       ]}
@@ -737,7 +749,7 @@ function Adding({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
         <>
           {pending && (
             <MenuFooterLink
-              icon={Undo2}
+              icon={UndoGlyph}
               chevron={false}
               closes
               onClick={() => {
@@ -747,7 +759,7 @@ function Adding({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
             </MenuFooterLink>
           )}
           <MenuFooterLink
-            icon={Plus}
+            icon={PlusGlyph}
             chevron={false}
             onClick={() => {
               setAdding(true)
@@ -843,7 +855,7 @@ function Reshaping({ tall }: { tall: number }) {
         }}
         footer={
           <MenuFooterLink
-            icon={Plus}
+            icon={PlusGlyph}
             chevron={false}
             onClick={() => {
               setAdding(true)

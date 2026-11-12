@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Lock } from 'lucide-react'
+import { LockGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx } from './internal.ts'
 import { Tooltip } from './tooltip.tsx'
@@ -92,7 +92,7 @@ export function SwitchRow({
           </span>
         )}
       </span>
-      {locked && <Icon icon={Lock} size={12} className="ui-switch-row-lock" />}
+      {locked && <Icon icon={LockGlyph} size={12} className="ui-switch-row-lock" />}
       <Switch
         id={id}
         checked={locked ? false : checked}

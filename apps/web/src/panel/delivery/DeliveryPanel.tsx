@@ -1,19 +1,22 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import {
-  Check,
-  ChevronRight,
-  CircleAlert,
-  CircleHelp,
-  GitCommitHorizontal,
-  GitPullRequest,
-  Info,
-  MessageSquarePlus,
-  TriangleAlert,
-  Upload,
-  Webhook,
-} from 'lucide-react'
+import { CircleHelp, GitPullRequest, MessageSquarePlus, Upload, Webhook } from 'lucide-react'
 import type { GitDeliveryState, TaskSummary } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, Spinner, StatusWord, Switch, TextAreaField, type LucideIcon } from '@latch/ui'
+import {
+  Button,
+  Hint,
+  ICON_STROKE,
+  Spinner,
+  StatusWord,
+  Switch,
+  TextAreaField,
+  type IconComponent,
+  CheckGlyph,
+  ChevronRightGlyph,
+  AlertGlyph,
+  CommitGlyph,
+  InfoGlyph,
+  WarningGlyph,
+} from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import {
@@ -78,8 +81,8 @@ function Steps({ step }: { step: DeliveryStep }) {
           key={name}
           data-state={index < at ? 'done' : index === at ? 'current' : undefined}
           aria-current={index === at ? 'step' : undefined}>
-          {index > 0 && <ChevronRight size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
-          {index < at && <Check size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+          {index > 0 && <ChevronRightGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+          {index < at && <CheckGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
           <span>{STEP_WORD[name]}</span>
         </li>
       ))}
@@ -94,7 +97,7 @@ function HookCard({ failure, onCompose }: { failure: DeliveryFailure; onCompose?
   return (
     <section className="delivery-card" data-tone="red" aria-label={title}>
       <header className="delivery-card-head">
-        <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <strong>{title}</strong>
         <span className="delivery-card-meta">
           {failure.hook ?? (push ? 'pre-push' : 'pre-commit')}
@@ -126,7 +129,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
     return (
       <section className="delivery-card" data-tone="red" aria-label="远端钩子拒绝了推送">
         <header className="delivery-card-head">
-          <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <strong>远端钩子拒绝了推送</strong>
         </header>
         {failure.remoteLines?.length ? <Output text={failure.remoteLines.join('\n')} label="远端输出" /> : null}
@@ -136,7 +139,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
     return (
       <section className="delivery-card" data-tone="red" aria-label="提交失败">
         <header className="delivery-card-head">
-          <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <strong>提交失败</strong>
           {failure.exitCode !== undefined && <span className="delivery-card-meta">退出码 {failure.exitCode}</span>}
         </header>
@@ -148,7 +151,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
     )
   if (!copy)
     return (
-      <Line tone="red" icon={CircleAlert}>
+      <Line tone="red" icon={AlertGlyph}>
         {failure.text}
       </Line>
     )
@@ -157,7 +160,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
   return (
     <Line
       tone={copy.tone === 'failed' ? 'red' : copy.tone === 'warn' ? 'amber' : 'muted'}
-      icon={copy.tone === 'failed' ? CircleAlert : copy.tone === 'warn' ? TriangleAlert : Info}
+      icon={copy.tone === 'failed' ? AlertGlyph : copy.tone === 'warn' ? WarningGlyph : InfoGlyph}
       detail={copy.detail}>
       {label}
     </Line>
@@ -303,19 +306,19 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
 
   const notes = (
     <>
-      {offline && <Line tone="amber" icon={TriangleAlert}>{`${computer} 不在线 · 恢复后再交付`}</Line>}
+      {offline && <Line tone="amber" icon={WarningGlyph}>{`${computer} 不在线 · 恢复后再交付`}</Line>}
       {readOnly && (
-        <Line tone="muted" icon={Info}>
+        <Line tone="muted" icon={InfoGlyph}>
           这个会话只读
         </Line>
       )}
       {state?.gitOperation && (
-        <Line tone="amber" icon={TriangleAlert}>
+        <Line tone="amber" icon={WarningGlyph}>
           {operationNote(state.gitOperation)}
         </Line>
       )}
       {turnRunning && !state?.gitOperation && canWrite && (
-        <Line tone="muted" icon={Info} detail={failureCopy('git-turn-running')?.detail}>
+        <Line tone="muted" icon={InfoGlyph} detail={failureCopy('git-turn-running')?.detail}>
           Agent 正在改这个文件夹
         </Line>
       )}
@@ -338,7 +341,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       ) : null}
       {outcome?.kind === 'committed' && (
         <Line
-          icon={Check}
+          icon={CheckGlyph}
           action={
             outcome.result.hookOutput ? (
               <Button size="xs" variant="ghost" aria-expanded={showOutput} onClick={() => setShowOutput(value => !value)}>
@@ -354,7 +357,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         <Output text={outcome.result.hookOutput} label="钩子输出" />
       )}
       {outcome?.kind === 'pushed' && (
-        <Line icon={Check}>
+        <Line icon={CheckGlyph}>
           已推送到{' '}
           <code className="delivery-sha">
             <VisibleText text={`${outcome.result.remote}/${outcome.result.ref.replace(/^refs\/heads\//u, '')}`} />
@@ -383,7 +386,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       />
       <div className="delivery-hooks">
         <Hint
-          lead={<Webhook size={12} strokeWidth={ICON_STROKE[12]} />}
+          lead={<Webhook size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
           label={skipHooks ? '这次不运行提交钩子' : '运行仓库钩子'}
           moreLabel="钩子说明">
           {state ? hooksDetail(state) : HOOKS_UNLISTED}
@@ -503,7 +506,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       <div className="delivery-body">
         {notes}
         {total === 0 ? (
-          <Line tone="muted" icon={Check}>
+          <Line tone="muted" icon={CheckGlyph}>
             没有未提交的改动
           </Line>
         ) : (
@@ -590,11 +593,11 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           ) : (
             <>
               <div className="delivery-remote">
-                <Upload size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                <Upload size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 <code>
                   <VisibleText text={state.remote} />
                 </code>
-                <ChevronRight size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+                <ChevronRightGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                 <code className="delivery-branch" title={escapeHiddenCharacters(state.branch)}>
                   <VisibleText text={state.branch} />
                 </code>
@@ -610,7 +613,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
               {upstreamOther && (
                 <Line
                   tone="muted"
-                  icon={Info}
+                  icon={InfoGlyph}
                   detail={`${failureCopy('git-upstream-other-branch')?.detail ?? ''} 上游：${state.upstream ?? ''}`}>
                   上游是另一个分支
                 </Line>
@@ -642,7 +645,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           <Button
             variant="primary"
             {...footSize}
-            icon={primary.kind === 'push' ? Upload : primary.kind === 'commit' ? GitCommitHorizontal : undefined}
+            icon={primary.kind === 'push' ? Upload : primary.kind === 'commit' ? CommitGlyph : undefined}
             loading={writing === primary.kind || (primary.kind === 'stage' && pending.size > 0)}
             loadingLabel={primary.kind === 'stage' ? '暂存中…' : RUNNING_WORD[primary.kind]}
             disabled={primaryBlocked}
@@ -660,7 +663,7 @@ function FailureCopyLine({ code }: { code: string }) {
   const copy = failureCopy(code)
   if (!copy) return null
   return (
-    <Line tone="muted" icon={Info} detail={copy.detail}>
+    <Line tone="muted" icon={InfoGlyph} detail={copy.detail}>
       {copy.label}
     </Line>
   )

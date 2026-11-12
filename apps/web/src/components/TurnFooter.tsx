@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
-import { Copy, CornerDownLeft, Ellipsis, GitFork, RotateCcw } from 'lucide-react'
+import { GitFork, RotateCcw } from 'lucide-react'
 import { modelIdKey, type RoutedModel } from '@latch/protocol'
 import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
 import { exactTokens, formatDuration, formatTokens, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
-import { IconButton, Tooltip, CopyButton } from '@latch/ui'
+import { IconButton, Tooltip, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -144,13 +144,13 @@ export function TurnFooter({
                 id: 'turn-actions',
                 items: [
                   ...(actions.onHandoff
-                    ? [{ id: 'handoff', label: '交给代码任务…', leading: <CornerDownLeft size={14} />, onSelect: actions.onHandoff }]
+                    ? [{ id: 'handoff', label: '交给代码任务…', leading: <EnterGlyph size={14} />, onSelect: actions.onHandoff }]
                     : []),
-                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
+                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <CopyGlyph size={14} />, onSelect: actions.onCopy },
                 ],
               },
             ]}
-            trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}
+            trigger={props => <IconButton {...props} icon={MoreGlyph} size="xs" label="这一轮的更多操作" />}
           />
         )}
       </div>

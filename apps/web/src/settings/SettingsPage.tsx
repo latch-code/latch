@@ -1,20 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import {
-  ArrowLeft,
-  Box,
-  ChevronLeft,
-  ChevronRight,
-  Cpu,
-  Folder,
-  Info,
-  Keyboard,
-  Laptop,
-  LockKeyhole,
-  MonitorSmartphone,
-  Puzzle,
-  SlidersHorizontal,
-} from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -23,7 +9,27 @@ import { currentShell, shellComputers } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { Count, ICON_STROKE, Icon, IconButton, Kbd, SearchField, type LucideIcon } from '@latch/ui'
+import {
+  Count,
+  ICON_STROKE,
+  Icon,
+  IconButton,
+  Kbd,
+  SearchField,
+  type IconComponent,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  FolderGlyph,
+  InfoGlyph,
+  KeyboardGlyph,
+  LaptopGlyph,
+  LockGlyph,
+  DevicesGlyph,
+  PluginsGlyph,
+  SettingsGlyph,
+  HarnessGlyph,
+  ModelGlyph,
+} from '@latch/ui'
 import { settingsSectionsAt, type AgentPageTarget, type PageEntry, type SettingsSection } from '../shell/routes.ts'
 
 export type { SettingsSection }
@@ -78,21 +84,21 @@ export function searchSections<T extends { id: SettingsSection; label: string }>
 const sections: Array<{
   id: SettingsSection
   label: string
-  icon: LucideIcon
+  icon: IconComponent
   admin: boolean
   catalog?: boolean
   secured?: boolean
   shell?: boolean
 }> = [
-  { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
-  { id: 'providers', label: '模型', icon: Box, admin: true, catalog: true },
-  { id: 'engines', label: 'Harness', icon: Cpu, admin: true, catalog: true },
-  { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
-  { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
-  { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
-  { id: 'computers', label: '电脑', icon: Laptop, admin: false, shell: true },
-  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
-  { id: 'about', label: '关于', icon: Info, admin: false },
+  { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
+  { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
+  { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
+  { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
+  { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
+  { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
+  { id: 'computers', label: '电脑', icon: LaptopGlyph, admin: false, shell: true },
+  { id: 'shortcuts', label: '快捷键', icon: KeyboardGlyph, admin: false },
+  { id: 'about', label: '关于', icon: InfoGlyph, admin: false },
 ]
 
 export const sectionLabel = (id: SettingsSection): string => sections.find(section => section.id === id)!.label
@@ -285,7 +291,7 @@ export function SettingsPage({
             {!phone && onBack && (
               <div className="settings-back-line">
                 <button type="button" className="sidebar-nav-row" onClick={onBack}>
-                  <ArrowLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+                  <ArrowLeft size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
                   <span>返回会话</span>
                   {waiting > 0 && <Count tone="warn" value={waiting} />}
                 </button>
@@ -318,16 +324,16 @@ export function SettingsPage({
                   onClick={() => {
                     open(section.id)
                   }}>
-                  <Icon icon={section.icon} size={phone ? 20 : 16} />
+                  <Icon icon={section.icon} size={phone ? 20 : 16} solid={active === section.id} />
                   <span>{section.label}</span>
-                  {phone && <Icon icon={ChevronRight} size={16} className="chevron" />}
+                  {phone && <Icon icon={ChevronRightGlyph} size={16} className="chevron" />}
                 </button>
               ))}
             </div>
             {found.length === 0 && <p className="settings-nav-caption">没有找到「{query.trim()}」</p>}
             {caption && (
               <p className="settings-nav-caption">
-                <Icon icon={LockKeyhole} size={14} />
+                <Icon icon={LockGlyph} size={14} />
                 <span>{caption}</span>
               </p>
             )}
@@ -343,7 +349,7 @@ export function SettingsPage({
               inert={(phone && (!pushed || level === 'page')) || undefined}>
               {phone && (
                 <header className="settings-bar">
-                  <IconButton label="返回" icon={ChevronLeft} onClick={back} />
+                  <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
                   <h2>{current?.label}</h2>
                 </header>
               )}

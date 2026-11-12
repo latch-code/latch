@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { ChevronDown, ChevronUp, X } from 'lucide-react'
-import { IconButton, SearchField } from '@latch/ui'
+
+import { IconButton, SearchField, ChevronDownGlyph, ChevronUpGlyph, CloseGlyph } from '@latch/ui'
 import type { Message } from '@latch/protocol'
 import { textMatches } from '../textSearch.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
@@ -233,7 +233,7 @@ export function FindBar({
         tooltip="上一个"
         shortcut="⇧⏎"
         size="xs"
-        icon={ChevronUp}
+        icon={ChevronUpGlyph}
         disabled={!found.length}
         onClick={() => {
           next(-1)
@@ -244,13 +244,13 @@ export function FindBar({
         tooltip="下一个"
         shortcut="⏎"
         size="xs"
-        icon={ChevronDown}
+        icon={ChevronDownGlyph}
         disabled={!found.length}
         onClick={() => {
           next(1)
         }}
       />
-      <IconButton label="关闭查找" tooltip="关闭" shortcut="esc" size="xs" icon={X} onClick={onClose} />
+      <IconButton label="关闭查找" tooltip="关闭" shortcut="esc" size="xs" icon={CloseGlyph} onClick={onClose} />
     </div>
   )
 }

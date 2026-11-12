@@ -39,7 +39,7 @@ import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId } from '../core/api.ts'
 import type { Handoff } from '@latch/protocol'
-import { CornerDownLeft } from 'lucide-react'
+
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
@@ -55,7 +55,7 @@ import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
-import { MOTION, usePresence, type ResizePhase } from '@latch/ui'
+import { MOTION, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController } from './useSessionController.ts'
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
@@ -1033,7 +1033,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
               {
                 id: 'close-handoff',
                 label: '结束交接',
-                leading: <CornerDownLeft size={14} />,
+                leading: <EnterGlyph size={14} />,
                 onSelect: () => {
                   void closeHandoff(incoming)
                 },

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Folder, FolderPlus, Plus, Sparkles } from 'lucide-react'
+import { FolderPlus } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
 import { api } from '../core/api.ts'
 import { findProvider, noProjectLine, pinnedChoice, startableWorkspaces } from '../composerChoice.ts'
@@ -28,6 +28,9 @@ import {
   ValuePicker,
   useLayerClose,
   type PickerGroup,
+  FolderGlyph,
+  PlusGlyph,
+  ModelGlyph,
 } from '@latch/ui'
 
 /** A model as one value of a picker. */
@@ -145,7 +148,7 @@ export function ModelPicker({
       searchable={(count > 8 || showHidden) && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(`${option.label} ${option.description ?? ''}`, query)}
       width={adding ? 360 : undefined}
-      leading={provider ? <ProviderTile provider={provider} size={16} /> : Sparkles}
+      leading={provider ? <ProviderTile provider={provider} size={16} /> : ModelGlyph}
       className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker`}
       disabled={disabled}
       onOpenChange={next => {
@@ -165,7 +168,7 @@ export function ModelPicker({
           )}
           {access.admin ? (
             <MenuFooterLink
-              icon={Plus}
+              icon={PlusGlyph}
               chevron={false}
               onClick={() => {
                 setAdding(true)
@@ -340,8 +343,8 @@ export function ProjectPicker({
         inline
           ? undefined
           : workspaces.find(item => item.id === value)?.glyph
-            ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? Folder)
-            : Folder
+            ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? FolderGlyph)
+            : FolderGlyph
       }
       placeholder="选择项目"
       header={{ title: '项目' }}

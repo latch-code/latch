@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+
 import type { SessionConfigOption } from '@latch/protocol'
-import { ICON_STROKE, Popover } from '@latch/ui'
+import { ICON_STROKE, Popover, ChevronDownGlyph } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_ICONS, PermissionList } from './PermissionList.tsx'
 import type { PermissionView } from './permission.ts'
@@ -36,9 +36,9 @@ export function PermissionChip({
       }}
       trigger={props => (
         <button {...props} type="button" className={`chip chip-permission${view.amber ? ' is-amber' : ''}`} aria-label={`权限：${label}`}>
-          <Glyph size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <Glyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="chip-text">{label}</span>
-          <ChevronDown className="chip-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <ChevronDownGlyph className="chip-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         </button>
       )}>
       <PermissionList

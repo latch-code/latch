@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, Check, RefreshCw } from 'lucide-react'
+import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import type {
   AppSnapshot,
   AppSummary,
@@ -9,7 +9,7 @@ import type {
   PluginPackageDetail,
   PluginPackageSummary,
 } from '@latch/protocol'
-import { Button, Dialog, Hint, Icon, InlineNotice, SegmentedControl, Switch, TextAreaField } from '@latch/ui'
+import { Button, Dialog, Hint, Icon, InlineNotice, SegmentedControl, Switch, TextAreaField, CheckGlyph, RefreshGlyph } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { handDraft } from '../core/draftHandoff.ts'
@@ -217,7 +217,7 @@ function AppDraftCard({
       </ol>
       {source && (
         <div className="new-app-source">
-          <Icon icon={Bot} size={14} />
+          <Icon icon={AgentsGlyph} size={14} />
           <span>来自会话</span>
           {onOpenSession && sessionTitle ? (
             <Button variant="ghost" size="xs" onClick={() => onOpenSession(source.sessionId)}>
@@ -227,7 +227,7 @@ function AppDraftCard({
             <span>{sessionTitle ?? '已删除的会话'}</span>
           )}
           {sessionTitle && (
-            <Button variant="ghost" size="xs" icon={RefreshCw} disabled={busy !== null} onClick={reimport}>
+            <Button variant="ghost" size="xs" icon={RefreshGlyph} disabled={busy !== null} onClick={reimport}>
               从会话更新
             </Button>
           )}
@@ -277,7 +277,7 @@ function AppDraftCard({
       )}
       {phase === 'applied' && (
         <div className="new-app-applied">
-          <Icon icon={Check} size={16} />
+          <Icon icon={CheckGlyph} size={16} />
           <strong>已应用</strong>
           <span className="new-app-meta">{`· ${record.id} ${record.version}`}</span>
           <span className="new-app-spacer" />
@@ -457,7 +457,7 @@ export function NewApps({
     <div className="new-apps">
       <div className="new-apps-head">
         <h3>新应用</h3>
-        <Button icon={Bot} onClick={() => setAsking(true)}>
+        <Button icon={AgentsGlyph} onClick={() => setAsking(true)}>
           让 Agent 做
         </Button>
       </div>

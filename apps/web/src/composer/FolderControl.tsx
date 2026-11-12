@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Folder, FolderGit2 } from 'lucide-react'
+import { FolderGit2 } from 'lucide-react'
 import type { WorkspaceInfo, WorktreeBase, WorktreeStart } from '@latch/protocol'
-import { MenuFooterLink, ValuePicker } from '@latch/ui'
+import { MenuFooterLink, ValuePicker, FolderGlyph } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { BriefHint } from './BriefHint.tsx'
@@ -124,7 +124,7 @@ export function FolderControl({
       label="文件夹"
       variant={variant}
       {...(variant === 'row' ? { className: 'new-sheet-row' } : { size: 'xs' as const })}
-      leading={picked ? FolderGit2 : Folder}
+      leading={picked ? FolderGit2 : FolderGlyph}
       value={value}
       disabled={disabled}
       width={360}
