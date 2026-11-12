@@ -347,6 +347,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             updates: Object.keys(shell.updates as object),
             computers: Object.keys(shell.computers as object),
             spaces: Object.keys(shell.spaces as object),
+            diagnostics: Object.keys(shell.diagnostics as object),
+            editors: Object.keys(shell.editors as object),
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
           }
         }),
@@ -359,7 +361,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         openInBrowser: 'function',
         copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
-        files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
+        files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open', 'editor'],
+        diagnostics: ['export'],
+        editors: ['protocolVersion', 'list', 'choose'],
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
         computers: ['list', 'subscribe', 'open', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
@@ -367,6 +371,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         browser: [
           'protocolVersion',
           'open',
+          'list',
           'close',
           'navigate',
           'back',
@@ -378,10 +383,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           'focus',
           'capture',
           'annotate',
+          'hitTest',
+          'setViewport',
+          'setColorScheme',
+          'logs',
           'zoom',
           'devTools',
           'clearData',
           'state',
+          'takeOver',
+          'handBack',
+          'showing',
           'subscribe',
         ],
       })
@@ -894,8 +906,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await advisory.getByRole('button', { name: '拒绝', exact: true }).click()
       await waitFor(async () => (await host.bridge.detail(advisoryId)).summary.status === 'idle')
 
-      // A full-access start from the composer, of an agent saved without any confirmation: it just starts.
-      const second = await helper.request('agents', {
+      // A full-access start from the composer, of an agent saved with its one confirmation: it just starts.
+      const second = await helper.confirmed('agents', {
         method: 'POST',
         body: { name: 'Second Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MARK: 'second' } },
       })
@@ -1396,24 +1408,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const page = await application.firstWindow()
       page.setDefaultTimeout(20_000)
       await enrollShell(page, testHost)
-      const created = await page.evaluate(
-        async definition =>
-          (
-            await fetch('latch://app/link/api/agents', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(definition),
-            })
-          ).status,
-        {
+      // A definition's program is confirmed on this Mac: the test backend stands in for Touch ID.
+      const local = await testHost.enroll({ listener: 'unix', name: '定义 Harness' })
+      const created = await local.confirmed('agents', {
+        method: 'POST',
+        body: {
           id: 'probe-fixture',
           name: 'Probe fixture',
           command: process.execPath,
           args: [FAKE_ACP_AGENT],
           env: { FAKE_ACP_CAPS: 'images,resume,dirs', FAKE_ACP_AUTH: 'new' },
         },
-      )
-      expect(created).toBe(201)
+      })
+      expect(created.status).toBe(201)
       const settings = await openSettings(page)
       await openSection(settings, 'Harness')
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
@@ -1443,18 +1450,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 1000)
       })
       const secret = 'test-only-probe-diagnostic-value'
-      const changed = await page.evaluate(
-        async body =>
-          (
-            await fetch('latch://app/link/api/agents/probe-fixture', {
-              method: 'PUT',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(body),
-            })
-          ).status,
-        { env: { FAKE_ACP_INIT_ERROR: '1', FAKE_SECRET: secret } },
-      )
-      expect(changed).toBe(200)
+      const changed = await local.confirmed('agents/probe-fixture', {
+        method: 'PUT',
+        body: { env: { FAKE_ACP_INIT_ERROR: '1', FAKE_SECRET: secret } },
+      })
+      expect(changed.status).toBe(200)
       await settings.getByRole('button', { name: '重新检测', exact: true }).click()
       await probe.getByText('尚未测试启动', { exact: true }).waitFor()
       await probe.getByRole('button', { name: '测试启动', exact: true }).click()

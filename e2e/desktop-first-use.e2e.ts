@@ -457,16 +457,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await list.getByRole('group', { name: 'Harness 命令', exact: true }).waitFor()
           expect(await list.getByRole('group', { name: '提示模板', exact: true }).getByRole('option').count()).toBe(4)
           expect(await list.getByRole('group', { name: 'Harness 命令', exact: true }).getByRole('option').count()).toBe(1)
-          // The session's own action comes first: the fake agent can start a turn on a new context.
+          // The session's own actions come first: a turn on a new context, and a side question (/btw).
           expect(
             await list.getByRole('group', { name: '这个会话', exact: true }).getByRole('option').locator('strong').allTextContents(),
-          ).toEqual(['/clear'])
+          ).toEqual(['/clear', '/btw'])
           expect(await list.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
             '这个会话',
             '提示模板',
             'Harness 命令',
           ])
-          for (const option of await list.getByRole('option').all()) await reachable(option)
+          // /btw is listed where the session cannot fork into a side question, disabled with its reason.
+          for (const option of await list.getByRole('option').all())
+            await reachable(option, { allowDisabled: (await option.textContent())?.includes('/btw') === true })
           await noHorizontalOverflow(page, menu)
           await mkdir('test-results/desktop-first-use', { recursive: true })
           await page.screenshot({ path: `test-results/desktop-first-use/slash-${width}.png`, animations: 'disabled' })
