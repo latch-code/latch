@@ -1,5 +1,5 @@
 import type { Bridge, ModelRoute, ProjectFolder } from './bridge.ts'
-import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
+import type { AttachmentContent, RuntimeRegistry, ToolDefinition } from './plugins.ts'
 import type {
   AttachmentRef,
   FileChange,
@@ -151,8 +151,17 @@ export interface McpServerLease {
   close(): void
 }
 
-/** Why a server's bridge reported it did not come up. */
-export type McpStartFailure = 'spawn-failed' | 'exited' | 'timeout' | 'protocol' | 'list-failed' | 'output-too-large'
+/** Why a server's bridge (or, for a remote address, the Host's client) reported it did not come up. */
+export type McpStartFailure =
+  | 'spawn-failed'
+  | 'exited'
+  | 'timeout'
+  | 'protocol'
+  | 'list-failed'
+  | 'output-too-large'
+  | 'auth-required'
+  | 'unreachable'
+  | 'refused'
 
 export interface ToolGateway {
   /**
@@ -219,6 +228,12 @@ export interface HarnessHostOptions {
   modelGateway?: ModelGateway
   /** ACP drivers: the Host's tool gateway, through which the agent's `latch-browser` MCP server reaches the browser tools. */
   toolGateway?: ToolGateway
+  /**
+   * The built-in harness: the tools of the session's remote MCP servers (Latch's, used in the session now), read when a
+   * run of an agent session begins. The Host is their client; each call is audited before it is sent and the Host's
+   * classifier makes every one R2. Rejects or answers nothing when there are none; a run never fails over them.
+   */
+  mcpTools?(input: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]>
   /**
    * A session whose context has `proposals` (one of 我的 Agent's, or a conversation with 通用): its agent proposed a
    * memory. The Host keeps it pending for the person and never saves it by itself; it finds the owner from its own

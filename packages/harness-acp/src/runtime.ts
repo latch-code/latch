@@ -262,6 +262,9 @@ const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
   protocol: '它的回答不是 MCP',
   'list-failed': '没有列出工具',
   'output-too-large': '输出过大',
+  'auth-required': '需要登录（尚未实现）',
+  unreachable: '无法连接',
+  refused: 'Latch 没有连接这个地址',
 }
 
 interface Segment {

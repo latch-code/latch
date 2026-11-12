@@ -12,4 +12,5 @@ export const RISK_REASON_TEXT: Readonly<Record<ApprovalRiskReason, string>> = {
   'unlisted-tool': 'Latch 不认识的工具',
   'unparsable-arguments': '参数无法解析',
   'sensitive-field': '密码等敏感输入框',
+  'mcp-tool': '远程 MCP 服务器的工具',
 }

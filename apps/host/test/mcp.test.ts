@@ -19,6 +19,7 @@ import {
   widens,
   within,
   type McpState,
+  type McpStdioState,
 } from '../src/mcp.ts'
 import { middleSlot } from '../src/presence-reason.ts'
 import { namedPaths } from '../src/routes/mcp.ts'
@@ -218,7 +219,7 @@ describe('设置 › MCP: Latch’s own MCP servers', () => {
     const wider = await patch(desktop, { args: [SERVER, '--wider'] })
     expect(wider.status).toBe(403)
     expect((await body(wider)).confirmation.action).toBe('mcp.server.apply')
-    expect((await desktop.json<McpServersResponse>('mcp/servers')).servers[0]!.args).toEqual([SERVER])
+    expect((await desktop.json<McpServersResponse>('mcp/servers')).servers[0]).toMatchObject({ args: [SERVER] })
     const confirmed = await desktop.confirmed(`mcp/servers/${id}`, {
       method: 'PATCH',
       body: { requestId: randomUUID(), baseRevision: revision, secrets: { NEW_NAME: 'xxxxxxxxxx' } },
@@ -540,7 +541,7 @@ describe('MCP changes that widen are on record first, on the real Host', () => {
       expect((await patch(change)).status, JSON.stringify(change)).toBe(503)
     const kept = (await desktop.json<McpServersResponse>('mcp/servers')).servers[0]!
     expect(kept).toMatchObject({ enabled: false, args: [SERVER], scope: { agents: [] }, revision: off.server.revision })
-    expect(kept.env).toEqual([{ name: 'API_TOKEN', set: true, secret: true }])
+    expect(kept).toMatchObject({ env: [{ name: 'API_TOKEN', set: true, secret: true }] })
     expect(await readFile(join(t.dataDir, 'mcp', 'secrets.json'), 'utf8')).toContain(SECRET)
     // 测试 runs nothing when its record cannot be written.
     const log = join(await mkdtemp(join(tmpdir(), 'latch-mcp-testlog-')), 'server.log')
@@ -647,7 +648,7 @@ describe('MCP changes that widen are on record first, on the real Host', () => {
 })
 
 describe('the rules of a definition', () => {
-  const state = (change: Partial<McpState> = {}): McpState => ({
+  const state = (change: Partial<McpStdioState> = {}): McpState => ({
     command: '/usr/bin/server',
     args: [],
     env: {},

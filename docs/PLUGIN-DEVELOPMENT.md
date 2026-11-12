@@ -253,10 +253,11 @@ Standard 在每次工具调用执行前请 Host 分级（`HarnessHostOptions.cla
 | --- | --- | --- |
 | R0 | 内置 `workspace-files` 的 `list_folders`，以及会话任一文件夹中的 `list_files`、`read_file`；内置浏览器工具里只看不动的（列标签、读取、查找、截图、滚动、视口、控制台、网络、等待）与关闭 Agent 自己开的标签；`--demo` 时的演示工具 `long_task` | 直接执行 |
 | R1 | 内置 `write_file` 写入会话任一文件夹内的普通路径；内置浏览器工具的打开、导航、点击、按键、选择、往普通输入框输入，关闭人开的标签；`--demo` 时的演示工具 `write_report` | 每次询问，可选"本会话始终允许" |
-| R2 | 其他所有工具，包括所有第三方插件注册的工具；内置文件工具的 `folder` 不是会话的文件夹；`write_file` 写入受保护路径（如 `.git/`、`.env*`、`package.json`、锁文件、`.github/workflows/`、`node_modules`、`.codex`、`.opencode`、`AGENTS.md` 等 Agent 配置，按所选文件夹判断，完整列表见 [paths.ts](../apps/host/src/paths.ts)）、越出所选文件夹的路径，或所选文件夹与 Latch 程序目录重叠（或无法解析）时的任何写入 | 每次询问，没有"始终允许"，即使同一工具此前在本会话被"始终允许" |
+| R2 | 其他所有工具，包括所有第三方插件注册的工具与远程 MCP 服务器的工具（`mcp__<服务器>__<工具>_<哈希>`）；内置文件工具的 `folder` 不是会话的文件夹；`write_file` 写入受保护路径（如 `.git/`、`.env*`、`package.json`、锁文件、`.github/workflows/`、`node_modules`、`.codex`、`.opencode`、`AGENTS.md` 等 Agent 配置，按所选文件夹判断，完整列表见 [paths.ts](../apps/host/src/paths.ts)）、越出所选文件夹的路径，或所选文件夹与 Latch 程序目录重叠（或无法解析）时的任何写入 | 每次询问，没有"始终允许"，即使同一工具此前在本会话被"始终允许" |
 
 - 浏览器工具的分级要看标签：往密码框、一次性验证码、卡号或隐藏字段输入（或往从没读到过的元素输入）是 R2，原因 `sensitive-field`。标签不在这台 Mac 的本机地址（localhost、`*.localhost`、127/8、::1）上时，除列标签与关标签外，Host 的 broker 一律拒绝，不论批准与否，所以「本会话始终允许」带不到别的地址。分级本身不看标签现在在哪，因为它可以在分级与执行之间变。外部 Harness 经 `latch-browser` MCP 服务与工具网关用同一组工具：会话是完全访问（L3），R0 与 R1 直接执行并审计，R2 一律拒绝（`elevated-refused`），不弹 Latch 的询问；Agent 自己对 MCP 工具的询问仍只是提示。见 [PREVIEW-BROWSER](PREVIEW-BROWSER.md#agent-的工具)。
 - 分级表只列出内置工具。第三方工具的 `requiresApproval: false` 会被忽略，它们一律是 R2，只读工具同样每次询问。`requiresApproval` 只在没有分级器的场合（例如直接用 `createRuntime` 写的测试）决定是否询问。
+- 远程 MCP 服务器的工具（内置 Harness 经 Host 调用，见 [MCP.md](MCP.md#远程地址)）一律 R2，原因 `mcp-tool`，审批卡写成「高风险 · 远程 MCP 服务器的工具」；服务器自报的 `readOnlyHint` 等提示不降低分级。它不属于任何插件，插件不能以 `mcp__` 开头的名字冒充它，同名的插件工具按插件工具分级。
 - 分级器抛错或返回未知值时按 R2 处理。审批的 `risk` 字段由 Host 按当前分级重新计算（不低于运行时记录的值，至少为 R1），并与待处理审批一起持久化；Host 重启后旧审批失效，不会被重新批准。Host 的分级为 R2 时，审批另带原因 `riskReason`（第三方工具为 `unlisted-tool`），审批卡写成「高风险 · Latch 不认识的工具」。工具的 `title` 与 `kind` 不参与分级：把自己叫作「读取文件」的插件工具仍是 R2。
 - R2 每次询问，不提供「始终允许」；持有 `approve:elevated` 的设备都能允许，其他设备只能拒绝或取消。每次决定都有审计。
 

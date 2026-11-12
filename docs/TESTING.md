@@ -309,7 +309,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | `FAKE_ACP_VERSION` | `agentInfo.version`；`none` 表示省略 |
 | `FAKE_ACP_CLI_VERSION` | 以 `--version` 启动时像 CLI 那样输出 `fake-cli <版本>` 后退出；`fail` 什么也不输出、以 1 退出 |
 | `FAKE_ACP_MCP=dsh` | 像 DeepSeek Harness 那样接收 `mcpServers`：只收命令为绝对路径的 stdio 服务；会话建立前先让一个临时副本回答 `server/discover`，再启动、`initialize`（2025 版握手）并 `tools/list`，任何一步失败就拒绝建立会话；日志记 `mcp-mounted` 与 `mcp-refused` |
-| `mcp <服务器> <工具> [JSON]`、`mcp-list <服务器>`（提示） | 在 `FAKE_ACP_MCP=dsh` 下调用会话里一个 Latch MCP 服务器（经 `latch-mcp`）的工具并报告为工具行，或说出它列出的工具；假 MCP 服务器是 `fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`，`FAKE_MCP_MODE` 与 `FAKE_MCP_LOG` 见 [MCP.md](MCP.md#测试替身)） |
+| `mcp <服务器> <工具> [JSON]`、`mcp-list <服务器>`（提示） | 在 `FAKE_ACP_MCP=dsh` 下调用会话里一个 Latch MCP 服务器（经 `latch-mcp`）的工具并报告为工具行，或说出它列出的工具；假 MCP 服务器是 `fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`，`FAKE_MCP_MODE` 与 `FAKE_MCP_LOG` 见 [MCP.md](MCP.md#测试替身)），远程地址的是只听回环的 `startFakeMcpHttp`（`src/fake-mcp-http.ts`；Host 的客户端、确认绑定、桥的远程模式与内置 Harness 的 R2 见 `apps/host/test/mcp-remote.test.ts`） |
 | `FAKE_ACP_DUMP_ENV=1` | 把完整环境写入日志，检查环境白名单 |
 | `FAKE_ACP_PROVIDERS`、`FAKE_ACP_PROVIDER_ID`、`FAKE_ACP_PROVIDERS_SET` | `1`：像 codex-acp 那样宣告并处理 ACP `providers/*`：一个可设置的服务（ID 默认 `openai`，类型 `openai`）；`providers/set` 用给它的头读 `<baseUrl>/models`，之后只提供它认识而列表里也有的模型，日志只记头的名字；`fail` 拒绝设置 |
 | `FAKE_ACP_PROTOCOL`、`FAKE_ACP_AUTH`、`FAKE_ACP_INIT_ERROR`、`FAKE_SECRET` | 协议版本、需要登录（`new`、`prompt`）、初始化失败；`FAKE_SECRET` 出现在 stderr 与错误中，检查脱敏 |

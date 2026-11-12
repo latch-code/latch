@@ -140,6 +140,11 @@ export interface RuntimeOptions {
    * it pending; nothing runs until the person saves it in the schedule editor.
    */
   proposeSchedule?(input: ScheduleProposalInput): Promise<void>
+  /**
+   * The session's remote MCP tools, read when an agent run begins (`HarnessHostOptions.mcpTools`). They never take the
+   * name of a plugin's tool, and a failure leaves them out: the run goes on without them.
+   */
+  mcpTools?(input: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]>
 }
 
 /** The tool a run of an Agent's or 通用's session may call to propose a memory; it saves nothing by itself. */
@@ -1205,6 +1210,17 @@ class HarnessRuntime implements Bridge {
     }
   }
 
+  /** The session's remote MCP tools for this run; none when the Host gives none, cannot list them, or a name is taken. */
+  private async remoteTools(run: Run, taken: readonly ToolDefinition[]): Promise<ToolDefinition[]> {
+    if (!this.options.mcpTools) return []
+    try {
+      const tools = await this.options.mcpTools({ sessionId: run.sessionId, signal: run.controller.signal })
+      return Array.isArray(tools) ? tools.filter(tool => !taken.some(item => item.name === tool.name)) : []
+    } catch {
+      return []
+    }
+  }
+
   /** Fails closed: a classifier that throws or returns anything else yields R2. */
   private async risk(run: Run, call: ToolCall, tool: ToolDefinition): Promise<RiskLevel> {
     // The run's own tool only hands the Host a proposal, which waits for the person.
@@ -1480,13 +1496,15 @@ class HarnessRuntime implements Bridge {
       // tools a 只对话 run has: they read and change nothing, and only hand the Host a proposal that waits for the person.
       // A model that cannot see images is not offered a tool that answers with them.
       const own = run.proposals ?? []
-      const availableTools = (
+      const base =
         run.mode === 'chat'
           ? own
           : own.length
             ? [...run.lease.tools.filter(tool => !own.some(item => item.name === tool.name)), ...own]
             : run.lease.tools
-      ).filter(tool => !tool.returnsImages || this.sees(run))
+      const remote = run.mode === 'agent' ? await this.remoteTools(run, base) : []
+      signal.throwIfAborted()
+      const availableTools = [...base, ...remote].filter(tool => !tool.returnsImages || this.sees(run))
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
         signal.throwIfAborted()

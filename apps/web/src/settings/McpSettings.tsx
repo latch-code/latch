@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Cable } from 'lucide-react'
 import {
+  isLoopbackHost,
+  isMcpHeaderName,
+  isMcpServerName,
   isUnpinnedRunner,
   type AppSnapshot,
   type McpFailure,
+  type McpHttpServerView,
   type McpScope,
   type McpServerView,
   type McpServersResponse,
+  type McpStdioServerView,
 } from '@latch/protocol'
 import {
   Button,
   Checkbox,
   Dialog,
+  GlobeGlyph,
   Hint,
   InlineNotice,
+  SegmentedControl,
   StatusWord,
   Switch,
   SwitchRow,
@@ -44,6 +51,9 @@ export const MCP_FAILURE_TEXT: Readonly<Record<McpFailure, string>> = {
   protocol: '回答不是 MCP',
   'list-failed': '没有列出工具',
   'output-too-large': '输出过大',
+  'auth-required': '需要登录 · 尚未实现',
+  unreachable: '无法连接',
+  refused: 'Latch 没有连接这个地址',
 }
 
 const RUNS_AS_YOU = {
@@ -51,10 +61,15 @@ const RUNS_AS_YOU = {
   detail:
     '命令由 Agent 一侧的 latch-mcp 启动，以你的身份运行，Latch 不隔离它。经 Latch 的每次调用都有记录；Harness 自己的 MCP 不经过 Latch。',
 }
-const BUILTIN_NOTE = {
-  label: '内置 Harness 尚未支持 MCP 命令',
+const REMOTE_NOTE = {
+  label: '请求头只留在这台 Mac',
   detail:
-    '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行这个命令，尚未实现。',
+    'Latch 是远程地址的客户端：请求头只发往确认过的地址，不交给 Agent，也不跟随重定向。内置 Harness 的每次调用都要你确认；外部 Harness 经 latch-mcp 交给 Latch 调用。经 Latch 的每次调用都有记录。',
+}
+const BUILTIN_NOTE = {
+  label: '内置 Harness 只用远程地址',
+  detail:
+    '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现；远程地址由 Latch 调用，每次都要你确认。',
 }
 
 /** The state word of a server: 已停用, 未测试, 可用 · N 个工具, or 失败 with the reason behind it. */
@@ -62,6 +77,8 @@ export function mcpStatus(server: McpServerView): { tone: StatusTone; text: stri
   if (!server.enabled) return { tone: 'neutral', text: '已停用' }
   const report = server.report
   if (!report) return { tone: 'neutral', text: '未测试' }
+  // A login is something the person does, not a failure; OAuth is not built yet, which the word says.
+  if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: '需要登录 · 尚未实现' }
   if (report.status === 'failed') return { tone: 'failed', text: '失败', reason: report.reason ? MCP_FAILURE_TEXT[report.reason] : '' }
   const on = report.tools.filter(tool => !server.disabledTools.includes(tool)).length
   return { tone: 'done', text: `可用 · ${on} 个工具` }
@@ -122,7 +139,18 @@ interface EnvRow {
 const projectLabel = (project: { name: string } | undefined, id: string) => project?.name || (id === 'default' ? '无项目' : id)
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u
-const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/u
+const HEADER = { test: isMcpHeaderName }
+
+/** Whether the Host would keep this address: `https://`, or `http://` on this Mac's loopback; no query or fragment. */
+export function remoteUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.search || url.hash || /[?#]/u.test(value)) return false
+    return url.protocol === 'https:' || (url.protocol === 'http:' && isLoopbackHost(url.hostname))
+  } catch {
+    return false
+  }
+}
 const lines = (text: string) =>
   text
     .split('\n')
@@ -141,6 +169,9 @@ function AddServer({
   onSaved: (server: McpServerView) => void
   onCancel: () => void
 }) {
+  const [transport, setTransport] = useState<'stdio' | 'http'>('stdio')
+  const [url, setUrl] = useState('')
+  const [headers, setHeaders] = useState<Array<{ key: string; value: string }>>([])
   const [name, setName] = useState('')
   const [command, setCommand] = useState('')
   const [args, setArgs] = useState('')
@@ -150,23 +181,36 @@ function AddServer({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const write = useWrite()
-  const nameError = name && (!NAME.test(name) || name.toLowerCase().startsWith('latch')) ? '字母、数字、- 与 _，不以 latch 开头' : undefined
+  const nameError = name && !isMcpServerName(name) ? '字母、数字、- 与 _，不连写 __，不以 latch 开头' : undefined
   const badEnv = env.find(row => row.key.trim() && !ENV_NAME.test(row.key.trim()))
+  const badHeader = headers.find(row => row.key.trim() && !HEADER.test(row.key.trim()))
+  const remote = transport === 'http'
+  const urlError = url.trim() && !remoteUrl(url.trim()) ? 'https:// 地址，或这台 Mac 上的 http://localhost' : undefined
+  const ready = remote ? !!url.trim() && !urlError && !badHeader : !!command.trim() && !badEnv
   const save = async (event: FormEvent) => {
     event.preventDefault()
-    if (!name.trim() || !command.trim() || nameError || badEnv || busy) return
+    if (!name.trim() || !ready || nameError || busy) return
     setBusy(true)
     setError('')
-    const body = {
-      baseRevision: revision,
-      name: name.trim(),
-      command: command.trim(),
-      args: lines(args),
-      env: Object.fromEntries(env.filter(row => row.key.trim() && !row.secret).map(row => [row.key.trim(), row.value])),
-      secrets: Object.fromEntries(env.filter(row => row.key.trim() && row.secret).map(row => [row.key.trim(), row.value])),
-      projectCwd,
-      scope,
-    }
+    const body = remote
+      ? {
+          baseRevision: revision,
+          transport: 'http',
+          name: name.trim(),
+          url: url.trim(),
+          headers: Object.fromEntries(headers.filter(row => row.key.trim()).map(row => [row.key.trim(), row.value])),
+          scope,
+        }
+      : {
+          baseRevision: revision,
+          name: name.trim(),
+          command: command.trim(),
+          args: lines(args),
+          env: Object.fromEntries(env.filter(row => row.key.trim() && !row.secret).map(row => [row.key.trim(), row.value])),
+          secrets: Object.fromEntries(env.filter(row => row.key.trim() && row.secret).map(row => [row.key.trim(), row.value])),
+          projectCwd,
+          scope,
+        }
     try {
       const result = await write('add', requestId =>
         withConfirmation(confirmation =>
@@ -189,103 +233,198 @@ function AddServer({
       onSubmit={event => {
         void save(event)
       }}>
-      <SettingsGroup title="命令" note={<NoteLine brief={RUNS_AS_YOU} />}>
-        <div className="settings-card-body settings-fields">
-          <TextField
-            label="名称"
-            value={name}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="例如 github"
-            error={nameError}
-            onChange={event => {
-              setName(event.target.value)
-            }}
-          />
-          <TextField
-            label="命令"
-            value={command}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="例如 npx 或 /usr/local/bin/server"
-            onChange={event => {
-              setCommand(event.target.value)
-            }}
-          />
-          <TextAreaField
-            label="参数"
-            hint="每行一个；${workspaceFolder} 是会话的项目文件夹"
-            rows={3}
-            value={args}
-            spellCheck={false}
-            onChange={event => {
-              setArgs(event.target.value)
-            }}
-          />
-          {isUnpinnedRunner(command.trim(), lines(args)) && <InlineNotice tone="warn">每次启动可能下载新版本</InlineNotice>}
-        </div>
-      </SettingsGroup>
-      <SettingsGroup
-        title="环境变量"
-        meta={
-          <Button
-            variant="link"
-            size="xs"
-            onClick={() => {
-              setEnv(rows => [...rows, { key: '', value: '', secret: true }])
-            }}>
-            添加变量
-          </Button>
-        }
-        captionIcon="lock"
-        caption="秘密的值只存在这台 Mac 上，不再显示">
-        {env.length === 0 && <SettingsRow title="没有环境变量" />}
-        {env.map((row, index) => (
-          <div key={index} className="settings-card-body settings-fields mcp-env-row">
-            <TextField
-              label="变量名"
-              value={row.key}
-              spellCheck={false}
-              autoComplete="off"
-              error={row.key.trim() && !ENV_NAME.test(row.key.trim()) ? '只能包含字母、数字和下划线' : undefined}
-              onChange={event => {
-                const key = event.target.value
-                setEnv(rows => rows.map((item, at) => (at === index ? { ...item, key } : item)))
-              }}
-            />
-            <TextField
-              label="值"
-              type={row.secret ? 'password' : 'text'}
-              value={row.value}
-              spellCheck={false}
-              autoComplete={row.secret ? 'new-password' : 'off'}
-              onChange={event => {
-                const value = event.target.value
-                setEnv(rows => rows.map((item, at) => (at === index ? { ...item, value } : item)))
-              }}
-            />
-            <Checkbox
-              label="秘密"
-              checked={row.secret}
-              onChange={event => {
-                const secret = event.target.checked
-                setEnv(rows => rows.map((item, at) => (at === index ? { ...item, secret } : item)))
-              }}
-            />
-            <Button
-              variant="ghost"
-              aria-label={`移除变量 ${row.key || index + 1}`}
-              onClick={() => {
-                setEnv(rows => rows.filter((_, at) => at !== index))
-              }}>
-              移除
-            </Button>
-          </div>
-        ))}
-      </SettingsGroup>
-      <SettingsGroup title="启动">
-        <SwitchRow title="在项目文件夹里启动" checked={projectCwd} onCheckedChange={setProjectCwd} />
-      </SettingsGroup>
+      <SegmentedControl<'stdio' | 'http'>
+        label="MCP 服务器的类型"
+        value={transport}
+        options={[
+          { value: 'stdio', label: '命令' },
+          { value: 'http', label: '远程地址' },
+        ]}
+        onValueChange={setTransport}
+      />
+      {remote && (
+        <>
+          <SettingsGroup title="地址" note={<NoteLine brief={REMOTE_NOTE} />}>
+            <div className="settings-card-body settings-fields">
+              <TextField
+                label="名称"
+                value={name}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="例如 github"
+                error={nameError}
+                onChange={event => {
+                  setName(event.target.value)
+                }}
+              />
+              <TextField
+                label="URL"
+                value={url}
+                spellCheck={false}
+                autoComplete="off"
+                inputMode="url"
+                placeholder="https://example.com/mcp"
+                error={urlError}
+                onChange={event => {
+                  setUrl(event.target.value)
+                }}
+              />
+            </div>
+          </SettingsGroup>
+          <SettingsGroup
+            title="请求头"
+            meta={
+              <Button
+                variant="link"
+                size="xs"
+                onClick={() => {
+                  setHeaders(rows => [...rows, { key: '', value: '' }])
+                }}>
+                添加请求头
+              </Button>
+            }
+            captionIcon="lock"
+            caption="值只存在这台 Mac 上，只发往这个地址">
+            {headers.length === 0 && <SettingsRow title="没有请求头" />}
+            {headers.map((row, index) => (
+              <div key={index} className="settings-card-body settings-fields mcp-env-row">
+                <TextField
+                  label="名称"
+                  value={row.key}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="Authorization"
+                  error={row.key.trim() && !HEADER.test(row.key.trim()) ? '不是可用的请求头名称' : undefined}
+                  onChange={event => {
+                    const key = event.target.value
+                    setHeaders(rows => rows.map((item, at) => (at === index ? { ...item, key } : item)))
+                  }}
+                />
+                <TextField
+                  label="值"
+                  type="password"
+                  value={row.value}
+                  spellCheck={false}
+                  autoComplete="new-password"
+                  onChange={event => {
+                    const value = event.target.value
+                    setHeaders(rows => rows.map((item, at) => (at === index ? { ...item, value } : item)))
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  aria-label={`移除请求头 ${row.key || index + 1}`}
+                  onClick={() => {
+                    setHeaders(rows => rows.filter((_, at) => at !== index))
+                  }}>
+                  移除
+                </Button>
+              </div>
+            ))}
+          </SettingsGroup>
+        </>
+      )}
+      {!remote && (
+        <>
+          <SettingsGroup title="命令" note={<NoteLine brief={RUNS_AS_YOU} />}>
+            <div className="settings-card-body settings-fields">
+              <TextField
+                label="名称"
+                value={name}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="例如 github"
+                error={nameError}
+                onChange={event => {
+                  setName(event.target.value)
+                }}
+              />
+              <TextField
+                label="命令"
+                value={command}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="例如 npx 或 /usr/local/bin/server"
+                onChange={event => {
+                  setCommand(event.target.value)
+                }}
+              />
+              <TextAreaField
+                label="参数"
+                hint="每行一个；${workspaceFolder} 是会话的项目文件夹"
+                rows={3}
+                value={args}
+                spellCheck={false}
+                onChange={event => {
+                  setArgs(event.target.value)
+                }}
+              />
+              {isUnpinnedRunner(command.trim(), lines(args)) && <InlineNotice tone="warn">每次启动可能下载新版本</InlineNotice>}
+            </div>
+          </SettingsGroup>
+          <SettingsGroup
+            title="环境变量"
+            meta={
+              <Button
+                variant="link"
+                size="xs"
+                onClick={() => {
+                  setEnv(rows => [...rows, { key: '', value: '', secret: true }])
+                }}>
+                添加变量
+              </Button>
+            }
+            captionIcon="lock"
+            caption="秘密的值只存在这台 Mac 上，不再显示">
+            {env.length === 0 && <SettingsRow title="没有环境变量" />}
+            {env.map((row, index) => (
+              <div key={index} className="settings-card-body settings-fields mcp-env-row">
+                <TextField
+                  label="变量名"
+                  value={row.key}
+                  spellCheck={false}
+                  autoComplete="off"
+                  error={row.key.trim() && !ENV_NAME.test(row.key.trim()) ? '只能包含字母、数字和下划线' : undefined}
+                  onChange={event => {
+                    const key = event.target.value
+                    setEnv(rows => rows.map((item, at) => (at === index ? { ...item, key } : item)))
+                  }}
+                />
+                <TextField
+                  label="值"
+                  type={row.secret ? 'password' : 'text'}
+                  value={row.value}
+                  spellCheck={false}
+                  autoComplete={row.secret ? 'new-password' : 'off'}
+                  onChange={event => {
+                    const value = event.target.value
+                    setEnv(rows => rows.map((item, at) => (at === index ? { ...item, value } : item)))
+                  }}
+                />
+                <Checkbox
+                  label="秘密"
+                  checked={row.secret}
+                  onChange={event => {
+                    const secret = event.target.checked
+                    setEnv(rows => rows.map((item, at) => (at === index ? { ...item, secret } : item)))
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  aria-label={`移除变量 ${row.key || index + 1}`}
+                  onClick={() => {
+                    setEnv(rows => rows.filter((_, at) => at !== index))
+                  }}>
+                  移除
+                </Button>
+              </div>
+            ))}
+          </SettingsGroup>
+          <SettingsGroup title="启动">
+            <SwitchRow title="在项目文件夹里启动" checked={projectCwd} onCheckedChange={setProjectCwd} />
+          </SettingsGroup>
+        </>
+      )}
       <ScopeGroup snapshot={snapshot} scope={scope} onChange={setScope} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={busy} rank={1} />
@@ -293,12 +432,7 @@ function AddServer({
         <Button size="md" disabled={busy} onClick={onCancel}>
           取消
         </Button>
-        <Button
-          size="md"
-          type="submit"
-          variant="primary"
-          loading={busy}
-          disabled={!name.trim() || !command.trim() || !!nameError || !!badEnv}>
+        <Button size="md" type="submit" variant="primary" loading={busy} disabled={!name.trim() || !ready || !!nameError}>
           添加
         </Button>
       </div>
@@ -374,10 +508,13 @@ function EnvDialog({
   open,
   name: fixed,
   fixedSecret = true,
+  header = false,
   onSubmit,
   onClose,
 }: {
   open: boolean
+  /** A remote server's request header: always secret, named as HTTP names headers. */
+  header?: boolean
   /** Replacing this variable's value; absent, a new variable. */
   name?: string
   /** The variable being replaced is secret. */
@@ -392,7 +529,7 @@ function EnvDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const name = fixed ?? key.trim()
-  const invalid = !fixed && key.trim() !== '' && !ENV_NAME.test(key.trim())
+  const invalid = !fixed && key.trim() !== '' && !(header ? HEADER : ENV_NAME).test(key.trim())
   const close = () => {
     setKey('')
     setValue('')
@@ -412,7 +549,7 @@ function EnvDialog({
     <Dialog
       open={open}
       size="form"
-      title={fixed ? `更换 ${fixed} 的值` : '添加环境变量'}
+      title={fixed ? `更换 ${fixed} 的值` : header ? '添加请求头' : '添加环境变量'}
       onClose={() => {
         if (!busy) close()
       }}
@@ -434,11 +571,11 @@ function EnvDialog({
         }}>
         {!fixed && (
           <TextField
-            label="变量名"
+            label={header ? '名称' : '变量名'}
             value={key}
             spellCheck={false}
             autoComplete="off"
-            error={invalid ? '只能包含字母、数字和下划线' : undefined}
+            error={invalid ? (header ? '不是可用的请求头名称' : '只能包含字母、数字和下划线') : undefined}
             onChange={event => {
               setKey(event.target.value)
             }}
@@ -454,7 +591,7 @@ function EnvDialog({
             setValue(event.target.value)
           }}
         />
-        {!fixed && <Checkbox label="秘密" checked={chosenSecret} onChange={event => setSecret(event.target.checked)} />}
+        {!fixed && !header && <Checkbox label="秘密" checked={chosenSecret} onChange={event => setSecret(event.target.checked)} />}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
         <InlineConfirm active={busy} rank={1} />
       </form>
@@ -470,7 +607,7 @@ function CommandDialog({
   onClose,
 }: {
   open: boolean
-  server: McpServerView
+  server: McpStdioServerView
   onSubmit: (body: { command: string; args: string[]; projectCwd: boolean }) => Promise<string>
   onClose: () => void
 }) {
@@ -539,6 +676,256 @@ function CommandDialog({
   )
 }
 
+/** A remote server's address, edited in a dialog; another origin or path asks for Touch ID. */
+function UrlDialog({
+  server,
+  onSubmit,
+  onClose,
+}: {
+  server: McpHttpServerView
+  onSubmit: (url: string) => Promise<string>
+  onClose: () => void
+}) {
+  const [url, setUrl] = useState(server.url)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const invalid = url.trim() !== '' && !remoteUrl(url.trim())
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!url.trim() || invalid || busy) return
+    setBusy(true)
+    const failure = await onSubmit(url.trim())
+    setBusy(false)
+    if (failure) setError(failure)
+    else onClose()
+  }
+  return (
+    <Dialog
+      open
+      size="form"
+      title="编辑地址"
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+      footer={
+        <>
+          <Button size="md" disabled={busy} onClick={onClose}>
+            取消
+          </Button>
+          <Button size="md" variant="primary" type="submit" form="mcp-url-form" disabled={!url.trim() || invalid} loading={busy}>
+            保存
+          </Button>
+        </>
+      }>
+      <form
+        id="mcp-url-form"
+        className="settings-form"
+        onSubmit={event => {
+          void submit(event)
+        }}>
+        <TextField
+          label="URL"
+          value={url}
+          spellCheck={false}
+          autoComplete="off"
+          inputMode="url"
+          error={invalid ? 'https:// 地址，或这台 Mac 上的 http://localhost' : undefined}
+          onChange={event => {
+            setUrl(event.target.value)
+          }}
+        />
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} rank={1} />
+      </form>
+    </Dialog>
+  )
+}
+
+/** A remote server's address and request headers by name, with 编辑 and 更换 on this Mac. */
+function RemoteGroups({
+  server,
+  local,
+  busy,
+  onEditUrl,
+  onAddHeader,
+  onReplace,
+  onRemove,
+}: {
+  server: McpHttpServerView
+  local: boolean
+  busy: boolean
+  onEditUrl: () => void
+  onAddHeader: () => void
+  onReplace: (name: string) => void
+  onRemove: (name: string) => void
+}) {
+  return (
+    <>
+      <SettingsGroup
+        title="地址"
+        meta={
+          local && (
+            <Button variant="link" size="xs" disabled={busy} onClick={onEditUrl}>
+              编辑…
+            </Button>
+          )
+        }
+        note={<NoteLine brief={REMOTE_NOTE} />}>
+        <SettingsRow title="URL" description={<MiddleEllipsis text={server.url} className="settings-mono" />} />
+      </SettingsGroup>
+      <SettingsGroup
+        title="请求头"
+        meta={
+          local && (
+            <Button variant="link" size="xs" disabled={busy} onClick={onAddHeader}>
+              添加…
+            </Button>
+          )
+        }
+        captionIcon="lock"
+        caption="值只存在这台 Mac 上，只发往这个地址">
+        {server.headers.length === 0 && <SettingsRow title="没有请求头" />}
+        {server.headers.map(entry => (
+          <SettingsRow
+            key={entry.name}
+            title={<code className="settings-mono">{entry.name}</code>}
+            description={entry.set ? '已设置' : '未设置'}
+            trailing={
+              local && (
+                <span className="mcp-row-actions">
+                  <Button variant="ghost" disabled={busy} onClick={() => onReplace(entry.name)}>
+                    更换…
+                  </Button>
+                  <Button variant="ghost" disabled={busy} aria-label={`移除 ${entry.name}`} onClick={() => onRemove(entry.name)}>
+                    移除
+                  </Button>
+                </span>
+              )
+            }
+          />
+        ))}
+      </SettingsGroup>
+    </>
+  )
+}
+
+/** A local command's groups: what runs and its variables by name. */
+function StdioGroups({
+  server,
+  local,
+  busy,
+  setDialog,
+  patch,
+  setError,
+}: {
+  server: McpStdioServerView
+  local: boolean
+  busy: string | null
+  setDialog: (dialog: 'command' | 'env' | { name: string; secret: boolean }) => void
+  patch: (key: string, change: Record<string, unknown>, confirm?: boolean) => Promise<string>
+  setError: (text: string) => void
+}) {
+  return (
+    <>
+      <SettingsGroup
+        title="命令"
+        meta={
+          local && (
+            <Button
+              variant="link"
+              size="xs"
+              disabled={busy !== null}
+              onClick={() => {
+                setDialog('command')
+              }}>
+              编辑…
+            </Button>
+          )
+        }
+        note={<NoteLine brief={RUNS_AS_YOU} />}>
+        <SettingsRow title="命令" description={<MiddleEllipsis text={server.command} className="settings-mono" />} />
+        <SettingsRow
+          title="参数"
+          description={server.args.length ? <MiddleEllipsis text={server.args.join(' ')} className="settings-mono" /> : '无'}
+        />
+        <SettingsRow title="工作目录" description={server.projectCwd ? '会话的项目文件夹' : '会话的空文件夹'} />
+        {server.unpinned && (
+          <SettingsRow
+            title={
+              <span className="mcp-warn">
+                <Icon icon={WarningGlyph} size={14} />
+                每次启动可能下载新版本
+              </span>
+            }
+          />
+        )}
+      </SettingsGroup>
+      <SettingsGroup
+        title="环境变量"
+        meta={
+          local && (
+            <Button
+              variant="link"
+              size="xs"
+              disabled={busy !== null}
+              onClick={() => {
+                setDialog('env')
+              }}>
+              添加…
+            </Button>
+          )
+        }
+        captionIcon="lock"
+        caption="秘密的值只存在这台 Mac 上，不再显示">
+        {server.env.length === 0 && <SettingsRow title="没有环境变量" />}
+        {server.env.map(entry => (
+          <SettingsRow
+            key={entry.name}
+            title={<code className="settings-mono">{entry.name}</code>}
+            description={
+              entry.secret ? (
+                entry.set ? (
+                  '秘密 · 已设置'
+                ) : (
+                  '秘密 · 未设置'
+                )
+              ) : (
+                <MiddleEllipsis text={entry.value ?? ''} className="settings-mono" />
+              )
+            }
+            trailing={
+              local && (
+                <span className="mcp-row-actions">
+                  <Button
+                    variant="ghost"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setDialog({ name: entry.name, secret: entry.secret })
+                    }}>
+                    更换…
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={busy !== null}
+                    aria-label={`移除 ${entry.name}`}
+                    onClick={() => {
+                      // A plain variable is part of what was confirmed: taking it away asks again.
+                      void patch(`env-${entry.name}`, { [entry.secret ? 'secrets' : 'env']: { [entry.name]: null } }, !entry.secret).then(
+                        text => text && setError(text),
+                      )
+                    }}>
+                    移除
+                  </Button>
+                </span>
+              )
+            }
+          />
+        ))}
+      </SettingsGroup>
+    </>
+  )
+}
+
 /** A server's page: what runs, its variables by name, its tools with switches, 「用在」, 测试, 停用 and 移除. */
 function ServerPage({
   snapshot,
@@ -556,8 +943,11 @@ function ServerPage({
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [dialog, setDialog] = useState<null | 'command' | 'env' | { name: string; secret: boolean }>(null)
+  const [dialog, setDialog] = useState<null | 'command' | 'url' | 'env' | { name: string; secret: boolean }>(null)
+  const remote = server.transport === 'http'
   const [removing, setRemoving] = useState(false)
+  /** Only offered when no other server or model service uses the allowance; taking it away asks nothing. */
+  const [dropAllowance, setDropAllowance] = useState(true)
   const [tested, setTested] = useState<'ok' | 'failed' | null>(null)
   const write = useWrite()
   const patch = async (key: string, change: Record<string, unknown>, confirm = false): Promise<string> => {
@@ -654,101 +1044,22 @@ function ServerPage({
         <InlineNotice tone="error">{`测试失败：${report.reason ? MCP_FAILURE_TEXT[report.reason] : '没有完成'}`}</InlineNotice>
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      <SettingsGroup
-        title="命令"
-        meta={
-          local && (
-            <Button
-              variant="link"
-              size="xs"
-              disabled={busy !== null}
-              onClick={() => {
-                setDialog('command')
-              }}>
-              编辑…
-            </Button>
-          )
-        }
-        note={<NoteLine brief={RUNS_AS_YOU} />}>
-        <SettingsRow title="命令" description={<MiddleEllipsis text={server.command} className="settings-mono" />} />
-        <SettingsRow
-          title="参数"
-          description={server.args.length ? <MiddleEllipsis text={server.args.join(' ')} className="settings-mono" /> : '无'}
+      {server.transport === 'http' ? (
+        <RemoteGroups
+          server={server}
+          local={local}
+          busy={busy !== null}
+          onEditUrl={() => setDialog('url')}
+          onAddHeader={() => setDialog('env')}
+          onReplace={name => setDialog({ name, secret: true })}
+          onRemove={name => {
+            // Taking a header away narrows what is sent: on record, no confirmation.
+            void patch(`header-${name}`, { headers: { [name]: null } }).then(text => text && setError(text))
+          }}
         />
-        <SettingsRow title="工作目录" description={server.projectCwd ? '会话的项目文件夹' : '会话的空文件夹'} />
-        {server.unpinned && (
-          <SettingsRow
-            title={
-              <span className="mcp-warn">
-                <Icon icon={WarningGlyph} size={14} />
-                每次启动可能下载新版本
-              </span>
-            }
-          />
-        )}
-      </SettingsGroup>
-      <SettingsGroup
-        title="环境变量"
-        meta={
-          local && (
-            <Button
-              variant="link"
-              size="xs"
-              disabled={busy !== null}
-              onClick={() => {
-                setDialog('env')
-              }}>
-              添加…
-            </Button>
-          )
-        }
-        captionIcon="lock"
-        caption="秘密的值只存在这台 Mac 上，不再显示">
-        {server.env.length === 0 && <SettingsRow title="没有环境变量" />}
-        {server.env.map(entry => (
-          <SettingsRow
-            key={entry.name}
-            title={<code className="settings-mono">{entry.name}</code>}
-            description={
-              entry.secret ? (
-                entry.set ? (
-                  '秘密 · 已设置'
-                ) : (
-                  '秘密 · 未设置'
-                )
-              ) : (
-                <MiddleEllipsis text={entry.value ?? ''} className="settings-mono" />
-              )
-            }
-            trailing={
-              local && (
-                <span className="mcp-row-actions">
-                  <Button
-                    variant="ghost"
-                    disabled={busy !== null}
-                    onClick={() => {
-                      setDialog({ name: entry.name, secret: entry.secret })
-                    }}>
-                    更换…
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busy !== null}
-                    aria-label={`移除 ${entry.name}`}
-                    onClick={() => {
-                      // A plain variable is part of what was confirmed: taking it away asks again.
-                      void patch(`env-${entry.name}`, { [entry.secret ? 'secrets' : 'env']: { [entry.name]: null } }, !entry.secret).then(
-                        text => text && setError(text),
-                      )
-                    }}>
-                    移除
-                  </Button>
-                </span>
-              )
-            }
-          />
-        ))}
-      </SettingsGroup>
+      ) : (
+        <StdioGroups server={server} local={local} busy={busy} setDialog={setDialog} patch={patch} setError={setError} />
+      )}
       <SettingsGroup title="工具" meta={tools.length > 0 ? `${tools.length} 个` : undefined}>
         {tools.length === 0 && <SettingsRow title={server.report ? '没有工具' : '测试后列出工具'} />}
         {tools.map(tool => (
@@ -777,26 +1088,48 @@ function ServerPage({
           void patch('scope', { scope }).then(text => text && setError(text))
         }}
       />
-      {dialog === 'command' && (
+      {dialog === 'command' && server.transport === 'stdio' && (
         <CommandDialog open server={server} onSubmit={body => patch('command', body, true)} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'url' && server.transport === 'http' && (
+        <UrlDialog server={server} onSubmit={url => patch('url', { url }, url !== server.url)} onClose={() => setDialog(null)} />
       )}
       <EnvDialog
         open={dialog === 'env' || (typeof dialog === 'object' && dialog !== null)}
+        header={remote}
         {...(typeof dialog === 'object' && dialog !== null ? { name: dialog.name, fixedSecret: dialog.secret } : {})}
-        // A secret's new value asks nothing; a plain variable, or a new secret name, is confirmed.
+        // A secret's new value asks nothing; a plain variable, or a new secret or header name, is confirmed.
         onSubmit={(key, value, secret) =>
-          patch(`env-${key}`, { [secret ? 'secrets' : 'env']: { [key]: value } }, !secret || !server.env.some(entry => entry.name === key))
+          server.transport === 'http'
+            ? patch(`header-${key}`, { headers: { [key]: value } }, !server.headers.some(entry => entry.name === key))
+            : patch(
+                `env-${key}`,
+                { [secret ? 'secrets' : 'env']: { [key]: value } },
+                !secret || !server.env.some(entry => entry.name === key),
+              )
         }
         onClose={() => setDialog(null)}
       />
       {removing && (
         <ConfirmDialog
           title={`移除 ${server.name}？`}
-          message="正在用它的会话立即失去它；它的环境变量的值一并删除。"
+          message={
+            <>
+              {`正在用它的会话立即失去它；它的${remote ? '请求头' : '环境变量'}的值一并删除。`}
+              {server.transport === 'http' && server.allowance && (
+                <Checkbox
+                  label={`同时移除出站许可 ${server.allowance}`}
+                  checked={dropAllowance}
+                  onChange={event => setDropAllowance(event.target.checked)}
+                />
+              )}
+            </>
+          }
           confirmLabel="移除"
           danger
           onConfirm={async () => {
-            await api(`mcp/servers/${encodeURIComponent(server.id)}`, { method: 'DELETE' })
+            const drop = server.transport === 'http' && server.allowance && dropAllowance ? '?allowance=remove' : ''
+            await api(`mcp/servers/${encodeURIComponent(server.id)}${drop}`, { method: 'DELETE' })
             onRemoved()
           }}
           onClose={() => setRemoving(false)}
@@ -858,7 +1191,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           <ObjectRow
             key={server.id}
             data={{ 'data-mcp-server': server.name }}
-            leading={<IconTile icon={TerminalGlyph} />}
+            leading={<IconTile icon={server.transport === 'http' ? GlobeGlyph : TerminalGlyph} />}
             title={server.name}
             description={scopeText(server.scope, snapshot)}
             dim={!server.enabled}

@@ -660,6 +660,39 @@
         }
       },
       "reason": "让 Agent 运行 node /Users/someone/…}evil-server.mjs（cc1c，MCP「files」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-remote",
+        "slots": {
+          "target": "api.githubcopilot.com:443",
+          "server": "github"
+        }
+      },
+      "reason": "让 Latch 连接 api.githubcopilot.com:443（MCP 服务器「github」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-remote",
+        "slots": {
+          "target": "mcp.a-very-long-subdomain-name.internal.example.com:8443",
+          "server": "linear\u202e for every project here"
+        }
+      },
+      "reason": "让 Latch 连接 …ubdomain-name.internal.example.com:8443（MCP 服务器「linear\\u{202E} …」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-remote",
+        "slots": {
+          "target": "127.0.0.1:3845",
+          "server": "figma"
+        }
+      },
+      "reason": "让 Latch 连接 127.0.0.1:3845（MCP 服务器「figma」）"
     }
   ],
   "presenceRequest": [

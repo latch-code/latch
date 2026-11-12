@@ -143,7 +143,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **设备各自持有密钥。** 每台设备在登记时生成自己的密钥，Host 只保存公钥与凭据哈希。登记需要在执行端电脑上确认（离线连接码除外）。
 - **只有 `host.sock` 算这台电脑。** 回环端口也可能被转发到别处，所以回环与其他入口一样按远程处理。
 - **能力按设备分级。** 设备权限（scope）决定能调用哪些接口，这是唯一的限制；监听入口决定能否扩大权限；会话级别（L1 / L3）说明 Latch 是否逐项把关。信任在连接设备时建立一次，之后手机和这台 Mac 一样工作。
-- **本机确认只留给真实边界，只在这台 Mac 上发起。** 连接新设备、扩大设备权限、确认新的模型服务地址或出站地址、应用含代码的插件、新增或放宽本机程序（MCP 服务器的命令、参数、变量名与工作目录，`mcp.server.apply`；Harness 定义的命令、参数与变量，`harness.command.apply`，见 [MCP.md](./MCP.md) 与 [HARNESSES.md](./HARNESSES.md)）。只有经 `host.sock` 认证的已登记设备（桌面端）能发起；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请，从未有过设备时桌面端在 `host.sock` 上的第一次连接不需要确认。开始 Agent、放宽模式、批准操作、改 Harness 的名称与开关不弹确认：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
+- **本机确认只留给真实边界，只在这台 Mac 上发起。** 连接新设备、扩大设备权限、确认新的模型服务地址或出站地址、应用含代码的插件、新增或放宽本机程序与远程 MCP 服务器（MCP 服务器的命令、参数、变量名与工作目录，或远程地址的源、路径与请求头名字，`mcp.server.apply`，远程地址需要的出站许可在同一次确认里；Harness 定义的命令、参数与变量，`harness.command.apply`，见 [MCP.md](./MCP.md) 与 [HARNESSES.md](./HARNESSES.md)）。只有经 `host.sock` 认证的已登记设备（桌面端）能发起；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请，从未有过设备时桌面端在 `host.sock` 上的第一次连接不需要确认。开始 Agent、放宽模式、批准操作、改 Harness 的名称与开关不弹确认：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
 - **先审计再执行。** 授予或执行权限的操作先写入审计记录，写入失败则拒绝执行；降低权限的操作从不因审计失败而受阻。
 
 ### 不防御的情况
@@ -274,7 +274,8 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 - **权限级别。** Hub 由 `trustOf` 给会话标注级别：Driver 的来源由注册它的插件得出，内置且声明 Latch 把关的是 L1，ACP 与插件 Harness 是 L3（未知来源按 L3），Driver 只能往低了说（`apps/host/src/harness-trust.ts`）；会话详情带 `permission` 说明由谁把关、能否读回模式与漂移状态。
 - **故障隔离。** 某个 Driver 列表失败不影响快照；非必需 Driver 启动失败只会在目录中标为不可用。
 - **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。自己带模型的 Harness 选了模型服务时，Host 用 `pairRoute` 重算这一对，只把 `modelRoute`（服务、模型、协议与源）交给声明了 `models.wires` 的 Driver，Driver 经 `modelGateway` 为每个进程换一个网关凭据（见 [HARNESSES.md](./HARNESSES.md#经-latch-使用模型服务)）。
-- **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），只转发 `tools/list` 与 `tools/call`（及其取消）给浏览器工具，以及 Latch 的 MCP 服务器的 `latch-mcp` 桥的启动清单、状态报告与每次调用前后的审计（[MCP.md](./MCP.md)）；MCP 的令牌每个服务器一个，失效时网关断开桥的连接，桥随之结束服务器的进程组。Driver 每次为会话打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌（只在桌面端已登记为浏览器提供者、会话有项目时），写进网关目录里新建的 0600 文件，`mcpServers` 里的 `latch-browser` 只拿到文件路径（参数与环境都可能被同一台电脑上的其他进程看到），读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期，进程退出、会话归档或删除、Host 停止时失效，每个请求都核对。它不是 API 的入口类别：持有令牌的进程不能当设备用，也碰不到会话与设备的接口；网页连不到 Unix 套接字。调用只在会话正在运行的一轮里执行，停止这一轮要等在途的调用结算后才确认；走浏览器的 broker、分级与审计（`browser.call` 带 `via: 'mcp'`），完全访问的会话里 R2 一律拒绝（见 [PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md#agent-的工具)）。
+- **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），只转发 `tools/list` 与 `tools/call`（及其取消）给浏览器工具，以及 Latch 的 MCP 服务器的 `latch-mcp` 桥的启动清单、状态报告与每次调用前后的审计（[MCP.md](./MCP.md)）；MCP 的令牌每个服务器一个，失效时网关断开桥的连接，桥随之结束服务器的进程组。远程地址的桥另经 `mcp/remote` 与 `mcp/cancel` 把 `initialize`、`tools/list`、`tools/call` 交给 Host（见下一条）。
+- **Host 作为远程 MCP 的客户端。** 远程 MCP 服务器（Streamable HTTP）只由 Host 连接（`mcp-remote.ts`），外部 Harness 经 `latch-mcp` 桥、内置 Harness 经 `mcpTools` 得到它的工具。请求只经注入的出站 `fetch` 与出站策略，只发往本机确认时绑定的源与路径，不跟随重定向；请求头与它的值从不离开 Host，回答有大小与时间上限，经 `redactKnownSecrets` 后才交给 Agent。每次调用先写审计，写不进就不发。见 [MCP.md](./MCP.md#远程地址)。Driver 每次为会话打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌（只在桌面端已登记为浏览器提供者、会话有项目时），写进网关目录里新建的 0600 文件，`mcpServers` 里的 `latch-browser` 只拿到文件路径（参数与环境都可能被同一台电脑上的其他进程看到），读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期，进程退出、会话归档或删除、Host 停止时失效，每个请求都核对。它不是 API 的入口类别：持有令牌的进程不能当设备用，也碰不到会话与设备的接口；网页连不到 Unix 套接字。调用只在会话正在运行的一轮里执行，停止这一轮要等在途的调用结算后才确认；走浏览器的 broker、分级与审计（`browser.call` 带 `via: 'mcp'`），完全访问的会话里 R2 一律拒绝（见 [PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md#agent-的工具)）。
 - **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效；在我的 Agent 里和「通用」的对话也记在这里（`generalChat`，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#会话)）；审批决定与取消的回执也随会话保存在这里（见「审批与取消」）。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`，删除成功后一并删除该会话的元数据与回执。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化（Standard 与 ACP 都如此；不记录运行的外部 Driver 不提供）。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **生命周期事件。** `session-lifecycle.ts` 把会话与 Host 的变化发给 Host 内按会话保存状态的模块，路由模块经 `RouteContext.lifecycle` 拿到的对象只有 `on`，只能订阅、不能发出。没有监听器时这些事件不增加任何读取或等待。
@@ -334,7 +335,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `audit/audit.jsonl` | 哈希链审计记录 |
 | `policy.json` | 本机安全策略 |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
-| `mcp/servers.json`、`mcp/secrets.json` | Latch 的 MCP 服务器定义与它们变量的值（目录 0700、文件 0600、strict，不进入时间机器备份），见 [MCP.md](./MCP.md) |
+| `mcp/servers.json`、`mcp/secrets.json` | Latch 的 MCP 服务器定义与它们变量、远程地址请求头的值（目录 0700、文件 0600、strict，不进入时间机器备份），见 [MCP.md](./MCP.md) |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `agents/computer.json` | 桌面端报告的睡眠与醒来、Host 有序停止到下次启动的时段（版本 1，各最多 32 段，只有时间，strict schema，0600），用于「电脑」的上次唤醒与错过的原因；读不了时移到一边从空开始（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)） |
@@ -509,7 +510,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。
 
-其他限制：外部 Harness 与 Standard 分别保存历史，会话不能在 Harness 之间迁移；运行中的任务不能迁移到其他电脑。每次状态推送包含选中会话的完整消息列表，长会话的带宽随历史增长；没有分页或虚拟列表。没有 MCP 管理界面或附件上传。
+其他限制：外部 Harness 与 Standard 分别保存历史，会话不能在 Harness 之间迁移；运行中的任务不能迁移到其他电脑。每次状态推送包含选中会话的完整消息列表，长会话的带宽随历史增长；没有分页或虚拟列表。没有附件上传。
 
 ## 会话搜索与批处理
 

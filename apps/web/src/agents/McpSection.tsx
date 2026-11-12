@@ -10,10 +10,10 @@ export function agentServers(servers: readonly McpServerView[], agentId: string)
   return servers.filter(server => server.scope.all || server.scope.agents.includes(agentId))
 }
 
-/** Why this Agent's Harness gets none of Latch's servers, or undefined when it gets them. */
+/** What of Latch's servers this Agent's Harness does not get, or undefined when it gets them all. */
 export function harnessNote(harness: HarnessInfo | undefined, builtin: boolean): string | undefined {
   if (!harness || harness.skills === 'server') return undefined
-  return builtin ? '内置 Harness 尚未支持 MCP 命令' : '这个 Harness 不接收 MCP 服务器'
+  return builtin ? '内置 Harness 只用远程地址' : '这个 Harness 不接收 MCP 服务器'
 }
 
 /**
@@ -76,7 +76,7 @@ export function McpSection({
         {note ? (
           <Hint label={note} moreLabel="MCP">
             {builtin
-              ? '命令交给 Claude Agent、Codex 等外部 Harness。内置 Harness 要由 Latch 自己在这台 Mac 上运行这个命令，尚未实现。'
+              ? '命令交给 Claude Agent、Codex 等外部 Harness；内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现。远程地址由 Latch 调用，每次都要你确认。'
               : 'pi 的 RPC 模式不接收 MCP 服务器。'}
           </Hint>
         ) : (

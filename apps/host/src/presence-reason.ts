@@ -78,6 +78,14 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
       '」）',
     ],
   },
+  /**
+   * A remote MCP server: the `host:port` the Host will connect to with the server's request headers, before the name a
+   * person chose. Like a model service's address, it keeps its end: the domain.
+   */
+  'mcp.server.apply-remote': {
+    actions: ['mcp.server.apply'],
+    segments: ['让 Latch 连接 ', { slot: 'target', max: 40, keep: 'end' }, '（MCP 服务器「', { slot: 'server', max: 16 }, '」）'],
+  },
   /** The same for a Harness definition: the command as the Host resolved it, then the definition's name. */
   'harness.command.apply': {
     actions: ['harness.command.apply'],

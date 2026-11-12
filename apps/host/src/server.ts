@@ -104,6 +104,7 @@ import {
   type ModelRoute,
   type ProjectFolder,
   type ToolRiskInput,
+  type ToolDefinition,
   type HarnessPlugin,
   type SessionFolder,
 } from '@latch/sdk'
@@ -175,12 +176,16 @@ import {
 import {
   MCP_DIRECTORY,
   McpStore,
+  TEST_TIMEOUT_MS,
   expandArgs,
   isConfirmed as mcpConfirmed,
   serverEnvironment,
   toolHash,
   usedIn as mcpUsedIn,
+  type McpHttpRecord,
+  type McpServerRecord,
 } from './mcp.ts'
+import { McpRemotePool, McpRemoteSession, builtinToolName, maskStrings, remoteFailure, type RemoteAnswer } from './mcp-remote.ts'
 import {
   authFailure,
   createRateLimits,
@@ -708,6 +713,24 @@ interface DestinationPlan {
   reason?: EgressReason
 }
 
+/** The `host:port` an outbound allowance names for `url`, as the egress rules write it; undefined for no URL. */
+function hostPortOf(url: string): string | undefined {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.hostname}:${parsed.port || (parsed.protocol === 'https:' ? 443 : 80)}`
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * An MCP tool's name as it may be kept in a report or shown: MCP's spelling, and no saved secret in it (a server could
+ * name a tool after one; such a tool is left out rather than shown masked).
+ */
+function keptToolName(name: string): boolean {
+  return /^[A-Za-z0-9_.:/-]{1,128}$/u.test(name) && redactKnownSecrets(name) === name
+}
+
 function approvalReceipt(record: ApprovalRecord): ApprovalReceipt {
   return {
     approvalId: record.approvalId,
@@ -1173,6 +1196,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
     })
     const inspectEgress = createEgressInspector(options.egressLookup ? { lookup: options.egressLookup } : {})
+    /** The Host's sessions with remote MCP servers, through the same outbound rules (docs/MCP.md). */
+    const mcpRemote = new McpRemotePool()
+    startupCleanup.push(() => mcpRemote.closeAll())
     let hub: HarnessHub | undefined
     const presence = new PresenceService({
       backend: options.presence ?? createPresenceBackend({ codeRoot, policy }),
@@ -2280,7 +2306,71 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ],
         commandDirectories: () => [...(options.commandDirectories?.() ?? [])],
         tmpRoot: runtime.tmpRoot,
-        revoke: serverId => toolGateway?.revokeMcp(serverId),
+        revoke: serverId => {
+          toolGateway?.revokeMcp(serverId)
+          mcpRemote.revoke(serverId)
+        },
+        // A remote server is judged as a model-service address is: the allowance it needs is in its own confirmation,
+        // and one the policy already has (a model service's, the process's) is not asked for again.
+        egressFor: async url => {
+          const need = await inspectEgress(url)
+          if (need.allowance === 'never') throw egressDenied(need.target)
+          if (need.allowance === 'none') return { target: need.target }
+          if (policy.get().hostEgressAllow.includes(need.target) || egressExtra.includes(need.target)) return { target: need.target }
+          return {
+            target: need.target,
+            egress: need.target,
+            ...(need.reason === 'loopback' || need.reason === 'local-interface' ? { local: true } : {}),
+          }
+        },
+        allowEgress: async (caller, target, stepup) => {
+          const undo = await addDestination(
+            caller,
+            { origin: '', address: '', hostPort: target, addAddress: false, egress: target },
+            stepup,
+          )
+          return async () => {
+            const res = { headersSent: true, setHeader: () => {} } as unknown as ServerResponse
+            await undo(res)
+          }
+        },
+        allowanceOf: serverId => {
+          const record = mcpStore.get(serverId)
+          if (!record || record.transport !== 'http') return undefined
+          const target = hostPortOf(record.url)
+          if (!target || !policy.get().hostEgressAllow.includes(target) || egressExtra.includes(target)) return undefined
+          const others = [
+            ...mcpStore.records().flatMap(item => (item.id !== serverId && item.transport === 'http' ? [item.url] : [])),
+            ...config.providers().map(provider => provider.baseURL),
+          ]
+          return others.some(url => hostPortOf(url) === target) ? undefined : target
+        },
+        removeAllowance: async (caller, target, res) => {
+          const current = policy.get()
+          if (!current.hostEgressAllow.includes(target)) return
+          const lowered = structuredClone(current)
+          lowered.hostEgressAllow = current.hostEgressAllow.filter(item => item !== target)
+          const { audited } = await policy.update(lowered, actorOf(caller), 'none')
+          if (!audited && !res.headersSent) res.setHeader('x-latch-audit', 'failed')
+        },
+        testRemote: async record => {
+          const session = new McpRemoteSession({ ...remoteOptions(record), timeoutMs: TEST_TIMEOUT_MS })
+          try {
+            const tools = await session.listTools(AbortSignal.timeout(TEST_TIMEOUT_MS))
+            return {
+              status: 'ok' as const,
+              tools: tools
+                .map(tool => tool.name)
+                .filter(keptToolName)
+                .slice(0, 256),
+            }
+          } catch (error) {
+            const reason = remoteFailure(error)
+            return { status: 'failed' as const, reason: reason === 'protocol' ? 'protocol' : reason }
+          } finally {
+            await session.close()
+          }
+        },
       },
       browser: {
         broker: browserBroker,
@@ -3707,6 +3797,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
       mcpSets.delete(sessionId)
+      mcpRemote.closeWhere(`std:${sessionId}:`)
     })
 
     async function mcpSetHashOf(sessionId: string, harnessId: string): Promise<string | undefined> {
@@ -3725,6 +3816,200 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
     }
 
+    /** The Host's session with a remote server for `key`: to its confirmed address, with its headers, through egress. */
+    /**
+     * Where a remote server's session goes and what it carries, from one reading of the definition as it stands now: the
+     * same definition the caller checked (`specHash`) and confirmed, so a header saved with another address never goes to
+     * the old one. Throws when it changed meanwhile.
+     */
+    function remoteOptions(record: Pick<McpHttpRecord, 'id' | 'specHash'>) {
+      const latest = mcpStore.get(record.id)
+      if (!latest || latest.transport !== 'http' || latest.specHash !== record.specHash || !mcpConfirmed(latest))
+        throw new AppError(409, 'mcp-server-gone', 'This MCP server was removed, switched off or changed in Latch.')
+      return { url: latest.url, headers: mcpStore.headersOf(latest.id), fetch: egressFetch }
+    }
+
+    function remoteSession(key: string, record: McpHttpRecord) {
+      return mcpRemote.session(key, record.id, record.specHash, () => remoteOptions(record))
+    }
+
+    async function remoteTools(key: string, record: McpHttpRecord, signal: AbortSignal) {
+      const { session, signal: stop } = remoteSession(key, record)
+      return session.listTools(AbortSignal.any([signal, stop]))
+    }
+
+    /**
+     * One call to a remote server, already on record (`mcp.tool.called`): sent to the confirmed address, its outcome
+     * recorded after. Stopping the turn, or revoking the server, stops it.
+     */
+    async function remoteCall(
+      key: string,
+      record: McpHttpRecord,
+      sessionId: string,
+      callId: string,
+      tool: string,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+    ): Promise<RemoteAnswer> {
+      const started = Date.now()
+      const settle = (result: 'ok' | 'error' | 'cancelled' | 'failed') =>
+        void audit
+          .append({
+            action: 'mcp.tool.settled',
+            actor: { listener: 'host' },
+            target: sessionId,
+            detail: { serverId: record.id, sessionId, callId, result, ms: Math.max(0, Date.now() - started) },
+          })
+          .catch(() => {})
+      const { session, signal: stop } = remoteSession(key, record)
+      try {
+        const answer = await session.callTool(tool, args, AbortSignal.any([signal, stop]))
+        const isError = 'error' in answer || (answer.result as { isError?: unknown } | null)?.isError === true
+        settle(isError ? 'error' : 'ok')
+        return answer
+      } catch (error) {
+        settle(signal.aborted ? 'cancelled' : 'failed')
+        throw error
+      }
+    }
+
+    /** `mcp.tool.called` before a call goes, or a refusal: no record, no call. */
+    async function recordCall(record: McpServerRecord, sessionId: string, tool: string): Promise<string> {
+      const callId = randomUUID()
+      try {
+        await audit.append({
+          action: 'mcp.tool.called',
+          actor: { listener: 'host' },
+          target: sessionId,
+          detail: { serverId: record.id, sessionId, callId, toolHash: toolHash(record.id, tool) },
+        })
+      } catch {
+        throw new AppError(503, 'audit-failed', 'Latch could not record this call, so it was not made.')
+      }
+      return callId
+    }
+
+    /** How long the built-in harness waits for a remote server's tools when a run begins. */
+    const BUILTIN_LIST_MS = 20_000
+
+    /**
+     * The built-in harness's MCP tools for a run: the tools of each remote server used in the session now and confirmed,
+     * listed by the Host (its client), named `mcp__<server>__<tool>`. Local commands are not offered: the Host would have
+     * to run the person's program itself, and the built-in harness is L1. An Agent with 「可以使用」 set gets only the
+     * servers it names as `mcp:<server ID>`. Each call is R2 (the classifier), checked against the definition again, on
+     * record before it is sent, and its answer masked.
+     */
+    async function builtinMcpTools({ sessionId, signal }: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]> {
+      const summary = await hub!
+        .detail(sessionId)
+        .then(detail => detail.summary)
+        .catch(() => undefined)
+      if (!summary) return []
+      const where = { ...(summary.agent ? { agentId: summary.agent.customAgentId } : {}), projectId: projectIdOf(summary) }
+      const chosen = mcpStore
+        .usedIn(where)
+        .filter((record): record is McpHttpRecord => record.transport === 'http' && mcpConfirmed(record))
+        .filter(record => !summary.agent || !summary.pluginIds || summary.pluginIds.includes(`mcp:${record.id}`))
+      const taken = new Set<string>()
+      const lists = await Promise.all(
+        chosen.map(async record => {
+          const key = `std:${sessionId}:${record.id}`
+          // As a bridge's launch: the session opens on record first; no record, no server for this run.
+          try {
+            await audit.append({
+              action: 'mcp.server.started',
+              actor: { listener: 'host' },
+              target: sessionId,
+              detail: { serverId: record.id, sessionId, specHash: record.specHash },
+            })
+          } catch {
+            return { record, key, tools: [] }
+          }
+          try {
+            const tools = await remoteTools(key, record, AbortSignal.any([signal, AbortSignal.timeout(BUILTIN_LIST_MS)]))
+            void mcpStore
+              .report(record.id, record.specHash, {
+                status: 'ok',
+                tools: tools
+                  .map(tool => tool.name)
+                  .filter(keptToolName)
+                  .slice(0, 256),
+                via: 'session',
+              })
+              .then(() => refresh())
+              .catch(() => {})
+            return { record, key, tools: tools.filter(tool => keptToolName(tool.name) && !record.disabledTools.includes(tool.name)) }
+          } catch (error) {
+            if (!signal.aborted) {
+              const reason = remoteFailure(error)
+              void mcpStore
+                .report(record.id, record.specHash, { status: 'failed', tools: [], reason, via: 'session' })
+                .then(() => refresh())
+                .catch(() => {})
+            }
+            return { record, key, tools: [] }
+          }
+        }),
+      )
+      return lists.flatMap(({ record, key, tools }) =>
+        tools.flatMap((tool): ToolDefinition[] => {
+          const name = builtinToolName(record.id, record.name, tool.name)
+          if (taken.has(name)) return []
+          taken.add(name)
+          return [
+            {
+              name,
+              // The server's words are outside content: masked, and marked as the server's.
+              description: redactKnownSecrets(
+                `MCP 服务器「${record.name}」的工具 ${tool.name}。${(tool.description ?? '').slice(0, 2000)}`,
+              ),
+              parameters:
+                tool.inputSchema && tool.inputSchema.type === 'object'
+                  ? (maskStrings(tool.inputSchema, redactKnownSecrets) as Record<string, unknown>)
+                  : { type: 'object', properties: {} },
+              requiresApproval: true,
+              kind: 'other',
+              title: redactKnownSecrets(`${record.name} · ${tool.name}`).slice(0, 80),
+              async execute(args, context) {
+                // As at a bridge's call: still there, on, as confirmed, used in this session and the tool on.
+                const latest = mcpStore.get(record.id)
+                if (
+                  !latest
+                  || latest.transport !== 'http'
+                  || !latest.enabled
+                  || latest.specHash !== record.specHash
+                  || !mcpConfirmed(latest)
+                  || !mcpUsedIn(latest.scope, where)
+                )
+                  throw new Error('这个 MCP 服务器已在 Latch 里移除、停用或修改。')
+                if (latest.disabledTools.includes(tool.name)) throw new Error('这个工具已在 Latch 里关掉。')
+                const callId = await recordCall(latest, sessionId, tool.name)
+                let answer: RemoteAnswer
+                try {
+                  answer = await remoteCall(key, latest, sessionId, callId, tool.name, args, context.signal)
+                } catch (error) {
+                  if (context.signal.aborted) throw error
+                  throw new Error(error instanceof Error && error.name === 'McpRemoteError' ? error.message : 'MCP 服务器调用失败。')
+                }
+                if ('error' in answer) throw new Error(redactKnownSecrets(answer.error.message))
+                const result = answer.result as { content?: unknown; isError?: unknown; structuredContent?: unknown } | null
+                const content = Array.isArray(result?.content) ? (result.content as Array<Record<string, unknown>>) : []
+                const text =
+                  content
+                    .map(item =>
+                      item.type === 'text' && typeof item.text === 'string' ? item.text : `[${String(item.type ?? 'content')}]`,
+                    )
+                    .join('\n') || (result?.structuredContent !== undefined ? JSON.stringify(result.structuredContent) : '')
+                const masked = redactKnownSecrets(text).slice(0, 256 * 1024)
+                if (result?.isError === true) throw new Error(masked || 'MCP 工具报告了错误。')
+                return { text: masked }
+              },
+            },
+          ]
+        }),
+      )
+    }
+
     function mcpGateway(): McpGatewayHandlers {
       /** Each bridge's empty working folder, removed when its binding ends. */
       const folders = new Map<string, string>()
@@ -3734,6 +4019,45 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const gone = () => new AppError(409, 'mcp-server-gone', 'This MCP server was removed, switched off or changed in Latch.')
       return {
+        async remote(binding, method, params, signal) {
+          const record = current(binding)
+          if (!record || record.transport !== 'http' || !mcpUsedIn(record.scope, binding)) throw gone()
+          const reportOn = (report: Parameters<McpGatewayHandlers['report']>[1]) => this.report(binding, report)
+          if (method === 'initialize') {
+            try {
+              const { session, signal: stop } = remoteSession(binding.id, record)
+              const result = await session.initialize(AbortSignal.any([signal, stop]))
+              // Only what an agent needs from it, masked: the server's version, name and instructions.
+              return maskStrings(
+                {
+                  protocolVersion: result.protocolVersion,
+                  ...(result.serverInfo && typeof result.serverInfo === 'object' ? { serverInfo: result.serverInfo } : {}),
+                  ...(typeof result.instructions === 'string' ? { instructions: result.instructions.slice(0, 8000) } : {}),
+                },
+                redactKnownSecrets,
+              )
+            } catch (error) {
+              if (!signal.aborted) reportOn({ ok: false, reason: remoteFailure(error) })
+              throw error
+            }
+          }
+          if (method === 'tools/list') {
+            const tools = await remoteTools(binding.id, record, signal).catch((error: unknown) => {
+              if (!signal.aborted)
+                reportOn({ ok: false, reason: remoteFailure(error) === 'protocol' ? 'list-failed' : remoteFailure(error) })
+              throw error
+            })
+            reportOn({ ok: true, tools: tools.map(tool => tool.name) })
+            return maskStrings({ tools: tools.filter(tool => !record.disabledTools.includes(tool.name)) }, redactKnownSecrets)
+          }
+          const tool = typeof params.name === 'string' ? params.name : ''
+          const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {}
+          const callId = await this.callStarted(binding, tool)
+          const answer = await remoteCall(binding.id, record, binding.sessionId, callId, tool, args as Record<string, unknown>, signal)
+          return 'error' in answer
+            ? { content: [{ type: 'text', text: redactKnownSecrets(answer.error.message) }], isError: true }
+            : maskStrings(answer.result, redactKnownSecrets)
+        },
         async select(input) {
           const chosen = mcpStore.usedIn(input).filter(record => mcpConfirmed(record))
           mcpSets.set(input.sessionId, setHash(chosen))
@@ -3743,7 +4067,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const record = current(binding)
           // Still used in this session: 「用在」 may have changed since the agent started.
           if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
-          // The person's program starts now, on record first: no record, no start.
+          // The person's program starts now (a remote server's session opens), on record first: no record, no start.
           try {
             await audit.append({
               action: 'mcp.server.started',
@@ -3754,6 +4078,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           } catch {
             throw new AppError(503, 'audit-failed', 'Latch could not record this start, so the server was not started.')
           }
+          if (record.transport === 'http') return { remote: true, disabledTools: [...record.disabledTools] }
           let cwd = binding.cwd
           if (!record.projectCwd) {
             cwd = await mkdtemp(join(runtime.tmpRoot, 'mcp-'))
@@ -3775,7 +4100,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           void mcpStore
             .report(binding.serverId, binding.specHash, {
               status: report.ok ? 'ok' : 'failed',
-              tools: report.ok ? report.tools.filter(tool => /^[A-Za-z0-9_.:/-]{1,128}$/u.test(tool)) : [],
+              tools: report.ok ? report.tools.filter(keptToolName) : [],
               ...(report.ok ? {} : { reason: report.reason }),
               via: 'session',
             })
@@ -3786,18 +4111,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const record = current(binding)
           if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
           if (record.disabledTools.includes(tool)) throw new AppError(403, 'mcp-tool-off', 'This tool is switched off in Latch.')
-          const callId = randomUUID()
-          try {
-            await audit.append({
-              action: 'mcp.tool.called',
-              actor: { listener: 'host' },
-              target: binding.sessionId,
-              detail: { serverId: record.id, sessionId: binding.sessionId, callId, toolHash: toolHash(record.id, tool) },
-            })
-          } catch {
-            throw new AppError(503, 'audit-failed', 'Latch could not record this call, so it was not made.')
-          }
-          return callId
+          return recordCall(record, binding.sessionId, tool)
         },
         callEnded(binding, callId, result, ms) {
           void audit
@@ -3810,6 +4124,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             .catch(() => {})
         },
         closed(binding) {
+          mcpRemote.close(binding.id)
           const folder = folders.get(binding.id)
           folders.delete(binding.id)
           if (folder) void rm(folder, { recursive: true, force: true })
@@ -3881,6 +4196,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             },
             // Only where Latch decides each call, which the hub has settled by the time it creates the Bridge.
             ...(hub!.levelOf(driver.id) === 'L1' ? { classifyToolCall } : {}),
+            // The built-in harness is the remote MCP servers' client through the Host; others get them through the bridge.
+            ...(driver.id === STANDARD ? { mcpTools: builtinMcpTools } : {}),
             // The built-in harness asks through its ask_user tool; other harnesses' questions go to the same card.
             ...(driver.id === STANDARD
               ? {}

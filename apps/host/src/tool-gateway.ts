@@ -90,16 +90,28 @@ export interface McpBinding {
   projectId?: string
 }
 
-/** What a bridge's server runs as, and the tools switched off. */
-export interface McpLaunchReply {
-  command: string
-  args: string[]
-  env: Record<string, string>
-  cwd: string
-  disabledTools: string[]
-}
+/**
+ * What a bridge's server runs as, and the tools switched off; or, for a remote address, only that it is one: the bridge
+ * then relays to the Host (`mcp/remote`), which is the server's client, and starts nothing.
+ */
+export type McpLaunchReply =
+  | { command: string; args: string[]; env: Record<string, string>; cwd: string; disabledTools: string[] }
+  | { remote: true; disabledTools: string[] }
 
-const MCP_FAILURES = new Set<McpStartFailure>(['spawn-failed', 'exited', 'timeout', 'protocol', 'list-failed', 'output-too-large'])
+/** What a bridge relays to a remote server through the Host. */
+export type McpRemoteMethod = 'initialize' | 'tools/list' | 'tools/call'
+
+const MCP_FAILURES = new Set<McpStartFailure>([
+  'spawn-failed',
+  'exited',
+  'timeout',
+  'protocol',
+  'list-failed',
+  'output-too-large',
+  'auth-required',
+  'unreachable',
+  'refused',
+])
 const MCP_RESULTS = new Set(['ok', 'error', 'cancelled', 'failed'])
 
 /** The Host's side of Latch's MCP servers; see docs/MCP.md. */
@@ -118,6 +130,12 @@ export interface McpGatewayHandlers {
   callStarted(binding: McpBinding, tool: string): Promise<string>
   /** After it: the outcome and how long it took. */
   callEnded(binding: McpBinding, callId: string, result: 'ok' | 'error' | 'cancelled' | 'failed', ms: number): void
+  /**
+   * A remote server's message, relayed by its bridge: the Host is the client, checks the binding as for a call, audits
+   * a `tools/call` before it is sent and answers with the server's result, secrets masked. Rejects, with words for the
+   * agent, when it must not go or the server failed (`McpRemoteError` names the reason).
+   */
+  remote?(binding: McpBinding, method: McpRemoteMethod, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown>
   /** The binding ended: its process went, or the server was removed, switched off or changed. */
   closed(binding: McpBinding): void
 }
@@ -146,7 +164,13 @@ interface Binding {
   idle: Set<() => void>
   tokenFile: string
   /** A `latch-mcp` bridge's binding; absent for `latch-browser`. */
-  mcp?: McpBinding & { onFailed?: (name: string, reason: McpStartFailure) => void; name: string; launched: boolean }
+  mcp?: McpBinding & {
+    onFailed?: (name: string, reason: McpStartFailure) => void
+    name: string
+    launched: boolean
+    /** Set only once the launch answered that the server is remote: before it (or after a refused launch) no relay. */
+    remoteReady?: boolean
+  }
   /** A bridge's connections that used this token: ended with it, so the bridge stops its server. */
   sockets: Set<Socket>
 }
@@ -358,6 +382,7 @@ export class ToolGatewayServer implements ToolGateway {
     params: unknown,
     reply: (message: Record<string, unknown>) => void,
     refuse: (id: unknown, code: number, message: string) => void,
+    remoteCalls: Map<string, AbortController>,
   ): void {
     const handlers = this.options.mcp
     const args = isPlainObject(params) ? params : {}
@@ -366,7 +391,11 @@ export class ToolGatewayServer implements ToolGateway {
       if (mcp.launched) return refuse(id, -32000, 'This server was started already.')
       mcp.launched = true
       void handlers.launch(mcp).then(
-        launch => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: launch })),
+        launch => {
+          if (binding.closed) return refuse(id, -32001, REFUSED)
+          if ('remote' in launch && launch.remote === true) mcp.remoteReady = true
+          reply({ id, result: launch })
+        },
         error => refuse(id, -32000, error instanceof AppError ? error.message : 'The server cannot start now.'),
       )
       return
@@ -391,6 +420,41 @@ export class ToolGatewayServer implements ToolGateway {
       )
       return
     }
+    if (method === 'mcp/remote') {
+      const relayed = args.method
+      if (!handlers.remote || (relayed !== 'initialize' && relayed !== 'tools/list' && relayed !== 'tools/call'))
+        return refuse(id, -32601, 'Method not found')
+      // Only after a launch that succeeded (its start on record) and said the server is remote.
+      if (!mcp.remoteReady) return refuse(id, -32000, 'This server was not started.')
+      if (binding.calls.size >= MAX_INFLIGHT * 4) return refuse(id, -32000, 'Too many calls at once.')
+      const controller = new AbortController()
+      binding.calls.add(controller)
+      const key = `${typeof id}:${id}`
+      remoteCalls.set(key, controller)
+      void handlers
+        .remote(mcp, relayed, isPlainObject(args.params) ? args.params : {}, controller.signal)
+        .then(
+          result => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result })),
+          (error: unknown) => {
+            const reason = error && typeof error === 'object' && 'reason' in error ? (error as { reason?: unknown }).reason : undefined
+            if (relayed === 'initialize' && MCP_FAILURES.has(reason as McpStartFailure)) mcp.onFailed?.(mcp.name, reason as McpStartFailure)
+            // Only the Host's own words: an AppError's, or a remote failure's fixed sentence.
+            const own = error instanceof AppError || (error instanceof Error && error.name === 'McpRemoteError')
+            refuse(id, -32000, own ? (error as Error).message : 'The call cannot be made now.')
+          },
+        )
+        .finally(() => {
+          remoteCalls.delete(key)
+          binding.calls.delete(controller)
+          this.settle(binding)
+        })
+      return
+    }
+    if (method === 'mcp/cancel') {
+      const target = args.id
+      if (typeof target === 'number' || typeof target === 'string') remoteCalls.get(`${typeof target}:${target}`)?.abort()
+      return reply({ id, result: {} })
+    }
     if (method === 'mcp/called') {
       const ms = typeof args.ms === 'number' && Number.isFinite(args.ms) ? Math.max(0, Math.min(Math.round(args.ms), 86_400_000)) : 0
       if (typeof args.callId === 'string' && MCP_RESULTS.has(args.result as string))
@@ -404,6 +468,8 @@ export class ToolGatewayServer implements ToolGateway {
     this.sockets.add(socket)
     /** This connection's calls by request ID. */
     const inflight = new Map<unknown, AbortController>()
+    /** A bridge's relayed remote calls on this connection, by its request ID. */
+    const remoteCalls = new Map<string, AbortController>()
     let buffer = ''
     const reply = (message: Record<string, unknown>) => {
       if (!socket.destroyed) socket.write(`${JSON.stringify(message)}\n`)
@@ -449,7 +515,7 @@ export class ToolGatewayServer implements ToolGateway {
         }
         if (binding.mcp) {
           binding.sockets.add(socket)
-          this.mcpRequest(binding, binding.mcp, id, method, params, reply, refuse)
+          this.mcpRequest(binding, binding.mcp, id, method, params, reply, refuse, remoteCalls)
           continue
         }
         if (method === 'cancel') {
@@ -503,6 +569,8 @@ export class ToolGatewayServer implements ToolGateway {
       // The server went away: its calls stop.
       for (const controller of inflight.values()) controller.abort()
       inflight.clear()
+      for (const controller of remoteCalls.values()) controller.abort()
+      remoteCalls.clear()
     })
   }
 }

@@ -490,7 +490,8 @@ export interface ApprovalOption {
  * Why the Host classed a built-in harness's request as high risk (R2): the session's folder overlaps Latch's program
  * folder, the target is a protected path, the target leaves the session's folder (`..`), the target is not a relative
  * path the Host can judge (absolute, empty or not text), the tool is not one the Host lists, the arguments do not
- * parse, or the browser would type into a password, one-time-code, card or hidden field (or one never read). An enum only: it never carries a path. Its words are `RISK_REASON_TEXT`.
+ * parse, the browser would type into a password, one-time-code, card or hidden field (or one never read), or the tool is
+ * a remote MCP server's (`mcp-tool`). An enum only: it never carries a path. Its words are `RISK_REASON_TEXT`.
  */
 export type ApprovalRiskReason =
   | 'code-root'
@@ -500,6 +501,7 @@ export type ApprovalRiskReason =
   | 'unlisted-tool'
   | 'unparsable-arguments'
   | 'sensitive-field'
+  | 'mcp-tool'
 
 export interface Approval {
   id: string

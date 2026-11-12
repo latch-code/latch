@@ -3,11 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { isUnpinnedRunner, type AppSnapshot, type HarnessInfo, type McpServerView } from '@latch/protocol'
 import { agentServers, harnessNote } from '../src/agents/McpSection.tsx'
-import { McpStatusWord, mcpStatus, scopeText } from '../src/settings/McpSettings.tsx'
+import { McpStatusWord, mcpStatus, remoteUrl, scopeText } from '../src/settings/McpSettings.tsx'
 
 const AGENT = `agt_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`
 
 function server(change: Partial<McpServerView> = {}): McpServerView {
+  // A local command unless the change says otherwise; tests of a remote one pass its fields.
   return {
     id: `mcp_${'A'.repeat(22)}`,
     name: 'github',
@@ -23,7 +24,7 @@ function server(change: Partial<McpServerView> = {}): McpServerView {
     createdAt: '2026-11-13T00:00:00.000Z',
     updatedAt: '2026-11-13T00:00:00.000Z',
     ...change,
-  }
+  } as McpServerView
 }
 
 const snapshot = {
@@ -45,6 +46,23 @@ describe('设置 › MCP', () => {
     const failed = { ...report, status: 'failed' as const, tools: [], reason: 'timeout' as const }
     expect(mcpStatus(server({ report: failed }))).toEqual({ tone: 'failed', text: '失败', reason: '没有在时限内完成初始化' })
     expect(renderToStaticMarkup(createElement(McpStatusWord, { server: server({ report: failed }) }))).toContain('data-tone="failed"')
+    // A remote server that asks for a login waits for the person, in amber, and says OAuth is not built yet.
+    const login = { ...failed, reason: 'auth-required' as const }
+    expect(mcpStatus(server({ report: login }))).toEqual({ tone: 'warn', text: '需要登录 · 尚未实现' })
+  })
+
+  it('takes https:// addresses, and http:// only on this Mac’s loopback, never with a query or credentials', () => {
+    for (const url of ['https://mcp.example.com/mcp', 'http://127.0.0.1:3845/mcp', 'http://localhost:8080/', 'http://[::1]:9/x'])
+      expect(remoteUrl(url), url).toBe(true)
+    for (const url of [
+      'http://example.com/mcp',
+      'http://192.168.1.2/mcp',
+      'https://a.b/mcp?token=x',
+      'https://u:p@a.b/',
+      'ftp://a.b/',
+      'mcp',
+    ])
+      expect(remoteUrl(url), url).toBe(false)
   })
 
   it('names 「用在」 by the Agents and projects chosen', () => {
@@ -72,10 +90,10 @@ describe('the Agent profile’s MCP', () => {
     expect(agentServers([all, mine, other], AGENT).map(item => item.name)).toEqual(['github', 'linear'])
   })
 
-  it('says the built-in Harness does not take local commands yet, and a Harness without MCP that it takes none', () => {
+  it('says the built-in Harness takes remote addresses only, and a Harness without MCP that it takes none', () => {
     const acp = { id: 'claude', skills: 'server' } as HarnessInfo
     expect(harnessNote(acp, false)).toBeUndefined()
-    expect(harnessNote({ id: 'standard', skills: 'native' } as HarnessInfo, true)).toBe('内置 Harness 尚未支持 MCP 命令')
+    expect(harnessNote({ id: 'standard', skills: 'native' } as HarnessInfo, true)).toBe('内置 Harness 只用远程地址')
     expect(harnessNote({ id: 'pi' } as HarnessInfo, false)).toBe('这个 Harness 不接收 MCP 服务器')
   })
 })

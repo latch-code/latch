@@ -1,7 +1,10 @@
 import type { McpServerLease } from '@latch/sdk'
 
 /**
- * `latch-mcp`: MCP over stdio for one of Latch's own servers in one agent process. The agent starts it with the Host's
+ * `latch-mcp`: MCP over stdio for one of Latch's own servers in one agent process. For a remote address it starts
+ * nothing: it relays `initialize`, `tools/list` and `tools/call` to the Host through the gateway (`mcp/remote`), and the
+ * Host, the server's only client, records each call, sends it and answers; the server's request headers never reach
+ * the agent's side. For a local command: The agent starts it with the Host's
  * own Node, no environment and two paths; at `initialize` it reads its token (from a 0600 file the Host made, deleted
  * once read, as `latch-browser`'s), takes the server's launch from the Host's tool gateway and starts the person's
  * command in a process group of its own, with exactly the environment the Host gave: the agent's variables never reach
@@ -90,10 +93,11 @@ function connect() {
   })
   return gateway
 }
-function ask(method, params) {
+function ask(method, params, onId) {
   return new Promise(resolve => {
     if (revoked) return resolve({ error: { message: 'This MCP server was removed or switched off in Latch.' } })
     const id = nextAsk++
+    if (onId) onId(id)
     asked.set(id, resolve)
     connect().write(JSON.stringify({ id, token: readToken(), method, params }) + '\n')
   })
@@ -104,6 +108,8 @@ const tell = (method, params) => {
 
 // ---- the server ----
 let child
+// A remote address: the Host is its client, and every message goes there.
+let remote = false
 let revoked = false
 let broken
 let reported = false
@@ -200,6 +206,17 @@ async function start(request) {
   }
   const launch = reply.result
   disabled = new Set(Array.isArray(launch.disabledTools) ? launch.disabledTools : [])
+  if (launch.remote === true) {
+    remote = true
+    const answer = await ask('mcp/remote', { method: 'initialize', params: request.params && typeof request.params === 'object' ? request.params : {} })
+    if (answer.error || !answer.result || typeof answer.result !== 'object') {
+      // The Host reported why; the agent gets a server with no tools.
+      broken = 'protocol'
+      return answerBroken(entry)
+    }
+    // Two sessions: the agent's with this bridge speaks the version the agent asked for; the Host's with the server, its own.
+    return write({ id: request.id, result: { ...answer.result, ...ownInitialize(request.params) } })
+  }
   try {
     child = spawn(launch.command, launch.args, { cwd: launch.cwd, env: launch.env, stdio: ['pipe', 'pipe', 'ignore'], detached: true })
   } catch {
@@ -240,6 +257,23 @@ async function start(request) {
   const params = request.params && typeof request.params === 'object' ? request.params : {}
   toChild({ id: request.id, method: 'initialize', params: { ...params, capabilities: {} } })
 }
+// A remote server's list or call, through the Host; a cancel from the agent stops it there.
+async function relay(id, method, params) {
+  const args = params && typeof params === 'object' ? params : {}
+  if (method === 'tools/call' && (typeof args.name !== 'string' || disabled.has(args.name)))
+    return write({ id, result: { content: [{ type: 'text', text: 'This tool is switched off in Latch.' }], isError: true } })
+  const entry = { id, method, remote: true }
+  pending.set(JSON.stringify(id), entry)
+  const answer = await ask('mcp/remote', { method, params: args }, askId => {
+    entry.askId = askId
+  })
+  if (pending.get(JSON.stringify(id)) !== entry) return
+  pending.delete(JSON.stringify(id))
+  if (answer.result && typeof answer.result === 'object') return write({ id, result: answer.result })
+  if (method === 'tools/list') return write({ id, result: { tools: [] } })
+  const text = answer.error && answer.error.message ? String(answer.error.message) : 'The call was not made.'
+  write({ id, result: { content: [{ type: 'text', text }], isError: true } })
+}
 let started = false
 async function handle(request) {
   const { id, method, params } = request
@@ -247,7 +281,10 @@ async function handle(request) {
     if (method === 'notifications/initialized' && child) toChild({ method })
     if (method === 'notifications/cancelled' && params) {
       const entry = pending.get(JSON.stringify(params.requestId))
-      if (entry) {
+      if (entry && entry.remote) {
+        entry.cancelled = true
+        if (entry.askId !== undefined) tell('mcp/cancel', { id: entry.askId })
+      } else if (entry) {
         entry.cancelled = true
         toChild({ method, params: { requestId: params.requestId, ...(params.reason ? { reason: String(params.reason).slice(0, 200) } : {}) } })
       }
@@ -260,11 +297,12 @@ async function handle(request) {
     return start(request)
   }
   if (method === 'ping') {
-    if (!child) return write({ id, result: {} })
+    if (!child || remote) return write({ id, result: {} })
     pending.set(JSON.stringify(id), { id, method })
     return toChild({ id, method })
   }
   if (method !== 'tools/list' && method !== 'tools/call') return write({ id, error: { code: -32601, message: 'Method not found' } })
+  if (remote && !broken && !revoked) return relay(id, method, params)
   if (!child || broken || revoked) return answerBroken({ id, method, at: Date.now() })
   if (method === 'tools/list') {
     pending.set(JSON.stringify(id), { id, method })

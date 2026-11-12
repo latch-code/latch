@@ -16,6 +16,8 @@ export const MCP_ACTIONS = {
     envCount: count,
     scope: z.enum(['all', 'chosen']),
     projectCwd: z.boolean(),
+    /** Absent for a local command (`stdio`), as before remote addresses. */
+    transport: z.literal('http').optional(),
   }),
   'mcp.server.changed': z.strictObject({
     serverId,

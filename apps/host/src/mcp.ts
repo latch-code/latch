@@ -1,14 +1,18 @@
-// Latch's own MCP servers: local commands defined on this Mac, kept in `<data>/mcp/servers.json` (definitions, no secret)
-// and `<data>/mcp/secrets.json` (the values of their variables), both 0600 in a 0700 directory, both strict. An agent
-// reaches one only through its `latch-mcp` bridge, which takes the launch from the tool gateway. See docs/MCP.md.
+// Latch's own MCP servers: local commands and remote addresses defined on this Mac, kept in `<data>/mcp/servers.json`
+// (definitions, no secret) and `<data>/mcp/secrets.json` (the values of their variables and request headers), both 0600
+// in a 0700 directory, both strict. An agent reaches one only through its `latch-mcp` bridge, which takes a local
+// command's launch from the tool gateway, or relays a remote one's calls to the Host, its only client. See docs/MCP.md.
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { z } from 'zod'
 import {
+  isLoopbackHost,
+  isMcpHeaderName,
   isMcpServerName,
   isReservedAgentEnvName,
+  isSavedMcpServerName,
   isUnpinnedRunner,
   type McpFailure,
   type McpReport,
@@ -123,7 +127,44 @@ export const scopeSchema = z.strictObject({
   agents: z.array(agentRef).max(64),
   projects: z.array(projectRef).max(64),
 })
-const failure = z.enum(['spawn-failed', 'exited', 'timeout', 'protocol', 'list-failed', 'output-too-large'])
+const failure = z.enum([
+  'spawn-failed',
+  'exited',
+  'timeout',
+  'protocol',
+  'list-failed',
+  'output-too-large',
+  'auth-required',
+  'unreachable',
+  'refused',
+])
+/** A remote server's request header, by name; its value is secret. */
+export const headerName = z.string().refine(isMcpHeaderName)
+const headerValue = z
+  .string()
+  .min(1)
+  .max(8 * 1024)
+  .refine(value => !/[\0\r\n]/u.test(value))
+
+/**
+ * A remote server's address as it is kept: `https://`, or `http://` on this Mac's loopback written literally; no
+ * credentials, query or fragment. Returns origin and path, or undefined.
+ */
+export function remoteAddress(value: string): string | undefined {
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return undefined
+  }
+  if (url.username || url.password || url.search || url.hash || value.includes('?') || value.includes('#')) return undefined
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) return undefined
+  return `${url.origin}${url.pathname}`
+}
+const remoteUrl = z
+  .string()
+  .max(2048)
+  .refine(value => remoteAddress(value) === value)
 const reportSchema = z.strictObject({
   status: z.enum(['ok', 'failed']),
   tools: z.array(toolName).max(256),
@@ -131,9 +172,29 @@ const reportSchema = z.strictObject({
   at: stamp,
   via: z.enum(['test', 'session']),
 })
-const recordSchema = z.strictObject({
+const common = {
   id: serverId,
-  name: z.string().refine(isMcpServerName),
+  name: z.string().refine(isSavedMcpServerName),
+  scope: scopeSchema,
+  enabled: z.boolean(),
+  disabledTools: z.array(toolName).max(256),
+  revision: z.number().int().min(1),
+  specHash: z.string().regex(/^[0-9a-f]{64}$/u),
+  /**
+   * What the local confirmation approved: the hash of the definition with the secret names it named (a remote server's
+   * header names), and those names. Set only when a confirmation passes; removing a secret later keeps it.
+   * `isConfirmed` checks a definition against it before anything runs or is sent.
+   */
+  confirmed: z.strictObject({
+    hash: z.string().regex(/^[0-9a-f]{64}$/u),
+    secretNames: z.array(z.union([envName, headerName])).max(32),
+  }),
+  report: reportSchema.optional(),
+  createdAt: stamp,
+  updatedAt: stamp,
+}
+const stdioRecord = z.strictObject({
+  ...common,
   transport: z.literal('stdio'),
   /** The absolute path found when it was saved. */
   command: z.string().min(1).max(4096),
@@ -143,23 +204,19 @@ const recordSchema = z.strictObject({
   /** Secret variables, by name: their values are in secrets.json. */
   secretNames: z.array(envName).max(32),
   projectCwd: z.boolean(),
-  scope: scopeSchema,
-  enabled: z.boolean(),
-  disabledTools: z.array(toolName).max(256),
-  revision: z.number().int().min(1),
-  /** SHA-256 of what runs now: command, arguments, plain variables, secret names, working directory. */
-  specHash: z.string().regex(/^[0-9a-f]{64}$/u),
-  /**
-   * What the local confirmation approved: the hash of the definition with the secret names it named, and those names.
-   * Set only when a confirmation passes; removing a secret variable later keeps it. `isConfirmed` checks a definition
-   * against it before anything runs.
-   */
-  confirmed: z.strictObject({ hash: z.string().regex(/^[0-9a-f]{64}$/u), secretNames: z.array(envName).max(32) }),
-  report: reportSchema.optional(),
-  createdAt: stamp,
-  updatedAt: stamp,
 })
+/** A remote address (Streamable HTTP); `specHash` is of its address and header names. */
+const httpRecord = z.strictObject({
+  ...common,
+  transport: z.literal('http'),
+  url: remoteUrl,
+  /** Its request headers, by name: their values are in secrets.json. */
+  headerNames: z.array(headerName).max(32),
+})
+const recordSchema = z.discriminatedUnion('transport', [stdioRecord, httpRecord])
 export type McpServerRecord = z.infer<typeof recordSchema>
+export type McpStdioRecord = z.infer<typeof stdioRecord>
+export type McpHttpRecord = z.infer<typeof httpRecord>
 const receiptSchema = z.strictObject({
   key: z.string().regex(/^[0-9a-f]{64}$/u),
   payloadHash: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -173,7 +230,7 @@ const serversFile = z.strictObject({
 })
 const secretsFile = z.strictObject({
   v: z.literal(1),
-  servers: z.record(serverId, z.strictObject({ env: z.record(envName, envValue) })),
+  servers: z.record(serverId, z.strictObject({ env: z.record(envName, envValue), headers: z.record(headerName, headerValue).optional() })),
 })
 type ServersFile = z.infer<typeof serversFile>
 type SecretsFile = z.infer<typeof secretsFile>
@@ -186,6 +243,8 @@ export const specInput = {
   projectCwd: z.boolean(),
 }
 export const envInput = z.record(envName, envValue).refine(value => Object.keys(value).length <= 32)
+export const headersInput = z.record(headerName, headerValue).refine(value => Object.keys(value).length <= 32)
+export const headersPatch = z.record(headerName, headerValue.nullable()).refine(value => Object.keys(value).length <= 32)
 export const envPatch = z.record(envName, envValue.nullable()).refine(value => Object.keys(value).length <= 32)
 
 /** The part of a definition that decides what runs. */
@@ -210,40 +269,83 @@ export function specHash(spec: McpSpec): string {
   )
 }
 
-/** Whether a saved definition is one a confirmation approved: its program as confirmed, and no secret name it did not name. */
-export function isConfirmed(record: Pick<McpServerRecord, keyof McpSpec | 'confirmed'>): boolean {
+/** The part of a remote server's definition that decides where its headers go. */
+export interface McpHttpSpec {
+  /** Origin and path. */
+  url: string
+  headerNames: string[]
+}
+
+export function httpSpecHash(spec: McpHttpSpec): string {
+  return sha256Hex(canonicalJson({ transport: 'http', url: spec.url, headerNames: spec.headerNames.toSorted() }))
+}
+
+type ConfirmedRecord =
+  | (Pick<McpStdioRecord, keyof McpSpec | 'confirmed'> & { transport?: 'stdio' })
+  | Pick<McpHttpRecord, 'transport' | keyof McpHttpSpec | 'confirmed'>
+
+/**
+ * Whether a saved definition is one a confirmation approved: its program (a remote server's address) as confirmed, and
+ * no secret name (header name) it did not name.
+ */
+export function isConfirmed(record: ConfirmedRecord): boolean {
+  if (record.transport === 'http')
+    return (
+      httpSpecHash({ url: record.url, headerNames: record.confirmed.secretNames }) === record.confirmed.hash
+      && record.headerNames.every(name => record.confirmed.secretNames.includes(name))
+    )
   return (
     specHash({ ...record, secretNames: record.confirmed.secretNames }) === record.confirmed.hash
     && record.secretNames.every(name => record.confirmed.secretNames.includes(name))
   )
 }
 
-/** A server's state as far as widening goes. */
-export interface McpState extends McpSpec {
+interface McpUse {
   scope: McpScope
   enabled: boolean
   disabledTools: string[]
-  /** Each secret variable's value, by its SHA-256. */
+  /** Each secret's value (a variable's, a header's), by its SHA-256. */
   secretHashes: Record<string, string>
 }
+/** A local command's state as far as widening goes. */
+export interface McpStdioState extends McpSpec, McpUse {
+  transport?: 'stdio'
+}
+/** A remote server's. */
+export interface McpHttpState extends McpHttpSpec, McpUse {
+  transport: 'http'
+}
+export type McpState = McpStdioState | McpHttpState
 
-/**
- * The one rule for what a change widens. `spec`: it runs something not confirmed (another program, arguments, folder or
- * plain variable, or a new secret name), which takes `mcp.server.apply`. `use`: what was confirmed reaches more
- * (「用在」 gains an Agent, a project or every session, a tool comes back on, the server is switched on) or a secret
- * value changes; no confirmation, but on record before it takes effect. `false`: it only narrows or renames.
- */
-export function widens(before: McpState, after: McpState): 'spec' | 'use' | false {
-  if (
+/** The names whose values are secret: a command's secret variables, a remote server's headers. */
+const secretNamesOf = (state: McpState) => (state.transport === 'http' ? state.headerNames : state.secretNames)
+
+/** Whether `after` sends or runs anything `before` did not: another address or program, or a new secret's name. */
+function specWidens(before: McpState, after: McpState): boolean {
+  if (before.transport === 'http' || after.transport === 'http') {
+    if (before.transport !== 'http' || after.transport !== 'http') return true
+    return before.url !== after.url || after.headerNames.some(name => !before.headerNames.includes(name))
+  }
+  return (
     before.command !== after.command
     || canonicalJson(before.args) !== canonicalJson(after.args)
     || before.projectCwd !== after.projectCwd
     || canonicalJson(before.env) !== canonicalJson(after.env)
     || after.secretNames.some(name => !before.secretNames.includes(name))
   )
-    return 'spec'
+}
+
+/**
+ * The one rule for what a change widens. `spec`: it runs or sends something not confirmed (another program, arguments,
+ * folder or plain variable, a remote server's other origin or path, or a new secret or header name), which takes
+ * `mcp.server.apply`. `use`: what was confirmed reaches more (「用在」 gains an Agent, a project or every session, a tool
+ * comes back on, the server is switched on) or a secret value changes; no confirmation, but on record before it takes
+ * effect. `false`: it only narrows or renames.
+ */
+export function widens(before: McpState, after: McpState): 'spec' | 'use' | false {
+  if (specWidens(before, after)) return 'spec'
   // A secret taken away changes what the server is given: on record first, as a rotation is.
-  if (before.secretNames.some(name => !after.secretNames.includes(name))) return 'use'
+  if (secretNamesOf(before).some(name => !secretNamesOf(after).includes(name))) return 'use'
   const gains =
     (after.scope.all && !before.scope.all)
     || (!after.scope.all
@@ -475,11 +577,32 @@ export function usedIn(scope: McpScope, session: { agentId?: string; projectId?:
   )
 }
 
-export function serverView(record: McpServerRecord, secrets: Readonly<Record<string, string>>): McpServerView {
-  return {
+export function serverView(
+  record: McpServerRecord,
+  secrets: Readonly<Record<string, string>>,
+  headers: Readonly<Record<string, string>> = {},
+): McpServerView {
+  const common = {
     id: record.id,
     name: record.name,
-    transport: record.transport,
+    scope: structuredClone(record.scope),
+    enabled: record.enabled,
+    disabledTools: [...record.disabledTools],
+    revision: record.revision,
+    ...(record.report ? { report: structuredClone(record.report) } : {}),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  }
+  if (record.transport === 'http')
+    return {
+      ...common,
+      transport: 'http',
+      url: record.url,
+      headers: record.headerNames.map(name => ({ name, set: Object.hasOwn(headers, name) && headers[name] !== '' })),
+    }
+  return {
+    ...common,
+    transport: 'stdio',
     command: record.command,
     args: [...record.args],
     env: [
@@ -487,14 +610,7 @@ export function serverView(record: McpServerRecord, secrets: Readonly<Record<str
       ...record.secretNames.map(name => ({ name, set: Object.hasOwn(secrets, name) && secrets[name] !== '', secret: true })),
     ],
     projectCwd: record.projectCwd,
-    scope: structuredClone(record.scope),
-    enabled: record.enabled,
-    disabledTools: [...record.disabledTools],
-    revision: record.revision,
     ...(isUnpinnedRunner(record.command, record.args) ? { unpinned: true as const } : {}),
-    ...(record.report ? { report: structuredClone(record.report) } : {}),
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
   }
 }
 
@@ -538,11 +654,17 @@ export class McpStore {
     return new McpStore(directory, now, servers, secrets)
   }
 
-  /** Every secret value of 8 characters or more is masked in what the Host sends out (`redactKnownSecrets`). */
+  /**
+   * Every secret value of 8 characters or more is masked in what the Host sends out (`redactKnownSecrets`); a header's
+   * credential after its scheme (`Bearer <token>`) too, since a server may echo it alone.
+   */
   private exposeSecrets(): void {
     setKnownSecrets(
       'mcp',
-      Object.values(this.secrets.servers).flatMap(entry => Object.values(entry.env)),
+      Object.values(this.secrets.servers).flatMap(entry => [
+        ...Object.values(entry.env),
+        ...Object.values(entry.headers ?? {}).flatMap(value => [value, ...(/^\S+ +(\S.*)$/u.exec(value)?.slice(1) ?? [])]),
+      ]),
     )
   }
 
@@ -557,7 +679,9 @@ export class McpStore {
   list(): McpServersResponse {
     return {
       revision: this.servers.revision,
-      servers: this.servers.servers.map(record => serverView(record, this.secrets.servers[record.id]?.env ?? {})),
+      servers: this.servers.servers.map(record =>
+        serverView(record, this.secrets.servers[record.id]?.env ?? {}, this.secrets.servers[record.id]?.headers ?? {}),
+      ),
     }
   }
 
@@ -571,12 +695,17 @@ export class McpStore {
 
   view(id: string): McpServerView | undefined {
     const record = this.get(id)
-    return record && serverView(record, this.secrets.servers[id]?.env ?? {})
+    return record && serverView(record, this.secrets.servers[id]?.env ?? {}, this.secrets.servers[id]?.headers ?? {})
   }
 
   /** The values of a server's variables, for its launch only. */
   secretsOf(id: string): Record<string, string> {
     return { ...this.secrets.servers[id]?.env }
+  }
+
+  /** A remote server's request headers, for the Host's client only: never to a device, an agent or a log. */
+  headersOf(id: string): Record<string, string> {
+    return { ...this.secrets.servers[id]?.headers }
   }
 
   /** The servers a session gets now: on, and used in it. */

@@ -33,6 +33,9 @@ export interface BrowserCallFacts {
   sensitive?: boolean
 }
 
+/** How the built-in harness names a remote MCP server's tool: `mcp__<server>__<tool>`. */
+export const MCP_TOOL_PREFIX = 'mcp__'
+
 /** The plugin of the built-in browser tools. */
 export const BROWSER_PLUGIN = 'browser'
 
@@ -82,10 +85,12 @@ export function targetFolder<T extends { id: string }>(args: unknown, folders: r
 
 /**
  * Host classification of a Standard tool call. Whatever a plugin declares (`requiresApproval`) is ignored:
- * only the listed built-in tools are below R2. Reads in any folder of the session are R0 and ordinary writes R1; a call
+ * only the listed built-in tools are below R2; a remote MCP server's tool is R2 (`mcp-tool`). Reads in any folder of the session are R0 and ordinary writes R1; a call
  * that names a folder outside the session is R2. Pure and synchronous; the tools themselves refuse symlinks.
  */
 export function classifyStandardCall(input: StandardCallInput): { risk: RiskLevel; reason?: RiskReason } {
+  // A remote MCP server's tool (`mcp__<server>__<tool>`, no plugin's): asked every time, whatever the server says of it.
+  if (input.pluginId === undefined && input.toolName.startsWith(MCP_TOOL_PREFIX)) return { risk: 'R2', reason: 'mcp-tool' }
   const key = `${input.pluginId ?? ''}:${input.toolName}`
   const builtin = input.pluginId !== undefined
   if (input.pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName))

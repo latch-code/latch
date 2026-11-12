@@ -122,6 +122,7 @@ export type PresenceReasonForm =
   | 'plugin.package.apply-pages'
   | 'mcp.server.apply'
   | 'mcp.server.apply-runner'
+  | 'mcp.server.apply-remote'
   | 'harness.command.apply'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
