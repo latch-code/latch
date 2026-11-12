@@ -313,7 +313,12 @@ export interface PendingSubmission {
   worktree?: true | WorktreeStart
   /** A new session of one of 我的 Agent (a delegation); the Host fills what the request leaves out from the Agent. */
   customAgentId?: string
+  /** An earlier prompt sent again (重试): it never came from the input, so delivering it leaves the session's draft. */
+  resent?: true
 }
+
+/** The submission took the input's text, attachments and file references; a prompt sent again (`resent`) took none. */
+export const fromInput = (submission: Pick<PendingSubmission, 'resent'>): boolean => submission.resent !== true
 
 /** A stored start point, as the Host accepts it; anything else is dropped. */
 export function worktreeStartOf(value: unknown): true | WorktreeStart | undefined {
@@ -355,6 +360,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
     if (item.steer !== undefined && item.steer !== true) return null
+    if (item.resent !== undefined && (item.resent !== true || typeof item.sessionId !== 'string')) return null
     if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
     if (item.worktree !== undefined && (worktreeStartOf(item.worktree) === undefined || item.sessionId !== undefined)) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
@@ -393,6 +399,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
+      ...(item.resent === true ? { resent: true as const } : {}),
       ...(item.freshContext === true ? { freshContext: true as const } : {}),
       ...(worktreeStartOf(item.worktree) ? { worktree: worktreeStartOf(item.worktree)! } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),

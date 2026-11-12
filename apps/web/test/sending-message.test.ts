@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
-import { ApiError, ApiTimeoutError, readPending, writePending, type PendingSubmission } from '../src/core/api.ts'
+import { ApiError, ApiTimeoutError, fromInput, readPending, writePending, type PendingSubmission } from '../src/core/api.ts'
 import {
   abandonSubmission,
   deliveredSubmission,
@@ -204,4 +204,31 @@ test('a queue item with the same text is named for what it is, waiting or parked
   expect(queuedTwin(queued, { ...detail, queue: [{ ...item, text: '别的' }] })).toBeNull()
   expect(queuedTwin({ ...queued, queue: undefined }, { ...detail, queue: [item] })).toBeNull()
   expect(queuedTwin(queued, null)).toBeNull()
+})
+
+test('a prompt sent again stays marked as one after a reload, so its delivery never takes the session draft', () => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+    removeItem: (key: string) => {
+      store.delete(key)
+    },
+  })
+  try {
+    const resent: PendingSubmission = { requestId: 'again-request', prompt: '上一条', sessionId: 'session', resent: true }
+    writePending('k', resent)
+    expect(readPending('k')).toEqual(resent)
+    store.set('k', JSON.stringify({ requestId: 'new-session', prompt: 'x', resent: true }))
+    expect(readPending('k')).toBeNull()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a prompt sent again took nothing of the input, so its delivery leaves the input’s attachments and file references', () => {
+  expect(fromInput({ resent: true })).toBe(false)
+  expect(fromInput({})).toBe(true)
 })

@@ -7,7 +7,7 @@ import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Approval, TaskDetail, TaskSummary } from '@latch/protocol'
-import { api, ApiError, errorMessage, inlineError, isUncertain } from '../core/api.ts'
+import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain } from '../core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { ConfigRequests } from '../core/configRequest.ts'
@@ -387,7 +387,8 @@ export function useSessionController({
     const held = submission.pending
     if (!held || abandoning) return
     await settingsLanded()
-    if (await submission.submit(held)) {
+    // A prompt sent again never took the input's attachments or file references, so its delivery leaves them.
+    if ((await submission.submit(held)) && fromInput(held)) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -405,7 +406,7 @@ export function useSessionController({
       if (!listedRetries.current.has(held.requestId)) {
         listedRetries.current.add(held.requestId)
         await settingsLanded()
-        if ((await submission.submit(held)) && held.sessionId === selectedId) {
+        if ((await submission.submit(held)) && held.sessionId === selectedId && fromInput(held)) {
           attachmentDraft.clear()
           setFileMentions([])
         }
@@ -414,12 +415,15 @@ export function useSessionController({
       if (!givingUp) return
     }
     if (!submission.delivered(held)) return
-    if (held.sessionId === selectedId) {
-      attachmentDraft.clear()
-      setFileMentions([])
-    } else if (held.sessionId !== undefined && sessionDrafts.current.read(held.sessionId, privateVisible).trim() === held.prompt.trim())
-      // The text waiting as that session's draft is what was just delivered, as a sent message takes it away.
-      sessionDrafts.current.remove(held.sessionId)
+    // A prompt sent again never was the input: what is being written stays, here and as the session's draft.
+    if (fromInput(held)) {
+      if (held.sessionId === selectedId) {
+        attachmentDraft.clear()
+        setFileMentions([])
+      } else if (held.sessionId !== undefined && sessionDrafts.current.read(held.sessionId, privateVisible).trim() === held.prompt.trim())
+        // The text waiting as that session's draft is what was just delivered, as a sent message takes it away.
+        sessionDrafts.current.remove(held.sessionId)
+    }
     setToast({ text: '已送达', tone: 'ok' })
   })
   const held = submission.pending

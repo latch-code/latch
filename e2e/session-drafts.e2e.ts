@@ -171,12 +171,13 @@ it.each([
         try {
           attempts++
           requestIds.push((route.request().postDataJSON() as { requestId: string }).requestId)
-          const response = await route.fetch()
-          accepted = true
+          // Lost before it reached the Host: nothing can prove it delivered, so only a retry or 放弃 ends it.
           if (unknown && attempts === 1) {
             await route.abort('failed')
             return
           }
+          const response = await route.fetch()
+          accepted = true
           await gate
           await route.fulfill({ response })
         } catch {
@@ -187,8 +188,8 @@ it.each([
         .getByRole('button', { name: resend ? '重试' : '发送', exact: true })
         .last()
         .click()
-      await expect.poll(() => accepted).toBe(true)
       if (unknown) await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
+      else await expect.poll(() => accepted).toBe(true)
       await choose(b.summary.title)
       expect(await input.inputValue()).toBe('Draft B stays with B')
       if (reload) {

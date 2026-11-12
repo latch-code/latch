@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENT_PRESETS, type AppSnapshot, type ModelRef, type FileMention, type WorktreeStart } from '@latch/protocol'
 import {
   api,
+  fromInput,
   ApiError,
   inlineError,
   newRequestId,
@@ -196,7 +197,7 @@ export function useSubmission({
   useEffect(() => {
     const stored = readPending(pendingKey)
     // A prompt sent again was never the input's text, so it does not take the input over on a reload.
-    const owner = stored && storedOwnsInput(stored, selectedId)
+    const owner = stored && fromInput(stored) && storedOwnsInput(stored, selectedId)
     setPending(stored)
     setSendingMessage(
       stored && !stored.queue && !stored.steer
@@ -322,6 +323,7 @@ export function useSubmission({
             requestId: newRequestId(),
             prompt: resend,
             sessionId: selectedId,
+            resent: true,
             ...(override ? { model: override } : {}),
             ...(clearing.has(selectedId) ? { freshContext: true } : {}),
           }
@@ -359,7 +361,7 @@ export function useSubmission({
     const origin = {
       epoch: destination.current.epoch,
       // After a reload only the stored submission says where it came from.
-      consumedDraft: earlier?.consumedDraft ?? resend === undefined,
+      consumedDraft: earlier?.consumedDraft ?? (resend === undefined && fromInput(submission)),
     }
     if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
@@ -435,7 +437,7 @@ export function useSubmission({
         setPending(null)
       }
       setPendingReason(reason ?? '')
-      if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released') {
+      if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released' && fromInput(submission)) {
         const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
         if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))
         onReleased?.(submission, restored)
