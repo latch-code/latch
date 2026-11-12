@@ -1,45 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Laptop } from 'lucide-react'
-import { Button, Hint, InlineNotice, StatusWord, type StatusTone } from '@latch/ui'
+import { Button, Hint, InlineNotice, StatusWord } from '@latch/ui'
 import { ConfirmDialog } from '../components/overlays.tsx'
+import { computerState } from '../core/computers.ts'
 import { shellComputers, type ComputersView, type ComputerView } from '../core/shell.ts'
 import { IconTile, Loading, NoteLine, ObjectRow, SettingsGroup } from './common.tsx'
-
-const time = (iso: string | undefined): string => {
-  const at = iso ? new Date(iso) : undefined
-  return at && Number.isFinite(at.getTime()) ? at.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
-}
-
-/** A computer's state in words and tone: amber where it waits for the person, red where the connection is not safe. */
-export function computerState(computer: Pick<ComputerView, 'state' | 'reason' | 'lastSeenAt'>): { text: string; tone: StatusTone } {
-  switch (computer.state) {
-    case 'online':
-      return { text: '在线', tone: 'neutral' }
-    case 'connecting':
-      return { text: '正在连接', tone: 'running' }
-    case 'offline': {
-      const seen = time(computer.lastSeenAt)
-      return { text: seen ? `离线 · 上次在线 ${seen}` : '离线', tone: 'neutral' }
-    }
-    case 'stopping':
-      return {
-        text: computer.reason === 'update' ? '正在更新' : computer.reason === 'restart' ? '正在重启' : '已停止',
-        tone: 'neutral',
-      }
-    case 'sleeping':
-      return { text: '已休眠', tone: 'neutral' }
-    case 'revoked':
-      return { text: '已被移除', tone: 'warn' }
-    case 'wrong-host':
-      return { text: '不是这台电脑', tone: 'failed' }
-    case 'cert-error':
-      return { text: '证书不受信任', tone: 'failed' }
-    case 'cert-changed':
-      return { text: '证书变了', tone: 'warn' }
-    case 'outdated':
-      return { text: '版本较旧', tone: 'warn' }
-  }
-}
 
 /** The address of a computer as a person reads it: host and port. */
 function host(origin: string): string {

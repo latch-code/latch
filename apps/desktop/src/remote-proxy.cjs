@@ -309,7 +309,7 @@ function computerNameOf(hostName) {
   const name = [
     ...hostName
       .replace(/\.local$/u, '')
-      .replace(/[\p{C}]/gu, '')
+      .replace(/[\p{C}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu, '')
       .trim(),
   ]
     .slice(0, 80)
@@ -786,7 +786,7 @@ function createRemoteProxy(options) {
 
   /**
    * Main's own look at the computer: its identity (always read again), then its snapshot with this device's credential.
-   * Resolves the state and, when online, its name and version. Never retries a write; there is none here.
+   * Resolves the state and, when online, its name, version and snapshot. Never retries a write; there is none here.
    */
   async function probe() {
     try {
@@ -816,7 +816,13 @@ function createRemoteProxy(options) {
         return { state: revoked ? 'revoked' : 'offline' }
       }
       if (status !== 200) return { state: 'offline' }
-      return { state: 'online', name: computerNameOf(json?.hostName), version: versionOf(json?.version) }
+      return {
+        state: 'online',
+        name: computerNameOf(json?.hostName),
+        version: versionOf(json?.version),
+        // For main alone (computers.cjs keeps only what waits there; notifications compare it): never given to a page.
+        ...(json && typeof json === 'object' ? { snapshot: json } : {}),
+      }
     } catch (error) {
       return { state: error instanceof RemoteError ? error.state : 'offline' }
     }

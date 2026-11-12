@@ -1969,3 +1969,18 @@
 .computers-code {
   font-family: var(--mono);
 }
+
+/* 关于: another computer's Host version, with its state while it does not answer and an amber 版本较旧 when older. */
+.about-remote-version {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+.about-older {
+  color: var(--amber);
+}
+.about-older .ui-hint-lead {
+  color: var(--amber-icon);
+}

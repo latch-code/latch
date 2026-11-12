@@ -7,6 +7,7 @@
 const { randomUUID } = require('node:crypto')
 const { lstat, mkdir, open, readFile, rename, rm } = require('node:fs/promises')
 const { join } = require('node:path')
+const { attentionOf, sameName } = require('./notifications.cjs')
 
 const FILE = 'computers.json'
 const COMPUTER_LIMIT = 16
@@ -27,7 +28,9 @@ const STATES = [
 ]
 /** While online, `lastSeenAt` is written at most this often; leaving online writes it at once. */
 const SEEN_WRITE_MS = 10 * 60 * 1000
-const PROBE_ONLINE_MS = 60_000
+/** While a computer answers: every 15 seconds while a Latch window is in front, every minute otherwise. */
+const PROBE_FRONT_MS = 15_000
+const PROBE_BACK_MS = 60_000
 const PROBE_RETRY_MS = 15_000
 const PROBE_MAX_MS = 5 * 60 * 1000
 
@@ -178,10 +181,13 @@ function nextState(current, event, at) {
   }
 }
 
-/** When main looks at a computer again: a minute while it answers, backing off to five minutes while it does not. */
-function probeDelay(current, failures, at) {
+/**
+ * When main looks at a computer again: every 15 seconds while it answers and a Latch window is in front, every minute
+ * while none is, backing off from 15 seconds to five minutes while it does not answer.
+ */
+function probeDelay(current, failures, at, focused = true) {
   if (current.state === 'revoked') return undefined
-  if (current.state === 'online' || current.state === 'connecting') return PROBE_ONLINE_MS
+  if (current.state === 'online' || current.state === 'connecting') return focused ? PROBE_FRONT_MS : PROBE_BACK_MS
   if ((current.state === 'stopping' || current.state === 'sleeping') && (current.until ?? 0) > at)
     return Math.max(1_000, (current.until ?? at) - at + 1_000)
   return Math.min(PROBE_MAX_MS, PROBE_RETRY_MS * 2 ** Math.min(Math.max(failures - 1, 0), 10))
@@ -192,10 +198,14 @@ function probeDelay(current, failures, at) {
  * 「这台 Mac」 on the page, so its own name never collides.
  */
 function distinctNames(items) {
+  // A name that mixes Latin with a script of Latin look-alikes (build-mіni, Cyrillic і) always carries its hostId.
+  // Compared as a person reads them: look-alikes (another width, case, a variation selector) count as the same name.
   const counts = new Map()
-  for (const item of items) if (!item.local) counts.set(item.name, (counts.get(item.name) ?? 0) + 1)
+  for (const item of items) if (!item.local) counts.set(sameName(item.name), (counts.get(sameName(item.name)) ?? 0) + 1)
   return items.map(item =>
-    !item.local && (counts.get(item.name) ?? 0) > 1 ? { ...item, name: `${item.name} ${item.hostId.slice(0, 4)}` } : item,
+    !item.local && ((counts.get(sameName(item.name)) ?? 0) > 1 || mixedScript(item.name))
+      ? { ...item, name: `${item.name} ${item.hostId.slice(0, 4)}` }
+      : item,
   )
 }
 
@@ -231,6 +241,36 @@ function createWindowOpener({ existing, create, focus }) {
   }
 }
 
+/** Scripts whose letters pass for Latin ones. Han, kana and Hangul beside Latin (「王的 MacBook」) are ordinary names. */
+const LOOK_ALIKE =
+  /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}\p{Script=Coptic}\p{Script=Lisu}\p{Script=Canadian_Aboriginal}\p{Script=Tifinagh}\p{Script=Glagolitic}\p{Script=Georgian}]/u
+function mixedScript(name) {
+  const text = String(name).normalize('NFKC')
+  return /\p{Script=Latin}/u.test(text) && LOOK_ALIKE.test(text)
+}
+
+/**
+ * Sends each other computer's window the list only when what it may see changed: what waits on another computer is not
+ * in its view, so a change to it sends that window nothing (not even the moment it happened).
+ * @param {(target: any, view: any) => void} send
+ */
+function createViewSender(send) {
+  const sent = new WeakMap()
+  const push = (target, view) => {
+    const text = JSON.stringify(view)
+    if (sent.get(target) === text) return false
+    sent.set(target, text)
+    send(target, view)
+    return true
+  }
+  /** What the window read itself (`list()`), so the first push after it is compared with that too. */
+  push.seen = (target, view) => {
+    sent.set(target, JSON.stringify(view))
+    return view
+  }
+  return push
+}
+
 function refusal(status, error, message) {
   return { ok: false, status, error, message }
 }
@@ -246,7 +286,9 @@ function refusal(status, error, message) {
  * @param {(link: { origin: string, code: string }, hooks: { signal: AbortSignal, onWaiting: (state: { fingerprint: string, hostId: string }) => void, refuse: (hostId: string) => string | undefined }) => Promise<{ hostId: string, certificate?: string, key: any, deviceId: string, credential: string }>} options.enroll
  * @param {(link: string) => { origin: string, code: string } | undefined} options.parseLink
  * @param {(hostId: string) => Promise<void> | void} [options.forgetPartition]  closes the computer's windows and clears its storage
- * @param {() => void} [options.onChange]  the list or a state changed
+ * @param {(kind?: 'list' | 'attention') => void} [options.onChange]  the list, a state or what waits on a computer changed
+ * @param {() => boolean} [options.focused]  a Latch window is in front
+ * @param {(hostId: string, snapshot: any) => void} [options.onSnapshot]  a computer's authenticated snapshot (notifications)
  * @param {(message: string) => void} [options.log]
  * @param {() => number} [options.now]
  * @param {(callback: () => void, ms: number) => any} [options.setTimer]
@@ -263,12 +305,18 @@ function createComputers(options) {
     parseLink,
     forgetPartition = () => {},
     onChange = () => {},
+    focused = () => true,
+    onSnapshot = () => {},
     log = () => {},
     now = Date.now,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
   } = options
-  /** @type {Map<string, { record: any, store: any, proxy: any, status: any, failures: number, timer?: any, seenWritten: number, stopRenewal?: () => void }>} */
+  /**
+   * `attention`: what waited on that computer at its last authenticated snapshot (attentionOf); kept while it is away,
+   * so the page can say what waited before it went, and dropped when it removes this device.
+   * @type {Map<string, { record: any, store: any, proxy: any, status: any, failures: number, timer?: any, seenWritten: number, stopRenewal?: () => void, dueAt?: number, probing?: Promise<void>, attention?: { count: number, items: any[], running: number } }>}
+   */
   const entries = new Map()
   let damaged = false
   let adding
@@ -297,9 +345,11 @@ function createComputers(options) {
     return next
   }
 
-  function changed() {
+  /** `attention`: only what waits on a computer changed, which no other computer's window sees. */
+  /** @param {'list' | 'attention'} [kind] */
+  function changed(kind = 'list') {
     try {
-      onChange()
+      onChange(kind)
     } catch {
       /* A closed window is not the registry's trouble. */
     }
@@ -309,8 +359,9 @@ function createComputers(options) {
     if (entry.timer !== undefined) clearTimer(entry.timer)
     entry.timer = undefined
     if (stopped) return
-    const delay = probeDelay(entry.status, entry.failures, now())
+    const delay = probeDelay(entry.status, entry.failures, now(), focused())
     if (delay === undefined) return
+    entry.dueAt = now() + delay
     entry.timer = setTimer(() => void probe(entry.record.hostId), delay)
     entry.timer?.unref?.()
   }
@@ -338,6 +389,8 @@ function createComputers(options) {
       }
     }
     if (after.state === 'online' || after.state === 'connecting') entry.failures = 0
+    // A computer that removed this device: nothing it said before stands.
+    if (after.state === 'revoked') entry.attention = undefined
     if (before.state !== after.state) {
       // A state that may change by itself is looked at again soon.
       schedule(entry)
@@ -345,12 +398,56 @@ function createComputers(options) {
     }
   }
 
-  async function probe(hostId) {
+  /**
+   * Looks at a computer once. Looks at one computer run one after another, so its snapshots apply in order; nothing a
+   * look throws or rejects stops the computer from being looked at again.
+   */
+  function probe(hostId) {
     const entry = entries.get(hostId)
-    if (!entry || stopped) return
-    const result = await entry.proxy.probe()
+    if (!entry || stopped) return Promise.resolve()
+    const next = (entry.probing ?? Promise.resolve()).then(() => look(hostId, entry))
+    entry.probing = next.catch(() => {})
+    return entry.probing
+  }
+
+  async function look(hostId, entry) {
+    if (entries.get(hostId) !== entry || stopped) return
+    let result
+    try {
+      result = await entry.proxy.probe()
+    } catch {
+      result = { state: 'offline' }
+    }
     if (entries.get(hostId) !== entry) return
+    try {
+      observe(hostId, entry, result)
+    } catch {
+      log('无法读取另一台电脑的状态')
+    } finally {
+      schedule(entry)
+    }
+  }
+
+  function observe(hostId, entry, result) {
     if (result.state !== 'online') entry.failures += 1
+    if (result.state === 'online' && result.snapshot) {
+      let attention
+      try {
+        attention = attentionOf(result.snapshot, { now: now() })
+      } catch {
+        // A snapshot that cannot be read says nothing about what waits there; the last one stands.
+        attention = entry.attention
+      }
+      if (JSON.stringify(attention) !== JSON.stringify(entry.attention)) {
+        entry.attention = attention
+        changed('attention')
+      }
+      try {
+        onSnapshot(hostId, result.snapshot)
+      } catch {
+        /* Notifications cannot stop the list. */
+      }
+    }
     if (result.state === 'online') {
       const record = entry.record
       const name = result.name ?? record.name
@@ -362,7 +459,6 @@ function createComputers(options) {
         changed()
     }
     apply(entry, { kind: result.state })
-    schedule(entry)
   }
 
   async function attach(listed, store) {
@@ -431,10 +527,21 @@ function createComputers(options) {
         name: entry.record.name,
         local: false,
         state: entry.status.state,
-        ...(entry.status.lastSeenAt !== undefined ? { lastSeenAt: new Date(entry.status.lastSeenAt).toISOString() } : {}),
+        // Another computer's page learns when one was last seen only while it is away, to the minute: a look at a
+        // computer that answers moves nothing it can see.
+        ...(entry.status.lastSeenAt !== undefined && (full || (entry.status.state !== 'online' && entry.status.state !== 'connecting'))
+          ? { lastSeenAt: new Date(full ? entry.status.lastSeenAt : Math.floor(entry.status.lastSeenAt / 60_000) * 60_000).toISOString() }
+          : {}),
         ...(entry.record.lastVersion ? { version: entry.record.lastVersion } : {}),
         ...(entry.status.reason ? { reason: entry.status.reason } : {}),
         ...(full ? { origin: entry.record.origin } : {}),
+        // What waits there, for this Mac's own page only: titles and kinds, never a message, path or argument.
+        ...(full && entry.attention
+          ? {
+              waiting: entry.attention.items.map(item => ({ hostId: entry.record.hostId, ...item })),
+              running: entry.attention.running,
+            }
+          : {}),
       })),
     ]
     const computers = distinctNames(items)
@@ -564,9 +671,33 @@ function createComputers(options) {
     return { ok: true }
   }
 
+  /** Every session that waits on the person on the computers that answer now; the Dock adds this Mac's own. */
+  function waitingTotal() {
+    let total = 0
+    for (const entry of entries.values()) if (entry.status.state === 'online') total += entry.attention?.count ?? 0
+    return total
+  }
+
+  /** Whether `taskId` waits on that computer as main last read it: a page opens only these on another computer. */
+  function waits(hostId, taskId) {
+    return entries.get(hostId)?.attention?.items.some(item => item.taskId === taskId) === true
+  }
+
+  /** A Latch window came to the front: computers that answer are looked at again at the faster rate. */
+  function refocus() {
+    for (const entry of entries.values())
+      if ((entry.status.state === 'online' || entry.status.state === 'connecting') && (entry.dueAt ?? Infinity) - now() > PROBE_FRONT_MS)
+        schedule(entry)
+  }
+
   return {
     start,
     view,
+    waitingTotal,
+    waits,
+    refocus,
+    /** The name the list shows for a computer (two that share one get part of their hostId). */
+    nameOf: hostId => view().computers.find(item => item.hostId === hostId)?.name,
     add,
     cancelAdd,
     remove,
@@ -601,8 +732,12 @@ module.exports = {
   writeComputers,
   nextState,
   probeDelay,
+  PROBE_FRONT_MS,
+  PROBE_BACK_MS,
   distinctNames,
+  mixedScript,
   nameFromOrigin,
   createWindowOpener,
+  createViewSender,
   createComputers,
 }

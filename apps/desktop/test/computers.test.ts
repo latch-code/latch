@@ -6,9 +6,10 @@ import { generateKeyPairSync, sign } from 'node:crypto'
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
+import { runInNewContext } from 'node:vm'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOST_PROOF_SIGNING_VECTOR, makeTestTls } from '@latch/testkit'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -82,8 +83,11 @@ const computers = require('../src/computers.cjs') as {
     focus(window: unknown): void
   }): (hostId: string) => Promise<unknown>
   nextState(current: Record<string, unknown>, event: Record<string, unknown>, at: number): Record<string, unknown>
-  probeDelay(current: Record<string, unknown>, failures: number, at: number): number | undefined
+  probeDelay(current: Record<string, unknown>, failures: number, at: number, focused?: boolean): number | undefined
   distinctNames<T extends { name: string; hostId: string; local?: boolean }>(items: T[]): T[]
+  createViewSender(
+    send: (target: unknown, view: unknown) => void,
+  ): ((target: unknown, view: unknown) => boolean) & { seen(target: unknown, view: unknown): unknown }
   createComputers(options: Record<string, unknown>): {
     start(): Promise<void>
     view(options?: { full?: boolean }): { computers: Array<Record<string, unknown>>; adding?: unknown }
@@ -91,6 +95,12 @@ const computers = require('../src/computers.cjs') as {
     known(hostId: string): boolean
     remove(hostId: string): Promise<{ ok: boolean; revokedThere?: boolean; error?: string }>
     proxyFor(hostId: string): RemoteProxy | undefined
+    probe(hostId: string): Promise<void>
+    waitingTotal(): number
+    waits(hostId: string, taskId: string): boolean
+    refocus(): void
+    nameOf(hostId: string): string | undefined
+    view(options?: { full?: boolean }): { computers: Array<Record<string, unknown>> }
     stop(): void
     settled(): Promise<void>
   }
@@ -208,13 +218,44 @@ describe('the computer state machine', () => {
     })
   })
 
-  it('looks again every minute while online, backs off to five minutes while not, and never at a revoked computer', () => {
-    expect(computers.probeDelay({ state: 'online' }, 0, at)).toBe(60_000)
+  it('looks again every 15 seconds in front and every minute behind while online, backs off to five minutes while not, never at a revoked computer', () => {
+    expect(computers.probeDelay({ state: 'online' }, 0, at)).toBe(15_000)
+    expect(computers.probeDelay({ state: 'online' }, 0, at, false)).toBe(60_000)
+    expect(computers.probeDelay({ state: 'connecting' }, 0, at, true)).toBe(15_000)
+    expect(computers.probeDelay({ state: 'offline' }, 20, at, true)).toBe(300_000)
     expect(computers.probeDelay({ state: 'offline' }, 1, at)).toBe(15_000)
     expect(computers.probeDelay({ state: 'offline' }, 3, at)).toBe(60_000)
     expect(computers.probeDelay({ state: 'offline' }, 20, at)).toBe(300_000)
     expect(computers.probeDelay({ state: 'sleeping', until: at + 30_000 }, 0, at)).toBe(31_000)
     expect(computers.probeDelay({ state: 'revoked' }, 0, at)).toBeUndefined()
+  })
+
+  it('tells look-alike names apart: another width or case, a variation selector or an invisible character', () => {
+    for (const twin of ['build-mini\uFE0F', 'BUILD-MINI', 'ｂｕｉｌｄ-mini', 'build\u200B-mini'])
+      expect(
+        computers
+          .distinctNames([
+            { hostId: HOST_A, name: 'build-mini' },
+            { hostId: HOST_B, name: twin },
+          ])
+          .map(item => item.name),
+        twin,
+      ).toEqual([`build-mini ${HOST_A.slice(0, 4)}`, `${twin} ${HOST_B.slice(0, 4)}`])
+    expect(remote.computerNameOf('build\u202Emini\u2028x.local')).toBe('buildminix')
+  })
+
+  it('always marks a name that mixes Latin with a script of Latin look-alikes, not one with Han or kana', () => {
+    expect(
+      computers
+        .distinctNames([
+          { hostId: HOST_A, name: 'build-mini' },
+          { hostId: HOST_B, name: 'build-m\u0456ni' },
+          { hostId: 'c'.repeat(52), name: '王的 MacBook' },
+          { hostId: 'd'.repeat(52), name: 'ビルド mini' },
+          { hostId: 'e'.repeat(52), name: '\u03b2uild-mini' },
+        ])
+        .map(item => item.name),
+    ).toEqual(['build-mini', `build-m\u0456ni ${HOST_B.slice(0, 4)}`, '王的 MacBook', 'ビルド mini', `\u03b2uild-mini eeee`])
   })
 
   it('tells two computers of one name apart by their hostId', () => {
@@ -961,5 +1002,352 @@ describe('the certificate proof (security vector)', () => {
       signature: sign('sha256', Buffer.from(vector.text), { key: stranger.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url'),
     }
     expect(remote.verifyCertificateProof(forged, vector.hostId, vector.nonce, vector.certificate)).toBe(false)
+  })
+})
+
+describe('what waits on other computers', () => {
+  type Answer = { state: string; snapshot?: unknown; name?: string; version?: string }
+  const HOST_C = 'c'.repeat(52)
+  const snapshotOf = (approvals: number, running = 0) => ({
+    hostName: 'build-mini.local',
+    version: '0.9.1',
+    tasks: [
+      ...Array.from({ length: approvals }, (_, index) => ({
+        id: `wait-${index}`,
+        title: `会话 ${index}`,
+        status: 'waiting-approval',
+        updatedAt: new Date(1_000 + index).toISOString(),
+      })),
+      ...Array.from({ length: running }, (_, index) => ({
+        id: `run-${index}`,
+        title: '跑着',
+        status: 'running',
+        updatedAt: '2026-11-12T08:00:00Z',
+      })),
+    ],
+    approvals: Array.from({ length: approvals }, (_, index) => ({
+      id: `approval-${index}`,
+      sessionId: `wait-${index}`,
+      toolName: 'write',
+      reason: '写入 /secret/path',
+      arguments: '{"path":"/secret/path"}',
+      requestedAt: new Date(2_000 + index).toISOString(),
+    })),
+  })
+
+  async function registry(
+    answers: Map<string, () => { state: string; snapshot?: unknown; name?: string; version?: string }>,
+    focus = { value: true },
+  ) {
+    const userData = await directory()
+    await computers.writeComputers(userData, [record(HOST_B), record(HOST_C, { origin: 'https://other.example.ts.net', name: 'other' })])
+    const timers: Array<{ at: number; run: () => void; cleared: boolean; ms: number; hostId?: string }> = []
+    const snapshots: Array<[string, unknown]> = []
+    let changes = 0
+    let time = 1_000_000
+    const hooks: { change?: (kind: string) => void } = {}
+    const reg = computers.createComputers({
+      directory: userData,
+      localHostId: HOST_A,
+      local: () => ({ state: 'online' }),
+      openStore: async (hostId: string) => ({
+        hostId,
+        current: () => ({ deviceId: 'device', credential: 'ldc1.test' }),
+        binding: () => undefined,
+        clear: async () => {},
+      }),
+      makeProxy: ({ hostId }: { hostId: string }) => ({
+        probe: async () => answers.get(hostId)!(),
+        revokeSelf: async () => true,
+      }),
+      enroll: () => Promise.reject(new Error('not reached')),
+      parseLink: () => undefined,
+      focused: () => focus.value,
+      onSnapshot: (hostId: string, snapshot: unknown) => snapshots.push([hostId, snapshot]),
+      onChange: (kind: string) => {
+        changes += 1
+        hooks.change?.(kind)
+      },
+      now: () => time,
+      setTimer: (run: () => void, ms: number) => {
+        const timer = { at: time + ms, run, cleared: false, ms }
+        timers.push(timer)
+        return timer
+      },
+      clearTimer: (timer: { cleared: boolean }) => {
+        timer.cleared = true
+      },
+    })
+    cleanups.push(async () => reg.stop())
+    return {
+      reg,
+      snapshots,
+      timers,
+      changes: () => changes,
+      hooks,
+      advance: (ms: number) => {
+        time += ms
+      },
+    }
+  }
+
+  it('lists the newest 50 titles and kinds of each computer to this Mac’s page alone, and counts only computers that answer', async () => {
+    const answers = new Map<string, () => Answer>([
+      [HOST_B, () => ({ state: 'online', name: 'build-mini', version: '0.9.1', snapshot: snapshotOf(60, 2) })],
+      [HOST_C, () => ({ state: 'online', name: 'other', snapshot: snapshotOf(1) })],
+    ])
+    const { reg, snapshots } = await registry(answers)
+    await reg.start()
+    await vi.waitFor(() => expect(reg.waitingTotal()).toBe(61))
+    const full = reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!
+    const waiting = full.waiting as Array<Record<string, unknown>>
+    expect(waiting).toHaveLength(50)
+    expect(full.running).toBe(2)
+    expect(waiting[0]).toEqual({
+      hostId: HOST_B,
+      taskId: 'wait-59',
+      title: '会话 59',
+      kind: 'approval',
+      since: new Date(2_059).toISOString(),
+    })
+    // Nothing of the request itself crosses: no reason, argument or path.
+    expect(JSON.stringify(reg.view({ full: true }))).not.toContain('/secret/path')
+    // Another computer's page gets names and states only, never what waits elsewhere.
+    for (const item of reg.view().computers) {
+      expect(item.waiting).toBeUndefined()
+      expect(item.running).toBeUndefined()
+    }
+    expect(reg.waits(HOST_B, 'wait-59')).toBe(true)
+    expect(reg.waits(HOST_B, 'wait-0')).toBe(false)
+    expect(reg.waits(HOST_C, 'wait-59')).toBe(false)
+    expect(snapshots.map(([hostId]) => hostId).sort()).toEqual([HOST_B, HOST_C].sort())
+    expect(reg.nameOf(HOST_B)).toBe('build-mini')
+
+    // B stops answering: what waited stays as 离线前, and the Dock no longer counts it.
+    answers.set(HOST_B, () => ({ state: 'offline' }))
+    await reg.probe(HOST_B)
+    const away = reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!
+    expect(away.state).toBe('offline')
+    expect(away.waiting).toHaveLength(50)
+    expect(reg.waitingTotal()).toBe(1)
+
+    // B removed this device: nothing it said before stands.
+    answers.set(HOST_B, () => ({ state: 'revoked' }))
+    await reg.probe(HOST_B)
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.waiting).toBeUndefined()
+  })
+
+  it('keeps looking at a computer whose snapshot is malformed or whose look fails, and applies its looks in order', async () => {
+    let answer: () => Promise<Answer> | Answer = () => ({
+      state: 'online',
+      snapshot: { tasks: [null, 'x', { id: 'has space' }], approvals: [null] },
+    })
+    const answers = new Map<string, () => Answer>([
+      [HOST_B, () => answer() as Answer],
+      [HOST_C, () => ({ state: 'online', snapshot: snapshotOf(0) })],
+    ])
+    const { reg, timers } = await registry(answers)
+    await reg.start()
+    const forB = () => timers.filter(timer => !timer.cleared).length
+    await vi.waitFor(() => expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.state).toBe('online'))
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.waiting).toEqual([])
+    expect(forB()).toBe(2)
+    // A look that throws or rejects: the computer is looked at again all the same.
+    answer = () => {
+      throw new Error('broken')
+    }
+    await reg.probe(HOST_B)
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.state).toBe('offline')
+    expect(forB()).toBe(2)
+    // Two looks at once apply in the order they were asked for: the later snapshot is the one that stands.
+    let release: () => void = () => {}
+    const gate = new Promise<void>(done => {
+      release = done
+    })
+    const sequence = [
+      async () => {
+        await gate
+        return { state: 'online', snapshot: snapshotOf(1) }
+      },
+      async () => ({ state: 'online', snapshot: snapshotOf(2) }),
+    ]
+    answer = () => sequence.shift()!() as unknown as Answer
+    const first = reg.probe(HOST_B)
+    const second = reg.probe(HOST_B)
+    release()
+    await Promise.all([first, second])
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.waiting).toHaveLength(2)
+  })
+
+  it('sends another computer’s window nothing while what waits elsewhere comes and goes, as probes move time on', async () => {
+    let waiting = 0
+    const answers = new Map<string, () => Answer>([
+      [HOST_B, () => ({ state: 'online', name: 'build-mini', snapshot: snapshotOf(waiting) })],
+      [HOST_C, () => ({ state: 'online', name: 'other', snapshot: snapshotOf(0) })],
+    ])
+    const { reg, hooks, advance } = await registry(answers)
+    // As main.cjs broadcasts: this Mac's page always, other computers' windows never for `attention`.
+    const pushes: Array<[unknown, unknown]> = []
+    const send = computers.createViewSender((target, view) => pushes.push([target, view]))
+    const windowOfC = {}
+    const freshC = {}
+    await reg.start()
+    await vi.waitFor(() => expect(reg.view({ full: true }).computers.every(item => item.local || item.state === 'online')).toBe(true))
+    // C's window has read the list (list() records what it answered); a window opened just now has too.
+    send.seen(windowOfC, reg.view())
+    hooks.change = kind => {
+      if (kind === 'attention') return
+      send(windowOfC, reg.view())
+      send(freshC, reg.view())
+    }
+    send.seen(freshC, reg.view())
+    for (const count of [1, 3, 0, 2, 0]) {
+      waiting = count
+      advance(15_000)
+      await reg.probe(HOST_B)
+      await reg.probe(HOST_C)
+      expect(reg.waitingTotal()).toBe(count)
+    }
+    expect(pushes).toEqual([])
+    // A change C can see (B goes away) still reaches it, with when B was last seen to the minute.
+    answers.set(HOST_B, () => ({ state: 'offline' }))
+    advance(15_000)
+    await reg.probe(HOST_B)
+    expect(pushes).toHaveLength(2)
+    const seen = (pushes[0]![1] as { computers: Array<Record<string, unknown>> }).computers.find(item => item.hostId === HOST_B)!
+    expect(Date.parse(String(seen.lastSeenAt)) % 60_000).toBe(0)
+    expect(reg.view().computers.find(item => item.hostId === HOST_C)!.lastSeenAt).toBeUndefined()
+  })
+
+  it('looks every 15 seconds in front, every minute behind, sooner again when a window comes forward, and backs off while away', async () => {
+    const focus = { value: false }
+    const answers = new Map<string, () => Answer>([
+      [HOST_B, () => ({ state: 'online', snapshot: snapshotOf(1) })],
+      [HOST_C, () => ({ state: 'offline' })],
+    ])
+    const { reg, timers, advance } = await registry(answers, focus)
+    await reg.start()
+    await vi.waitFor(() => expect(reg.waitingTotal()).toBe(1))
+    const live = () => timers.filter(timer => !timer.cleared)
+    // B answers and no window is in front: a minute. C is away: 15 seconds, then longer.
+    expect(
+      live()
+        .map(timer => timer.ms)
+        .sort((a, b) => a - b),
+    ).toEqual([15_000, 60_000])
+    focus.value = true
+    advance(1_000)
+    reg.refocus()
+    expect(
+      live()
+        .map(timer => timer.ms)
+        .sort((a, b) => a - b),
+    ).toEqual([15_000, 15_000])
+    // A second refocus does not push the next look further away.
+    const before = live().map(timer => timer.at)
+    advance(1_000)
+    reg.refocus()
+    expect(live().map(timer => timer.at)).toEqual(before)
+    // C keeps not answering: 15 s, 30 s, 60 s … five minutes.
+    const delays: number[] = []
+    for (let index = 0; index < 8; index++) {
+      await reg.probe(HOST_C)
+      delays.push(live().at(-1)!.ms)
+    }
+    expect(delays.slice(0, 3)).toEqual([30_000, 60_000, 120_000])
+    expect(delays.at(-1)).toBe(300_000)
+  })
+})
+
+describe('the computers preload', () => {
+  type Shell = {
+    remote?: true
+    computers: {
+      list(): Promise<{ computers: Array<Record<string, unknown>> } | undefined>
+      open(hostId: string, taskId?: string): Promise<unknown>
+      subscribeSession?(callback: (id: string) => void): () => void
+    }
+  }
+  async function load(href: string) {
+    const listeners = new Map<string, (event: unknown, value: unknown) => void>()
+    const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ ok: true }))
+    let shell: Shell | undefined
+    runInNewContext(await readFile('apps/desktop/src/preload.cjs', 'utf8'), {
+      process: { platform: 'darwin' },
+      location: { href },
+      URL,
+      require: () => ({
+        contextBridge: {
+          exposeInMainWorld: (_name: string, value: Shell) => {
+            shell = value
+          },
+        },
+        ipcRenderer: {
+          invoke,
+          on: (name: string, listener: (event: unknown, value: unknown) => void) => listeners.set(name, listener),
+          removeListener: (name: string) => listeners.delete(name),
+        },
+        webUtils: { getPathForFile: () => '' },
+      }),
+    })
+    return { shell: shell!, invoke, listeners }
+  }
+  const item = { hostId: HOST_B, taskId: 'wait-1', title: '添加币种筛选', kind: 'approval', since: '2026-11-12T08:00:00.000Z' }
+  const view = {
+    computers: [
+      { hostId: HOST_A, name: 'studio', local: true, state: 'online' },
+      { hostId: HOST_B, name: 'build-mini', local: false, state: 'online', waiting: [item], running: 2 },
+    ],
+  }
+
+  it('gives this Mac’s page what waits elsewhere, checked field by field, and opens a session only from it', async () => {
+    const { shell, invoke } = await load('latch://app/link/')
+    invoke.mockResolvedValueOnce(view)
+    expect((await shell.computers.list())!.computers[1]).toMatchObject({ waiting: [item], running: 2 })
+    for (const bad of [
+      { ...item, hostId: HOST_A },
+      { ...item, kind: 'message' },
+      { ...item, title: 'a\u0000b' },
+      { ...item, title: 'x'.repeat(81) },
+      { ...item, taskId: '../x' },
+      { ...item, body: undefined, since: 'yesterday' },
+    ]) {
+      invoke.mockResolvedValueOnce({ computers: [view.computers[0], { ...view.computers[1], waiting: [bad] }] })
+      expect((await shell.computers.list())!.computers[1]!.waiting, JSON.stringify(bad)).toBeUndefined()
+    }
+    // One malformed item or count drops what waits on that computer alone; the list stays.
+    for (const bad of [{ waiting: [{ ...item, taskId: 'has space' }] }, { running: 1e12 }, { waiting: 'x' }]) {
+      invoke.mockResolvedValueOnce({ computers: [view.computers[0], { ...view.computers[1], ...bad }] })
+      const listed = await shell.computers.list()
+      expect(listed!.computers, JSON.stringify(bad)).toHaveLength(2)
+      expect(listed!.computers[1]).toEqual({ hostId: HOST_B, name: 'build-mini', local: false, state: 'online' })
+    }
+    invoke.mockResolvedValueOnce({ computers: [{ ...view.computers[0], waiting: [item] }] })
+    expect((await shell.computers.list())!.computers[0]!.waiting).toBeUndefined()
+    await shell.computers.open(HOST_B, 'wait-1')
+    expect(invoke).toHaveBeenLastCalledWith('latch:computers:open', HOST_B, 'wait-1')
+    await shell.computers.open(HOST_B, '../x')
+    expect(invoke).toHaveBeenLastCalledWith('latch:computers:open', HOST_B)
+    expect(shell.computers.subscribeSession).toBeUndefined()
+  })
+
+  it('never gives another computer’s page what waits elsewhere, and opens there only sessions main sends', async () => {
+    const { shell, invoke, listeners } = await load(`latch://h-${HOST_B}/link/`)
+    expect(shell.remote).toBe(true)
+    invoke.mockResolvedValueOnce(view)
+    const listed = await shell.computers.list()
+    expect(listed!.computers.every(computer => computer.waiting === undefined && computer.running === undefined)).toBe(true)
+    await shell.computers.open(HOST_A, 'wait-1')
+    expect(invoke).toHaveBeenLastCalledWith('latch:computers:open', HOST_A)
+    // A session main asks it to open before the page subscribes waits for the first subscriber, once.
+    listeners.get('latch:computers:session')!({}, 'not a session id!')
+    listeners.get('latch:computers:session')!({}, 'wait-1')
+    const opened = vi.fn()
+    const stop = shell.computers.subscribeSession!(opened)
+    expect(opened.mock.calls).toEqual([['wait-1']])
+    listeners.get('latch:computers:session')!({}, 'wait-2')
+    expect(opened.mock.calls).toEqual([['wait-1'], ['wait-2']])
+    stop()
+    expect(listeners.has('latch:computers:session')).toBe(false)
   })
 })

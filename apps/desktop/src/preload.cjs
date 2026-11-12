@@ -15,6 +15,10 @@ const holdEarlySession = (_event, sessionId) => {
   if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlySession = sessionId
 }
 ipcRenderer.on('latch:notifications:open', holdEarlySession)
+let earlyRemoteSession
+const holdEarlyRemoteSession = (_event, sessionId) => {
+  if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlyRemoteSession = sessionId
+}
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
 const CANCELED = Object.freeze({ status: 'canceled' })
 const NOTIFICATION_CONSENT = new Set(['unasked', 'accepted', 'declined'])
@@ -244,8 +248,9 @@ function diskPaths(files) {
 }
 
 // `computers`: the computers this app reaches (computers.cjs). Only this checked view crosses: hostIds, names, states,
-// times and versions, and on this Mac's own page each address and an addition in progress. Never a link, a code or a
-// credential: main reads a link from the clipboard or a code file itself.
+// times and versions, and on this Mac's own page each address, an addition in progress and what waits on each other
+// computer (session IDs, titles, kinds and times, and how many run). Never a link, a code, a credential or a message:
+// main reads a link from the clipboard or a code file itself.
 const HOST_ID = /^[a-z2-7]{52}$/
 const COMPUTER_STATES = new Set([
   'online',
@@ -262,6 +267,15 @@ const COMPUTER_STATES = new Set([
 const HOST_STATE_REASONS = new Set(['restart', 'update', 'sleep', 'shutdown'])
 const ADD_STAGES = new Set(['checking', 'waiting'])
 const FINGERPRINT = /^[A-Z2-7]{4}(?: [A-Z2-7]{4}){4}$/
+const ATTENTION_KINDS = new Set(['approval', 'question', 'stuck'])
+const ATTENTION_LIMIT = 50
+function attentionItem(value, hostId) {
+  if (!value || typeof value !== 'object' || value.hostId !== hostId) return undefined
+  if (typeof value.taskId !== 'string' || !SESSION_ID.test(value.taskId) || !ATTENTION_KINDS.has(value.kind)) return undefined
+  if (!shortText(value.title, 160) || [...value.title].length > 80 || /[\p{C}]/u.test(value.title)) return undefined
+  if (!shortText(value.since, 40) || !Number.isFinite(Date.parse(value.since))) return undefined
+  return { hostId, taskId: value.taskId, title: value.title, kind: value.kind, since: value.since }
+}
 const httpsOriginText = value => {
   if (!shortText(value, 512)) return false
   try {
@@ -292,12 +306,28 @@ function computerItem(value) {
     if (!httpsOriginText(value.origin)) return undefined
     item.origin = value.origin
   }
+  // What waits there comes from that computer's Host: anything malformed drops it for that computer alone, never the list.
+  const waiting =
+    !value.local && Array.isArray(value.waiting) && value.waiting.length <= ATTENTION_LIMIT
+      ? value.waiting.map(entry => attentionItem(entry, item.hostId))
+      : undefined
+  const running = value.running === undefined || (Number.isSafeInteger(value.running) && value.running >= 0 && value.running <= 100_000)
+  if (waiting && !waiting.some(entry => entry === undefined) && running) {
+    item.waiting = waiting
+    if (value.running !== undefined) item.running = value.running
+  }
   return item
 }
-function computersView(value) {
+function computersView(value, full) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.computers) || value.computers.length > 17) return undefined
   const computers = value.computers.map(computerItem)
   if (computers.some(item => item === undefined)) return undefined
+  // Another computer's page never holds what waits elsewhere, whatever arrives.
+  if (!full)
+    for (const item of computers) {
+      delete item.waiting
+      delete item.running
+    }
   const view = { computers }
   if (value.problem !== undefined) {
     if (value.problem !== 'credentials') return undefined
@@ -335,23 +365,46 @@ function computerResult(value) {
 }
 function computersApi(full) {
   const api = {
-    list: () => ipcRenderer.invoke('latch:computers:list').then(computersView),
+    list: () => ipcRenderer.invoke('latch:computers:list').then(value => computersView(value, full)),
     /** Main pushes each change; returns the function that stops listening. */
     subscribe: callback => {
       if (typeof callback !== 'function') return () => {}
       const listener = (_event, value) => {
-        const view = computersView(value)
+        const view = computersView(value, full)
         if (view) callback(view)
       }
       ipcRenderer.on('latch:computers:changed', listener)
       return () => ipcRenderer.removeListener('latch:computers:changed', listener)
     },
-    /** Opens (or brings forward) that computer's window. */
-    open: hostId =>
+    /**
+     * Opens (or brings forward) that computer's window; on this Mac's page, with `taskId`, on a session main last saw
+     * waiting there.
+     */
+    open: (hostId, taskId) =>
       typeof hostId === 'string' && HOST_ID.test(hostId)
-        ? ipcRenderer.invoke('latch:computers:open', hostId).then(computerResult)
+        ? ipcRenderer
+            .invoke('latch:computers:open', hostId, ...(full && typeof taskId === 'string' && SESSION_ID.test(taskId) ? [taskId] : []))
+            .then(computerResult)
         : Promise.resolve(computerResult(undefined)),
   }
+  if (!full) ipcRenderer.on('latch:computers:session', holdEarlyRemoteSession)
+  if (!full)
+    /**
+     * A session of this page's own Host that main was asked to open (from this Mac's 等你处理 or a notification); one
+     * that arrives before the page subscribes waits for the first subscriber.
+     */
+    api.subscribeSession = callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, sessionId) => {
+        if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
+      }
+      ipcRenderer.removeListener('latch:computers:session', holdEarlyRemoteSession)
+      ipcRenderer.on('latch:computers:session', listener)
+      const early = earlyRemoteSession
+      earlyRemoteSession = undefined
+      if (early !== undefined) callback(early)
+      return () => ipcRenderer.removeListener('latch:computers:session', listener)
+    }
   if (full) {
     /** `clipboard`: the link another computer's 复制链接 put there; `file`: a code file chosen in the system's panel. */
     api.add = source => ipcRenderer.invoke('latch:computers:add', source === 'file' ? 'file' : 'clipboard').then(computerResult)

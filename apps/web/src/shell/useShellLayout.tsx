@@ -527,16 +527,20 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
   const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)
-  useEffect(
-    () =>
-      currentShell()?.notifications?.subscribe(id => {
-        setNotified({ id, read: false, arrived: false })
-        void refresh().finally(() => {
-          setNotified(previous => (previous?.id === id ? { ...previous, read: true } : previous))
-        })
-      }),
-    [refresh],
-  )
+  useEffect(() => {
+    const open = (id: string) => {
+      setNotified({ id, read: false, arrived: false })
+      void refresh().finally(() => {
+        setNotified(previous => (previous?.id === id ? { ...previous, read: true } : previous))
+      })
+    }
+    const shell = currentShell()
+    // Another computer's window: main asks it to open a session of its own Host (from this Mac's 等你处理 or a notification).
+    const stops = [shell?.notifications?.subscribe(open), shell?.computers?.subscribeSession?.(open)]
+    return () => {
+      for (const stop of stops) stop?.()
+    }
+  }, [refresh])
   useEffect(() => {
     if (notified === null || !snapshot.tasks.some(task => task.id === notified.id)) return
     const done = openNotified(notified.id, !notified.arrived)

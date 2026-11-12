@@ -250,6 +250,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   sessionMenu={sessionMenu}
                   now={now}
                   apps={<AppsGroup shell={shell} />}
+                  onManageComputers={() => {
+                    openSettings('computers')
+                  }}
                   {...(lifecycle.view?.keepAwake.active ? { keepAwake: keepAwakeLine(lifecycle.view.keepAwake) } : {})}
                 />
               </aside>

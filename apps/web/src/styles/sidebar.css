@@ -52,6 +52,67 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * With more than one computer the row is the computer menu's trigger: this window's computer, its state when it is not
+ * online, and the menu's chevron. Each computer in the menu has a dot: filled while it answers, hollow while it does
+ * not, amber or red where the state asks for the person or is unsafe; its count of what waits there is amber.
+ */
+.sidebar-host-menu {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.sidebar-host-menu:hover,
+.sidebar-host-menu[aria-expanded='true'] {
+  background: var(--hover);
+}
+.sidebar-host-menu:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sidebar-host-menu .sidebar-host-name {
+  flex: 1;
+}
+.sidebar-host-state {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.sidebar-host-menu > .sidebar-host-chevron {
+  color: var(--muted);
+}
+.computer-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 3px;
+  border: 1.5px solid var(--faint);
+  border-radius: 50%;
+}
+.computer-dot[data-state='online'] {
+  border-color: var(--ink-2);
+  background: var(--ink-2);
+}
+.computer-dot:is([data-state='revoked'], [data-state='cert-changed'], [data-state='outdated']) {
+  border-color: var(--amber-icon);
+}
+.computer-dot:is([data-state='wrong-host'], [data-state='cert-error']) {
+  border-color: var(--red);
+}
+.computer-count {
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.computer-older {
+  color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
 .sidebar-nav-line {
   display: flex;
   align-items: center;
@@ -682,4 +743,33 @@
   .session-entry {
     transition: opacity var(--m-micro) var(--e-micro);
   }
+}
+
+/*
+ * 等你处理's rows from other computers, under a quiet 「其他电脑」: the computer's name with its laptop glyph on the second
+ * line. A computer that does not answer is one grey row, 「离线前 N 项」, never in amber: it is not live.
+ */
+.other-computers-label {
+  margin: var(--sp-8) 0 var(--sp-2);
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.session-computer-icon {
+  flex-shrink: 0;
+}
+.session-computer {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item[data-stale] .session-item-main {
+  color: var(--muted);
+}
+.other-computers-stale {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }

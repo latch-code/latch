@@ -81,30 +81,92 @@ async function writePreferences(directory, value) {
     await rm(temporary, { force: true })
   }
 }
+const ATTENTION_LIMIT = 50
+const TITLE_LIMIT = 80
+const RUNNING_LIMIT = 100_000
+/** A session ID as the preload accepts it; anything else from a Host is not listed. */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 /**
- * What 等你处理 lists: sessions with a request or a question, a request Latch did not recognise and nothing since, and runs the
- * Host calls silent; a stop already asked for answers all of these. Unread results and running work do not count.
+ * Characters that change how a line reads without being seen: controls, format characters (bidi overrides), line and
+ * paragraph separators, unassigned and private-use code points, and default-ignorable ones (variation selectors).
  */
-function waitingCount(snapshot) {
-  const stopping = task => (task.status === 'running' || task.status === 'waiting-approval') && task.live?.activity === 'cancelling'
-  const stopped = new Set(snapshot.tasks.filter(stopping).map(task => task.id))
-  const waiting = new Set(snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopped.has(id)))
-  for (const task of snapshot.tasks) {
-    if (stopped.has(task.id)) continue
-    const asked = Date.parse(task.live?.unrecognized?.at)
-    const stuck = asked >= Date.parse(task.live?.lastEventAt)
-    const quiet = task.live?.silent === true || stuck
-    if (task.status === 'waiting-approval' || (task.status === 'running' && (task.pendingQuestions > 0 || quiet))) waiting.add(task.id)
-  }
-  return waiting.size
+const INVISIBLE = /[\p{C}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu
+const stamp = value => {
+  const at = Date.parse(value)
+  return Number.isFinite(at) ? at : undefined
 }
-/** Only authenticated Host snapshots decide notification contents; the renderer never supplies text. */
+/** A title as other computers' rows and notifications show it: one visible line of at most `limit` code points. */
+function attentionTitle(value, limit = TITLE_LIMIT) {
+  return [...String(typeof value === 'string' ? value : '').replace(INVISIBLE, '')].slice(0, limit).join('').trim()
+}
+/**
+ * What 等你处理 lists, as items: sessions with a request or a question (`approval`, `question`), a request Latch did not
+ * recognise and nothing since, and runs the Host calls silent (`stuck`); a stop already asked for answers all of these.
+ * Unread results and running work do not count. `count` is every such session, `items` the newest `limit` of them with
+ * the title and when it began to wait, and `running` the sessions running without waiting on the person. Nothing else
+ * of the snapshot is kept: no message, path, argument or project.
+ */
+function attentionOf(snapshot, { limit = ATTENTION_LIMIT, now = Date.now() } = {}) {
+  // A Host's snapshot is data: entries that are not objects with a session ID of the accepted shape are left out.
+  const listed = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const tasks = (Array.isArray(snapshot?.tasks) ? snapshot.tasks : []).filter(
+    task => listed(task) && typeof task.id === 'string' && SESSION_ID.test(task.id),
+  )
+  const approvals = (Array.isArray(snapshot?.approvals) ? snapshot.approvals : []).filter(
+    approval => listed(approval) && typeof approval.sessionId === 'string' && SESSION_ID.test(approval.sessionId),
+  )
+  const stopping = task => (task.status === 'running' || task.status === 'waiting-approval') && task.live?.activity === 'cancelling'
+  const stopped = new Set(tasks.filter(stopping).map(task => task.id))
+  const byId = new Map(tasks.map(task => [task.id, task]))
+  /** @type {Map<string, { kind: 'approval' | 'question' | 'stuck', since: number | undefined }>} */
+  const waiting = new Map()
+  for (const approval of approvals) {
+    if (stopped.has(approval.sessionId)) continue
+    const at = stamp(approval.requestedAt)
+    const before = waiting.get(approval.sessionId)
+    const since = before?.since === undefined ? at : at === undefined ? before.since : Math.min(before.since, at)
+    waiting.set(approval.sessionId, { kind: 'approval', since })
+  }
+  for (const task of tasks) {
+    if (stopped.has(task.id) || waiting.has(task.id)) continue
+    const asked = stamp(task.live?.unrecognized?.at)
+    const stuck = asked !== undefined && asked >= (stamp(task.live?.lastEventAt) ?? Infinity)
+    const quiet = task.live?.silent === true || stuck
+    if (task.status === 'waiting-approval') waiting.set(task.id, { kind: 'approval', since: stamp(task.live?.lastEventAt) })
+    else if (task.status === 'running' && task.pendingQuestions > 0)
+      waiting.set(task.id, { kind: 'question', since: stamp(task.live?.lastEventAt) })
+    else if (task.status === 'running' && quiet)
+      waiting.set(task.id, { kind: 'stuck', since: stuck ? asked : stamp(task.live?.lastEventAt) })
+  }
+  const items = [...waiting].map(([taskId, item]) => {
+    const task = byId.get(taskId)
+    const since = item.since ?? stamp(task?.updatedAt) ?? now
+    return { taskId, title: attentionTitle(task?.title), kind: item.kind, since: new Date(since).toISOString() }
+  })
+  items.sort((a, b) => Date.parse(b.since) - Date.parse(a.since))
+  const running = tasks.filter(task => task.status === 'running' && !waiting.has(task.id) && !stopped.has(task.id)).length
+  return { count: items.length, items: items.slice(0, limit), running: Math.min(running, RUNNING_LIMIT) }
+}
+/** A name as two names are compared: NFKC, nothing invisible, case folded, so look-alikes count as one. */
+function sameName(value) {
+  return String(value).normalize('NFKC').replace(INVISIBLE, '').toLowerCase()
+}
+/** How many sessions 等你处理 lists (attentionOf); the Dock counts these. */
+function waitingCount(snapshot) {
+  return attentionOf(snapshot, { limit: 0 }).count
+}
+/**
+ * Only authenticated Host snapshots decide notification contents; the renderer never supplies text. This Mac's Host is
+ * read by `poll`; another computer's snapshots arrive through `observeRemote` (computers.cjs reads them), each compared
+ * with that computer's own previous one, under the same preferences, with its name before the title.
+ */
 function createNotifications(options) {
-  let previous,
-    polling = false,
+  let polling = false,
     closed = false,
     state = fresh(),
     writes = Promise.resolve()
+  /** The previous snapshot of each source: `local`, or a remote computer's hostId. */
+  const previous = new Map()
   const last = new Map(),
     now = options.now ?? Date.now
   const view = () => ({
@@ -135,25 +197,59 @@ function createNotifications(options) {
     )
     return pending
   }
-  const notify = (task, kind) => {
+  const notify = (source, task, kind) => {
     const setting = kind === 'failure' ? 'completion' : kind
-    if (
-      closed
-      || options.focused()
-      || !options.supported()
-      || !state.preferences[setting]
-      || now() - (last.get(task.id) ?? -Infinity) < 10_000
-    )
+    const key = `${source.key}\u0000${task.id}`
+    if (closed || options.focused() || !options.supported() || !state.preferences[setting] || now() - (last.get(key) ?? -Infinity) < 10_000)
       return
-    last.set(task.id, now())
+    last.set(key, now())
     const body = kind === 'approval' ? '有一个请求等你处理。' : kind === 'failure' ? '一个会话失败了。' : '一个会话已完成。'
-    const title = state.preferences.title
-      ? String(task.title || '未命名会话')
-          .replace(/[\u0000-\u001f\u007f]/gu, '')
-          .slice(0, 120)
-      : 'Latch'
-    options.show({ title, body, onClick: () => options.open(task.id) })
+    // Nothing invisible survives (a bidi override could make one computer's line read as another's).
+    const named = state.preferences.title ? attentionTitle(task.title, 120) || '未命名会话' : 'Latch'
+    // Another computer's name leads the title; this Mac's notifications have none.
+    const title = source.name ? `${source.name} · ${named}` : named
+    options.show({ title, body, onClick: () => source.open(task.id) })
   }
+  /** Compares a source's snapshot with its previous one; the first only sets the baseline. */
+  async function observe(source, snapshot) {
+    const current = new Map(snapshot.tasks.map(task => [task.id, { ...task }]))
+    const before = previous.get(source.key)
+    if (before) {
+      for (const task of snapshot.tasks) {
+        const earlier = before.tasks.get(task.id)
+        if (!earlier || !['running', 'waiting-approval'].includes(earlier.status)) continue
+        const outcome =
+          task.status === 'failed' || (task.status === 'idle' && task.runOutcome === 'failed')
+            ? 'failure'
+            : task.status === 'idle' && (task.runOutcome === undefined || task.runOutcome === 'completed')
+              ? 'completion'
+              : undefined
+        if (!outcome) continue
+        // The first real ending seen in the background turns notifications on; the OS asks on the first one shown.
+        if (!options.focused() && options.supported() && state.consent === 'unasked')
+          await change(value =>
+            value.consent === 'unasked'
+              ? { ...value, preferences: { ...value.preferences, completion: true, approval: true }, consent: 'accepted' }
+              : value,
+          )
+        notify(source, task, outcome)
+      }
+      for (const approval of snapshot.approvals)
+        if (!before.approvals.has(approval.id)) {
+          const task = current.get(approval.sessionId)
+          if (task) notify(source, task, 'approval')
+        }
+    }
+    previous.set(source.key, { tasks: current, approvals: new Set(snapshot.approvals.map(item => item.id)) })
+    const prefix = `${source.key}\u0000`
+    for (const key of last.keys()) if (key.startsWith(prefix) && !current.has(key.slice(prefix.length))) last.delete(key)
+  }
+  const valid = snapshot =>
+    snapshot
+    && Array.isArray(snapshot.tasks)
+    && Array.isArray(snapshot.approvals)
+    && snapshot.tasks.every(task => task !== null && typeof task === 'object' && typeof task.id === 'string')
+    && snapshot.approvals.every(item => item !== null && typeof item === 'object')
   return {
     configure(value) {
       const next = record(value)
@@ -176,42 +272,33 @@ function createNotifications(options) {
       polling = true
       try {
         const snapshot = await options.snapshot()
-        if (closed || !snapshot || !Array.isArray(snapshot.tasks) || !Array.isArray(snapshot.approvals)) return
+        if (closed || !valid(snapshot)) return
         options.badge?.(waitingCount(snapshot))
-        const current = new Map(snapshot.tasks.map(task => [task.id, { ...task }]))
-        if (previous) {
-          for (const task of snapshot.tasks) {
-            const before = previous.tasks.get(task.id)
-            if (!before || !['running', 'waiting-approval'].includes(before.status)) continue
-            const outcome =
-              task.status === 'failed' || (task.status === 'idle' && task.runOutcome === 'failed')
-                ? 'failure'
-                : task.status === 'idle' && (task.runOutcome === undefined || task.runOutcome === 'completed')
-                  ? 'completion'
-                  : undefined
-            if (!outcome) continue
-            // The first real ending seen in the background turns notifications on; the OS asks on the first one shown.
-            if (!options.focused() && options.supported() && state.consent === 'unasked')
-              await change(value =>
-                value.consent === 'unasked'
-                  ? { ...value, preferences: { ...value.preferences, completion: true, approval: true }, consent: 'accepted' }
-                  : value,
-              )
-            notify(task, outcome)
-          }
-          for (const approval of snapshot.approvals)
-            if (!previous.approvals.has(approval.id)) {
-              const task = current.get(approval.sessionId)
-              if (task) notify(task, 'approval')
-            }
-        }
-        previous = { tasks: current, approvals: new Set(snapshot.approvals.map(item => item.id)) }
-        for (const id of last.keys()) if (!current.has(id)) last.delete(id)
+        await observe({ key: 'local', open: id => options.open(id) }, snapshot)
       } catch {
         /* A disconnected Host or failed preference write cannot authorize a new notification. */
       } finally {
         polling = false
       }
+    },
+    /**
+     * Another computer's authenticated snapshot, read by main (computers.cjs). `name` is how the list names it; a click
+     * opens that computer's window on the session.
+     */
+    async observeRemote(hostId, name, snapshot) {
+      if (closed || typeof hostId !== 'string' || !valid(snapshot)) return
+      try {
+        const shown = attentionTitle(name) || '另一台电脑'
+        await observe({ key: `h-${hostId}`, name: shown, open: id => options.openRemote?.(hostId, id) }, snapshot)
+      } catch {
+        /* A failed preference write cannot authorize a new notification. */
+      }
+    },
+    /** A removed computer: its baseline goes, so adding it again starts from a fresh one. */
+    forgetRemote(hostId) {
+      const key = `h-${hostId}`
+      previous.delete(key)
+      for (const id of last.keys()) if (id.startsWith(`${key}\u0000`)) last.delete(id)
     },
     async close() {
       closed = true
@@ -224,4 +311,15 @@ function handleNotificationRequests({ ipcMain, trusted, controller }) {
   ipcMain.handle('latch:notifications:get', event => (trusted(event) ? controller.view() : undefined))
   ipcMain.handle('latch:notifications:set', (event, input) => (trusted(event) ? controller.set(input) : undefined))
 }
-module.exports = { createNotifications, readPreferences, writePreferences, validPreferences, handleNotificationRequests }
+module.exports = {
+  createNotifications,
+  readPreferences,
+  writePreferences,
+  validPreferences,
+  handleNotificationRequests,
+  attentionOf,
+  attentionTitle,
+  sameName,
+  waitingCount,
+  ATTENTION_LIMIT,
+}

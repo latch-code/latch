@@ -1,4 +1,5 @@
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -9,7 +10,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { openEntry, openSection } from './helpers/layout.ts'
+import { openEntry, openSection, openSessions } from './helpers/layout.ts'
 
 const SHOTS = 'test-results/multi-host'
 /** What another computer's 「复制链接」 asks for (COMPUTER_INVITATION in apps/desktop/src/proxy.cjs). */
@@ -25,7 +26,9 @@ async function freePort(): Promise<number> {
 
 /**
  * The bootstrap trusts the test certificate of the other computer's HTTPS entry (and resolves its test name to
- * 127.0.0.1) through remote-proxy.cjs's module object; main, the preload, the proxies and both Hosts stay real.
+ * 127.0.0.1) through remote-proxy.cjs's module object, replaces only Electron's Notification class (it records what
+ * would be shown, as desktop-notifications.e2e.ts does) and keeps the computers registry, so the test can ask main to
+ * look at a computer now instead of waiting for its next look; main, the preload, the proxies and both Hosts stay real.
  */
 async function trustBootstrap(directory: string, ca: string): Promise<string> {
   const path = join(directory, 'multi-host-main.cjs')
@@ -41,7 +44,24 @@ const lookup = (_hostname, options, callback) => {
   else done(null, '127.0.0.1', 4)
 }
 remotes.tlsOptions = () => ({ ca: [ca], lookup })
-require(${JSON.stringify(resolve('apps/desktop/src/main.cjs'))})
+const Module = require('node:module'), { EventEmitter } = require('node:events')
+const originalLoad = Module._load, electron = require('electron')
+const fixture = globalThis.multiHostFixture = { shown: [], items: [], registry: undefined }
+class FixtureNotification extends EventEmitter {
+  constructor(options) { super(); this.options = { title: options.title, body: options.body }; fixture.items.push(this) }
+  static isSupported() { return true }
+  show() { fixture.shown.push(this.options) }
+}
+const facade = Object.create(electron)
+Object.defineProperty(facade, 'Notification', { value: FixtureNotification })
+const computers = require(${JSON.stringify(resolve('apps/desktop/src/computers.cjs'))})
+const create = computers.createComputers
+computers.createComputers = options => (fixture.registry = create(options))
+Module._load = function(request, parent, isMain) {
+  return request === 'electron' ? facade : Reflect.apply(originalLoad, this, [request, parent, isMain])
+}
+try { require(${JSON.stringify(resolve('apps/desktop/src/main.cjs'))}) }
+finally { Module._load = originalLoad; computers.createComputers = create }
 `,
     { mode: 0o600 },
   )
@@ -135,13 +155,52 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         async function shots(name: string) {
           for (const width of [1440, 768] as const)
             for (const theme of ['light', 'dark'] as const) {
-              await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size, 900), width)
+              await sizeA(width)
               await showComputers(theme)
               await page.evaluate(() => document.fonts.ready)
               await page.screenshot({ path: join(SHOTS, `computers-${name}--${theme}--${width}.png`), animations: 'disabled' })
             }
-          await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 900))
+          await sizeA(1440)
           await showComputers('light')
+        }
+
+        /** This Mac's window at a width: by its own origin, whatever other windows are open. */
+        const sizeA = (width: number) =>
+          app.evaluate(({ BrowserWindow }, size) => {
+            BrowserWindow.getAllWindows()
+              .find(item => item.webContents.getURL().startsWith('latch://app/'))!
+              .setContentSize(size, 900)
+          }, width)
+        /** The sidebar at 1440 and 768 (its drawer), light and dark; with `menu`, the computer menu open. */
+        async function sidebarShots(name: string, menu = false) {
+          for (const width of [1440, 768] as const)
+            for (const theme of ['light', 'dark'] as const) {
+              await sizeA(width)
+              await page.evaluate(look => {
+                const key = 'latch.preferences'
+                const saved = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>
+                localStorage.setItem(key, JSON.stringify({ ...saved, theme: look }))
+              }, theme)
+              await page.reload()
+              await page.locator('.app-shell[data-connection="connected"]').waitFor()
+              const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
+              if (await drawer.isVisible()) await drawer.click()
+              await page.locator('[data-other-computers]').waitFor()
+              if (menu) {
+                await page.locator('.sidebar-host-menu').click()
+                await page.getByRole('menu', { name: '电脑' }).waitFor()
+              }
+              await page.evaluate(() => document.fonts.ready)
+              await page.screenshot({ path: join(SHOTS, `sidebar-${name}--${theme}--${width}.png`), animations: 'disabled' })
+            }
+          await sizeA(1440)
+          await page.evaluate(() => {
+            const key = 'latch.preferences'
+            const saved = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>
+            localStorage.setItem(key, JSON.stringify({ ...saved, theme: 'light' }))
+          })
+          await page.reload()
+          await page.locator('.app-shell[data-connection="connected"]').waitFor()
         }
 
         // 设置 › 电脑 lists this Mac alone, and says how to add another.
@@ -217,7 +276,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         })
         expect(remoteShell).toEqual({
           keys: ['computers', 'devMode', 'kind', 'platform', 'remote'],
-          computers: ['list', 'open', 'subscribe'],
+          computers: ['list', 'open', 'subscribe', 'subscribeSession'],
           remote: true,
         })
         const remoteView = await bPage.evaluate(() =>
@@ -271,11 +330,118 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         expect((await a.host.bridge.listTasks()).length).toBe(0)
         await bPage.screenshot({ path: join(SHOTS, 'remote-session--light--1440.png'), animations: 'disabled' })
 
+        // What waits on B reaches this Mac's window, its notification and the Dock; B's own page never gets it.
+        type Fixture = { shown: Array<{ title: string; body: string }>; registry: { probe(hostId: string): Promise<void> } }
+        const lookAtB = () =>
+          app.evaluate(async (_electron, hostId) => {
+            await (Reflect.get(globalThis, 'multiHostFixture') as Fixture).registry.probe(hostId)
+          }, bId)
+        const shown = () => app.evaluate(() => (Reflect.get(globalThis, 'multiHostFixture') as Fixture).shown)
+        const listed = await page.evaluate(() =>
+          (
+            Reflect.get(globalThis, 'latchShell') as { computers: { list(): Promise<{ computers: Array<Record<string, unknown>> }> } }
+          ).computers.list(),
+        )
+        const bName = String(listed.computers.find(item => item.hostId === bId)!.name)
+        const bVersion = String(listed.computers.find(item => item.hostId === bId)!.version)
+        await page.evaluate(() =>
+          (
+            Reflect.get(globalThis, 'latchShell') as { notifications: { set(value: Record<string, boolean>): Promise<unknown> } }
+          ).notifications.set({ completion: false, approval: true, title: true }),
+        )
+        // No Latch window in front, as when the person is elsewhere.
+        await app.evaluate(({ BrowserWindow }) => {
+          for (const window of BrowserWindow.getAllWindows()) window.hide()
+        })
+        await vi.waitFor(
+          async () =>
+            expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isFocused()))).toBe(false),
+          { timeout: 10_000 },
+        )
+        await lookAtB()
+        const { sessionId: waitingId } = await hostB.bridge.createTask({
+          prompt: '生成需要审批的报告',
+          requestId: randomUUID(),
+          mode: 'agent',
+        })
+        await vi.waitFor(() => expect(hostB.bridge.approvals().some(approval => approval.sessionId === waitingId)).toBe(true), {
+          timeout: 20_000,
+        })
+        await lookAtB()
+        const waitingTitle = (await hostB.bridge.detail(waitingId)).summary.title
+        expect(await shown()).toEqual([{ title: `${bName} · ${waitingTitle}`, body: '有一个请求等你处理。' }])
+        await lookAtB()
+        expect(await shown()).toHaveLength(1)
+        expect(await app.evaluate(({ app: electronApp }) => electronApp.dock?.getBadge())).toBe('1')
+        // B's own page lists the computers without what waits on any of them.
+        const bLists = await bPage.evaluate(() =>
+          (
+            Reflect.get(globalThis, 'latchShell') as { computers: { list(): Promise<{ computers: Array<Record<string, unknown>> }> } }
+          ).computers.list(),
+        )
+        expect(bLists.computers.every(item => item.waiting === undefined && item.running === undefined)).toBe(true)
+
+        // This Mac's window: B's session under 等你处理 › 其他电脑, with B's name; the computer menu lists both.
+        await app.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL().startsWith('latch://app/'))!
+          window.show()
+          window.focus()
+        })
+        await openSessions(page)
+        const elsewhere = page.locator(`[data-computer-item="${bId}"]`)
+        await elsewhere.locator(`[data-attention-task="${waitingId}"]`).waitFor()
+        await elsewhere.getByText(bName, { exact: true }).waitFor()
+        await page.locator('.other-computers-label').getByText('其他电脑', { exact: true }).waitFor()
+        await page.locator('.sidebar-host-menu').click()
+        const menu = page.getByRole('menu', { name: '电脑' })
+        await menu.getByRole('menuitemradio', { name: /这台 Mac/u }).waitFor()
+        await menu.getByRole('menuitemradio', { name: new RegExp(bName, 'u') }).waitFor()
+        await sidebarShots('menu', true)
+        await page.keyboard.press('Escape')
+        await sidebarShots('waiting')
+
+        // 关于: B's Host version on its own row, nothing to install from here.
+        await openEntry(page, '设置')
+        await openSection(settings, '关于')
+        await settings.locator(`[data-remote-host="${bId}"]`).getByText(bVersion, { exact: true }).waitFor()
+        await settings
+          .locator('.settings-row')
+          .filter({ has: page.locator(`[data-remote-host="${bId}"]`) })
+          .getByText(bName, { exact: true })
+          .waitFor()
+        await page.screenshot({ path: join(SHOTS, 'about-remote--light--1440.png'), animations: 'disabled' })
+        await openSessions(page)
+
+        // Clicking it brings B's window forward on that session, where the request waits.
+        await elsewhere.locator(`[data-attention-task="${waitingId}"]`).click()
+        await vi.waitFor(async () =>
+          expect(
+            await app.evaluate(
+              ({ BrowserWindow }, home) => BrowserWindow.getFocusedWindow()?.webContents.getURL().startsWith(home) === true,
+              `latch://h-${bId}/`,
+            ),
+          ).toBe(true),
+        )
+        await bPage.locator(`[data-task-id="${waitingId}"][aria-current="page"]`).waitFor()
+        await bPage.locator('[data-approval-id]').first().waitFor()
+        expect(app.windows()).toHaveLength(2)
+
         // B stops: its window's connection drops and 设置 › 电脑 shows it offline with when it was last seen.
         await b.close()
         b = undefined
+        await showComputers()
         await row.getByText(/^离线 · 上次在线 \d{2}:\d{2}$/u).waitFor({ timeout: 30_000 })
         await shots('offline')
+        // Offline, what waited there is one grey row, not live; the Dock no longer counts it.
+        await openSessions(page)
+        const stale = page.locator(`[data-computer-item="${bId}"][data-stale]`)
+        await stale.getByText('离线前 1 项', { exact: true }).waitFor()
+        await stale.getByText(/^离线 · 上次在线 \d{2}:\d{2}$/u).waitFor()
+        expect(await page.locator(`[data-attention-task="${waitingId}"]`).count()).toBe(0)
+        expect(await app.evaluate(({ app: electronApp }) => electronApp.dock?.getBadge())).toBe('')
+        await sidebarShots('offline')
+        expect(await shown()).toHaveLength(1)
+        await showComputers()
 
         // Another Latch answers at B's address: nothing is sent to it, and it is not B.
         other = await startTestHost({ tls: listener })

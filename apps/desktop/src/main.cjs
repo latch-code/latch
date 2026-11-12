@@ -39,7 +39,7 @@ const { readHostStateFile, inspectHostState, readBody, socketRequest } = require
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 // Through the module objects, so the multi-computer end-to-end test's bootstrap can trust its test certificate.
 const remotes = require('./remote-proxy.cjs')
-const { createComputers, createWindowOpener } = require('./computers.cjs')
+const { createComputers, createViewSender, createWindowOpener } = require('./computers.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   createNotifications,
@@ -210,6 +210,25 @@ function openWindow() {
   mainWindow = createWindow()
   previewBrowser.attach(mainWindow)
   void mainWindow.loadURL(APP_URL)
+}
+
+/** A session ID as Hosts write them; main hands a page nothing else to open. */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
+
+/**
+ * Brings forward this Mac's window (opening it when closed) on a session of this Mac's Host: the page's notification
+ * subscription opens it, and a message that arrives before the page subscribes waits in the preload.
+ */
+function openLocalSession(sessionId) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    openWindow()
+    mainWindow.webContents.once('did-finish-load', () => mainWindow?.webContents.send('latch:notifications:open', sessionId))
+  } else {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send('latch:notifications:open', sessionId)
+  }
 }
 
 /** Shows a local error page served by the latch scheme (the renderer may load nothing else), then quits on close. */
@@ -659,6 +678,7 @@ function deviceNameHere() {
 const COMPUTER_CHANNELS = Object.freeze({
   list: 'latch:computers:list',
   open: 'latch:computers:open',
+  session: 'latch:computers:session',
   add: 'latch:computers:add',
   cancelAdd: 'latch:computers:cancel-add',
   trustCertificate: 'latch:computers:trust-certificate',
@@ -673,7 +693,7 @@ const CODE_FILE_LIMIT = 4096
  * add and remove; another computer's page may only list and open. Adding and removing need a native click or key on
  * this Mac's page a moment before; main alone reads the link from the clipboard or a code file.
  */
-async function startComputers({ localHostId, localState }) {
+async function startComputers({ localHostId, localState, onSnapshot, onChange, onForget }) {
   const userData = app.getPath('userData')
   /** Each partition is hardened and given its handlers once, however many opens race for it. */
   const prepared = new Map()
@@ -700,10 +720,14 @@ async function startComputers({ localHostId, localState }) {
     return pending
   }
 
-  function broadcast() {
+  /** Each other computer's window hears of a change only when its own view changed (never what waits elsewhere). */
+  const sendRemote = createViewSender((contents, view) => contents.send(COMPUTER_CHANNELS.changed, view))
+  function broadcast(kind) {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(COMPUTER_CHANNELS.changed, computers.view({ full: true }))
-    for (const window of remoteWindows.values())
-      if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.changed, computers.view())
+    // What waits on a computer is this Mac's page's alone: other computers' windows hear nothing of it.
+    if (kind === 'attention') return
+    const view = computers.view()
+    for (const window of remoteWindows.values()) if (!window.isDestroyed()) sendRemote(window.webContents, view)
   }
 
   function focus(window) {
@@ -712,17 +736,31 @@ async function startComputers({ localHostId, localState }) {
     window.focus()
   }
 
-  async function openComputer(hostId) {
+  /**
+   * Opens (or brings forward) a computer's window and, with `taskId`, that session in it. The session ID goes only to
+   * that computer's own page, which opens it as its notification click would.
+   */
+  async function openComputer(hostId, taskId) {
+    const session = typeof taskId === 'string' && SESSION_ID.test(taskId) ? taskId : undefined
     if (hostId === localHostId) {
-      if (!mainWindow || mainWindow.isDestroyed()) openWindow()
+      if (session) openLocalSession(session)
+      else if (!mainWindow || mainWindow.isDestroyed()) openWindow()
       else focus(mainWindow)
       return { ok: true }
     }
     if (!computers.proxyFor(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    let window
     try {
-      await openRemote(hostId)
+      window = await openRemote(hostId)
     } catch {
       return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    }
+    if (session && window && !window.isDestroyed()) {
+      const send = () => {
+        if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.session, session)
+      }
+      if (window.webContents.isLoading()) window.webContents.once('did-finish-load', send)
+      else send()
     }
     return { ok: true }
   }
@@ -776,8 +814,14 @@ async function startComputers({ localHostId, localState }) {
       setTimeout(() => {
         if (!computers.known(hostId)) void rm(folder, { recursive: true, force: true }).catch(() => {})
       }, 2_000).unref()
+      onForget(hostId)
     },
-    onChange: broadcast,
+    onChange: kind => {
+      broadcast(kind)
+      onChange()
+    },
+    focused: () => BrowserWindow.getAllWindows().some(window => !window.isDestroyed() && window.isFocused()),
+    onSnapshot: (hostId, snapshot) => onSnapshot(hostId, computers.nameOf(hostId), snapshot),
     log,
   })
 
@@ -798,14 +842,18 @@ async function startComputers({ localHostId, localState }) {
 
   ipcMain.handle(COMPUTER_CHANNELS.list, event => {
     const sender = senderOf(event)
-    return sender ? computers.view({ full: sender === 'full' }) : refused
+    if (!sender) return refused
+    return sender === 'full' ? computers.view({ full: true }) : sendRemote.seen(event.sender, computers.view())
   })
-  ipcMain.handle(COMPUTER_CHANNELS.open, (event, hostId) => {
-    if (!senderOf(event)) return refused
+  ipcMain.handle(COMPUTER_CHANNELS.open, (event, hostId, taskId) => {
+    const sender = senderOf(event)
+    if (!sender) return refused
     // A page may not pull a window to the front on its own: only after a click or key on it.
     if (!gestureOf(event)) return noGesture
     if (typeof hostId !== 'string' || !computers.has(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
-    return openComputer(hostId)
+    // Only this Mac's page opens a session on another computer, and only one main last saw waiting there.
+    const session = sender === 'full' && typeof taskId === 'string' && computers.waits(hostId, taskId) ? taskId : undefined
+    return openComputer(hostId, session)
   })
   ipcMain.handle(COMPUTER_CHANNELS.add, async (event, source) => {
     if (senderOf(event) !== 'full') return refused
@@ -847,6 +895,7 @@ async function startComputers({ localHostId, localState }) {
     return computers.remove(hostId)
   })
   app.on('will-quit', () => computers.stop())
+  app.on('browser-window-focus', () => computers.refocus())
   await computers.start()
   // The page storage of a computer that is no longer listed (removed while Chromium still wrote to it).
   const partitions = await readdir(join(userData, 'Partitions')).catch(() => [])
@@ -854,7 +903,7 @@ async function startComputers({ localHostId, localState }) {
     const match = /^latch-host-([a-z2-7]{52})$/u.exec(name)
     if (match && !computers.known(match[1])) await rm(join(userData, 'Partitions', name), { recursive: true, force: true }).catch(() => {})
   }
-  return computers
+  return { computers, openComputer }
 }
 
 async function start() {
@@ -952,10 +1001,14 @@ async function start() {
   )
   handleFiles(proxy)
   handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
-  await startComputers({
-    localHostId: state.hostId,
-    localState: () => (['running', 'unresponsive'].includes(supervisor.view().status) ? 'online' : 'offline'),
-  })
+  // The Dock counts what waits on this Mac and on every other computer that answers now.
+  let localWaiting = 0
+  /** @type {Awaited<ReturnType<typeof startComputers>> | undefined} */
+  let reach
+  const updateBadge = () => {
+    const total = localWaiting + (reach?.computers.waitingTotal() ?? 0)
+    if (app.dock) app.dock.setBadge(total ? String(total) : '')
+  }
   const notifications = createNotifications({
     save: value => writeNotificationPreferences(app.getPath('userData'), value),
     changed: value => {
@@ -968,7 +1021,8 @@ async function start() {
     focused: () => BrowserWindow.getAllWindows().some(window => !window.isDestroyed() && window.isFocused()),
     supported: () => Notification.isSupported(),
     badge: count => {
-      if (app.dock) app.dock.setBadge(count ? String(count) : '')
+      localWaiting = count
+      updateBadge()
     },
     show: ({ title, body, onClick }) => {
       if (Notification.isSupported()) {
@@ -977,17 +1031,15 @@ async function start() {
         item.show()
       }
     },
-    open: sessionId => {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        openWindow()
-        mainWindow.webContents.once('did-finish-load', () => mainWindow?.webContents.send('latch:notifications:open', sessionId))
-      } else {
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        mainWindow.show()
-        mainWindow.focus()
-        mainWindow.webContents.send('latch:notifications:open', sessionId)
-      }
-    },
+    open: openLocalSession,
+    openRemote: (hostId, sessionId) => void reach?.openComputer(hostId, sessionId),
+  })
+  reach = await startComputers({
+    localHostId: state.hostId,
+    localState: () => (['running', 'unresponsive'].includes(supervisor.view().status) ? 'online' : 'offline'),
+    onSnapshot: (hostId, name, snapshot) => void notifications.observeRemote(hostId, name, snapshot),
+    onChange: updateBadge,
+    onForget: hostId => notifications.forgetRemote(hostId),
   })
   notifications.configure(await readNotificationPreferences(app.getPath('userData')))
   handleNotificationRequests({ ipcMain, trusted, controller: notifications })

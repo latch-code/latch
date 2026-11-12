@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { AGENT_PRESETS, type AppSnapshot, type TaskSummary } from '@latch/protocol'
-import { Shield, SquareTerminal, TriangleAlert } from 'lucide-react'
+import { CircleAlert, Shield, SquareTerminal, TriangleAlert } from 'lucide-react'
 import { Button, ButtonLink, DevMark, Hint, Icon, InlineNotice, Meter, StatusWord, SwitchRow } from '@latch/ui'
 import type { UpdateView } from '../core/shell.ts'
+import { computerState, olderVersion, useComputers } from '../core/computers.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
 import { formatSize, relativeTime } from '../format.ts'
 import { BrandMark } from '../components/ui.tsx'
@@ -17,6 +18,8 @@ const UPDATE_COPY = {
   app: 'Latch 应用',
   hostHere: '这台 Mac',
   hostOn: (name: string) => name,
+  older: '版本较旧',
+  olderDetail: '在那台电脑上更新 Latch。这台 Mac 不会替它更新或重启。',
   updates: '更新',
   check: '检查更新',
   checking: '正在检查…',
@@ -346,6 +349,9 @@ export function AboutSettings({
   const desktop = updates.view !== null
   const host = access.legacy ? undefined : hostView(snapshot)
   const dev = host?.devMode === true
+  const computers = useComputers()
+  // Other computers' Hosts, on this Mac's page only: their versions, never anything to install from here.
+  const remotes = access.local ? (computers?.computers.filter(computer => !computer.local) ?? []) : []
   const main = (
     <>
       <header className="about-head">
@@ -369,6 +375,27 @@ export function AboutSettings({
               trailing={<span className="settings-row-value">{snapshot.version}</span>}
             />
           )}
+          {remotes.map(computer => {
+            const state = computerState(computer)
+            const older = olderVersion(computer.version, updates.view?.appVersion)
+            return (
+              <SettingsRow
+                key={computer.hostId}
+                title={UPDATE_COPY.hostOn(computer.name)}
+                trailing={
+                  <span className="about-remote-version" data-remote-host={computer.hostId}>
+                    {computer.state !== 'online' && <StatusWord tone={state.tone}>{state.text}</StatusWord>}
+                    {computer.version && <span className="settings-row-value">{computer.version}</span>}
+                    {older && (
+                      <Hint className="about-older" lead={<Icon icon={CircleAlert} size={12} />} label={UPDATE_COPY.older}>
+                        {UPDATE_COPY.olderDetail}
+                      </Hint>
+                    )}
+                  </span>
+                }
+              />
+            )
+          })}
         </SettingsGroup>
       )}
       {desktop && access.local && updates.view && (

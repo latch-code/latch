@@ -1,3 +1,4 @@
+import type { ComputerSummary } from '@latch/protocol'
 /** What adding folders as projects through the desktop shell came to. */
 export type FolderResult =
   | {
@@ -167,36 +168,9 @@ export interface ShellUpdates {
   onShow(callback: () => void): () => void
 }
 
-/**
- * A computer the desktop app reaches: this Mac's Host over host.sock (`local`) or another computer's over HTTPS.
- * `stopping`/`sleeping` come from that Host's own announcement; `revoked`: that computer removed this device;
- * `wrong-host`: another Host answers at its address; `cert-error`: its certificate is not trusted; `cert-changed`: its
- * trusted certificate is not the one it was added with (renewed, or another server); `outdated`: its
- * Latch is too old to say who it is.
- */
-export type ComputerState =
-  | 'online'
-  | 'connecting'
-  | 'offline'
-  | 'stopping'
-  | 'sleeping'
-  | 'revoked'
-  | 'wrong-host'
-  | 'cert-error'
-  | 'cert-changed'
-  | 'outdated'
-
-export interface ComputerView {
-  hostId: string
-  name: string
-  local: boolean
-  state: ComputerState
-  lastSeenAt?: string
-  version?: string
-  reason?: 'restart' | 'update' | 'sleep' | 'shutdown'
-  /** Only on this Mac's own page. */
-  origin?: string
-}
+export type { ComputerState } from '@latch/protocol'
+/** A computer as the desktop app's pages see it (`ComputerSummary` in @latch/protocol). */
+export type ComputerView = ComputerSummary
 
 export interface ComputersView {
   computers: ComputerView[]
@@ -215,7 +189,10 @@ export type ComputerResult = { ok: true; hostId?: string; revokedThere?: boolean
 export interface ShellComputers {
   list(): Promise<ComputersView | undefined>
   subscribe(callback: (view: ComputersView) => void): () => void
-  open(hostId: string): Promise<ComputerResult>
+  /** On this Mac's page `taskId` opens a session that waits on that computer (an item of its `waiting`). */
+  open(hostId: string, taskId?: string): Promise<ComputerResult>
+  /** Another computer's page: a session of its own Host that main was asked to open. */
+  subscribeSession?(callback: (sessionId: string) => void): () => void
   add?(source: 'clipboard' | 'file'): Promise<ComputerResult>
   cancelAdd?(): Promise<ComputerResult>
   trustCertificate?(hostId: string): Promise<ComputerResult>

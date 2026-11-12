@@ -5,9 +5,11 @@ import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Laptop, Pin, Pl
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
-import { deviceAccess } from '../core/permissions.ts'
+import { deviceAccess, hostView } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
+import { otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
+import { ComputerMenu, OtherComputersWaiting } from './Computers.tsx'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
 import { projectName } from '../projects.tsx'
@@ -238,7 +240,10 @@ function SessionGroupView({
   onEditProject,
   onProjectsChanged,
   menu,
+  others = [],
 }: ProjectNavigationActions & {
+  /** 等你处理 only: what waits on other computers, after this computer's own rows. */
+  others?: readonly OtherWaiting[]
   group: SessionGroup
   snapshot: AppSnapshot
   /** The filter the list shows; rows leave at once when it changes. */
@@ -262,7 +267,7 @@ function SessionGroupView({
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
   const workspaces = snapshot.catalog?.workspaces
-  const count = group.tasks.length
+  const count = group.tasks.length + others.reduce((sum, other) => sum + (other.live ? other.items.length : 0), 0)
   return (
     <section className="session-group" aria-label={group.label} data-shelf={group.id} data-flip-id={`group:${group.id}`} data-flip-scope="">
       {group.project ? (
@@ -280,7 +285,7 @@ function SessionGroupView({
           label={group.label}
           folded={folded}
           onFold={onFold}
-          count={waiting || folded ? count : undefined}
+          count={(waiting && count > 0) || folded ? count : undefined}
           actions={
             group.id === 'other' && onNewWithoutProject ? (
               <IconButton size="xs" label="新会话" tooltip="新会话" icon={Plus} onClick={onNewWithoutProject} />
@@ -313,6 +318,7 @@ function SessionGroupView({
             )
           })}
         </ul>
+        {waiting && <OtherComputersWaiting others={others} now={now} />}
       </Collapse>
     </section>
   )
@@ -369,7 +375,10 @@ export function Sidebar({
   now,
   keepAwake,
   apps,
+  onManageComputers,
 }: ProjectNavigationActions & {
+  /** Opens 设置 › 电脑 (the computer menu's 管理电脑…). */
+  onManageComputers?: () => void
   /** The 「应用」 group: the plugin pages applied on the Host. */
   apps?: import('react').ReactNode
   snapshot: AppSnapshot
@@ -408,10 +417,16 @@ export function Sidebar({
   const archived = filter === 'archived'
   const visible = useMemo(() => filterSessions(snapshot.tasks, filter, ''), [snapshot.tasks, filter])
   const projectSections = snapshot.catalog?.projectFolders !== undefined && !archived
-  const groups = groupSessions(visible, snapshot.catalog?.workspaces, {
+  const computers = useComputers()
+  const several = computers !== undefined && computers.computers.length > 1
+  // Only this Mac's page holds what waits on other computers (main gives it to no other page).
+  const others = archived ? [] : otherWaiting(computers, hostView(snapshot)?.hostId)
+  const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
     ...(archived ? {} : { waitingFrom: snapshot.tasks }),
   })
+  const groups: SessionGroup[] =
+    others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: '等你处理', tasks: [] }, ...grouped] : grouped
   const archivedCount = snapshot.tasks.filter(task => task.archived).length
   const trouble = connectionTrouble(connection, hostProblem)
   const shell = currentShell()
@@ -424,16 +439,24 @@ export function Sidebar({
   // 「这台电脑」 is only the Latch app on the Host's own socket; a loopback browser is told which computer it is reading.
   const remote = !deviceAccess(snapshot, shell).local
   const context = filter
-  const signature = groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
+  const signature =
+    groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
+    + others
+      .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
+      .join('')
   const remeasure = useListMotion(list, context, signature)
   return (
     <div className="sidebar-body">
       <div className="sidebar-top">
-        {remote && (
-          <p className="sidebar-host" title={computerName(snapshot.hostName)}>
-            <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
-          </p>
+        {several ? (
+          <ComputerMenu snapshot={snapshot} view={computers} onManage={onManageComputers} />
+        ) : (
+          remote && (
+            <p className="sidebar-host" title={computerName(snapshot.hostName)}>
+              <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+              <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
+            </p>
+          )
         )}
         <div className="sidebar-nav-line">
           <Button
@@ -494,6 +517,7 @@ export function Sidebar({
               onNewIn={onNewIn}
               onNewWithoutProject={onNewWithoutProject}
               menu={sessionMenu}
+              {...(group.id === 'waiting' ? { others } : {})}
               onEditProject={onEditProject}
               onProjectsChanged={onProjectsChanged}
             />

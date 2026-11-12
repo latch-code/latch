@@ -11,6 +11,8 @@ const {
   readPreferences,
   writePreferences,
   handleNotificationRequests,
+  attentionOf,
+  waitingCount,
 } = require('../src/notifications.cjs')
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -393,5 +395,140 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     expect(show).toHaveBeenCalledTimes(1)
     expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true, title: false })
+  })
+})
+
+describe('what waits, from Host snapshots', () => {
+  const at = (seconds: number) => new Date(Date.UTC(2026, 10, 12, 8, 0, seconds)).toISOString()
+  const snapshot = {
+    tasks: [
+      { id: 'approve', title: '添加币种筛选', status: 'waiting-approval', updatedAt: at(1), live: { lastEventAt: at(1) } },
+      { id: 'ask', title: '问题\u202e反转', status: 'running', pendingQuestions: 2, updatedAt: at(2), live: { lastEventAt: at(2) } },
+      { id: 'silent', title: 'x'.repeat(200), status: 'running', updatedAt: at(3), live: { silent: true, lastEventAt: at(3) } },
+      { id: 'odd', title: '', status: 'running', updatedAt: at(4), live: { lastEventAt: at(4), unrecognized: { at: at(5) } } },
+      { id: 'stopping', title: '停', status: 'waiting-approval', updatedAt: at(6), live: { activity: 'cancelling' } },
+      { id: 'run', title: '跑', status: 'running', updatedAt: at(7), live: { lastEventAt: at(7) } },
+      { id: 'done', title: '完', status: 'idle', updatedAt: at(8) },
+    ],
+    approvals: [
+      { id: 'a1', sessionId: 'approve', requestedAt: at(9), reason: '写入 /secret', arguments: '{}' },
+      { id: 'a0', sessionId: 'approve', requestedAt: at(1), reason: '写入 /secret', arguments: '{}' },
+      { id: 'a2', sessionId: 'stopping', requestedAt: at(6), reason: 'x' },
+      { id: 'a3', sessionId: 'elsewhere', requestedAt: at(10), reason: 'x' },
+    ],
+  }
+
+  it('lists the sessions the Dock counts, by kind and when each began to wait, with titles cut to one line of 80', () => {
+    const result = attentionOf(snapshot, { now: Date.UTC(2026, 10, 12, 9) })
+    expect(result.count).toBe(waitingCount(snapshot))
+    expect(result.count).toBe(5)
+    expect(result.running).toBe(1)
+    expect(result.items).toEqual([
+      { taskId: 'elsewhere', title: '', kind: 'approval', since: at(10) },
+      { taskId: 'odd', title: '', kind: 'stuck', since: at(5) },
+      { taskId: 'silent', title: 'x'.repeat(80), kind: 'stuck', since: at(3) },
+      { taskId: 'ask', title: '问题反转', kind: 'question', since: at(2) },
+      { taskId: 'approve', title: '添加币种筛选', kind: 'approval', since: at(1) },
+    ])
+    expect(JSON.stringify(result)).not.toContain('/secret')
+    expect(attentionOf(snapshot, { limit: 2 }).items.map((item: { taskId: string }) => item.taskId)).toEqual(['elsewhere', 'odd'])
+    expect(attentionOf(snapshot, { limit: 2 }).count).toBe(5)
+  })
+
+  it('leaves out entries a Host should not have sent, and caps the running count', () => {
+    const odd = {
+      tasks: [
+        null,
+        'x',
+        { id: 'has space', status: 'waiting-approval' },
+        { id: 'ok', status: 'waiting-approval', title: 'a', updatedAt: at(1) },
+        ...Array.from({ length: 100_001 }, (_, index) => ({ id: `r${index}`, status: 'running' })),
+      ],
+      approvals: [null, { sessionId: 'has space' }, { sessionId: 7 }],
+    }
+    const result = attentionOf(odd)
+    expect(result.items.map((item: { taskId: string }) => item.taskId)).toEqual(['ok'])
+    expect(result.running).toBe(100_000)
+  })
+
+  it('notifies another computer’s new request under the same preferences, its name first, and opens that computer on click', async () => {
+    const show = vi.fn(),
+      openRemote = vi.fn(),
+      open = vi.fn()
+    let focused = false,
+      time = 100_000
+    const controller = createNotifications({
+      now: () => time,
+      snapshot: async () => ({ tasks: [], approvals: [] }),
+      focused: () => focused,
+      supported: () => true,
+      show,
+      open,
+      openRemote,
+    })
+    cleanup.push(() => controller.close())
+    controller.configure({ version: 1, preferences: { completion: true, approval: true, title: false }, consent: 'accepted' })
+    const task = { id: 'remote-1', title: '添加币种筛选', status: 'running' }
+    const before = { tasks: [task], approvals: [] }
+    await controller.observeRemote('b'.repeat(52), 'build-mini', before)
+    expect(show).not.toHaveBeenCalled()
+    const asking = { tasks: [{ ...task, status: 'waiting-approval' }], approvals: [{ id: 'ap', sessionId: 'remote-1' }] }
+    await controller.observeRemote('b'.repeat(52), 'build-mini', asking)
+    await controller.observeRemote('b'.repeat(52), 'build-mini', asking)
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(show.mock.calls[0]![0]).toMatchObject({ title: 'build-mini · Latch', body: '有一个请求等你处理。' })
+    show.mock.calls[0]![0].onClick()
+    expect(openRemote).toHaveBeenCalledWith('b'.repeat(52), 'remote-1')
+    expect(open).not.toHaveBeenCalled()
+
+    // The title preference shows the session's title after the name; this Mac's own have no name.
+    controller.configure({ version: 1, preferences: { completion: true, approval: true, title: true }, consent: 'accepted' })
+    time += 11_000
+    await controller.observeRemote('b'.repeat(52), 'build-mini', { tasks: [{ ...task, status: 'idle' }], approvals: [] })
+    expect(show.mock.calls[1]![0]).toMatchObject({ title: 'build-mini · 添加币种筛选', body: '一个会话已完成。' })
+
+    // A name or title with invisible characters cannot pose as another computer's line.
+    time += 11_000
+    await controller.observeRemote('b'.repeat(52), 'evil\u202E · build-mini\u2028', {
+      tasks: [{ ...task, title: 'x\u202Ey', status: 'running' }],
+      approvals: [],
+    })
+    await controller.observeRemote('b'.repeat(52), 'evil\u202E · build-mini\u2028', {
+      tasks: [{ ...task, title: 'x\u202Ey', status: 'idle' }],
+      approvals: [],
+    })
+    expect(show.mock.calls[2]![0].title).toBe('evil · build-mini · xy')
+    show.mockClear()
+    show.mockImplementation(() => {})
+    // Each computer has its own baseline: the same session ID on another computer is its own first sight.
+    await controller.observeRemote('c'.repeat(52), 'other', asking)
+    expect(show).toHaveBeenCalledTimes(0)
+    // A window in front: nothing is shown, from any computer.
+    focused = true
+    await controller.observeRemote('c'.repeat(52), 'other', { tasks: [{ ...task, status: 'idle' }], approvals: [] })
+    expect(show).toHaveBeenCalledTimes(0)
+    // A removed computer starts again from a fresh baseline.
+    focused = false
+    controller.forgetRemote('b'.repeat(52))
+    await controller.observeRemote('b'.repeat(52), 'build-mini', asking)
+    expect(show).toHaveBeenCalledTimes(0)
+    // A malformed snapshot is ignored, not thrown.
+    await controller.observeRemote('b'.repeat(52), 'build-mini', { tasks: [null], approvals: [] })
+    expect(show).toHaveBeenCalledTimes(0)
+  })
+
+  it('gives the Dock this Mac’s own count; main adds the other computers that answer', async () => {
+    const badge = vi.fn()
+    const controller = createNotifications({
+      snapshot: async () => snapshot,
+      focused: () => true,
+      supported: () => true,
+      show: vi.fn(),
+      open: vi.fn(),
+      badge,
+    })
+    cleanup.push(() => controller.close())
+    await controller.poll()
+    expect(badge).toHaveBeenCalledWith(5)
   })
 })
