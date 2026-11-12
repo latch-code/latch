@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import type {
@@ -12,6 +12,7 @@ import type {
   GeneralAgent,
   GeneralAgentDetail,
   TaskDetail,
+  WorkspaceInfo,
 } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
@@ -638,3 +639,72 @@ test('checking an automation does not count as its device being seen, so an idle
     .toBe('owner-unavailable')
   expect(created.enabled).toBe(true)
 })
+
+// The web's 委托 sends the folder it shows: the Agent's default project, or 'default' for the Host's own start.
+test.each([{ sessionFolders: false }, { sessionFolders: true }])(
+  'a delegation in the start folder or a project starts, with sessionFolders $sessionFolders',
+  async ({ sessionFolders }) => {
+    const { host, owner } = await fixture(sessionFolders ? { sessionFolders: true } : {})
+    const folder = join(host.root, 'notes')
+    await mkdir(folder)
+    expect((await owner.addFolders({ paths: [folder], name: 'notes' })).status).toBeLessThan(300)
+    const notes = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.name === 'notes')!
+    const loose = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ mode: 'agent' }) })
+    const placed = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: definition({ name: '笔记整理', mode: 'agent', defaultProjectId: notes.id }),
+    })
+    const delegate = async (agent: CustomAgent, workspaceId: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { customAgentId: agent.id, prompt: 'Go', requestId: randomUUID(), mode: 'agent', harnessId: 'standard', workspaceId, model },
+      })
+      await settled(owner, sessionId)
+      return (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary
+    }
+    expect(await delegate(loose, 'default')).toMatchObject({ workspaceId: 'default', agent: { customAgentId: loose.id } })
+    expect(await delegate(placed, notes.id)).toMatchObject({ workspaceId: notes.id })
+    // 起始文件夹 picked for this session over the Agent's default project.
+    expect(await delegate(placed, 'default')).toMatchObject({ workspaceId: 'default' })
+    // A project picked for this session that is gone is that pick's problem, not the Agent's.
+    const gone = await owner.request('tasks', {
+      method: 'POST',
+      body: {
+        customAgentId: loose.id,
+        prompt: 'Go',
+        requestId: randomUUID(),
+        mode: 'agent',
+        harnessId: 'standard',
+        workspaceId: 'gone',
+        model,
+      },
+    })
+    expect(gone.status).toBe(400)
+    expect(await gone.json()).toMatchObject({ error: 'workspace-unavailable' })
+    // Once the Agent's own project is removed, that project is refused in those words, and the start folder still works.
+    const old = join(host.root, 'old')
+    await mkdir(old)
+    expect((await owner.addFolders({ paths: [old], name: 'old' })).status).toBeLessThan(300)
+    const oldId = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.name === 'old')!.id
+    const moved = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: definition({ name: '旧项目', mode: 'agent', defaultProjectId: oldId }),
+    })
+    expect((await owner.request(`workspaces/${oldId}`, { method: 'DELETE' })).status).toBe(200)
+    const removed = await owner.request('tasks', {
+      method: 'POST',
+      body: {
+        customAgentId: moved.id,
+        prompt: 'Go',
+        requestId: randomUUID(),
+        mode: 'agent',
+        harnessId: 'standard',
+        workspaceId: oldId,
+        model,
+      },
+    })
+    expect(removed.status).toBe(409)
+    expect(await removed.json()).toMatchObject({ error: 'agent-unavailable', message: '默认项目已移除，请更新这个 Agent。' })
+    expect(await delegate(moved, 'default')).toMatchObject({ workspaceId: 'default' })
+  },
+)

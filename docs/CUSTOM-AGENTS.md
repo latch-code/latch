@@ -63,7 +63,7 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 
 ## 会话
 
-`POST /tasks` 接受 `customAgentId`。新会话的标题取第一条输入从第一行非 `>` 引用的文字起（内置与外部 Harness 相同，`promptTitle`），所以带入的成果不会成为标题；只有引用时取第一个「上次成果」的标题。请求里同时给的 `harnessId`、`mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
+`POST /tasks` 接受 `customAgentId`。新会话的标题取第一条输入从第一行非 `>` 引用的文字起（内置与外部 Harness 相同，`promptTitle`），所以带入的成果不会成为标题；只有引用时取第一个「上次成果」的标题。请求里同时给的 `harnessId`、`mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值；`workspaceId: 'default'` 是 Host 的起始文件夹（开了 `sessionFolders` 时是会话自己的文件夹），没有默认项目的 Agent 与这一次不用默认项目的委托都这样发送。只有用的是 Agent 自己的默认项目而它已移除时，开始以 409 `agent-unavailable`「默认项目已移除」拒绝；这一次另选的项目不存在时与普通会话一样是 400 `workspace-unavailable`。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
 
 会话开始后 Agent 与 Harness 不再变，归属记录在 `TaskSummary.agent`。Agent 的会话内容只对完整数据范围的设备开放。
 

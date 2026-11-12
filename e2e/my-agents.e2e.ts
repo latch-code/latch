@@ -218,3 +218,45 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await host.close()
   }
 })
+
+it('delegates from an Agent with no default project into the start folder', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.json('agents', {
+      method: 'POST',
+      body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const agent = await owner.json<{ id: string }>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '随手助手', harnessId: 'fake-agent', mode: 'agent', instructions: '', skills: [] },
+    })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    await fullScopeBrowser(page, host, owner, '无项目 Agent')
+    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
+    await page
+      .getByRole('navigation', { name: 'Agent 列表' })
+      .getByRole('button', { name: /随手助手/u })
+      .click()
+    const sent: unknown[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/api/tasks')) sent.push(request.postDataJSON())
+    })
+    const input = page.getByRole('textbox', { name: '委托内容', exact: true })
+    await input.fill('列一下待办')
+    await input.press('Meta+Enter')
+    const delegated = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
+    await expect.poll(async () => (await delegated()).length, { timeout: 15_000 }).toBe(1)
+    expect(sent).toEqual([expect.objectContaining({ customAgentId: agent.id, workspaceId: 'default' })])
+    expect((await delegated())[0]).toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: host.workspaceRoot })
+    await expect.poll(() => input.inputValue()).toBe('')
+    expect(await page.getByText(/委托没开始/u).count()).toBe(0)
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})

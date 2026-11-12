@@ -5131,13 +5131,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           actor,
         )
         const { model: startModel, workspaceId: startWorkspace, ...choice } = start
-        // Judged on what this start uses, not on defaults it replaced.
-        const { defaultProjectId: _project, ...savedRest } = saved
+        // Judged on what this start uses, not on defaults it replaced. Only the Agent's own project being gone is the
+        // Agent's problem: 'default' is the Host's start folder, and another pick is checked as any session's is, below.
+        const { defaultProjectId: ownProject, ...savedRest } = saved
         const reason = agentPlans.unavailable({
           ...savedRest,
           harnessId: start.harnessId,
           ...(startModel ? { model: startModel } : {}),
-          ...(startWorkspace ? { defaultProjectId: startWorkspace } : {}),
+          ...(ownProject && startWorkspace === ownProject ? { defaultProjectId: ownProject } : {}),
         })
         if (reason) throw new AppError(409, 'agent-unavailable', reason)
         input = {

@@ -7,6 +7,7 @@ import {
   agentHarnesses,
   agentSessions,
   delegationMode,
+  delegationChoice,
   delegationSubmission,
   draftOf,
   draftProblem,
@@ -201,6 +202,25 @@ describe('a delegation request', () => {
 })
 
 describe('a delegation start', () => {
+  it('names the folder the Host starts in: the start folder without a default project, else that project', () => {
+    const harness = catalog().harnesses[0]!
+    const request = (agent: CustomAgentSummary, choice = delegationChoice(agent)) =>
+      delegationSubmission({ agent, harness, choice, prompt: '整理', worktree: undefined, inProject: false })
+    const model = { providerId: 'deepseek', model: 'deepseek-chat' }
+    expect(request(summary({ model }))).toEqual({
+      customAgentId: 'agt_1',
+      prompt: '整理',
+      mode: 'agent',
+      harnessId: 'standard',
+      workspaceId: 'default',
+      model,
+    })
+    const placed = summary({ defaultProjectId: 'notes' })
+    expect(request(placed).workspaceId).toBe('notes')
+    // 起始文件夹 picked for one session is still sent, or the Host would start in the Agent's project.
+    expect(request(placed, { ...delegationChoice(placed), workspaceId: 'default' }).workspaceId).toBe('default')
+  })
+
   it('sends the worktree start point as picked, and none outside a project', () => {
     const harness = catalog().harnesses[0]!
     const base = { agent: summary(), harness, choice: { mode: 'agent' as const, workspaceId: 'notes' }, prompt: '比较三家' }

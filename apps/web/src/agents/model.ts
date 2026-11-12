@@ -205,6 +205,19 @@ export function delegationMode(harness: Pick<HarnessInfo, 'modes'> | undefined, 
   return !harness || harness.modes.includes(mode) ? mode : (harness.modes[0] ?? mode)
 }
 
+/**
+ * The delegation's picks start from the Agent's defaults. Without a default project the folder is the Host's start
+ * ('default'), sent as picked: it also stands for 起始文件夹 chosen over the Agent's project for one session.
+ */
+export function delegationChoice(agent: Pick<CustomAgentSummary, 'mode' | 'harnessId' | 'defaultProjectId' | 'model'>): ComposerChoice {
+  return {
+    mode: agent.mode,
+    harnessId: agent.harnessId,
+    workspaceId: agent.defaultProjectId ?? 'default',
+    ...(agent.model ? { model: agent.model } : {}),
+  }
+}
+
 /** 委托's start request: the Agent, the picks, and the worktree start point as picked (only for a project that has one). */
 export function delegationSubmission(input: {
   agent: Pick<CustomAgentSummary, 'id' | 'mode'>

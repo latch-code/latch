@@ -35,7 +35,17 @@ import { rowStatus } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { MyAgentTab } from '../shell/routes.ts'
 import { AgentForm, GeneralForm, TakesEffect, WriteNotice } from './AgentForm.tsx'
-import { agentHarnesses, agentSessions, delegationSubmission, dutyLine, GENERAL_NAME, runsWith, usesHostModels, worksIn } from './model.ts'
+import {
+  agentHarnesses,
+  agentSessions,
+  delegationChoice,
+  delegationSubmission,
+  dutyLine,
+  GENERAL_NAME,
+  runsWith,
+  usesHostModels,
+  worksIn,
+} from './model.ts'
 import { AgentTile, Availability } from './parts.tsx'
 import { CarryResults } from './CarryResults.tsx'
 import { SchedulesTab } from './Schedules.tsx'
@@ -83,16 +93,6 @@ function AgentFacts({
   )
 }
 
-/** The delegation's picks start from the Agent's defaults. */
-function initialChoice(agent: CustomAgentSummary): ComposerChoice {
-  return {
-    mode: agent.mode,
-    harnessId: agent.harnessId,
-    workspaceId: agent.defaultProjectId ?? 'default',
-    ...(agent.model ? { model: agent.model } : {}),
-  }
-}
-
 /** One row of 近期委托: the title, when, and its state in the words the session list uses. */
 function RecentRow({ task, frozen, onOpen }: { task: TaskSummary; frozen: string | null; onOpen: (id: string) => void }) {
   const status = rowStatus(task, { frozen: frozen !== null })
@@ -125,14 +125,14 @@ function RecentRow({ task, frozen, onOpen }: { task: TaskSummary; frozen: string
 function DelegateTab({ shell, agent, offline }: { shell: ShellState; agent: CustomAgentSummary; offline: boolean }) {
   const { snapshot, delegation, access, preferences, coarse, catalog } = shell
   const [draft, setDraft] = useState('')
-  const [choice, setChoice] = useState<ComposerChoice>(() => initialChoice(agent))
+  const [choice, setChoice] = useState<ComposerChoice>(() => delegationChoice(agent))
   // The start point picked in 新工作树 (HEAD or another one), sent as picked.
   const [worktree, setWorktree] = useState<WorktreeStart | undefined>(undefined)
   const [all, setAll] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   // A new definition from the Host starts the picks again from its defaults.
   useEffect(() => {
-    setChoice(initialChoice(agent))
+    setChoice(delegationChoice(agent))
   }, [agent.id, agent.revision])
   const frozen = useLastConfirmed(shell.connection, snapshot)
   if (!catalog) return null
