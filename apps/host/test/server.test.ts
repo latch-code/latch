@@ -423,6 +423,8 @@ describe('listeners and request context', () => {
       activeSessions: 0,
       activity: { running: 0, waiting: 0 },
       protocol: 1,
+      // The preview tabs of the desktop app may not reach it (apps/desktop/src/browser.cjs).
+      modelGatewayPort: expect.any(Number),
     })
     for (const path of ['api/login', 'api/pair']) {
       const removed = await t.raw('loopback-tcp', path, { method: 'POST', body: { token: 'x' } })

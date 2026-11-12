@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { Icon, Kbd, type IconComponent, DiffGlyph, FolderGlyph, CommitGlyph, PluginsGlyph, TerminalGlyph } from '@latch/ui'
+import { Icon, Kbd, type IconComponent, DiffGlyph, FolderGlyph, CommitGlyph, GlobeGlyph, PluginsGlyph, TerminalGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
 
@@ -10,6 +10,7 @@ export function launcherRows(input: {
   changes?: boolean
   files?: boolean
   terminal?: boolean
+  browser?: boolean
   delivery?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): Row[] {
@@ -19,6 +20,7 @@ export function launcherRows(input: {
     ...(input.terminal
       ? [{ id: 'terminal', label: '终端', icon: TerminalGlyph, letter: 'T', surface: { kind: 'terminal' as const } }]
       : []),
+    ...(input.browser ? [{ id: 'browser', label: '浏览器', icon: GlobeGlyph, letter: 'B', surface: { kind: 'browser' as const } }] : []),
     ...(input.delivery ? [{ id: 'delivery', label: '交付', icon: CommitGlyph, surface: { kind: 'delivery' as const } }] : []),
     ...(input.plugins ?? []).map(plugin => ({
       id: `plugin:${plugin.id}`,
@@ -33,6 +35,7 @@ export function PanelLauncher({
   changes,
   files,
   terminal,
+  browser,
   delivery,
   plugins,
   takesFocus,
@@ -44,6 +47,7 @@ export function PanelLauncher({
   changes?: boolean
   files?: boolean
   terminal?: boolean
+  browser?: boolean
   delivery?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
   onOpen(surface: PanelSurface): void
@@ -53,6 +57,7 @@ export function PanelLauncher({
     ...(changes ? { changes } : {}),
     ...(files ? { files } : {}),
     ...(terminal ? { terminal } : {}),
+    ...(browser ? { browser } : {}),
     ...(delivery ? { delivery } : {}),
     ...(plugins ? { plugins } : {}),
   })

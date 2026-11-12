@@ -7,6 +7,8 @@ export type WorkbenchAction =
   | 'files'
   | 'changes'
   | 'terminal'
+  /** ⇧⌘B: the 浏览器 tab, only in the desktop app. */
+  | 'browser'
   | 'file-search'
   | 'close-file'
   | 'compose'
@@ -66,6 +68,8 @@ const SHORTCUTS = [
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
   { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
+  { id: 'browser', label: '浏览器', desktop: '⇧⌘B', browser: null },
+  { id: 'pick', label: '在浏览器里选取元素', desktop: '⇧⌘S', browser: null },
   { id: 'find', label: '在会话中查找', desktop: '⌘F', browser: 'Mod F' },
   { id: 'find-step', label: '下一个、上一个匹配', desktop: '⏎ · ⇧⏎', browser: 'Enter · Shift Enter' },
   { id: 'file-search', label: '搜索文件', desktop: '⌘P', browser: 'Alt P' },
@@ -166,6 +170,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   const modifier = desktop ? (event.metaKey || event.ctrlKey) && !event.altKey : event.altKey && !event.metaKey && !event.ctrlKey
   if (!modifier) return null
   if (!desktop && event.code === 'KeyB' && event.shiftKey) return 'side-panel'
+  if (desktop && event.code === 'KeyB' && event.shiftKey) return 'browser'
   if (event.code === 'KeyE' && event.shiftKey) return 'files'
   // ⌘[ and ⌘] are a Mac's back and forward; moving between sessions is moving between tabs, which it shifts.
   if (event.code === 'BracketLeft' && event.shiftKey === desktop) return 'previous'

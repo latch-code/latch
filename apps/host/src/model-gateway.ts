@@ -258,6 +258,11 @@ export class ModelGatewayServer implements ModelGateway {
     this.port = (server.address() as AddressInfo).port
   }
 
+  /** The loopback port it listens on, once started. */
+  get listeningPort(): number | undefined {
+    return this.port
+  }
+
   async close(): Promise<void> {
     for (const binding of this.bindings.values()) binding.closed = true
     this.bindings.clear()

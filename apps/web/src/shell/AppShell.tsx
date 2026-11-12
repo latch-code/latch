@@ -133,6 +133,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     changesOpen,
     deliveryOpen,
     terminalOpen,
+    browserOpen,
     selectedId,
     resync,
     connection,
@@ -362,13 +363,15 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                                 ? '交付'
                                 : terminalOpen && !fileTabs.active
                                   ? '终端'
-                                  : fileTabs.active?.target.view === 'changes'
-                                    ? '代码审阅'
-                                    : fileTabs.active
-                                      ? '文件预览'
-                                      : filesOpen
-                                        ? '文件'
-                                        : '面板'}
+                                  : browserOpen && !fileTabs.active
+                                    ? '浏览器'
+                                    : fileTabs.active?.target.view === 'changes'
+                                      ? '代码审阅'
+                                      : fileTabs.active
+                                        ? '文件预览'
+                                        : filesOpen
+                                          ? '文件'
+                                          : '面板'}
                           </h2>
                           <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                         </div>

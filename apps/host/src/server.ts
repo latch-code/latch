@@ -5291,6 +5291,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           activeSessions: running + waiting,
           activity: { running, waiting },
           protocol: HOST_PROTOCOL,
+          ...(modelGateway.listeningPort === undefined ? {} : { modelGatewayPort: modelGateway.listeningPort }),
         }
         json(res, info)
         return true

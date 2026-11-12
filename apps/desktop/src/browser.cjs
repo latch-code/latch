@@ -5,13 +5,14 @@
 // WebRTC sends UDP only through a proxy. Its requests never reach a Latch Host: main refuses the Host's listener
 // ports, every `h-<hostId>.localhost` name and every `/link/api` path, which also covers the `pnpm dev:web` proxy. A tab
 // goes only to http(s) addresses, and a page cannot send it to another private address unless the person clicked.
-// The page drives tabs through `latchShell.browser`; main answers only the main window's own page. See
-// docs/PREVIEW-BROWSER.md. The exported helpers are pure so they can be unit-tested without Electron.
+// The page drives tabs through `latchShell.browser`; main answers only the main window's own page. A tab belongs to a
+// session of the page's: a reload of the page hides the tabs (the page lists them again), closing the window ends them.
+// See docs/PREVIEW-BROWSER.md. The exported helpers are pure so they can be unit-tested without Electron.
 const { randomBytes } = require('node:crypto')
 const { isIP } = require('node:net')
 const { createExternalGesture } = require('./proxy.cjs')
 
-const PROTOCOL_VERSION = 1
+const PROTOCOL_VERSION = 2
 /** The IPC channels. preload.cjs names them literally: a sandboxed preload cannot load this file. */
 const CHANNELS = Object.freeze({
   open: 'latch:browser:open',
@@ -27,12 +28,54 @@ const CHANNELS = Object.freeze({
   devTools: 'latch:browser:devtools',
   clearData: 'latch:browser:clear-data',
   state: 'latch:browser:state',
+  list: 'latch:browser:list',
+  viewport: 'latch:browser:viewport',
+  colorScheme: 'latch:browser:color-scheme',
+  hitTest: 'latch:browser:hit-test',
+  logs: 'latch:browser:logs',
   /** Main to the page: a tab's state, a notice about something refused, or the end of a tab. */
   event: 'latch:browser:event',
 })
 const TAB_ID = /^brw_[A-Za-z0-9_-]{22}$/
 /** As the Host hands out project IDs (and as the preload checks them). */
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
+/** As the Host hands out session IDs (and as folders.cjs and the preload check them). */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
+/** The viewport presets, in CSS pixels upright; 「适应面板」 (`fit`) is the panel's own size. */
+const VIEWPORTS = Object.freeze({
+  phone: Object.freeze({ width: 390, height: 844 }),
+  tablet: Object.freeze({ width: 820, height: 1180 }),
+  desktop: Object.freeze({ width: 1280, height: 800 }),
+})
+const VIEWPORT_PRESETS = new Set(['fit', ...Object.keys(VIEWPORTS)])
+/** What `prefers-color-scheme` a tab's pages see: the system's, or light or dark as the person chose. */
+const COLOR_SCHEMES = new Set(['system', 'light', 'dark'])
+/** Console messages and requests each tab keeps, the newest; the page gets the last `LOG_REPORTED` of each. */
+const LOG_LIMIT = 500
+const LOG_REPORTED = 200
+const CONSOLE_TEXT_LIMIT = 500
+const LOG_URL_LIMIT = 512
+const CONSOLE_LEVELS = new Set(['info', 'warning', 'error', 'debug'])
+/**
+ * Warnings a tab shows only because it is a Latch preview, never in a normal browser: Chromium's about the sandbox
+ * Latch adds to every document (GUEST_SANDBOX_POLICY), and Electron's own insecure-CSP warning for an unpackaged app.
+ * Matched exactly, at the warning level, and left out of the 控制台 list and its counts.
+ */
+const SANDBOX_WARNING = 'An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.'
+const ELECTRON_CSP_WARNING = [
+  '%cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security',
+  '  Policy set or a policy with "unsafe-eval" enabled. This exposes users of',
+  '  this app to unnecessary security risks.',
+  '',
+  'For more information and help, consult',
+  'https://electronjs.org/docs/tutorial/security.',
+  'This warning will not show up',
+  'once the app is packaged.',
+].join('\n')
+const LATCH_OWN_WARNINGS = new Set([SANDBOX_WARNING, ELECTRON_CSP_WARNING])
+const latchOwnWarning = (level, message) => level === 'warning' && typeof message === 'string' && LATCH_OWN_WARNINGS.has(message)
+/** Request starts kept for their durations; a request that never ends is forgotten with the oldest. */
+const STARTS_LIMIT = 4096
 const TAB_LIMIT = 8
 /** In-memory sessions live until the app quits, so the projects that get one are bounded too. */
 const PARTITION_LIMIT = 64
@@ -58,8 +101,12 @@ const GO_ACTIONS = new Set(['back', 'forward', 'reload', 'stop'])
 const ZOOM_DIRECTIONS = new Set(['in', 'out', 'reset'])
 /** A Latch Host's own loopback name, and names under it. */
 const HOST_NAME = /(?:^|\.)h-[a-z2-7]{52}\.localhost$/u
-/** C0 and C1 controls, line and paragraph separators, bidi controls and zero-width characters (as folders.cjs R8). */
-const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u
+/**
+ * C0 and C1 controls, format characters (bidi controls, zero-width characters, soft hyphens, Unicode tags), other
+ * default-ignorable code points (variation selectors) and line and paragraph separators: what could hide or reorder
+ * text a page hands the person.
+ */
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u
 const UNPRINTABLE_ALL = new RegExp(UNPRINTABLE.source, 'gu')
 const PERMISSION_NAME = /^[A-Za-z][A-Za-z-]{0,39}$/u
 const NET_ABORTED = -3
@@ -84,15 +131,18 @@ const REQUEST_SCHEMES = new Set(['http:', 'https:', 'ws:', 'wss:', 'data:', 'blo
 const FRAME_SCHEMES = new Set(['about:', 'data:', 'blob:'])
 /**
  * App shortcuts that work while a tab has focus: main takes them from the guest (`before-input-event`) and gives them to
- * the page, so a page never swallows them. ⌘K palette, ⌘J terminal, ⌘B sidebar, ⌥⌘B side panel, ⌘, settings.
+ * the page, so a page never swallows them. ⌘K palette, ⌘J terminal, ⌘B sidebar, ⌥⌘B side panel, ⌘, settings, ⇧⌘B
+ * the 浏览器 tab and ⇧⌘S 选取元素.
  */
 const FORWARDED_SHORTCUTS = Object.freeze(
   [
-    { code: 'KeyK', keyCode: 'K', alt: false },
-    { code: 'KeyJ', keyCode: 'J', alt: false },
-    { code: 'KeyB', keyCode: 'B', alt: false },
-    { code: 'KeyB', keyCode: 'B', alt: true },
-    { code: 'Comma', keyCode: ',', alt: false },
+    { code: 'KeyK', keyCode: 'K', alt: false, shift: false },
+    { code: 'KeyJ', keyCode: 'J', alt: false, shift: false },
+    { code: 'KeyB', keyCode: 'B', alt: false, shift: false },
+    { code: 'KeyB', keyCode: 'B', alt: true, shift: false },
+    { code: 'Comma', keyCode: ',', alt: false, shift: false },
+    { code: 'KeyB', keyCode: 'B', alt: false, shift: true },
+    { code: 'KeyS', keyCode: 'S', alt: false, shift: true },
   ].map(item => Object.freeze(item)),
 )
 
@@ -359,6 +409,14 @@ function requestAllowed(details, ports, devTools) {
 
 const isTabId = value => typeof value === 'string' && TAB_ID.test(value)
 const isProjectId = value => typeof value === 'string' && PROJECT_ID.test(value)
+const isSessionId = value => typeof value === 'string' && SESSION_ID.test(value)
+
+/** A point of the tab, from its top-left corner in CSS pixels of the page. */
+function pointInput(input) {
+  if (!hasOnlyKeys(input, ['tabId', 'point']) || !isTabId(input.tabId) || !hasOnlyKeys(input.point, ['x', 'y'])) return undefined
+  const { x, y } = input.point
+  return finite(x, 0, PANEL_LIMIT) && finite(y, 0, PANEL_LIMIT) ? { tabId: input.tabId, point: { x, y } } : undefined
+}
 
 function rectInput(value) {
   if (!hasOnlyKeys(value, ['x', 'y', 'width', 'height'])) return undefined
@@ -370,10 +428,11 @@ function rectInput(value) {
 /** Each IPC input: exactly its keys with values of its shape, copied; anything else is undefined (refused). */
 const INPUTS = Object.freeze({
   open: input =>
-    hasOnlyKeys(input, ['projectId', 'url'])
+    hasOnlyKeys(input, ['projectId', 'sessionId', 'url'])
     && isProjectId(input.projectId)
+    && isSessionId(input.sessionId)
     && (input.url === null || (typeof input.url === 'string' && input.url.length <= ADDRESS_LIMIT))
-      ? { projectId: input.projectId, url: input.url }
+      ? { projectId: input.projectId, sessionId: input.sessionId, url: input.url }
       : undefined,
   tab: input => (hasOnlyKeys(input, ['tabId']) && isTabId(input.tabId) ? { tabId: input.tabId } : undefined),
   navigate: input =>
@@ -394,11 +453,20 @@ const INPUTS = Object.freeze({
     hasOnlyKeys(input, ['tabId', 'occluded']) && isTabId(input.tabId) && typeof input.occluded === 'boolean'
       ? { tabId: input.tabId, occluded: input.occluded }
       : undefined,
-  annotate: input => {
-    if (!hasOnlyKeys(input, ['tabId', 'point']) || !isTabId(input.tabId) || !hasOnlyKeys(input.point, ['x', 'y'])) return undefined
-    const { x, y } = input.point
-    return finite(x, 0, PANEL_LIMIT) && finite(y, 0, PANEL_LIMIT) ? { tabId: input.tabId, point: { x, y } } : undefined
-  },
+  annotate: pointInput,
+  hitTest: pointInput,
+  viewport: input =>
+    hasOnlyKeys(input, ['tabId', 'preset', 'rotated'])
+    && isTabId(input.tabId)
+    && VIEWPORT_PRESETS.has(input.preset)
+    && typeof input.rotated === 'boolean'
+      ? { tabId: input.tabId, preset: input.preset, rotated: input.rotated }
+      : undefined,
+  colorScheme: input =>
+    hasOnlyKeys(input, ['tabId', 'scheme']) && isTabId(input.tabId) && COLOR_SCHEMES.has(input.scheme)
+      ? { tabId: input.tabId, scheme: input.scheme }
+      : undefined,
+  none: input => (hasOnlyKeys(input, []) ? {} : undefined),
   zoom: input =>
     hasOnlyKeys(input, ['tabId', 'direction']) && isTabId(input.tabId) && ZOOM_DIRECTIONS.has(input.direction)
       ? { tabId: input.tabId, direction: input.direction }
@@ -423,12 +491,93 @@ function viewBounds(rect, zoom, content) {
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
 }
 
-/** The forwarded shortcut `input` is, if any: ⌘ on macOS and Ctrl elsewhere, without Shift, Alt as listed. */
+/** The forwarded shortcut `input` is, if any: ⌘ on macOS and Ctrl elsewhere, Alt and Shift as listed. */
 function forwardedShortcut(input, platform) {
-  if (!input || (input.type !== 'keyDown' && input.type !== 'keyUp') || input.shift) return undefined
+  if (!input || (input.type !== 'keyDown' && input.type !== 'keyUp')) return undefined
   const command = platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta
   if (!command) return undefined
-  return FORWARDED_SHORTCUTS.find(item => item.code === input.code && item.alt === Boolean(input.alt))
+  return FORWARDED_SHORTCUTS.find(
+    item => item.code === input.code && item.alt === Boolean(input.alt) && item.shift === Boolean(input.shift),
+  )
+}
+
+/** A preset's size in CSS pixels, turned when rotated; null for 「适应面板」. */
+function viewportSize(viewport) {
+  const size = viewport && viewport.preset !== 'fit' ? VIEWPORTS[viewport.preset] : undefined
+  if (!size) return null
+  return viewport.rotated ? { width: size.height, height: size.width } : { width: size.width, height: size.height }
+}
+
+/** How far a preset's page is scaled to fit the view (its DIP), never up. */
+function emulationScale(size, bounds) {
+  if (!size || !bounds || bounds.width <= 0 || bounds.height <= 0) return 1
+  return Math.min(1, bounds.width / size.width, bounds.height / size.height)
+}
+
+/** An address for the console and network lists: its origin and path, never the query (which may carry a token). */
+function logUrl(raw) {
+  if (typeof raw !== 'string' || raw === '') return ''
+  try {
+    const url = new URL(raw)
+    if (url.protocol === 'data:' || url.protocol === 'blob:') return `${url.protocol}…`
+    const text = url.origin === 'null' ? `${url.protocol}${url.pathname}` : `${url.origin}${url.pathname}`
+    return cleanText(text, LOG_URL_LIMIT)
+  } catch {
+    return ''
+  }
+}
+
+/** A console message, printable and at most 500 characters; its lines stay lines. */
+function consoleText(value) {
+  if (typeof value !== 'string') return ''
+  return value
+    .slice(0, CONSOLE_TEXT_LIMIT * 4)
+    .split(/\r\n?|\n/u)
+    .map(line => line.replace(UNPRINTABLE_ALL, ' ').trimEnd())
+    .join('\n')
+    .trim()
+    .slice(0, CONSOLE_TEXT_LIMIT)
+}
+
+/** A response's own Content-Length, when it states one. */
+function contentLength(headers) {
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() !== 'content-length') continue
+    const length = Number(Array.isArray(value) ? value[0] : value)
+    return Number.isSafeInteger(length) && length >= 0 ? length : null
+  }
+  return null
+}
+
+/** A Chromium error name as webRequest gives it (`net::ERR_CONNECTION_REFUSED`), without the prefix. */
+function netError(value) {
+  const name = typeof value === 'string' ? value.replace(/^net::/u, '') : ''
+  return /^ERR_[A-Z0-9_]{1,64}$/u.test(name) ? name : 'ERR_FAILED'
+}
+
+const failedRequest = entry => entry.error !== null || (entry.status !== null && entry.status >= 400)
+
+/** A tab's 控制台 or 网络 list: the newest `LOG_LIMIT` entries in a ring, each with a sequence ID, and running counts. */
+function createLog() {
+  return { items: new Array(LOG_LIMIT), head: 0, size: 0, next: 1 }
+}
+
+/** Adds an entry with the next ID; returns the entry it pushed out, if the ring was full. */
+function pushLog(log, entry) {
+  const at = (log.head + log.size) % LOG_LIMIT
+  const evicted = log.size === LOG_LIMIT ? log.items[at] : undefined
+  log.items[at] = { id: log.next++, ...entry }
+  if (evicted) log.head = (log.head + 1) % LOG_LIMIT
+  else log.size++
+  return evicted
+}
+
+/** The newest `count` entries, oldest first, as copies. */
+function lastOf(log, count) {
+  const take = Math.min(count, log.size)
+  const out = []
+  for (let index = log.size - take; index < log.size; index++) out.push({ ...log.items[(log.head + index) % LOG_LIMIT] })
+  return out
 }
 
 /**
@@ -602,6 +751,33 @@ function annotationScript(x, y) {
 })(${args})`
 }
 
+/** What `hitTest` takes from the isolated world: a tag and a box. Anything else is undefined. */
+function hitOf(raw) {
+  if (!hasOnlyKeys(raw, ['tag', 'rect']) || !hasOnlyKeys(raw.rect, ['x', 'y', 'width', 'height'])) return undefined
+  const { tag } = raw
+  const { x, y, width, height } = raw.rect
+  if (typeof tag !== 'string' || !/^[A-Za-z][A-Za-z0-9._-]{0,63}$/u.test(tag)) return undefined
+  if (![x, y].every(value => finite(value, -1e7, 1e7)) || ![width, height].every(value => finite(value, 0, 1e7))) return undefined
+  return { tag: tag.toLowerCase(), rect: { x, y, width, height } }
+}
+
+/**
+ * The script `hitTest` runs in the isolated world 标注 uses: only the element at a point of the viewport, its tag and its
+ * box, through this world's prototypes. It reads nothing else and changes nothing.
+ */
+function hitTestScript(x, y) {
+  const args = JSON.stringify({ x, y })
+  return `((options) => {
+  const elementFromPoint = Document.prototype.elementFromPoint
+  const localName = Object.getOwnPropertyDescriptor(Element.prototype, 'localName').get
+  const getBox = Element.prototype.getBoundingClientRect
+  const element = elementFromPoint.call(document, options.x, options.y)
+  if (!(element instanceof Element)) return null
+  const box = getBox.call(element)
+  return { tag: localName.call(element), rect: { x: box.x, y: box.y, width: box.width, height: box.height } }
+})(${args})`
+}
+
 /** The annotated element's box with some room around it, in the view's DIP, clamped to the view; undefined if empty. */
 function cropRect(rect, zoom, view) {
   const x = Math.max(0, Math.floor(rect.x * zoom) - CROP_PADDING)
@@ -660,7 +836,16 @@ function stateOf(tab) {
     zoom: Math.round(contents.getZoomFactor() * 100) / 100,
     crashed: contents.isCrashed(),
     error: tab.error,
+    viewport: { preset: tab.viewport.preset, rotated: tab.viewport.rotated },
+    colorScheme: tab.scheme,
+    logs: { errors: tab.counts.errors, warnings: tab.counts.warnings, failed: tab.counts.failed },
   }
+}
+
+function clearLogs(tab) {
+  tab.console = createLog()
+  tab.network = createLog()
+  tab.counts = { errors: 0, warnings: 0, failed: 0 }
 }
 
 /** Main's own load of an address it checked: the address field, or a local link the person clicked in the page. */
@@ -689,6 +874,8 @@ function applyVisibility(tab) {
   const visible = tab.bounds !== null && !tab.occluded
   if (visible) tab.view.setBounds(tab.bounds)
   tab.view.setVisible(visible)
+  // A tab out of sight makes no sound; a frozen frame (an overlay, 选取元素) still counts as in sight.
+  if (!tab.contents.isDestroyed()) tab.contents.setAudioMuted(tab.bounds === null)
   if (!visible && !tab.contents.isDestroyed() && tab.contents.isFocused() && !tab.window.isDestroyed()) tab.window.webContents.focus()
 }
 
@@ -743,6 +930,10 @@ function createPreviewBrowser(options) {
   const ports = new Set()
   /** Set around `new WebContentsView`, in case Electron reports the new WebContents before the constructor returns. */
   let constructing = false
+  /** The tabs by their WebContents ID, for the partition's request events. */
+  const tabByContentsId = new Map()
+  /** When each request in flight started, by webRequest ID, for its duration. */
+  const starts = new Map()
 
   const liveWindow = () => {
     const window = options.window()
@@ -809,8 +1000,39 @@ function createPreviewBrowser(options) {
     })
     ses.setSpellCheckerEnabled(false)
     ses.webRequest.onBeforeRequest((details, callback) => {
+      if (typeof details.webContentsId === 'number' && tabByContentsId.has(details.webContentsId)) {
+        if (starts.size >= STARTS_LIMIT) starts.delete(starts.keys().next().value)
+        starts.set(details.id, details.timestamp)
+      }
       callback({ cancel: !requestAllowed(details, ports, devTools) })
     })
+    // The 网络 list: what each request came to, never its headers or bodies; the address without its query.
+    const finished = (details, error) => {
+      const started = starts.get(details.id)
+      starts.delete(details.id)
+      const tab = typeof details.webContentsId === 'number' ? tabByContentsId.get(details.webContentsId) : undefined
+      if (!tab || tabs.get(tab.id) !== tab) return
+      const status = !error && Number.isInteger(details.statusCode) && details.statusCode > 0 ? details.statusCode : null
+      const entry = {
+        method: typeof details.method === 'string' && /^[A-Z]{1,16}$/u.test(details.method) ? details.method : 'GET',
+        url: logUrl(details.url),
+        type: typeof details.resourceType === 'string' && /^[A-Za-z]{1,32}$/u.test(details.resourceType) ? details.resourceType : 'other',
+        status,
+        error: error ? netError(details.error) : null,
+        duration:
+          typeof started === 'number' && typeof details.timestamp === 'number'
+            ? Math.max(0, Math.round(details.timestamp - started))
+            : null,
+        size: error ? null : contentLength(details.responseHeaders),
+        time: typeof details.timestamp === 'number' ? Math.round(details.timestamp) : Date.now(),
+      }
+      const evicted = pushLog(tab.network, entry)
+      if (failedRequest(entry)) tab.counts.failed++
+      if (evicted && failedRequest(evicted)) tab.counts.failed--
+      changed(tab)
+    }
+    ses.webRequest.onCompleted(details => finished(details, false))
+    ses.webRequest.onErrorOccurred(details => finished(details, true))
     ses.webRequest.onHeadersReceived((details, callback) => {
       const document = details.resourceType === 'mainFrame' || details.resourceType === 'subFrame'
       callback(document ? { responseHeaders: withGuestPolicy(details.responseHeaders) } : {})
@@ -832,7 +1054,7 @@ function createPreviewBrowser(options) {
   function forward(tab, shortcut) {
     const page = tab.window.webContents
     if (tab.window.isDestroyed() || page.isDestroyed()) return
-    const modifiers = [platform === 'darwin' ? 'meta' : 'control', ...(shortcut.alt ? ['alt'] : [])]
+    const modifiers = [platform === 'darwin' ? 'meta' : 'control', ...(shortcut.alt ? ['alt'] : []), ...(shortcut.shift ? ['shift'] : [])]
     page.focus()
     page.sendInputEvent({ type: 'keyDown', keyCode: shortcut.keyCode, modifiers })
     page.sendInputEvent({ type: 'keyUp', keyCode: shortcut.keyCode, modifiers })
@@ -925,7 +1147,10 @@ function createPreviewBrowser(options) {
         // and one it did not (the address field, reload, history) ends any click left on the old page.
         if (!details.initiator) gesture.clear()
         const tab = tabOf(contents)
-        if (tab) tab.error = null
+        if (tab) {
+          tab.error = null
+          clearLogs(tab)
+        }
       } else if (hops.size >= 64) hops.delete(hops.keys().next().value)
       hops.set(frameKey(details.frame, details.isMainFrame), details.url)
     })
@@ -969,6 +1194,34 @@ function createPreviewBrowser(options) {
       const tab = tabOf(contents)
       if (tab) changed(tab)
     })
+    // The 控制台 list: what the page logged, printable and cut to 500 characters.
+    contents.on('console-message', event => {
+      const tab = tabOf(contents)
+      if (!tab) return
+      const level = CONSOLE_LEVELS.has(event?.level) ? event.level : 'info'
+      if (latchOwnWarning(level, event?.message)) return
+      const evicted = pushLog(tab.console, {
+        level,
+        text: consoleText(event?.message),
+        source: logUrl(event?.sourceId),
+        line: Number.isSafeInteger(event?.lineNumber) && event.lineNumber >= 0 ? event.lineNumber : 0,
+        time: Date.now(),
+      })
+      const count = (entry, step) => {
+        if (entry.level === 'error') tab.counts.errors += step
+        else if (entry.level === 'warning') tab.counts.warnings += step
+      }
+      count({ level }, 1)
+      if (evicted) count(evicted, -1)
+      changed(tab)
+    })
+    // A new document keeps the tab's viewport and color scheme.
+    contents.on('did-navigate', () => {
+      const tab = tabOf(contents)
+      if (!tab) return
+      applyEmulation(tab)
+      if (tab.scheme !== 'system') void queueScheme(tab).catch(() => {})
+    })
     contents.once('destroyed', () => {
       const tab = tabOf(contents)
       if (tab) drop(tab)
@@ -978,6 +1231,7 @@ function createPreviewBrowser(options) {
   function drop(tab) {
     if (tabs.get(tab.id) !== tab) return
     tabs.delete(tab.id)
+    tabByContentsId.delete(tab.contentsId)
     if (tab.timer !== undefined) clearTimeout(tab.timer)
     if (!tab.window.isDestroyed()) tab.window.contentView.removeChildView(tab.view)
     if (!tab.contents.isDestroyed()) {
@@ -989,6 +1243,105 @@ function createPreviewBrowser(options) {
 
   function closeAll() {
     for (const tab of tabs.values()) drop(tab)
+  }
+
+  /**
+   * The page went away (a reload, its renderer gone): its tabs stay, hidden and without the keyboard, until the page
+   * lists them again and places them.
+   */
+  function hideAll() {
+    for (const tab of tabs.values()) {
+      tab.bounds = null
+      tab.occluded = false
+      tab.occlusions++
+      if (!tab.contents.isDestroyed()) applyVisibility(tab)
+      emit(tab, { type: 'hidden' })
+    }
+  }
+
+  /** Lays a preset's page out at its size, scaled into the view; 「适应面板」 lets the view's own size be the page's. */
+  function applyEmulation(tab) {
+    if (tab.contents.isDestroyed()) return
+    const size = viewportSize(tab.viewport)
+    if (!size) {
+      tab.scale = 1
+      if (tab.emulated) tab.contents.disableDeviceEmulation()
+      tab.emulated = false
+      return
+    }
+    tab.scale = emulationScale(size, tab.bounds)
+    tab.contents.enableDeviceEmulation({
+      screenPosition: tab.viewport.preset === 'desktop' ? 'desktop' : 'mobile',
+      screenSize: size,
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: size,
+      scale: tab.scale,
+    })
+    tab.emulated = true
+  }
+
+  /**
+   * `prefers-color-scheme` as the person chose, through the tab's own debugger, which main attaches only for this and
+   * only while a scheme is chosen. Nothing else is ever sent over it.
+   */
+  async function applyScheme(tab) {
+    const debug = tab.contents.debugger
+    if (tab.scheme === 'system') {
+      if (tab.debugging && debug.isAttached()) {
+        try {
+          await debug.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: '' }] })
+        } finally {
+          tab.debugging = false
+          debug.detach()
+        }
+      }
+      tab.debugging = false
+      return
+    }
+    if (!debug.isAttached()) {
+      debug.attach('1.3')
+      tab.debugging = true
+    } else if (!tab.debugging) throw new Error('attached elsewhere')
+    await debug.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: tab.scheme }] })
+  }
+
+  /**
+   * One scheme change at a time per tab, each applying the scheme chosen last when it runs, so quick choices end on the
+   * last one with the debugger attached only if that one needs it. A failure leaves the tab on the system's scheme.
+   */
+  function queueScheme(tab) {
+    const run = tab.schemes
+      .catch(() => {})
+      .then(async () => {
+        if (tabs.get(tab.id) !== tab || tab.contents.isDestroyed()) return
+        try {
+          await applyScheme(tab)
+        } catch (error) {
+          schemeLost(tab)
+          throw error
+        }
+      })
+    tab.schemes = run
+    return run
+  }
+
+  /**
+   * The debugger went away, or a command failed: the tab follows the system again, main lets go of a debugger it
+   * attached, and the page hears so.
+   */
+  function schemeLost(tab) {
+    const ours = tab.debugging
+    tab.scheme = 'system'
+    tab.debugging = false
+    if (ours && !tab.contents.isDestroyed() && tab.contents.debugger.isAttached()) {
+      try {
+        tab.contents.debugger.detach()
+      } catch {
+        /* Already gone. */
+      }
+    }
+    changed(tab)
   }
 
   /** The tab named by a checked input, while its page is still there. */
@@ -1008,8 +1361,13 @@ function createPreviewBrowser(options) {
       }
     },
     guard,
-    /** Shuts the listener ports a host.json names, for the life of the app. */
-    blockHost(state) {
+    /**
+     * Shuts the listener ports a host.json names, and the model gateway's loopback port that host-info reports, for
+     * the life of the app.
+     */
+    blockHost(state, info) {
+      const gateway = info?.modelGatewayPort
+      if (Number.isInteger(gateway) && gateway > 0 && gateway <= 65_535) ports.add(gateway)
       for (const origin of [state?.loopbackOrigin, state?.tlsOrigin]) {
         if (typeof origin !== 'string') continue
         try {
@@ -1019,15 +1377,24 @@ function createPreviewBrowser(options) {
         }
       }
     },
-    /** Tabs belong to the page that opened them: a reload, a crash or closing the window ends them. */
+    /** Tabs live as long as the window: a new document or a crash of its page hides them, closing the window ends them. */
     attach(window) {
       window.on('closed', closeAll)
-      window.webContents.on('did-start-navigation', details => {
-        if (details.isMainFrame && !details.isSameDocument) closeAll()
-      })
-      window.webContents.on('render-process-gone', closeAll)
+      // Only a navigation of the page that commits: one the app's rules refuse leaves the page, and its tabs, in place.
+      window.webContents.on('did-navigate', () => hideAll())
+      window.webContents.on('render-process-gone', hideAll)
     },
     closeAll,
+    /** Every tab of the window, with the session and project it belongs to, for a page that comes back. */
+    list() {
+      if (!liveWindow()) return failure('unavailable')
+      const listed = []
+      for (const tab of tabs.values()) {
+        const state = stateOf(tab)
+        if (state) listed.push({ tabId: tab.id, projectId: tab.projectId, sessionId: tab.sessionId, state })
+      }
+      return { ok: true, tabs: listed }
+    },
     open(input) {
       const window = liveWindow()
       if (!window) return failure('unavailable')
@@ -1074,6 +1441,18 @@ function createPreviewBrowser(options) {
       const tab = {
         id: newTabId(),
         projectId: input.projectId,
+        sessionId: input.sessionId,
+        contentsId: contents.id,
+        viewport: { preset: 'fit', rotated: false },
+        scale: 1,
+        emulated: false,
+        scheme: 'system',
+        debugging: false,
+        hitting: false,
+        console: createLog(),
+        network: createLog(),
+        counts: { errors: 0, warnings: 0, failed: 0 },
+        schemes: Promise.resolve(),
         window,
         view,
         contents,
@@ -1087,6 +1466,10 @@ function createPreviewBrowser(options) {
       }
       tabs.set(tab.id, tab)
       tabByContents.set(contents, tab)
+      tabByContentsId.set(contents.id, tab)
+      contents.debugger.on('detach', () => {
+        if (tab.debugging) schemeLost(tab)
+      })
       guard(contents)
       view.setVisible(false)
       window.contentView.addChildView(view)
@@ -1126,6 +1509,7 @@ function createPreviewBrowser(options) {
       else {
         const [width = 0, height = 0] = tab.window.getContentSize()
         tab.bounds = viewBounds(input.bounds, tab.window.webContents.getZoomFactor(), { width, height })
+        if (tab.emulated) applyEmulation(tab)
       }
       applyVisibility(tab)
       return { ok: true }
@@ -1184,7 +1568,8 @@ function createPreviewBrowser(options) {
       if (!tab) return Promise.resolve(NOT_FOUND)
       return exclusive(tab, async () => {
         const pageZoom = tab.window.isDestroyed() ? 1 : tab.window.webContents.getZoomFactor()
-        const guestZoom = tab.contents.getZoomFactor()
+        // A guest CSS pixel is this many view pixels: its own zoom, and a preset's page scaled into the view.
+        const guestZoom = tab.contents.getZoomFactor() * tab.scale
         const scale = pageZoom / guestZoom
         let raw
         try {
@@ -1216,6 +1601,61 @@ function createPreviewBrowser(options) {
           },
         }
       })
+    },
+    /** The element under a point as the person moves over a frozen frame: only its tag and its box. */
+    async hitTest(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      if (tab.hitting) return failure('busy')
+      tab.hitting = true
+      try {
+        const pageZoom = tab.window.isDestroyed() ? 1 : tab.window.webContents.getZoomFactor()
+        const scale = pageZoom / (tab.contents.getZoomFactor() * tab.scale)
+        let raw
+        try {
+          const code = hitTestScript(input.point.x * scale, input.point.y * scale)
+          raw = await withTimeout(tab.contents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD, [{ code }]), SCRIPT_TIMEOUT_MS)
+        } catch {
+          return failure('no-target')
+        }
+        const hit = hitOf(raw)
+        if (!hit || tabs.get(tab.id) !== tab) return failure('no-target')
+        const { x, y, width, height } = hit.rect
+        return { ok: true, target: { tag: hit.tag, rect: { x: x / scale, y: y / scale, width: width / scale, height: height / scale } } }
+      } finally {
+        tab.hitting = false
+      }
+    },
+    /** A preset size for the tab's page (or the panel's own), turned when rotated. */
+    viewport(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      tab.viewport = { preset: input.preset, rotated: input.preset === 'fit' ? false : input.rotated }
+      applyEmulation(tab)
+      changed(tab)
+      return { ok: true, viewport: { ...tab.viewport }, size: viewportSize(tab.viewport) }
+    },
+    async colorScheme(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      tab.scheme = input.scheme
+      changed(tab)
+      try {
+        await queueScheme(tab)
+      } catch {
+        return failure('emulation-failed')
+      }
+      return { ok: true, colorScheme: tab.scheme }
+    },
+    /** The 控制台 and 网络 lists, the newest last. */
+    logs(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      return {
+        ok: true,
+        console: lastOf(tab.console, LOG_REPORTED),
+        network: lastOf(tab.network, LOG_REPORTED),
+      }
     },
     zoom(input) {
       const tab = tabFor(input)
@@ -1279,6 +1719,11 @@ function handleBrowserRequests({ ipcMain, trusted, controller }) {
   route(CHANNELS.devTools, INPUTS.tab, input => controller.devTools(input))
   route(CHANNELS.clearData, INPUTS.project, input => controller.clearData(input))
   route(CHANNELS.state, INPUTS.tab, input => controller.state(input))
+  route(CHANNELS.list, INPUTS.none, () => controller.list())
+  route(CHANNELS.viewport, INPUTS.viewport, input => controller.viewport(input))
+  route(CHANNELS.colorScheme, INPUTS.colorScheme, input => controller.colorScheme(input))
+  route(CHANNELS.hitTest, INPUTS.hitTest, input => controller.hitTest(input))
+  route(CHANNELS.logs, INPUTS.tab, input => controller.logs(input))
 }
 
 module.exports = {
@@ -1288,6 +1733,9 @@ module.exports = {
   ADDRESS_LIMIT,
   CAPTURE_LIMITS,
   CROP_LIMITS,
+  VIEWPORTS,
+  LOG_LIMIT,
+  LOG_REPORTED,
   TEXT_LIMIT,
   SELECTOR_LIMIT,
   ANNOTATION_WORLD,
@@ -1306,6 +1754,18 @@ module.exports = {
   withGuestPolicy,
   annotationOf,
   annotationScript,
+  hitOf,
+  hitTestScript,
+  viewportSize,
+  emulationScale,
+  logUrl,
+  consoleText,
+  latchOwnWarning,
+  createLog,
+  pushLog,
+  lastOf,
+  ELECTRON_CSP_WARNING,
+  SANDBOX_WARNING,
   cropRect,
   nextZoom,
   createPreviewBrowser,

@@ -200,6 +200,12 @@ function parseHostInfo(value) {
   if (value.activity !== undefined && !isActivity(value.activity)) return undefined
   // Optional too: the Host API version, which the updater compares with a release's bundled Host (updater.cjs).
   if (value.protocol !== undefined && !(Number.isInteger(value.protocol) && value.protocol > 0)) return undefined
+  // Optional: the model gateway's loopback port, which the preview tabs may not reach (browser.cjs).
+  if (
+    value.modelGatewayPort !== undefined
+    && !(Number.isInteger(value.modelGatewayPort) && value.modelGatewayPort > 0 && value.modelGatewayPort <= 65_535)
+  )
+    return undefined
   return value
 }
 
@@ -275,6 +281,7 @@ async function verifyHostState(state, options) {
 module.exports = {
   SOCKET_HOST,
   parseHostState,
+  parseHostInfo,
   exchange,
   readHostStateFile,
   socketRequest,

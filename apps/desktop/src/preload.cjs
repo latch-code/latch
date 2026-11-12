@@ -205,6 +205,20 @@ const browserNumber = (value, min, max) => typeof value === 'number' && Number.i
 const browserCall = (channel, input) => (input ? ipcRenderer.invoke(channel, input) : Promise.resolve(BROWSER_INVALID))
 const browserTab = tabId => (typeof tabId === 'string' && BROWSER_TAB.test(tabId) ? { tabId } : undefined)
 const browserProject = projectId => (typeof projectId === 'string' && PROJECT_ID.test(projectId) ? projectId : undefined)
+const BROWSER_SESSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
+const browserSession = sessionId => (typeof sessionId === 'string' && BROWSER_SESSION.test(sessionId) ? sessionId : undefined)
+const BROWSER_PRESETS = new Set(['fit', 'phone', 'tablet', 'desktop'])
+const BROWSER_SCHEMES = new Set(['system', 'light', 'dark'])
+/** Exactly x and y, finite and not negative: a point of the tab in CSS pixels of the page. */
+const browserPoint = point =>
+  point
+  && typeof point === 'object'
+  && Object.keys(point).length === 2
+  && browserNumber(point.x, 0, 100_000)
+  && browserNumber(point.y, 0, 100_000)
+    ? { x: point.x, y: point.y }
+    : undefined
+const browserCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 100_000
 const browserAddress = url => (typeof url === 'string' && url.length > 0 && url.length <= 2048 ? url : undefined)
 const browserGo = action => tabId => {
   const tab = browserTab(tabId)
@@ -226,14 +240,31 @@ function browserState(value) {
   if (![loading, canGoBack, canGoForward, crashed].every(item => typeof item === 'boolean') || !browserNumber(zoom, 0.25, 5))
     return undefined
   if (error !== null && !(Number.isInteger(error) && error < 0 && error > -1000)) return undefined
-  return { url, title, loading, canGoBack, canGoForward, zoom, crashed, error }
+  const { viewport, colorScheme, logs } = value
+  if (!viewport || typeof viewport !== 'object' || !BROWSER_PRESETS.has(viewport.preset) || typeof viewport.rotated !== 'boolean')
+    return undefined
+  if (!BROWSER_SCHEMES.has(colorScheme)) return undefined
+  if (!logs || typeof logs !== 'object' || ![logs.errors, logs.warnings, logs.failed].every(browserCount)) return undefined
+  return {
+    url,
+    title,
+    loading,
+    canGoBack,
+    canGoForward,
+    zoom,
+    crashed,
+    error,
+    viewport: { preset: viewport.preset, rotated: viewport.rotated },
+    colorScheme,
+    logs: { errors: logs.errors, warnings: logs.warnings, failed: logs.failed },
+  }
 }
 
 /** A tab's state, a notice (with the permission or the reason it names) or its end; anything else is dropped. */
 function browserEvent(value) {
   if (!value || typeof value !== 'object' || typeof value.tabId !== 'string' || !BROWSER_TAB.test(value.tabId)) return undefined
   const tabId = value.tabId
-  if (value.type === 'closed') return { type: 'closed', tabId }
+  if (value.type === 'closed' || value.type === 'hidden') return { type: value.type, tabId }
   if (value.type === 'state') {
     const state = browserState(value.state)
     return state ? { type: 'state', tabId, state } : undefined
@@ -623,13 +654,21 @@ if (!REMOTE)
       // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
       // could reach the shell or the Host shut.
       browser: Object.freeze({
-        protocolVersion: 1,
-        /** A new tab in the project's own partition, empty or at an address as typed in the address field. */
-        open: (projectId, url) => {
+        protocolVersion: 2,
+        /**
+         * A new tab of a session, in its project's own partition, empty or at an address as typed in the address field.
+         */
+        open: (projectId, sessionId, url) => {
           const project = browserProject(projectId)
+          const session = browserSession(sessionId)
           const address = url === undefined || url === null ? null : browserAddress(url)
-          return browserCall('latch:browser:open', project && address !== undefined ? { projectId: project, url: address } : undefined)
+          return browserCall(
+            'latch:browser:open',
+            project && session && address !== undefined ? { projectId: project, sessionId: session, url: address } : undefined,
+          )
         },
+        /** Every tab of the window with its session and project: what a page that reloaded shows again. */
+        list: () => ipcRenderer.invoke('latch:browser:list', {}),
         close: tabId => browserCall('latch:browser:close', browserTab(tabId)),
         navigate: (tabId, url) => {
           const tab = browserTab(tabId)
@@ -656,14 +695,28 @@ if (!REMOTE)
         /** 标注: the element at a point of the tab, in CSS pixels of the page from the tab's top-left corner. */
         annotate: (tabId, point) => {
           const tab = browserTab(tabId)
-          const valid =
-            point
-            && typeof point === 'object'
-            && Object.keys(point).length === 2
-            && browserNumber(point.x, 0, 100_000)
-            && browserNumber(point.y, 0, 100_000)
-          return browserCall('latch:browser:annotate', tab && valid ? { tabId: tab.tabId, point: { x: point.x, y: point.y } } : undefined)
+          const at = browserPoint(point)
+          return browserCall('latch:browser:annotate', tab && at ? { tabId: tab.tabId, point: at } : undefined)
         },
+        /** 选取元素 over the frozen frame: the tag and box of the element at a point, nothing else. */
+        hitTest: (tabId, point) => {
+          const tab = browserTab(tabId)
+          const at = browserPoint(point)
+          return browserCall('latch:browser:hit-test', tab && at ? { tabId: tab.tabId, point: at } : undefined)
+        },
+        /** 适应面板, 手机, 平板 or 桌面, turned when rotated. */
+        setViewport: (tabId, preset, rotated) => {
+          const tab = browserTab(tabId)
+          const valid = BROWSER_PRESETS.has(preset) && typeof rotated === 'boolean'
+          return browserCall('latch:browser:viewport', tab && valid ? { tabId: tab.tabId, preset, rotated } : undefined)
+        },
+        /** What `prefers-color-scheme` the tab's pages see: the system's, light or dark. */
+        setColorScheme: (tabId, scheme) => {
+          const tab = browserTab(tabId)
+          return browserCall('latch:browser:color-scheme', tab && BROWSER_SCHEMES.has(scheme) ? { tabId: tab.tabId, scheme } : undefined)
+        },
+        /** The 控制台 and 网络 lists: messages and request summaries, never headers or bodies. */
+        logs: tabId => browserCall('latch:browser:logs', browserTab(tabId)),
         zoom: (tabId, direction) => {
           const tab = browserTab(tabId)
           const valid = direction === 'in' || direction === 'out' || direction === 'reset'

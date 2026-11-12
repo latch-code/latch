@@ -35,7 +35,7 @@ const { createHash } = require('node:crypto')
 const { lstat, open: openFile, readdir, readFile, realpath, rm, stat } = require('node:fs/promises')
 const { hostname } = require('node:os')
 const { dirname, join, resolve } = require('node:path')
-const { readHostStateFile, inspectHostState, readBody, socketRequest } = require('./host.cjs')
+const { readHostStateFile, inspectHostState: inspectHostRecord, readBody, socketRequest } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 // Through the module objects, so the multi-computer end-to-end test's bootstrap can trust its test certificate.
 const remotes = require('./remote-proxy.cjs')
@@ -281,6 +281,16 @@ const previewBrowser = createPreviewBrowser({
   openExternal: url => openExternal(url, mainWindow, { userGesture: true }),
   log,
 })
+
+/**
+ * Checks host.json against the Host over host.sock (host.cjs); a Host that checks out also shuts its model gateway's
+ * loopback port to the preview tabs, as host-info names it.
+ */
+async function inspectHostState(state) {
+  const result = await inspectHostRecord(state)
+  if (result.ok) previewBrowser.blockHost(state, result.info)
+  return result
+}
 
 app.on('web-contents-created', (_event, contents) => {
   contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')

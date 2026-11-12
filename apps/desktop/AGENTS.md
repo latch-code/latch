@@ -23,9 +23,9 @@ electron-main：CommonJS，不导入 TS 源码；运行时只依赖 `@latch/prot
 - 设备密钥与凭据只在主进程，经 safeStorage 加密存于 0600 文件，无安全存储时不保存。
 - 文件夹操作需 `folders.protocolVersion: 1`，只回应主窗口顶层页面，窗口有焦点才开原生对话框；路径只来自面板、经原生确认的拖入或 Host 已知会话目录。主进程取 nonce 用设备私钥签名提交，页面的添加路由 403 `shell-managed`；访达只用 `showItemInFolder`。
 - 文件操作只收顶层页面的会话引用或句柄（v2 另收项目/Harness）。Host 先裁决并审计，主进程复查文件、类型白名单与文件头后只调 `shell.openPath`、`previewFile`、`showItemInFolder` 或编辑器（`editors.cjs`：白名单、真实手势、固定模板、无 shell），不开目录。页面只转发 resolve/search/list、句柄 GET/meta/PUT，`Origin: null` 拒绝。见 [ARCHITECTURE](../../docs/ARCHITECTURE.md#会话文件)。
-- 只经 `host.json` + `host.sock` 找到并核对 Host，不经环境变量或参数传 URL 与凭据。`host.cjs` 与 `host-state.ts` 的检查两边同改。
-- 主进程不显示也不批准本机确认（`PresenceService` 的系统表单），页面只能读取与取消票据。
-- 预览标签（`browser.cjs`）不可信，请求到不了 Host；分区与拒绝的能力见 [PREVIEW-BROWSER](../../docs/PREVIEW-BROWSER.md)。
+- 只经 `host.json` + `host.sock` 找到并核对 Host，URL 与凭据不经环境变量或参数。`host.cjs` 与 `host-state.ts` 的检查两边同改。
+- 主进程不显示也不批准本机确认（`PresenceService` 系统表单），页面只读取与取消票据。
+- 预览标签（`browser.cjs`）不可信、到不了 Host 与模型网关；重载只隐藏标签，见 [PREVIEW-BROWSER](../../docs/PREVIEW-BROWSER.md)。
 - 更新只经 `updater.cjs`（[UPDATES](../../docs/UPDATES.md)）：源与公钥仅来自 `update-source.cjs`，页面只得视图；`update-window` 仅主进程。
 - 构建不含测试代码。
 

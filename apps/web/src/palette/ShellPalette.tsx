@@ -7,6 +7,7 @@ import {
   DownloadGlyph,
   DiffGlyph,
   FileGlyph,
+  GlobeGlyph,
   PanelLeftGlyph,
   PanelRightGlyph,
   SearchGlyph,
@@ -58,6 +59,8 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     choose,
     canViewChanges,
     openChangesTab,
+    canBrowser,
+    showSurface,
     toggleSidebar,
     togglePanel,
     startNew,
@@ -221,6 +224,18 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             root: true,
             ...keys('changes'),
             run: inSession(openChangesTab),
+          },
+        ]
+      : []),
+    ...(canBrowser
+      ? [
+          {
+            id: 'browser',
+            label: '浏览器',
+            icon: glyph(GlobeGlyph),
+            root: true,
+            ...keys('browser'),
+            run: inSession(() => showSurface({ kind: 'browser' })),
           },
         ]
       : []),

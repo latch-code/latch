@@ -1660,17 +1660,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         )
 
       // The page's calls are checked twice: arguments in the preload, tabs and addresses in main.
-      expect(await call('open', '../x', `${local}/`)).toEqual({ ok: false, error: 'invalid' })
+      expect(await call('open', '../x', 'ses_e2e', `${local}/`)).toEqual({ ok: false, error: 'invalid' })
       expect(await call('state', `brw_${'z'.repeat(22)}`)).toEqual({ ok: false, error: 'not-found' })
-      expect(await call('open', 'alpha', 'file:///etc/hosts')).toEqual({ ok: false, error: 'invalid-url' })
-      expect(await call('open', 'alpha', `${hostOrigin.hostname}:${hostOrigin.port}`)).toEqual({
+      expect(await call('open', 'alpha', 'ses_e2e', 'file:///etc/hosts')).toEqual({ ok: false, error: 'invalid-url' })
+      expect(await call('open', 'alpha', 'ses_e2e', `${hostOrigin.hostname}:${hostOrigin.port}`)).toEqual({
         ok: false,
         error: 'blocked',
         reason: 'host',
       })
       expect(await guests()).toEqual([])
 
-      const opened = await call('open', 'alpha', `${local}/`)
+      const opened = await call('open', 'alpha', 'ses_e2e', `${local}/`)
       expect(opened).toMatchObject({ ok: true, tabId: expect.stringMatching(/^brw_[A-Za-z0-9_-]{22}$/u) })
       const tabId = opened.tabId as string
       await waitFor(async () => (await guests()).some(guest => guest.url === `${local}/`))
@@ -2052,7 +2052,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await call('navigate', tabId, `${local}/`)).toMatchObject({ ok: true })
       await settled(guestId, `${local}/`)
       await inGuest(guestId, `localStorage.setItem('latch-e2e', 'alpha'); document.cookie = 'latch-e2e=alpha'; true`)
-      const second = await call('open', 'beta', `${local}/`)
+      const second = await call('open', 'beta', 'ses_e2e', `${local}/`)
       expect(second).toMatchObject({ ok: true })
       await waitFor(async () => (await guests()).filter(guest => guest.url === `${local}/`).length === 2)
       const otherId = (await guests()).find(guest => guest.url === `${local}/` && guest.id !== guestId)!.id
@@ -2068,10 +2068,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await call('close', second.tabId)).toEqual({ ok: false, error: 'not-found' })
       await waitFor(async () => !(await guests()).some(guest => guest.id === otherId))
 
-      // A tab belongs to the page that opened it: reloading the page ends it.
+      // A tab lives with the window: reloading the page hides it and the page lists it again; closing the window ends it.
       await page.reload()
+      await page.waitForLoadState('domcontentloaded')
+      expect((await guests()).map(guest => guest.id)).toEqual([guestId])
+      expect(await viewOf(guestId)).toMatchObject([{ visible: false }])
+      expect(await call('list')).toMatchObject({ ok: true, tabs: [{ tabId, projectId: 'alpha', sessionId: 'ses_e2e' }] })
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close())
       await waitFor(async () => (await guests()).length === 0)
-      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.length)).toBe(0)
       expect(hostTls.connections()).toBe(0)
     } finally {
       await application?.close()

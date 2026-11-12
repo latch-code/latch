@@ -6,6 +6,7 @@ import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
+import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
 import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
@@ -51,6 +52,14 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     deliveryOpen,
     canTerminal,
     terminalOpen,
+    browserShell,
+    browserProject,
+    canBrowser,
+    browserOpen,
+    browserRequest,
+    openInBrowser,
+    attachmentDraft,
+    infoPage,
     openChangesTab,
     showSurface,
     launcherTakesFocus,
@@ -178,11 +187,38 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 sessionId={summary.id}
                 shown={terminalOpen && !fileTabs.active}
                 onCompose={canCompose ? compose : undefined}
+                {...(canBrowser ? { onOpenService: openInBrowser } : {})}
               />
             ),
           }
         : {})}
       terminalOpen={terminalOpen}
+      {...(summary && canBrowser && browserShell && browserProject
+        ? {
+            browser: (
+              <BrowserPanel
+                key={summary.id}
+                shell={browserShell}
+                sessionId={summary.id}
+                projectId={browserProject.id}
+                deviceId={snapshot.device.id}
+                shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)}
+                terminals={canTerminal}
+                request={browserRequest}
+                onCompose={canCompose ? compose : undefined}
+                onAttach={
+                  canCompose && catalog?.features?.attachments === true
+                    ? files => {
+                        attachmentDraft.add(files)
+                        composerRef.current?.focus()
+                      }
+                    : undefined
+                }
+              />
+            ),
+          }
+        : {})}
+      browserOpen={browserOpen}
       {...(summary && (phone || noCrumb)
         ? {
             launcherNote: (

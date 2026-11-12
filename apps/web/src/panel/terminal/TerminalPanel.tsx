@@ -39,6 +39,8 @@ export interface TerminalPanelProps {
   shown: boolean
   /** Puts text into the session's composer draft without sending it; absent while the composer takes none. */
   onCompose?: ((text: string) => void) | undefined
+  /** Opens a local service in the 浏览器 tab (the desktop app); ⌘-click still goes to the system browser. */
+  onOpenService?: ((origin: string) => void) | undefined
 }
 
 /** The size a new terminal opens at: what fits the screen area, by the terminal font's cell. */
@@ -65,7 +67,7 @@ const tabIcon = (summary: TerminalSummary) => (summary.status !== 'running' ? Sq
  * screen follows the Host's stream; the bar holds the local services the output announced and 「加入对话」. Only this Mac
  * gets here (the Host offers `catalog.features.terminal` nowhere else).
  */
-export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProps) {
+export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: TerminalPanelProps) {
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
   const terminals = useTerminals({ sessionId, shown, size: () => measuredSize(screens.current) })
@@ -128,8 +130,19 @@ export function TerminalPanel({ sessionId, shown, onCompose }: TerminalPanelProp
         actions={
           <>
             {services.map(service => (
-              <Tooltip key={service.origin} content={`在浏览器中打开 ${service.origin}`}>
-                <a className="terminal-service" href={service.origin} target="_blank" rel="noopener noreferrer">
+              <Tooltip
+                key={service.origin}
+                content={onOpenService ? `在浏览器标签里打开 ${service.origin} · ⌘ 点按用系统浏览器` : `在浏览器中打开 ${service.origin}`}>
+                <a
+                  className="terminal-service"
+                  href={service.origin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={event => {
+                    if (!onOpenService || event.metaKey || event.ctrlKey) return
+                    event.preventDefault()
+                    onOpenService(service.origin)
+                  }}>
                   <Icon icon={GlobeGlyph} size={12} />
                   {serviceLabel(service)}
                 </a>

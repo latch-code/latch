@@ -218,6 +218,114 @@ export interface ShellComputers {
   remove?(hostId: string): Promise<ComputerResult>
 }
 
+/** A tab's viewport: 适应面板 (`fit`) or a preset size, turned when rotated. */
+export type BrowserPreset = 'fit' | 'phone' | 'tablet' | 'desktop'
+export type BrowserColorScheme = 'system' | 'light' | 'dark'
+
+/** A preview tab as main reports it (apps/desktop/src/browser.cjs). */
+export interface BrowserTabState {
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  zoom: number
+  crashed: boolean
+  /** The Chromium network error of the last failed main-frame load, negative; null when it did not fail. */
+  error: number | null
+  viewport: { preset: BrowserPreset; rotated: boolean }
+  colorScheme: BrowserColorScheme
+  /** Console errors and warnings and failed requests since the page's document started. */
+  logs: { errors: number; warnings: number; failed: number }
+}
+
+export interface BrowserImage {
+  type: 'image/png'
+  width: number
+  height: number
+  data: Uint8Array
+}
+
+export interface BrowserRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** The element 标注 found: what the page presents there, never form values. */
+export interface BrowserTarget {
+  url: string
+  tag: string
+  selector: string
+  text: string
+  rect: BrowserRect
+  image: BrowserImage | null
+}
+
+export interface BrowserConsoleEntry {
+  /** Main's sequence number for the tab's list. */
+  id: number
+  level: 'info' | 'warning' | 'error' | 'debug'
+  text: string
+  source: string
+  line: number
+  time: number
+}
+
+/** A request's summary: never its headers or bodies, and its address without the query. */
+export interface BrowserNetworkEntry {
+  id: number
+  method: string
+  url: string
+  type: string
+  status: number | null
+  error: string | null
+  duration: number | null
+  size: number | null
+  time: number
+}
+
+export type BrowserFailure = { ok: false; error: string; reason?: string }
+export type BrowserResult<T extends object = object> = ({ ok: true } & T) | BrowserFailure
+
+export type BrowserEvent =
+  | { type: 'state'; tabId: string; state: BrowserTabState }
+  | { type: 'notice'; tabId: string; notice: 'permission' | 'download' | 'popup' | 'navigation' | 'certificate'; detail?: string }
+  | { type: 'closed'; tabId: string }
+  /** Main hid the tab (the page that placed it went away): it waits to be placed again. */
+  | { type: 'hidden'; tabId: string }
+
+/**
+ * The 浏览器 tab's tabs, which the desktop app's main process keeps: version 2 ties each to a session, lists them for a
+ * page that reloaded, and adds viewports, color schemes, 选取元素 and the console and network lists.
+ */
+export interface ShellBrowser {
+  protocolVersion: number
+  open(projectId: string, sessionId: string, url?: string | null): Promise<BrowserResult<{ tabId: string; state: BrowserTabState }>>
+  list(): Promise<BrowserResult<{ tabs: Array<{ tabId: string; projectId: string; sessionId: string; state: BrowserTabState }> }>>
+  close(tabId: string): Promise<BrowserResult>
+  navigate(tabId: string, url: string): Promise<BrowserResult<{ url: string }>>
+  back(tabId: string): Promise<BrowserResult>
+  forward(tabId: string): Promise<BrowserResult>
+  reload(tabId: string): Promise<BrowserResult>
+  stop(tabId: string): Promise<BrowserResult>
+  setBounds(tabId: string, bounds: BrowserRect | null): Promise<BrowserResult>
+  occlude(tabId: string, occluded: boolean): Promise<BrowserResult<{ image: BrowserImage | null }>>
+  focus(tabId: string): Promise<BrowserResult>
+  capture(tabId: string): Promise<BrowserResult<{ image: BrowserImage }>>
+  annotate(tabId: string, point: { x: number; y: number }): Promise<BrowserResult<{ target: BrowserTarget }>>
+  hitTest(tabId: string, point: { x: number; y: number }): Promise<BrowserResult<{ target: { tag: string; rect: BrowserRect } }>>
+  setViewport(tabId: string, preset: BrowserPreset, rotated: boolean): Promise<BrowserResult>
+  setColorScheme(tabId: string, scheme: BrowserColorScheme): Promise<BrowserResult>
+  logs(tabId: string): Promise<BrowserResult<{ console: BrowserConsoleEntry[]; network: BrowserNetworkEntry[] }>>
+  zoom(tabId: string, direction: 'in' | 'out' | 'reset'): Promise<BrowserResult<{ zoom: number }>>
+  devTools(tabId: string): Promise<BrowserResult>
+  clearData(projectId: string): Promise<BrowserResult>
+  state(tabId: string): Promise<BrowserResult<{ state: BrowserTabState }>>
+  subscribe(callback: (event: BrowserEvent) => void): () => void
+}
+
 /** What the Electron preload exposes; nothing else crosses into the renderer. */
 export interface LatchShell {
   /**
@@ -270,6 +378,8 @@ export interface LatchShell {
   }
   /** Shells from before updates do not have it. */
   updates?: ShellUpdates
+  /** The 浏览器 tab's tabs; version 1 shells (no sessions, no list) are not used. Never on another computer's page. */
+  browser?: ShellBrowser
   /** Code or 我的 Agent chosen in the menu bar. Shells from before the two places do not have it. */
   spaces?: { onShow(callback: (space: 'code' | 'agents') => void): () => void }
 }
@@ -335,4 +445,14 @@ export function revealLabel(platform: string | undefined): string {
   if (platform === 'darwin') return '在访达中显示'
   if (platform === 'win32') return '在资源管理器中显示'
   return '在文件管理器中显示'
+}
+
+/** The preview browser, only from a shell that ties tabs to sessions and lists them again (version 2 and later). */
+export function shellBrowser(): ShellBrowser | null {
+  const shell = currentShell()
+  const browser = shell?.browser
+  if (!shell || shell.remote || !browser || typeof browser.protocolVersion !== 'number' || browser.protocolVersion < 2) return null
+  return typeof browser.list === 'function' && typeof browser.open === 'function' && typeof browser.subscribe === 'function'
+    ? browser
+    : null
 }

@@ -20,9 +20,14 @@ type Result = { ok: true; [key: string]: unknown } | { ok: false; error: string;
 interface Controller {
   owns(contents: unknown): boolean
   guard(contents: unknown): void
-  blockHost(state: unknown): void
+  blockHost(state: unknown, info?: unknown): void
   attach(window: unknown): void
-  open(input: { projectId: string; url: string | null }): Result & { tabId?: string }
+  open(input: { projectId: string; sessionId: string; url: string | null }): Result & { tabId?: string }
+  list(): Result
+  viewport(input: { tabId: string; preset: string; rotated: boolean }): Result
+  colorScheme(input: { tabId: string; scheme: string }): Promise<Result>
+  hitTest(input: { tabId: string; point: { x: number; y: number } }): Promise<Result>
+  logs(input: { tabId: string }): Result
   close(input: { tabId: string }): Result
   navigate(input: { tabId: string; url: string }): Result
   go(input: { tabId: string; action: string }): Result
@@ -41,6 +46,10 @@ const browser = require('../src/browser.cjs') as {
   CHANNELS: Record<string, string>
   TAB_LIMIT: number
   CAPTURE_LIMITS: { edge: number; bytes: number }
+  LOG_REPORTED: number
+  SANDBOX_WARNING: string
+  ELECTRON_CSP_WARNING: string
+  latchOwnWarning(level: string, message: unknown): boolean
   ANNOTATION_WORLD: number
   INPUTS: Record<string, (input: unknown) => unknown>
   isPrivateHost(hostname: string): boolean
@@ -63,6 +72,12 @@ const browser = require('../src/browser.cjs') as {
   annotationOf(raw: unknown): { tag: string; selector: string; text: string; rect: object } | undefined
   annotationScript(x: number, y: number): string
   nextZoom(current: number, direction: string): number
+  hitOf(raw: unknown): { tag: string; rect: object } | undefined
+  hitTestScript(x: number, y: number): string
+  viewportSize(viewport: { preset: string; rotated: boolean }): { width: number; height: number } | null
+  emulationScale(size: { width: number; height: number } | null, bounds: { width: number; height: number } | null): number
+  logUrl(raw: unknown): string
+  consoleText(raw: unknown): string
   createPreviewBrowser(options: Record<string, unknown>): Controller
   handleBrowserRequests(options: {
     ipcMain: { handle(channel: string, handler: Handler): void }
@@ -74,7 +89,12 @@ type Handler = (event: unknown, input: unknown) => unknown
 /** `latchShell.browser` as the page sees it; arguments are unknown, since the preload checks them. */
 interface PreloadBrowser {
   protocolVersion: number
-  open(projectId?: unknown, url?: unknown): Promise<unknown>
+  open(projectId?: unknown, sessionId?: unknown, url?: unknown): Promise<unknown>
+  list(): Promise<unknown>
+  hitTest(tabId: unknown, point: unknown): Promise<unknown>
+  setViewport(tabId: unknown, preset: unknown, rotated: unknown): Promise<unknown>
+  setColorScheme(tabId: unknown, scheme: unknown): Promise<unknown>
+  logs(tabId: unknown): Promise<unknown>
   close(tabId: unknown): Promise<unknown>
   navigate(tabId: unknown, url: unknown): Promise<unknown>
   back(tabId: unknown): Promise<unknown>
@@ -94,6 +114,8 @@ interface PreloadBrowser {
 }
 
 const HOST = `h-${'a'.repeat(52)}.localhost`
+/** A query that carries a credential's value, which no list may keep (spelled apart for the repository's secret scan). */
+const QUERY = ['to', 'ken=fixture-value'].join('')
 const PORTS = new Set([4317, 4318])
 
 /** A PNG header of the given size, padded to `bytes`. */
@@ -128,7 +150,10 @@ class FakeImage {
   }
 }
 
+type RequestDetails = Record<string, unknown> & { url: string; webContentsId?: number }
 class FakeSession extends EventEmitter {
+  completed?: (details: RequestDetails) => void
+  errorOccurred?: (details: RequestDetails) => void
   permissionRequest?: (contents: unknown, permission: string, callback: (granted: boolean) => void) => void
   permissionCheck?: () => boolean
   devicePermission?: () => boolean
@@ -145,6 +170,12 @@ class FakeSession extends EventEmitter {
     },
     onHeadersReceived: (listener: FakeSession['headersReceived']) => {
       this.headersReceived = listener
+    },
+    onCompleted: (listener: FakeSession['completed']) => {
+      this.completed = listener
+    },
+    onErrorOccurred: (listener: FakeSession['errorOccurred']) => {
+      this.errorOccurred = listener
     },
   }
   setPermissionRequestHandler(handler: FakeSession['permissionRequest']) {
@@ -180,17 +211,41 @@ class FakeSession extends EventEmitter {
     return answer
   }
   /** What the request filter answers for one request. */
-  allows(url: string, webContentsId?: number): boolean {
+  allows(url: string, webContentsId?: number, extra: Record<string, unknown> = {}): boolean {
     let cancel = true
-    this.beforeRequest?.({ url, ...(webContentsId === undefined ? {} : { webContentsId }) }, response => {
+    this.beforeRequest?.({ url, ...extra, ...(webContentsId === undefined ? {} : { webContentsId }) }, response => {
       cancel = response.cancel
     })
     return !cancel
   }
 }
 
+/** The tab's debugger, which main attaches only for 外观. */
+class FakeDebugger extends EventEmitter {
+  attached = false
+  commands: Array<[string, unknown]> = []
+  failAttach = false
+  isAttached() {
+    return this.attached
+  }
+  attach(version: string) {
+    if (this.failAttach) throw new Error('Another debugger is already attached')
+    this.attached = version === '1.3'
+  }
+  detach() {
+    this.attached = false
+    this.emit('detach', {}, 'target closed')
+  }
+  sendCommand(method: string, params: unknown) {
+    this.commands.push([method, params])
+    return Promise.resolve({})
+  }
+}
+
 let nextContentsId = 100
 class FakeContents extends EventEmitter {
+  readonly debugger = new FakeDebugger()
+  emulation: Array<Record<string, unknown> | null> = []
   readonly id = nextContentsId++
   type = 'window'
   url = ''
@@ -295,6 +350,16 @@ class FakeContents extends EventEmitter {
   sendInputEvent(input: unknown) {
     this.inputs.push(input)
   }
+  audioMuted = false
+  setAudioMuted(muted: boolean) {
+    this.audioMuted = muted
+  }
+  enableDeviceEmulation(parameters: Record<string, unknown>) {
+    this.emulation.push(parameters)
+  }
+  disableDeviceEmulation() {
+    this.emulation.push(null)
+  }
   send(channel: string, value: Record<string, unknown>) {
     this.sent.push([channel, value])
   }
@@ -361,8 +426,8 @@ function setup() {
     newTabId: () => `brw_${String(++tabs).padStart(22, 'x')}`,
   })
   controller.blockHost({ loopbackOrigin: `http://${HOST}:4317`, tlsOrigin: 'https://192.168.1.20:4318' })
-  const open = (url: string | null = 'localhost:5173', projectId = 'alpha') => {
-    const result = controller.open({ projectId, url })
+  const open = (url: string | null = 'localhost:5173', projectId = 'alpha', sessionId = 'ses_one') => {
+    const result = controller.open({ projectId, sessionId, url })
     if (!result.ok) throw new Error(`open failed: ${result.error}`)
     const view = window.children.at(-1)!
     return { tabId: String(result.tabId), view, contents: view.webContents }
@@ -590,18 +655,45 @@ describe('preview browser inputs', () => {
 
   it('takes exactly the keys of each call with values of their shape, and nothing inherited', () => {
     const { INPUTS } = browser
-    expect(INPUTS.open({ projectId: 'alpha', url: null })).toEqual({ projectId: 'alpha', url: null })
-    expect(INPUTS.open({ projectId: 'alpha', url: 'localhost:5173' })).toEqual({ projectId: 'alpha', url: 'localhost:5173' })
+    const sessionId = 'ses_one'
+    expect(INPUTS.open({ projectId: 'alpha', sessionId, url: null })).toEqual({ projectId: 'alpha', sessionId, url: null })
+    expect(INPUTS.open({ projectId: 'alpha', sessionId, url: 'localhost:5173' })).toEqual({
+      projectId: 'alpha',
+      sessionId,
+      url: 'localhost:5173',
+    })
     for (const bad of [
-      { projectId: '../alpha', url: null },
-      { projectId: 'alpha' },
-      { projectId: 'alpha', url: null, preload: '/tmp/x.js' },
-      { projectId: 'alpha', url: 'x'.repeat(2049) },
-      Object.create({ projectId: 'alpha', url: null }),
+      { projectId: '../alpha', sessionId, url: null },
+      { projectId: 'alpha', url: null },
+      { projectId: 'alpha', sessionId: '../x', url: null },
+      { projectId: 'alpha', sessionId: '', url: null },
+      { projectId: 'alpha', sessionId },
+      { projectId: 'alpha', sessionId, url: null, preload: '/tmp/x.js' },
+      { projectId: 'alpha', sessionId, url: 'x'.repeat(2049) },
+      Object.create({ projectId: 'alpha', sessionId, url: null }),
       null,
       'alpha',
     ])
       expect(INPUTS.open(bad)).toBeUndefined()
+    expect(INPUTS.none({})).toEqual({})
+    for (const bad of [{ tabId }, null, Object.create(null, { x: { value: 1, enumerable: true } })])
+      expect(INPUTS.none(bad)).toBeUndefined()
+    expect(INPUTS.viewport({ tabId, preset: 'phone', rotated: true })).toEqual({ tabId, preset: 'phone', rotated: true })
+    expect(INPUTS.viewport({ tabId, preset: 'fit', rotated: false })).toEqual({ tabId, preset: 'fit', rotated: false })
+    for (const bad of [
+      { tabId, preset: 'watch', rotated: false },
+      { tabId, preset: 'phone' },
+      { tabId, preset: 'phone', rotated: 'yes' },
+      { tabId, preset: 'phone', rotated: false, width: 10 },
+      { tabId: 'brw_x', preset: 'phone', rotated: false },
+    ])
+      expect(INPUTS.viewport(bad)).toBeUndefined()
+    expect(INPUTS.colorScheme({ tabId, scheme: 'dark' })).toEqual({ tabId, scheme: 'dark' })
+    for (const bad of [{ tabId, scheme: 'sepia' }, { tabId }, { tabId, scheme: 'dark', media: 'print' }])
+      expect(INPUTS.colorScheme(bad)).toBeUndefined()
+    expect(INPUTS.hitTest({ tabId, point: { x: 1, y: 2 } })).toEqual({ tabId, point: { x: 1, y: 2 } })
+    for (const bad of [{ tabId, point: { x: -1, y: 2 } }, { tabId, point: { x: 1, y: 2, z: 3 } }, { tabId }])
+      expect(INPUTS.hitTest(bad)).toBeUndefined()
     expect(INPUTS.tab({ tabId })).toEqual({ tabId })
     for (const bad of [{ tabId: 'brw_short' }, { tabId, extra: 1 }, { tabId: 7 }]) expect(INPUTS.tab(bad)).toBeUndefined()
     expect(INPUTS.go({ tabId, action: 'back' })).toEqual({ tabId, action: 'back' })
@@ -775,12 +867,18 @@ describe('preview browser tabs', () => {
 
   it('refuses addresses before making a tab, and stops at the tab limit', () => {
     const { controller, window } = setup()
-    expect(controller.open({ projectId: 'alpha', url: 'file:///etc/hosts' })).toEqual({ ok: false, error: 'invalid-url' })
-    expect(controller.open({ projectId: 'alpha', url: `${HOST}:4317` })).toEqual({ ok: false, error: 'blocked', reason: 'host' })
-    expect(controller.open({ projectId: 'alpha', url: '127.0.0.1:4317' })).toEqual({ ok: false, error: 'blocked', reason: 'host' })
+    const sessionId = 'ses_one'
+    expect(controller.open({ projectId: 'alpha', sessionId, url: 'file:///etc/hosts' })).toEqual({ ok: false, error: 'invalid-url' })
+    expect(controller.open({ projectId: 'alpha', sessionId, url: `${HOST}:4317` })).toEqual({ ok: false, error: 'blocked', reason: 'host' })
+    expect(controller.open({ projectId: 'alpha', sessionId, url: '127.0.0.1:4317' })).toEqual({
+      ok: false,
+      error: 'blocked',
+      reason: 'host',
+    })
     expect(window.children).toHaveLength(0)
-    for (let index = 0; index < browser.TAB_LIMIT; index++) expect(controller.open({ projectId: 'alpha', url: null }).ok).toBe(true)
-    expect(controller.open({ projectId: 'alpha', url: null })).toEqual({ ok: false, error: 'tab-limit' })
+    for (let index = 0; index < browser.TAB_LIMIT; index++)
+      expect(controller.open({ projectId: 'alpha', sessionId: `ses_${index % 2}`, url: null }).ok).toBe(true)
+    expect(controller.open({ projectId: 'alpha', sessionId: 'ses_new', url: null })).toEqual({ ok: false, error: 'tab-limit' })
   })
 
   it('refuses every permission, device, download and request to the Host in the partition, and says so quietly', () => {
@@ -1139,6 +1237,9 @@ describe('preview browser tabs', () => {
           zoom: 1,
           crashed: false,
           error: -202,
+          viewport: { preset: 'fit', rotated: false },
+          colorScheme: 'system',
+          logs: { errors: 0, warnings: 0, failed: 0 },
         },
       },
     ])
@@ -1149,20 +1250,46 @@ describe('preview browser tabs', () => {
     expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { error: null } })
   })
 
-  it('ends tabs with the page that opened them, and when a guest closes itself', () => {
+  it('keeps tabs, hidden, when the page reloads or its renderer goes; ends them with the window or when a guest closes', async () => {
     const { controller, open, window, events } = setup()
     controller.attach(window)
     const first = open()
-    const second = open()
+    const second = open('localhost:3000', 'beta', 'ses_two')
     first.contents.close()
     expect(window.children).toEqual([second.view])
     expect(events('closed')).toEqual([{ tabId: first.tabId, type: 'closed' }])
     expect(controller.state({ tabId: first.tabId })).toEqual({ ok: false, error: 'not-found' })
-    window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
-    expect(window.children).toEqual([second.view])
+    controller.setBounds({ tabId: second.tabId, bounds: { x: 0, y: 0, width: 300, height: 300 } })
+    await controller.occlude({ tabId: second.tabId, occluded: true })
+    controller.setBounds({ tabId: second.tabId, bounds: { x: 0, y: 0, width: 300, height: 300 } })
+    second.contents.focused = true
+    await controller.occlude({ tabId: second.tabId, occluded: false })
+    // A navigation that only starts (and that the app's rules may refuse) leaves the tabs where they are.
     window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
-    expect(window.children).toEqual([])
-    expect(second.contents.destroyed).toBe(true)
+    expect(second.view.visible).toBe(true)
+    expect(second.contents.audioMuted).toBe(false)
+    window.webContents.emit('did-navigate')
+    // Still there, hidden and without the keyboard, until the page that comes back lists and places it.
+    expect(window.children).toEqual([second.view])
+    expect(second.contents.destroyed).toBe(false)
+    expect(second.view.visible).toBe(false)
+    expect(window.webContents.focused).toBe(true)
+    // Out of sight it is muted, and the page hears it was hidden so it places it again from scratch.
+    expect(second.contents.audioMuted).toBe(true)
+    expect(events('hidden')).toEqual([{ tabId: second.tabId, type: 'hidden' }])
+    expect(controller.list()).toEqual({
+      ok: true,
+      tabs: [
+        { tabId: second.tabId, projectId: 'beta', sessionId: 'ses_two', state: expect.objectContaining({ url: 'http://localhost:3000/' }) },
+      ],
+    })
+    // Not occluded any more: placing it shows it at once.
+    controller.setBounds({ tabId: second.tabId, bounds: { x: 0, y: 0, width: 300, height: 300 } })
+    expect(second.view.visible).toBe(true)
+    window.webContents.emit('render-process-gone', {}, { reason: 'crashed' })
+    expect(second.view.visible).toBe(false)
+    expect(second.contents.destroyed).toBe(false)
+    expect(controller.close({ tabId: second.tabId })).toEqual({ ok: true })
     const third = open()
     expect(controller.close({ tabId: third.tabId })).toEqual({ ok: true })
     expect(controller.close({ tabId: third.tabId })).toEqual({ ok: false, error: 'not-found' })
@@ -1170,6 +1297,290 @@ describe('preview browser tabs', () => {
     window.destroyed = true
     window.emit('closed')
     expect(fourth.contents.destroyed).toBe(true)
+  })
+})
+
+describe('preview browser, version 2', () => {
+  it('shuts the model gateway port host-info names, on any local name, and nothing for a malformed port', () => {
+    const { controller, sessions, open } = setup()
+    open()
+    const session = sessions.get('latch-preview-alpha')!
+    expect(session.allows('http://127.0.0.1:47123/v1/chat/completions')).toBe(true)
+    controller.blockHost({ loopbackOrigin: `http://${HOST}:4317` }, { modelGatewayPort: 47123 })
+    for (const url of ['http://127.0.0.1:47123/v1/chat/completions', 'http://localhost:47123/', 'ws://[::1]:47123/'])
+      expect(session.allows(url), url).toBe(false)
+    controller.blockHost(undefined, { modelGatewayPort: '47124' })
+    controller.blockHost(undefined, { modelGatewayPort: 70_000 })
+    expect(session.allows('http://127.0.0.1:47124/')).toBe(true)
+    expect(verdict({ url: 'http://localhost:47123/', kind: 'typed' })).toEqual({ ok: true })
+    expect(controller.navigate({ tabId: open().tabId, url: 'localhost:47123' })).toEqual({ ok: false, error: 'blocked', reason: 'host' })
+  })
+
+  it('lists every tab of the window with its session and project, and ties each new tab to its session', () => {
+    const { controller, open } = setup()
+    expect(controller.list()).toEqual({ ok: true, tabs: [] })
+    const one = open('localhost:5173', 'alpha', 'ses_one')
+    const two = open(null, 'alpha', 'ses_two')
+    expect(controller.list()).toMatchObject({
+      ok: true,
+      tabs: [
+        { tabId: one.tabId, projectId: 'alpha', sessionId: 'ses_one', state: { url: 'http://localhost:5173/' } },
+        { tabId: two.tabId, projectId: 'alpha', sessionId: 'ses_two', state: { url: '' } },
+      ],
+    })
+  })
+
+  it('lays a preset out at its size, scaled into the view and never up, turned when rotated, and back to the panel', () => {
+    expect(browser.viewportSize({ preset: 'phone', rotated: false })).toEqual({ width: 390, height: 844 })
+    expect(browser.viewportSize({ preset: 'phone', rotated: true })).toEqual({ width: 844, height: 390 })
+    expect(browser.viewportSize({ preset: 'fit', rotated: true })).toBeNull()
+    expect(browser.emulationScale({ width: 390, height: 844 }, { width: 195, height: 422 })).toBe(0.5)
+    expect(browser.emulationScale({ width: 390, height: 844 }, { width: 2000, height: 2000 })).toBe(1)
+    const { controller, open, events } = setup()
+    const { tabId, contents } = open()
+    expect(controller.viewport({ tabId, preset: 'phone', rotated: false })).toMatchObject({
+      ok: true,
+      viewport: { preset: 'phone', rotated: false },
+      size: { width: 390, height: 844 },
+    })
+    controller.setBounds({ tabId, bounds: { x: 100, y: 100, width: 195, height: 422 } })
+    expect(contents.emulation.at(-1)).toEqual({
+      screenPosition: 'mobile',
+      screenSize: { width: 390, height: 844 },
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: { width: 390, height: 844 },
+      scale: 0.5,
+    })
+    controller.viewport({ tabId, preset: 'desktop', rotated: true })
+    expect(contents.emulation.at(-1)).toMatchObject({ screenPosition: 'desktop', viewSize: { width: 800, height: 1280 } })
+    // A new document keeps it.
+    const before = contents.emulation.length
+    contents.emit('did-navigate')
+    expect(contents.emulation).toHaveLength(before + 1)
+    // 适应面板 cannot be rotated, and ends the emulation.
+    expect(controller.viewport({ tabId, preset: 'fit', rotated: true })).toMatchObject({
+      ok: true,
+      viewport: { preset: 'fit', rotated: false },
+    })
+    expect(contents.emulation.at(-1)).toBeNull()
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { viewport: { preset: 'fit', rotated: false } } })
+    expect(controller.viewport({ tabId: `brw_${'z'.repeat(22)}`, preset: 'phone', rotated: false })).toEqual({
+      ok: false,
+      error: 'not-found',
+    })
+    expect(events('state')).toBeDefined()
+  })
+
+  it('finds the element under a point with the preset scale, and annotates through it too', async () => {
+    const { controller, open, window } = setup()
+    const { tabId, contents } = open()
+    window.webContents.zoom = 1
+    controller.viewport({ tabId, preset: 'phone', rotated: false })
+    controller.setBounds({ tabId, bounds: { x: 0, y: 0, width: 195, height: 422 } })
+    contents.isolatedResult = { tag: 'BUTTON', rect: { x: 20, y: 40, width: 100, height: 20 } }
+    const hit = await controller.hitTest({ tabId, point: { x: 10, y: 20 } })
+    expect(contents.isolated.at(-1)!.world).toBe(browser.ANNOTATION_WORLD)
+    // The page's point 10,20 is the guest's 20,40 at half scale; the box comes back halved.
+    expect(contents.isolated.at(-1)!.code).toContain('"x":20,"y":40')
+    expect(contents.isolated.at(-1)!.code).not.toContain('selector')
+    expect(hit).toEqual({ ok: true, target: { tag: 'button', rect: { x: 10, y: 20, width: 50, height: 10 } } })
+    contents.isolatedResult = { tag: 'button', rect: { x: 1, y: 2, width: 3, height: 4 }, text: 'secret' }
+    expect(await controller.hitTest({ tabId, point: { x: 1, y: 1 } })).toEqual({ ok: false, error: 'no-target' })
+    expect(browser.hitOf({ tag: '<img>', rect: { x: 0, y: 0, width: 1, height: 1 } })).toBeUndefined()
+    // One hit test at a time; a second one meanwhile is answered busy.
+    let finish: (value: unknown) => void = () => {}
+    contents.executeJavaScriptInIsolatedWorld = () =>
+      new Promise(done => {
+        finish = done
+      })
+    const first = controller.hitTest({ tabId, point: { x: 1, y: 1 } })
+    expect(await controller.hitTest({ tabId, point: { x: 1, y: 1 } })).toEqual({ ok: false, error: 'busy' })
+    finish({ tag: 'p', rect: { x: 0, y: 0, width: 2, height: 2 } })
+    expect(await first).toMatchObject({ ok: true, target: { tag: 'p' } })
+    contents.executeJavaScriptInIsolatedWorld = (world: number, scripts: Array<{ code: string }>) => {
+      contents.isolated.push({ world, code: scripts[0]!.code })
+      return Promise.resolve({ tag: 'button', selector: '#save', text: '保存', rect: { x: 20, y: 40, width: 100, height: 20 } })
+    }
+    const marked = await controller.annotate({ tabId, point: { x: 10, y: 20 } })
+    expect(contents.isolated.at(-1)!.code).toContain('"x":20,"y":40')
+    expect(marked).toMatchObject({ ok: true, target: { selector: '#save', rect: { x: 10, y: 20, width: 50, height: 10 } } })
+  })
+
+  it('emulates the color scheme through the tab’s own debugger only while one is chosen, and says when it cannot', async () => {
+    const { controller, open } = setup()
+    const { tabId, contents } = open()
+    expect(await controller.colorScheme({ tabId, scheme: 'dark' })).toEqual({ ok: true, colorScheme: 'dark' })
+    expect(contents.debugger.attached).toBe(true)
+    expect(contents.debugger.commands).toEqual([
+      ['Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }],
+    ])
+    contents.emit('did-navigate')
+    await new Promise(done => setTimeout(done, 0))
+    expect(contents.debugger.commands).toHaveLength(2)
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'dark' } })
+    expect(await controller.colorScheme({ tabId, scheme: 'system' })).toEqual({ ok: true, colorScheme: 'system' })
+    expect(contents.debugger.attached).toBe(false)
+    expect(contents.debugger.commands.at(-1)).toEqual([
+      'Emulation.setEmulatedMedia',
+      { features: [{ name: 'prefers-color-scheme', value: '' }] },
+    ])
+    // Someone else's debugger session: no emulation, and the tab follows the system.
+    contents.debugger.failAttach = true
+    expect(await controller.colorScheme({ tabId, scheme: 'light' })).toEqual({ ok: false, error: 'emulation-failed' })
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'system' } })
+    contents.debugger.failAttach = false
+    await controller.colorScheme({ tabId, scheme: 'light' })
+    // A command that fails after main attached: main detaches again, and the tab follows the system.
+    await controller.colorScheme({ tabId, scheme: 'system' })
+    const send = contents.debugger.sendCommand.bind(contents.debugger)
+    contents.debugger.sendCommand = () => Promise.reject(new Error('target closed'))
+    expect(await controller.colorScheme({ tabId, scheme: 'dark' })).toEqual({ ok: false, error: 'emulation-failed' })
+    expect(contents.debugger.attached).toBe(false)
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'system' } })
+    contents.debugger.sendCommand = send
+    // Quick choices run one at a time and end on the last: attached and dark, never detached with dark chosen.
+    const quick = [
+      controller.colorScheme({ tabId, scheme: 'dark' }),
+      controller.colorScheme({ tabId, scheme: 'system' }),
+      controller.colorScheme({ tabId, scheme: 'dark' }),
+    ]
+    await Promise.all(quick)
+    expect(contents.debugger.attached).toBe(true)
+    expect(contents.debugger.commands.at(-1)).toEqual([
+      'Emulation.setEmulatedMedia',
+      { features: [{ name: 'prefers-color-scheme', value: 'dark' }] },
+    ])
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'dark' } })
+    // The debugger going away (developer tools taking over) puts the tab back on the system's scheme.
+    contents.debugger.attached = false
+    contents.debugger.emit('detach', {}, 'replaced')
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'system' } })
+  })
+
+  it('keeps the console and the request summaries per tab, bounded, cut and without queries, and counts what failed', async () => {
+    const { controller, open, sessions, events } = setup()
+    const { tabId, contents } = open()
+    const other = open('localhost:3000')
+    const session = sessions.get('latch-preview-alpha')!
+    contents.emit('console-message', {
+      level: 'error',
+      message: `bad ${'x'.repeat(900)}‮\nsecond line`,
+      lineNumber: 12,
+      sourceId: `http://localhost:5173/src/app.ts?${QUERY}`,
+    })
+    contents.emit('console-message', { level: 'warning', message: 'careful', lineNumber: -1, sourceId: '' })
+    contents.emit('console-message', { level: 'verbose', message: 42 })
+    // Warnings only a Latch preview shows: left out, matched exactly.
+    contents.emit('console-message', { level: 'warning', message: browser.SANDBOX_WARNING })
+    contents.emit('console-message', { level: 'warning', message: browser.ELECTRON_CSP_WARNING })
+    session.allows(`http://localhost:5173/api/items?${QUERY}`, contents.id, { id: 1, timestamp: 1000 })
+    session.completed?.({
+      id: 1,
+      url: `http://localhost:5173/api/items?${QUERY}`,
+      method: 'POST',
+      webContentsId: contents.id,
+      resourceType: 'xhr',
+      statusCode: 500,
+      timestamp: 1042,
+      responseHeaders: { 'Content-Length': ['123'], 'Set-Cookie': ['sid=1'] },
+    })
+    session.errorOccurred?.({
+      id: 2,
+      url: 'http://127.0.0.1:4317/link/api/health',
+      method: 'GET',
+      webContentsId: contents.id,
+      resourceType: 'other',
+      timestamp: 2000,
+      error: 'net::ERR_BLOCKED_BY_CLIENT',
+    })
+    session.completed?.({
+      id: 3,
+      url: 'http://localhost:3000/',
+      method: 'GET',
+      webContentsId: other.contents.id,
+      resourceType: 'mainFrame',
+      statusCode: 200,
+      timestamp: 1,
+    })
+    session.completed?.({ id: 4, url: 'http://elsewhere/', method: 'GET', webContentsId: 999_999, statusCode: 200, timestamp: 1 })
+    const logs = controller.logs({ tabId }) as unknown as {
+      console: Array<Record<string, unknown>>
+      network: Array<Record<string, unknown>>
+    }
+    expect(logs.console).toHaveLength(3)
+    const [first, second, third] = logs.console
+    expect(first).toMatchObject({ level: 'error', line: 12, source: 'http://localhost:5173/src/app.ts' })
+    expect(String(first!.text).length).toBeLessThanOrEqual(500)
+    expect(String(first!.text)).not.toContain('‮')
+    expect(second).toMatchObject({ level: 'warning', text: 'careful', line: 0, source: '' })
+    expect(third).toMatchObject({ level: 'info', text: '' })
+    expect(logs.network).toEqual([
+      {
+        id: 1,
+        method: 'POST',
+        url: 'http://localhost:5173/api/items',
+        type: 'xhr',
+        status: 500,
+        error: null,
+        duration: 42,
+        size: 123,
+        time: 1042,
+      },
+      {
+        id: 2,
+        method: 'GET',
+        url: 'http://127.0.0.1:4317/link/api/health',
+        type: 'other',
+        status: null,
+        error: 'ERR_BLOCKED_BY_CLIENT',
+        duration: null,
+        size: null,
+        time: 2000,
+      },
+    ])
+    expect(JSON.stringify(logs)).not.toContain('fixture-value')
+    expect(JSON.stringify(logs)).not.toContain('sid=1')
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { logs: { errors: 1, warnings: 1, failed: 2 } } })
+    expect(controller.logs({ tabId: other.tabId })).toMatchObject({ ok: true, console: [], network: [{ url: 'http://localhost:3000/' }] })
+    await new Promise(done => setTimeout(done, 60))
+    expect(events('state').some(event => (event.state as { logs: { errors: number } }).logs.errors === 1)).toBe(true)
+    // Each tab keeps the newest 500 and hands the page the last 200.
+    // Running counts follow what the ring pushes out; IDs keep rising.
+    for (let index = 0; index < 600; index++)
+      contents.emit('console-message', { level: index === 0 || index >= 590 ? 'error' : 'info', message: `line ${index}` })
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { logs: { errors: 10, warnings: 0 } } })
+    const many = controller.logs({ tabId }) as unknown as { console: Array<{ id: number; text: string }> }
+    expect(many.console).toHaveLength(browser.LOG_REPORTED)
+    expect(many.console.at(-1)).toMatchObject({ id: 603, text: 'line 599' })
+    expect(many.console.at(0)!.id).toBe(404)
+    for (let index = 0; index < 500; index++) contents.emit('console-message', { level: 'info', message: 'more' })
+    expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { logs: { errors: 0, warnings: 0 } } })
+    // A new document starts the lists again.
+    contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'http://localhost:5173/', initiator: null })
+    expect(controller.logs({ tabId })).toMatchObject({ ok: true, console: [], network: [] })
+    expect(browser.logUrl('data:text/html,<b>x</b>')).toBe('data:…')
+    expect(browser.logUrl('not a url')).toBe('')
+    expect(browser.logUrl(`http://${['user', 'pass'].join(':')}@localhost:5173/x?y=1`)).toBe('http://localhost:5173/x')
+    expect(browser.consoleText(`a\u00adb\u200b${String.fromCodePoint(0xe0041)}c\ufe0fd`)).toBe('a b  c d')
+    expect(browser.consoleText('a\r\nb')).toBe('a\nb')
+    expect(browser.latchOwnWarning('warning', browser.SANDBOX_WARNING)).toBe(true)
+    expect(browser.latchOwnWarning('error', browser.SANDBOX_WARNING)).toBe(false)
+    expect(browser.latchOwnWarning('warning', `${browser.SANDBOX_WARNING} `)).toBe(false)
+    expect(browser.latchOwnWarning('warning', browser.ELECTRON_CSP_WARNING.slice(0, 60))).toBe(false)
+  })
+
+  it('forwards ⇧⌘B and ⇧⌘S from a focused tab, and still no other shifted chord', () => {
+    expect(browser.forwardedShortcut(keyDown('KeyB', { shift: true }), 'darwin')).toMatchObject({ keyCode: 'B', shift: true })
+    expect(browser.forwardedShortcut(keyDown('KeyS', { shift: true }), 'darwin')).toMatchObject({ keyCode: 'S', shift: true })
+    expect(browser.forwardedShortcut(keyDown('KeyS'), 'darwin')).toBeUndefined()
+    expect(browser.forwardedShortcut(keyDown('KeyK', { shift: true }), 'darwin')).toBeUndefined()
+    const { open, window } = setup()
+    const { contents } = open()
+    const event = { preventDefault: vi.fn() }
+    contents.emit('before-input-event', event, keyDown('KeyS', { shift: true }))
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(window.webContents.inputs.at(-1)).toEqual({ type: 'keyUp', keyCode: 'S', modifiers: ['meta', 'shift'] })
   })
 })
 
@@ -1198,12 +1609,25 @@ describe('preview browser IPC', () => {
     )
     const tabId = `brw_${'b'.repeat(22)}`
     const call = (channel: string, event: unknown, input: unknown) => handlers.get(channel)!(event, input)
-    expect(await call(browser.CHANNELS.open, 'guest', { projectId: 'alpha', url: null })).toEqual({ ok: false, error: 'shell-refused' })
-    expect(await call(browser.CHANNELS.open, 'main-page', { projectId: 'alpha', url: null, preload: 'x' })).toEqual({
+    const sessionId = 'ses_one'
+    expect(await call(browser.CHANNELS.open, 'guest', { projectId: 'alpha', sessionId, url: null })).toEqual({
+      ok: false,
+      error: 'shell-refused',
+    })
+    expect(await call(browser.CHANNELS.open, 'main-page', { projectId: 'alpha', sessionId, url: null, preload: 'x' })).toEqual({
       ok: false,
       error: 'invalid',
     })
-    expect(await call(browser.CHANNELS.open, 'main-page', { projectId: 'alpha', url: 'localhost:5173' })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.open, 'main-page', { projectId: 'alpha', sessionId, url: 'localhost:5173' })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.list, 'guest', {})).toEqual({ ok: false, error: 'shell-refused' })
+    expect(await call(browser.CHANNELS.list, 'main-page', { all: true })).toEqual({ ok: false, error: 'invalid' })
+    expect(await call(browser.CHANNELS.list, 'main-page', {})).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.viewport, 'main-page', { tabId, preset: 'tablet', rotated: true })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.colorScheme, 'main-page', { tabId, scheme: 'print' })).toEqual({ ok: false, error: 'invalid' })
+    expect(await call(browser.CHANNELS.colorScheme, 'main-page', { tabId, scheme: 'dark' })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.hitTest, 'main-page', { tabId, point: { x: 3, y: 4 } })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.logs, 'main-page', { tabId })).toEqual({ ok: true })
+    expect(await call(browser.CHANNELS.logs, 'subframe', { tabId })).toEqual({ ok: false, error: 'shell-refused' })
     expect(await call(browser.CHANNELS.bounds, 'main-page', { tabId, bounds: { x: 0, y: 0, width: 10, height: 10 } })).toEqual({
       ok: true,
     })
@@ -1211,7 +1635,12 @@ describe('preview browser IPC', () => {
     expect(await call(browser.CHANNELS.clearData, 'main-page', { projectId: 'alpha' })).toEqual({ ok: true })
     expect(await call(browser.CHANNELS.capture, 'subframe', { tabId })).toEqual({ ok: false, error: 'shell-refused' })
     expect(calls).toEqual([
-      ['open', { projectId: 'alpha', url: 'localhost:5173' }],
+      ['open', { projectId: 'alpha', sessionId, url: 'localhost:5173' }],
+      ['list', undefined],
+      ['viewport', { tabId, preset: 'tablet', rotated: true }],
+      ['colorScheme', { tabId, scheme: 'dark' }],
+      ['hitTest', { tabId, point: { x: 3, y: 4 } }],
+      ['logs', { tabId }],
       ['setBounds', { tabId, bounds: { x: 0, y: 0, width: 10, height: 10 } }],
       ['go', { tabId, action: 'back' }],
       ['clearData', { projectId: 'alpha' }],
@@ -1247,6 +1676,7 @@ describe('preview browser IPC', () => {
     expect(Object.keys(api)).toEqual([
       'protocolVersion',
       'open',
+      'list',
       'close',
       'navigate',
       'back',
@@ -1258,6 +1688,10 @@ describe('preview browser IPC', () => {
       'focus',
       'capture',
       'annotate',
+      'hitTest',
+      'setViewport',
+      'setColorScheme',
+      'logs',
       'zoom',
       'devTools',
       'clearData',
@@ -1268,9 +1702,17 @@ describe('preview browser IPC', () => {
     const tabId = `brw_${'c'.repeat(22)}`
     const invalid = { ok: false, error: 'invalid' }
     for (const refused of [
-      api.open('../x'),
-      api.open('alpha', 42),
-      api.open('alpha', ''),
+      api.open('../x', 'ses_one'),
+      api.open('alpha'),
+      api.open('alpha', '../ses'),
+      api.open('alpha', 'ses_one', 42),
+      api.open('alpha', 'ses_one', ''),
+      api.hitTest(tabId, { x: 1 }),
+      api.hitTest(tabId, { x: 1, y: Number.POSITIVE_INFINITY }),
+      api.setViewport(tabId, 'watch', false),
+      api.setViewport(tabId, 'phone', 'yes'),
+      api.setColorScheme(tabId, 'sepia'),
+      api.logs('brw_short'),
       api.close('brw_short'),
       api.navigate(tabId, 'x'.repeat(2049)),
       api.setBounds(tabId, { x: 1, y: 2, width: 3, height: 4, z: 5 }),
@@ -1284,8 +1726,13 @@ describe('preview browser IPC', () => {
     ])
       expect(await refused).toEqual(invalid)
     expect(invoke).not.toHaveBeenCalled()
-    await api.open('alpha')
-    await api.open('alpha', 'localhost:5173')
+    await api.open('alpha', 'ses_one')
+    await api.open('alpha', 'ses_one', 'localhost:5173')
+    await api.list()
+    await api.hitTest(tabId, { x: 7, y: 8 })
+    await api.setViewport(tabId, 'phone', true)
+    await api.setColorScheme(tabId, 'dark')
+    await api.logs(tabId)
     await api.setBounds(tabId, { x: 1, y: 2, width: 3, height: 4 })
     await api.setBounds(tabId, null)
     await api.annotate(tabId, { x: 5, y: 6 })
@@ -1293,8 +1740,13 @@ describe('preview browser IPC', () => {
     await api.zoom(tabId, 'out')
     await api.occlude(tabId, false)
     expect(invoke.mock.calls).toEqual([
-      ['latch:browser:open', { projectId: 'alpha', url: null }],
-      ['latch:browser:open', { projectId: 'alpha', url: 'localhost:5173' }],
+      ['latch:browser:open', { projectId: 'alpha', sessionId: 'ses_one', url: null }],
+      ['latch:browser:open', { projectId: 'alpha', sessionId: 'ses_one', url: 'localhost:5173' }],
+      ['latch:browser:list', {}],
+      ['latch:browser:hit-test', { tabId, point: { x: 7, y: 8 } }],
+      ['latch:browser:viewport', { tabId, preset: 'phone', rotated: true }],
+      ['latch:browser:color-scheme', { tabId, scheme: 'dark' }],
+      ['latch:browser:logs', { tabId }],
       ['latch:browser:bounds', { tabId, bounds: { x: 1, y: 2, width: 3, height: 4 } }],
       ['latch:browser:bounds', { tabId, bounds: null }],
       ['latch:browser:annotate', { tabId, point: { x: 5, y: 6 } }],
@@ -1314,10 +1766,16 @@ describe('preview browser IPC', () => {
       zoom: 1,
       crashed: false,
       error: null,
+      viewport: { preset: 'phone', rotated: false },
+      colorScheme: 'dark',
+      logs: { errors: 2, warnings: 0, failed: 1 },
     }
     deliver({ tabId, type: 'state', state })
     deliver({ tabId, type: 'state', state: { ...state, url: 'x'.repeat(8193) } })
     deliver({ tabId, type: 'state', state: { ...state, error: 'boom' } })
+    deliver({ tabId, type: 'state', state: { ...state, viewport: { preset: 'watch', rotated: false } } })
+    deliver({ tabId, type: 'state', state: { ...state, colorScheme: 'sepia' } })
+    deliver({ tabId, type: 'state', state: { ...state, logs: { errors: -1, warnings: 0, failed: 0 } } })
     deliver({ tabId: 'brw_short', type: 'closed' })
     deliver({ tabId, type: 'exec', code: 'x' })
     deliver({ tabId, type: 'notice', notice: 'permission', detail: 'geolocation' })
@@ -1332,5 +1790,16 @@ describe('preview browser IPC', () => {
     ])
     unsubscribe()
     expect(listeners.has('latch:browser:event')).toBe(false)
+  })
+})
+
+describe('host-info for the preview tabs', () => {
+  it('takes the model gateway port only as a port number', () => {
+    const { parseHostInfo } = require('../src/host.cjs') as { parseHostInfo(value: unknown): unknown }
+    const info = { product: 'Latch', hostId: 'h', instanceId: 'i', pid: 1, devMode: false }
+    expect(parseHostInfo({ ...info, modelGatewayPort: 47123 })).toMatchObject({ modelGatewayPort: 47123 })
+    expect(parseHostInfo(info)).toMatchObject(info)
+    for (const port of ['47123', 0, 70_000, 1.5, null])
+      expect(parseHostInfo({ ...info, modelGatewayPort: port }), String(port)).toBeUndefined()
   })
 })

@@ -432,6 +432,8 @@ export interface HostInfo {
   activity?: { running: number; waiting: number }
   /** The Host API version the desktop app compares with an update's bundled Host (update-window.ts); absent from older Hosts. */
   protocol?: number
+  /** The model gateway's loopback port, which the desktop app keeps its preview tabs from; absent from older Hosts. */
+  modelGatewayPort?: number
 }
 
 const hostInfoSchema = z.object({
@@ -448,6 +450,7 @@ const hostInfoSchema = z.object({
   activeSessions: z.number().int().nonnegative(),
   activity: z.object({ running: z.number().int().nonnegative(), waiting: z.number().int().nonnegative() }).optional(),
   protocol: z.number().int().positive().optional(),
+  modelGatewayPort: z.number().int().min(1).max(65_535).optional(),
 })
 
 const MAX_INFO_BYTES = 64 * 1024

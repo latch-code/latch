@@ -46,8 +46,9 @@ import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type
 import { connectionWords, hostNoticeCopy } from '../core/hostState.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
-import { currentShell, shellFolders } from '../core/shell.ts'
+import { currentShell, shellBrowser, shellFolders } from '../core/shell.ts'
 import { useDrawer } from '../hooks/useDrawer.ts'
+import { useEndedSessionTabs } from '../panel/browser/useBrowserTabs.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { usePhoneReview } from '../phone-review/usePhoneReview.ts'
@@ -296,6 +297,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const canTerminal = catalog?.features?.terminal === true && !!summary && !summary.archived && !summary.personal
   const [terminalWanted, setTerminalWanted] = useState(false)
   const terminalOpen = terminalWanted && canTerminal
+  // Only the desktop app's own window on this Mac (`latchShell.browser` version 2), for a live session of a project.
+  const browserShell = shellBrowser()
+  const browserProject =
+    summary && catalog && access.local && !summary.archived && !summary.personal ? projectOf(summary, catalog.workspaces) : undefined
+  const canBrowser = browserShell !== null && browserProject !== undefined
+  const [browserWanted, setBrowserWanted] = useState(false)
+  const browserOpen = browserWanted && canBrowser
+  useEndedSessionTabs(browserShell, snapshot, snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view'))
+  /** A local service the terminal asked to open in the 浏览器 tab. */
+  const [browserRequest, setBrowserRequest] = useState<{ url: string; nonce: number }>()
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   /**
@@ -328,6 +339,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setChangesWanted(false)
     setDeliveryWanted(false)
     setTerminalWanted(false)
+    setBrowserWanted(false)
+    setBrowserRequest(undefined)
     setChangesTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
@@ -349,7 +362,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const placement =
     !summary && !filesVisible
       ? null
-      : !profileColumn && (filesVisible || changesOpen || deliveryOpen || terminalOpen || pluginPanel !== undefined) && fileExpanded
+      : !profileColumn
+          && (filesVisible || changesOpen || deliveryOpen || terminalOpen || browserOpen || pluginPanel !== undefined)
+          && fileExpanded
         ? { kind: 'page' as const }
         : profileColumn && placed.kind === 'page'
           ? null
@@ -358,7 +373,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
-    && (profileColumn || filesVisible || changesOpen || deliveryOpen || terminalOpen || (!!summary && preferences.rightPanel.open))
+    && (profileColumn
+      || filesVisible
+      || changesOpen
+      || deliveryOpen
+      || terminalOpen
+      || browserOpen
+      || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
@@ -758,6 +779,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setChangesWanted(surface.kind === 'changes')
     setDeliveryWanted(surface.kind === 'delivery')
     setTerminalWanted(surface.kind === 'terminal')
+    setBrowserWanted(surface.kind === 'browser')
     setFilesOpen(surface.kind === 'files')
     setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
     fileTabs.select(surface.kind === 'file' ? surface.id : undefined)
@@ -780,17 +802,20 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           ? { kind: 'delivery' }
           : terminalOpen
             ? { kind: 'terminal' }
-            : filesOpen
-              ? { kind: 'files' }
-              : pluginPanel !== undefined
-                ? { kind: 'plugin', id: pluginPanel }
-                : { kind: 'launcher' }
+            : browserOpen
+              ? { kind: 'browser' }
+              : filesOpen
+                ? { kind: 'files' }
+                : pluginPanel !== undefined
+                  ? { kind: 'plugin', id: pluginPanel }
+                  : { kind: 'launcher' }
   const closePanel = () => {
     setProfile(null)
     lastSurface.current = shownSurface()
     setChangesWanted(false)
     setDeliveryWanted(false)
     setTerminalWanted(false)
+    setBrowserWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setFileExpanded(false)
@@ -804,6 +829,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setChangesWanted(true)
     setDeliveryWanted(false)
     setTerminalWanted(false)
+    setBrowserWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setInfoPage(true)
@@ -812,6 +838,17 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const toggleTerminal = () => {
     if (terminalOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
     else if (canTerminal) showSurface({ kind: 'terminal' })
+  }
+  const toggleBrowser = () => {
+    if (browserOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
+    else if (canBrowser) showSurface({ kind: 'browser' })
+  }
+  /** A local service from the terminal: in the 浏览器 tab where there is one. */
+  const openInBrowser = (url: string) => {
+    if (!canBrowser) return false
+    setBrowserRequest(previous => ({ url, nonce: (previous?.nonce ?? 0) + 1 }))
+    showSurface({ kind: 'browser' })
+    return true
   }
   const toggleChanges = () => {
     if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
@@ -924,6 +961,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     if (action === 'terminal') {
       if (canTerminal) toggleTerminal()
+      return
+    }
+    if (action === 'browser') {
+      if (canBrowser) toggleBrowser()
       return
     }
     if (action === 'settings') {
@@ -1135,6 +1176,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setChangesWanted(false)
     setDeliveryWanted(false)
     setTerminalWanted(false)
+    setBrowserWanted(false)
     if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
       setInfoPage(false)
@@ -1342,6 +1384,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     canTerminal,
     terminalOpen,
     toggleTerminal,
+    browserShell,
+    browserProject,
+    canBrowser,
+    browserOpen,
+    toggleBrowser,
+    browserRequest,
+    openInBrowser,
     showSurface,
     launcherTakesFocus,
     closePanel,
