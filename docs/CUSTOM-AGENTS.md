@@ -21,6 +21,8 @@ sources:
   - apps/web/src/agents/Schedules.tsx
   - apps/web/src/agents/CarryResults.tsx
   - apps/web/src/agents/scheduleModel.ts
+  - native/ios/Sources/LatchNativeCore/PhoneAgents.swift
+  - native/ios/App/Agents/AgentsView.swift
 ---
 # 我的 Agent
 
@@ -86,3 +88,4 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 - **定时**：这个 Agent 的定时任务（「通用」的是不指定 Agent 的那些），界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
 - **写入**：新建、修改（带打开表单时的 `baseRevision`，只发改了的字段）、删除与记忆都带 `requestId`；结果未知时保留原请求，「重试同一请求」原样重发，`agent-changed` 显示为已在别处修改并可载入最新。委托的待确认请求单独存放，不占用新会话的草稿，重试同样沿用原 `requestId`。
 - **数据范围**：没有完整数据范围的设备看到「这台设备看不到 Agent」，不显示空列表；Host 返回 `agent-scope-required` 时同样处理，`agent-write-unknown` 时显示正在确认并稍后重读。
+- **iPhone/iPad**：标签栏同样是 Code / 我的 Agent / 应用 / 设置，判断在 `PhoneTabs`、`PhoneAgents`。手机只在正文窗口内拿到快照的 `customAgents` 与 `automations`，所以窗口外不显示任何 Agent 的名称、职责与定时，列表写「查看」（Face ID 关闭时自动打开）；离线保存的列表不含它们，窗口关闭时也从内存撤下，委托的会话在窗口外页头只写「委托」。Agent 页的「委托」经同一 `POST /tasks` 带 `customAgentId`，Harness 只列有 `agentContext` 的，默认文件夹不作为 `workspaceId` 发送；成功后转到 Code 打开会话，会话页头写「为 <Agent> 委托」。「记忆」可以添加、修改、删除，写入与委托都占用手机唯一的待确认写入，结果未知时「重试同一请求」，`agent-changed` 显示「已在别处修改」。「定时」只读，列出计划与运行记录；「设置」只读；新建与修改 Agent 或定时任务写「尚未实现」，在网页或桌面端修改。

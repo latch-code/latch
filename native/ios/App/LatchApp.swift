@@ -2,6 +2,8 @@ import LatchNativeCore
 import SwiftUI
 import UIKit
 
+// LatchScreens has its own entry with canned scenes; this one is the product's.
+#if !LATCH_SCREENS
 @main struct LatchApp: App {
     @StateObject private var model = PhoneModel()
     @Environment(\.scenePhase) private var phase
@@ -22,6 +24,7 @@ import UIKit
         }
     }
 }
+#endif
 final class PhoneAppDelegate: NSObject, UIApplicationDelegate {
     private var privacy: [UIWindow] = []
     func applicationWillResignActive(_ application: UIApplication) {

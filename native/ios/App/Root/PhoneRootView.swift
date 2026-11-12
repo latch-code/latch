@@ -1,27 +1,26 @@
 import LatchNativeCore
 import SwiftUI
-
-enum PhoneTab: Hashable { case sessions, agents, settings }
+import UIKit
 
 struct PhoneRootView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var scan = false
-    @State private var tab = PhoneTab.sessions
+    private var hasComputers: Bool {
+        #if LATCH_SCREENS
+        if model.staged { return true }
+        #endif
+        return !(model.hosts.isEmpty && model.selectedHost == nil)
+    }
     var body: some View {
         Group {
             if !model.storeReady { PhoneTheme.canvas.ignoresSafeArea() }
-            else if model.hosts.isEmpty && model.selectedHost == nil {
+            else if !hasComputers {
                 PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460)
-            } else {
-                TabView(selection: $tab) {
-                    InboxView().tabItem { Label("会话", systemImage: "bubble.left.and.bubble.right") }.tag(PhoneTab.sessions)
-                    AgentTabView().tabItem { Label("Agent", systemImage: "cpu") }.tag(PhoneTab.agents)
-                    PhoneSettingsView { scan = true }.tabItem { Label("设置", systemImage: "gearshape") }.tag(PhoneTab.settings)
-                }.tint(PhoneTheme.ink)
-            }
+            } else { RootTabs(addComputer: { scan = true }) }
         }
         .fullScreenCover(isPresented: Binding(get: { scan || model.pairing != nil }, set: { if !$0 { scan = false } })) {
-            PairingView { scan = false }
+            // A cover is its own presentation; it is handed the model rather than trusting inheritance.
+            PairingView { scan = false }.environmentObject(model)
         }
         .onOpenURL { url in if PairingInvitation.recognizes(url.absoluteString) { Task { await model.beginPairing(payload: url.absoluteString) } } }
         .alert("这台 Mac 已移除这台 iPhone", isPresented: $model.removedByMac) {
@@ -31,6 +30,9 @@ struct PhoneRootView: View {
             Button("知道了") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: .latchStatusHint)) { _ in Task { await model.refresh() } }
+        #if LATCH_SCREENS
+        .onChange(of: model.staged) { _, _ in if ScreensStage.scanning { scan = true } }
+        #endif
     }
 }
 
@@ -49,28 +51,47 @@ struct ControlPendingBar: View {
     }
 }
 
-/** Until the Host's agents arrive, the tab lists what is installed and what this phone may start on it. */
-struct AgentTabView: View {
+/** Code, 我的 Agent, 应用 and 设置, as the web's phone bar has them; a place the Host stops offering falls back to Code. */
+private struct RootTabs: View {
     @EnvironmentObject private var model: PhoneModel
-    private var catalog: NativeJSON { model.snapshot["catalog"] }
+    @Environment(\.colorScheme) private var scheme
+    let addComputer: () -> Void
     var body: some View {
-        NavigationStack {
-            List {
-                Section("已安装") {
-                    if PhoneStart.engines(catalog).isEmpty {
-                        Text(model.connected ? "还没有可用的 Harness" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+        let entries = PhoneTabs.entries(model.snapshot)
+        let shown = entries.contains { $0.id == model.tab } ? model.tab : .code
+        let dot = PhoneTabs.codeDot(model.snapshot, current: shown)
+        TabView(selection: Binding(get: { shown }, set: { model.tab = $0 })) {
+            ForEach(entries) { entry in
+                page(entry.id)
+                    .tabItem {
+                        // Not a count and not the system's red badge: amber says something waits on you in Code.
+                        if entry.id == .code && dot { Label { Text(entry.label) } icon: { Self.dotted(entry.symbol, scheme: scheme) }.accessibilityValue("有等你处理") }
+                        else { Label(entry.label, systemImage: entry.symbol) }
                     }
-                    ForEach(PhoneStart.engines(catalog)) { engine in
-                        HStack(spacing: 12) {
-                            EngineTile(mark: model.engineMark(engine.id), size: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(engine.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
-                            }
-                        }.padding(.vertical, 2)
-                    }
-                }
+                    .tag(entry.id)
             }
-            .navigationTitle("Agent")
         }
+        .tint(PhoneTheme.ink)
+    }
+    @ViewBuilder private func page(_ tab: PhoneTab) -> some View {
+        switch tab {
+        case .code: InboxView()
+        case .agents: AgentsTabView()
+        case .apps: AppsTabView()
+        case .settings: PhoneSettingsView(addComputer: addComputer)
+        }
+    }
+    /** The tab's symbol in the bar's unselected ink with an amber dot at its corner; drawn, since a tab item takes one image. */
+    private static func dotted(_ symbol: String, scheme: ColorScheme) -> Image {
+        let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+        let base = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)) ?? UIImage()
+        let ink = UIColor.label.resolvedColor(with: traits), amber = UIColor(PhoneTheme.amberIcon).resolvedColor(with: traits)
+        let dot: CGFloat = 7, size = CGSize(width: base.size.width + dot / 2, height: base.size.height + dot / 2)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            base.withTintColor(ink, renderingMode: .alwaysOriginal).draw(at: CGPoint(x: 0, y: dot / 2))
+            amber.setFill()
+            UIBezierPath(ovalIn: CGRect(x: size.width - dot, y: 0, width: dot, height: dot)).fill()
+        }
+        return Image(uiImage: image.withRenderingMode(.alwaysOriginal))
     }
 }

@@ -1,0 +1,124 @@
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
+import { expect, it } from 'vitest'
+
+const run = promisify(execFile)
+const simctl = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 120_000, maxBuffer: 16_777_216 })
+const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
+
+/** Scenes of the LatchScreens target (`native/ios/Screens/ScreensStage.swift`), chosen by a launch argument. */
+const SCENES = [
+  'code',
+  'conversation',
+  'agents',
+  'agents-locked',
+  'agent-delegate',
+  'agent-unavailable',
+  'agent-memory',
+  'agent-schedules',
+  'agent-settings',
+  'general',
+  'apps',
+  'app-page',
+  'pairing',
+]
+/** A narrow and a wide iPhone, and an iPad; the first device type of each list that this Xcode has. */
+const DEVICES = [
+  { name: 'iphone-narrow', types: ['iPhone-16e', 'iPhone-17e', 'iPhone-16'] },
+  { name: 'iphone-wide', types: ['iPhone-17-Pro-Max', 'iPhone-16-Pro-Max', 'iPhone-16-Plus'] },
+  { name: 'ipad', types: ['iPad-Pro-11-inch-M5-12GB', 'iPad-Pro-11-inch-M4-8GB', 'iPad-Air-11-inch-M3'] },
+]
+
+/**
+ * Opt-in (`LATCH_IOS_SCREENS=1`, macOS with an iOS Simulator runtime): builds the separate LatchScreens target, whose
+ * canned scenes never enter the Latch product (`ios-app.e2e.ts` checks the product), then screenshots each scene light
+ * and dark on simulators this test creates and deletes. No Host, key or secret is involved. Screenshots go to
+ * `LATCH_IOS_SCREENS_DIR`, or `test-results/ios-screens/`.
+ */
+it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1')(
+  'screenshots the App’s scenes from the LatchScreens target on simulators of its own',
+  async context => {
+    const runtimes = JSON.parse((await simctl('list', 'runtimes', '-j')).stdout) as {
+      runtimes: Array<{ identifier: string; platform?: string; isAvailable?: boolean }>
+    }
+    const runtime = runtimes.runtimes.filter(item => item.isAvailable && item.identifier.includes('iOS')).at(-1)
+    if (!runtime) {
+      context.skip()
+      return
+    }
+    const types = JSON.parse((await simctl('list', 'devicetypes', '-j')).stdout) as { devicetypes: Array<{ identifier: string }> }
+    const known = new Set(types.devicetypes.map(item => item.identifier))
+    const output = resolve(process.env.LATCH_IOS_SCREENS_DIR ?? 'test-results/ios-screens')
+    await mkdir(output, { recursive: true })
+    const derived = await mkdtemp(join(tmpdir(), 'latch-ios-screens-'))
+    const created: string[] = []
+    try {
+      await run(
+        '/usr/bin/xcodebuild',
+        [
+          '-project',
+          'native/ios/Latch.xcodeproj',
+          '-scheme',
+          'LatchScreens',
+          '-configuration',
+          'Debug',
+          '-sdk',
+          'iphonesimulator',
+          '-destination',
+          'generic/platform=iOS Simulator',
+          '-derivedDataPath',
+          derived,
+          '-clonedSourcePackagesDirPath',
+          'native/ios/.build/xcode-packages',
+          '-disableAutomaticPackageResolution',
+          '-onlyUsePackageVersionsFromResolvedFile',
+          'CODE_SIGNING_ALLOWED=NO',
+          'ARCHS=arm64',
+          'ONLY_ACTIVE_ARCH=YES',
+          'build',
+        ],
+        { timeout: 300_000, maxBuffer: 16_777_216 },
+      )
+      const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
+      // The marker the product check looks for is really in this target, so its absence there means something.
+      const libraries = (await readdir(application)).filter(name => name.endsWith('.dylib'))
+      const product = Buffer.concat(
+        await Promise.all(
+          [join(application, 'LatchScreens'), ...libraries.map(name => join(application, name))].map(file => readFile(file)),
+        ),
+      )
+      expect(product.includes(Buffer.from('LatchScreens fixture state'))).toBe(true)
+      for (const device of DEVICES) {
+        const type = device.types.map(name => `com.apple.CoreSimulator.SimDeviceType.${name}`).find(id => known.has(id))
+        if (!type) continue
+        const udid = (await simctl('create', `latch-screens-${device.name}-${Date.now()}`, type, runtime.identifier)).stdout.trim()
+        created.push(udid)
+        await simctl('boot', udid)
+        await simctl('bootstatus', udid, '-b')
+        await simctl('install', udid, application)
+        await simctl('privacy', udid, 'grant', 'camera', 'dev.latch.ios.screens').catch(() => {})
+        for (const theme of ['light', 'dark']) {
+          await simctl('ui', udid, 'appearance', theme)
+          for (const scene of SCENES) {
+            await simctl('launch', '--terminate-running-process', udid, 'dev.latch.ios.screens', '-LatchScene', scene)
+            await pause(2500)
+            await simctl('io', udid, 'screenshot', join(output, `${scene}--${theme}--${device.name}.png`))
+          }
+        }
+        await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
+      }
+      expect(created.length).toBeGreaterThan(0)
+    } finally {
+      // Only the simulators this test made are shut down and deleted.
+      for (const udid of created) {
+        await simctl('shutdown', udid).catch(() => {})
+        await simctl('delete', udid).catch(() => {})
+      }
+      await rm(derived, { recursive: true, force: true })
+    }
+  },
+  1_800_000,
+)

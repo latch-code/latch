@@ -708,6 +708,7 @@ public actor NativeWorkspace {
             return .expired
         }
         if ["workspace-changed", "workspace-disabled", "permission-drift"].contains(code ?? "") { return .contextChanged }
+        if ["agent-changed", "agent-memory-deleted"].contains(code ?? "") { return .changedElsewhere }
         if response.status == 401 || response.status == 403 { return .forbidden }
         if response.status == 408 || response.status >= 500 { return .resultUnknown }
         return .unsupported
@@ -735,10 +736,12 @@ public actor NativeWorkspace {
         }
         return .object(["instanceId": value["instanceId"], "revision": value["revision"], "approvals": .array([]),
             "device": select(value["device"], keys: ["id", "status", "scopes", "dataScope"]),
-            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds", "mode", "branch", "runOutcome", "runEnd", "permissionDrift"]) }),
-            // Enough to draw the shelves and the engine's name offline; paths, models and settings stay out.
+            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds", "mode", "branch", "runOutcome", "runEnd", "permissionDrift", "agent", "automationId"]) }),
+            // Enough to draw the shelves, the tabs and the engine's name offline; paths, models and settings stay out.
             "catalog": .object(["workspaces": .array(value["catalog"]["workspaces"].array.map { select($0, keys: ["id", "name"]) }),
-                "harnesses": .array(value["catalog"]["harnesses"].array.map { .object(["id": $0["id"], "level": $0["level"], "capabilities": .object(["display": $0["capabilities"]["display"]])]) })]),
+                "harnesses": .array(value["catalog"]["harnesses"].array.map { .object(["id": $0["id"], "level": $0["level"], "capabilities": .object(["display": $0["capabilities"]["display"]])]) }),
+                "features": select(value["catalog"]["features"], keys: ["customAgents", "automations", "appPages"])]),
+            "apps": .array(value["apps"].array.map { select($0, keys: ["pluginId", "appId", "title", "icon", "pluginName", "status"]) }),
             "hostTime": value["hostTime"]])
     }
 }

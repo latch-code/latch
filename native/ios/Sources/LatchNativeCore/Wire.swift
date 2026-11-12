@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public enum NativeFailure: String, Error, LocalizedError, Sendable {
-    case invalidRecord, identityMismatch, expired, unavailable, unsupported, resultUnknown, storageUnavailable, revoked, eventOverflow, forbidden, contextChanged, declined, notVerified
+    case invalidRecord, identityMismatch, expired, unavailable, unsupported, resultUnknown, storageUnavailable, revoked, eventOverflow, forbidden, contextChanged, declined, notVerified, changedElsewhere
     public var errorDescription: String? {
         switch self {
         case .invalidRecord: "连接资料无法验证。"
@@ -19,6 +19,7 @@ public enum NativeFailure: String, Error, LocalizedError, Sendable {
         case .contextChanged: "会话的文件夹或权限已变化，请在电脑上重新确认。"
         case .declined: "你取消了这次确认。"
         case .notVerified: "没能确认是你本人，请再试一次。"
+        case .changedElsewhere: "这项记录已在别处修改。"
         }
     }
 }

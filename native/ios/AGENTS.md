@@ -22,5 +22,6 @@
 
 机制见 docs/STREAMING.md。真机 Secure Enclave、Face ID、App Attest 与推送签名配置由所有者人工验收，自动化结果不能代替它们。
 
+- `LatchScreens` 目标只编模拟器，截图场景在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts` 核对）。
 - 预览取消关闭自有Task，晚回不展示。
 - 目录只为固定节点/公钥恢复公网地址；提示不授予正文或替换身份。

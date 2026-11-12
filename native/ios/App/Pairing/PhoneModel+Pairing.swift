@@ -108,6 +108,7 @@ extension PhoneModel {
                 freshPairings[saved.id] = (parsed, networkGeneration)
                 await connection.close(); pairingConnection = nil
                 pairing = .connected(name)
+                clearPastedPairing()
                 try await Task.sleep(for: .seconds(1))
                 guard current == generation else { return }
                 pairing = nil; busy = false
@@ -126,10 +127,17 @@ extension PhoneModel {
             }
         }
     }
+    /** A pasted code is used once: the clipboard is cleared if nothing else was copied since. */
+    func clearPastedPairing() {
+        guard let pasted = pastedPairing else { return }
+        pastedPairing = nil
+        if UIPasteboard.general.changeCount == pasted { UIPasteboard.general.items = [] }
+    }
     func cancelPairing() {
         let connection = pairingConnection, task = pairingTask, store = store
         pairingTask = nil; pairingConnection = nil
         task?.cancel(); pairing = nil; busy = false; draft = nil
+        clearPastedPairing()
         Task {
             // Best effort: the Host's own 120 seconds end whatever this cannot reach.
             if let connection, let id = try? await connection.request(.get, path: "/link/api/native/pairing"),
@@ -157,6 +165,7 @@ extension PhoneModel {
             draft = nil
         }
         pairing = .failed(failure)
+        clearPastedPairing()
     }
     private func failure(_ error: Error, invitation: PairingInvitation?) -> PhonePairingFailure {
         switch error as? NativePairingFailure {

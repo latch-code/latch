@@ -51,8 +51,10 @@ struct ConversationView: View {
         }
     }
     private var title: some View {
-        HeaderTitle(title: model.detail["summary"]["title"].string ?? summary["title"].string ?? "会话",
-            subtitle: hasContent ? PhoneConversation.subtitle(model.detail, engine: engine) : ([engine], false))
+        let line: (parts: [String], neverAsks: Bool) = hasContent ? PhoneConversation.subtitle(model.detail, engine: engine) : ([engine], false)
+        let delegated = PhoneAgents.delegated(model.snapshot, task: hasContent ? model.detail["summary"] : summary, windowOpen: model.verifiedUntil != nil)
+        return HeaderTitle(title: model.detail["summary"]["title"].string ?? summary["title"].string ?? "会话",
+            subtitle: (([delegated].compactMap { $0 }) + line.parts, line.neverAsks))
     }
     /** After a declined Face ID or a closed window: the session's name stays, and one plain way back in. There is no unlock screen before the first try. */
     private var locked: some View {

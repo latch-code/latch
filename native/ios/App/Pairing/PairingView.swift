@@ -98,7 +98,18 @@ private struct PairingScanner: View {
             VStack {
                 Text(foreign ? "这不是 Latch 的二维码" : "对准 Mac 上的二维码").foregroundStyle(.white).padding(.top, 24)
                 Spacer()
-                Button("取消", action: close).buttonStyle(.bordered).tint(.white).padding(.bottom, 24)
+                HStack(spacing: 12) {
+                    // A device without a camera takes the same code from the clipboard, checked as a scanned one is.
+                    PasteButton(payloadType: String.self) { values in
+                        guard let value = values.first, value.utf8.count <= 16_384 else { return }
+                        let count = UIPasteboard.general.changeCount
+                        Task { @MainActor in
+                            if PairingInvitation.recognizes(value) { model.pastedPairing = count; await model.beginPairing(payload: value) }
+                            else { foreign = true }
+                        }
+                    }.labelStyle(.titleAndIcon).buttonBorderShape(.capsule).tint(.white)
+                    Button("取消", action: close).buttonStyle(.bordered).tint(.white)
+                }.padding(.bottom, 24)
             }
         }
         .task { allowed = await AVCaptureDevice.requestAccess(for: .video) }

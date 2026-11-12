@@ -31,7 +31,7 @@ struct PromptComposer: View {
         VStack(spacing: 8) {
             ForEach(model.pending, id: \.requestId) { pending in
                 HStack {
-                    Label("提交结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
                     Button("重试这次提交") { Task { await model.submit(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }.padding(.horizontal, 16)

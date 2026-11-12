@@ -1320,6 +1320,281 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('delegates to an Agent and writes its memories from the actual Swift workspace against a real Host', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const agent = await owner.json<{ id: string }>('custom-agents', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '代码审阅',
+          description: '只报真实的问题',
+          harnessId: 'standard',
+          mode: 'chat',
+          instructions: 'AGENT INSTRUCTIONS',
+          skills: [],
+        },
+      })
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      const result = await invoke({ operation: 'nativeAgents', payload: invitation.payload, port: host.host.nativePort, agentId: agent.id })
+      expect(result).toEqual({
+        delegated: true,
+        sameSession: true,
+        memoryReceipts: true,
+        staleRefused: true,
+        general: true,
+        cachedTabs: true,
+      })
+      const general = await owner.json<{ memories: Array<{ content: string }> }>('custom-agents/general')
+      expect(general.memories.map(memory => memory.content)).toEqual(['回答用中文'])
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
+  it('derives the tabs, 我的 Agent and 应用 the phone shows, and the memory writes it sends', async () => {
+    const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
+    const review = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
+    const daily = `agt_${'2'.repeat(8)}-2222-4222-8222-${'2'.repeat(12)}`
+    const docs = `agt_${'3'.repeat(8)}-3333-4333-8333-${'3'.repeat(12)}`
+    const memory = { id: `mem_${'4'.repeat(8)}-4444-4444-8444-${'4'.repeat(12)}`, revision: 3, content: '旧的' }
+    const harnesses = [
+      {
+        id: 'standard',
+        status: 'ready',
+        modes: ['agent', 'chat'],
+        agentContext: 'private',
+        capabilities: { display: { label: 'Latch' }, models: { owner: 'latch' }, permission: { enforcement: 'latch' } },
+      },
+      {
+        id: 'codex',
+        status: 'ready',
+        modes: ['agent'],
+        agentContext: 'first-turn',
+        capabilities: { display: { label: 'Codex' }, models: { owner: 'harness' } },
+      },
+      { id: 'plain', status: 'ready', modes: ['agent'], capabilities: { display: { label: 'Plain' }, models: { owner: 'harness' } } },
+      {
+        id: 'offered',
+        status: 'ready',
+        modes: ['agent'],
+        agentContext: 'first-turn',
+        offer: { presetId: 'x' },
+        capabilities: { display: { label: 'Offered' } },
+      },
+    ]
+    const catalog = {
+      features: { customAgents: true, automations: true },
+      harnesses,
+      providers: [{ id: 'svc', name: 'Svc', models: ['m1', 'm2'] }],
+      workspaces: [
+        { id: 'default', name: '默认文件夹' },
+        { id: 'latch', name: 'latch' },
+      ],
+      skills: [{ id: 'review', pluginId: 'kit', name: '审阅清单' }],
+      sessionFolders: true,
+      defaults: {},
+    }
+    const snapshot = {
+      device: { status: 'active', scopes: ['view', 'run'], dataScope: 'all' },
+      catalog,
+      approvals: [],
+      customAgents: [
+        {
+          id: review,
+          name: '代码审阅',
+          description: '只报真实的问题\n第二行',
+          harnessId: 'codex',
+          mode: 'agent',
+          defaultProjectId: 'latch',
+          available: true,
+        },
+        {
+          id: daily,
+          name: '每日简报',
+          description: '',
+          instructions: '\n  汇总依赖\n其余',
+          harnessId: 'standard',
+          mode: 'chat',
+          model: { providerId: 'svc', model: 'm2' },
+          available: true,
+        },
+        {
+          id: docs,
+          name: '文档整理',
+          description: '整理',
+          harnessId: 'gone',
+          mode: 'agent',
+          available: false,
+          unavailableReason: '没有安装。',
+          defaultProjectId: 'removed',
+        },
+      ],
+      automations: [
+        {
+          id: 'auto_a',
+          name: '依赖检查',
+          customAgentId: daily,
+          schedule: { kind: 'weekdays', time: '09:00' },
+          enabled: true,
+          state: 'ready',
+          lastRun: { state: 'completed' },
+        },
+        {
+          id: 'auto_b',
+          name: '周报',
+          customAgentId: daily,
+          schedule: { kind: 'weekly', day: 5, time: '17:30' },
+          enabled: false,
+          state: 'paused',
+        },
+        { id: 'auto_c', name: '早报', schedule: { kind: 'daily', time: '08:00' }, enabled: false, state: 'off' },
+      ],
+      apps: [
+        { pluginId: 'release-check', appId: 'main', title: '发布检查', pluginName: '发布检查', status: 'ready' },
+        { pluginId: 'old', appId: 'main', title: '停用的', pluginName: '旧', status: 'disabled' },
+      ],
+      tasks: [
+        { id: 'a', title: '新', status: 'idle', updatedAt: at(9), agent: { customAgentId: review } },
+        { id: 'b', title: '旧', status: 'idle', updatedAt: at(1), agent: { customAgentId: review } },
+        { id: 'c', title: '归档', status: 'idle', updatedAt: at(5), archived: true, agent: { customAgentId: review } },
+        { id: 'd', title: '通用的', status: 'idle', updatedAt: at(3) },
+        { id: 'e', title: '已删除的 Agent', status: 'idle', updatedAt: at(4), agent: { customAgentId: docs.replace('3', '9') } },
+      ],
+    }
+    const waiting = { ...snapshot, tasks: [{ id: 'w', status: 'waiting-approval', updatedAt: at(2) }] }
+    const result = await invoke({
+      operation: 'phoneAgents',
+      snapshot,
+      memoryOwner: review,
+      memory,
+      snapshots: [
+        { catalog: { features: {} }, device: { dataScope: 'all' }, tasks: [], approvals: [] },
+        snapshot,
+        { ...snapshot, apps: [snapshot.apps[1]] },
+        { ...snapshot, device: { ...snapshot.device, dataScope: 'work' }, customAgents: undefined },
+        { ...snapshot, customAgents: undefined },
+        waiting,
+        {
+          ...waiting,
+          tasks: [{ id: 'w', status: 'running', updatedAt: at(2), live: { activity: 'cancelling' } }],
+          approvals: [{ sessionId: 'w' }],
+        },
+      ],
+    })
+    expect(result.tabs).toEqual([
+      ['Code', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
+      ['Code', '我的 Agent', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
+    ])
+    // The dot shows only away from Code, and a stop already asked for answers what waits.
+    expect(result.dots).toEqual([
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, false],
+      [true, false],
+      [false, false],
+    ])
+    // Outside a content window a phone shows nothing of an Agent, whatever the snapshot holds.
+    expect(result.access).toEqual([
+      ['hidden', 'hidden'],
+      ['ready', 'closed'],
+      ['ready', 'closed'],
+      ['locked', 'locked'],
+      ['confirming', 'closed'],
+      ['ready', 'closed'],
+      ['ready', 'closed'],
+    ])
+    expect(result.entries).toEqual([
+      {
+        id: 'general',
+        name: '通用',
+        general: true,
+        duty: '没选别的 Agent 的会话都带上它',
+        runs: '内置 · 每个会话自己选 Harness',
+        place: null,
+        available: true,
+        reason: null,
+      },
+      {
+        id: review,
+        name: '代码审阅',
+        general: false,
+        duty: '只报真实的问题',
+        runs: 'Codex',
+        place: 'latch',
+        available: true,
+        reason: null,
+      },
+      {
+        id: daily,
+        name: '每日简报',
+        general: false,
+        duty: '汇总依赖',
+        runs: 'Latch · m2',
+        place: '各自的文件夹',
+        available: true,
+        reason: null,
+      },
+      {
+        id: docs,
+        name: '文档整理',
+        general: false,
+        duty: '整理',
+        runs: 'gone',
+        place: '项目已移除',
+        available: false,
+        reason: '没有安装。',
+      },
+    ])
+    expect(result.harnesses).toEqual(['standard', 'codex'])
+    expect(result.choices).toEqual([
+      { harness: 'codex', workspace: 'latch', model: '' },
+      { harness: 'standard', workspace: 'default', model: 'm2' },
+      { harness: '', workspace: 'default', model: '' },
+    ])
+    expect(result.blockers).toEqual(['', '', '没有安装。'])
+    expect(result.offline).toBe('Mac 不在线，恢复后再委托')
+    expect(result.cannotRun).toBe('这台设备不能开始会话')
+    expect(result.fields).toEqual([
+      { prompt: '看一下', customAgentId: review, harnessId: 'codex', mode: 'agent', workspaceId: 'latch' },
+      { prompt: '看一下', customAgentId: daily, harnessId: 'standard', mode: 'chat', model: { providerId: 'svc', model: 'm2' } },
+      null,
+    ])
+    expect(result.recent).toEqual([['a', 'b'], [], []])
+    expect(result.generalRecent).toBe(0)
+    expect(result.delegated).toEqual(['为 代码审阅 委托', '为 代码审阅 委托', '为 代码审阅 委托', '', '为 Agent 委托'])
+    // Outside a window nothing of an Agent shows, and closing one takes the lists out of memory.
+    expect(result.closedWindow).toEqual([0, 0, 0])
+    expect(result.delegatedClosed).toEqual(['委托', '委托', '委托', '', '委托'])
+    expect(result.automations).toEqual([[], ['依赖检查', '周报'], []])
+    expect(result.generalAutomations).toEqual(['早报'])
+    expect(result.schedules).toEqual(['工作日 09:00 · 已开启 · 完成', '每周五 17:30 · 已暂停 · 没有运行', '每天 08:00 · 已关闭 · 没有运行'])
+    expect(result.skills).toEqual(['全部已启用的技能', '不用技能', '审阅清单、gone:x'])
+    expect(result.apps).toEqual([['release-check/main', '发布检查', '插件 · 发布检查']])
+    const writes = result.memoryWrites as Array<Record<string, unknown> | string>
+    const base = `/link/api/custom-agents/${review}/memories`
+    expect(writes[0]).toMatchObject({ method: 'POST', path: base, body: { content: '用 pnpm' }, words: '记忆的修改结果待确认' })
+    expect(writes[1]).toMatchObject({ method: 'PATCH', path: `${base}/${memory.id}`, body: { content: '改过', baseRevision: 3 } })
+    expect(writes[2]).toMatchObject({ method: 'DELETE', path: `${base}/${memory.id}` })
+    for (const write of writes.slice(0, 3)) {
+      const { body, requestId } = write as { body: { requestId: string }; requestId: string }
+      expect(body.requestId).toBe(requestId)
+    }
+    expect(writes.slice(3)).toEqual(['refused', 'refused', 'refused', 'refused'])
+    expect((result.pendingKinds as Array<{ words: string; kind: string }>).map(item => [item.words, item.kind])).toEqual([
+      ['提交结果待确认', 'start'],
+      ['委托结果待确认', `delegation(agentId: "${review}")`],
+      ['提交结果待确认', 'session(id: "ses_1")'],
+    ])
+  })
   it('rejects noncanonical base64url, trailing bytes and unsafe integers without trapping', async () => {
     expect(await invoke({ base64url: 'Zm9v' })).toEqual({ base64url: 'Zm9v', base32: 'mzxw6' })
     for (const base64url of ['A', 'Zh', 'Zg==', 'Z g', 'Zg\n']) await expect(invoke({ base64url })).rejects.toThrow('rejected')

@@ -36,6 +36,17 @@ import UIKit
     @Published var controlsInFlight: Set<String> = []
     /** The core keeps one unconfirmed control at a time, so they go out in the order they were asked for. */
     var controlTail: Task<Void, Never>?
+    /** The root place on screen; Code when the one chosen is not offered. */
+    @Published var tab = PhoneTab.code
+    /** 我的 Agent's pushed pages, by Agent; 应用's, by page. */
+    @Published var agentPath: [String] = []
+    @Published var appPath: [String] = []
+    /** The clipboard's change count when a pairing code was pasted, so a successful pairing clears it only if it still holds that code. */
+    var pastedPairing: Int?
+    #if LATCH_SCREENS
+    /** A screenshot scene: canned Host data, no network, no keys. Only the LatchScreens target compiles this. */
+    @Published var staged = false
+    #endif
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
     var heldDrafts: [String: String] = [:]
     private var shelfCache: (query: String, shelves: [PhoneShelf])?
@@ -116,6 +127,7 @@ import UIKit
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
+        agentPath = []; appPath = []
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
@@ -127,7 +139,7 @@ import UIKit
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
+        clearPrivateContent(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
@@ -486,6 +498,8 @@ import UIKit
     private func clearPrivateContent() {
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        // Agents' names, duties and schedules came with the window and go with it.
+        snapshot = PhoneAgents.withoutPrivate(snapshot)
     }
     private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,

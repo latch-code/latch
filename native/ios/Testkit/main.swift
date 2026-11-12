@@ -73,6 +73,10 @@ do {
         stage = "workspace"
         result = try await runNativeWorkspace(input)
     case "phoneProjection": result = try phoneProjectionFixture(input)
+    case "phoneAgents": result = try phoneAgentsFixture(input)
+    case "nativeAgents":
+        stage = "agents"
+        result = try await runNativeAgents(input)
     case "directoryResolver": result = try await directoryResolverFixture(input)
     case "directoryHTTP": result = try directoryHTTPFixture(input)
     case "directoryEpoch":

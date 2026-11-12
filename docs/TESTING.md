@@ -109,7 +109,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ## 按改动选择回归
 
-原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。
+原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。`e2e/ios-screens.e2e.ts`（`LATCH_IOS_SCREENS=1`，需要已安装的 iOS 模拟器运行时）构建独立的 `LatchScreens` 目标，在自己新建并在结束时删除的模拟器上按启动参数 `-LatchScene` 截各场景的浅深色，写入 `LATCH_IOS_SCREENS_DIR` 或 `test-results/ios-screens/`；场景数据是固定样本，不连 Host，不等于对真实 Host 的验收。
 
 | 改动 | 用例 |
 | --- | --- |

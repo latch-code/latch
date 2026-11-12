@@ -53,7 +53,14 @@ it.skipIf(process.platform !== 'darwin')(
       expect(binary.readUInt32LE(0)).toBe(0xfeedfacf)
       const libraries = (await readdir(application)).filter(name => name.endsWith('.dylib'))
       const product = Buffer.concat([binary, ...(await Promise.all(libraries.map(name => readFile(join(application, name)))))])
-      for (const marker of ['Native fixture rejected the input', 'FixtureKeys', 'fixture plaintext'])
+      // The screenshot scenes live only in the LatchScreens target (`ios-screens.e2e.ts`).
+      for (const marker of [
+        'Native fixture rejected the input',
+        'FixtureKeys',
+        'fixture plaintext',
+        'LatchScreens fixture state',
+        'ScreensStage',
+      ])
         expect(product.includes(Buffer.from(marker))).toBe(false)
     } finally {
       await rm(directory, { recursive: true, force: true })
