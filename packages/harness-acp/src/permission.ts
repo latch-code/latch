@@ -5,9 +5,10 @@ import { AGENT_PRESETS, isReservedAgentEnvName, type AgentPreset } from '@latch/
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
-import { HARNESS_PROFILES, type AcpPermissionProfile, type HarnessProfile } from './profiles/index.ts'
+import { FALLBACK_PROFILES, HARNESS_PROFILES, type AcpPermissionProfile, type HarnessProfile } from './profiles/index.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
+import { codexArgs } from './wires/codex.ts'
 import { piArgs } from './wires/pi.ts'
 
 export interface ProfileSelection {
@@ -23,7 +24,7 @@ export interface ProfileSelection {
 }
 
 /** Executable name without a Windows extension, as compared with `AgentPreset.command`. */
-function commandName(command: string): string {
+export function commandName(command: string): string {
   const name = basename(command.replace(/\\/g, '/'))
   return process.platform === 'win32' ? name.replace(/\.(exe|cmd|bat|com)$/i, '') : name
 }
@@ -62,8 +63,12 @@ function matchesName(patterns: readonly string[], name: string): boolean {
 export function selectProfile(record: AgentRecord, locate: CommandLocator = resolveCommand): ProfileSelection {
   const name = commandName(record.command)
   const byId = record.presetId !== undefined ? AGENT_PRESETS.find(preset => preset.id === record.presetId) : undefined
-  const preset = byId ?? AGENT_PRESETS.find(item => item.command === name)
-  const profile = preset ? HARNESS_PROFILES.get(preset.id) : undefined
+  const preset = byId ?? AGENT_PRESETS.find(item => item.command === name || item.fallback?.command === name)
+  // Only the preset's own program speaks its own protocol: any other command of a preset with an adapter (the adapter,
+  // or a wrapper of the person's) runs with the adapter's profile, and is verified against the adapter's command.
+  const viaFallback = preset?.fallback !== undefined && name !== preset.command
+  const route = viaFallback ? preset!.fallback! : preset
+  const profile = preset ? (viaFallback ? FALLBACK_PROFILES : HARNESS_PROFILES).get(preset.id) : undefined
   const configEnv = profile?.permission.configEnv ?? []
   const redirected = Object.keys(record.env)
     .filter(key => matchesName(configEnv, key))
@@ -71,9 +76,10 @@ export function selectProfile(record: AgentRecord, locate: CommandLocator = reso
   const verified =
     byId !== undefined
     && redirected.length === 0
-    && record.args.length === byId.args.length
-    && record.args.every((arg, index) => arg === byId.args[index])
-    && isPresetCommand(record.command, byId.command, locate)
+    && route !== undefined
+    && record.args.length === route.args.length
+    && record.args.every((arg, index) => arg === route.args[index])
+    && isPresetCommand(record.command, route.command, locate)
   const notes =
     preset && redirected.length
       ? [
@@ -93,9 +99,10 @@ export function validateAgentDefinition(
     }
   }
   const selection = selectProfile(record, locate)
-  if (selection.profile?.wire === 'pi') {
+  if (selection.profile?.wire === 'pi' || selection.profile?.wire === 'codex') {
     try {
-      piArgs(record.args)
+      if (selection.profile.wire === 'pi') piArgs(record.args)
+      else codexArgs(record.args)
     } catch (error) {
       return { ok: false, error: new AppError(400, 'agent-args-reserved', error instanceof Error ? error.message : String(error)) }
     }

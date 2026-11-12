@@ -1400,7 +1400,7 @@ describe('agent settings', () => {
     const t = await testHost({
       detectPreset: preset =>
         preset.id === 'codex'
-          ? { found: true, path: '/fake/codex-acp' }
+          ? { found: true, path: '/fake/codex' }
           : preset.id === 'claude-agent'
             ? { found: false, agent: { command: 'claude', found: true } }
             : { found: false },
@@ -1435,7 +1435,7 @@ describe('agent settings', () => {
     expect((await desktop.json<{ agents: unknown[] }>('agents')).agents).toEqual([])
     const saved = await desktop.request('agents', {
       method: 'POST',
-      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {}, enabled: true },
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {}, enabled: true },
     })
     expect(saved.status).toBe(201)
     const after = await harnesses(desktop)
@@ -1446,7 +1446,7 @@ describe('agent settings', () => {
     // The second save of the same offer, from another window, says it exists instead of making codex-2.
     const again = await desktop.request('agents', {
       method: 'POST',
-      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {}, enabled: true },
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {}, enabled: true },
     })
     expect(again.status).toBe(409)
     expect((await body<{ error: string }>(again)).error).toBe('agent-exists')
@@ -1501,18 +1501,20 @@ describe('agent settings', () => {
     expect(await preset('goose')).toEqual({ found: false })
     // pi runs as itself, with no adapter to look for.
     expect(await preset('pi')).toEqual({ found: false })
+    // A definition saved on the adapter keeps saying what the adapter drives; the preset itself is Codex alone.
     expect(await detected()).toEqual({ found: false, agent: { command: 'codex', found: false } })
-    expect(await preset('codex')).toEqual({ found: false, agent: { command: 'codex', found: false } })
+    expect(await preset('codex')).toEqual({ found: false })
     expect((await harness()).statusMessage).toBe('未找到命令 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp')
     await install('codex')
     expect(await detected()).toEqual({ found: false, agent: { command: 'codex', found: true } })
     expect((await harness()).statusMessage).toBe(
       '已安装 codex，还差让 Latch 连接它的适配器 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp',
     )
+    // Codex alone is enough for the preset: it is reached directly.
+    expect(await preset('codex')).toEqual({ found: true, path: join(bin, 'codex') })
     await install('codex-acp')
     // Reading the settings is the re-check: the catalog that follows does not show the earlier lookup.
     expect(await detected()).toEqual({ found: true, path: join(bin, 'codex-acp'), agent: { command: 'codex', found: true } })
-    expect(await preset('codex')).toEqual({ found: true, path: join(bin, 'codex-acp'), agent: { command: 'codex', found: true } })
     expect((await harness()).status).toBe('ready')
   })
 })

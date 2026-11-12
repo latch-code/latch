@@ -1,4 +1,5 @@
 import { claudeAgentProfile } from './claude-agent.ts'
+import { codexAcpProfile } from './codex-acp.ts'
 import { codexProfile } from './codex.ts'
 import { cursorProfile } from './cursor.ts'
 import { dshProfile } from './dsh.ts'
@@ -26,6 +27,9 @@ export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
     profile => [profile.presetId, profile],
   ),
 )
+
+/** The profile of a preset's `fallback` adapter, by preset ID: what a definition on the adapter runs with. */
+export const FALLBACK_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map([[codexAcpProfile.presetId, codexAcpProfile]])
 
 export function profileFor(presetId: string | undefined): HarnessProfile | undefined {
   return presetId === undefined ? undefined : HARNESS_PROFILES.get(presetId)

@@ -208,7 +208,7 @@ export async function checkLogin(record: AgentRecord, options: RunOptions = {}):
 export async function readProgramVersion(record: AgentRecord, options: RunOptions = {}): Promise<{ found: boolean; version?: string }> {
   const { preset, profile } = selectProfile(record)
   const read = profile?.programVersion
-  const command = preset?.agentCommand
+  const command = preset?.agentCommand ?? preset?.fallback?.drives
   if (!read || !command || !locate) return { found: false }
   const variable = Object.entries(profile.permission.programEnv ?? {}).find(([, program]) => program === command)?.[0]
   const own = variable && !isReservedAgentEnvName(variable) && Object.hasOwn(record.env, variable) ? record.env[variable] : undefined

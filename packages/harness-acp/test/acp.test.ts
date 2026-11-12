@@ -37,7 +37,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
-import { HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
+import { FALLBACK_PROFILES, HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS } from '../src/project-config.ts'
 import { agentProbePreview } from '../src/probe.ts'
 import { initializeResult } from '../src/protocol.ts'
@@ -675,7 +675,7 @@ describe('ACP driver registration and readiness', () => {
       visible: [option('r', 'reject_once')],
       autoReject: { reason: 'unknown-kind', optionId: 'r' },
     })
-    const codex = profileFor('codex')!.permission
+    const codex = FALLBACK_PROFILES.get('codex')!.permission
     expect(
       filterPermissionOptions(codex, [
         option('approved', 'allow_once'),
@@ -2054,7 +2054,7 @@ describe('ACP permission mode', () => {
       // A session starts on the asking row, never a wider one.
       expect(modeTiers[expectedMode!]?.tier, profile.presetId).toBe('ask')
     }
-    expect(profileFor('codex')!.permission.modeTiers?.agent?.line).toContain('它的模型判断')
+    expect(FALLBACK_PROFILES.get('codex')!.permission.modeTiers?.agent?.line).toContain('它的模型判断')
   })
 
   it("keeps OpenCode's plan agent from changing files or running commands under Latch's rules", () => {
@@ -5104,8 +5104,10 @@ describe('Claude Agent and Cursor presets', () => {
     for (const toolResponse of [{ decisionReasonType: 'hook' }, { decisionReasonType: 3 }, {}, 'classifier', null])
       expect(read(update({ status: 'failed', ...meta(toolResponse) }))).toBeUndefined()
     expect(read(update({ status: 'failed' }))).toBeUndefined()
-    // No other preset reads Claude's words.
-    for (const profile of HARNESS_PROFILES.values()) if (profile.presetId !== 'claude-agent') expect(profile.readDenial).toBeUndefined()
+    // No other preset reads Claude's words; Codex's direct route reads only its own wire's mark.
+    const refusedByClaude = update({ status: 'failed', ...meta({ decisionReasonType: 'classifier', decisionReason: 'why' }) })
+    for (const profile of HARNESS_PROFILES.values())
+      if (profile.presetId !== 'claude-agent') expect(profile.readDenial?.(refusedByClaude)).toBeUndefined()
   })
 
   it("marks a Claude subagent's refused calls, and records its model's in auto mode", async () => {

@@ -5,7 +5,7 @@ import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
 import { resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
-import { selectProfile, validateAgentDefinition } from './permission.ts'
+import { commandName, selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import { assertVersion, forgetVersions, knownVersion, settleVersions, tooOld, tooOldText, versionRefusal, wasRead } from './version.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
@@ -15,7 +15,7 @@ export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, pres
 export { loadLoginShell } from './login-shell.ts'
 export { onVersionChange } from './version.ts'
 export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
-export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
+export { commandName, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
 
 /** PATH lookups touch the file system; status() is polled with every catalog. */
@@ -57,6 +57,17 @@ const outdatedLine = (record: AgentRecord, path: string | undefined): string | u
   path ? tooOldText(record, knownVersion(record, path)) : undefined
 
 /**
+ * A preset as a draft would save it now: its own command, or its `fallback` adapter when only the adapter is installed.
+ * A command that is here but too old is refused, never swapped: the adapter would run that same program (`CODEX_PATH`).
+ */
+export function presetRoute(presetId: string): AgentRecord | undefined {
+  const record = presetRecord(presetId)
+  const fallback = AGENT_PRESETS.find(item => item.id === presetId)?.fallback
+  if (!record || !fallback || resolveCommand(record.command) !== undefined) return record
+  return resolveCommand(fallback.command) ? { ...record, command: fallback.command, args: [...fallback.args] } : record
+}
+
+/**
  * Reads the versions of these definitions' commands, and of these presets' when one was read before (chosen once), at
  * most `timeoutMs`, so that a re-check answers with them. A preset never chosen is not run.
  */
@@ -73,11 +84,23 @@ export function recheckVersions(records: readonly AgentRecord[], timeoutMs: numb
  * What is missing for an agent to start, in words, or undefined when nothing is: the command, or for an adapter whose
  * program is installed, only the adapter.
  */
-function missingParts(command: string, found: boolean, preset: AgentPreset | undefined): string | undefined {
+function missingParts(command: string, found: boolean, drives: string | undefined): string | undefined {
   if (found) return undefined
-  return preset?.agentCommand && resolveCommand(preset.agentCommand) !== undefined
-    ? `已安装 ${preset.agentCommand}，还差让 Latch 连接它的适配器 ${command}`
+  return drives && resolveCommand(drives) !== undefined
+    ? `已安装 ${drives}，还差让 Latch 连接它的适配器 ${command}`
     : `未找到命令 ${command}`
+}
+
+/**
+ * What a definition's command is of its preset: the preset's own program, or its adapter (`fallback`) for any other
+ * command of a preset that has one. The install command and the program an adapter drives follow.
+ */
+function routeOf(record: AgentRecord): { install?: string; drives?: string } {
+  const preset = AGENT_PRESETS.find(item => item.id === record.presetId)
+  if (!preset) return {}
+  const fallback = preset.fallback && commandName(record.command) !== preset.command ? preset.fallback : undefined
+  if (fallback) return { install: fallback.install, ...(fallback.drives ? { drives: fallback.drives } : {}) }
+  return { ...(preset.install ? { install: preset.install } : {}), ...(preset.agentCommand ? { drives: preset.agentCommand } : {}) }
 }
 
 /** Short form for pickers; the full command stays in the agent settings. */
@@ -140,14 +163,14 @@ const skillsOf = (presetId: string | undefined): Pick<HarnessDriver, 'skills'> =
  * Describing it starts nothing and saves nothing.
  */
 export function presetOffer(preset: AgentPreset): HarnessInfo {
-  const record = presetRecord(preset.id)!
+  const record = presetRoute(preset.id)!
   const { profile } = selectProfile(record)
   const login = harnessLogin(record)
   const folders = folderDeclaration(profile)
   const outdated = outdatedLine(record, resolveCommand(record.command))
   return {
     id: preset.id,
-    description: preset.description,
+    description: record.command !== preset.command && preset.fallback ? preset.fallback.description : preset.description,
     ...(outdated ? { status: 'unavailable' as const, statusMessage: `${preset.name} ${outdated}` } : { status: 'ready' as const }),
     capabilities: agentFacts(preset.name, preset.id, profile),
     modes: [...ACP_CAPABILITIES.modes],
@@ -169,7 +192,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
   if (!validation.ok) throw validation.error
   const limits = resolveOptions(options)
   const record: AgentRecord = structuredClone(agent)
-  const protocol = selectProfile(record).profile?.wire === 'pi' ? 'pi 的 RPC 模式' : 'ACP'
+  const wire = selectProfile(record).profile?.wire
+  const protocol = wire === 'pi' ? 'pi 的 RPC 模式' : wire === 'codex' ? 'Codex 的 app-server' : 'ACP'
   const description = `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
   return {
     id: `agent-${record.id}`,
@@ -196,17 +220,17 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         ...skillsOf(record.presetId),
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
-        ...(selectProfile(record).profile?.historyImport && selectProfile(record).profile?.wire === undefined
+        ...(selectProfile(record).profile?.historyImport && selectProfile(record).profile?.wire !== 'pi'
           ? { historyImport: true as const }
           : {}),
         seededStart: true,
         login: () => harnessLogin(record),
         status() {
-          const preset = AGENT_PRESETS.find(item => item.id === record.presetId)
+          const route = routeOf(record)
           const found = located() !== undefined
-          const missing = missingParts(record.command, found, preset)
-          // The preset's install command installs its own command, so it is offered only while that one is missing.
-          const install = !found && preset?.install ? `。安装：${preset.install}` : ''
+          const missing = missingParts(record.command, found, route.drives)
+          // The install command installs this command, so it is offered only while that one is missing.
+          const install = !found && route.install ? `。安装：${route.install}` : ''
           if (missing) return { status: 'unavailable', statusMessage: `${missing}${install}` }
           const outdated = outdatedLine(record, located())
           if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}` }

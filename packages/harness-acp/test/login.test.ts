@@ -13,9 +13,11 @@ import { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPr
 import { ALWAYS_INHERITED, loadLoginShell, loginShellValues, readLoginShell, setLoginShellValues } from '../src/login-shell.ts'
 import { launchHash } from '../src/permission.ts'
 import { agentProbePreview, probeAgent } from '../src/probe.ts'
-import { HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
+import { FALLBACK_PROFILES, HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
 
 const run = promisify(execFile)
+/** The Codex preset on its ACP adapter, as a definition saved before Codex was reached directly. */
+const codexAdapter = (): AgentRecord => ({ ...presetRecord('codex')!, command: 'codex-acp' })
 const roots: string[] = []
 const savedPath = process.env.PATH
 afterEach(async () => {
@@ -127,7 +129,7 @@ describe('reading the login shell', () => {
     // What the login shell adds is searched; only this test's directories are, so no installed Codex is found.
     expect(personCommandDirectories()).toContain(elsewhere)
     setCommandSearch(() => personCommandDirectories().filter(path => path.startsWith(`${directory}/`)))
-    const preview = await agentProbePreview(presetRecord('codex')!, { dataDir: directory, cwd: directory })
+    const preview = await agentProbePreview(codexAdapter(), { dataDir: directory, cwd: directory })
     expect(preview.command).toBe(join(elsewhere, 'codex-acp'))
     expect(preview.envNames).not.toContain('CODEX_PATH')
     expect(preview.envNames).toEqual(expect.arrayContaining(['CODEX_HOME', 'https_proxy', '__MISE_DIFF']))
@@ -155,7 +157,12 @@ describe('the environment an agent inherits', () => {
 
   it("inherits a profile's home, and only that profile's", () => {
     const shellEnv = { CODEX_HOME: '/me/.codex', GEMINI_CLI_HOME: '/me/.gemini' }
-    const codex = agentEnvironment({ ...base, profile: profileFor('codex')!.permission, hostEnv: { PATH: '/usr/bin' }, shellEnv })
+    const codex = agentEnvironment({
+      ...base,
+      profile: FALLBACK_PROFILES.get('codex')!.permission,
+      hostEnv: { PATH: '/usr/bin' },
+      shellEnv,
+    })
     expect(codex.CODEX_HOME).toBe('/me/.codex')
     expect(codex).not.toHaveProperty('GEMINI_CLI_HOME')
     const plain = agentEnvironment({ ...base, hostEnv: { PATH: '/usr/bin', CODEX_HOME: '/me/.codex' }, shellEnv })
@@ -174,7 +181,7 @@ describe('the environment an agent inherits', () => {
   it('points the adapter at the program the person installed, and leaves it out otherwise', async () => {
     const directory = await root()
     const bin = await fakeCodex(directory, join(directory, 'login'))
-    const profile = profileFor('codex')!.permission
+    const profile = FALLBACK_PROFILES.get('codex')!.permission
     expect(agentEnvironment({ ...base, profile, hostEnv: { PATH: bin }, shellEnv: {} }).CODEX_PATH).toBe(join(bin, 'codex'))
     expect(
       programPaths({ approvals: 'prompts', defaultEnv: {}, readback: 'none', notes: [], programEnv: { X: 'no-such-program-here' } }),
@@ -195,9 +202,9 @@ describe('the launch fingerprint', () => {
     )
     const directory = await root()
     await fakeCodex(directory, join(directory, 'login'))
-    const before = await agentProbePreview(presetRecord('codex')!, { dataDir: directory, cwd: directory })
+    const before = await agentProbePreview(codexAdapter(), { dataDir: directory, cwd: directory })
     setLoginShellValues({ CODEX_HOME: '/somewhere/else', HTTPS_PROXY: 'http://user:pass@proxy.test:8080' })
-    const after = await agentProbePreview(presetRecord('codex')!, { dataDir: directory, cwd: directory })
+    const after = await agentProbePreview(codexAdapter(), { dataDir: directory, cwd: directory })
     expect(after.launchHash).toBe(before.launchHash)
     expect(JSON.stringify(after)).not.toContain('pass')
     expect(after.envNames).toEqual(expect.arrayContaining(['HTTPS_PROXY']))
@@ -237,20 +244,20 @@ describe('the login check', () => {
     const file = join(directory, 'login')
     await fakeCodex(directory, file)
     setLoginPrograms(undefined)
-    await expect(checkLogin(presetRecord('codex')!)).resolves.toEqual({ status: 'unknown' })
-    expect(harnessLogin(presetRecord('codex')!)).toBeUndefined()
-    expect(loginTerminalScript(presetRecord('codex')!)).toBeUndefined()
+    await expect(checkLogin(codexAdapter())).resolves.toEqual({ status: 'unknown' })
+    expect(harnessLogin(codexAdapter())).toBeUndefined()
+    expect(loginTerminalScript(codexAdapter())).toBeUndefined()
   })
 
   it('has three states, and only the sentence itself means logged out', async () => {
     const directory = await root()
     const file = join(directory, 'login')
     await fakeCodex(directory, file)
-    const record = presetRecord('codex')!
+    const record = codexAdapter()
     await expect(checkLogin(record)).resolves.toEqual({ status: 'unauthenticated' })
     await writeFile(file, 'yes')
     await expect(checkLogin(record)).resolves.toEqual({ status: 'authenticated' })
-    const read = profileFor('codex')!.loginStatus!.read
+    const read = FALLBACK_PROFILES.get('codex')!.loginStatus!.read
     expect(read({ code: 1, output: 'Error checking login status: disk on fire' })).toBe('unknown')
     expect(read({ code: null, output: '' })).toBe('unknown')
     expect(read({ code: 127, output: 'Not logged in' })).toBe('unknown')
@@ -268,22 +275,22 @@ describe('the login check', () => {
     await writeFile(join(bin, 'codex'), '#!/bin/sh\nsleep 30\n')
     await chmod(join(bin, 'codex'), 0o755)
     useOnly(bin)
-    await expect(checkLogin(presetRecord('codex')!, { timeoutMs: 100 })).resolves.toEqual({ status: 'unknown' })
+    await expect(checkLogin(codexAdapter(), { timeoutMs: 100 })).resolves.toEqual({ status: 'unknown' })
   })
 
   it('uses the copy an adapter ships when the program itself is not installed', async () => {
     const directory = await root()
     const file = join(directory, 'login')
     await fakeCodex(directory, file, ['codex-acp'])
-    expect(harnessLogin(presetRecord('codex')!)).toEqual({ command: 'codex-acp cli login', checkable: true })
-    await expect(checkLogin(presetRecord('codex')!)).resolves.toEqual({ status: 'unauthenticated' })
+    expect(harnessLogin(codexAdapter())).toEqual({ command: 'codex-acp cli login', checkable: true })
+    await expect(checkLogin(codexAdapter())).resolves.toEqual({ status: 'unauthenticated' })
   })
 
   it('adds the verdict to a test start without keeping what the command printed', async () => {
     const directory = await root()
     const file = join(directory, 'login')
     await fakeCodex(directory, file)
-    const record = presetRecord('codex')!
+    const record = codexAdapter()
     const options = { dataDir: directory, cwd: directory }
     const preview = await agentProbePreview(record, options)
     const result = await probeAgent(record, { ...options, expectedLaunchHash: preview.launchHash })
@@ -309,13 +316,13 @@ describe('the program an adapter drives, beside the adapter', () => {
     }
     useOnly(bin)
     const options = { dataDir: directory, cwd: directory }
-    const probe = async (record: AgentRecord = presetRecord('codex')!) =>
+    const probe = async (record: AgentRecord = codexAdapter()) =>
       probeAgent(record, { ...options, expectedLaunchHash: (await agentProbePreview(record, options)).launchHash })
     return { probe, ran: () => existsSync(marks) }
   }
 
   it('shows both versions and marks a pair the adapter was not built for, starting either way', async () => {
-    expect(profileFor('codex')!.programVersion!.read('codex-cli 0.165.0\n')).toBe('0.165.0')
+    expect(FALLBACK_PROFILES.get('codex')!.programVersion!.read('codex-cli 0.165.0\n')).toBe('0.165.0')
     const built = await pair('2.5.0', '0.165.3')
     expect(await built.probe()).toMatchObject({
       status: 'ready',
@@ -356,7 +363,7 @@ describe('the program an adapter drives, beside the adapter', () => {
       ].join('\n'),
     )
     await chmod(own, 0o755)
-    const probe = (env: Record<string, string>) => found.probe({ ...presetRecord('codex')!, env })
+    const probe = (env: Record<string, string>) => found.probe({ ...codexAdapter(), env })
     expect((await probe({ CODEX_PATH: own })).program).toEqual({ name: 'Codex', version: '0.165.2' })
     expect(existsSync(ownMark)).toBe(true)
     // A relative path resolves against the project, which a test start does not use: the version stays unknown.
@@ -379,7 +386,7 @@ describe('the program an adapter drives, beside the adapter', () => {
       await chmod(join(bin, name), 0o755)
     }
     useOnly(bin)
-    const record = presetRecord('codex')!
+    const record = codexAdapter()
     const options = { dataDir: directory, cwd: directory }
     const started = Date.now()
     const result = await probeAgent(record, {
@@ -406,7 +413,7 @@ describe('the login command', () => {
     const directory = await root()
     const file = join(directory, 'login')
     const bin = await fakeCodex(directory, file)
-    const record = presetRecord('codex')!
+    const record = codexAdapter()
     expect(harnessLogin(record)).toEqual({ command: 'codex login', checkable: true })
     const script = loginTerminalScript(record)!
     expect(script).toContain(`'${join(bin, 'codex')}' 'login'`)

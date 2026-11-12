@@ -227,3 +227,74 @@ describe('pi 1.5', () => {
     expect(detail.messages.some(message => message.role === 'assistant' && message.text.length > 0)).toBe(true)
   })
 })
+
+describe('Codex chosen from a draft', () => {
+  async function codexHost(programs: Record<string, string>) {
+    const root = await directory()
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    for (const [name, body] of Object.entries(programs)) {
+      await writeFile(join(bin, name), `#!/bin/sh\n${body}\n`)
+      await chmod(join(bin, name), 0o755)
+    }
+    const t: TestHost = await startTestHost({
+      loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+      commandDirectories: () => [bin],
+    })
+    cleanups.push(() => t.close())
+    return t.enroll({ listener: 'unix' })
+  }
+  const body = { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} }
+  const acp = `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`
+
+  it('is saved on Codex itself when it is new enough', async () => {
+    const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.167.0'; exit 0; }\n${acp}`, 'codex-acp': acp })
+    const saved = await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })
+    expect(saved.agent).toMatchObject({ command: 'codex', args: [], verified: true })
+  })
+
+  it('is refused when Codex is too old, even with its adapter installed: the adapter would run that same Codex', async () => {
+    const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.150.0'; exit 0; }\n${acp}`, 'codex-acp': acp })
+    const refused = await owner.request('agents', { method: 'POST', body })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: 'harness-version-unsupported' })
+    expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
+  })
+
+  it('is saved on its adapter only when Codex is not installed, and the list says what the adapter runs', async () => {
+    const owner = await codexHost({ 'codex-acp': acp })
+    const listed = await owner.json<{ presets: Array<{ id: string; command: string; description: string }> }>('agents')
+    expect(listed.presets.find(preset => preset.id === 'codex')).toMatchObject({
+      command: 'codex-acp',
+      description: '经适配器 codex-acp 运行它自带的 Codex；模型、登录与沙箱由 Codex 自身配置。',
+    })
+    expect((await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent).toMatchObject({
+      command: 'codex-acp',
+      verified: true,
+    })
+  })
+
+  it('stays Codex itself, to install, when neither is installed', async () => {
+    const owner = await codexHost({})
+    const listed = await owner.json<{ presets: Array<{ id: string; command: string; install?: string; detected?: unknown }> }>('agents')
+    expect(listed.presets.find(preset => preset.id === 'codex')).toMatchObject({
+      command: 'codex',
+      install: 'npm i -g @openai/codex',
+      detected: { found: false },
+    })
+    const saved = (await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent
+    expect(saved).toMatchObject({ command: 'codex' })
+    const harness = (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'codex')
+    expect(harness).toMatchObject({ status: 'unavailable', statusMessage: '未找到命令 codex。安装：npm i -g @openai/codex' })
+  })
+
+  it('is refused when Codex is too old and no adapter is installed', async () => {
+    const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.150.0'; exit 0; }\n${acp}` })
+    const refused = await owner.request('agents', { method: 'POST', body })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toEqual({
+      error: 'harness-version-unsupported',
+      message: 'Codex 需要 0.156.0 或更高版本（当前 0.150.0）。升级：npm i -g @openai/codex@latest',
+    })
+  })
+})

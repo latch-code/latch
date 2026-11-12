@@ -7,7 +7,7 @@ sources:
 ---
 # 接入外部 Harness（ACP）
 
-Latch 用 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动外部 Agent，pi 用它自己的 RPC 模式（见「pi 的 RPC 模式」）。每个启用的 Agent 定义成为一个 HarnessDriver，与内置 `standard` 并列出现在新会话的 Harness 选择器中。实现是包 `@latch/harness-acp`（`packages/harness-acp/`，只有 Host 依赖它）；浏览器可见的预设（命令、参数、许可证、安装提示）位于 `packages/protocol/src/agent-presets.ts`，只在 Host 上使用的权限配置位于 `packages/harness-acp/src/profiles/`（每个预设一个文件）。整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+Latch 用 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动外部 Agent；Agent 自己有官方的机器协议时直连它（见「直连优先」）：Codex 用它的 app-server，pi 用它的 RPC 模式。每个启用的 Agent 定义成为一个 HarnessDriver，与内置 `standard` 并列出现在新会话的 Harness 选择器中。实现是包 `@latch/harness-acp`（`packages/harness-acp/`，只有 Host 依赖它）；浏览器可见的预设（命令、参数、许可证、安装提示）位于 `packages/protocol/src/agent-presets.ts`，只在 Host 上使用的权限配置位于 `packages/harness-acp/src/profiles/`（每个预设一个文件）。整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 ## 权限级别：完全访问（L3）
 
@@ -32,11 +32,22 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
    这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行，带 Harness 的标记：「Latch 不隔离 Codex」，ⓘ 后是「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。」；执行工具前不询问的 Harness 写「pi 不询问，Latch 不隔离它」，ⓘ 后是「pi 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它。」。Driver 不会收到这一项。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。权限菜单的写法见「权限菜单」。
 
+### 直连优先
+
+Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP 适配器只作后备：少一层转换，能用到协议的全部，版本也只跟着 Agent 自己走。
+
+| Harness | 路线 | 为什么 |
+| --- | --- | --- |
+| Codex | `codex app-server`（见「Codex 的 app-server」） | Codex 自己的客户端用的 JSON-RPC 协议；codex-acp 本身也是启动它再转成 ACP。需要 Codex 0.156.0 或更高：它的发布说明从这一版起在一轮被中断或失败时保留已经流出的回答与计划，另一个直连 app-server 的开源客户端也以 0.156.0 为支持下限。`codex` 低于 0.156.0 时以 409 `harness-version-unsupported` 拒绝并给出升级命令，不改用 codex-acp：适配器会经 `CODEX_PATH` 运行同一个旧 Codex。只有这台电脑没有 `codex`、却装了 `codex-acp` 时，从草稿选 Codex 才保存为 `codex-acp`，它运行自己随包带的 Codex（[codex-acp 的 README](https://github.com/agentclientprotocol/codex-acp)：npm 包依赖一个兼容的 `@openai/codex`，`CODEX_PATH` 只用来换成别的 Codex；Codex 没装时 Latch 不设它），预设列表这时写它经适配器运行。定义的命令是 `codex-acp`（之前保存的定义）或任何别的命令时走 ACP，「设置 › Harness」在它的行上写「经 codex-acp」，ⓘ 后是直连需要的版本；两者都没装时，预设就是 Codex 本身，给出它的安装命令 |
+| pi | `pi --mode rpc`（见「pi 的 RPC 模式」） | pi 官方的 RPC 模式 |
+| DeepSeek Harness | `dsh --profile acp` | dsh 随包提供的 `acp` 配置就是它给自动化客户端的官方协议；`--profile sdk` 是给它自己的 SDK 用的 JSON-RPC，换过去没有收益 |
+| 其他预设 | ACP | 它们的官方集成方式就是 ACP（OpenCode、Gemini CLI、Qwen Code、goose、Cursor 的 `acp` 命令，Claude Agent 的官方适配器） |
+
 预设收录开源 Agent，以及厂商官方文档支持的已安装命令（Claude Agent、Cursor）；都只使用本机已安装的命令，不使用 `npx` 等运行时下载，不捆绑、不修改它们：
 
 | 预设 | 命令 | 许可证 | 说明 |
 | --- | --- | --- | --- |
-| Codex | `codex-acp` | Apache-2.0 | `npm i -g @agentclientprotocol/codex-acp`；登录、模型与沙箱由 Codex 管理 |
+| Codex | `codex app-server` | Apache-2.0 | `npm i -g @openai/codex`，0.156.0 或更高版本；不用适配器；没装 Codex 而装了 `codex-acp`（Apache-2.0）时经它运行它自带的 Codex；登录、模型与沙箱由 Codex 管理 |
 | pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本（与 1.5.0 核对过握手）；不用适配器；pi 执行工具前不请求审批，扩展要求确认时交给人 |
 | OpenCode | `opencode acp` | MIT | `npm i -g opencode-ai`；支持 1.x 与 2.x |
 | DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.1-rc.1 或更高（`acp` 配置自 0.1.2 起随包提供；0.2.1-rc.1 起它的 ACP 一轮等子 Agent 结束才结算、取消等真实停止，见 `@deepseek-ai/dsh-acp` 0.2.0-rc.2 与 0.2.1-rc.1 的 README；2026-11 的 latest 是 0.2.2-rc.1，参数不变）；它要求 Node.js 24.9 或更高；按完整消息回复 |
@@ -52,7 +63,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 启动脚本让 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
 
-预设可以声明 `agentCommand`：适配器驱动的那个人熟悉的程序（codex-acp 驱动 codex）。Host 用同样的规则查找它，只装了程序时「设置 → Harness」与选择器写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」；适配器才是启动的命令，没有它这个 Agent 不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
+预设可以声明 `agentCommand`：适配器驱动的那个人熟悉的程序；有 `fallback` 适配器的预设由 `fallback.drives` 说（codex-acp 驱动 codex），只用于保存在适配器上的定义。Host 用同样的规则查找它，只装了程序时「设置 → Harness」与选择器写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」；适配器才是启动的命令，没有它这个 Agent 不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
 
 ### 版本门槛
 
@@ -78,7 +89,7 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 
 | 预设 | Latch 设置的环境变量 | 预期模式 | 模式顺序（严格 → 宽松） | 不提供的模式 | 隐藏的选项 | 读回 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | `INITIAL_AGENT_MODE=read-only` | `read-only` | `read-only`、`workspace-write`、`agent`、`agent-full-access` | — | `accept_execpolicy_amendment`、`apply_network_policy_amendment*` | 可读回 |
+| Codex（经 codex-acp；直连见「Codex 的 app-server」） | `INITIAL_AGENT_MODE=read-only` | `read-only` | `read-only`、`workspace-write`、`agent`、`agent-full-access` | — | `accept_execpolicy_amendment`、`apply_network_policy_amendment*` | 可读回 |
 | Qwen Code | — | `default` | `plan`、`default`、`auto-edit`、`auto`、`yolo` | — | — | 可读回；恢复会话会恢复旧模式，Latch 每轮前重新设置 |
 | goose | `GOOSE_MODE=approve` | `approve` | `chat`、`approve`、`smart_approve`、`auto` | — | — | 可读回 |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` | `default` | `plan`、`default`、`autoEdit`、`yolo` | — | `proceed_always_and_save`、`ProceedAlwaysAndSave` | 可读回 |
@@ -127,7 +138,7 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 
 | 预设 | 其他文件夹怎样交给它 | `HarnessInfo.projectFolders` | 说明 |
 | --- | --- | --- | --- |
-| Codex | ACP 的 `additionalDirectories`：`session/new`、`session/resume` 与 `session/load` 每次都发送完整列表 | `{ access: 'all' }` | 只在 `initialize` 声明了 `sessionCapabilities.additionalDirectories`（一个对象）时发送。没有声明时 Latch 结束该进程并返回 409 `agent-folders-unsupported`，会话不会创建。codex-acp 把每个文件夹当作受信项目并加载其中的 `.agents/skills`；在 `workspace-write` 模式下这些文件夹也可写 |
+| Codex | 直连时是 `workspace-write` 一轮的可写根（`sandboxPolicy.writableRoots`）；经 codex-acp 时是 ACP 的 `additionalDirectories`：`session/new`、`session/resume` 与 `session/load` 每次都发送完整列表 | `{ access: 'all' }` | 只在 `initialize` 声明了 `sessionCapabilities.additionalDirectories`（一个对象）时发送。没有声明时 Latch 结束该进程并返回 409 `agent-folders-unsupported`，会话不会创建。codex-acp 把每个文件夹当作受信项目并加载其中的 `.agents/skills`；在 `workspace-write` 模式下这些文件夹也可写 |
 | Gemini CLI、Qwen Code | 在定义的参数之后，每个其他文件夹追加一次 `--include-directories <真实路径>`；每个会话有自己的进程，参数只对它生效 | `{ access: 'all', max: 5 }` | 最多 4 个其他文件夹，超出时返回 409 `harness-folder-limit`，不启动进程。它们按逗号拆分这个参数，含逗号的路径返回 400 `workspace-folder-chars`（Host 本来就不接受这样的新文件夹） |
 | OpenCode | 不传（1.x 的 ACP 不支持；2.x 声明支持，Latch 尚未使用） | `primary-asks` | Latch 设置的 `external_directory: 'ask'` 让它访问工作目录以外的路径之前先询问；2.x 默认放行这类访问，这条规则让它照样先询问 |
 | DeepSeek Harness | 不传（它拒绝这个字段） | `primary` | — |
@@ -152,7 +163,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 低于版本门槛的命令不运行探测（见「版本门槛」）。探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。附件能力不只来自测试启动：会话启动与选中时读取可选项的握手也记下 `initialize` 报告的图片与 embeddedContext（驱动状态的 `promptCapabilities`，按定义哈希），见 [ATTACHMENTS.md](ATTACHMENTS.md)。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
 
-适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
+适配器驱动这个人自己装的程序时（保存在 codex-acp 上的 Codex 定义经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
 
 结果带 `checkedAt`、`launchHash` 与最多 4 KiB 的诊断；先按定义变量与秘密格式脱敏，再截取结尾。最近结果以可选 `AgentRecord.lastProbe`、`probedDefinitionHash` 保存，`AgentSettings.lastProbe` 只返回同一定义的记录；修改启动内容会清除它。探测通过不等于会话已经启动，不修改 `startedHash`，也不授予以后启动会话的信任。运行前写审计 `agent.probe.requested`，结束后记录 `agent.probed`；审计只含 ID、哈希与状态。当前 Host 生命周期内，同设备同 `requestId` 共享整次探测与记录过程，重试不再执行程序；这份记录只在内存中，Host 重启后同一 `requestId` 会再执行一次探测。
 
@@ -199,9 +210,35 @@ Harness 说某个模型服务的协议时，会话可以不用它自己的登录
 - **每轮核对**：一轮有回复而网关没收到这个进程的请求（网关拒绝的请求也算收到，读模型列表不算），会话追加「这一轮没有经过 Latch：<Harness> 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。」，`summary.modelRoute.bypassed` 置真，写审计 `task.model.bypassed`；会话照常继续。只有整轮绕过看得出来：一轮里一部分请求走了别处（例如另一个评审模型）看不出来。
 - **每轮的模型与用量**：网关按凭据记下每个请求点名的模型（Responses 是请求体的 `model`，Gemini 是路径里的模型），以及服务在回复里说的模型与令牌：Responses 读 `response.created`、`response.completed`、`response.incomplete`、`response.failed` 里的 `response.model` 与 `response.usage`，不是流式时读整个回复；Gemini 读每段的 `modelVersion` 与 `usageMetadata`，以最后一段为准（`thoughtsTokenCount` 算输出，`cachedContentTokenCount` 算缓存读取）。流式回复边转发边逐行读，只留下可能带这些字段的那一个事件，Responses 其他有名字的事件一行也不留；一个事件或一个非流式回复超过 4 MiB 就不读它，照常转发。只留模型名与令牌数，不留请求或回复的内容；服务给的模型名先去掉密钥与 `redactSecrets` 认得的秘密，最多 200 字。一轮结束时这些计数记在开启这一轮的消息上（`turn.routed`：请求数、这一轮选的模型、按模型最多 16 项的请求数、没有完成的次数、还在进行的次数、报告了令牌的次数与令牌合计），这一轮发出之前和两轮之间的请求不计。请求到达时计入当时的这一轮。回复说它结束了（Responses 的 `response.completed`、`response.incomplete`、`response.failed` 或 `error` 事件，Gemini 的 `error` 或某个候选的 `finishReason`）就按它说的计：服务还没关闭连接、Agent 读到这里就不再读，都不算没有完成。一轮结束时还没有说结束的请求记为还在进行（`open`），之后的结果不再计入这一轮。没有完成指 Latch 没有转发（例如模型不在服务里）、服务回了错误，或者回复说结束之前服务断开或 Agent 不再等待，或回复本身说失败。界面上，这一轮的输入与输出令牌来自这些计数，提示里写「由模型服务在回复里报告，Latch 转发时读取」、没有计入的回复或还在进行的请求，和每个模型的请求；没有令牌可显示时写「经 Latch N 次请求」。服务说回答的模型与这一轮选的不同（按 `modelIdKey` 比较，只差日期后缀算同一个）时，作者行写服务说的模型，旁边写「选的是 <模型>」；这一轮没有请求选的模型、服务也没有说用的是哪个时，作者行写请求最多的模型，提示写明这是 Harness 请求的、服务没有说。Agent 自己报告的用量（`session/prompt` 的 `usage`、`usage_update`）照旧另算，不被替换。iPhone 还不显示这些计数。
 - **Gemini CLI 的辅助调用**：网页抓取与搜索、循环检测、下一位发言判断、编辑修正、摘要与上下文压缩、实验性上下文管理的令牌计数与提炼等辅助调用按别名取模型，每个别名指向 Gemini CLI 内置的固定模型（如 `gemini-3-flash-preview`、`gemini-3-pro-preview` 与 flash-lite 一档）；自带的子 Agent `codebase_investigator`、`cli_help`、`browser_agent` 也各用固定模型。它们和会话的模型走同一个网关，服务的模型列表里没有这些模型时网关会拒绝（403）。所以会话自己的系统设置文件把它们都指到会话开始时的模型：`modelConfigs.customOverrides` 为每个辅助别名写一条 `{"match":{"model":"<别名>"},"modelConfig":{"model":"<会话模型>"}}`，`agents.overrides.<子 Agent>.modelConfig.model` 写会话模型。只改模型，别名与子 Agent 自己的生成参数（温度、思考预算、`web-search` 的搜索工具等）不变。会话中途换了模型，辅助调用仍用开始时的模型，它也在服务的列表里。限制：系统设置最后合并、数组整个替换，所以你自己设置的 `modelConfigs.customOverrides` 在这样的会话里不生效（`agents.overrides` 按键合并，你的其他设置照常）；`web-search` 要用 Gemini 自己的搜索工具，服务不支持时仍会失败；Gemini CLI 以后新增的别名或子 Agent 不在这份列表里，在 Latch 补上之前仍会被拒绝；你自己定义的子 Agent 指定了别的模型时同样被拒绝，你在 `modelConfigs.overrides` 里为某个别名写的、除别名外还有别的条件（如 `isRetry`）的规则仍然生效，指定了别的模型时也是如此。
-- **Codex 的模型**：`providers/set` 之后 codex-acp 只留下网关列出、且 Codex 自己认识的模型；所选模型在第一轮前选中，Codex 不认识它时这一轮失败并说明。所以 Codex 声明 `models.knownOnly`：草稿读过 Codex 自己的模型列表后，服务里不在这份列表上的模型（按小写、去掉厂商前缀与日期后缀比较，`modelIdKey`）不能选，写「Codex 不认识这个模型」；还没读过时都列出。这样的会话的模型列表不当作 Codex 自己的列表保存。
+- **Codex 的模型**（只在经 codex-acp 时；直连 app-server 的路线尚未实现经 Latch 使用模型服务）：`providers/set` 之后 codex-acp 只留下网关列出、且 Codex 自己认识的模型；所选模型在第一轮前选中，Codex 不认识它时这一轮失败并说明。所以 Codex 声明 `models.knownOnly`：草稿读过 Codex 自己的模型列表后，服务里不在这份列表上的模型（按小写、去掉厂商前缀与日期后缀比较，`modelIdKey`）不能选，写「Codex 不认识这个模型」；还没读过时都列出。这样的会话的模型列表不当作 Codex 自己的列表保存。
 - **审计**：`task.l3.start-requested` 与 `task.l3.started` 带 `providerId` 与路由的哈希 `routeHash`；凭据不进审计、日志、会话记录、启动预览或磁盘。凭据只在 Agent 进程的环境变量里（Gemini CLI，子进程会继承，`printenv` 能把它带进会话）或 ACP 的请求头里（Codex）。它不是模型密钥，但同一用户的进程拿到它就能经这台 Mac 花这个服务的额度，直到它失效；Agent 也仍然读得到 `providers.json`，因为没有操作系统沙箱。
 - 会话开始后不能换服务（模型菜单写「换服务要新开会话：开始时确认的是这个服务。」）。服务停用、删除或缺了密钥与地址确认后，网关拒绝这个会话的下一轮，模型菜单在发送前就按服务名说明；重新打开后下一轮换新的网关凭据继续。会话的模型选项只有网关会转发的模型（Agent 进程的凭据绑定的列表），客户端照此列出，切换也只接受其中的：Gemini CLI 不管指向哪个服务都列自己的一组固定模型，经 Latch 时换成服务的模型列表，切换走 `session/set_model`，它接受任何模型名；Codex 保留它列出的、服务里也有的模型。为 Agent 自己的登录填写的模型 ID 不在其中。
+
+## Codex 的 app-server
+
+`wires/codex.ts` 运行 `codex app-server`（定义的参数之后加 `app-server`；定义的参数不能有 `app-server`、`exec`、`login`、`logout`、`resume`、`fork`、`review`、`apply`、`--help`、`--version`，保存时就拒绝，400 `agent-args-reserved`），一个进程一个会话（Codex 的 thread），把运行时说的 ACP 换成 Codex 的请求，把 Codex 的通知换成 ACP 的会话更新，所以运行时的检查（启动指纹、模式读回、审批、取消、项目配置）照旧适用。协议形状按 Codex 0.167 的 `codex app-server generate-ts` 核对。
+
+- **握手与登录。** `initialize` 之后发 `initialized`；版本取自回答的 `userAgent`。开会话前先 `account/read`：没有账号且需要 OpenAI 登录时按未登录处理（409 `agent-auth-required`，「Codex 还没登录。按它自己的方式登录后重试。」），不开 thread。
+- **会话。** 新会话 `thread/start`，恢复 `thread/resume`（`excludeTurns`）。只有 Codex 自己说没有这个 thread（`no rollout found for thread id`、`invalid session id`）时是「该 Harness 已找不到这个会话」；其他拒绝照原样（脱敏后）显示它的理由，接入已有会话时据此认出「正在别处使用」。会话带技能时，只读技能服务器经 thread 的 `config.mcp_servers` 交给 Codex。
+- **一轮。** `turn/start` 带输入（文字；图片作 data URL）、模型、思考深度与当前模式的设置，等到 `turn/completed` 才结束：`completed` 正常结束，`interrupted` 算取消，`failed` 带 Codex 的原因失败。`item/agentMessage/delta` 与推理增量流式显示，`commandExecution`（输出增量）、`fileChange`（每个文件的 diff）、`mcpToolCall`、`webSearch` 显示为工具调用，`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条「Codex 正在重试」的提示。运行中追加用 `turn/steer`（带当前一轮的 ID）。
+- **权限模式。** 四档与 ACP 路线同名、同说明，对照写在 `profiles/codex.ts`（改动时提高 profile 的 `version`），模式由 wire 保存，每一轮都随 `turn/start` 发出（thread 开始与恢复时也带上）：
+
+  | 模式 | `approvalPolicy` | 沙箱 | 谁审 |
+  | --- | --- | --- | --- |
+  | `read-only` | `untrusted` | `readOnly`（不联网） | 人 |
+  | `workspace-write` | `on-request` | `workspaceWrite`（项目的其他文件夹是可写根，不联网） | 人 |
+  | `agent` | `on-request` | `workspaceWrite` | Codex 的审阅模型（`auto_review`） |
+  | `agent-full-access` | `never` | `dangerFullAccess` | — |
+
+- **审批。** `item/commandExecution/requestApproval` 与 `item/fileChange/requestApproval` 交给人，只有「允许」「拒绝」两个一次性选项（不提供 `acceptForSession` 与策略修改）：允许回 `accept`，拒绝回 `decline`（Codex 不做这一步，继续这一轮），没有回答（停止、停止之后才到的请求）回 `cancel`。卡片写出允许给的是什么：带 `networkApprovalContext` 的是「联网：<主机>」与「允许后，这条命令可以访问 <主机>（<协议>）」；命令写「允许后，这条命令在沙箱之外运行」（完全访问模式下只写运行这条命令）；改文件写允许写入的文件夹（`grantRoot`）。子 Agent（同一进程里的其他 thread）的审批标为它的，由运行时按会话自己的模式决定交给人还是拒绝并说明。
+- **MCP 工具。** Codex 运行 MCP 服务器的工具前，用标了 `codex_approval_kind: mcp_tool_call` 的 elicitation 询问：这是一张普通的审批卡片，写「调用 <服务器>.<工具>」、参数与「允许后，Codex 调用 MCP 服务器「<服务器>」的工具「<工具>」一次」，允许回 `accept`，拒绝回 `decline`，没有回答回 `cancel`。MCP 调用与网页搜索同命令一样，看到结果才算运行。卡片上来自 Codex 的文字（主机、协议、文件夹、理由、命令、参数）都经过 `escapeSecurityText`，每个客户端都看到被显示出来的不可见字符。
+- **不交给人的请求。** 要求更多权限（`item/permissions/requestApproval`，回空权限、只限这一轮）、MCP 服务器自己的 elicitation（不是工具审批的那些，回 `decline`）、旧式的 `execCommandApproval` 与 `applyPatchApproval`（回 `abort`）由 profile 当场回答：会话里写一行「已自动拒绝：…」（例如「已自动拒绝：Codex 请求联网。权限只随你在「权限」里选的模式变。」），并记审计 `task.approval-auto-rejected`（`harness-declined`）；会话还没记下时审计照记，这一行在会话记下时补进去。其他请求按「看不懂的请求」写进会话并回 method not found。
+- **模型审阅与拒绝。** `agent` 模式下 Codex 的审阅模型代替人决定：`item/autoApprovalReview/started` 与 `completed` 成为一行「Codex 的模型审阅」（ID 以 `guardian_assessment:` 开头），带它的结论与理由，按「模型的判断」记录。命令与改文件先显示为等待，看到输出或完成才算运行；Codex 报告 `declined` 而没有人回答过的调用，是它的审阅模型（带理由）或它自己的规则与沙箱拦下的，显示为「拦下」，从不记成「没有问你就运行」。
+- **子 Agent。** 同一进程里其他 thread 的命令、改文件等调用显示为该子 Agent 的行，`agent` 模式下审阅模型对它们的决定也是该子 Agent 的「Codex 的模型审阅」行，同样记录；它们的文字回复不显示。
+- **停止。** `turn/interrupt`，等 Codex 报告这一轮 `turn/completed`（`interrupted`）才算停下；`turn/start` 还没回答时，拿到这一轮的 ID 后立刻中断。到取消的时限（30 秒）还没结束时，Latch 结束进程并写「取消未在 30 秒内完成，已强制结束 Codex 进程…」。
+- **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度，与 ACP 路线同样的选项 ID；开始前读取用同一个程序的 `codex app-server`，不开 thread。
+- **接入已有会话。** `thread/list` 列出，`thread/resume` 载入后 `thread/read`（`includeTurns`）重放说过的话、回复与工具调用；Latch 从不读 Codex 自己的文件夹。
+- **尚未实现。** 经 Latch 使用模型服务（这条路线没有 `providers/set`，模型菜单收起的那一行写「尚未实现」）；分叉沿用文字记录，不用 Codex 的 `thread/fork`。
 
 ## pi 的 RPC 模式
 
@@ -233,7 +270,7 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 - **Agent 声明的终端登录。** `initialize` 声明 `clientCapabilities.auth.terminal: true`（写了 `signIn` 的预设除外，见下），Agent 于是可以在 `authMethods` 里列出 `type: "terminal"` 的方法（如 OpenCode 2.x 的 `opencode acp --login`）。会话、读取可选项与「测试启动」的握手都记下这些方法，以及宣告它们的程序路径（`src/auth.ts`，只在内存）。方法本身不能指定程序：登录时运行的就是会话运行的那个程序，加定义的参数，再加方法的 `args`；方法的 `env` 只接受普通变量名，点名 Latch 设置或清除的变量（`PATH`、`NODE_OPTIONS`、`DYLD_*`、`CODEX_HOME` 等）的整个方法丢弃，参数与变量有数量和长度上限。打开终端之前重新查找程序，路径和宣告时不同就拒绝（409 `login-program-changed`）。定义自己的环境变量不写进登录脚本，因为里面可能有密钥；脚本在终端自己的环境里运行，结束时按退出码说完成或没有完成。Agent 列了方法时，页面用它们代替预设的命令。
 - **预设的命令。** Agent 没列方法时用 `AgentPreset.login`（`codex login`、`opencode auth login`、`goose configure`、`cursor-agent login`；pi、Gemini CLI、Qwen Code 是进入程序后按说明操作；DeepSeek Harness 没有记录）。Codex 没单独安装时用适配器自带的 `codex-acp cli login`。经 `HarnessInfo.login` 发给客户端。
 - **Claude Agent。** 预设写了 `signIn`：Latch 不对它声明 terminal auth（适配器于是不列出 claude.ai 登录），也不运行它列出的任何登录；说怎么登录时，页面只给出 `signIn` 这句话，没有登录命令，也没有「在终端里登录」。页面显示它报告的登录状态、标签与到期日（见下）；适配器宣告 `logout` 时也显示「退出登录」，之后要在 Claude Code 里自己重新登录。Latch 不读取它的凭据。
-- **Agent 推送的状态。** Codex 与 Claude Agent 的适配器推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）：`initialize` 之后一次，之后只在内容变化时。Codex 的适配器把 Codex 的 `account/updated` 转成推送，在别的终端里登录或退出也会推送。Claude Agent 的只在 `initialize`、建会话与每轮开始时重新读取登录，所以进程空闲时，别的终端里的登录或退出要到下一轮才推送，在那之前推送可能是旧的。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`；`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉，不进内存里的记录、日志、SSE、快照或磁盘。推送只在发出它的进程还在时算数，进程退出就忘掉，回到状态命令。`HarnessInfo.login.reported` 把它发给客户端。
+- **Agent 推送的状态。** 经 codex-acp 的 Codex 与 Claude Agent 的适配器推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）：`initialize` 之后一次，之后只在内容变化时。Codex 的适配器把 Codex 的 `account/updated` 转成推送，在别的终端里登录或退出也会推送。Claude Agent 的只在 `initialize`、建会话与每轮开始时重新读取登录，所以进程空闲时，别的终端里的登录或退出要到下一轮才推送，在那之前推送可能是旧的。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`；`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉，不进内存里的记录、日志、SSE、快照或磁盘。推送只在发出它的进程还在时算数，进程退出就忘掉，回到状态命令。`HarnessInfo.login.reported` 把它发给客户端。
 - **三态。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`，`status` 是 `authenticated`、`unauthenticated` 或 `unknown`。有正在运行的进程推送过、而状态命令说不出推送没有的东西时，直接用推送，不运行程序；否则运行状态命令。Codex 的命令是 `codex login status`：退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，它的其他错误也退出 1，所以都算 `unknown`。Claude Agent 的是适配器自带 CLI 的 `claude-agent-acp --cli auth status --json`：只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`，claude.ai 登录、密钥或其他服务都算已登录，存下的登录到期日期（ISO 字符串或秒、毫秒数，不合理的丢掉）作为 `expiresAt` 返回；有推送时它仍运行，因为推送里没有日期，而且可能是旧的。两者都有时较新的说了算：命令运行之后推送变了，用推送；否则用命令的明确结论，命令说不清时用推送。标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。页面对 Host 的回答也这样：提问之后到达的推送比回答新，否则显示回答，所以「重新检查」显示的是程序刚说的。超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。其他 Harness 始终 `unknown`，要到 `session/new` 被拒绝才知道。结果缓存 30 秒；「测试启动」读到的明确登录状态与缓存不同，或测试结束时还有检查在运行，缓存作废，下一次提问重新运行状态命令（`agent-login.ts` 的 `probed`）。每次实际运行之前写审计 `agent.login.requested`（写不进就不运行），结束后写 `agent.login.checked`，只含 ID 与状态。「测试启动」的结果带 `login`：宣告了推送的 Agent 在握手后最多等 5 秒，收到就不再运行状态命令。页面打开期间完成的测试启动说的与「登录」一组显示的不同时，这一组带 `fresh` 再问一次；页面只显示最后一次提问的回答。
 - **页面。** 选中 Harness 时检查一次，窗口回到前台时再查；新会话上方只在 `unauthenticated` 时显示登录说明，登录在 10 天内到期时显示琥珀色的「<Harness> 的登录 M 月 D 日到期」，都不挡发送，因为程序才说了算。一轮被拒绝后在这一轮的结尾显示命令和「重试」；下一轮启动新进程，读到新的登录。「设置 › Harness › <名称>」有「登录」一组：状态（已登录时带 Agent 的标签与到期日）、「重新检查」、没登录时的登录方式，已登录时的「退出登录」或「换账号」。状态命令说已登录、最近一次测试启动却说还没登录时（例如存下的登录不再被接受，握手被拒绝），这一组写「登录可能已失效」并列出登录方式，直到测试启动不再这样说。
 - **退出登录。** Agent 宣告 `agentCapabilities.auth.logout` 时才显示。`POST /link/api/harnesses/:id/logout`（`run`，空请求体）先写审计 `agent.logout`（写不进就不做），再在私有空文件夹里起一个进程调用 ACP `logout`，然后停掉它；这个 Harness 有会话正在运行时拒绝（409 `harness-busy`），没宣告时 409 `logout-unsupported`。之后停掉能恢复会话的空闲进程，下一轮读到新的登录；不能恢复的进程留着，带着它启动时读到的登录。Agent 的登录可能被这台电脑上别处共用，确认框写明这一点。
@@ -246,7 +283,7 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 
 | 预设 | 只看不改 | 先问你 | 按规则放行 | 由模型判断 | 不再询问 |
 | --- | --- | --- | --- | --- | --- |
-| Codex | — | `read-only` | `workspace-write` | `agent`（codex-acp 的 Auto review：沙箱同 `workspace-write`，本来要问的由 Codex 的审阅模型放行或拦下，不转给人） | `agent-full-access` |
+| Codex | — | `read-only` | `workspace-write` | `agent`（Codex 的 Auto review，直连与经 codex-acp 都有：沙箱同 `workspace-write`，本来要问的由 Codex 的审阅模型放行或拦下，不转给人） | `agent-full-access` |
 | Qwen Code | `plan` | `default` | `auto-edit` | `auto`（用户自己的允许规则、只读工具与项目里的文件编辑先放行，`.git`、`package.json` 等会影响之后运行的文件除外；其余由它的分类器判断，判断不了时问） | `yolo` |
 | goose | `chat` | `approve` | — | `smart_approve`（工具声明或模型判断为只读的不问，其余问） | `auto` |
 | Gemini CLI | `plan` | `default` | `autoEdit` | — | `yolo` |
@@ -258,7 +295,7 @@ Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有�
 - **三行。** 模式超过三个时，菜单只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余（只看不改、另一个中间档）收在「更多」里；当前的模式总是列出。「不再询问」的标题、说明与触发器是琥珀色，「由模型判断」不是。
 - **谁能选。** 任何有 `run` 的设备都能选任何一档，不弹确认，放宽写 `task.mode.widened`。
 - **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在。分叉的草稿用来源会话当时的模型、思考与模式，而不是这台设备记住的；模式是 Latch 让来源会话保持的那一档（`permission.expectedMode`，人选的），不是 Harness 报告的、它自己换到的那一档，所以设置被 Harness 自己改了之后的「在新会话中继续」仍从人选的档位开始，Latch 不知道人选的档位时从目标 Harness 的默认模式开始并写明。具体是：还是同一个 Harness 时照原样带上（经 Latch 转发到保存的服务的，带上那个服务与模型）；换了 Harness 时，模型与思考按同样的值带上，模式按档位找同一档，没有这一档时用比它严的最宽一档，比它严的也没有时用最严的一档；来源没有模式或档位对应不上时从 Harness 的默认模式开始，来源只对话、不读写文件而目标 Harness 没有这种方式时也是如此；档位对应不上、模式被 Harness 自己改过与来源只对话这三种情况在分叉说明里各写一行。草稿里写明哪些没有沿用（「没有沿用来源会话的模型「Large」：goose 在这里不能选。」「来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。」）；目标 Harness 的选项还没读到时（读取中、读取失败，或像 pi 那样要人去读），还不知道它有没有这些，草稿不说没有沿用，只写「来源会话的模型「Large」、思考「High」与权限「按规则放行」要等读到 goose 的选项后才能沿用。」，读到后换成上面的说明；预设写明没有可选权限的 Harness（pi）不在这句里提权限。人仍可以在草稿里改；分叉草稿里选的模型、思考与模式只用于这一份草稿，不写入设备记住的选项。
-- **模型的判断。** Codex 报告自己的模型审阅一次请求：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。Claude Agent 只报告它拦下的调用：适配器把这次调用报为 `failed` 的 `tool_call_update`，内容是「Permission denied: <理由>」，`_meta.claudeCode.toolResponse` 带 `decisionReasonType` 与理由（`decisionReason`，没有时是 `message`）。来源是 `classifier`（它的自动模式询问的模型）时，这一行仍是那次调用本身，写「拦下」，下面一行「Claude Agent 的模型审阅：<理由>」；会话在「由模型判断」档时它带 `ToolDetail.judged`（`denied`）并记录。来源是 `rule` 或 `mode` 时写「拦下」与「被 Claude Agent 自己的规则或当前模式拦下：<理由>」，提示说模式拦下的在「权限」换一档后可以放行、规则拦下的要改 Claude Agent 自己的权限设置；在任何档都这样，不算模型的判断，不记录。两种都放在 `ToolDetail.blocked`（`by`、`source`、`reason`），不显示成失败；理由是 Agent 的不可信文字，Host 遮住像密钥的部分（与重试、压缩失败的原因一样）并限 1000 字，行下只显示第一行的前 120 字，没显示全的在展开这一行后的细节里完整显示（适配器之后发的失败结果会替换掉内容里的理由）。折叠的一轮写「模型拦下 N 次」「规则拦下 N 次」，不算失败的步骤。其他来源（钩子、安全检查等 Latch 叫不出名字的）照旧是一行失败；问过人的调用、已经开始运行的调用不算 Claude 自己拦下的。`classifier` 这个取值来自适配器注释对来源的称呼，它的测试里没有出现，也还没有在真实的自动模式下见过；取值不同时这些调用照旧是失败，不会被说成模型的判断。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`）与不报告放行的 Claude Agent `auto`，在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
+- **模型的判断。** Codex 报告自己的模型审阅一次请求（直连时 wire 把 `item/autoApprovalReview/started` 与 `completed` 换成同样的一行，见「Codex 的 app-server」；以下字段是 codex-acp 的）：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。Claude Agent 只报告它拦下的调用：适配器把这次调用报为 `failed` 的 `tool_call_update`，内容是「Permission denied: <理由>」，`_meta.claudeCode.toolResponse` 带 `decisionReasonType` 与理由（`decisionReason`，没有时是 `message`）。来源是 `classifier`（它的自动模式询问的模型）时，这一行仍是那次调用本身，写「拦下」，下面一行「Claude Agent 的模型审阅：<理由>」；会话在「由模型判断」档时它带 `ToolDetail.judged`（`denied`）并记录。来源是 `rule` 或 `mode` 时写「拦下」与「被 Claude Agent 自己的规则或当前模式拦下：<理由>」，提示说模式拦下的在「权限」换一档后可以放行、规则拦下的要改 Claude Agent 自己的权限设置；在任何档都这样，不算模型的判断，不记录。两种都放在 `ToolDetail.blocked`（`by`、`source`、`reason`），不显示成失败；理由是 Agent 的不可信文字，Host 遮住像密钥的部分（与重试、压缩失败的原因一样）并限 1000 字，行下只显示第一行的前 120 字，没显示全的在展开这一行后的细节里完整显示（适配器之后发的失败结果会替换掉内容里的理由）。折叠的一轮写「模型拦下 N 次」「规则拦下 N 次」，不算失败的步骤。其他来源（钩子、安全检查等 Latch 叫不出名字的）照旧是一行失败；问过人的调用、已经开始运行的调用不算 Claude 自己拦下的。`classifier` 这个取值来自适配器注释对来源的称呼，它的测试里没有出现，也还没有在真实的自动模式下见过；取值不同时这些调用照旧是失败，不会被说成模型的判断。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`）与不报告放行的 Claude Agent `auto`，在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
 - **记录。** 每个审阅结论、每个被模型拦下的调用（来源 `agent-report`）、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
 
 ## 权限模式
@@ -382,7 +419,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 这个人在 Latch 之外用 CLI 做过的会话，可以经它自己的 ACP 适配器列出、预览，并接入为一个 Latch 会话。这与 Latch 自己开始的会话在进程退出后的继续（上一节）不同；接管终端里正开着的会话不做，遇到时拒绝。
 
-- **范围。** 只对 profile 声明 `historyImport` 的预设开放（`HarnessDriver.historyImport`）：现在只有 Codex（codex-acp 列出 Codex 的会话，只有元数据，`session/load` 重放内容）。运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。Latch 从不读取任何 CLI 的文件夹（如 `~/.codex`），一切经适配器。
+- **范围。** 只对 profile 声明 `historyImport` 的预设开放（`HarnessDriver.historyImport`）：现在只有 Codex（直连时经 `thread/list` 与 `thread/read`，见「Codex 的 app-server」；经 codex-acp 时它列出 Codex 的会话，只有元数据，`session/load` 重放内容）。运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。Latch 从不读取任何 CLI 的文件夹（如 `~/.codex`），一切经适配器。
 - **权限。** 每一步都要 `run` 与数据范围 `all`，不弹确认：有 `run` 的设备本来就能让 Agent 在这台电脑上读这些文件。接入的会话一律私有（`sessions-meta.json` 的 `imported` 计入私有），只对数据范围 `all` 的设备可见，分叉出的会话同样私有。`catalog.features.historyImport` 只对这样的设备出现。
 - **审计。** `history.list`、`history.preview`、`history.import` 在每一步之前写入，写不进就不做；只含 Harness 与项目 ID、外部会话 ID 的哈希、方式、请求 ID 的哈希与新会话 ID，不含标题、路径或内容。
 - **列出。** `POST /history/list` `{ projectId, harnessId }`：在数据目录下 0700 的私有空文件夹里起一个进程，只发 `initialize` 与 `session/list`（不带 `cwd`），按 `nextCursor` 翻页，最多 500 条或 20 秒，然后停掉进程、删掉文件夹。Host 按真实路径过滤：在项目主文件夹或它下面开始的会话返回（标题经 `redactSecrets`、最多 200 字符，更新时间，相对主文件夹的子目录），最多 50 行、按更新时间倒序；在项目其他文件夹里的只给数量 `otherFolders`；项目之外的不返回、不计数。任何 Latch 会话用过的 Agent 会话（`acpSessionId` 与 `earlierSessionIds`）不列出；已接入的带 `importedTaskId`。每行给一个不透明句柄，只对这台设备、10 分钟有效。列表不加载任何内容。

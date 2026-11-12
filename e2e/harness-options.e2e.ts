@@ -53,7 +53,9 @@ describe("choosing a Harness's own options before the first message", () => {
     log = join(directory, 'agent.log')
     const bin = join(directory, 'bin')
     await mkdir(bin)
-    for (const name of ['codex', 'codex-acp']) {
+    // Only the adapter: with no Codex of its own here, choosing the preset saves it on codex-acp, which runs the Codex it
+    // ships (here, the fake app-server the fake agent answers as).
+    for (const name of ['codex-acp']) {
       await writeFile(
         join(bin, name),
         [

@@ -8,7 +8,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 
 每个会话可以组合：
 
-- **Harness**：Latch 内置的执行循环（ID `standard`），或接入的本机 Agent：经 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）的开源 Codex、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，经 pi 自己的 RPC 模式的 pi，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
+- **Harness**：Latch 内置的执行循环（ID `standard`），或接入的本机 Agent：经 Codex 自己的 app-server 的 Codex，经 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）的开源 OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose，经 pi 自己的 RPC 模式的 pi，以及经官方命令接入的 Claude Agent（运行 Claude Code，用你在 Claude Code 中已有的登录）与 Cursor（用你自己的 Cursor 账号）。
 - **模型**：用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务，会话中可切换。
 - **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
@@ -22,7 +22,7 @@ Latch 用 Harness 自己的登录，不需要 API 密钥。在这台 Mac 上装�
 
 | Harness | 安装 | 登录与模型 |
 | --- | --- | --- |
-| Codex | 先装 Codex，再 `npm i -g @agentclientprotocol/codex-acp`（让 Latch 连接它的适配器） | `codex login` |
+| Codex | `npm i -g @openai/codex`（0.156.0 或更高版本，Latch 直接连接；只装了 `codex-acp` 时经它运行它自带的 Codex） | `codex login` |
 | pi | `npm i -g @earendil-works/pi-coding-agent`（0.84.4 或更高版本） | 运行 `pi`，输入 `/login` |
 | OpenCode | `npm i -g opencode-ai` | `opencode auth login` |
 | DeepSeek Harness | `npm i -g @deepseek-ai/dsh`（0.2.1-rc.1 或更高版本） | 在 DeepSeek Harness 里配置 |
@@ -131,7 +131,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 
 | 预设 | 启动命令 | 许可证 |
 | --- | --- | --- |
-| [Codex](https://github.com/agentclientprotocol/codex-acp) | `codex-acp` | Apache-2.0 |
+| [Codex](https://github.com/openai/codex) | `codex app-server`（没装 Codex 而装了 `codex-acp` 时经它） | Apache-2.0 |
 | [pi](https://github.com/earendil-works/pi) | `pi --mode rpc` | MIT |
 | [OpenCode](https://github.com/anomalyco/opencode) | `opencode acp` | MIT |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh --profile acp` | MIT |

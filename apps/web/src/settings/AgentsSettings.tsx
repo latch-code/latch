@@ -16,6 +16,7 @@ import {
   ButtonLink,
   Collapse,
   Dialog,
+  Hint,
   Icon,
   IconButton,
   InlineNotice,
@@ -762,6 +763,8 @@ export function presetGroups(presets: readonly AgentPresetSettings[], agents: re
 /** 可以安装 stands on the section's own page, so asking for the presets is asking for that page. */
 const editingOf = (target: AgentPageTarget): Editing => (target.kind === 'presets' ? null : target)
 
+const commandBase = (command: string) => command.replace(/\\/g, '/').split('/').at(-1) ?? command
+
 /** One engine: the row opens its page; the switch turns it on or off from any admin device. */
 export function AgentRow({
   agent,
@@ -778,6 +781,8 @@ export function AgentRow({
   onOpen: () => void
   onToggle: () => void
 }) {
+  // Saved on the preset's adapter rather than its own program: said, with what the direct route needs.
+  const viaAdapter = preset?.fallback !== undefined && commandBase(agent.command) === preset.fallback.command
   return (
     <ObjectRow
       className="agent-row"
@@ -792,11 +797,16 @@ export function AgentRow({
       }
       description={
         // A preset's description would hide that this runs something other than the preset.
-        agent.verified && preset ? preset.description : <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
+        agent.verified && preset ? (
+          ((viaAdapter ? preset.fallback?.description : undefined) ?? preset.description)
+        ) : (
+          <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
+        )
       }
       onOpen={onOpen}
       trailing={
         <>
+          {viaAdapter && preset?.fallback && <Hint label={`经 ${preset.fallback.command}`}>{preset.fallback.direct}</Hint>}
           <EngineStatus agent={agent} harness={harness} />
           <Switch label={`启用 ${agent.name}`} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
         </>

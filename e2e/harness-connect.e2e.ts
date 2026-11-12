@@ -14,7 +14,7 @@ const NEED = '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）'
 const UPGRADE = 'npm i -g @deepseek-ai/dsh@latest'
 
 /**
- * A Mac where DeepSeek Harness is installed but too old and Codex has no adapter: what settings and a new session say,
+ * A Mac where DeepSeek Harness is installed but too old and Codex has only its own CLI: what settings and a new session say,
  * on a Host that may run the person's programs only inside a temporary folder of fakes.
  */
 describe('a Harness that cannot connect yet', () => {
@@ -100,24 +100,12 @@ describe('a Harness that cannot connect yet', () => {
         await shot(page, `new-session-${width}-${theme}`)
         await page.getByRole('button', { name: '取消', exact: true }).click()
       } else {
-        // The new session's Harness menu offers neither: DeepSeek Harness is defined but too old, Codex lacks its adapter.
+        // The new session's Harness menu offers Codex, reached directly with no adapter, and not the too-old DeepSeek Harness.
         await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
-        await page.getByRole('menuitem', { name: '添加 Harness…', exact: true }).waitFor()
-        expect(await page.getByRole('menuitem', { name: /DeepSeek Harness/u }).count()).toBe(0)
+        await page.getByRole('menuitemradio', { name: /^Codex/u }).waitFor()
+        expect(await page.getByRole('menuitemradio', { name: /DeepSeek Harness/u }).count()).toBe(0)
         await noHorizontalOverflow(page)
         await shot(page, `new-session-harnesses-${width}-${theme}`)
-        await page.keyboard.press('Escape')
-
-        await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
-        await page.getByRole('menuitem', { name: '添加 Harness…', exact: true }).click()
-        await page
-          .getByRole('group', { name: '添加 Harness', exact: true })
-          .getByRole('button', { name: /^Codex/u })
-          .click()
-        const codex = page.getByRole('region', { name: 'Codex', exact: true })
-        await codex.getByText('已安装 codex，还差让 Latch 连接它的适配器 codex-acp', { exact: true }).waitFor()
-        await codex.getByRole('button', { name: '复制安装命令', exact: true }).waitFor()
-        await shot(page, `new-session-codex-${width}-${theme}`)
         await page.keyboard.press('Escape')
       }
 
@@ -127,7 +115,9 @@ describe('a Harness that cannot connect yet', () => {
       const found = settings.locator('.agent-row, .settings-row').filter({ hasText: 'DeepSeek Harness' }).first()
       // The row says what to do; its page says why and how (below).
       await found.getByText('需要升级', { exact: true }).waitFor()
-      await settings.getByText('找到了 codex，还差让 Latch 连接它的适配器').waitFor()
+      // Codex alone is found: no word of an adapter.
+      await settings.locator('.agent-row').filter({ hasText: 'Codex' }).getByText('已找到', { exact: true }).waitFor()
+      expect(await settings.getByText(/codex-acp|适配器/u).count()).toBe(0)
       await noHorizontalOverflow(page)
       await shot(page, `settings-${width}-${theme}`)
       await page.context().close()

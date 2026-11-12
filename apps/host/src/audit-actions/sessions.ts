@@ -104,7 +104,7 @@ export const SESSION_ACTIONS = {
   'task.model.bypassed': z.strictObject({ sessionId: opaqueId }),
   'task.approval-auto-rejected': z.strictObject({
     sessionId: opaqueId,
-    reason: z.enum(['persistent-only', 'unknown-kind', 'subagent-wider']),
+    reason: z.enum(['persistent-only', 'unknown-kind', 'subagent-wider', 'harness-declined']),
   }),
   /** A person stopped one subagent of the session; `subagentId` is its row's message ID. */
   'task.subagent.stopped': z.strictObject({ sessionId: opaqueId, subagentId: opaqueId }),

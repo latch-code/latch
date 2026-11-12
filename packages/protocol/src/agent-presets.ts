@@ -34,20 +34,48 @@ export interface AgentPreset {
   brandMark?: false
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
+  /**
+   * An ACP adapter that runs the same agent, for when `command` (the agent's own protocol) cannot be used: definitions
+   * saved with it keep it, and a draft gets it when only it is installed or `command` is older than its preset supports.
+   * `drives`: the program the adapter runs, as `agentCommand` says for a preset whose command is an adapter.
+   */
+  fallback?: {
+    command: string
+    args: string[]
+    install: string
+    homepage: string
+    license: string
+    /** What the preset's own description says, for the adapter route. */
+    description: string
+    /** What a saved definition on the adapter says the direct route needs, behind its hint. */
+    direct: string
+    drives?: string
+  }
 }
 
 export const AGENT_PRESETS: AgentPreset[] = [
   {
     id: 'codex',
     name: 'Codex',
-    command: 'codex-acp',
+    // Codex's own app-server (`codex app-server`), the protocol its own clients use; the wire adds the subcommand.
+    command: 'codex',
     args: [],
     license: 'Apache-2.0',
-    homepage: 'https://github.com/agentclientprotocol/codex-acp',
-    description: '通过适配器运行 Codex；模型、登录与沙箱由 Codex 自身配置。',
-    install: 'npm i -g @agentclientprotocol/codex-acp',
-    agentCommand: 'codex',
+    homepage: 'https://github.com/openai/codex',
+    description: '直接连接 Codex；模型、登录与沙箱由 Codex 自身配置。',
+    install: 'npm i -g @openai/codex',
+    installNote: '0.156.0 或更高版本',
     login: { command: 'codex', args: ['login'], bundled: { command: 'codex-acp', args: ['cli', 'login'] } },
+    fallback: {
+      command: 'codex-acp',
+      args: [],
+      install: 'npm i -g @agentclientprotocol/codex-acp',
+      homepage: 'https://github.com/agentclientprotocol/codex-acp',
+      license: 'Apache-2.0',
+      description: '经适配器 codex-acp 运行它自带的 Codex；模型、登录与沙箱由 Codex 自身配置。',
+      direct: '直接连接需要 Codex 0.156.0 或更高版本：npm i -g @openai/codex',
+      drives: 'codex',
+    },
   },
   {
     id: 'claude-agent',

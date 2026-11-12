@@ -29,8 +29,9 @@ if (env.FAKE_ACP_CLI_VERSION && process.argv[2] === '--version') {
   process.stdout.write(`fake-cli ${env.FAKE_ACP_CLI_VERSION}\n`)
   process.exit(0)
 }
-// Like codex-acp, whose `cli` runs Codex: `cli app-server` answers as Codex's app-server instead of as an ACP agent.
-if (process.argv[2] === 'cli' && process.argv[3] === 'app-server') {
+// Like codex-acp, whose `cli` runs Codex: `cli app-server` answers as Codex's app-server instead of as an ACP agent; and
+// like `codex` itself, which a fake named `codex` stands for, `app-server` does too.
+if ((process.argv[2] === 'cli' && process.argv[3] === 'app-server') || process.argv[2] === 'app-server') {
   await import('./fake-codex-app-server.mjs')
   await new Promise(() => {})
 }

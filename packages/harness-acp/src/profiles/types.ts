@@ -74,7 +74,10 @@ interface ExtensionAsk {
  */
 export type ExtensionRequest =
   | { readonly ask: (params: unknown) => ExtensionAsk | undefined; readonly answer: (optionId: string | undefined) => unknown }
-  | { readonly decline: (params: unknown, agentName: string) => { note: string; reply: unknown } | undefined }
+  | {
+      /** `rejected`: the request was an ask for the person, so it is also recorded as automatically refused. */
+      readonly decline: (params: unknown, agentName: string) => { note: string; reply: unknown; rejected?: true } | undefined
+    }
 
 /**
  * What a harness sends outside ACP. A notification is rewritten into the `session/update` it means, for the session the

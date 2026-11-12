@@ -115,6 +115,8 @@ import {
   recheckVersions,
   presetOffer,
   presetRecord,
+  presetRoute,
+  commandName,
   resolveCommand,
   setCommandSearch,
   setLoginPrograms,
@@ -931,13 +933,26 @@ function detectCommand(command: string, agent?: string, record?: AgentRecord): C
   }
 }
 
-/** What this computer has of a preset's commands. */
-export const detectPresetCommands = (preset: AgentPreset): CommandDetection => detectCommand(preset.command, preset.agentCommand)
+/**
+ * The program a definition's adapter drives, for saying it is installed when only the adapter is missing: the preset's
+ * `agentCommand`, or for a definition on a preset's `fallback` adapter, the program that adapter drives.
+ */
+function programOf(agent: Pick<AgentRecord, 'presetId' | 'command'>): string | undefined {
+  const preset = AGENT_PRESETS.find(item => item.id === agent.presetId)
+  if (!preset) return undefined
+  return preset.fallback && commandName(agent.command) !== preset.command ? preset.fallback.drives : preset.agentCommand
+}
+
+/** What this computer has of a preset's commands: its own, or its adapter when a draft would use that. */
+export const detectPresetCommands = (preset: AgentPreset): CommandDetection => {
+  const route = presetRoute(preset.id) ?? { command: preset.command }
+  return detectCommand(route.command, programOf({ presetId: preset.id, command: route.command }))
+}
 
 /** A preset's detection with what its command's version says, whichever way it was found. */
 function withVersion(preset: AgentPreset, detected: CommandDetection): CommandDetection {
-  const record = presetRecord(preset.id)
-  const outdated = detected.found && record ? outdatedCommand(record, detected.path ?? resolveCommand(preset.command)) : undefined
+  const record = presetRoute(preset.id)
+  const outdated = detected.found && record ? outdatedCommand(record, detected.path ?? resolveCommand(record.command)) : undefined
   return outdated ? { ...detected, outdated } : detected
 }
 
@@ -956,7 +971,7 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
     enabled: agent.enabled,
-    detected: detectCommand(agent.command, AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.agentCommand, agent),
+    detected: detectCommand(agent.command, programOf(agent), agent),
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
     ...(agent.startedHash === undefined ? {} : { started: agent.startedHash === definitionHash(agent) }),
@@ -2123,7 +2138,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       agentLogin: {
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)
-          ?? (caller.device?.scopes.includes('admin') && presetsToOffer().some(offer => offer.id === id) ? presetRecord(id) : undefined),
+          ?? (caller.device?.scopes.includes('admin') && presetsToOffer().some(offer => offer.id === id) ? presetRoute(id) : undefined),
         login: id => hub?.harnessLogin(id),
         logout: id => hub!.logoutHarness(id),
         ...(options.loginTerminal ? { openTerminal: options.loginTerminal } : {}),
@@ -4482,7 +4497,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // One found too old is not offered: the list of Harnesses to add says what it needs instead.
       return presetLookup.found
         .filter(preset => !saved.has(preset.id) && !hub!.info(preset.id))
-        .filter(preset => !outdatedCommand(presetRecord(preset.id)!, resolveCommand(preset.command)))
+        .filter(preset => {
+          const route = presetRoute(preset.id)!
+          return !outdatedCommand(route, resolveCommand(route.command))
+        })
         .map(presetOffer)
     }
 
@@ -6603,8 +6621,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
         // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
         presetLookup = undefined
+        // A preset is added as a draft would save it: its adapter, when only that can run here.
         const presets: AgentPresetSettings[] = AGENT_PRESETS.map(preset => ({
           ...preset,
+          ...(() => {
+            const route = presetRoute(preset.id)
+            return route && route.command !== preset.command && preset.fallback
+              ? { command: route.command, args: [...route.args], description: preset.fallback.description }
+              : {}
+          })(),
           detected: withVersion(preset, (options.detectPreset ?? detectPresetCommands)(preset)),
         }))
         json(res, { agents: config.settings().agents.map(agentSettings), presets })
@@ -6634,9 +6659,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           enabled: input.enabled ?? true,
           startedHash: null,
         }
-        const hash = checkAgent(next)
+        let hash = checkAgent(next)
         // Choosing a Harness is the moment its version is read, once: one too old for its preset is refused before
         // anything is saved or started, and the result is kept, so the picker then says it needs an upgrade.
+        // A preset whose own program is missing while its adapter is installed is saved on the adapter, which then runs a
+        // copy of the program it ships: with the program missing nothing points it elsewhere (`CODEX_PATH`).
+        const fallback = AGENT_PRESETS.find(preset => preset.id === next.presetId && preset.command === next.command)?.fallback
+        if (fallback && !resolveCommand(next.command) && resolveCommand(fallback.command)) {
+          next.command = fallback.command
+          next.args = [...fallback.args]
+          hash = checkAgent(next)
+        }
         if (next.enabled) {
           await assertCommandVersion(next)
           recheck(caller, 'admin')

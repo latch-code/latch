@@ -14,7 +14,7 @@ const MAX_PAGES = 5
 const MAX_MODELS = 64
 
 const effort = z.object({ reasoningEffort: z.string().min(1).max(64), description: z.string().nullish() })
-const codexModel = z.object({
+export const codexModel = z.object({
   id: z.string().min(1).max(256),
   displayName: z.string().nullish(),
   description: z.string().nullish(),

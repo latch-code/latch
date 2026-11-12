@@ -234,6 +234,8 @@ interface Live {
   lastUsed: number
   /** Methods already recorded in the transcript while no turn was running. */
   unrecognizedMethods?: Set<string>
+  /** Lines of requests the profile answered before the process's session was recorded, written in once it is. */
+  heldNotes?: string[]
   /** The process's token to the Host's gateway, for a session on a route; revoked when the process ends. */
   gateway?: ModelGatewayLease
 }
@@ -1065,7 +1067,8 @@ export class AgentRuntime implements Bridge {
 
   private assertHistoryImport(): void {
     const profile = this.selection.profile
-    if (!profile?.historyImport || profile.wire !== undefined) throw historyNotSupported(this.agent.name)
+    // pi's wire answers no session/list or session/load; ACP and Codex's app-server do.
+    if (!profile?.historyImport || profile.wire === 'pi') throw historyNotSupported(this.agent.name)
   }
 
   /** The agent's sessions with what it reports of them, from a process in a private empty folder that only lists. */
@@ -3644,6 +3647,9 @@ export class AgentRuntime implements Bridge {
     const target = this.state.tasks[taskId]
     if (!target) throw new AppError(404, 'task-not-found', '找不到该任务')
     live.sessions.set(acpSessionId, taskId)
+    // What the process was answered for before this session was on record goes into it now.
+    for (const note of live.heldNotes?.splice(0) ?? [])
+      target.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
     target.acp.acpSessionId = acpSessionId
     target.acp.deletable = live.capabilities.delete
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
@@ -4077,6 +4083,9 @@ export class AgentRuntime implements Bridge {
     if ('decline' in extension) {
       const declined = extension.decline(params, this.agent.name)
       if (!declined) return undefined
+      // Recorded whether or not the session is yet: the answer was given either way.
+      if (declined.rejected) this.securityEvent({ type: 'approval-auto-rejected', sessionId: live.key, reason: 'harness-declined' })
+      if (!task) (live.heldNotes ??= []).push(declined.note)
       if (task) {
         const run = this.runs.get(live.key)
         if (run?.segment && run.live === live) this.settleSegment(run, task, 'completed')
