@@ -432,7 +432,7 @@ export class PluginRegistry implements RuntimeRegistry {
     return { provider, tools, ...(skills.length ? { skills } : {}), release: this.lease(contributors, true) }
   }
 
-  /** The text of enabled skills by `pluginId:skillId`, for a read-only server; same limit as a lease. */
+  /** The text of enabled skills by `pluginId:skillId`, for the skills server; same limit as a lease. */
   skillBodies(ids: readonly string[]): Array<{ id: string; name: string; description: string; content: string }> {
     const wanted = new Set(ids)
     const skills = [...this.entries.values()]

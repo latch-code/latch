@@ -310,7 +310,7 @@ export function AgentForm({
         title="技能"
         aside={
           harness && !harness.skills ? (
-            <Hint label="这个 Harness 收不到技能">技能经内置加载或只读的技能服务送达；这个 Harness 两种都不接受，所选技能不会发送。</Hint>
+            <Hint label="这个 Harness 收不到技能">技能经内置加载或技能服务送达；这个 Harness 两种都不接受，所选技能不会发送。</Hint>
           ) : undefined
         }>
         <SkillChoice

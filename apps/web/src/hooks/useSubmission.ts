@@ -91,7 +91,11 @@ export function useSubmission({
   selectedId: string | null
   select: (id: string | null) => void
   refresh: () => Promise<void>
-  onSent: (sessionId: string, submission: PendingSubmission, result: { foreground: boolean; consumedDraft: boolean }) => void
+  onSent: (
+    sessionId: string,
+    submission: PendingSubmission,
+    result: { foreground: boolean; consumedDraft: boolean; memoryRefused?: string },
+  ) => void
   /** A definitive refusal; `resent`, a prompt that never sat in the input. Return true when a dedicated recovery UI owns its explanation. */
   onRefused?: (sessionId: string, error: unknown, resent?: string) => boolean | void
   /**
@@ -398,14 +402,19 @@ export function useSubmission({
     setError('')
     try {
       const { path, body } = submissionRequest(submission)
-      const result = await api<{ sessionId?: string; queued?: { id: string } }>(path, { method: 'POST', body })
+      const result = await api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string }>(path, { method: 'POST', body })
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
       const foreground =
         mounted.current && destination.current.epoch === origin.epoch && destination.current.selectedId === (submission.sessionId ?? null)
       if (foreground) select(sessionId)
-      if (mounted.current) onSent(sessionId, submission, { foreground, consumedDraft: origin.consumedDraft })
+      if (mounted.current)
+        onSent(sessionId, submission, {
+          foreground,
+          consumedDraft: origin.consumedDraft,
+          ...(result.memoryRefused ? { memoryRefused: result.memoryRefused } : {}),
+        })
       requestOrigins.current.delete(submission.requestId)
       releaseStored(pendingKey, submission.requestId)
       setPending(null)

@@ -54,6 +54,16 @@ export interface AcpRecord {
   folderVia?: 'acp' | 'args'
   /** The session has an agent's skills in its own folder, served to the engine read-only. */
   skills?: true
+  /** Its agent may propose memories through the skills server (`proposals.jsonl` in that directory). */
+  proposals?: true
+  /** How many lines of that file the Host has been handed. */
+  proposalsRead?: number
+  /** Byte offset in that file just past the last line handed over. */
+  proposalsOffset?: number
+  /** Lines taken and then cleared from the file; they still count toward the session's limit. */
+  proposalsCleared?: number
+  /** A scheduled run: whatever it proposes is external. */
+  unattended?: true
   /**
    * What the draft chose, set before the first prompt and dropped once set. `category` and `label` are what the catalogue
    * said when the session was created, to name a choice the agent no longer offers.
@@ -356,6 +366,12 @@ const stateSchema = z.object({
         folders: z.array(z.string()).optional(),
         folderVia: z.enum(['acp', 'args']).optional(),
         skills: z.literal(true).optional(),
+        /** Its agent may propose memories through the skills server; the Host has read this many of its lines. */
+        proposals: z.literal(true).optional(),
+        proposalsRead: z.number().int().min(0).max(1000).optional(),
+        proposalsOffset: z.number().int().min(0).max(1_048_576).optional(),
+        proposalsCleared: z.number().int().min(0).max(1000).optional(),
+        unattended: z.literal(true).optional(),
         startConfig: z.array(startChoice).optional(),
         route: z
           .object({

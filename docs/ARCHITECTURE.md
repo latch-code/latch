@@ -331,7 +331,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
-| `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
+| `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、记忆提议（`proposals`）、每条记忆可撤销的最近一次修改（`changes`）、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。没有 `proposals` 与 `changes` 的旧文件按空读入，下次写入时补上。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
 | `history-imports.json` | 接入已有会话的回执：请求 ID、来源 Harness 与它的会话 ID、方式与 Latch 会话 ID；目录与标题只在完成之前保存（见 [HARNESSES.md](HARNESSES.md#接入已有会话)） |
 | `review-notes/<会话 ID 的 SHA-256>.json` | 会话的行级反馈、未定的发送与回执（0600，目录 0700，见 [CHANGES.md](CHANGES.md#行级反馈)） |
@@ -339,7 +339,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
-| `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock` |
+| `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`，以及 `skills/<会话 ID 的 SHA-256 前 32 位>/`（0700）：技能服务读取的 `skills.json`，和 `propose_memory` 追加的 `proposals.jsonl`（0600，一行一条，有行数与大小上限，ACP 驱动读后交给 Host 建提议，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)） |
 | `host.json` | 运行中 Host 的 PID、hostId、实例 ID、`host.sock` 路径与地址（版本 2，0600） |
 | `host.lock` | 数据目录锁：持有者的 PID、实例 ID、角色与开机时间（0600，正常退出时删除）；取锁与接管时的临时条目以 `.host-lock-` 开头 |
 | `host.log` | 桌面启动器或桌面端主进程在后台启动的 Host 的输出（0600，追加写入，不跟随符号链接） |
@@ -413,7 +413,8 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /handoffs?sessionId=`、`GET /handoffs/:id`；`POST /handoffs`、`POST /handoffs/:id/return`、`POST /handoffs/:id/withdraw` | 读：`view`；新建、交回、撤回：`run`；都要能读相关的会话 | 交接，先写审计再新建或交回，见 [HANDOFFS.md](HANDOFFS.md) |
 | `GET /history/sources?projectId=`、`POST /history/list`、`POST /history/previews`、`DELETE /history/previews/:id`、`POST /history/imports`、`GET /history/imports/:requestId` | `run` + 数据范围 `all`；不弹确认 | 接入已有会话：列出 Harness 自己的会话（只有元数据）、一次显式加载的只读预览、幂等接入 `{ requestId, previewId | handle | fromTaskId, harnessId? }`（没有 `prompt`）；按文字重建的会话不开始一轮，等这个人的第一条消息才把带上的文字发出（`CreateTaskInput.seed`，只限 ACP Harness）；每一步先写审计，见 [HARNESSES.md](HARNESSES.md#接入已有会话) |
 | `GET /tasks/:id/review-notes`；`POST /tasks/:id/review-notes`、`…/:noteId/edit`、`status`、`delete`、`…/send` | 读：`view`；写与发送：`run`；都要数据范围 `all`，写与发送另过会话输入的检查 | 行级反馈；发送走 `POST /tasks/:id/prompt` 的同一条路径，见 [CHANGES.md](CHANGES.md#行级反馈) |
-| `POST /tasks/:id/prompt` | `run`；带 `via` 时只限这个页面开始的会话 | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled` |
+| `POST /tasks/:id/prompt` | `run`；带 `via` 时只限这个页面开始的会话 | 只看设备权限，L3 会话也可以从任何设备输入；会话的文件夹已不在项目中时 409 `workspace-changed`，项目不可用时 409 `workspace-disabled`；我的 Agent 的会话里以「记住」开头的消息另建一条记忆提议，被拒绝时回答带 `memoryRefused`（`POST /tasks` 开始这样的会话时同样） |
+| `GET /custom-agents/:id/proposals`；`POST /custom-agents/:id/proposals/:pid/save`、`…/dismiss`；`POST`、`DELETE /custom-agents/:id/memories/:mid/undo` | 读：`view`；保存、不要、撤销与清除：`run`；都要数据范围 `all` | 记忆提议、撤销与清除已删除的文字，带 `requestId`（撤销与清除另带 `baseRevision`），先审计再写，重试只按回执回答，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议) |
 | `POST /tasks/:id/config` | `run` | 放宽权限模式写 `task.mode.widened`；`{configId,value,requestId?}`，新客户端按 `configReceipts` 保留原请求 |
 | `GET /tasks/:id/config-requests/:requestId` | 原设备的 `view`；个人数据与手机正文门禁仍适用 | 只返回 `state`，不返回配置原值、不重新调用 Agent |
 | `DELETE /tasks/:id` | `run` | |

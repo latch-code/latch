@@ -131,6 +131,25 @@ export interface HarnessHostOptions {
   clock?: () => number
   /** Drivers that declare `models.wires`: the Host's forwarding to its model services. */
   modelGateway?: ModelGateway
+  /**
+   * A session whose context has `proposals` (one of 我的 Agent's, or a conversation with 通用): its agent proposed a
+   * memory. The Host keeps it pending for the person and never saves it by itself; it finds the owner from its own
+   * records of `sessionId`. Rejects with the reason when it is refused (a secret, too long, too many).
+   */
+  proposeMemory?(input: MemoryProposalInput): Promise<void>
+}
+
+/** A memory an agent proposed through `propose_memory`. Only `content` and `reason` come from the agent. */
+export interface MemoryProposalInput {
+  sessionId: string
+  /** The user message of the turn it came from. */
+  messageId?: string
+  content: string
+  reason?: string
+  /** A tool that read outside content ran in that turn before it, or the driver could not tell. */
+  external: boolean
+  /** Unique within the session's own channel, so a proposal read twice is kept once. */
+  key: string
 }
 
 /** A driver's own account of `HarnessCapabilities`, with the modes and attachments it takes. */

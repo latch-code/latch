@@ -26,6 +26,9 @@ sources:
   - apps/web/src/agents/NewTopic.tsx
   - apps/web/src/agents/AgentProfile.tsx
   - apps/web/src/agents/Memory.tsx
+  - apps/web/src/agents/proposals.ts
+  - apps/web/src/agents/ProposalRow.tsx
+  - apps/web/src/agents/TopicProposals.tsx
   - apps/web/src/agents/AgentForm.tsx
   - apps/web/src/agents/Schedules.tsx
   - apps/web/src/agents/CarryResults.tsx
@@ -45,6 +48,8 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 | `POST /custom-agents` | 新建；头像由 Host 分配 |
 | `GET`、`PATCH`、`DELETE /custom-agents/:id` | 详情（含指令、记忆、会话）、按 `baseRevision` 修改、删除；可选字段传 `null` 清除 |
 | `GET`、`POST /custom-agents/:id/memories`，`PATCH`、`DELETE …/:mid` | 记忆，只有用户能写，只有这个 Agent 能用 |
+| `POST`、`DELETE /custom-agents/:id/memories/:mid/undo` | 撤销这条记忆最近一次的修改或删除；清除已删除记忆留着的文字 |
+| `GET /custom-agents/:id/proposals`，`POST …/proposals/:pid/save`、`…/dismiss` | 记忆提议：列出、保存为记忆、不要 |
 | `GET`、`PATCH /custom-agents/general` | 「通用」，不能删除；记忆路由同样可用 |
 
 快照的 `customAgents` 只有摘要（不含指令、技能和工具的内容）。写操作都带 `requestId`，重试按回执回答；结果未知时拒绝其他修改和读取，Host 每秒自己重试写入，也可以重试同一请求；这期间快照没有 `customAgents` 和 `automations`，其余照常。定义在 `agents/custom.json`。
@@ -60,6 +65,25 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 - `avatar`：头像，`{ kind: 'face', bracket, eyes, hue }`，括号 `round`、`curly`、`square`、`angle`，眼睛 `dot`、`arc`、`oval`、`sleepy`，颜色 `ink`、`slate`、`pine`、`plum`、`wisteria`、`cocoa`、`sand`、`moss`、`mist`（`AGENT_BRACKETS`、`AGENT_EYES`、`AGENT_HUES`）。新建时 Host 分配一个还没用过的括号 × 颜色组合，眼睛用圆点；`PATCH` 带 `avatar` 修改，和其他字段一样经 `baseRevision`、`requestId`、先审计再写和回执，审计 detail 只有哈希。未知的字段与取值都拒绝。头像不进 `definitionHash`，会话收不到它。只有 `definitionHash` 变了的修改才把这个 Agent 的定时任务重新绑定到修改的设备（读不到时照旧重新绑定）；改名称、说明或头像既不移动也不暂停定时任务，但新名称会出现在之后运行的第一轮文本块里，因为它写着 Agent 的名称。`kind` 为以后上传图片留位，尚未实现。
 
 摘要里的 `available` 与 `unavailableReason` 说明现在能否开始会话，`canAutomate` 说明能否用于定时任务。
+
+## 记忆提议
+
+Agent 会学，但从不静默保存。记忆只有两种来源：人在资料面板里写的，和人保存的提议。没有「自动接受」。
+
+- **来源**：（a）人在某个 Agent 或「通用」的对话里发的消息以「记住」「记住：」「请记住」或 `remember` 开头时，Host 用去掉这几个字之后的文字建一条提议（`origin: 'user'`），消息照常发给 Harness；Code 里的会话没有这一步。排队的消息在真正从队列发出时才建提议，撤回的不建。（b）Agent 调用 `propose_memory(content, reason?)`（`origin: 'agent'`）。
+- **哪些会话有 `propose_memory`**：只有这个 Agent 的会话和「和通用的对话」，由 Host 在执行上下文里写 `proposals`（`AgentExecutionContext`，从不接受客户端传入）。内置 Harness（`private`）由运行循环自己提供这个工具，同名的插件工具在这些会话里被它替换，不经分级、不需要批准，因为它只交给 Host 一条待确认的提议。它也是「只对话」运行唯一能调用的工具：这样的运行仍然叫只对话，不读写文件、不运行命令，其他工具照旧拒绝。外部 Harness 经技能服务（见下）提供。pi 不接受 MCP 服务，Agent 提议在 pi 上尚未实现，「记住…」照样可用。
+- **存放**：在 `agents/custom.json` 的 `proposals`（按 Agent 或 `general`），strict schema；每条有 ID、文字、理由、来源（会话、那一轮的用户消息或请求）、`origin`、`external`、状态（`pending`、`saved`、`dismissed`）、时间与保存后的记忆 ID。每个 Agent 最多 64 条：放不下时先丢最早的「不要了」，再丢最早的已保存；全是待处理时拒绝新提议（409 `agent-proposal-limit`）。每个 Agent 的提议合计不超过 256 KB，其中 Agent 提出的最多占一半：超出时先丢它自己最早的已处理提议，仍超出就拒绝；Agent 的待处理提议最多 32 条，满了时它的新提议被拒绝，工具用英文告诉它。所以 Agent 从不挤掉人的「记住…」，人总有另一半的地方；一个会话最多提议 32 次（内置与外部 Harness 相同）。同一个来源（一行、一次调用或人的一次请求）只建一条，重读或重试不重复。Agent 删除时一并删除。
+- **拒绝**：文字或理由像密钥（`redactSecrets` 会改动它，或 `containsSecret` 认出它）时拒绝（422 `agent-memory-secret`「内容像是密钥或凭据，没有记下。」），超过 4000 字（理由 500 字）时拒绝，含不可见或控制字符（换行除外）时 400 `agent-memory-invalid`，都在审计之前、不存任何东西。Agent 的工具结果写明原因；人的「记住…」被拒绝时消息照常发出，回答里带 `memoryRefused`，页面用提示条说出原因；会话详情的 `memoryRefusals`（按请求，只有原因，只在内存里）让那一轮下面写「没有记下」与原因，从队列发出的消息也是这样。
+- **保存与不要**：带 `requestId`，经与添加记忆相同的回执、先审计再写（`agent.changed`，`kind: 'memory'`、`via: 'proposal'`）；保存在同一次写入里建记忆并把提议标为已保存，记忆带 `source`（提议 ID、`origin`、`external`、会话与消息、提议时间）。重试同一请求只按回执回答（`proposalId`、`memoryId`，提议与记忆还在时一并给出），提议已为腾地方被丢掉也一样；已处理的提议再保存或不要是 409 `agent-proposal-decided`。只有能写记忆的设备（`run` 与完整数据范围）能保存或不要。
+- **审计**：建提议记 `agent.memory.proposed`（`origin`、`external`、`customAgentId`），不要记 `agent.changed`（`kind: 'proposal'`）；detail 里只有枚举与 ID，从没有文字。
+- **外部内容**（`external`）：从会话的上下文上次重新开始（清空上下文）以来，运行过可能读到外部内容的工具；上下文里一直留着读到的东西，所以之后每一轮的提议都标外部。内置 Harness：Host 分级为 R2 的调用（任何插件的工具、会话文件夹以外的文件），记在会话上；之后的只对话运行没有工具，但继承这个标记，这是有意的，因为上下文里还留着读到的东西。外部 Harness 只能看 Agent 自报的工具行，所以从宽判定：`fetch`、`search`、`execute`、`think`、`other` 或没有 `kind` 的调用、子 Agent，以及没有 `locations` 或位置在项目文件夹之外的读写，都算外部；技能服务自己的三个工具不算：只看没有特定种类（`other`）的工具行的名称字段（Agent 不给名称时是标题），去掉服务前缀（如 `mcp__latch-skills__`）后确切相等才算，标题里只是提到这个名字的不算。位置先解析 `..` 与符号链接再判断是否在项目文件夹内。驱动只能把提议交给 Host 在它自己的会话里；插件 Harness 说的 `external: false` 不被采信。人的「记住…」从不标外部；只对话的运行没有其他工具，它的提议不标外部。定时任务运行的会话里的提议一律标外部（执行上下文带 `unattended`，Host 再按会话的 `automationId` 核对），因为没人看着它读了什么，人之后在其中继续时也一样。
+- **何时生效**：内置 Harness 每轮重新读取记忆，保存后就生效；外部 Harness 只在话题的第一轮收到记忆，保存后从下一个话题起才收到。界面只这样写，不声称别的。
+- **撤销**：每条记忆保留最近一次修改或删除（`changes`，每个 Agent 最多 64 条，strict schema），「撤销」（`POST …/undo`，带 `requestId` 与人看到的 `baseRevision`，不符时 409 `agent-changed`，审计 `via: 'undo'`）把它恢复为之前的文字或重新加回，用过即消失。删除的文字只留 7 天（`MEMORY_UNDO_DAYS`）：Host 启动时、每天一次和每次写入时删去过期的，「清除」（`DELETE …/undo`）立即删去；这条记忆若是从提议保存的，那条提议的文字也同时清空，只留 ID 与状态，`GET …/proposals` 不再列出它。话题本身的对话记录（人的原话、工具调用）不受影响，随会话保留或删除。修改一条从提议保存的记忆后，它就是人自己写的，不再带来源；撤销修改时来源随文字恢复。
+- **快照**：完整数据范围的设备（手机只在正文窗口内）收到 `agentProposals`：每个 Agent 待处理的数量和最近一次变化的时间，不含文字；页面据此重新读取提议。其他设备不知道有提议。
+
+### 外部 Harness 的通道
+
+技能服务以 `propose` 参数启动时多一个写工具 `propose_memory`，其余照旧只读、不联网。每次调用在会话自己的私有目录（0700）里的 `proposals.jsonl`（会话存在期间保留文字；每次会话的服务启动之前，若 Host 已取走全部完整的行就清空它，取走的行数仍计入上限；删除会话时一并删除）（0600，`O_NOFOLLOW`、`O_NONBLOCK`，只接受只有一个链接的普通文件）追加一行 `{ content, reason? }`；每行不超过 8 KB，每个会话最多 32 行、128 KB，超出时工具返回错误。ACP 驱动在每个工具调用结束和每轮结束时，按 Host 读私有记录的方式（不跟随链接、不读 FIFO、只读打开时的大小、固定大小的缓冲）从上次的偏移读新增的完整行（行数与按字节计的偏移持久化在会话记录的 `proposalsRead`、`proposalsOffset`），逐行交给 Host（`HarnessHostOptions.proposeMemory`）。行里只取 `content` 与 `reason`，经 zod 和密钥检查；会话来自目录本身，归属由 Host 从自己的会话记录（`TaskSummary.agent` 或 `generalChat`）查出，从不取自文件；Host 只收下这个驱动自己的、开始时上下文带 `proposals` 的会话（记在会话元数据 `proposals`）的提议。无效的行跳过并在 Host 日志里只记种类（`not-json`、`invalid`），被拒绝的行照样算读过，驱动只记下 Host 的原因。
 
 ## 「通用」
 
@@ -87,7 +111,7 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 
 **外部 Harness**（`first-turn`）：Harness 的提示和工具都保留。指令和记忆作为一个带标注的文本块，在第一个真正到达 Harness 的轮次排在用户输入之前发送，写出后记录在那条用户消息的 `agentBrief` 上；`segments` 分开 Latch 的说明和用户写的内容，换行连接后就是发送的字符。第一轮没有到达 Harness（进程没有起来、发送前取消）时，文本块留到下一轮，重启后也一样；写出后、记录落盘前崩溃时下一轮会再发一次，不会一次都没发。`Message.text` 不含它，分叉的背景文本也不带它；pi 用自己的记录分叉时（见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式)），新会话里是 pi 收到过的原样记录，来源会话发过的文本块也在其中，新会话自己的文本块照常随它的第一轮发送。发送过之后的轮次不再发送，改动指令不影响已开始的会话；清空上下文后，同一个文本块随新上下文的第一轮再发送一次并记在那条消息上，因为 Harness 的新会话里没有它。设备开始完全访问会话时，启动审计（`task.l3.start-requested`）的 `promptHash` 同时覆盖这个文本块。
 
-**外部 Harness 的技能**（`server`）：Host 把所选技能复制到会话自己的目录，并在 `session/new`、`resume`、`load` 时附加一个 stdio MCP 服务 `latch-skills`。它只有 `list_skills` 和 `read_skill` 两个工具，不写文件、不访问网络。删除会话时一并删除这份副本。服务的命令是 Host 自己 Node 程序的绝对路径，不带 `type`，环境变量为空，所以只接受命令为绝对路径的 stdio 服务的 Harness（DeepSeek Harness）也能启动它；`server/discover` 返回「方法不存在」，客户端退回 2025 版的 `initialize` 握手（假 Agent 的 `FAKE_ACP_MCP=dsh` 照此检查）。预设以 `skillServer: false` 声明不接受 MCP 的 Harness（目前是 pi），这些 Harness 没有 `HarnessInfo.skills`，技能不发送，界面据此提示。其余预设是否实际取用技能尚未逐一在真实 Agent 上验证。
+**外部 Harness 的技能**（`server`）：Host 把所选技能复制到会话自己的目录，并在 `session/new`、`resume`、`load` 时附加一个 stdio MCP 服务 `latch-skills`。它有 `list_skills` 和 `read_skill` 两个只读工具；这个 Agent 的会话和「和通用的对话」另有一个写工具 `propose_memory`，只往同一目录的 `proposals.jsonl` 追加提议（见「记忆提议」），此外不写文件、不访问网络。没有技能的 Agent 会话也为了 `propose_memory` 附加它。删除会话时一并删除这个目录。服务的命令是 Host 自己 Node 程序的绝对路径，不带 `type`，环境变量为空，所以只接受命令为绝对路径的 stdio 服务的 Harness（DeepSeek Harness）也能启动它；`server/discover` 返回「方法不存在」，客户端退回 2025 版的 `initialize` 握手（假 Agent 的 `FAKE_ACP_MCP=dsh` 照此检查）。预设以 `skillServer: false` 声明不接受 MCP 的 Harness（目前是 pi），这些 Harness 没有 `HarnessInfo.skills`，技能不发送，界面据此提示。其余预设是否实际取用技能尚未逐一在真实 Agent 上验证。
 
 `agentContext` 由 Host 构造，从不接受 HTTP 客户端传入。
 
@@ -112,6 +136,7 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 - **头像**：一对括号围着两只眼睛，放在浅色圆角方块上，颜色取 `--agent-<hue>` 令牌（「通用」是中性灰的圆括号加圆点）。列表 40、资料面板与新话题 56、侧栏 24、对话外框 24（手机 28）、命令面板 16；「我的 Agent」入口是上面的单色 `{··}`。资料面板的大头像打开选择器（桌面是弹层，手机是底部面板）：会动的预览，下面是括号、眼睛、颜色三行，选项本身就是头像，选中项是墨色环，每行一个 Tab 停靠点，方向键从当前焦点移动，空格或回车选择；「设置」里没保存的修改在 Agent 有新版本时保留，同一字段在别处也改了时提示「已在别处修改」；选了立即提交，只显示 Host 读回的值，失败、结果未知与离线沿用「写入」的提示与原 `requestId` 重试。
 - **头像的状态**：只由 Host 已有的数据推出，来自这个 Agent 的会话（`TaskSummary.agent.customAgentId`）：等你处理 > 运行中 > 休息（摘要 `available: false`）> 最近一次未归档会话失败 > 空闲（`agentActivity`）。状态词始终写在旁边（运行中、等你处理、失败；休息时是「不可用」），头像只陪衬：运行中右下角闪烁的 `_`、眼睛看向它；等你处理眼睛抬起，右上角不时冒出琥珀色「?」；失败眼睛低下，右上角红色「!」；休息闭眼，飘出「z」；会话在页面打开时结束，笑眯眯一次。空闲时每隔几秒随机眨眼、看一眼或笑眯眯。32 px 起有全部动作与配件，20–31 px 只偶尔眨眼，16 px 不动。全页一个调度器（`avatarMotion.ts`）、一个计时器，只驱动视口内的头像，页面隐藏时停；同时笑眯眯或冒配件的不超过 3 个；只动 transform 与 opacity。减少动态效果或根元素 `data-motion="still"`（e2e 的 `stillMotion`，与固定时钟一起在 `visualContext` 里）时完全不动，配件静态显示。
 - **定时**：这个 Agent 的定时任务（「通用」的是不指定 Agent 的那些），界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
+- **记忆提议**：对话里在提议来自的那一轮之后是一行「想记住：<文字>」，下面是来源的短词「你说的」或「它推断的」、外部内容时琥珀色的「来自外部内容」、理由（在 `Hint` 里）与「不要」「保存」（这一处唯一的蓝色主按钮）。保存中、不要中、已保存（「已保存」与「已生效」或「从下一个话题起」）、不要了、结果未知（保留原 `requestId`，「重试同一请求」）与失败（Host 的原因）都是真实状态。资料面板的「记忆」最上面是待处理的「提议」，同样的两个按钮（保存不用蓝色，面板的蓝色留给它的表单）；从提议保存的记忆写出来源、链到话题和时间；改过的记忆有「撤销修改」，删除的记忆在列表下面带「撤销」。
 - **写入**：新建、修改（带打开表单时的 `baseRevision`，只发改了的字段）、删除与记忆都带 `requestId`；结果未知时保留原请求，「重试同一请求」原样重发，`agent-changed` 显示为已在别处修改并可载入最新。新话题的待确认请求单独存放，不占用新会话的草稿，重试同样沿用原 `requestId`；卡片写出最后一次重试的原因，「放弃这次提交」只在这台设备上放下它，文字回到输入框（Host 如果其实收到了，它会作为一个话题出现）。
 - **数据范围**：没有完整数据范围的设备看到「这台设备看不到 Agent」，不显示空列表；Host 返回 `agent-scope-required` 时同样处理，`agent-write-unknown` 时显示正在确认并稍后重读。
 - **iPhone/iPad**：标签栏同样是 Code / 我的 Agent / 应用 / 设置，判断在 `PhoneTabs`、`PhoneAgents`。手机只在正文窗口内拿到快照的 `customAgents` 与 `automations`，所以窗口外不显示任何 Agent 的名称、职责与定时，列表写「查看」（Face ID 关闭时自动打开）；离线保存的列表不含它们，窗口关闭时也从内存撤下，委托的会话在窗口外页头只写「委托」。Agent 页的「委托」经同一 `POST /tasks` 带 `customAgentId`，Harness 只列有 `agentContext` 的，所选的文件夹照网页一样作为 `workspaceId` 发送（起始文件夹 `default` 也发送，Host 用它代替 Agent 自己的项目）；成功后转到 Code 打开会话，会话页头写「为 <Agent> 委托」。「记忆」可以添加、修改、删除，写入与委托都占用手机唯一的待确认写入，结果未知时「重试同一请求」，`agent-changed` 显示「已在别处修改」。「定时」只读，列出计划与运行记录；「设置」只读；新建与修改 Agent 或定时任务写「尚未实现」，在网页或桌面端修改。头像用 SwiftUI 画同样的几何与动作（`AgentFace`，状态由 `PhoneAgents.face` 推出），列表 40、Agent 页 56，一个共享时钟只在头像显示、App 在前台时走；开启「减弱动态效果」时不动；标签栏的「我的 Agent」图标由 iOS 另行更新；手机上换头像的选择器尚未实现。

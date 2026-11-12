@@ -29,7 +29,8 @@ import { agentActivity, dutyLine, GENERAL_NAME, runsWith, scheduleWords, worksIn
 import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
-import { useAgentDetail, useAgentList } from './useAgentData.ts'
+import { useAgentDetail, useAgentList, useProposals } from './useAgentData.ts'
+import { effectWords } from './proposals.ts'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
 
 const NO_PLUGINS: CustomAgentList['plugins'] = []
@@ -153,12 +154,14 @@ export function AgentProfile({
   const general = owner === GENERAL_AGENT_ID
   const { read: listRead, reload: reloadList } = useAgentList(snapshot)
   const detail = useAgentDetail(snapshot, owner)
+  const { read: proposalRead, reload: reloadProposals } = useProposals(snapshot, owner)
   const refreshShell = shell.refresh
   const settle = useCallback(() => {
     reloadList()
     detail.reload()
+    reloadProposals()
     void refreshShell()
-  }, [reloadList, detail.reload, refreshShell])
+  }, [reloadList, detail.reload, reloadProposals, refreshShell])
   const writes = useAgentWrites(settle)
   const scheduleWrites = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
   const frozen = useLastConfirmed(connection, snapshot)
@@ -281,7 +284,19 @@ export function AgentProfile({
                 ))}
               {segment === 'memory'
                 && (value ? (
-                  <MemoryTab key={owner} owner={owner} memories={value.detail.memories} writes={writes} disabled={held} onReload={settle} />
+                  <MemoryTab
+                    key={owner}
+                    owner={owner}
+                    memories={value.detail.memories}
+                    changes={value.detail.memoryChanges}
+                    proposals={'value' in proposalRead && proposalRead.value ? proposalRead.value.proposals : []}
+                    effect={general ? undefined : effectWords(harness)}
+                    writes={writes}
+                    disabled={held}
+                    onReload={settle}
+                    topicTitle={id => snapshot.tasks.find(task => task.id === id)?.title}
+                    onOpenTopic={shell.choose}
+                  />
                 ) : (
                   <Loading label="正在读取" />
                 ))}

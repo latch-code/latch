@@ -8,12 +8,12 @@ import {
   UpdateWindow,
   updateWindowInputSchema,
 } from './update-window.ts'
-import { CustomAgents, type AgentActor } from './custom-agents.ts'
+import { CustomAgents, rememberRequest, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
-import { AgentPlans } from './agent-plans.ts'
+import { AgentPlans, canPropose } from './agent-plans.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import { GENERAL_AGENT_ID, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
@@ -93,6 +93,7 @@ import {
   type FileTrackingInput,
   type HarnessDriver,
   type HarnessSecurityEvent,
+  type MemoryProposalInput,
   type HostProject,
   type ModelRoute,
   type ProjectFolder,
@@ -1394,13 +1395,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     )
     await registry.enable('standard-harness')
     const customAgents = await CustomAgents.open({ dataDir, audit, now })
+    // A deleted memory's text goes when its undo window ends, whether or not anything is written meanwhile.
+    const purgeMemories = () => void customAgents.purgeExpired().catch(error => log(`过期的已删除记忆没有清除：${errorText(error)}`))
+    purgeMemories()
+    const purgeTimer = setInterval(purgeMemories, 24 * 60 * 60 * 1000)
+    purgeTimer.unref()
+    startupCleanup.push(() => clearInterval(purgeTimer))
     startupCleanup.push(() => customAgents.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
     await registry.enable('user-questions')
     /** Names and schedules of private definitions: for a device that may read them, and on a phone only while verified. */
-    function agentSummaries(caller: Caller, tasks: readonly TaskSummary[]): Pick<AppSnapshot, 'customAgents' | 'automations'> {
+    function agentSummaries(
+      caller: Caller,
+      tasks: readonly TaskSummary[],
+    ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals'> {
       if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all') return {}
       if (caller.nativeOpening && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now()) return {}
       // Absent, as on a Host without them, while a write is being confirmed: the rest of the app has nothing to wait for.
@@ -1408,6 +1418,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         customAgents: customAgents.list().map(agent => agentPlans.summary(agent, tasks)),
         automations: automations.list().map(automationSummary),
+        agentProposals: customAgents.proposalStates(),
       }
     }
     function questionSummary(task: TaskSummary): TaskSummary {
@@ -1782,8 +1793,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       changed: () => refresh(),
       list: async () => (await harnessHub.listTasks()).map(questionSummary),
       detail: id => harnessHub.detail(id),
-      patch: (id, patch) => harnessHub.updateMeta(id, patch),
+      patch: (id, patch) => {
+        if (patch.archived) memoryRefusals.delete(id)
+        return harnessHub.updateMeta(id, patch)
+      },
       remove: async id => {
+        memoryRefusals.delete(id)
         await keepWorktreePrivacy(id)
         await harnessHub.remove(id)
         await promptQueues.forgetSession(id)
@@ -1887,6 +1902,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.model ? { model: input.model } : {}),
           ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
         })
+        // Only now is it the person's message in the session; a withdrawn one never gets here.
+        await rememberFromPerson(
+          { deviceId: actor.deviceId, actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' } },
+          sessionId,
+          input.text,
+          input.requestId,
+        )
       },
       changed: id => refresh(id),
     })
@@ -2177,6 +2199,74 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         .filter(plugin => plugin.enabled)
         .map(({ id, name, description, capabilities }) => ({ id, name, description, capabilities }))
     }
+    /** The Agent a session belongs to in 我的 Agent, from the Host's own records: one of yours, `general`, or none. */
+    function sessionOwner(sessionId: string): string | undefined {
+      return hub?.agentOf(sessionId)?.customAgentId ?? (hub?.generalChatOf(sessionId) ? GENERAL_AGENT_ID : undefined)
+    }
+    /**
+     * A driver's `propose_memory`. The owner is the session's, from the Host's records; a first turn may ask before its
+     * start has been recorded, so it waits a little for that. Kept pending for the person, never saved here.
+     */
+    async function proposeFromAgent(driver: HarnessDriver, input: MemoryProposalInput): Promise<void> {
+      // A driver proposes only into its own sessions, of an Agent or 通用, on a Harness the Host gives `proposals` to.
+      const own = () =>
+        hub?.ownerOf(input.sessionId) === driver.id && hub.proposalsOf(input.sessionId) && sessionOwner(input.sessionId) !== undefined
+      for (let attempt = 0; !own() && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 100))
+      const owner = own() ? sessionOwner(input.sessionId) : undefined
+      const harness = hub?.info(driver.id)
+      if (owner === undefined || !harness || !canPropose(harness))
+        throw new AppError(409, 'agent-proposal-session', 'This session cannot propose memories.')
+      // Only Latch's own loops can tell what a turn read; another driver's word that it read nothing is not taken.
+      const trusted = kindOf(driver) !== 'plugin'
+      await customAgents.propose({
+        owner,
+        key: `agent:${input.sessionId}:${input.key}`,
+        content: input.content,
+        ...(input.reason ? { reason: input.reason } : {}),
+        origin: 'agent',
+        // Nobody watched what a scheduled run read; the driver says so too, this covers a run it could not tell.
+        external: input.external || !trusted || hub?.automationOf(input.sessionId) !== undefined,
+        source: { sessionId: input.sessionId, ...(input.messageId ? { messageId: input.messageId } : {}) },
+        actor: { listener: 'host' },
+      })
+      refresh()
+    }
+    /**
+     * The person's own 「记住…」 in a session of 我的 Agent: a proposal from their words, which they still save. Their
+     * message goes to the Harness either way. Answers why nothing was kept, never with the text.
+     */
+    async function rememberFromPerson(
+      person: { deviceId: string; actor: AuditActor },
+      sessionId: string,
+      prompt: string,
+      requestId: string,
+    ): Promise<string | undefined> {
+      const content = rememberRequest(prompt)
+      const owner = content === undefined ? undefined : sessionOwner(sessionId)
+      if (content === undefined || owner === undefined || devices.get(person.deviceId)?.dataScope !== 'all') return undefined
+      try {
+        await customAgents.propose({
+          owner,
+          key: `user:${person.deviceId}:${requestId}`,
+          content,
+          origin: 'user',
+          external: false,
+          source: { sessionId, requestId },
+          actor: person.actor,
+        })
+        refresh()
+        return undefined
+      } catch (error) {
+        const reason = error instanceof AppError && error.status < 500 ? error.message : '没有记下：提议暂时无法保存。'
+        // The turn row says it too, for a message sent from a queue, where no answer goes back to the person.
+        const rows = (memoryRefusals.get(sessionId) ?? []).filter(row => row.requestId !== requestId)
+        memoryRefusals.set(sessionId, [...rows, { requestId, reason }].slice(-8))
+        refresh(sessionId)
+        return reason
+      }
+    }
+    /** The person's 「记住…」 the Host did not keep, per session, newest last; in memory only, never the text. */
+    const memoryRefusals = new Map<string, Array<{ requestId: string; reason: string }>>()
     function agentAccess(caller: Caller, write = false): AgentActor {
       requireScope(caller, write ? 'run' : 'view')
       const authorize = () => {
@@ -3136,6 +3226,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tmpRoot: runtime.tmpRoot,
             securityEvent,
             clock,
+            proposeMemory: input => proposeFromAgent(driver, input),
             // Only a driver that says it can be pointed at a service gets tokens for one.
             ...(hub!.info(driver.id)?.capabilities.models.wires.length ? { modelGateway } : {}),
             trackFiles: async input => {
@@ -4478,6 +4569,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         summary: questionSummary(detail.summary),
         queue: promptQueues.view(sessionId),
         questions: questions.view(sessionId),
+        ...(memoryRefusals.get(sessionId)?.length ? { memoryRefusals: memoryRefusals.get(sessionId)! } : {}),
         approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, level, detail.summary))),
       }
     }
@@ -5256,7 +5348,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
-      json(res, await startSession(caller, input, res), 201)
+      const started = await startSession(caller, input, res)
+      const refused =
+        input.customAgentId && input.prompt && !input.forkOf
+          ? await rememberFromPerson(
+              { deviceId: caller.device.id, actor: actorOf(caller) },
+              started.sessionId,
+              input.prompt,
+              input.requestId,
+            )
+          : undefined
+      json(res, { ...started, ...(refused ? { memoryRefused: refused } : {}) }, 201)
     }
 
     /**
@@ -5349,7 +5451,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           : undefined
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const harnessId = input.harnessId ?? defaultHarnessId()
-        const agentContext: AgentExecutionContext | undefined =
+        const baseContext: AgentExecutionContext | undefined =
           (customAgentId
             ? agentPlans.agentContext(customAgentId, harnessId)
             : generalContextFor(withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope, harnessId))
@@ -5358,6 +5460,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : undefined)
           ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
         await rereadOutdated(harnessId)
+        // A conversation with 通用 may propose memories, on a Harness that can.
+        const agentContext = generalChat ? agentPlans.generalChatContext(harnessId, baseContext) : baseContext
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready') {
@@ -5831,7 +5935,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function turnContext(sessionId: string, harnessId: string, dataScope: 'work' | 'all' | undefined): AgentExecutionContext | undefined {
       if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
       const owner = hub!.agentOf(sessionId)
-      if (!owner) return generalContextFor(dataScope, harnessId)
+      if (!owner) {
+        const general = generalContextFor(dataScope, harnessId)
+        return dataScope === 'all' && hub!.generalChatOf(sessionId) ? agentPlans.generalChatContext(harnessId, general) : general
+      }
       try {
         return agentPlans.agentContext(owner.customAgentId, harnessId)
       } catch (error) {
@@ -5995,7 +6102,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const input = taskPatchSchema.parse(await jsonBody(req))
         recheck(caller, 'run')
         if (input.archived) terminalRoutes.checkSessionEnd(caller, id)
-        json(res, { summary: await hub!.updateMeta(id, input) })
+        const summary = await hub!.updateMeta(id, input)
+        if (input.archived) memoryRefusals.delete(id)
+        json(res, { summary })
         return true
       }
       if (method === 'DELETE' && !action) {
@@ -6004,6 +6113,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         terminalRoutes.checkSessionEnd(caller, id)
         await keepWorktreePrivacy(id)
         await hub!.remove(id)
+        memoryRefusals.delete(id)
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
         await attachmentStore.removeTask(id).catch(() => log('未能清理已删除会话的附件'))
@@ -6028,8 +6138,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.freshContext && (input.queue || input.steer))
           throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
         const sent = await sendPrompt(caller, id, input)
-        if (sent === 'steered') json(res, { steered: true })
-        else if (sent === 'accepted') json(res, { accepted: true })
+        // A queued message proposes when it is sent from the queue, not now.
+        const refused =
+          input.prompt && typeof sent !== 'object'
+            ? await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, id, input.prompt, input.requestId)
+            : undefined
+        const memory = refused ? { memoryRefused: refused } : {}
+        if (sent === 'steered') json(res, { steered: true, ...memory })
+        else if (sent === 'accepted') json(res, { accepted: true, ...memory })
         else json(res, sent.queued, 'queued' in sent.queued ? 202 : 200)
         return true
       }
@@ -7476,6 +7592,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => harnessHub.close(),
             () => modelGateway.close(),
             () => questions.close(),
+            () => clearInterval(purgeTimer),
             () => customAgents.close(),
             () => fileTracking.close(),
             () => fileRoutes.close(),

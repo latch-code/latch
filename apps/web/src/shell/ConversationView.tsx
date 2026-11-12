@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
@@ -25,6 +25,7 @@ import { SourceHandoffDock, type HandoffRequest } from '../handoffs/SourceHandof
 import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
 import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
+import { useTopicProposals } from '../agents/TopicProposals.tsx'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -77,6 +78,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     rebuiltInto,
   } = shell
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
+  const placeProposals = useTopicProposals(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   // A session brought in as it was whose Harness lost it: rebuilt as text, through the same choice as an import.
@@ -330,7 +332,12 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                           })}
                       onReveal={reading.reveal}
                       {...(handing ? { onHandoff: handOff } : {})}
-                      {...(returned.length ? { placed: placeReturned } : {})}
+                      {...(returned.length || placeProposals
+                        ? {
+                            placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                              joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                          }
+                        : {})}
                       {...(frozenAt !== undefined ? { frozenAt } : {})}
                       cancelling={cancelState === 'cancelling'}
                       coarse={coarse}
@@ -432,4 +439,25 @@ function FirstStartNote({ harness }: { harness: HarnessInfo }) {
       </Hint>
     </div>
   )
+}
+
+/** Two sets of rows placed in the timeline, each slot's rows in order. */
+function joinPlaced(
+  first: ReadonlyMap<string, ReactNode> | undefined,
+  second: ReadonlyMap<string, ReactNode> | undefined,
+): ReadonlyMap<string, ReactNode> {
+  const joined = new Map<string, ReactNode>(first)
+  for (const [key, node] of second ?? [])
+    joined.set(
+      key,
+      joined.has(key) ? (
+        <>
+          {joined.get(key)}
+          {node}
+        </>
+      ) : (
+        node
+      ),
+    )
+  return joined
 }

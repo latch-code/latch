@@ -531,6 +531,115 @@ button.agents-list-row:focus-visible {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.agent-memory-source {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+}
+.agent-memory-topic {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.agent-memory-topic {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+button.agent-memory-topic:hover {
+  color: var(--ink);
+}
+.agent-memory-proposals {
+  display: grid;
+  gap: var(--sp-8);
+}
+.agent-memory-proposals > h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.agent-memory-count {
+  font-variant-numeric: tabular-nums;
+}
+.agent-memory-deleted .agent-memory-text > p {
+  color: var(--muted);
+}
+
+/* A memory proposal: in a topic after the turn it came from, and at the top of 记忆. */
+.memory-proposals {
+  display: grid;
+  gap: var(--sp-8);
+  margin: var(--sp-16) 0 var(--sp-24);
+}
+.memory-proposal {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+}
+.memory-proposal[data-state='dismissed'] {
+  background: transparent;
+}
+.memory-proposal-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.memory-proposal[data-state='dismissed'] .memory-proposal-text {
+  color: var(--muted);
+}
+.memory-proposal-lead {
+  color: var(--muted);
+}
+.memory-proposal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.memory-proposal-spacer {
+  flex: 1;
+}
+.memory-proposal-actions,
+.memory-proposal-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.memory-proposal-refused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.memory-proposal-effect,
+.memory-proposal-muted {
+  color: var(--muted);
+}
+
 .agent-memory-list .agent-memory-edit {
   padding: var(--sp-12) var(--sp-16);
 }

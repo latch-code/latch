@@ -1,6 +1,6 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
-import type { CustomAgentSummary } from './custom-agents.ts'
+import type { AgentProposalState, CustomAgentSummary } from './custom-agents.ts'
 import type { AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
 import type { AppSummary } from './apps.ts'
@@ -69,6 +69,8 @@ export interface AppSnapshot {
   customAgents?: CustomAgentSummary[]
   /** 定时任务, under the same condition. */
   automations?: AutomationSummary[]
+  /** Memory proposals by owner (an Agent's ID or `general`), under the same condition: counts only, never their text. */
+  agentProposals?: Record<string, AgentProposalState>
   /** Handoffs whose source or target is among `tasks`; absent on older Hosts. */
   handoffs?: HandoffSummary[]
   /** Applied plugin pages; absent on older Hosts. */

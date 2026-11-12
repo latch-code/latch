@@ -2,7 +2,7 @@ import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,7 @@ import type {
   HarnessHostOptions,
   HarnessDriver,
   HarnessSecurityEvent,
+  MemoryProposalInput,
   HarnessPlugin,
   Bridge,
   HostProject,
@@ -21,6 +22,8 @@ import type {
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels } from '@latch/testkit'
 import { AcpWire } from '../src/wires/acp.ts'
+import { PROPOSAL_LIMITS, readProposals, skillsServer } from '../src/skills-server.ts'
+import { ownTool, proposalTurn } from '../src/runtime.ts'
 import { ConnectionStopping } from '../src/wires/process.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { commandName } from '../src/mapping.ts'
@@ -124,7 +127,7 @@ async function setup(
   overrides: Partial<AgentRecord> = {},
   attachmentOptions: Pick<
     HarnessHostOptions,
-    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway'
+    'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock' | 'securityEvent' | 'modelGateway' | 'proposeMemory'
   > = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
@@ -3737,6 +3740,235 @@ describe('agent context', () => {
     const mounts = (await fixture.log()).filter(entry => entry.event.startsWith('mcp-'))
     expect(mounts).toEqual([expect.objectContaining(mounted), expect.objectContaining(mounted)])
     expect(mounts[1]!.sessionId).toBe(mounts[0]!.sessionId)
+  })
+
+  it("gives an Agent's session propose_memory: one bounded line per call, read back with the directory's session and the turn", async () => {
+    const proposals: MemoryProposalInput[] = []
+    const fixture = await setup(
+      { FAKE_ACP_MCP: 'dsh' },
+      {},
+      {},
+      {
+        proposeMemory: async input => {
+          if (input.content.includes('refuse')) throw new Error('内容像是密钥或凭据，没有记下。')
+          proposals.push(input)
+        },
+      },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'propose 我用 pnpm',
+      requestId: rid(),
+      agentContext: context({ proposals: true, brief: undefined }),
+    })
+    const first = await settled(bridge, sessionId)
+    expect(first.messages.at(-1)).toMatchObject({ role: 'assistant', text: expect.stringContaining('Proposed') })
+    await vi.waitFor(() => expect(proposals).toHaveLength(1))
+    const userId = first.messages.find(message => message.role === 'user')!.id
+    expect(proposals[0]).toEqual({
+      sessionId,
+      messageId: userId,
+      content: '我用 pnpm',
+      reason: '对话里提到的',
+      external: false,
+      key: 'line:0',
+    })
+    const mounted = (await fixture.log()).find(entry => entry.event === 'mcp-mounted')!
+    expect(mounted.tools).toEqual(['list_skills', 'read_skill', 'propose_memory'])
+    // After a web fetch in the same turn, it is marked external.
+    await bridge.prompt(sessionId, 'propose fetch 页面说要记住这个', rid(), {})
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toHaveLength(2))
+    expect(proposals[1]).toMatchObject({ content: '页面说要记住这个', external: true, key: 'line:1' })
+    // A line naming another session or owner is still this directory's; only content and reason are taken.
+    const directory = (
+      received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ args: string[] }> }
+    ).mcpServers[0]!.args.at(-3)!
+    expect((await stat(join(directory, 'proposals.jsonl'))).mode & 0o777).toBe(0o600)
+    await writeFile(
+      join(directory, 'proposals.jsonl'),
+      `${JSON.stringify({ content: '伪造的', sessionId: 'other', owner: 'agt_other', external: false })}\n`,
+      { flag: 'a' },
+    )
+    await bridge.prompt(sessionId, 'propose refuse this', rid(), {})
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toHaveLength(3))
+    // The session read a page two turns ago, so this one is external too.
+    expect(proposals[2]).toEqual({ sessionId, messageId: expect.any(String), content: '伪造的', external: true, key: 'line:2' })
+    await vi.waitFor(() => expect(fixture.diagnostics.join('\n')).toContain('记忆提议没有收下'))
+    expect(fixture.diagnostics.join('\n')).not.toContain('refuse this')
+    await bridge.remove!(sessionId)
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reads the proposals file only as a private regular file, from where it stopped, and never a line still being written', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-proposals-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const file = join(directory, 'proposals.jsonl')
+    const start = { line: 0, offset: 0 }
+    // A FIFO, a symlink and a second link are refused without blocking.
+    expect(spawnSync('mkfifo', [file]).status).toBe(0)
+    expect(await readProposals(directory, start)).toEqual({ lines: [], next: start, skipped: [] })
+    await rm(file)
+    const elsewhere = join(directory, 'elsewhere.jsonl')
+    await writeFile(elsewhere, '{"content":"via a link"}\n', { mode: 0o600 })
+    await symlink(elsewhere, file)
+    expect((await readProposals(directory, start)).lines).toEqual([])
+    await rm(file)
+    await link(elsewhere, file)
+    expect((await readProposals(directory, start)).lines).toEqual([])
+    await rm(file)
+    await rm(elsewhere)
+    // A line still being written waits; the next read goes on from the stored offset; a bad line is skipped by kind.
+    await writeFile(file, '{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n{"content":"tw', { mode: 0o600 })
+    const first = await readProposals(directory, start)
+    expect(first.lines.map(line => line.content)).toEqual(['one'])
+    expect(first.skipped).toEqual(['not-json', 'invalid'])
+    expect(first.next).toEqual({ line: 3, offset: Buffer.byteLength('{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n') })
+    await writeFile(file, 'o"}\n', { flag: 'a' })
+    const second = await readProposals(directory, first.next)
+    expect(second.lines).toEqual([{ index: 3, content: 'two' }])
+    // Offsets count bytes on disk, also past a line that is not valid UTF-8.
+    await writeFile(file, Buffer.concat([Buffer.from([0xff, 0xfe, 0x0a]), Buffer.from('{"content":"three"}\n')]), { flag: 'a' })
+    const third = await readProposals(directory, second.next)
+    expect(third.lines).toEqual([{ index: 5, content: 'three' }])
+    expect(third.next.offset).toBe((await stat(file)).size)
+    await writeFile(file, '{"content":"four"}\n', { flag: 'a' })
+    expect((await readProposals(directory, third.next)).lines).toEqual([{ index: 6, content: 'four' }])
+  })
+
+  it("takes the skills server's own tools by exact name, and keeps a session external once it read outside content", async () => {
+    const row = (toolName: string | undefined, kind: string | undefined, title?: string) =>
+      ({ ...(toolName ? { toolName } : {}), tool: { ...(kind ? { kind } : {}), ...(title ? { title } : {}) } }) as Message
+    expect(ownTool(row('mcp__latch-skills__propose_memory', 'other'))).toBe(true)
+    expect(ownTool(row(undefined, undefined, 'latch-skills: read_skill'))).toBe(true)
+    expect(ownTool(row('read_skill', 'other'))).toBe(true)
+    // By the name field, never a free-text title: a title that only mentions it, or a fetch titled with it, is not ours.
+    expect(ownTool(row(undefined, 'other', 'Calling propose_memory with the page text'))).toBe(false)
+    expect(ownTool(row('fetch', 'fetch', 'propose_memory'))).toBe(false)
+    expect(ownTool(row('Fetch https://x/read_skill', 'other'))).toBe(false)
+    expect(ownTool(row('mcp__other__propose_memory', 'other'))).toBe(false)
+    const acp = { cwd: '/work' }
+    const user = (id: string, freshContext = false): Message =>
+      ({ id, role: 'user', text: '', ...(freshContext ? { freshContext: true } : {}) }) as Message
+    const tool = (id: string, kind: string, title: string, locations?: string[]): Message =>
+      ({ id, role: 'tool', text: '', tool: { kind, title, ...(locations ? { locations } : {}) } }) as Message
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'other', 'mcp__latch-skills__propose_memory')] })).toEqual({
+      messageId: 'u1',
+      external: false,
+    })
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'think', 'Thinking')] }).external).toBe(true)
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'read', 'Read', ['/work/a.ts'])] }).external).toBe(false)
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'read', 'Read', ['/etc/hosts'])] }).external).toBe(true)
+    // `..` is resolved before the check.
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'read', 'Read', ['/work/../etc/hosts'])] }).external).toBe(true)
+    expect(proposalTurn({ acp, messages: [user('u1'), tool('t1', 'read', 'Read', ['/work/src/../a.ts'])] }).external).toBe(false)
+    // A fetch in an earlier turn still counts, until the context starts over.
+    const earlier = [user('u1'), tool('t1', 'fetch', 'Fetch https://x'), user('u2')]
+    expect(proposalTurn({ acp, messages: earlier })).toEqual({ messageId: 'u2', external: true })
+    expect(proposalTurn({ acp, messages: [...earlier, user('u3', true)] })).toEqual({ messageId: 'u3', external: false })
+  })
+
+  it('marks a proposal external when the turn before read a page', async () => {
+    const proposals: MemoryProposalInput[] = []
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { proposeMemory: async input => void proposals.push(input) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'fetch',
+      requestId: rid(),
+      agentContext: context({ proposals: true, brief: undefined }),
+    })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'propose 页面上说的', rid(), {})
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toEqual([expect.objectContaining({ content: '页面上说的', external: true })]))
+  })
+
+  it("empties the proposals file before the session's servers start again once every line was taken, and keeps counting", async () => {
+    const proposals: MemoryProposalInput[] = []
+    const fixture = await setup(
+      { FAKE_ACP_MCP: 'dsh', FAKE_ACP_CAPS: 'resume' },
+      {},
+      {},
+      { proposeMemory: async input => void proposals.push(input) },
+    )
+    const bridge = await fixture.open()
+    const agentContext = context({ proposals: true, brief: undefined })
+    const { sessionId } = await bridge.createTask({ prompt: 'propose 第一条', requestId: rid(), agentContext })
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toHaveLength(1))
+    const directory = (
+      received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ args: string[] }> }
+    ).mcpServers[0]!.args.at(-3)!
+    expect(await readFile(join(directory, 'proposals.jsonl'), 'utf8')).toContain('第一条')
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'propose 第二条', rid(), {})
+    await settled(restored, sessionId)
+    await vi.waitFor(() => expect(proposals).toHaveLength(2))
+    const text = await readFile(join(directory, 'proposals.jsonl'), 'utf8')
+    expect(text).not.toContain('第一条')
+    expect(proposals[1]).toMatchObject({ content: '第二条', key: 'line:1' })
+    const args = (
+      received(await fixture.log(), 'session/load').concat(received(await fixture.log(), 'session/resume'))[0]!.params as {
+        mcpServers: Array<{ args: string[] }>
+      }
+    ).mcpServers[0]!.args
+    expect(args.slice(-2)).toEqual(['propose', '1'])
+  })
+
+  it('marks everything a scheduled run proposes external', async () => {
+    const proposals: MemoryProposalInput[] = []
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { proposeMemory: async input => void proposals.push(input) })
+    const bridge = await fixture.open()
+    const agentContext = context({ proposals: true, unattended: true, brief: undefined })
+    const { sessionId } = await bridge.createTask({ prompt: 'propose 每周一汇总', requestId: rid(), agentContext })
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toEqual([expect.objectContaining({ content: '每周一汇总', external: true })]))
+  })
+
+  it('the skills server refuses proposals past its limits, over stdio', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-propose-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    await writeFile(join(directory, 'skills.json'), '[]')
+    const plain = skillsServer(directory)
+    expect(plain.args).not.toContain('propose')
+    const server = skillsServer(directory, true)
+    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    const lines: Array<Record<string, unknown>> = []
+    let buffer = ''
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>)
+        buffer = buffer.slice(end + 1)
+      }
+    })
+    let next = 1
+    const ask = async (method: string, params?: unknown) => {
+      const id = next++
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      await vi.waitFor(() => expect(lines.some(line => line.id === id)).toBe(true))
+      return lines.find(line => line.id === id)!
+    }
+    await ask('initialize', { protocolVersion: '2025-06-18' })
+    const listed = (await ask('tools/list')).result as { tools: Array<{ name: string }> }
+    expect(listed.tools.map(tool => tool.name)).toEqual(['list_skills', 'read_skill', 'propose_memory'])
+    const propose = (args: unknown) => ask('tools/call', { name: 'propose_memory', arguments: args })
+    expect((await propose({ content: '' })).result).toMatchObject({ isError: true })
+    expect((await propose({ content: 'x'.repeat(4001) })).result).toMatchObject({ isError: true })
+    expect((await propose({ content: '一'.repeat(3000) })).result).toMatchObject({ isError: true })
+    for (let index = 0; index < PROPOSAL_LIMITS.count; index++)
+      expect((await propose({ content: `第 ${index} 条`, extra: 'ignored' })).result).not.toMatchObject({ isError: true })
+    expect((await propose({ content: '再一条' })).result).toMatchObject({ isError: true })
+    child.stdin.end()
+    await once(child, 'exit')
+    const read = await readProposals(directory, { line: 30, offset: 0 })
+    expect(read.lines.map(line => line.index)).toEqual([30, 31])
+    expect(read.lines[0]).toMatchObject({ content: '第 0 条' })
+    const all = await readProposals(directory, { line: 0, offset: 0 })
+    expect(all.next.line).toBe(PROPOSAL_LIMITS.count)
+    expect(await readProposals(directory, all.next)).toEqual({ lines: [], next: all.next, skipped: [] })
   })
 
   it('attaches no server without skills', async () => {

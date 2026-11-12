@@ -73,7 +73,12 @@ export function writeFor(state: WriteState | null, key: string): WriteState | nu
  * The delegation this device sent and has no answer for: stored before it is sent and cleared only on the Host's
  * definitive answer, apart from the new session's draft, so one never holds the other back.
  */
-export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: () => Promise<void>) {
+export function useDelegation(
+  snapshot: Pick<AppSnapshot, 'device'>,
+  refresh: () => Promise<void>,
+  /** The start went through but its 「记住…」 was not kept: the Host's reason, never the text. */
+  onMemoryRefused?: (reason: string) => void,
+) {
   const key = `latch.delegation.${location.origin}.${snapshot.device.id}`
   const [pending, setPending] = useState<PendingSubmission | null>(() => readPending(key))
   const [sending, setSending] = useState(false)
@@ -100,9 +105,10 @@ export function useDelegation(snapshot: Pick<AppSnapshot, 'device'>, refresh: ()
     setReason('')
     try {
       const { path, body } = submissionRequest(submission)
-      const result = await api<{ sessionId?: string }>(path, { method: 'POST', body })
+      const result = await api<{ sessionId?: string; memoryRefused?: string }>(path, { method: 'POST', body })
       writePending(key, null)
       setPending(null)
+      if (result.memoryRefused) onMemoryRefused?.(result.memoryRefused)
       await refresh()
       return result.sessionId
     } catch (error) {

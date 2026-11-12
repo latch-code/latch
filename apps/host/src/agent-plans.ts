@@ -116,6 +116,19 @@ export class AgentPlans {
     })
   }
 
+  /**
+   * A conversation with 通用: what any session on the Harness gets from 通用, and on a Harness that can call it,
+   * `propose_memory`. Such a conversation always has a context, so its turns stay private even while 通用 is empty.
+   */
+  generalChatContext(harnessId: string, base: AgentExecutionContext | undefined): AgentExecutionContext | undefined {
+    const harness = this.options.harness(harnessId)
+    if (!harness || !canPropose(harness)) return base
+    return {
+      ...(base ?? { instructions: '', revision: this.options.agents.definitionHash(GENERAL_AGENT_ID) }),
+      proposals: true,
+    }
+  }
+
   /** What an unattended run needs. A question nobody answers ends as any unanswered approval does. */
   automation(config: AutomationConfig): AutomationPlan {
     const agent = config.customAgentId ? this.options.agents.get(config.customAgentId) : undefined
@@ -169,6 +182,7 @@ export class AgentPlans {
       agentContext: {
         ...(context ?? { instructions: '', revision: definition }),
         expectedRevisions: snapshot.revisions,
+        unattended: true,
       },
     }
   }
@@ -189,6 +203,7 @@ export class AgentPlans {
       revision: this.options.agents.definitionHash(agent.id),
       ...(agent.tools ? { pluginIds: agent.tools } : {}),
       ...this.skillDelivery(harness, agent.skills),
+      proposals: canPropose(harness),
       brief: {
         agentName: agent.name,
         engineName: harness.capabilities.display.label,
@@ -211,4 +226,12 @@ export class AgentPlans {
     const skills = this.options.skills()
     return ids.flatMap(id => skills.find(skill => skill.id === id)?.name ?? [])
   }
+}
+
+/**
+ * Whether an Agent's session on this Harness can propose memories: the built-in one through its own tool, an external
+ * one through the skills server. A Harness that takes no MCP servers (pi) cannot; only 「记住…」 works there.
+ */
+export function canPropose(harness: Pick<HarnessInfo, 'agentContext' | 'skills'>): boolean {
+  return harness.agentContext === 'private' || harness.skills === 'server'
 }

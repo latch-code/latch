@@ -542,6 +542,8 @@ export interface TaskDetail {
   messages: Message[]
   queue?: PromptQueueItem[]
   questions?: AgentQuestion[]
+  /** The person's 「记住…」 in this session that the Host did not keep, by the message's request, with why; never the text. */
+  memoryRefusals?: Array<{ requestId: string; reason: string }>
   approvals: Approval[]
   liveText: string
   cursor: number

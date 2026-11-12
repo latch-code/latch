@@ -228,7 +228,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     snapshot.apps?.some(page => page.status !== 'disabled') === true,
   )
   /** The delegation this device sent from 我的 Agent and has no answer for; kept apart from the new session's draft. */
-  const delegation = useDelegation(snapshot, refresh)
+  const delegation = useDelegation(snapshot, refresh, text => {
+    setToast({ text, tone: 'error' })
+  })
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
   const shownEntry = useRef(route.entry)
   useLayoutEffect(() => {

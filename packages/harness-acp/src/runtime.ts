@@ -1,12 +1,19 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
 import { fileMentionContext, modelIdKey, promptTitle, type FileMention } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
-import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
+import {
+  clearTakenProposals,
+  readProposals,
+  removeSessionSkills,
+  skillsDirectory,
+  skillsServer,
+  writeSessionSkills,
+} from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
   AgentBrief,
@@ -622,6 +629,8 @@ export class AgentRuntime implements Bridge {
   private readonly runs = new Map<string, Run>()
   private readonly permissions = new Map<string, Permission>()
   private readonly tools = new Map<string, { seq: number; calls: Map<string, ToolState> }>()
+  /** Each session's read of its proposals file, one at a time. */
+  private readonly proposalReads = new Map<string, Promise<void>>()
   /** Assistant text that arrived outside a turn and is being appended to a settled message. */
   private readonly stray = new Map<string, { id: string; acpMessageId?: string }>()
   /** What each compaction row says so far, by session and compaction ID; the row itself is the record. */
@@ -1615,8 +1624,8 @@ export class AgentRuntime implements Bridge {
     } catch {
       throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
     }
-    if (agentContext?.skillBodies?.length)
-      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext.skillBodies)
+    if (agentContext?.skillBodies?.length || this.proposing(agentContext))
+      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
     const run = this.reserve(sessionId, 1, context)
     run.attachments = attachments
     const at = isoTime(run.clock.startedAt)
@@ -1659,6 +1668,8 @@ export class AgentRuntime implements Bridge {
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
+        ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
+        ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
         ...(route ? { route } : {}),
@@ -1682,8 +1693,8 @@ export class AgentRuntime implements Bridge {
   /** A session recorded with no turn: its seed waits for the first message, so nothing is sent until the person sends. */
   private async recordSeeded(create: Parameters<AgentRuntime['record']>[0] & { seed: string }): Promise<{ sessionId: string }> {
     const { sessionId, cwd, launch, scope, agentContext, startConfig, route } = create
-    if (agentContext?.skillBodies?.length)
-      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext.skillBodies)
+    if (agentContext?.skillBodies?.length || this.proposing(agentContext))
+      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
     const at = this.now()
     this.state.tasks[sessionId] = {
       summary: {
@@ -1711,6 +1722,8 @@ export class AgentRuntime implements Bridge {
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
+        ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
+        ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
         ...(route ? { route } : {}),
@@ -2075,7 +2088,7 @@ export class AgentRuntime implements Bridge {
     const { acpSessionId, earlierSessionIds = [], cwd, deletable } = task.acp
     const recorded = structuredClone(task)
     this.fileTracking.dispose(sessionId)
-    if (task.acp.skills) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
+    if (task.acp.skills || task.acp.proposals) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
     delete this.state.tasks[sessionId]
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
@@ -2206,6 +2219,66 @@ export class AgentRuntime implements Bridge {
 
   private openApprovals(taskId: string): Approval[] {
     return [...this.permissions.values()].filter(item => item.taskId === taskId && !item.claimed).map(item => item.approval)
+  }
+
+  /** Whether a session started with this context gets `propose_memory`: only where the Host takes proposals. */
+  private proposing(agentContext: AgentExecutionContext | undefined): boolean {
+    return agentContext?.proposals === true && this.options.proposeMemory !== undefined
+  }
+
+  /**
+   * Hands the Host what the session's server has written since the last read, one proposal per line, in order. The
+   * session is the directory's; only `content` and `reason` come from the file. A refused line is still read.
+   */
+  private collectProposals(taskId: string): void {
+    const previous = this.proposalReads.get(taskId) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      const task = this.state.tasks[taskId]
+      const propose = this.options.proposeMemory
+      if (!task?.acp.proposals || !propose) return
+      // What the session had done when the lines were written, taken before anything else can change it.
+      const turn = proposalTurn(task)
+      const from = { line: task.acp.proposalsRead ?? 0, offset: task.acp.proposalsOffset ?? 0 }
+      const { lines, next, skipped } = await readProposals(skillsDirectory(this.options.dataDir, taskId), from)
+      for (const reason of skipped) this.limits.log(`${this.agent.name} 会话 ${taskId} 的一条记忆提议无效，已跳过：${reason}`)
+      if (next.line === from.line && next.offset === from.offset) return
+      for (const line of lines)
+        await propose({
+          sessionId: taskId,
+          ...(turn.messageId ? { messageId: turn.messageId } : {}),
+          content: line.content,
+          ...(line.reason ? { reason: line.reason } : {}),
+          external: turn.external || task.acp.unattended === true,
+          key: `line:${line.index}`,
+        }).catch((error: unknown) => {
+          // The Host's reasons never quote the proposal.
+          this.limits.log(`${this.agent.name} 会话 ${taskId} 的记忆提议没有收下：${clip(this.redact(message(error)), 200)}`)
+        })
+      const current = this.state.tasks[taskId]
+      if (!current) return
+      current.acp.proposalsRead = next.line
+      current.acp.proposalsOffset = next.offset
+      this.mark()
+    })
+    const settled = next.catch(() => {})
+    this.proposalReads.set(taskId, settled)
+    void settled.then(() => {
+      if (this.proposalReads.get(taskId) === settled) this.proposalReads.delete(taskId)
+    })
+  }
+
+  /**
+   * Before the session's servers start, nothing writes the proposals file: once the Host has taken every line, empty it,
+   * so their text stays only in the Host's own records. The lines taken still count toward the session's limit.
+   */
+  private async clearProposals(taskId: string): Promise<void> {
+    await this.proposalReads.get(taskId)
+    const task = this.state.tasks[taskId]
+    const offset = task?.acp.proposalsOffset ?? 0
+    if (!task || offset === 0 || !(await clearTakenProposals(skillsDirectory(this.options.dataDir, taskId), offset))) return
+    task.acp.proposalsCleared = task.acp.proposalsRead ?? 0
+    task.acp.proposalsOffset = 0
+    this.mark()
   }
 
   private notify(sessionId?: string): void {
@@ -3064,6 +3137,7 @@ export class AgentRuntime implements Bridge {
     }
     const task = this.state.tasks[run.taskId]
     let outputMessageId: string | undefined
+    if (task?.acp.proposals) this.collectProposals(run.taskId)
     if (task) {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
@@ -3513,7 +3587,11 @@ export class AgentRuntime implements Bridge {
     // ACP wants the whole list again for every new, resumed or loaded session: omitting it would drop the folders.
     const passed = storedFolders(task.acp)
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
-    const mcpServers = task.acp.skills ? [skillsServer(skillsDirectory(this.options.dataDir, taskId))] : []
+    if (task.acp.proposals) await this.clearProposals(taskId)
+    const mcpServers =
+      task.acp.skills || task.acp.proposals
+        ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0)]
+        : []
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
       void live.wire.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)
@@ -4451,6 +4529,7 @@ export class AgentRuntime implements Bridge {
     mergeTool(state, fields, this.now())
     this.judge(task, state, fields.toolCallId, denial)
     this.upsert(task, toolMessage(state))
+    if (task.acp.proposals && (state.status === 'completed' || state.status === 'failed')) this.collectProposals(task.summary.id)
     if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
       if (state.status === 'in_progress') {
@@ -4975,4 +5054,66 @@ export class AgentRuntime implements Bridge {
     const model = modelName(task.config)
     if (model) task.summary.model = clip(model, 200)
   }
+}
+
+/** The server's own tools: calling them reads nothing from outside. Compared by exact name, after the server's prefix. */
+const OWN_TOOLS: ReadonlySet<string> = new Set(['propose_memory', 'list_skills', 'read_skill'])
+/** How agents name an MCP tool of `latch-skills`: Claude Code's `mcp__latch-skills__x`, others' `latch-skills: x` and similar. */
+const SERVER_PREFIX = /^(?:mcp__latch[-_]skills__|latch[-_]skills(?:\s*[:/.]\s*|__))/u
+/** Kinds that name what they touch in `locations`; any other kind (fetch, search, execute, think, other) may read anything. */
+const LOCAL_KINDS: ReadonlySet<string> = new Set(['read', 'edit', 'delete', 'move'])
+
+/**
+ * Whether a tool row is one of the skills server's own tools. Only a row of no particular kind can be (an MCP tool is
+ * `other`), and only by its name field (`toolName`, which falls back to the title when an agent sends none), compared
+ * exactly after the server's prefix. A title that merely mentions the name, or a fetch titled like it, is not.
+ */
+export function ownTool(message: Pick<Message, 'toolName' | 'tool'>): boolean {
+  const kind = message.tool?.kind
+  if (kind !== undefined && kind !== 'other') return false
+  const name = message.toolName ?? message.tool?.title
+  return name !== undefined && OWN_TOOLS.has(name.trim().replace(SERVER_PREFIX, ''))
+}
+
+/** A path as the file system resolves it: `..` collapsed, and symlinks followed as far as the path exists. */
+function canonical(path: string): string {
+  let head = resolve(path)
+  const rest: string[] = []
+  for (;;) {
+    try {
+      return join(realpathSync.native(head), ...rest.toReversed())
+    } catch {
+      const parent = dirname(head)
+      if (parent === head) return resolve(path)
+      rest.push(basename(head))
+      head = parent
+    }
+  }
+}
+
+/**
+ * The turn a proposal came from (its user message) and whether, since the context last started over, a tool may have read
+ * outside content: a fetch, search, command, thought or tool of unknown kind, a subagent, or a read or edit whose
+ * locations are absent or outside the session's folders after resolving them. The context keeps what it read until it
+ * starts over, so the mark holds for every later turn. An agent reports its calls in its own words, so this errs toward
+ * external.
+ */
+export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; folders?: string[] } }): {
+  messageId?: string
+  external: boolean
+} {
+  const start = task.messages.findLastIndex(message => message.role === 'user')
+  const fresh = task.messages.findLastIndex(message => message.role === 'user' && message.freshContext === true)
+  const roots = [task.acp.cwd, ...(task.acp.folders ?? [])].map(root => canonical(root))
+  const inside = (path: string) =>
+    isAbsolute(path) && roots.some(root => (canonical(path) + sep).startsWith(root.endsWith(sep) ? root : root + sep))
+  const external = task.messages.slice(Math.max(fresh, 0)).some(message => {
+    if (message.subagent) return true
+    if (message.role !== 'tool') return false
+    const tool = message.tool
+    if (ownTool(message)) return false
+    if (!tool?.kind || !LOCAL_KINDS.has(tool.kind)) return true
+    return !tool.locations?.length || !tool.locations.every(inside)
+  })
+  return { ...(start >= 0 ? { messageId: task.messages[start]!.id } : {}), external }
 }

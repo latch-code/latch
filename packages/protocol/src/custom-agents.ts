@@ -90,13 +90,94 @@ export interface GeneralAgentPatch {
   skills?: string[] | null
 }
 
-/** Written by the user only, used only by that agent. No tool writes it and no other agent reads it. */
+/** Who a proposal came from: the person's own 「记住…」, or the agent's `propose_memory`. */
+export type MemoryOrigin = 'user' | 'agent'
+
+/** Where a memory or a proposal came from: a topic, and the turn in it. */
+export interface MemorySource {
+  sessionId: string
+  /** The user message of the turn it came from, when the Host knew it. */
+  messageId?: string
+  /** The request of that user message, for a proposal made from the person's own words. */
+  requestId?: string
+}
+
+/** A memory saved from a proposal remembers that proposal. */
+export interface AgentMemoryOrigin extends MemorySource {
+  proposalId: string
+  origin: MemoryOrigin
+  external: boolean
+  /** When it was proposed; the memory's own `createdAt` is when it was saved. */
+  proposedAt: string
+}
+
+/** Written by the user only, used only by that agent. A tool can only propose one; the person saves it. */
 export interface AgentMemory {
   id: string
   content: string
   revision: number
   createdAt: string
   updatedAt: string
+  /** Present when it was saved from a proposal. */
+  source?: AgentMemoryOrigin
+}
+
+/**
+ * Something the agent or the person's 「记住…」 offered to remember. Nothing is saved until the person saves it; there is
+ * no automatic saving. `external`: a tool that read outside content ran in that turn before it, or the Host could not tell.
+ */
+export interface MemoryProposal {
+  id: string
+  content: string
+  /** The agent's reason, when it gave one. */
+  reason?: string
+  origin: MemoryOrigin
+  external: boolean
+  source: MemorySource
+  state: 'pending' | 'saved' | 'dismissed'
+  createdAt: string
+  updatedAt: string
+  /** The memory it became. */
+  memoryId?: string
+}
+export interface MemoryProposalList {
+  proposals: MemoryProposal[]
+}
+/** Saving or dismissing a proposal; a retry with the same `requestId` gets the same answer. */
+export interface MemoryProposalDecision {
+  requestId: string
+}
+/**
+ * What a save or dismiss answers. A retry is answered from its receipt alone, so `proposal` and `memory` are absent once
+ * they are gone (the proposal dropped for room, the memory deleted since).
+ */
+export interface MemoryProposalResult {
+  proposalId: string
+  /** Save: the memory it became. */
+  memoryId?: string
+  proposal?: MemoryProposal
+  memory?: AgentMemory
+}
+/** 撤销 and 清除 of a memory's last change: the revision the person saw, so a change made elsewhere since is not undone. */
+export interface AgentMemoryUndo {
+  requestId: string
+  baseRevision: number
+}
+
+/** The last edit or delete of a memory, kept as one step to undo; a delete's text only for `MEMORY_UNDO_DAYS`. */
+export const MEMORY_UNDO_DAYS = 7
+export interface AgentMemoryChange {
+  memoryId: string
+  operation: 'update' | 'delete'
+  at: string
+  /** The memory as it was before. */
+  previous: AgentMemory
+}
+/** What the snapshot says of an owner's proposals, so a page reads them again when they change. */
+export interface AgentProposalState {
+  pending: number
+  /** When any of them last changed. */
+  at: string
 }
 export interface AgentMemoryCreate {
   requestId: string
@@ -117,11 +198,14 @@ export interface CustomAgentList {
 export interface CustomAgentDetail {
   agent: CustomAgentSummary & Pick<CustomAgent, 'instructions' | 'skills' | 'tools' | 'createdAt' | 'updatedAt'>
   memories: AgentMemory[]
+  /** Each memory's last edit or delete that can still be undone, newest first. */
+  memoryChanges: AgentMemoryChange[]
   sessions: TaskSummary[]
 }
 export interface GeneralAgentDetail {
   general: GeneralAgent
   memories: AgentMemory[]
+  memoryChanges: AgentMemoryChange[]
 }
 
 export interface SessionAgentRef {
@@ -160,5 +244,12 @@ export interface AgentExecutionContext {
   pluginIds?: string[]
   /** `pluginId:skillId`. Absent: the skills of `pluginIds`. */
   skillIds?: string[]
+  /**
+   * A session of one of 我的 Agent or a conversation with 通用: its agent may propose memories (`propose_memory`), which
+   * the Host keeps pending until the person saves one. Set by the Host only.
+   */
+  proposals?: true
+  /** A scheduled run nobody is watching: whatever it proposes is marked external. Set by the Host only. */
+  unattended?: true
   revision: string
 }

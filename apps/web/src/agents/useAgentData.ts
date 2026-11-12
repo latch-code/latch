@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, CustomAgentDetail, CustomAgentList, GeneralAgentDetail } from '@latch/protocol'
+import type { AppSnapshot, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, MemoryProposalList } from '@latch/protocol'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { api, ApiError, errorMessage } from '../core/api.ts'
 import { lockedRead, readsAgents } from './model.ts'
@@ -60,18 +60,28 @@ function useAgentRead<T>(snapshot: Pick<AppSnapshot, 'device'>, path: string | n
 }
 
 /** What the snapshot says of the Agents, so the list is read again when any of them changes. */
-export function agentsVersion(snapshot: Pick<AppSnapshot, 'customAgents' | 'tasks'>): string {
+export function agentsVersion(snapshot: Pick<AppSnapshot, 'customAgents' | 'tasks' | 'agentProposals'>): string {
   const agents = snapshot.customAgents?.map(agent => `${agent.id}:${agent.revision}:${agent.memoryCount}:${agent.available}`).join() ?? '-'
-  return `${agents}|${snapshot.customAgents === undefined ? 'absent' : 'present'}`
+  const proposals = Object.entries(snapshot.agentProposals ?? {})
+    .map(([owner, state]) => `${owner}:${state.pending}:${state.at}`)
+    .join()
+  return `${agents}|${proposals}|${snapshot.customAgents === undefined ? 'absent' : 'present'}`
 }
 
-export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks'>) {
+/** An owner's memory proposals, read again whenever the snapshot says they changed. Null `owner` reads nothing. */
+export function useProposals(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'agentProposals'>, owner: string | null) {
+  const state = owner === null ? undefined : snapshot.agentProposals?.[owner]
+  const version = `${state?.pending ?? 0}:${state?.at ?? ''}:${snapshot.customAgents === undefined ? 'absent' : 'present'}`
+  return useAgentRead<MemoryProposalList>(snapshot, owner === null ? null : `custom-agents/${encodeURIComponent(owner)}/proposals`, version)
+}
+
+export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>) {
   return useAgentRead<CustomAgentList>(snapshot, 'custom-agents', agentsVersion(snapshot))
 }
 
 export type AgentDetailValue = { kind: 'custom'; detail: CustomAgentDetail } | { kind: 'general'; detail: GeneralAgentDetail }
 
-export function useAgentDetail(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks'>, id: string | null) {
+export function useAgentDetail(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>, id: string | null) {
   const path = id === null || id === 'new' ? null : `custom-agents/${encodeURIComponent(id)}`
   const { read, reload } = useAgentRead<CustomAgentDetail | GeneralAgentDetail>(snapshot, path, agentsVersion(snapshot))
   const value = 'value' in read && read.value ? wrap(read.value) : undefined

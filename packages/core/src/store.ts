@@ -32,6 +32,10 @@ export interface StoredTask {
   batch?: { calls: ToolCall[]; started: string[]; completed: string[] }
   /** Tools the user allowed for the rest of this session. */
   allowedTools?: string[]
+  /** A call that may have read outside content ran since the context last started over: proposals are external. */
+  outsideRead?: true
+  /** How many memories this session has proposed through `propose_memory`. */
+  proposals?: number
 }
 
 export interface RequestReceipt {
@@ -193,6 +197,8 @@ const stateSchema = z.object({
         .optional(),
       batch: z.object({ calls: z.array(callSchema), started: z.array(z.string()), completed: z.array(z.string()) }).optional(),
       allowedTools: z.array(z.string()).optional(),
+      outsideRead: z.literal(true).optional(),
+      proposals: z.number().int().min(0).max(1000).optional(),
     }),
   ),
   receipts: z.record(z.string(), z.object({ taskId: z.string(), payloadHash: z.string() })),

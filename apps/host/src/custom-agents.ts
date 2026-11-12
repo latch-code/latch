@@ -9,6 +9,7 @@ import {
   type AgentBrief,
   type AgentExecutionContext,
   type AgentMemory,
+  type AgentMemoryChange,
   type AgentMemoryCreate,
   type AgentMemoryPatch,
   type AgentSkillBody,
@@ -17,15 +18,32 @@ import {
   type CustomAgentPatch,
   type GeneralAgent,
   type GeneralAgentPatch,
+  type MemoryOrigin,
+  type MemoryProposal,
+  type MemoryProposalResult,
+  type MemorySource,
+  MEMORY_UNDO_DAYS,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
+import { canonicalJson, containsSecret, redactSecrets, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
 import { AgentJournal } from './agent-journal.ts'
 import type { AuditActor, AuditLog } from './audit.ts'
 
 export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
 const MAX_AGENTS = 64
 const MAX_MEMORIES = 128
+/** Per owner. Past it the oldest dismissed go first, then the oldest saved; pending ones are never dropped. */
+export const MAX_PROPOSALS = 64
+/** Agent proposals waiting for the person, per owner: the rest of the room is kept for the person's own 「记住…」. */
+export const MAX_AGENT_PENDING = 32
+const UNDO_MS = MEMORY_UNDO_DAYS * 24 * 60 * 60 * 1000
+/** Per owner: the last edit or delete of each memory, newest kept. */
+const MAX_CHANGES = 64
+/** What one owner's proposals, or changes, may hold. */
+const OWNER_BYTES = 256 * 1024
+/** The agent's proposals may fill at most this much of an owner's room; the rest is the person's. */
+const AGENT_BYTES = OWNER_BYTES / 2
+const bytes = (rows: readonly unknown[]) => Buffer.byteLength(JSON.stringify(rows))
 /** Mutation and start receipts answer retries of a recent request; the oldest go first once there are this many. */
 const MAX_RECEIPTS = 4096
 
@@ -36,6 +54,8 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const agentId = z.string().regex(CUSTOM_AGENT_ID)
 const memoryOwner = z.union([agentId, z.literal(GENERAL_AGENT_ID)])
 const memoryId = z.string().regex(/^mem_[a-f0-9-]{36}$/u)
+const proposalId = z.string().regex(/^prp_[a-f0-9-]{36}$/u)
+const sessionRef = z.string().regex(/^[A-Za-z0-9_.:@-]{1,128}$/u)
 const harnessId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/u)
 const pluginId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)
 const skillId = z.string().regex(/^[A-Za-z0-9_-]{1,64}:[A-Za-z0-9_.-]{1,128}$/u)
@@ -97,7 +117,22 @@ const content = z
   .string()
   .max(4000)
   .refine(value => value.trim().length > 0)
+const reason = z
+  .string()
+  .max(500)
+  .refine(value => printable(value.replaceAll('\n', ' ')))
+const origin = z.enum(['user', 'agent'])
+const source = z.strictObject({
+  sessionId: sessionRef,
+  messageId: z.string().min(1).max(200).refine(printable).optional(),
+  requestId: requestId.optional(),
+})
+const memoryOrigin = source.extend({ proposalId, origin, external: z.boolean(), proposedAt: stamp })
+/** What a proposal holds: memory text with no hidden or control characters but line breaks, and a one-paragraph reason. */
+const proposalContent = content.refine(value => printable(value.replace(/[\n\t]/gu, ' ')))
+const proposalText = z.strictObject({ content: proposalContent, reason: reason.optional() })
 const memoryCreateSchema = z.strictObject({ requestId, content })
+const undoSchema = z.strictObject({ requestId, baseRevision: revision })
 const memoryPatchSchema = memoryCreateSchema.extend({ baseRevision: revision })
 const agentSchema = config.extend({
   id: agentId,
@@ -106,7 +141,33 @@ const agentSchema = config.extend({
   createdAt: stamp,
   updatedAt: stamp,
 })
-const memorySchema = z.strictObject({ id: memoryId, content, revision, createdAt: stamp, updatedAt: stamp })
+const memorySchema = z.strictObject({
+  id: memoryId,
+  content,
+  revision,
+  createdAt: stamp,
+  updatedAt: stamp,
+  source: memoryOrigin.optional(),
+})
+const proposalSchema = z
+  .strictObject({
+    id: proposalId,
+    /** One proposal per key: a driver's channel position, or the person's message by its request. */
+    key: hash,
+    /** Empty once the memory it became is gone for good (`purged`): the row keeps only its ids and state. */
+    content: z.union([proposalContent, z.literal('')]),
+    reason: reason.optional(),
+    origin,
+    external: z.boolean(),
+    source,
+    state: z.enum(['pending', 'saved', 'dismissed']),
+    createdAt: stamp,
+    updatedAt: stamp,
+    memoryId: memoryId.optional(),
+    purged: z.literal(true).optional(),
+  })
+  .refine(row => (row.content === '') === (row.purged === true) && (!row.purged || (row.state === 'saved' && row.reason === undefined)))
+const changeSchema = z.strictObject({ memoryId, operation: z.enum(['update', 'delete']), at: stamp, previous: memorySchema })
 const generalSchema = z.strictObject({
   id: z.literal(GENERAL_AGENT_ID),
   instructions,
@@ -124,6 +185,8 @@ const stateSchema = z
     general: generalSchema,
     agents: z.array(agentSchema).max(MAX_AGENTS),
     memories: z.record(memoryOwner, z.array(memorySchema).max(MAX_MEMORIES)),
+    proposals: z.record(memoryOwner, z.array(proposalSchema).max(MAX_PROPOSALS)).default({}),
+    changes: z.record(memoryOwner, z.array(changeSchema).max(MAX_CHANGES)).default({}),
     starts: z.record(hash, startSchema),
     receipts: z.record(hash, z.strictObject({ hash, target: z.string().max(128), audited: z.boolean() })),
   })
@@ -135,6 +198,15 @@ const stateSchema = z
       if (rows.reduce((size, row) => size + Buffer.byteLength(row.content), 0) > 256 * 1024)
         ctx.addIssue({ code: 'custom', message: 'Memory capacity' })
       if (new Set(rows.map(row => row.id)).size !== rows.length) ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
+    }
+    for (const rows of Object.values(state.proposals)) {
+      if (Buffer.byteLength(JSON.stringify(rows)) > OWNER_BYTES) ctx.addIssue({ code: 'custom', message: 'Proposal capacity' })
+      if (new Set(rows.map(row => row.id)).size !== rows.length || new Set(rows.map(row => row.key)).size !== rows.length)
+        ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
+    }
+    for (const rows of Object.values(state.changes)) {
+      if (Buffer.byteLength(JSON.stringify(rows)) > OWNER_BYTES) ctx.addIssue({ code: 'custom', message: 'Change capacity' })
+      if (new Set(rows.map(row => row.memoryId)).size !== rows.length) ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
     }
   })
 type State = z.infer<typeof stateSchema>
@@ -178,7 +250,16 @@ export class CustomAgents {
       options.dataDir,
       'custom.json',
       stateSchema,
-      { version: 2, general: { id: GENERAL_AGENT_ID, instructions: '', revision: 1 }, agents: [], memories: {}, starts: {}, receipts: {} },
+      {
+        version: 2,
+        general: { id: GENERAL_AGENT_ID, instructions: '', revision: 1 },
+        agents: [],
+        memories: {},
+        proposals: {},
+        changes: {},
+        starts: {},
+        receipts: {},
+      },
       // Every snapshot and new session reads this, so a failed write must not wait for someone to retry that request.
       { directory: 'agents', retryMs: 1000, upgrade: upgradeState, ...(options.atomicFs ? { atomicFs: options.atomicFs } : {}) },
     )
@@ -267,6 +348,8 @@ export class CustomAgents {
       state => {
         state.agents = state.agents.filter(agent => agent.id !== id)
         delete state.memories[id]
+        delete state.proposals[id]
+        delete state.changes[id]
         return { target: id, customAgentId: id }
       },
       true,
@@ -308,7 +391,10 @@ export class CustomAgents {
       const found = state.memories[owner]?.find(row => row.id === id)
       if (!found) throw new AppError(404, 'agent-memory-not-found', '找不到这条记忆。')
       if (found.revision !== parsed.baseRevision) throw changed()
+      this.keepChange(state, owner, { memoryId: id, operation: 'update', at: this.at(), previous: structuredClone(found) })
       found.content = parsed.content
+      // An edit makes it the person's own words; where the old text came from no longer describes it.
+      delete found.source
       found.revision++
       found.updatedAt = this.at()
       return { target: id, ...ownerDetail(owner) }
@@ -325,7 +411,258 @@ export class CustomAgents {
       { requestId: requestId.parse(rid) },
       actor,
       state => {
+        const found = state.memories[owner]?.find(row => row.id === id)
+        if (found) this.keepChange(state, owner, { memoryId: id, operation: 'delete', at: this.at(), previous: structuredClone(found) })
         if (state.memories[owner]) state.memories[owner] = state.memories[owner].filter(row => row.id !== id)
+        return { target: id, ...ownerDetail(owner) }
+      },
+      true,
+    ).then(result => ({ ...result, value: { id } }))
+  }
+
+  /** Each memory's last edit or delete that can still be undone, newest first. */
+  memoryChanges(owner: string): AgentMemoryChange[] {
+    const state = this.journal.read()
+    if (owner !== GENERAL_AGENT_ID && !state.agents.some(agent => agent.id === owner)) throw missing()
+    // A delete past the undo window is not shown, even before the next write purges it.
+    const cutoff = (this.options.now ?? Date.now)() - UNDO_MS
+    return (state.changes[owner] ?? []).filter(row => row.operation !== 'delete' || Date.parse(row.at) > cutoff).toReversed()
+  }
+
+  /** An owner's proposals, oldest first. */
+  proposals(owner: string): MemoryProposal[] {
+    const state = this.journal.read()
+    if (owner !== GENERAL_AGENT_ID && !state.agents.some(agent => agent.id === owner)) throw missing()
+    // A purged row is kept for its ids only; its text is gone and it is not shown.
+    return (state.proposals[owner] ?? []).filter(row => !row.purged).map(({ key: _, purged: __, ...proposal }) => proposal)
+  }
+
+  /** For the snapshot: how many wait for the person, and when any last changed. Counts only, never the text. */
+  proposalStates(): Record<string, { pending: number; at: string }> {
+    const state = this.journal.read()
+    return Object.fromEntries(
+      Object.entries(state.proposals)
+        .filter(([, rows]) => rows.length > 0)
+        .map(([owner, rows]) => [
+          owner,
+          {
+            pending: rows.filter(row => row.state === 'pending').length,
+            at: rows.reduce((latest, row) => (row.updatedAt > latest ? row.updatedAt : latest), ''),
+          },
+        ]),
+    )
+  }
+
+  /**
+   * Keeps a proposal pending for the person; it never becomes a memory here. The same `key` (a driver's channel position,
+   * or the person's message by its request) is kept once. Refuses, storing nothing, what looks like a secret, what is too
+   * long, and a new one while the owner has as many pending as it may hold. Audited first, with enums and IDs only.
+   */
+  async propose(input: {
+    owner: string
+    key: string
+    content: string
+    reason?: string
+    origin: MemoryOrigin
+    external: boolean
+    source: MemorySource
+    actor: AuditActor
+  }): Promise<MemoryProposal> {
+    memoryOwner.parse(input.owner)
+    const text = input.content.trim(),
+      why = input.reason?.trim() ?? ''
+    if (!text) throw new AppError(400, 'agent-memory-empty', '提议的记忆是空的。')
+    if (text.length > 4000 || why.length > 500) throw new AppError(413, 'agent-memory-too-long', '记忆最多 4000 字，理由最多 500 字。')
+    if (looksSecret(text) || looksSecret(why)) throw new AppError(422, 'agent-memory-secret', '内容像是密钥或凭据，没有记下。')
+    // Everything the record would refuse is refused here, before anything is audited.
+    if (!proposalText.safeParse({ content: text, ...(why ? { reason: why } : {}) }).success)
+      throw new AppError(400, 'agent-memory-invalid', '内容含有不可见的控制字符，没有记下。')
+    const parsedSource = source.safeParse(input.source)
+    if (!parsedSource.success) throw new AppError(400, 'agent-proposal-source', '提议的来源无效，没有记下。')
+    const key = digest(['proposal', input.owner, input.key]),
+      payload = digest([input.owner, input.key, text, why, input.origin, input.external, parsedSource.data])
+    const id = await this.journal.change(key, payload, async state => {
+      this.assertOwner(state, input.owner)
+      this.prune(state)
+      const rows = (state.proposals[input.owner] ??= [])
+      const held = rows.find(row => row.key === key)
+      if (held) return { value: held.id, changed: false }
+      // The person's 「记住…」 is never kept out by what the agent proposed. Agent-facing, so in the agent's words.
+      if (input.origin === 'agent' && rows.filter(row => row.origin === 'agent' && row.state === 'pending').length >= MAX_AGENT_PENDING)
+        throw new AppError(
+          409,
+          'agent-proposal-limit',
+          'Too many of your memory proposals are waiting for the user. Propose again after the user has decided on them.',
+        )
+      const at = this.at(),
+        proposal = {
+          id: `prp_${randomUUID()}`,
+          key,
+          content: text,
+          ...(why ? { reason: why } : {}),
+          origin: input.origin,
+          external: input.external,
+          source: parsedSource.data,
+          state: 'pending' as const,
+          createdAt: at,
+          updatedAt: at,
+        }
+      rows.push(proposal)
+      // The agent's own share first: its decided proposals make room, oldest first, and past that it is refused, so the
+      // person's half is never taken.
+      const agents = () => rows.filter(row => row.origin === 'agent')
+      if (input.origin === 'agent') {
+        for (const kind of ['dismissed', 'saved'] as const)
+          while (bytes(agents()) > AGENT_BYTES && agents().some(row => row.state === kind))
+            rows.splice(
+              rows.findIndex(row => row.origin === 'agent' && row.state === kind),
+              1,
+            )
+        if (bytes(agents()) > AGENT_BYTES)
+          throw new AppError(
+            409,
+            'agent-proposal-limit',
+            'Your memory proposals waiting for the user are too long in total. Propose again after the user has decided on them.',
+          )
+      }
+      // Room comes from decided ones, oldest first: dismissed, then saved. Pending ones wait for the person.
+      for (const kind of ['dismissed', 'saved'] as const)
+        while (
+          (rows.length > MAX_PROPOSALS || Buffer.byteLength(JSON.stringify(rows)) > OWNER_BYTES)
+          && rows.some(row => row.state === kind)
+        )
+          rows.splice(
+            rows.findIndex(row => row.state === kind),
+            1,
+          )
+      if (rows.length > MAX_PROPOSALS || Buffer.byteLength(JSON.stringify(rows)) > OWNER_BYTES)
+        throw new AppError(409, 'agent-proposal-limit', '等你处理的记忆提议太多，请先保存或不要一些。')
+      await this.options.audit.append({
+        action: 'agent.memory.proposed',
+        actor: input.actor,
+        target: proposal.id,
+        detail: { origin: input.origin, external: input.external, ...ownerDetail(input.owner) },
+      })
+      return { value: proposal.id }
+    })
+    return this.proposal(input.owner, id)
+  }
+
+  /** Saves a pending proposal as a memory, through the same receipts and audit as adding one. */
+  saveProposal(owner: string, id: string, rid: string, actor: AgentActor): Promise<AgentMutation<MemoryProposalResult>> {
+    memoryOwner.parse(owner)
+    proposalId.parse(id)
+    return this.mutate('create', 'memory', `${owner}/${id}/save`, { requestId: requestId.parse(rid) }, actor, state => {
+      this.assertOwner(state, owner)
+      const found = state.proposals[owner]?.find(row => row.id === id)
+      if (!found) throw new AppError(404, 'agent-proposal-not-found', '找不到这条提议。')
+      if (found.state !== 'pending') throw new AppError(409, 'agent-proposal-decided', '这条提议已经处理过了。')
+      const rows = (state.memories[owner] ??= [])
+      if (rows.length >= MAX_MEMORIES) throw new AppError(409, 'agent-memory-limit', `一个 Agent 最多保存 ${MAX_MEMORIES} 条记忆。`)
+      const memory = `mem_${randomUUID()}`,
+        at = this.at()
+      rows.push({
+        id: memory,
+        content: found.content,
+        revision: 1,
+        createdAt: at,
+        updatedAt: at,
+        source: { ...found.source, proposalId: found.id, origin: found.origin, external: found.external, proposedAt: found.createdAt },
+      })
+      found.state = 'saved'
+      found.memoryId = memory
+      found.updatedAt = at
+      return { target: memory, via: 'proposal', ...ownerDetail(owner) }
+    }).then(result => ({ ...result, value: this.decision(owner, id, result.value) }))
+  }
+
+  /** 不要: the proposal stays, dismissed, until room is needed. Never refused for want of an audit record. */
+  dismissProposal(owner: string, id: string, rid: string, actor: AgentActor): Promise<AgentMutation<MemoryProposalResult>> {
+    memoryOwner.parse(owner)
+    proposalId.parse(id)
+    return this.mutate(
+      'delete',
+      'proposal',
+      `${owner}/${id}/dismiss`,
+      { requestId: requestId.parse(rid) },
+      actor,
+      state => {
+        this.assertOwner(state, owner)
+        const found = state.proposals[owner]?.find(row => row.id === id)
+        if (!found) throw new AppError(404, 'agent-proposal-not-found', '找不到这条提议。')
+        if (found.state === 'saved') throw new AppError(409, 'agent-proposal-decided', '这条提议已经保存了。')
+        if (found.state === 'pending') {
+          found.state = 'dismissed'
+          found.updatedAt = this.at()
+        }
+        return { target: id, ...ownerDetail(owner) }
+      },
+      true,
+    ).then(result => ({ ...result, value: this.decision(owner, id) }))
+  }
+
+  /** Puts back a memory as it was before its last edit or delete; that step is then used up. */
+  undoMemory(
+    owner: string,
+    id: string,
+    input: { requestId: string; baseRevision: number },
+    actor: AgentActor,
+  ): Promise<AgentMutation<AgentMemory>> {
+    memoryOwner.parse(owner)
+    memoryId.parse(id)
+    const parsed = undoSchema.parse(input)
+    return this.mutate('update', 'memory', `${owner}/${id}/undo`, parsed, actor, state => {
+      this.assertOwner(state, owner)
+      this.prune(state)
+      const changes = state.changes[owner] ?? [],
+        step = changes.find(change => change.memoryId === id)
+      if (!step) throw new AppError(409, 'agent-memory-no-undo', '这条记忆没有可以撤销的修改。')
+      const rows = (state.memories[owner] ??= []),
+        current = rows.find(row => row.id === id),
+        at = this.at()
+      // Only what the person saw: a change made elsewhere since then is not silently undone.
+      if ((current?.revision ?? step.previous.revision) !== parsed.baseRevision) throw changed()
+      if (step.operation === 'update') {
+        if (!current) throw new AppError(410, 'agent-memory-deleted', '这条记忆已删除。')
+        current.content = step.previous.content
+        assign(current, 'source', step.previous.source ?? null)
+        current.revision++
+        current.updatedAt = at
+      } else {
+        if (current) throw changed()
+        if (rows.length >= MAX_MEMORIES) throw new AppError(409, 'agent-memory-limit', `一个 Agent 最多保存 ${MAX_MEMORIES} 条记忆。`)
+        rows.push({ ...structuredClone(step.previous), revision: step.previous.revision + 1, updatedAt: at })
+      }
+      state.changes[owner] = changes.filter(change => change !== step)
+      return { target: id, via: 'undo', ...ownerDetail(owner) }
+    }).then(result => ({ ...result, value: this.memory(owner, id) }))
+  }
+
+  /** 清除 on a deleted memory: its text goes now instead of when the undo window ends. Never refused for want of an audit. */
+  forgetChange(
+    owner: string,
+    id: string,
+    input: { requestId: string; baseRevision: number },
+    actor: AgentActor,
+  ): Promise<AgentMutation<{ id: string }>> {
+    memoryOwner.parse(owner)
+    memoryId.parse(id)
+    const parsed = undoSchema.parse(input)
+    return this.mutate(
+      'delete',
+      'memory',
+      `${owner}/${id}/forget`,
+      parsed,
+      actor,
+      state => {
+        this.assertOwner(state, owner)
+        this.prune(state)
+        const step = state.changes[owner]?.find(change => change.memoryId === id && change.operation === 'delete')
+        if (step) {
+          if (step.previous.revision !== parsed.baseRevision) throw changed()
+          state.changes[owner] = state.changes[owner]!.filter(change => change !== step)
+          this.dropText(state, owner, step)
+        }
         return { target: id, ...ownerDetail(owner) }
       },
       true,
@@ -350,6 +687,7 @@ export class CustomAgents {
           return { value: chosen, changed: false }
         }
         if (!state.agents.some(agent => agent.id === id)) throw missing()
+        this.prune(state)
         const chosen = selection.parse(choose())
         state.starts[key] = { ...chosen, customAgentId: id }
         keep(state.starts)
@@ -359,6 +697,62 @@ export class CustomAgents {
     )
   }
 
+  /** A decision's answer: from the receipt alone, with the proposal and memory while they are still there. */
+  private decision(owner: string, id: string, memory?: string): MemoryProposalResult {
+    const proposal = this.proposals(owner).find(row => row.id === id),
+      saved = memory ?? proposal?.memoryId,
+      found = saved ? this.memories(owner).find(row => row.id === saved) : undefined
+    return { proposalId: id, ...(saved ? { memoryId: saved } : {}), ...(proposal ? { proposal } : {}), ...(found ? { memory: found } : {}) }
+  }
+  /** A deleted memory's text is kept for the undo window only. Answers whether anything went. */
+  private prune(state: State): boolean {
+    const cutoff = (this.options.now ?? Date.now)() - UNDO_MS
+    let pruned = false
+    for (const [owner, rows] of Object.entries(state.changes)) {
+      const expired = rows.filter(row => row.operation === 'delete' && Date.parse(row.at) <= cutoff)
+      if (!expired.length) continue
+      pruned = true
+      state.changes[owner] = rows.filter(row => !expired.includes(row))
+      for (const row of expired) this.dropText(state, owner, row)
+    }
+    return pruned
+  }
+  /**
+   * A deleted memory's undo step is gone: so is its text, in the proposal it was saved from too. That row keeps its ids
+   * and state, and is no longer listed.
+   */
+  private dropText(state: State, owner: string, change: State['changes'][string][number]): void {
+    if (change.operation !== 'delete' || !change.previous.source) return
+    const row = state.proposals[owner]?.find(item => item.id === change.previous.source!.proposalId)
+    if (!row || row.state !== 'saved') return
+    row.content = ''
+    delete row.reason
+    row.purged = true
+  }
+
+  /** Purges deleted memories past the undo window without waiting for another write: at start and once a day. */
+  async purgeExpired(): Promise<void> {
+    const probe = structuredClone(this.journal.read())
+    if (!this.prune(probe)) return
+    await this.journal.change(digest(['purge', randomUUID()]), digest(['purge']), state => ({
+      value: undefined,
+      changed: this.prune(state),
+    }))
+  }
+  private proposal(owner: string, id: string): MemoryProposal {
+    const found = this.proposals(owner).find(row => row.id === id)
+    if (!found) throw new AppError(404, 'agent-proposal-not-found', '找不到这条提议。')
+    return found
+  }
+  /** One undo step per memory, the newest; the oldest go first past the limit. */
+  private keepChange(state: State, owner: string, change: State['changes'][string][number]): void {
+    this.prune(state)
+    const rows = (state.changes[owner] ?? []).filter(row => row.memoryId !== change.memoryId)
+    rows.push(change)
+    while (rows.length > MAX_CHANGES || (rows.length > 1 && Buffer.byteLength(JSON.stringify(rows)) > OWNER_BYTES))
+      this.dropText(state, owner, rows.shift()!)
+    state.changes[owner] = rows
+  }
   private memory(owner: string, id: string): AgentMemory {
     const found = this.memories(owner).find(row => row.id === id)
     if (!found) throw new AppError(410, 'agent-memory-deleted', '这条记忆已删除。')
@@ -373,11 +767,11 @@ export class CustomAgents {
 
   private async mutate(
     operation: 'create' | 'update' | 'delete',
-    kind: 'agent' | 'general' | 'memory',
+    kind: 'agent' | 'general' | 'memory' | 'proposal',
     subject: string,
     input: { requestId: string },
     actor: AgentActor,
-    apply: (state: State) => { target: string; customAgentId?: string },
+    apply: (state: State) => { target: string; customAgentId?: string; via?: 'proposal' | 'undo' },
     lowering = false,
   ): Promise<AgentMutation<string>> {
     actor.authorize()
@@ -392,16 +786,24 @@ export class CustomAgents {
           if (prior.hash !== payload) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同修改。')
           return { value: prior, changed: false }
         }
-        const before = digest([state.general, state.agents, state.memories]),
+        this.prune(state)
+        const before = digest([state.general, state.agents, state.memories, state.proposals]),
           result = apply(state),
-          after = digest([state.general, state.agents, state.memories])
+          after = digest([state.general, state.agents, state.memories, state.proposals])
         let audited = true
         try {
           await this.options.audit.append({
             action: 'agent.changed',
             actor: actor.actor,
             target: result.target,
-            detail: { kind, operation, before, after, ...(result.customAgentId ? { customAgentId: result.customAgentId } : {}) },
+            detail: {
+              kind,
+              operation,
+              before,
+              after,
+              ...(result.customAgentId ? { customAgentId: result.customAgentId } : {}),
+              ...(result.via ? { via: result.via } : {}),
+            },
           })
         } catch (error) {
           if (!lowering) throw error
@@ -420,6 +822,22 @@ export class CustomAgents {
   async close(): Promise<void> {
     await this.journal.close()
   }
+}
+
+/** What a memory must never hold: anything `redactSecrets` would hide, or a credential by its own shape. */
+export function looksSecret(text: string): boolean {
+  return redactSecrets(text) !== text || containsSecret(text)
+}
+
+/**
+ * The person's own 「记住…」: the words after it, or undefined when the message does not start with it. Only the start
+ * counts, so a message that quotes it later is ordinary.
+ */
+export function rememberRequest(prompt: string): string | undefined {
+  const match = /^\s*(?:请记住|记住|remember\b)[\s:：,，、]*/iu.exec(prompt)
+  if (!match) return undefined
+  const rest = prompt.slice(match[0].length).trim()
+  return rest || undefined
 }
 
 function ownerDetail(owner: string): { customAgentId?: string } {
@@ -499,7 +917,7 @@ export interface AgentDelivery {
   engineName: string
   instructions: string
   memories: readonly AgentMemory[]
-  /** Names of the skills the engine can fetch from the read-only server. */
+  /** Names of the skills the engine can fetch from the skills server. */
   skillNames: readonly string[]
 }
 
@@ -527,7 +945,7 @@ export function firstTurnBrief(input: AgentDelivery): AgentBrief | undefined {
       ...memories.map(memory => ({ source: 'user' as const, text: memory.content })),
     )
   if (skillNames.length)
-    segments.push({ source: 'latch', text: `技能${skillNames.map(skill => `「${skill}」`).join('')}可以用只读的技能服务取到。` })
+    segments.push({ source: 'latch', text: `技能${skillNames.map(skill => `「${skill}」`).join('')}可以用技能服务取到。` })
   return { segments }
 }
 
@@ -540,6 +958,8 @@ export function agentContext(input: {
   skillIds?: string[]
   skillBodies?: AgentSkillBody[]
   expectedRevisions?: Record<string, string>
+  /** One of 我的 Agent's sessions or a conversation with 通用, on a Harness that can call `propose_memory`. */
+  proposals?: boolean
 }): AgentExecutionContext {
   const brief = input.delivery === 'first-turn' ? firstTurnBrief(input.brief) : undefined
   return {
@@ -550,6 +970,7 @@ export function agentContext(input: {
     ...(input.skillIds ? { skillIds: input.skillIds } : {}),
     ...(input.skillBodies?.length ? { skillBodies: input.skillBodies } : {}),
     ...(input.expectedRevisions ? { expectedRevisions: input.expectedRevisions } : {}),
+    ...(input.proposals ? { proposals: true as const } : {}),
     revision: input.revision,
   }
 }

@@ -134,6 +134,7 @@ const sessionEntrySchema = z.object({
   agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
   automationId: z.string().min(1).max(64).optional(),
   generalChat: z.literal(true).optional(),
+  proposals: z.literal(true).optional(),
   origin: z
     .strictObject({
       app: z.string().regex(APP_REF),
@@ -223,6 +224,8 @@ export interface StoredMeta {
   automationId?: string
   /** A conversation with 通用 in 我的 Agent. */
   generalChat?: true
+  /** Started with `propose_memory`: only such a session's driver may hand the Host proposals. */
+  proposals?: true
   /** The plugin page that started the session, with the page's own request ID. */
   origin?: PageOrigin
   agentPrivate?: true

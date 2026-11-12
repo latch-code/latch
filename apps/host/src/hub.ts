@@ -208,6 +208,10 @@ export class HarnessHub implements Bridge {
   private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
   private readonly agentOwners = new Map<string, NonNullable<TaskSummary['agent']>>()
   private readonly briefSessions = new Set<string>()
+  /** Sessions started with `propose_memory`, in memory as soon as they start. */
+  private readonly proposalSessions = new Set<string>()
+  /** Conversations with 通用, in memory as soon as they start, before their record is written. */
+  private readonly generalChats = new Set<string>()
   /** Approvals seen only through `detail()`, for drivers that do not list them in `approvals()`. */
   private readonly detailApprovals = new Map<string, string>()
   private readonly listeners = new Set<(sessionId?: string) => void>()
@@ -428,6 +432,11 @@ export class HarnessHub implements Bridge {
     return this.branches.branchOf(cwd)
   }
 
+  /** The harness that owns a session, as far as the hub has seen it; no driver is asked. */
+  ownerOf(sessionId: string): string | undefined {
+    return this.routes.get(sessionId)
+  }
+
   /** The harness that owns a session. */
   async harnessOf(sessionId: string): Promise<string> {
     return (await this.route(sessionId)).driver.id
@@ -564,6 +573,13 @@ export class HarnessHub implements Bridge {
       await this.meta
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
+    if (input.agentContext?.proposals) {
+      // In memory before the write: its first turn may propose before the record is on disk.
+      this.proposalSessions.add(result.sessionId)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, proposals: true as const }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的记忆提议标记写入失败：${message(error)}`))
+    }
     if (generalChat)
       await this.recordGeneralChat(result.sessionId).catch(error =>
         this.log(`会话 ${result.sessionId} 的通用对话标记写入失败：${message(error)}`),
@@ -644,7 +660,20 @@ export class HarnessHub implements Bridge {
   /** As recordPrivate: private in memory before the write, so a failed write never leaves it readable by a smaller scope. */
   private async recordGeneralChat(sessionId: string): Promise<void> {
     this.briefSessions.add(sessionId)
+    this.generalChats.add(sessionId)
     if (!this.meta.get(sessionId)?.generalChat) await this.meta.update(sessionId, current => ({ ...current, generalChat: true as const }))
+  }
+  /** The schedule a session is a run of, once its record is written. */
+  automationOf(sessionId: string): string | undefined {
+    return this.meta.get(sessionId)?.automationId
+  }
+  /** Whether the session was started with `proposals` in its context. */
+  proposalsOf(sessionId: string): boolean {
+    return this.proposalSessions.has(sessionId) || this.meta.get(sessionId)?.proposals === true
+  }
+  /** A conversation with 通用 in 我的 Agent; known before its record is written. */
+  generalChatOf(sessionId: string): boolean {
+    return this.generalChats.has(sessionId) || this.meta.get(sessionId)?.generalChat === true
   }
   /** The session's agent, which makes its contents private; available even when the driver cannot list its tasks. */
   agentOf(sessionId: string): TaskSummary['agent'] {

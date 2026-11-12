@@ -896,6 +896,30 @@ const scenarios = {
     say(`model: ${events.map(answer.pick).join('')}`)
     return END
   },
+  // `fetch`: reports a completed web fetch and nothing else, as a turn that only read a page.
+  fetch: ({ say, tool }) => {
+    tool({ toolCallId: `fetch_${Date.now()}`, title: 'Fetch https://example.com/read_skill', kind: 'fetch', status: 'completed' })
+    say('fetched')
+    return END
+  },
+  // `propose [fetch] <text>`: calls `propose_memory` on the session's `latch-skills` server with the rest of the input as
+  // its content, reporting the call as a tool row; `fetch` first reports a completed web fetch, as after reading a page.
+  propose: async ({ sessionId, input, argument, say, tool }) => {
+    const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-skills')
+    if (!server) {
+      say('no MCP server')
+      return END
+    }
+    const fetching = argument === 'fetch'
+    const content = input.trim().replace(fetching ? /^propose\s+fetch\s*/u : /^propose\s*/u, '')
+    if (fetching) tool({ toolCallId: 'fetch_1', title: 'Fetch https://example.com', kind: 'fetch', status: 'completed' })
+    const id = `propose_${Date.now()}`
+    tool({ toolCallId: id, title: 'latch-skills: propose_memory', kind: 'other', status: 'in_progress', rawInput: { content } })
+    const reply = await server.ask('tools/call', { name: 'propose_memory', arguments: { content, reason: '对话里提到的' } })
+    tool({ toolCallId: id, status: reply.result?.isError ? 'failed' : 'completed' }, 'tool_call_update')
+    say(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
+    return END
+  },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.
   skills: async ({ sessionId, say }) => {
     const server = mcpServers.get(sessionId)?.[0]

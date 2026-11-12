@@ -205,8 +205,10 @@ export function useSessionController({
     selectedId,
     select,
     refresh,
-    onSent: (sessionId, sent, { foreground, consumedDraft }) => {
+    onSent: (sessionId, sent, { foreground, consumedDraft, memoryRefused }) => {
       if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? NEW_SESSION_DRAFT)
+      // The message went; only its 「记住…」 was not kept, and the Host says why.
+      if (memoryRefused) setToast({ text: memoryRefused, tone: 'error' })
       if (!foreground || sent.queue) return
       draftSessionId.current = sessionId
       onForegroundSent()

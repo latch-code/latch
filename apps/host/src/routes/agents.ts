@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostFeatures, TaskSummary } from '@latch/protocol'
+import type { CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostFeatures, MemoryProposalList, TaskSummary } from '@latch/protocol'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { AgentActor, AgentMutation, CustomAgents } from '../custom-agents.ts'
@@ -19,7 +19,8 @@ export interface AgentRouteDeps {
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
-const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36}))?)?$/u
+const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo)?)?)?$/u
+const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
 
 /** 我的 Agent and 通用. `/link/api/agents` keeps meaning engine definitions. */
 export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): RouteModule {
@@ -61,14 +62,41 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         }
         throw new AppError(404, 'not-found', '接口不存在。')
       }
+      const proposal = PROPOSALS.exec(path)
+      if (proposal) {
+        const owner = proposal[1]!,
+          proposalId = proposal[2],
+          verb = proposal[3]
+        if (method === 'GET' && !proposalId) {
+          const list: MemoryProposalList = { proposals: agents.proposals(owner) }
+          actor.authorize()
+          json(res, list)
+        } else if (method === 'POST' && proposalId && verb === 'save') {
+          const { requestId } = deletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+          await edit(owner, () => agents.saveProposal(owner, proposalId, requestId, actor))
+        } else if (method === 'POST' && proposalId && verb === 'dismiss') {
+          const { requestId } = deletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+          reply(await agents.dismissProposal(owner, proposalId, requestId, actor))
+        } else throw new AppError(404, 'not-found', '接口不存在。')
+        return true
+      }
       const match = AGENT.exec(path)
       if (!match) throw new AppError(404, 'not-found', '接口不存在。')
       const id = match[1]!,
         memoryId = match[2],
+        undo = match[3] !== undefined,
         memories = path.includes('/memories'),
         general = id === GENERAL_AGENT_ID
       if (memories) {
         if (method === 'GET' && !memoryId) json(res, { memories: agents.memories(id) })
+        else if (method === 'POST' && memoryId && undo) {
+          const body = (await jsonBody(req, CONFIG_BODY_LIMIT)) as Parameters<CustomAgents['undoMemory']>[2]
+          await edit(id, () => agents.undoMemory(id, memoryId, body, actor))
+        } else if (method === 'DELETE' && memoryId && undo) {
+          // 清除: a deleted memory's text goes now; nothing a session receives changes.
+          const body = (await jsonBody(req, CONFIG_BODY_LIMIT)) as Parameters<CustomAgents['forgetChange']>[2]
+          reply(await agents.forgetChange(id, memoryId, body, actor))
+        } else if (undo) throw new AppError(404, 'not-found', '接口不存在。')
         else if (method === 'POST' && !memoryId) {
           const body = (await jsonBody(req, CONFIG_BODY_LIMIT)) as Parameters<CustomAgents['createMemory']>[1]
           await edit(id, () => agents.createMemory(id, body, actor), 201)
@@ -83,7 +111,11 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
       }
       if (method === 'GET') {
         if (general) {
-          const detail: GeneralAgentDetail = { general: agents.general(), memories: agents.memories(GENERAL_AGENT_ID) }
+          const detail: GeneralAgentDetail = {
+            general: agents.general(),
+            memories: agents.memories(GENERAL_AGENT_ID),
+            memoryChanges: agents.memoryChanges(GENERAL_AGENT_ID),
+          }
           json(res, detail)
           return true
         }
@@ -94,6 +126,7 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         const detail: CustomAgentDetail = {
           agent: { ...plans.summary(agent, tasks), instructions, skills, ...(tools ? { tools } : {}), createdAt, updatedAt },
           memories: agents.memories(id),
+          memoryChanges: agents.memoryChanges(id),
           sessions: tasks.filter(task => task.agent?.customAgentId === id),
         }
         json(res, detail)
