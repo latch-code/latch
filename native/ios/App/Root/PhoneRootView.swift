@@ -69,13 +69,18 @@ private struct RootTabs: View {
     var body: some View {
         let entries = PhoneTabs.entries(model.snapshot)
         let shown = entries.contains { $0.id == model.tab } ? model.tab : .code
-        let dot = PhoneTabs.codeDot(model.snapshot, current: shown)
-        TabView(selection: Binding(get: { shown }, set: { model.tab = $0 })) {
+        let dot = PhoneTabs.codeDot(model.snapshot, current: shown), agentsDot = PhoneTabs.agentsDot(model.snapshot, current: shown)
+        TabView(selection: Binding(get: { shown }, set: { next in
+            // Code shows Code's sessions: a topic of 我的 Agent left open there is closed on the way back, as the web's switch does.
+            if next == .code, PhoneSpaces.belongsElsewhere(model.snapshot, sessionId: model.sessionId, from: .code) { model.closeSession() }
+            model.tab = next
+        })) {
             ForEach(entries) { entry in
                 page(entry.id)
                     .tabItem {
                         // Not a count and not the system's red badge: amber says something waits on you in Code.
                         if entry.id == .code && dot { Label { Text(entry.label) } icon: { Self.dotted(entry.symbol, scheme: scheme) }.accessibilityValue("有等你处理") }
+                        else if entry.id == .agents && agentsDot { Label { Text(entry.label) } icon: { Self.dotted(Self.agentsImage, scheme: scheme) }.accessibilityValue("有等你处理") }
                         else if entry.id == .agents { Label { Text(entry.label) } icon: { Self.agentsMark } }
                         else { Label { Text(entry.label) } icon: { Self.symbol(entry.symbol) } }
                     }
@@ -113,7 +118,8 @@ private struct RootTabs: View {
         /** In points: the line SF Symbols draw at regular weight at the bar's 18 pt, so the face has the symbols' weight. */
         static let strokePoints: CGFloat = 1.6
     }
-    private static let agentsMark: Image = {
+    private static let agentsMark = Image(uiImage: agentsImage.withRenderingMode(.alwaysTemplate))
+    private static let agentsImage: UIImage = {
         let reference = UIImage(systemName: "gearshape", withConfiguration: barSymbol) ?? UIImage()
         let unit = max(reference.size.height, 20) / AgentsGlyph.box.height
         let grid = CGRect(x: 0, y: 0, width: 40 * unit, height: 40 * unit)
@@ -126,13 +132,15 @@ private struct RootTabs: View {
             for d in AgentsGlyph.brackets { cg.addPath(GridPath(d: d).path(in: grid).cgPath); cg.strokePath() }
             for d in AgentsGlyph.eyes { cg.addPath(GridPath(d: d).path(in: grid).cgPath); cg.fillPath() }
         }
-        return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
+        return image
     }()
 
     /** The tab's symbol in the bar's unselected ink with an amber dot at its corner; drawn, since a tab item takes one image. */
     private static func dotted(_ symbol: String, scheme: ColorScheme) -> Image {
+        dotted(UIImage(systemName: symbol, withConfiguration: barSymbol) ?? UIImage(), scheme: scheme)
+    }
+    private static func dotted(_ base: UIImage, scheme: ColorScheme) -> Image {
         let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
-        let base = UIImage(systemName: symbol, withConfiguration: barSymbol) ?? UIImage()
         let ink = UIColor.label.resolvedColor(with: traits), amber = UIColor(PhoneTheme.amberIcon).resolvedColor(with: traits)
         let dot: CGFloat = 7, size = CGSize(width: base.size.width + dot / 2, height: base.size.height + dot / 2)
         let image = UIGraphicsImageRenderer(size: size).image { _ in

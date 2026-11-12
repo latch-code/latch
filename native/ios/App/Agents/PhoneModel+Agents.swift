@@ -54,13 +54,16 @@ extension PhoneModel {
         guard PhoneAgents.validAutomation(id) else { return .missing }
         return await readAgentPart("/link/api/automations/" + id)
     }
-    /** Memory writes share the one unconfirmed write the phone keeps; a retry sends the same request. */
-    func writeMemory(_ write: NativePendingWrite) async -> PhoneAgentWrite {
+    /**
+     * A write of 我的 Agent (a memory, a proposal's 保存 or 不要, 撤销 and 清除, a schedule's switch). It shares the one
+     * unconfirmed write the phone keeps; a retry sends the same request.
+     */
+    func writeAgent(_ write: NativePendingWrite) async -> PhoneAgentWrite {
         #if LATCH_SCREENS
         if staged { return .done }
         #endif
         guard let workspace, !busy else { return .refused("稍后再试。") }
-        guard canRun else { return .refused("这台设备不能修改记忆。") }
+        guard canRun else { return .refused("这台设备不能修改。") }
         let current = generation
         do {
             try await ensureVerified()
@@ -83,33 +86,37 @@ extension PhoneModel {
             return .refused(failure?.errorDescription ?? "没有保存，请重试。")
         }
     }
+    /** An owner's proposals, read again when the snapshot says they changed; nothing outside a window. */
+    func loadProposals(_ owner: String) async {
+        guard PhoneAgents.validId(owner), agentAccess == .ready else { proposals.drop(owner); return }
+        // Only this owner's latest read is adopted; a lock or a closed window drops the token with the lists.
+        let token = proposals.begin(owner)
+        if case let .ready(value) = await readAgentPart("/link/api/custom-agents/" + owner + "/proposals") {
+            proposals.finish(owner, token: token, list: value, windowOpen: verifiedUntil != nil)
+        }
+    }
     /**
-     * 委托: a real session of the Agent through the same start as 新会话, with the same request kept while its result is
-     * unknown. On success the conversation opens in Code.
+     * A new topic: the first message to an Agent (or 通用) starts its session through the same start as 新会话, with the same
+     * request kept while its result is unknown. Only while the new topic is still what is shown does the answer open it.
      */
-    func delegate(agent: NativeJSON, choice: PhoneStartChoice, prompt: String) async -> Bool {
+    func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) async -> Bool {
         let current = generation
         do {
             guard canRun, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
-            let fields = try PhoneAgents.fields(snapshot["catalog"], agent: agent, choice: choice, prompt: prompt)
+            let catalog = snapshot["catalog"]
+            let fields = owner == PhoneAgents.generalId ? try PhoneAgentChat.generalFields(catalog, choice: choice, prompt: prompt)
+                : try PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: prompt)
+            if sessionId != nil { closeSession() }
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            return await finishDelegation(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
+            return await finishTopic(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
         } catch { report(error); return false }
     }
-    /** The first try, or a retry of the very same request. */
-    func finishDelegation(_ write: NativePendingWrite) async -> Bool {
-        sessionId = nil; detail = .null; contentGeneration = UUID()
-        // True also when the result is unknown; the request then stays pending and the page offers it again.
+    /** The first try, or a retry of the very same request; true once the Host answered with the new topic, now open. */
+    func finishTopic(_ write: NativePendingWrite) async -> Bool {
         guard await submit(write), pending.isEmpty, sessionId != nil else { return false }
-        tab = .code
         startEvents()
         return true
-    }
-    /** A session from 近期委托 opens as any conversation does, in Code. */
-    func openFromAgent(_ id: String) async {
-        tab = .code
-        await openSession(id)
     }
 }

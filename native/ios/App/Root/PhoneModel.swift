@@ -40,6 +40,8 @@ import UIKit
     @Published var tab = PhoneTab.code
     /** 我的 Agent's pushed pages, by Agent; 应用's, by page. */
     @Published var agentPath: [String] = []
+    /** Memory proposals by owner, read inside a content window and dropped with it. */
+    @Published var proposals = PhoneProposalStore()
     @Published var appPath: [String] = []
     /** The clipboard's change count when a pairing code was pasted, so a successful pairing clears it only if it still holds that code. */
     var pastedPairing: Int?
@@ -108,7 +110,7 @@ import UIKit
     /** Drawn on every update of anything, so it is worked out once per list and search. */
     func shelves(query: String) -> [PhoneShelf] {
         if let shelfCache, shelfCache.query == query { return shelfCache.shelves }
-        let value = PhoneSessions.shelves(tasks: snapshot["tasks"].array, workspaces: snapshot["catalog"]["workspaces"].array, query: query)
+        let value = PhoneSessions.shelves(tasks: PhoneSpaces.tasks(snapshot, in: .code), workspaces: snapshot["catalog"]["workspaces"].array, query: query)
         shelfCache = (query, value)
         return value
     }
@@ -178,7 +180,7 @@ import UIKit
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        agentPath = []; appPath = []; resetSessionActions(); resetReview()
+        agentPath = []; appPath = []; proposals.clear(); resetSessionActions(); resetReview()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
@@ -560,7 +562,7 @@ import UIKit
         // Diffs, notes and handoffs are content: they go with the window, and the review page with them.
         reviewTarget = nil; sessionHandoffs = nil; handoffSignature = ""; handoffDraft = nil
         // Agents' names, duties and schedules came with the window and go with it.
-        snapshot = PhoneAgents.withoutPrivate(snapshot)
+        snapshot = PhoneAgents.withoutPrivate(snapshot); proposals.clear()
     }
     private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,

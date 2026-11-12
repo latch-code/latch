@@ -18,15 +18,50 @@ public enum PhoneTabs {
         result.append(PhoneTabEntry(id: .settings, label: "设置", symbol: "gearshape"))
         return result
     }
-    /** Sessions that wait on you, counted as the web's dot counts them: a stop already asked for answers them. */
-    public static func waitingCount(_ snapshot: NativeJSON) -> Int {
-        let tasks = snapshot["tasks"].array.filter { !$0["archived"].bool }
+    /**
+     * Sessions that wait on you, counted as the web's dot counts them: a stop already asked for answers them. With a
+     * place, only what that place's own lists show; an approval of a session no list holds counts in the total alone.
+     */
+    public static func waitingCount(_ snapshot: NativeJSON, space: PhoneSpace? = nil) -> Int {
+        let all = snapshot["tasks"].array
+        let tasks = all.filter { !$0["archived"].bool }
         let stopping = Set(tasks.filter { $0["live"]["activity"].string == "cancelling" }.compactMap { $0["id"].string })
-        let asking = snapshot["approvals"].array.compactMap { $0["sessionId"].string }.filter { !stopping.contains($0) }
-        return Set(asking + tasks.filter(PhoneSessions.waitsOnYou).compactMap { $0["id"].string }).count
+        let placed = Dictionary(all.compactMap { task in task["id"].string.map { ($0, PhoneSpaces.of(task)) } }, uniquingKeysWith: { a, _ in a })
+        let here = { (id: String) in space == nil || placed[id] == space }
+        let asking = snapshot["approvals"].array.compactMap { $0["sessionId"].string }.filter { !stopping.contains($0) && here($0) }
+        return Set(asking + tasks.filter(PhoneSessions.waitsOnYou).compactMap { $0["id"].string }.filter(here)).count
     }
-    /** An amber dot on Code, never a number, while another place is on screen. */
-    public static func codeDot(_ snapshot: NativeJSON, current: PhoneTab) -> Bool { current != .code && waitingCount(snapshot) > 0 }
+    /** An amber dot on Code, never a number, while another place is on screen; it counts Code's own sessions. */
+    public static func codeDot(_ snapshot: NativeJSON, current: PhoneTab) -> Bool {
+        current != .code && waitingCount(snapshot, space: PhoneSpaces.split(snapshot) ? .code : nil) > 0
+    }
+    /** The same on 我的 Agent, for its own topics. */
+    public static func agentsDot(_ snapshot: NativeJSON, current: PhoneTab) -> Bool {
+        current != .agents && PhoneSpaces.split(snapshot) && waitingCount(snapshot, space: .agents) > 0
+    }
+}
+
+/** Code and 我的 Agent, the two places a session belongs to. */
+public enum PhoneSpace: String, Equatable, Sendable { case code, agents }
+
+/**
+ * Where a session belongs, by the web's rule (`spaceOf`): one of your Agents' sessions and a conversation with 通用 are
+ * 我的 Agent's; every other one is Code's. A Host without 我的 Agent has Code alone, and every session is there.
+ */
+public enum PhoneSpaces {
+    public static func split(_ snapshot: NativeJSON) -> Bool { snapshot["catalog"]["features"]["customAgents"].bool }
+    public static func of(_ task: NativeJSON) -> PhoneSpace { task["agent"] != .null || task["generalChat"].bool ? .agents : .code }
+    /** The sessions a place lists. */
+    public static func tasks(_ snapshot: NativeJSON, in space: PhoneSpace) -> [NativeJSON] {
+        let tasks = snapshot["tasks"].array
+        guard split(snapshot) else { return space == .code ? tasks : [] }
+        return tasks.filter { of($0) == space }
+    }
+    /** Whether a session open in Code belongs to the other place, so going back to Code leaves it. */
+    public static func belongsElsewhere(_ snapshot: NativeJSON, sessionId: String?, from space: PhoneSpace) -> Bool {
+        guard split(snapshot), let sessionId, let task = snapshot["tasks"].array.first(where: { $0["id"].string == sessionId }) else { return false }
+        return of(task) != space
+    }
 }
 
 /** Applied plugin pages. The App lists them; it cannot show them yet. */
@@ -124,7 +159,7 @@ public enum PhoneAgents {
     /** The snapshot with what only a content window may show taken out, for when a window closes. */
     public static func withoutPrivate(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
-        value.removeValue(forKey: "customAgents"); value.removeValue(forKey: "automations")
+        value.removeValue(forKey: "customAgents"); value.removeValue(forKey: "automations"); value.removeValue(forKey: "agentProposals")
         return .object(value)
     }
     public static func validId(_ id: String) -> Bool { id == generalId || LinkBytes.matches(id, "agt_[a-f0-9-]{36}") }
@@ -193,7 +228,7 @@ public enum PhoneAgents {
         let ids = Set(catalog["harnesses"].array.filter { $0["agentContext"].string != nil && $0["offer"] == .null }.compactMap { $0["id"].string })
         return PhoneStart.engines(catalog).filter { ids.contains($0.id) }
     }
-    /** The delegation's picks start from the Agent's own. */
+    /** A new topic's picks start from the Agent's own. */
     public static func choice(_ catalog: NativeJSON, agent: NativeJSON) -> PhoneStartChoice {
         let harnessId = harnesses(catalog).first { $0.id == agent["harnessId"].string }?.id
         let projects = PhoneStart.projects(catalog)
@@ -202,22 +237,22 @@ public enum PhoneAgents {
         let model = models.first { $0.providerId == agent["model"]["providerId"].string && $0.model == agent["model"]["model"].string }
         return PhoneStartChoice(harnessId: harnessId, workspaceId: project?.id, model: model)
     }
-    /** Why 委托 cannot start now, in the web's words; nil when it can. */
+    /** Why a new topic cannot start now, in the web's words; nil when it can. */
     public static func blocker(_ catalog: NativeJSON, agent: NativeJSON, choice: PhoneStartChoice, connected: Bool, canRun: Bool) -> String? {
-        if !connected { return "Mac 不在线，恢复后再委托" }
+        if !connected { return "Mac 不在线，恢复后再发" }
         if !canRun { return "这台设备不能开始会话" }
-        if !agent["available"].bool { return agent["unavailableReason"].string ?? "现在不能委托" }
+        if !agent["available"].bool { return agent["unavailableReason"].string ?? "现在不能开始" }
         guard let id = choice.harnessId, harnesses(catalog).contains(where: { $0.id == id }) else { return "先选 Harness" }
         if let workspace = choice.workspaceId, !PhoneStart.projects(catalog).contains(where: { $0.id == workspace }) { return "这个项目已不可用。" }
         return nil
     }
-    /** The mode a delegation asks for: the Agent's own, where the chosen Harness has it. */
+    /** The mode a new topic asks for: the Agent's own, where the chosen Harness has it. */
     public static func mode(_ catalog: NativeJSON, harnessId: String, agentMode: String?) -> String {
         let modes = catalog["harnesses"].array.first { $0["id"].string == harnessId }?["modes"].array.compactMap(\.string) ?? []
         let wanted = agentMode ?? "agent"
         return modes.isEmpty || modes.contains(wanted) ? wanted : modes[0]
     }
-    /** 委托's start request: the Agent, then what was picked for this session. */
+    /** A new topic's start request: the Agent, then what was picked for this session. */
     public static func fields(_ catalog: NativeJSON, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) throws -> [String: NativeJSON] {
         guard let id = agent["id"].string, validId(id), id != generalId, let harnessId = choice.harnessId else { throw NativeFailure.invalidRecord }
         var result: [String: NativeJSON] = ["prompt": .string(prompt), "customAgentId": .string(id), "harnessId": .string(harnessId),
@@ -231,18 +266,16 @@ public enum PhoneAgents {
         }
         return result
     }
-    /** This Agent's sessions, newest first. 通用 has none of its own. */
-    public static func recent(_ tasks: [NativeJSON], id: String) -> [NativeJSON] {
-        guard id != generalId else { return [] }
-        return tasks.filter { $0["agent"]["customAgentId"].string == id && !$0["archived"].bool }
-            .sorted { (PhoneTime.parse($0["updatedAt"]) ?? .distantPast) > (PhoneTime.parse($1["updatedAt"]) ?? .distantPast) }
-    }
-    /** 「为 <Agent> 委托」 on a delegated session, plain 「委托」 outside a window; nil on any other. */
-    public static func delegated(_ snapshot: NativeJSON, task: NativeJSON, windowOpen: Bool = true) -> String? {
-        guard let id = task["agent"]["customAgentId"].string else { return nil }
-        guard windowOpen else { return "委托" }
-        let name = snapshot["customAgents"].array.first { $0["id"].string == id }?["name"].string ?? "Agent"
-        return "为 " + name + " 委托"
+    /**
+     * The name of the Agent a topic belongs to (通用 for a conversation with it, 已删除的 Agent once it is gone), plain
+     * 「我的 Agent」 outside a window; nil on a session of Code.
+     */
+    public static func ownerName(_ snapshot: NativeJSON, task: NativeJSON, windowOpen: Bool = true) -> String? {
+        guard let id = PhoneAgentChat.owner(task) else { return nil }
+        guard windowOpen else { return "我的 Agent" }
+        if id == generalId { return generalName }
+        guard snapshot["customAgents"] != .null else { return "Agent" }
+        return snapshot["customAgents"].array.first { $0["id"].string == id }?["name"].string ?? "已删除的 Agent"
     }
     /** This Agent's schedules (通用's name no Agent); nil while the Host leaves them out. */
     public static func automations(_ snapshot: NativeJSON, id: String, windowOpen: Bool = true) -> [NativeJSON]? {
@@ -324,8 +357,11 @@ public enum PhoneMemoryWrite {
 /** What an unconfirmed write is, so each place offers only its own retry and says what it waits on. */
 public enum PhonePendingKind: Equatable, Sendable {
     case start
-    case delegation(agentId: String)
+    /** A new topic with an Agent or 通用. */
+    case topic(owner: String)
     case memory(owner: String)
+    case proposal(owner: String)
+    case schedule(id: String)
     case session(id: String)
     case other
 }
@@ -333,19 +369,23 @@ public enum PhonePendingKind: Equatable, Sendable {
 public enum PhonePending {
     public static func kind(_ write: NativePendingWrite) -> PhonePendingKind {
         if write.path == "/link/api/tasks" && write.method == "POST" {
-            if let id = (try? NativeJSON.decode(write.body))?["customAgentId"].string { return .delegation(agentId: id) }
+            if let id = (try? NativeJSON.decode(write.body))?["customAgentId"].string { return .topic(owner: id) }
             return .start
         }
         let parts = write.path.split(separator: "/").map(String.init)
         if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "memories" { return .memory(owner: parts[3]) }
+        if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "proposals" { return .proposal(owner: parts[3]) }
+        if parts.count == 5, parts[2] == "automations", parts[4] == "enabled" { return .schedule(id: parts[3]) }
         if parts.count >= 4, parts[2] == "tasks" { return .session(id: parts[3]) }
         return .other
     }
     public static func words(_ write: NativePendingWrite) -> String {
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {
-        case .delegation: return "委托结果待确认"
+        case .topic: return "新话题结果待确认"
         case .memory: return "记忆的修改结果待确认"
+        case .proposal: return "记忆提议的结果待确认"
+        case .schedule: return "定时任务的开关结果待确认"
         case .start: return (try? NativeJSON.decode(write.body))?["forkOf"] != .null ? "分叉结果待确认" : "提交结果待确认"
         case .session:
             return write.path.hasSuffix("/config") ? "切换结果待确认" : "提交结果待确认"
@@ -359,7 +399,7 @@ public enum PhonePending {
     public static func prompt(_ write: NativePendingWrite) -> String? {
         guard write.method == "POST" else { return nil }
         switch kind(write) {
-        case .start: return (try? NativeJSON.decode(write.body))?["prompt"].string
+        case .start, .topic: return (try? NativeJSON.decode(write.body))?["prompt"].string
         case let .session(id): return write.path == "/link/api/tasks/" + id + "/prompt" ? (try? NativeJSON.decode(write.body))?["prompt"].string : nil
         default: return nil
         }

@@ -74,6 +74,7 @@ do {
         result = try await runNativeWorkspace(input)
     case "phoneProjection": result = try phoneProjectionFixture(input)
     case "phoneAgents": result = try phoneAgentsFixture(input)
+    case "phoneAgentPages": result = try phoneAgentPagesFixture(input)
     case "phoneActions": result = try phoneActionsFixture(input)
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)

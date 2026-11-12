@@ -23,6 +23,12 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     return [
         "tabs": value["snapshots"].array.map { PhoneTabs.entries($0).map(\.label) },
         "dots": value["snapshots"].array.map { [PhoneTabs.codeDot($0, current: .agents), PhoneTabs.codeDot($0, current: .code)] },
+        "agentDots": value["snapshots"].array.map { [PhoneTabs.agentsDot($0, current: .code), PhoneTabs.agentsDot($0, current: .agents)] },
+        "spaces": snapshot["tasks"].array.map { PhoneSpaces.of($0).rawValue },
+        "codeTasks": PhoneSpaces.tasks(snapshot, in: .code).compactMap { $0["id"].string },
+        "agentTasks": PhoneSpaces.tasks(snapshot, in: .agents).compactMap { $0["id"].string },
+        "unsplit": [PhoneSpaces.tasks(value["unsplit"], in: .code).count, PhoneSpaces.tasks(value["unsplit"], in: .agents).count],
+        "elsewhere": ["a", "d", "missing"].map { PhoneSpaces.belongsElsewhere(snapshot, sessionId: $0, from: .code) },
         "access": value["snapshots"].array.map { [PhoneAgents.access($0).rawValue, PhoneAgents.access($0, windowOpen: false).rawValue] },
         "entries": PhoneAgents.entries(snapshot).map { entry -> [String: Any] in
             ["id": entry.id, "name": entry.name, "general": entry.general, "duty": entry.duty, "runs": entry.runs,
@@ -37,12 +43,27 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "offline": agents.first.map { PhoneAgents.blocker(catalog, agent: $0, choice: choices[0], connected: false, canRun: true) ?? "" } ?? "",
         "cannotRun": agents.first.map { PhoneAgents.blocker(catalog, agent: $0, choice: choices[0], connected: true, canRun: false) ?? "" } ?? "",
         "fields": fields,
-        "recent": agents.map { agent in PhoneAgents.recent(snapshot["tasks"].array, id: agent["id"].string ?? "").compactMap { $0["id"].string } },
-        "generalRecent": PhoneAgents.recent(snapshot["tasks"].array, id: PhoneAgents.generalId).count,
-        "delegated": snapshot["tasks"].array.map { PhoneAgents.delegated(snapshot, task: $0) ?? "" },
+        "topics": ([PhoneAgents.generalId] + agents.compactMap { $0["id"].string }).map { id -> [String: Any] in
+            let topics = PhoneAgentChat.topics(snapshot["tasks"].array, id: id)
+            return ["open": topics.open.compactMap { $0["id"].string }, "archived": topics.archived.compactMap { $0["id"].string },
+                    "current": PhoneAgentChat.current(snapshot["tasks"].array, id: id)?["id"].string ?? NSNull()]
+        },
+        "topicWords": snapshot["tasks"].array.map { PhoneAgentChat.topicWords($0, frozen: false) ?? "" },
+        "placeholder": PhoneAgentChat.placeholder("代码审阅"),
+        "generalChoice": { let choice = PhoneAgentChat.generalChoice(catalog); return [choice.harnessId ?? "", choice.workspaceId ?? "", choice.model?.model ?? ""] }(),
+        "generalFields": PhoneAgents.harnesses(catalog).map { harness -> Any in
+            let choice = PhoneStartChoice(harnessId: harness.id, workspaceId: "latch", model: PhoneStart.models(catalog).first)
+            return (try? fieldValue(.object(PhoneAgentChat.generalFields(catalog, choice: choice, prompt: "你好")))) ?? NSNull()
+        },
+        "generalBlockers": [PhoneAgentChat.generalBlocker(catalog, choice: PhoneAgentChat.generalChoice(catalog), connected: true, canRun: true) ?? "",
+            PhoneAgentChat.generalBlocker(catalog, choice: PhoneStartChoice(harnessId: "gone"), connected: true, canRun: true) ?? "",
+            PhoneAgentChat.generalBlocker(catalog, choice: PhoneAgentChat.generalChoice(catalog), connected: false, canRun: true) ?? ""],
+        "kits": agents.map { PhoneAgentChat.kitWords(catalog, agent: $0) },
+        "owners": snapshot["tasks"].array.map { PhoneAgents.ownerName(snapshot, task: $0) ?? "" },
         "closedWindow": [PhoneAgents.entries(snapshot, windowOpen: false).count, PhoneAgents.automations(snapshot, id: PhoneAgents.generalId, windowOpen: false) == nil ? 0 : 1,
-            PhoneAgents.withoutPrivate(snapshot)["customAgents"] == .null && PhoneAgents.withoutPrivate(snapshot)["automations"] == .null ? 0 : 1],
-        "delegatedClosed": snapshot["tasks"].array.map { PhoneAgents.delegated(snapshot, task: $0, windowOpen: false) ?? "" },
+            PhoneAgents.withoutPrivate(snapshot)["customAgents"] == .null && PhoneAgents.withoutPrivate(snapshot)["automations"] == .null
+                && PhoneAgents.withoutPrivate(snapshot)["agentProposals"] == .null ? 0 : 1],
+        "ownersClosed": snapshot["tasks"].array.map { PhoneAgents.ownerName(snapshot, task: $0, windowOpen: false) ?? "" },
         "automations": agents.map { PhoneAgents.automations(snapshot, id: $0["id"].string ?? "")?.compactMap { $0["name"].string } ?? [] },
         "generalAutomations": PhoneAgents.automations(snapshot, id: PhoneAgents.generalId)?.compactMap { $0["name"].string } ?? [],
         "schedules": snapshot["automations"].array.map { PhoneAgents.scheduleWords($0["schedule"]) + " · " + PhoneAgents.automationState($0) + " · " + PhoneAgents.runWords($0["lastRun"]["state"].string) },
@@ -57,15 +78,65 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             write { try PhoneMemoryWrite.create(owner: "agt_../../tasks", text: "x") },
             write { try PhoneMemoryWrite.remove(owner: memoryOwner, memoryId: "mem_../x") },
         ],
+        "proposals": proposalCases(value),
+        "memoryChanges": memoryCases(value),
+        "decisions": [
+            write { try PhoneProposals.save(owner: memoryOwner, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d") },
+            write { try PhoneProposals.dismiss(owner: PhoneAgents.generalId, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d") },
+            write { try PhoneProposals.save(owner: memoryOwner, proposalId: "prp_../x") },
+            write { try PhoneMemories.undo(owner: memoryOwner, memoryId: memory["id"].string ?? "", baseRevision: 3) },
+            write { try PhoneMemories.forget(owner: memoryOwner, memoryId: memory["id"].string ?? "", baseRevision: 2) },
+            write { try PhoneScheduleWrite.enabled(snapshot["automations"].array[0], on: false) },
+            write { try PhoneScheduleWrite.enabled(.object(["id": .string("auto_x"), "revision": .number(1)]), on: true) },
+        ],
+        "scheduleBlockers": [
+            PhoneScheduleWrite.blocker(agent: agents[0], connected: true, canRun: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: agents[1], connected: true, canRun: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: .null, connected: true, canRun: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: agents[1], connected: false, canRun: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: agents[1], connected: true, canRun: false) ?? "",
+        ],
         "pendingKinds": [
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x")]) },
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x"), "customAgentId": .string(memoryOwner)]) },
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("x")]) },
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/config", fields: ["configId": .string("model")]) },
+            write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x"), "customAgentId": .string(PhoneAgents.generalId)]) },
         ],
         "delivered": try deliveredCases(),
         "queued": try queuedCases(),
         "joined": [PhonePending.joined("  ", "回来的"), PhonePending.joined("新写的", "回来的")],
+    ]
+}
+
+/** Proposals as the conversation and the 记忆 section place and word them; hidden characters are drawn, never kept. */
+private func proposalCases(_ value: NativeJSON) -> [String: Any] {
+    let proposals = PhoneProposals.parse(value["proposals"])
+    let detail = value["topicDetail"]
+    let messages = detail["messages"].array
+    let turns = PhoneConversation.turns(messages).map(\.id)
+    let placed = PhoneProposals.place(proposals + PhoneProposals.refusals(detail), sessionId: detail["summary"]["id"].string ?? "", messages: messages, turnIds: turns)
+    return [
+        "parsed": proposals.map { [$0.id, $0.content, $0.reason ?? "", $0.origin, $0.external ? "external" : "", $0.state.rawValue] },
+        "pending": PhoneProposals.pending(proposals).map(\.id),
+        "placed": placed.mapValues { $0.map(\.id) },
+        "refused": PhoneProposals.refusals(detail).map { [$0.id, $0.content, $0.refused ? "refused" : ""] },
+        "origins": [PhoneProposals.originWords("user"), PhoneProposals.originWords("agent")],
+        "effects": [PhoneProposals.effectWords(.object(["agentContext": .string("private")])), PhoneProposals.effectWords(.object(["agentContext": .string("first-turn")]))],
+        "signature": [PhoneProposals.signature(value["snapshot"], owner: "general"), PhoneProposals.signature(.null, owner: "general")],
+    ]
+}
+
+/** 撤销 and 清除 from the Host's last change of each memory, and each memory's source. */
+private func memoryCases(_ value: NativeJSON) -> [String: Any] {
+    let detail = value["memoryDetail"]
+    return [
+        "deleted": PhoneMemories.deleted(detail).compactMap { $0["memoryId"].string },
+        "edited": detail["memories"].array.map { PhoneMemories.edited(detail, memoryId: $0["id"].string ?? "") },
+        "sources": detail["memories"].array.map { memory -> Any in
+            guard let source = PhoneMemories.source(memory) else { return NSNull() }
+            return [source.words, source.external ? "external" : "", source.sessionId ?? ""]
+        },
     ]
 }
 
@@ -89,10 +160,10 @@ private func deliveredCases() throws -> [Bool] {
     ]
 }
 
-/** 委托 and 记忆 from the phone's actual workspace against a real Host: same request, same answer; a stale edit is not retried. */
+/** A new topic, 「记住…」 and its proposal, 撤销, a schedule's switch and 记忆 from the phone's actual workspace against a real Host: same request, same answer; a stale edit is not retried. */
 @MainActor func runNativeAgents(_ input: [String: Any]) async throws -> [String: Any] {
     let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), port = try fixturePort(input), keys = try FixtureKeys()
-    guard let agentId = input["agentId"] as? String else { throw NativeFailure.invalidRecord }
+    guard let agentId = input["agentId"] as? String, let automationId = input["automationId"] as? String else { throw NativeFailure.invalidRecord }
     let pairing = try NativePairing(invitation: invitation, keys: keys)
     let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey)
     _ = try await pairing.begin(on: temporary, name: "Swift agents fixture", gatewayHash: Data(repeating: 0, count: 32))
@@ -132,10 +203,10 @@ private func deliveredCases() throws -> [Bool] {
         guard let agent = snapshot["customAgents"].array.first(where: { $0["id"].string == agentId }) else { throw NativeFailure.invalidRecord }
         let choice = PhoneAgents.choice(catalog, agent: agent)
         guard PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: true, canRun: true) == nil else { throw NativeFailure.invalidRecord }
-        // 委托 through the same start path; the retry of the same request answers with the same session.
+        // A new topic through the same start path; the retry of the same request answers with the same session.
         let delegation = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: "Review from the phone"))
         // The Agent has no project of its own, so the start folder goes as picked; since 45740a5d the Host takes it.
-        guard PhonePending.kind(delegation) == .delegation(agentId: agentId),
+        guard PhonePending.kind(delegation) == .topic(owner: agentId), PhonePending.prompt(delegation) == "Review from the phone",
               try NativeJSON.decode(delegation.body)["workspaceId"].string == choice.workspaceId, choice.workspaceId == "default" else { throw NativeFailure.invalidRecord }
         guard let sessionId = try await workspace.submit(delegation)["sessionId"].string else { throw NativeFailure.invalidRecord }
         let settled = try await settle(sessionId)
@@ -144,8 +215,9 @@ private func deliveredCases() throws -> [Bool] {
               try await workspace.submit(delegation)["sessionId"].string == sessionId else { throw NativeFailure.identityMismatch }
         let after = try await workspace.snapshot()
         guard let task = after["tasks"].array.first(where: { $0["id"].string == sessionId }),
-              PhoneAgents.delegated(after, task: task) == "为 代码审阅 委托",
-              PhoneAgents.recent(after["tasks"].array, id: agentId).compactMap({ $0["id"].string }) == [sessionId],
+              PhoneAgents.ownerName(after, task: task) == "代码审阅", PhoneAgents.ownerName(after, task: task, windowOpen: false) == "我的 Agent",
+              PhoneAgentChat.current(after["tasks"].array, id: agentId)?["id"].string == sessionId,
+              !PhoneSpaces.tasks(after, in: .code).contains(where: { $0["id"].string == sessionId }),
               after["tasks"].array.filter({ $0["agent"]["customAgentId"].string == agentId }).count == 1 else { throw NativeFailure.invalidRecord }
         // The list kept for offline still knows the session's Agent and the tabs.
         guard let cached = try await workspace.cachedSnapshot(), PhoneTabs.entries(cached).map(\.id).contains(.agents),
@@ -170,6 +242,64 @@ private func deliveredCases() throws -> [Bool] {
         _ = try await workspace.submit(remove)
         detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
         guard detail["memories"].array.isEmpty else { throw NativeFailure.invalidRecord }
+        // 「记住：…」 in the topic becomes a pending proposal; 保存 makes it a memory with its source, and a retry is answered alike.
+        let remember = try NativePendingWrite(method: .post, path: "/link/api/tasks/" + sessionId + "/prompt", fields: ["prompt": .string("记住：发版前先跑 pnpm check")])
+        _ = try await workspace.submit(remember)
+        _ = try await settle(sessionId)
+        let proposals = PhoneProposals.parse(try await workspace.read("/link/api/custom-agents/" + agentId + "/proposals", body: true))
+        guard let proposal = proposals.first, proposals.count == 1, proposal.state == .pending, proposal.origin == "user", !proposal.external,
+              proposal.content == "发版前先跑 pnpm check", proposal.sessionId == sessionId,
+              PhoneProposals.turn(proposal, messages: try await workspace.detail(sessionId)["messages"].array) != nil else { throw NativeFailure.invalidRecord }
+        let save = try PhoneProposals.save(owner: agentId, proposalId: proposal.id)
+        guard PhonePending.kind(save) == .proposal(owner: agentId) else { throw NativeFailure.invalidRecord }
+        let saved = try await workspace.submit(save)
+        guard try await workspace.submit(save)["memoryId"] == saved["memoryId"], saved["memoryId"].string != nil else { throw NativeFailure.identityMismatch }
+        var decided = false
+        do { _ = try await workspace.submit(PhoneProposals.dismiss(owner: agentId, proposalId: proposal.id)) } catch { decided = error is NativeFailure }
+        detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
+        guard decided, let kept = detail["memories"].array.first(where: { $0["id"] == saved["memoryId"] }),
+              PhoneMemories.source(kept)?.words == "你说的", PhoneMemories.source(kept)?.sessionId == sessionId else { throw NativeFailure.invalidRecord }
+        // An edit, then 撤销 with the revision shown: the text and the source come back.
+        _ = try await workspace.submit(PhoneMemoryWrite.change(owner: agentId, memory: kept, text: "发版前跑 pnpm check 与 e2e"))
+        detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
+        guard let changed = detail["memories"].array.first(where: { $0["id"] == kept["id"] }), PhoneMemories.edited(detail, memoryId: kept["id"].string ?? ""),
+              PhoneMemories.source(changed) == nil, let changedRevision = changed["revision"].integer else { throw NativeFailure.invalidRecord }
+        var staleUndo = false
+        do { _ = try await workspace.submit(PhoneMemories.undo(owner: agentId, memoryId: kept["id"].string ?? "", baseRevision: Int(changedRevision) - 1)) }
+        catch { staleUndo = (error as? NativeFailure) == .changedElsewhere }
+        _ = try await workspace.submit(PhoneMemories.undo(owner: agentId, memoryId: kept["id"].string ?? "", baseRevision: Int(changedRevision)))
+        detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
+        guard staleUndo, let undone = detail["memories"].array.first(where: { $0["id"] == kept["id"] }), undone["content"].string == "发版前先跑 pnpm check",
+              PhoneMemories.source(undone) != nil, !PhoneMemories.edited(detail, memoryId: kept["id"].string ?? "") else { throw NativeFailure.invalidRecord }
+        // A delete leaves 撤销 and 清除; 清除 takes the text now.
+        _ = try await workspace.submit(PhoneMemoryWrite.remove(owner: agentId, memoryId: kept["id"].string ?? ""))
+        detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
+        // The earlier memory's delete is listed too; each has its own 撤销 and 清除.
+        guard let gone = PhoneMemories.deleted(detail).first(where: { $0["memoryId"] == kept["id"] }), PhoneMemories.deleted(detail).count == 2, let goneRevision = gone["previous"]["revision"].integer else { throw NativeFailure.invalidRecord }
+        _ = try await workspace.submit(PhoneMemories.forget(owner: agentId, memoryId: kept["id"].string ?? "", baseRevision: Int(goneRevision)))
+        detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
+        guard PhoneMemories.deleted(detail).map({ $0["memoryId"] }) == [memory["id"]] else { throw NativeFailure.invalidRecord }
+        // 即将进行's switch, with the revision shown and the same request on retry.
+        let before = try await workspace.snapshot()
+        guard let automation = before["automations"].array.first(where: { $0["id"].string == automationId }), automation["enabled"].bool else { throw NativeFailure.invalidRecord }
+        let off = try PhoneScheduleWrite.enabled(automation, on: false)
+        guard PhonePending.kind(off) == .schedule(id: automationId) else { throw NativeFailure.invalidRecord }
+        _ = try await workspace.submit(off)
+        _ = try await workspace.submit(off)
+        var staleSwitch = false
+        do { _ = try await workspace.submit(PhoneScheduleWrite.enabled(automation, on: true)) } catch { staleSwitch = (error as? NativeFailure) == .changedElsewhere }
+        guard staleSwitch, try await workspace.snapshot()["automations"].array.first(where: { $0["id"].string == automationId })?["enabled"].bool == false else { throw NativeFailure.invalidRecord }
+        // 通用: its first message starts a conversation without a project, marked as 通用's.
+        let generalStart = try NativePendingWrite(method: .post, path: "/link/api/tasks",
+            fields: PhoneAgentChat.generalFields(catalog, choice: PhoneAgentChat.generalChoice(catalog), prompt: "你好"))
+        guard PhonePending.kind(generalStart) == .topic(owner: PhoneAgents.generalId),
+              let generalSession = try await workspace.submit(generalStart)["sessionId"].string else { throw NativeFailure.invalidRecord }
+        _ = try await settle(generalSession)
+        let withGeneral = try await workspace.snapshot()
+        guard PhoneAgentChat.current(withGeneral["tasks"].array, id: PhoneAgents.generalId)?["id"].string == generalSession,
+              PhoneSpaces.tasks(withGeneral, in: .agents).contains(where: { $0["id"].string == generalSession }),
+              try await workspace.cachedSnapshot()?["tasks"].array.first(where: { $0["id"].string == generalSession })?["generalChat"].bool == true else { throw NativeFailure.invalidRecord }
+        _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/tasks/" + generalSession, fields: [:]))
         // 通用 has its own memories through the same routes.
         _ = try await workspace.submit(PhoneMemoryWrite.create(owner: PhoneAgents.generalId, text: "回答用中文"))
         let general = try await workspace.read("/link/api/custom-agents/general", body: true)
@@ -177,7 +307,8 @@ private func deliveredCases() throws -> [Bool] {
               try await workspace.pendingWrites().isEmpty else { throw NativeFailure.invalidRecord }
         _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/tasks/" + sessionId, fields: [:]))
         await workspace.closeOpening(); await vault.lock()
-        return ["delegated": true, "sameSession": true, "memoryReceipts": true, "staleRefused": true, "general": true, "cachedTabs": true]
+        return ["delegated": true, "sameSession": true, "memoryReceipts": true, "staleRefused": true, "general": true, "cachedTabs": true,
+                "proposalSaved": true, "undone": true, "scheduleSwitched": true, "generalTopic": true]
     } catch {
         await workspace.closeOpening(); await vault.lock(); throw error
     }
@@ -213,5 +344,56 @@ private func queuedCases() throws -> [String] {
         PhonePending.queuedTwin(queued, detail: try detail("dropped", text: "排队的话")) ?? "",
         PhonePending.queuedTwin(queued, detail: try detail("waiting", text: "别的")) ?? "",
         PhonePending.queuedTwin(plain, detail: try detail("waiting", text: "排队的话")) ?? "",
+    ]
+}
+
+/** The review's cases: what a page shows, the input after a start, where a retry is offered, the proposal store, the sheet after expiry. */
+func phoneAgentPagesFixture(_ input: [String: Any]) throws -> [String: Any] {
+    let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    let tasks = value["tasks"].array, owner = value["owner"].string ?? ""
+    let topic = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("你好"), "customAgentId": .string(owner)])
+    let other = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("别的"), "customAgentId": .string(PhoneAgents.generalId)])
+    let proposal = try PhoneProposals.save(owner: owner, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")
+    let schedule = try PhoneScheduleWrite.enabled(.object(["id": .string("auto_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"), "revision": .number(2)]), on: false)
+    let prompt = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("x")])
+    // 放弃 after an unknown start: the input was emptied when the request was held, so the text comes back once.
+    let held = PhoneAgentChat.promptAfterStart("你好", pending: [topic], owner: owner, started: false)
+    var store = PhoneProposalStore()
+    let list = value["proposals"]
+    let first = store.begin(owner), second = store.begin(owner)
+    let staleAdopted = store.finish(owner, token: first, list: .object(["proposals": .array([])]), windowOpen: true)
+    let freshAdopted = store.finish(owner, token: second, list: list, windowOpen: true)
+    let adoptedCount = store[owner]?.count ?? -1
+    let inFlight = store.begin(owner)
+    store.clear()
+    let afterClear = store.finish(owner, token: inFlight, list: list, windowOpen: true)
+    var closed = PhoneProposalStore()
+    let closedToken = closed.begin(owner)
+    let closedAdopted = closed.finish(owner, token: closedToken, list: list, windowOpen: false)
+    return [
+        "shown": [
+            PhoneAgentChat.shown(tasks, owner: owner, picked: nil, newTopic: false) ?? "",
+            PhoneAgentChat.shown(tasks, owner: owner, picked: "old", newTopic: false) ?? "",
+            PhoneAgentChat.shown(tasks, owner: owner, picked: "code", newTopic: false) ?? "",
+            PhoneAgentChat.shown(tasks, owner: owner, picked: "theirs", newTopic: false) ?? "",
+            PhoneAgentChat.shown(tasks, owner: owner, picked: "gone", newTopic: false) ?? "",
+            PhoneAgentChat.shown(tasks, owner: owner, picked: "old", newTopic: true) ?? "",
+            PhoneAgentChat.shown(tasks, owner: PhoneAgents.generalId, picked: "code", newTopic: false) ?? "",
+        ],
+        "prompts": [held, PhonePending.joined(held, "你好"), PhoneAgentChat.promptAfterStart("你好", pending: [], owner: owner, started: false),
+            PhoneAgentChat.promptAfterStart("你好", pending: [other], owner: owner, started: false), PhoneAgentChat.promptAfterStart("你好", pending: [], owner: owner, started: true)],
+        "abandonable": [PhonePending.prompt(topic) ?? "", PhonePending.prompt(proposal) ?? "", PhonePending.prompt(schedule) ?? ""],
+        "retried": [topic, other, proposal, schedule, prompt].map { write in
+            [PhonePending.retried(write, at: .session("ses_1")), PhonePending.retried(write, at: .newTopic(owner)), PhonePending.retried(write, at: .list)]
+        },
+        "topicOwners": [PhonePending.topicOwner(topic) ?? "", PhonePending.topicOwner(prompt) ?? ""],
+        // Unknown results stay with their row: the held write is found again by the row that sent it.
+        "held": [PhoneProposals.held([schedule, proposal], owner: owner, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")?.saving == true,
+            PhoneProposals.held([schedule], owner: owner, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d") == nil,
+            PhoneScheduleWrite.held([proposal, schedule], automationId: "auto_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")?.requestId == schedule.requestId,
+            PhoneScheduleWrite.held([proposal], automationId: "auto_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d") == nil],
+        "store": [staleAdopted, freshAdopted, adoptedCount == 1, afterClear, store.isEmpty, closedAdopted, closed[owner] == nil],
+        "contentChange": [PhoneContentChange.next(windowOpen: false, showing: true), PhoneContentChange.next(windowOpen: true, showing: true),
+            PhoneContentChange.next(windowOpen: false, showing: false)].map { "\($0)" },
     ]
 }

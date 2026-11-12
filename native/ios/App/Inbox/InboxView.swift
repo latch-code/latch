@@ -17,7 +17,8 @@ struct InboxView: View {
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $column) {
             let workspaces = model.snapshot["catalog"]["workspaces"].array
-            let tasks = model.snapshot["tasks"].array
+            // Code lists its own sessions; 我的 Agent's topics are in their conversations, as on the web.
+            let tasks = PhoneSpaces.tasks(model.snapshot, in: .code)
             let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
             let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
             List(selection: selection) {
@@ -278,7 +279,14 @@ private struct PendingWritesBar: View {
                 } else if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
-                Button("重试这次提交") { Task { await model.retryPending(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                Button("重试这次提交") {
+                    Task {
+                        // A new topic's start opens its topic in 我的 Agent, where the conversation with that Agent is.
+                        if let owner = PhonePending.topicOwner(pending) {
+                            if await model.finishTopic(pending) { model.tab = .agents; model.agentPath = [owner] }
+                        } else { await model.retryPending(pending) }
+                    }
+                }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 if PhonePending.prompt(pending) != nil, case let .session(id) = PhonePending.kind(pending) {
                     Button("放弃这次提交") {
                         Task {

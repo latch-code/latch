@@ -48,6 +48,8 @@ const DEVICE = process.env.LATCH_IOS_LIVE_DEVICE
 const KEEP = process.env.LATCH_IOS_LIVE_KEEP === '1'
 /** `LATCH_IOS_LIVE_HISTORY=1`: also a project of two folders and the fake agent as Codex with sessions of its own, for 接入已有会话. */
 const HISTORY = process.env.LATCH_IOS_LIVE_HISTORY === '1'
+/** `LATCH_IOS_LIVE_AGENTS=1`: also an Agent of yours on the built-in Harness (demo model) with a daily schedule, for 我的 Agent. */
+const AGENTS = process.env.LATCH_IOS_LIVE_AGENTS === '1'
 type Simulators = { devices: Record<string, Array<{ name: string; udid: string; state?: string }>> }
 const listSimulators = (): Simulators['devices'][string] =>
   Object.values(
@@ -270,6 +272,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       }
       const owner = await prepare(host)
       if (HISTORY) await addHistory(host, owner)
+      if (AGENTS) await addAgent(owner)
       other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
       const otherOwner = other ? await prepare(other) : undefined
 
@@ -414,4 +417,31 @@ async function addHistory(host: TestHost, owner: TestDevice): Promise<void> {
   })
   expect(codex.status).toBe(201)
   expect((await owner.addFolders({ paths: [main, other] })).status).toBe(201)
+}
+
+/** An Agent of yours on the built-in Harness and the demo model, with one daily schedule, for 我的 Agent. */
+async function addAgent(owner: TestDevice): Promise<void> {
+  const agent = await owner.json<{ id: string }>('custom-agents', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name: '代码审阅',
+      description: '只报真实的问题',
+      harnessId: 'standard',
+      mode: 'chat',
+      instructions: '只报真实的问题。',
+      skills: [],
+    },
+  })
+  await owner.json('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name: '每日检查',
+      customAgentId: agent.id,
+      prompt: '看一下昨天的改动',
+      schedule: { kind: 'daily', time: '09:00' },
+      notify: false,
+    },
+  })
 }

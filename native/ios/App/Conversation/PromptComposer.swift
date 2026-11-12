@@ -6,6 +6,8 @@ struct PromptComposer: View {
     @EnvironmentObject private var model: PhoneModel
     /** Where unsent text waits while the window is closed; nil where nothing is kept. */
     let draftId: String?
+    /** 「给 <名字> 发消息…」 in a topic of 我的 Agent; the engine's own words elsewhere. */
+    var placeholder: String? = nil
     /** Why this phone cannot type here; nil when it can. */
     let gate: String?
     let engine: String
@@ -24,7 +26,7 @@ struct PromptComposer: View {
         guard model.engineInfo(model.currentSummary["harnessId"].string)["capabilities"]["permission"]["rejectionNote"].bool, model.detail["questions"].array.isEmpty, let approval = model.detail["approvals"].array.first else { return nil }
         return approval["id"].string
     }
-    private var placeholder: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : "回复 " + engine + "…" }
+    private var hint: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : placeholder ?? "回复 " + engine + "…" }
     private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(text) }
     /** While a turn runs: 追加 where the Harness takes more text now, else 排队 where the Host queues. */
     private var followUp: PhoneFollowUp {
@@ -43,7 +45,10 @@ struct PromptComposer: View {
                 HStack {
                     Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
-                    Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    // A new topic's start is retried on its own page or the list, never into this conversation.
+                    if PhonePending.retried(pending, at: draftId.map { .session($0) } ?? .list) {
+                        Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    }
                     if PhonePending.prompt(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
                         Button("放弃这次提交") { Task { await abandon(pending) } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
                         InfoHint(text: PromptComposer.abandonHint)
@@ -107,8 +112,8 @@ struct PromptComposer: View {
         .padding(.horizontal, 12)
     }
     private var editor: some View {
-        LocalTextEditor(text: $text, placeholder: placeholder, focused: $focused)
-            .overlay(alignment: .topLeading) { if text.isEmpty { Text(placeholder).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) } }
+        LocalTextEditor(text: $text, placeholder: hint, focused: $focused)
+            .overlay(alignment: .topLeading) { if text.isEmpty { Text(hint).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) } }
     }
     /** Empty while a turn runs, the circle stops it; with text it queues. */
     @ViewBuilder private var action: some View {

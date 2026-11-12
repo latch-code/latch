@@ -1590,9 +1590,29 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           skills: [],
         },
       })
+      const automation = await owner.json<{ id: string }>('automations', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '每日检查',
+          customAgentId: agent.id,
+          prompt: '看一下',
+          schedule: { kind: 'daily', time: '09:00' },
+          notify: false,
+        },
+      })
       const response = await owner.request('native/pairings', { method: 'POST', body: {} })
       const { invitation } = (await response.json()) as { invitation: { payload: string } }
-      const result = await invoke({ operation: 'nativeAgents', payload: invitation.payload, port: host.host.nativePort, agentId: agent.id })
+      const result = await invoke(
+        {
+          operation: 'nativeAgents',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          agentId: agent.id,
+          automationId: automation.id,
+        },
+        30_000,
+      )
       expect(result).toEqual({
         delegated: true,
         sameSession: true,
@@ -1600,6 +1620,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         staleRefused: true,
         general: true,
         cachedTabs: true,
+        proposalSaved: true,
+        undone: true,
+        scheduleSwitched: true,
+        generalTopic: true,
       })
       const general = await owner.json<{ memories: Array<{ content: string }> }>('custom-agents/general')
       expect(general.memories.map(memory => memory.content)).toEqual(['回答用中文'])
@@ -2751,6 +2775,26 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const daily = `agt_${'2'.repeat(8)}-2222-4222-8222-${'2'.repeat(12)}`
     const docs = `agt_${'3'.repeat(8)}-3333-4333-8333-${'3'.repeat(12)}`
     const memory = { id: `mem_${'4'.repeat(8)}-4444-4444-8444-${'4'.repeat(12)}`, revision: 3, content: '旧的' }
+    const schedule = `auto_${'5'.repeat(8)}-5555-4555-8555-${'5'.repeat(12)}`
+    const proposal = (n: number, extra: Record<string, unknown>) => ({
+      id: `prp_${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`,
+      origin: 'agent',
+      external: false,
+      state: 'pending',
+      createdAt: at(1),
+      updatedAt: at(1),
+      ...extra,
+    })
+    const proposals = [
+      proposal(6, { content: 'use pnpm\u202e', reason: '它说过', origin: 'user', source: { sessionId: 'a', messageId: 'm1' } }),
+      proposal(7, { content: '读到的', external: true, state: 'saved', source: { sessionId: 'a', requestId: 'req-2' } }),
+      proposal(8, { content: '不要了', state: 'dismissed', source: { sessionId: 'a', messageId: 'gone' } }),
+      proposal(9, { content: '别的话题', source: { sessionId: 'b' } }),
+      { ...proposal(6, { content: 'x', source: { sessionId: 'a' } }), id: 'prp_bad' },
+    ]
+    const mem = (n: number) =>
+      `mem_${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`
+    const previous = (id: string) => ({ id, content: '以前的', revision: 1, createdAt: at(1), updatedAt: at(1) })
     const harnesses = [
       {
         id: 'standard',
@@ -2801,6 +2845,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           mode: 'agent',
           defaultProjectId: 'latch',
           available: true,
+          skillCount: 2,
           avatar: { kind: 'face', bracket: 'curly', eyes: 'arc', hue: 'plum' },
         },
         {
@@ -2812,6 +2857,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           mode: 'chat',
           model: { providerId: 'svc', model: 'm2' },
           available: true,
+          canAutomate: true,
         },
         {
           id: docs,
@@ -2828,7 +2874,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
       automations: [
         {
-          id: 'auto_a',
+          id: schedule,
+          revision: 4,
           name: '依赖检查',
           customAgentId: daily,
           schedule: { kind: 'weekdays', time: '09:00' },
@@ -2856,7 +2903,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { id: 'c', title: '归档', status: 'idle', updatedAt: at(5), archived: true, agent: { customAgentId: review } },
         { id: 'd', title: '通用的', status: 'idle', updatedAt: at(3) },
         { id: 'e', title: '已删除的 Agent', status: 'idle', updatedAt: at(4), agent: { customAgentId: docs.replace('3', '9') } },
+        { id: 'g', title: '和通用', status: 'running', updatedAt: at(7), generalChat: true },
+        { id: 'r', title: '定时的运行', status: 'idle', updatedAt: at(10), agent: { customAgentId: review }, automationId: schedule },
       ],
+      agentProposals: { general: { pending: 2, at: at(3) } },
     }
     const waiting = { ...snapshot, tasks: [{ id: 'w', status: 'waiting-approval', updatedAt: at(2) }] }
     const mine = (id: string, extra: Record<string, unknown>) => ({ id, updatedAt: at(5), agent: { customAgentId: review }, ...extra })
@@ -2870,6 +2920,31 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       snapshot,
       memoryOwner: review,
       memory,
+      proposals: { proposals },
+      topicDetail: {
+        summary: { id: 'a' },
+        messages: [
+          { id: 'm1', role: 'user', text: '记住：use pnpm' },
+          { id: 'm2', role: 'assistant', text: '好' },
+          { id: 'm3', role: 'user', text: '看看', requestId: 'req-2' },
+          { id: 'm4', role: 'assistant', text: '看了' },
+        ],
+        memoryRefusals: [{ requestId: 'req-3', reason: '内容像是密钥或凭据，没有记下。' }],
+      },
+      memoryDetail: {
+        memories: [
+          {
+            ...previous(mem(1)),
+            source: { origin: 'agent', external: true, sessionId: 'a', proposalId: proposals[1]!.id, proposedAt: at(1) },
+          },
+          previous(mem(2)),
+        ],
+        memoryChanges: [
+          { memoryId: mem(2), operation: 'update', at: at(2), previous: previous(mem(2)) },
+          { memoryId: mem(3), operation: 'delete', at: at(2), previous: previous(mem(3)) },
+          { memoryId: mem(1), operation: 'delete', at: at(1), previous: previous(mem(1)) },
+        ],
+      },
       faceCases: [
         faceCase([]),
         faceCase([mine('r', { status: 'running' })]),
@@ -2894,12 +2969,16 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           tasks: [{ id: 'w', status: 'running', updatedAt: at(2), live: { activity: 'cancelling' } }],
           approvals: [{ sessionId: 'w' }],
         },
+        // A topic of 我的 Agent waits on you: 我的 Agent's dot, never Code's.
+        { ...snapshot, tasks: [{ id: 'aw', status: 'waiting-approval', updatedAt: at(2), agent: { customAgentId: review } }] },
       ],
+      unsplit: { ...snapshot, catalog: { ...catalog, features: {} } },
     })
     expect(result.tabs).toEqual([
       ['Code', '设置'],
       ['Code', '我的 Agent', '应用', '设置'],
       ['Code', '我的 Agent', '设置'],
+      ['Code', '我的 Agent', '应用', '设置'],
       ['Code', '我的 Agent', '应用', '设置'],
       ['Code', '我的 Agent', '应用', '设置'],
       ['Code', '我的 Agent', '应用', '设置'],
@@ -2914,7 +2993,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       [false, false],
       [true, false],
       [false, false],
+      [false, false],
     ])
+    expect(result.agentDots).toEqual([...Array.from({ length: 7 }, () => [false, false]), [true, false]])
+    // Code lists Code's sessions only: an Agent's topics and a conversation with 通用 are 我的 Agent's, as on the web.
+    expect(result.spaces).toEqual(['agents', 'agents', 'agents', 'code', 'agents', 'agents', 'agents'])
+    expect(result.codeTasks).toEqual(['d'])
+    expect(result.agentTasks).toEqual(['a', 'b', 'c', 'e', 'g', 'r'])
+    expect(result.unsplit).toEqual([7, 0])
+    expect(result.elsewhere).toEqual([true, false, false])
     // Outside a content window a phone shows nothing of an Agent, whatever the snapshot holds.
     expect(result.access).toEqual([
       ['hidden', 'hidden'],
@@ -2922,6 +3009,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['ready', 'closed'],
       ['locked', 'locked'],
       ['confirming', 'closed'],
+      ['ready', 'closed'],
       ['ready', 'closed'],
       ['ready', 'closed'],
     ])
@@ -2986,7 +3074,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { harness: '', workspace: 'default', model: '' },
     ])
     expect(result.blockers).toEqual(['', '', '没有安装。'])
-    expect(result.offline).toBe('Mac 不在线，恢复后再委托')
+    expect(result.offline).toBe('Mac 不在线，恢复后再发')
     expect(result.cannotRun).toBe('这台设备不能开始会话')
     expect(result.fields).toEqual([
       { prompt: '看一下', customAgentId: review, harnessId: 'codex', mode: 'agent', workspaceId: 'latch' },
@@ -3001,12 +3089,90 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
       null,
     ])
-    expect(result.recent).toEqual([['a', 'b'], [], []])
-    expect(result.generalRecent).toBe(0)
-    expect(result.delegated).toEqual(['为 代码审阅 委托', '为 代码审阅 委托', '为 代码审阅 委托', '', '为 Agent 委托'])
-    // Outside a window nothing of an Agent shows, and closing one takes the lists out of memory.
+    // Topics newest first; the current one is the newest open topic that is not a schedule's run; 通用's are `generalChat`.
+    expect(result.topics).toEqual([
+      { open: ['g'], archived: [], current: 'g' },
+      { open: ['r', 'a', 'b'], archived: ['c'], current: 'a' },
+      { open: [], archived: [], current: null },
+      { open: [], archived: [], current: null },
+    ])
+    expect(result.topicWords).toEqual(['', '', '', '', '', '运行中', ''])
+    expect(result.placeholder).toBe('给 代码审阅 发消息…')
+    expect(result.generalChoice).toEqual(['standard', '', 'm1'])
+    expect(result.generalFields).toEqual([
+      {
+        prompt: '你好',
+        customAgentId: 'general',
+        harnessId: 'standard',
+        mode: 'chat',
+        workspaceId: 'default',
+        model: { providerId: 'svc', model: 'm1' },
+      },
+      { prompt: '你好', customAgentId: 'general', harnessId: 'codex', mode: 'agent', workspaceId: 'default' },
+    ])
+    expect(result.generalBlockers).toEqual(['', '先选 Harness', 'Mac 不在线，恢复后再发'])
+    expect(result.kits).toEqual(['2 个技能 · 全部插件', '全部已启用的技能 · 全部插件', '全部已启用的技能 · 全部插件'])
+    expect(result.owners).toEqual(['代码审阅', '代码审阅', '代码审阅', '', '已删除的 Agent', '通用', '代码审阅'])
+    // Outside a window nothing of an Agent shows, and closing one takes the lists and proposal counts out of memory.
     expect(result.closedWindow).toEqual([0, 0, 0])
-    expect(result.delegatedClosed).toEqual(['委托', '委托', '委托', '', '委托'])
+    expect(result.ownersClosed).toEqual(['我的 Agent', '我的 Agent', '我的 Agent', '', '我的 Agent', '我的 Agent', '我的 Agent'])
+    // Hidden characters are drawn, never kept; each proposal goes after its turn, an unknown turn and a refusal after the last.
+    const ids = proposals.map(item => item.id)
+    expect(result.proposals).toEqual({
+      parsed: [
+        [ids[0], 'use pnpm\\u{202E}', '它说过', 'user', '', 'pending'],
+        [ids[1], '读到的', '', 'agent', 'external', 'saved'],
+        [ids[2], '不要了', '', 'agent', '', 'dismissed'],
+        [ids[3], '别的话题', '', 'agent', '', 'pending'],
+      ],
+      pending: [ids[0], ids[3]],
+      placed: { m1: [ids[0]], m3: [ids[1], ids[2], 'refused:req-3'] },
+      refused: [['refused:req-3', '内容像是密钥或凭据，没有记下。', 'refused']],
+      origins: ['你说的', '它推断的'],
+      effects: ['已生效', '从下一个话题起'],
+      signature: [`2:${at(3)}`, '-:'],
+    })
+    expect(result.memoryChanges).toEqual({ deleted: [mem(3)], edited: [false, true], sources: [['它推断的', 'external', 'a'], null] })
+    const decisions = result.decisions as Array<Record<string, unknown> | string>
+    expect(decisions[0]).toMatchObject({
+      method: 'POST',
+      path: `/link/api/custom-agents/${review}/proposals/prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d/save`,
+      words: '记忆提议的结果待确认',
+      kind: `proposal(owner: "${review}")`,
+    })
+    expect(decisions[1]).toMatchObject({
+      path: '/link/api/custom-agents/general/proposals/prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d/dismiss',
+    })
+    expect(decisions[2]).toBe('refused')
+    expect(decisions[3]).toMatchObject({
+      method: 'POST',
+      path: `/link/api/custom-agents/${review}/memories/${memory.id}/undo`,
+      body: { baseRevision: 3 },
+    })
+    expect(decisions[4]).toMatchObject({
+      method: 'DELETE',
+      path: `/link/api/custom-agents/${review}/memories/${memory.id}/undo`,
+      body: { baseRevision: 2 },
+    })
+    expect(decisions[5]).toMatchObject({
+      method: 'POST',
+      path: `/link/api/automations/${schedule}/enabled`,
+      body: { enabled: false, baseRevision: 4 },
+      words: '定时任务的开关结果待确认',
+      kind: `schedule(id: "${schedule}")`,
+    })
+    expect(decisions[6]).toBe('refused')
+    for (const write of decisions.filter(item => typeof item !== 'string')) {
+      const { body, requestId } = write as { body: { requestId: string }; requestId: string }
+      expect(body.requestId).toBe(requestId)
+    }
+    expect(result.scheduleBlockers).toEqual([
+      '这个 Agent 现在不能用于定时任务。',
+      '',
+      '',
+      'Mac 不在线，恢复后再改',
+      '这台设备只能查看定时任务：它没有开始会话的权限。',
+    ])
     expect(result.automations).toEqual([[], ['依赖检查', '周报'], []])
     expect(result.generalAutomations).toEqual(['早报'])
     expect(result.schedules).toEqual(['工作日 09:00 · 已开启 · 完成', '每周五 17:30 · 已暂停 · 没有运行', '每天 08:00 · 已关闭 · 没有运行'])
@@ -3030,15 +3196,60 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ]),
     ).toEqual([
       ['提交结果待确认', 'start', 'x'],
-      ['委托结果待确认', `delegation(agentId: "${review}")`, null],
+      ['新话题结果待确认', `topic(owner: "${review}")`, 'x'],
       ['提交结果待确认', 'session(id: "ses_1")', 'x'],
       ['切换结果待确认', 'session(id: "ses_1")', null],
+      ['新话题结果待确认', 'topic(owner: "general")', 'x'],
     ])
     // 放弃这次提交 settles a message its session already lists by requestId as delivered; nothing else counts.
     expect(result.delivered).toEqual([true, false, false, false, false])
     // A queue item with the same text is only named (it may be another device's); returned text never replaces what was typed.
     expect(result.queued).toEqual(['waiting', 'parked', '', '', ''])
     expect(result.joined).toEqual(['回来的', '新写的\n\n回来的'])
+  })
+  it('keeps a page on its own owner, gives a held topic back once, retries a start only where it can open, and drops stale or closed proposal reads', async () => {
+    const owner = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
+    const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
+    const result = await invoke({
+      operation: 'phoneAgentPages',
+      owner,
+      tasks: [
+        { id: 'new', updatedAt: at(9), agent: { customAgentId: owner } },
+        { id: 'old', updatedAt: at(1), agent: { customAgentId: owner } },
+        { id: 'code', updatedAt: at(8) },
+        { id: 'theirs', updatedAt: at(7), agent: { customAgentId: owner.replace('1', '2') } },
+      ],
+      proposals: {
+        proposals: [
+          {
+            id: `prp_${'3'.repeat(8)}-3333-4333-8333-${'3'.repeat(12)}`,
+            content: '用 pnpm',
+            origin: 'user',
+            external: false,
+            state: 'pending',
+            source: { sessionId: 'new' },
+          },
+        ],
+      },
+    })
+    // A session of no Agent or another one never shows under this frame, and 通用 shows only its own.
+    expect(result.shown).toEqual(['new', 'old', 'new', 'new', 'new', '', ''])
+    // An unknown start empties the input, so 放弃这次提交 gives the text back once.
+    expect(result.prompts).toEqual(['', '你好', '你好', '你好', ''])
+    expect(result.abandonable).toEqual(['你好', '', ''])
+    expect(result.retried).toEqual([
+      [false, true, true],
+      [false, false, true],
+      [true, true, true],
+      [true, true, true],
+      [true, true, true],
+    ])
+    expect(result.topicOwners).toEqual([owner, ''])
+    expect(result.held).toEqual([true, true, true, true])
+    // Only the latest read is adopted; clearing (lock, window closed) drops a read in flight; a closed window adopts nothing.
+    expect(result.store).toEqual([false, true, true, false, true, false, true])
+    // After the window expires, the sheet closes what it showed and never reads (and so never verifies) again.
+    expect(result.contentChange).toEqual(['close', 'reload', 'none'])
   })
   it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
     const harness = (id: string, extra: Record<string, unknown> = {}) => ({

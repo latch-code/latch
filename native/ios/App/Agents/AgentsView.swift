@@ -1,7 +1,7 @@
 import LatchNativeCore
 import SwiftUI
 
-/** 我的 Agent: the list is the root, an Agent's page is pushed on a phone and stands beside the list on an iPad. */
+/** 我的 Agent: the list is the root; choosing an Agent opens the conversation with it, pushed on a phone and beside the list on an iPad. */
 struct AgentsTabView: View {
     @EnvironmentObject private var model: PhoneModel
     private var selection: Binding<String?> {
@@ -11,7 +11,7 @@ struct AgentsTabView: View {
         NavigationSplitView {
             AgentList(selection: selection)
         } detail: {
-            if let id = model.agentPath.first { NavigationStack { AgentPage(id: id).id(id) } }
+            if let id = model.agentPath.first { NavigationStack { AgentChat(id: id).id(id) } }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
     }
@@ -156,112 +156,6 @@ private struct AgentRow: View {
     }
 }
 
-enum AgentSection: String, Hashable, CaseIterable {
-    case delegate = "委托", memory = "记忆", schedules = "定时", settings = "设置"
-}
-
-/** An Agent's page: its name and duty, how it runs, and 委托 · 记忆 · 定时 · 设置 (通用 has no 委托). */
-struct AgentPage: View {
-    @EnvironmentObject private var model: PhoneModel
-    let id: String
-    @State private var section: AgentSection?
-    @State private var read = PhoneAgentRead.loading
-    @State private var reading = UUID()
-    private var general: Bool { id == PhoneAgents.generalId }
-    private var summary: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == id } ?? .null }
-    private var entry: PhoneAgentEntry? { PhoneAgents.entry(model.snapshot, id: id, windowOpen: model.verifiedUntil != nil) }
-    private var sections: [AgentSection] {
-        (general ? [] : [.delegate]) + [.memory] + (model.snapshot["catalog"]["features"]["automations"].bool ? [.schedules] : []) + [.settings]
-    }
-    private var current: AgentSection { section.flatMap { sections.contains($0) ? $0 : nil } ?? sections[0] }
-    var body: some View {
-        Group {
-            switch model.agentAccess {
-            case .locked: LockedAgents()
-            case .confirming: ConfirmingAgents()
-            case .closed: ClosedAgents()
-            default:
-                if let entry { page(entry) }
-                else {
-                    VStack(spacing: 12) {
-                        Text("找不到这个 Agent").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
-                        Button("回到列表") { model.agentPath = [] }.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink)
-                    }.frame(maxWidth: .infinity).padding(.top, 48)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(PhoneTheme.canvas)
-        .navigationTitle(entry?.name ?? "Agent").navigationBarTitleDisplayMode(.inline)
-        .task(id: reading) { await load() }
-        #if LATCH_SCREENS
-        .onAppear { if section == nil { section = ScreensStage.section } }
-        #endif
-        // What the window showed goes with it; a refusal or a changed scope clears content too, and the page reads again.
-        .onChange(of: model.verifiedUntil == nil) { _, closed in if closed, case .ready = read { read = .closed } }
-        .onChange(of: model.contentGeneration) { _, _ in
-            guard case .ready = read else { return }
-            if model.verifiedUntil == nil { read = .closed } else { reload() }
-        }
-    }
-    private func load() async {
-        read = .loading
-        read = await model.readAgent(id)
-    }
-    private func reload() { reading = UUID() }
-    private func page(_ entry: PhoneAgentEntry) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    AgentFace(avatar: entry.avatar, size: 56, face: entry.face)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
-                            if entry.general { BuiltInMark() }
-                            if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
-                        }
-                        Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2)
-                    }
-                }
-                facts(entry)
-                Picker("\(entry.name) 的页面", selection: Binding(get: { current }, set: { section = $0 })) {
-                    ForEach(sections, id: \.self) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
-                switch current {
-                case .delegate: DelegateSection(agent: summary, name: entry.name)
-                case .memory: detailed { MemorySection(owner: id, memories: $0["memories"].array, reload: reload) }
-                case .schedules: ScheduleSection(id: id)
-                case .settings: detailed { AgentSettingsSection(detail: $0, general: general) }
-                }
-            }.padding(.horizontal, 20).padding(.vertical, 12).frame(maxWidth: 720, alignment: .leading)
-        }
-    }
-    private func facts(_ entry: PhoneAgentEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            fact("执行方式") {
-                HStack(spacing: 6) {
-                    if let harness = entry.harnessId { EngineTile(mark: model.engineMark(harness), size: 14) }
-                    Text(entry.general ? "每个会话自己选" : entry.runs)
-                }
-            }
-            if let place = entry.place { fact("工作位置") { Text(place) } }
-            if !entry.available { fact("可用性") { Unavailable(reason: entry.unavailableReason) } }
-        }
-    }
-    private func fact<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
-        HStack(spacing: 12) {
-            Text(label).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(width: 64, alignment: .leading)
-            value().font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
-        }
-    }
-    @ViewBuilder private func detailed<Content: View>(@ViewBuilder _ content: (NativeJSON) -> Content) -> some View {
-        switch read {
-        case .ready(let value): content(value)
-        default: AgentReadState(read: read, retry: reload)
-        }
-    }
-}
-
 /** Every read state but the ready one, in the words the rest of the App uses. */
 struct AgentReadState: View {
     @EnvironmentObject private var model: PhoneModel
@@ -288,198 +182,12 @@ struct AgentReadState: View {
     }
 }
 
-/** 委托: a real session of this Agent, its picks changeable for this one; under it, this Agent's sessions. */
-private struct DelegateSection: View {
-    @EnvironmentObject private var model: PhoneModel
-    let agent: NativeJSON
-    let name: String
-    @State private var choice = PhoneStartChoice()
-    @State private var prompt = ""
-    @State private var sending = false
-    @State private var all = false
-    private var catalog: NativeJSON { model.snapshot["catalog"] }
-    private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
-    private var agentId: String { agent["id"].string ?? "" }
-    private var mine: [NativePendingWrite] { model.pending.filter { PhonePending.kind($0) == .delegation(agentId: agentId) } }
-    private var blocker: String? {
-        if !mine.isEmpty { return nil }
-        if !model.pending.isEmpty { return "上一项提交结果待确认" }
-        return PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: model.connected, canRun: model.canRun)
-    }
-    private var canSend: Bool { blocker == nil && mine.isEmpty && !sending && !model.busy && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(spacing: 0) {
-                projectRow
-                Divider().overlay(PhoneTheme.line)
-                harnessRow
-                if PhoneStart.usesServices(harness) { Divider().overlay(PhoneTheme.line); modelRow }
-            }
-            .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(PhoneTheme.line))
-            .disabled(sending || !mine.isEmpty)
-            LocalTextEditor(text: $prompt, placeholder: "交给\(name)一件事…", maximumLines: 6)
-                .overlay(alignment: .topLeading) {
-                    if prompt.isEmpty { Text("交给\(name)一件事…").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) }
-                }
-                .padding(14).frame(minHeight: 96, alignment: .topLeading)
-                .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
-            ForEach(mine, id: \.requestId) { pending in
-                HStack {
-                    Label("委托结果待确认", systemImage: "questionmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
-                    Spacer()
-                    Button("重试同一请求") { retry(pending) }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
-                }
-            }
-            HStack(spacing: 8) {
-                if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2) }
-                Spacer(minLength: 0)
-                HintButton(label: "新会话", text: "按 Agent 现在的定义开始一个新会话。要接着原来的对话，在近期委托里打开那个会话直接输入。")
-                Button { send() } label: {
-                    if sending { ProgressView().controlSize(.small).tint(.white) } else { Text("委托") }
-                }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).controlSize(.large).tint(PhoneTheme.accent).disabled(!canSend)
-            }
-            recent
-        }
-        .task(id: (agent["id"].string ?? "") + "\(agent["revision"].integer ?? 0)") { choice = PhoneAgents.choice(catalog, agent: agent) }
-    }
-    private func send() {
-        sending = true
-        Task {
-            if await model.delegate(agent: agent, choice: choice, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines)) { prompt = "" }
-            sending = false
-        }
-    }
-    private func retry(_ pending: NativePendingWrite) {
-        sending = true
-        Task {
-            if await model.finishDelegation(pending) { prompt = "" }
-            sending = false
-        }
-    }
-    @ViewBuilder private var recent: some View {
-        let sessions = PhoneAgents.recent(model.snapshot["tasks"].array, id: agentId)
-        let shown = all ? sessions : Array(sessions.prefix(6))
-        HStack {
-            Text("近期委托").font(.system(size: 13, weight: .medium)).foregroundStyle(PhoneTheme.muted)
-            Spacer()
-            if sessions.count > shown.count { Button("全部（\(sessions.count)）") { all = true }.font(PhoneTheme.caption) }
-        }.padding(.top, 12)
-        if sessions.isEmpty { Text("还没有委托").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 16) }
-        ForEach(shown, id: \.id) { task in
-            Button { Task { await model.openFromAgent(task.id) } } label: {
-                InboxRow(task: task, frozen: !model.connected, inWaiting: false, project: nil)
-            }.buttonStyle(.plain)
-            Divider().overlay(PhoneTheme.line)
-        }
-    }
-    private func row<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
-        HStack(spacing: 8) {
-            Text(label).font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink)
-            Spacer(minLength: 8)
-            value().font(.system(size: 15)).lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .medium)).foregroundStyle(PhoneTheme.faint)
-        }.padding(.horizontal, 16).frame(height: 48).contentShape(Rectangle())
-    }
-    private func check(_ name: String, on: Bool) -> some View {
-        Group { if on { Label(name, systemImage: "checkmark") } else { Text(name) } }
-    }
-    private var projectRow: some View {
-        Menu {
-            ForEach(PhoneStart.projects(catalog)) { project in Button { choice.workspaceId = project.id } label: { check(project.name, on: project.id == choice.workspaceId) } }
-        } label: {
-            row("项目") {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted)
-                    Text(PhoneAgents.worksIn(catalog, projectId: choice.workspaceId)).foregroundStyle(PhoneTheme.ink2)
-                }
-            }
-        }
-    }
-    private var harnessRow: some View {
-        Menu {
-            ForEach(PhoneAgents.harnesses(catalog)) { engine in Button { choice.harnessId = engine.id } label: { check(engine.name, on: engine.id == choice.harnessId) } }
-        } label: {
-            row("Harness") {
-                HStack(spacing: 6) {
-                    if choice.harnessId != nil { EngineTile(mark: PhoneStart.mark(harness), size: 18); Text(PhoneStart.engineName(harness)).foregroundStyle(PhoneTheme.ink2) }
-                    else { Text("先选 Harness").foregroundStyle(PhoneTheme.muted) }
-                }
-            }
-        }
-    }
-    private var modelRow: some View {
-        Menu {
-            Button { choice.model = nil } label: { check("默认模型", on: choice.model == nil) }
-            ForEach(PhoneStart.models(catalog)) { item in Button { choice.model = item } label: { check(item.model + " · " + item.providerName, on: item == choice.model) } }
-        } label: { row("模型") { Text(choice.model?.model ?? "默认模型").foregroundStyle(PhoneTheme.ink2) } }
-    }
-}
-
-/** 记忆: what the person wrote for this Agent, to add, change and delete. Each write keeps its request until the Mac answers. */
-private struct MemorySection: View {
-    @EnvironmentObject private var model: PhoneModel
-    let owner: String
-    let memories: [NativeJSON]
-    let reload: () -> Void
-    @State private var editing: MemoryDraft?
-    @State private var deleting: NativeJSON?
-    @State private var deleteState: PhoneAgentWrite?
-    @State private var deleteWrite: NativePendingWrite?
-    private var held: [NativePendingWrite] { model.pending.filter { PhonePending.kind($0) == .memory(owner: owner) } }
-    private var canWrite: Bool { model.connected && model.canRun && !model.busy }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Text("只给这个 Agent").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                HintButton(label: "只给这个 Agent", text: "只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch 保存的这一条，不会抹掉上游服务里已有的记录。")
-                Spacer()
-                Button("添加", systemImage: "plus") { editing = MemoryDraft(memory: nil, text: "") }
-                    .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink).disabled(!canWrite || !held.isEmpty)
-            }
-            ForEach(held, id: \.requestId) { pending in
-                WriteNotice(state: .unknown, retry: { Task { if await model.writeMemory(pending) == .done { reload() } } })
-            }
-            if let deleteState { WriteNotice(state: deleteState, retry: retryDelete, reload: { self.deleteState = nil; reload() }) }
-            if memories.isEmpty { Text("还没有记忆").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 24) }
-            ForEach(memories, id: \.id) { memory in
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(memory["content"].string ?? "").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink).textSelection(.disabled)
-                        Text(PhoneTime.parse(memory["updatedAt"]).map { PhoneTime.relative($0) } ?? "").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                    }
-                    Spacer(minLength: 4)
-                    Menu {
-                        Button("修改", systemImage: "pencil") { editing = MemoryDraft(memory: memory, text: memory["content"].string ?? "") }
-                        Button("删除", systemImage: "trash", role: .destructive) { deleting = memory }
-                    } label: { Image(systemName: "ellipsis").frame(width: 32, height: 32).foregroundStyle(PhoneTheme.muted) }
-                        .disabled(!canWrite || !held.isEmpty).accessibilityLabel("记忆操作")
-                }.padding(.vertical, 6)
-                Divider().overlay(PhoneTheme.line)
-            }
-        }
-        .sheet(item: $editing) { draft in MemoryEditor(owner: owner, draft: draft, saved: reload) }
-        .confirmationDialog("删除这条记忆？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
-            Button("删除", role: .destructive) { if let deleting { remove(deleting) } }
-        } message: { Text("这个 Agent 之后不再收到它。已经开始的外部 Harness 会话里已发出的内容不会撤回。") }
-    }
-    private func remove(_ memory: NativeJSON) {
-        guard let id = memory["id"].string, let write = try? PhoneMemoryWrite.remove(owner: owner, memoryId: id) else { return }
-        deleteWrite = write
-        Task { await settle(write) }
-    }
-    private func retryDelete() { if let deleteWrite { Task { await settle(deleteWrite) } } }
-    private func settle(_ write: NativePendingWrite) async {
-        let outcome = await model.writeMemory(write)
-        if outcome == .done { deleteState = nil; deleteWrite = nil; reload() } else { deleteState = outcome }
-    }
-}
-
-struct MemoryDraft: Identifiable {
+struct MemoryDraft: Identifiable, Hashable {
     let id = UUID()
     let memory: NativeJSON?
     var text: String
+    static func == (a: MemoryDraft, b: MemoryDraft) -> Bool { a.id == b.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 /** A write's state: refused, changed meanwhile, or unknown with a retry of the same request. */
@@ -508,7 +216,7 @@ struct WriteNotice: View {
     }
 }
 
-private struct MemoryEditor: View {
+struct MemoryEditor: View {
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
     let owner: String
@@ -521,27 +229,27 @@ private struct MemoryEditor: View {
     private var text: String { draft.text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var unchanged: Bool { draft.memory.map { text == $0["content"].string } ?? false }
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
+        // Pushed inside the profile sheet's own navigation, never a second sheet over it.
+        VStack(alignment: .leading, spacing: 12) {
                 LocalTextEditor(text: $draft.text, placeholder: draft.memory == nil ? "新记忆" : "修改记忆", maximumLines: 10)
                     .padding(14).frame(minHeight: 140, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
                     .disabled(write != nil)
                 if draft.text.count > PhoneMemoryWrite.maximum { Text("最多 \(PhoneMemoryWrite.maximum) 字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
                 if let state { WriteNotice(state: state, retry: { save() }, reload: { saved(); dismiss() }) }
+                // In the content rather than the bar: a pushed page's bar items do not follow its state inside a sheet.
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("取消") { dismiss() }.buttonStyle(.bordered).tint(PhoneTheme.ink).disabled(saving)
+                    Button("保存") { save() }.buttonStyle(.borderedProminent).tint(PhoneTheme.accent)
+                        .disabled(saving || text.isEmpty || unchanged || draft.text.count > PhoneMemoryWrite.maximum || !model.connected)
+                }.buttonBorderShape(.capsule)
                 Spacer(minLength: 0)
             }
             .padding(16)
             .navigationTitle(draft.memory == nil ? "新记忆" : "修改记忆").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(PhoneTheme.accent)
-                        .disabled(saving || text.isEmpty || unchanged || draft.text.count > PhoneMemoryWrite.maximum || !model.connected)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
+            .navigationBarBackButtonHidden(true)
+            .background(PhoneTheme.canvas)
         .interactiveDismissDisabled(saving || state == .unknown)
         // An unconfirmed write stays with the model and is offered again on the page; the text goes with the window.
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { dismiss() } }
@@ -553,7 +261,7 @@ private struct MemoryEditor: View {
         guard let write else { return }
         saving = true
         Task {
-            let outcome = await model.writeMemory(write)
+            let outcome = await model.writeAgent(write)
             saving = false
             if outcome == .done { saved(); dismiss() }
             else {
@@ -561,26 +269,6 @@ private struct MemoryEditor: View {
                 // A refusal or a change elsewhere ends this request; the text stays to try again as a new one.
                 if outcome != .unknown { self.write = nil }
             }
-        }
-    }
-}
-
-/** 定时: this Agent's schedules and their runs, read-only here. */
-private struct ScheduleSection: View {
-    @EnvironmentObject private var model: PhoneModel
-    let id: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let items = PhoneAgents.automations(model.snapshot, id: id, windowOpen: model.verifiedUntil != nil) {
-                if items.isEmpty { Text("没有定时任务").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 24) }
-                ForEach(items, id: \.id) { item in
-                    NavigationLink { AutomationRuns(id: item.id, name: item["name"].string ?? "定时任务") } label: { ScheduleRow(item: item) }.buttonStyle(.plain)
-                    Divider().overlay(PhoneTheme.line)
-                }
-            } else if !model.connected {
-                Text("Mac 不在线，连上后可以查看").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 32)
-            } else { ConfirmingAgents() }
-            NotYet(text: "新建与修改定时任务")
         }
     }
 }
@@ -598,7 +286,7 @@ struct NotYet: View {
     }
 }
 
-private struct ScheduleRow: View {
+struct ScheduleRow: View {
     let item: NativeJSON
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -617,10 +305,12 @@ private struct ScheduleRow: View {
     }
 }
 
-private struct AutomationRuns: View {
+struct AutomationRuns: View {
     @EnvironmentObject private var model: PhoneModel
     let id: String
     let name: String
+    /** A run's session is a topic of the Agent: it opens in the conversation. */
+    let openTopic: (String) -> Void
     @State private var read = PhoneAgentRead.loading
     @State private var reading = UUID()
     var body: some View {
@@ -631,7 +321,7 @@ private struct AutomationRuns: View {
                     if value["runs"].array.isEmpty { Text("还没有运行").foregroundStyle(PhoneTheme.muted) }
                     ForEach(Array(value["runs"].array.prefix(50).enumerated()), id: \.offset) { _, run in
                         let session = run["sessionId"].string.flatMap { id in model.snapshot["tasks"].array.contains { $0["id"].string == id } ? id : nil }
-                        Button { if let session { Task { await model.openFromAgent(session) } } } label: {
+                        Button { if let session { openTopic(session) } } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(PhoneTime.parse(run["at"]).map { PhoneTime.message($0) } ?? "").font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
@@ -654,7 +344,7 @@ private struct AutomationRuns: View {
 }
 
 /** 设置: what the Agent is, read-only here. */
-private struct AgentSettingsSection: View {
+struct AgentSettingsSection: View {
     @EnvironmentObject private var model: PhoneModel
     let detail: NativeJSON
     let general: Bool

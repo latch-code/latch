@@ -29,12 +29,13 @@ const SCENES = [
   'agents',
   'agents-faces',
   'agents-locked',
-  'agent-delegate',
+  'agent-chat',
+  'agent-new',
   'agent-waiting',
   'agent-unavailable',
+  'agent-profile',
   'agent-memory',
   'agent-schedules',
-  'agent-settings',
   'general',
   'apps',
   'app-page',
@@ -72,6 +73,13 @@ const DEVICES = [
 ]
 
 /**
+ * `LATCH_IOS_SCREENS_DEVICE=<udid>`: run on that existing simulator alone, which the test boots when it is not running
+ * and never creates, shuts down, erases or deletes; its light or dark appearance is put back at the end.
+ */
+const DEVICE = process.env.LATCH_IOS_SCREENS_DEVICE
+type Listed = { devices: Record<string, Array<{ name: string; udid: string; state?: string; deviceTypeIdentifier?: string }>> }
+
+/**
  * Opt-in (`LATCH_IOS_SCREENS=1`, macOS with an iOS Simulator runtime): builds the separate LatchScreens target, whose
  * canned scenes never enter the Latch product (`ios-app.e2e.ts` checks the product), then screenshots each scene light
  * and dark on simulators this test creates and deletes. No Host, key or secret is involved. Screenshots go to
@@ -95,11 +103,11 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         return DEVICES.every(device => device.types.some(name => supported.has(typeId(name))))
       })
       .toSorted((a, b) => newer(a.version ?? '', b.version ?? ''))[0]
-    if (!runtime) {
+    if (!runtime && !DEVICE) {
       context.skip('No installed iOS Simulator runtime supports a narrow iPhone, a wide iPhone and an iPad from the lists')
       return
     }
-    const supported = new Set((runtime.supportedDeviceTypes ?? []).map(type => type.identifier))
+    const supported = new Set((runtime?.supportedDeviceTypes ?? []).map(type => type.identifier))
     const prefixes = (process.env.LATCH_IOS_SCENES ?? '').split(',').filter(Boolean)
     const chosen = prefixes.length ? SCENES.filter(scene => prefixes.some(prefix => scene.startsWith(prefix))) : SCENES
     const types = JSON.parse((await simctl('list', 'devicetypes', '-j')).stdout) as { devicetypes: Array<{ identifier: string }> }
@@ -144,15 +152,34 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         ),
       )
       expect(product.includes(Buffer.from('LatchScreens fixture state'))).toBe(true)
-      for (const device of DEVICES) {
-        const type = device.types.map(typeId).find(id => known.has(id) && supported.has(id))
-        if (!type) continue
-        const udid = (await simctl('create', `latch-screens-${device.name}-${Date.now()}`, type, runtime.identifier)).stdout.trim()
-        created.push(udid)
-        await simctlSlow('boot', udid)
+      const given = DEVICE
+        ? Object.values((JSON.parse((await simctl('list', 'devices', '-j')).stdout) as Listed).devices)
+            .flat()
+            .find(item => item.udid === DEVICE)
+        : undefined
+      if (DEVICE && !given) throw new Error('LATCH_IOS_SCREENS_DEVICE names no simulator on this Mac')
+      const targets = given ? [{ name: given.deviceTypeIdentifier?.includes('iPad') ? 'ipad' : 'iphone', types: [] as string[] }] : DEVICES
+      let used = 0
+      for (const device of targets) {
+        let udid: string
+        if (given) {
+          udid = given.udid
+          if (given.state !== 'Booted') await simctlSlow('boot', udid)
+        } else {
+          const type = device.types.map(typeId).find(id => known.has(id) && supported.has(id))
+          if (!type || !runtime) continue
+          udid = (await simctl('create', `latch-screens-${device.name}-${Date.now()}`, type, runtime.identifier)).stdout.trim()
+          created.push(udid)
+          await simctlSlow('boot', udid)
+        }
+        used += 1
         await simctlSlow('bootstatus', udid, '-b')
         await simctl('install', udid, application)
         await simctl('privacy', udid, 'grant', 'camera', 'dev.latch.ios.screens').catch(() => {})
+        const before = given ? (await simctl('ui', udid, 'appearance')).stdout.trim() : undefined
+        // A fresh install's first launch is slow, so the first scene would be shot blank.
+        await simctl('launch', '--terminate-running-process', udid, 'dev.latch.ios.screens', '-LatchScene', chosen[0] ?? 'code')
+        await pause(6000)
         for (const theme of ['light', 'dark']) {
           await simctl('ui', udid, 'appearance', theme)
           for (const scene of chosen) {
@@ -162,8 +189,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
           }
         }
         await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
+        if (before === 'light' || before === 'dark') await simctl('ui', udid, 'appearance', before)
       }
-      expect(created.length).toBeGreaterThan(0)
+      expect(used).toBeGreaterThan(0)
     } finally {
       // Only the simulators this test made are shut down and deleted.
       for (const udid of created) {

@@ -10,7 +10,10 @@ import UIKit
  */
 @MainActor enum ScreensStage {
     static let marker = "LatchScreens fixture state"
-    static var section: AgentSection?
+    /** The Agent scenes: the profile sheet open (at 动态 or 记忆) or a new topic shown. */
+    static var profile = false
+    static var profilePart: AgentProfileSheet.Part?
+    static var newTopic = false
     static var scanning = false
     /** The list's search field, for the 内容中包含 scene. */
     static var query = ""
@@ -73,14 +76,24 @@ import UIKit
                 object["customAgents"] = .array(object["customAgents"]!.array + [json(releaseAgent)])
                 object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask), json(failedTask)])
             }
-        case "agent-waiting": model.tab = .agents; model.agentPath = [daily]; section = .delegate
+        case "agent-chat", "agent-profile", "agent-memory":
+            // 代码审阅's current topic, with a 「记住…」 proposal after its turn and one from outside content.
+            model.tab = .agents; model.agentPath = [review]
+            model.snapshot = patched(model.snapshot) { object in
+                object["tasks"] = .array(object["tasks"]!.array.map { task in task["id"].string == "ses_review" ? patched(task) { $0["updatedAt"] = .string(stamp.string(from: Date().addingTimeInterval(-10))) } : task })
+            }
+            model.sessionId = "ses_review"; model.detail = conversation()
+            var store = PhoneProposalStore(); let token = store.begin(review); store.finish(review, token: token, list: json(proposalsText), windowOpen: true); model.proposals = store
+            profile = name != "agent-chat"; profilePart = name == "agent-memory" ? .memory : .activity
+        case "agent-new": model.tab = .agents; model.agentPath = [review]; newTopic = true
+        case "agent-waiting":
+            model.tab = .agents; model.agentPath = [daily]
             model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask)]) }
-        case "agent-delegate": model.tab = .agents; model.agentPath = [review]; section = .delegate
-        case "agent-memory": model.tab = .agents; model.agentPath = [review]; section = .memory
-        case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; section = .schedules
-        case "agent-settings": model.tab = .agents; model.agentPath = [review]; section = .settings
-        case "agent-unavailable": model.tab = .agents; model.agentPath = [docs]; section = .delegate
-        case "general": model.tab = .agents; model.agentPath = [PhoneAgents.generalId]; section = .memory
+            model.sessionId = "ses_brief"
+            model.detail = json(approvalText.replacingOccurrences(of: "\"id\":\"ses_wait\",\"title\":\"升级 swift-nio 到 2.104\"", with: "\"id\":\"ses_brief\",\"title\":\"汇总本周依赖更新\""))
+        case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
+        case "agent-unavailable": model.tab = .agents; model.agentPath = [docs]
+        case "general": model.tab = .agents; model.agentPath = [PhoneAgents.generalId]
         case "apps": model.tab = .apps
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
@@ -92,6 +105,7 @@ import UIKit
     }
     static func read(_ path: String) -> PhoneAgentRead {
         if locked { return .locked }
+        if path.hasSuffix("/proposals") { return .ready(path.contains(review) ? json(proposalsText) : json(#"{"proposals":[]}"#)) }
         let id = String(path.split(separator: "/").last ?? "")
         if id == PhoneAgents.generalId { return .ready(json(general)) }
         if id == review { return .ready(json(reviewDetail)) }
@@ -213,7 +227,11 @@ import UIKit
       "instructions":"先读改动涉及的源码与测试，再下结论。\\n只报会出错的地方，每条写清复现方法。","skills":["review-kit:review"],"createdAt":"{{-864000}}","updatedAt":"{{-3600}}"},
      "memories":[
       {"id":"mem_1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d","content":"这个仓库用 pnpm，不要建议 npm 命令。","revision":1,"createdAt":"{{-600000}}","updatedAt":"{{-600000}}"},
-      {"id":"mem_2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e","content":"Swift 代码按 native/ios/AGENTS.md 的规则审：写入超时保持结果未知。","revision":2,"createdAt":"{{-300000}}","updatedAt":"{{-7200}}"}],
+      {"id":"mem_2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e","content":"Swift 代码按 native/ios/AGENTS.md 的规则审：写入超时保持结果未知。","revision":2,"createdAt":"{{-300000}}","updatedAt":"{{-7200}}"},
+      {"id":"mem_4d5e6f7a-8b9c-4d0e-8f1a-3b4c5d6e7f80","content":"报告先写结论，再写复现步骤。","revision":1,"createdAt":"{{-5000}}","updatedAt":"{{-5000}}",
+       "source":{"proposalId":"prp_5e6f7a8b-9c0d-4e1f-8a2b-4c5d6e7f8091","origin":"user","external":false,"sessionId":"ses_review","messageId":"m1","proposedAt":"{{-5200}}"}}],
+     "memoryChanges":[{"memoryId":"mem_2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e","operation":"update","at":"{{-7200}}","previous":{"id":"mem_2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e","content":"Swift 代码按规则审。","revision":1,"createdAt":"{{-300000}}","updatedAt":"{{-300000}}"}},
+      {"memoryId":"mem_6f7a8b9c-0d1e-4f2a-8b3c-5d6e7f809102","operation":"delete","at":"{{-3600}}","previous":{"id":"mem_6f7a8b9c-0d1e-4f2a-8b3c-5d6e7f809102","content":"不审 docs/ 下的文件。","revision":1,"createdAt":"{{-400000}}","updatedAt":"{{-400000}}"}}],
      "sessions":[]}
     """ }
     private static var dailyDetail: String { """
@@ -224,6 +242,11 @@ import UIKit
     private static let general = """
     {"general":{"id":"general","instructions":"回答用中文，先给结论。","revision":2},
      "memories":[{"id":"mem_3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f","content":"我在东京时区工作。","revision":1,"createdAt":"{{-900000}}","updatedAt":"{{-900000}}"}]}
+    """
+    private static let proposalsText = """
+    {"proposals":[
+     {"id":"prp_7a8b9c0d-1e2f-4a3b-8c4d-6e7f80910213","content":"复核时先跑 swift build 再下结论。","origin":"user","external":false,"state":"pending","source":{"sessionId":"ses_review","messageId":"m1"},"createdAt":"{{-990}}","updatedAt":"{{-990}}"},
+     {"id":"prp_8b9c0d1e-2f3a-4b4c-8d5e-7f8091021324","content":"relay 的默认超时是 15 秒。","reason":"在 relay.json 的注释里读到的。","origin":"agent","external":true,"state":"pending","source":{"sessionId":"ses_review","messageId":"m1"},"createdAt":"{{-950}}","updatedAt":"{{-950}}"}]}
     """
     private static let runs = """
     {"automation":{"id":"auto_9a1c3d40-5f7e-4b0d-8e4f-3d4e5f607182","name":"每日依赖检查"},

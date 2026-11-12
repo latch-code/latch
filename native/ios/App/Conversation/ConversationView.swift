@@ -6,6 +6,8 @@ struct ConversationView: View {
     let id: String
     /** Set where the navigation has no back of its own. */
     var back: (() -> Void)? = nil
+    /** A topic of 我的 Agent: the Agent's frame takes the header, and its memory proposals follow their turns. */
+    var frame: AgentFrame? = nil
     @State private var preview: PreviewItem?
     @State private var previewTask: Task<Void, Never>?
     @State private var previewRequest: UUID?
@@ -48,7 +50,9 @@ struct ConversationView: View {
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
         if let back { ToolbarItem(placement: .topBarLeading) { Button("返回", systemImage: "chevron.left", action: back).labelStyle(.iconOnly) } }
-        if #available(iOS 26, *) {
+        if let frame {
+            AgentFrameItems(frame: frame, topic: hasContent ? model.detail["summary"] : summary, shown: id)
+        } else if #available(iOS 26, *) {
             ToolbarItem(placement: .topBarLeading) { titleMenu }.sharedBackgroundVisibility(.hidden)
         } else {
             ToolbarItem(placement: .topBarLeading) { titleMenu }
@@ -66,7 +70,7 @@ struct ConversationView: View {
     }
     private var title: some View {
         let line: (parts: [String], neverAsks: Bool) = hasContent ? PhoneConversation.subtitle(model.detail, engine: engine) : ([engine], false)
-        let delegated = PhoneAgents.delegated(model.snapshot, task: hasContent ? model.detail["summary"] : summary, windowOpen: model.verifiedUntil != nil)
+        let delegated = PhoneAgents.ownerName(model.snapshot, task: hasContent ? model.detail["summary"] : summary, windowOpen: model.verifiedUntil != nil)
         let current = hasContent ? model.detail["summary"] : summary
         let imported = PhoneHistory.mark(current, sourceLabel: current["imported"]["from"].string.flatMap { from in
             model.engineInfo(from) != .null ? model.engineName(from) : nil
@@ -112,6 +116,8 @@ struct ConversationView: View {
                 }
                 let returned = PhoneHandoffs.place(PhoneHandoffs.results(model.openHandoffs, sessionId: id), turns: turns)
                 ForEach(returned[""] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
+                let proposals = placedProposals(turns)
+                ForEach(proposals[""] ?? []) { ProposalRow(owner: frame?.owner ?? "", proposal: $0, effect: effect) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
@@ -121,6 +127,7 @@ struct ConversationView: View {
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: openFile).equatable()
                     ForEach(returned[turn.id] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
+                    ForEach(proposals[turn.id] ?? []) { ProposalRow(owner: frame?.owner ?? "", proposal: $0, effect: effect) }
                 }
                 if running { RunStatusLine().id("status") }
                 else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
@@ -187,11 +194,18 @@ struct ConversationView: View {
                 .padding(.horizontal, 12).padding(.bottom, 8)
             } else {
                 // A stop needs no window, so it stays in reach while the content is closed.
-                PromptComposer(draftId: id, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
+                PromptComposer(draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
                     : hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
+    /** This topic's proposals and the 「记住…」 the Host did not keep, each after its turn; none outside 我的 Agent. */
+    private func placedProposals(_ turns: [PhoneTurn]) -> [String: [PhoneProposal]] {
+        guard let frame, hasContent else { return [:] }
+        return PhoneProposals.place((model.proposals[frame.owner] ?? []) + PhoneProposals.refusals(model.detail), sessionId: id,
+            messages: model.detail["messages"].array, turnIds: turns.map(\.id))
+    }
+    private var effect: String { PhoneProposals.effectWords(model.engineInfo(summary["harnessId"].string)) }
     private var sessionFiles: [PhoneChangedFile] {
         guard hasContent else { return [] }
         var seen = Set<String>(), result: [PhoneChangedFile] = []
