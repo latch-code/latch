@@ -1,7 +1,7 @@
 /*
  * 我的 Agent: laid out as 设置 is (settings.css). On wide windows its list stands where the sidebar stands, under the
  * same top rows; the work panel holds the list page or an Agent's page in one column. Rows are the raised list of the
- * design system: a 40px glyph tile, the name, one line of duty and one line of how and where it runs.
+ * design system: a 40px face, the name, one line of duty and one line of how and where it runs.
  */
 
 /* Code and 我的 Agent under 新会话 and 搜索: the place you are in is in ink; on 我的 Agent's own list it is selected. */
@@ -66,8 +66,9 @@
   gap: 1px;
 }
 .agents-nav-row {
-  display: grid;
-  gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
   width: 100%;
   min-width: 0;
   padding: var(--sp-6) 10px;
@@ -77,6 +78,11 @@
   color: var(--ink-2);
   text-align: left;
   transition: background-color var(--m-micro) var(--e-micro);
+}
+.agents-nav-text {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 .agents-nav-row:hover {
   background: var(--hover);

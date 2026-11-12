@@ -25,8 +25,11 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "access": value["snapshots"].array.map { [PhoneAgents.access($0).rawValue, PhoneAgents.access($0, windowOpen: false).rawValue] },
         "entries": PhoneAgents.entries(snapshot).map { entry -> [String: Any] in
             ["id": entry.id, "name": entry.name, "general": entry.general, "duty": entry.duty, "runs": entry.runs,
-             "place": entry.place ?? NSNull(), "available": entry.available, "reason": entry.unavailableReason ?? NSNull()]
+             "place": entry.place ?? NSNull(), "available": entry.available, "reason": entry.unavailableReason ?? NSNull(),
+             "avatar": [entry.avatar.bracket, entry.avatar.eyes, entry.avatar.hue], "face": entry.face.rawValue]
         },
+        "slots": faceSlots(),
+        "faces": value["faceCases"].array.map { PhoneAgents.face($0["snapshot"], id: $0["id"].string ?? "", available: $0["available"].bool).rawValue },
         "harnesses": PhoneAgents.harnesses(catalog).map(\.id),
         "choices": choices.map { ["harness": $0.harnessId ?? "", "workspace": $0.workspaceId ?? "", "model": $0.model?.model ?? ""] },
         "blockers": zip(agents, choices).map { PhoneAgents.blocker(catalog, agent: $0, choice: $1, connected: true, canRun: true) ?? "" },
@@ -153,4 +156,19 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     } catch {
         await workspace.closeOpening(); await vault.lock(); throw error
     }
+}
+
+/** Ten looping faces asking every quarter second for a minute: the most moving at once, and how many got a turn. */
+func faceSlots() -> [String: Any] {
+    var slots = PhoneFaceSlots(), peak = 0, turns = Set<Int>()
+    for step in 0..<240 {
+        let now = Double(step) * 0.25
+        for face in 0..<10 where slots.take("face-\(face)", now: now, for: 6, resting: 4) { turns.insert(face) }
+        peak = max(peak, slots.held(now: now))
+    }
+    var released = PhoneFaceSlots()
+    _ = released.take("a", now: 0, for: 6); _ = released.take("b", now: 0, for: 6); _ = released.take("c", now: 0, for: 6)
+    let fourthWaits = !released.take("d", now: 1, for: 6)
+    released.release("a")
+    return ["peak": peak, "turns": turns.count, "fourthWaits": fourthWaits, "afterRelease": released.take("d", now: 1, for: 6)]
 }

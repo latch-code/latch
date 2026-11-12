@@ -330,6 +330,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
+| `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
 | `history-imports.json` | 接入已有会话的回执：请求 ID、来源 Harness 与它的会话 ID、方式与 Latch 会话 ID；目录与标题只在完成之前保存（见 [HARNESSES.md](HARNESSES.md#接入已有会话)） |
 | `review-notes/<会话 ID 的 SHA-256>.json` | 会话的行级反馈、未定的发送与回执（0600，目录 0700，见 [CHANGES.md](CHANGES.md#行级反馈)） |

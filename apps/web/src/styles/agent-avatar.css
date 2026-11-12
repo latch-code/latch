@@ -1,0 +1,222 @@
+/*
+ * 我的 Agent's faces (agents/AgentAvatar.tsx): brackets and eyes in the Agent's hue on a plate of 13% of it over the
+ * surface beneath. Motion is scheduled by script (agents/avatarMotion.ts) as short animations of transform and opacity;
+ * here are only the gaze each state holds and the two props that loop, which run while the scheduler marks the face
+ * as moving (in view, page shown, motion allowed). Still faces keep their props, at rest.
+ */
+
+.agent-avatar {
+  --agent-hue: var(--agent-ink);
+  /* Where this face's loops start; the scheduler sets its own per face, so cursors and z's never move in step. */
+  --avatar-phase: 0s;
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+.agent-avatar[data-hue='neutral'] {
+  --agent-hue: var(--agent-neutral);
+}
+.agent-avatar[data-hue='slate'] {
+  --agent-hue: var(--agent-slate);
+}
+.agent-avatar[data-hue='pine'] {
+  --agent-hue: var(--agent-pine);
+}
+.agent-avatar[data-hue='plum'] {
+  --agent-hue: var(--agent-plum);
+}
+.agent-avatar[data-hue='wisteria'] {
+  --agent-hue: var(--agent-wisteria);
+}
+.agent-avatar[data-hue='cocoa'] {
+  --agent-hue: var(--agent-cocoa);
+}
+.agent-avatar[data-hue='sand'] {
+  --agent-hue: var(--agent-sand);
+}
+.agent-avatar[data-hue='moss'] {
+  --agent-hue: var(--agent-moss);
+}
+.agent-avatar[data-hue='mist'] {
+  --agent-hue: var(--agent-mist);
+}
+
+.agent-avatar-plate {
+  fill: color-mix(in srgb, var(--agent-hue) 13%, var(--surface));
+}
+.agent-avatar-line {
+  fill: none;
+  stroke: var(--agent-hue);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.agent-avatar-fill {
+  fill: var(--agent-hue);
+}
+.agent-avatar-eye,
+.agent-avatar-prop {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* The gaze a state holds: at the cursor while running, up at you while it waits, down after a failure. */
+.agent-avatar-gaze {
+  transition: transform calc(var(--m-panel) * 2.5) var(--e-enter);
+}
+.agent-avatar[data-tier='full'][data-state='running'] .agent-avatar-gaze {
+  transform: translate(1.2px, 0.8px);
+}
+.agent-avatar[data-tier='full'][data-state='waiting'] .agent-avatar-gaze {
+  transform: translateY(-0.8px);
+}
+.agent-avatar[data-tier='full'][data-state='failed'] .agent-avatar-gaze {
+  transform: translateY(0.9px);
+}
+
+.agent-avatar-prop {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.agent-avatar-prop[data-tone='waiting'] {
+  stroke: var(--amber-icon);
+}
+.agent-avatar-prop[data-tone='waiting'] circle {
+  fill: var(--amber-icon);
+  stroke: none;
+}
+.agent-avatar-prop[data-tone='failed'] {
+  stroke: var(--red);
+}
+.agent-avatar-prop[data-tone='failed'] circle {
+  fill: var(--red);
+  stroke: none;
+}
+/* Moving, the ? comes and goes by script; still, it stays. */
+.agent-avatar[data-moving] .agent-avatar-prop[data-part='ask'] {
+  opacity: 0;
+}
+
+/* The `_` blinks and the z drifts up while the face holds one of the three places (data-looping); otherwise, and when
+ * still, the cursor stays lit and the z stays put. */
+@media (prefers-reduced-motion: no-preference) {
+  .agent-avatar[data-moving][data-looping] .agent-avatar-cursor {
+    animation: agent-avatar-cursor 1s steps(1) infinite;
+    animation-delay: calc(var(--avatar-phase) * -1);
+  }
+  .agent-avatar[data-moving][data-looping] .agent-avatar-sleep {
+    animation: agent-avatar-sleep 3.2s ease-in-out infinite;
+    animation-delay: calc(var(--avatar-phase) * -1);
+  }
+}
+@keyframes agent-avatar-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes agent-avatar-sleep {
+  0% {
+    opacity: 0;
+    transform: translate(0, 2px);
+  }
+  25% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.8;
+    transform: translate(2px, -4px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(3px, -6px);
+  }
+}
+:root[data-motion='still'] .agent-avatar *,
+.agent-avatar:not([data-moving]) * {
+  transition: none;
+}
+
+/* The 我的 Agent entry: the face in line, in the colour of the icons beside it. */
+.agents-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.agents-mark circle {
+  fill: currentColor;
+}
+
+/* The Agent page's face opens the picker. */
+.agent-head {
+  flex-wrap: wrap;
+}
+.agent-head-avatar {
+  display: block;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-16);
+  background: transparent;
+  cursor: pointer;
+}
+.agent-head-avatar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.avatar-picker-notice {
+  flex: 1 0 100%;
+  order: 1;
+}
+
+/* The picker: the moving face, then 括号, 眼睛 and 颜色, each a row of faces; the chosen one has an ink ring. */
+.avatar-picker {
+  --surface: var(--raised);
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+}
+.avatar-picker-preview {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--sp-4);
+}
+.avatar-picker-row {
+  display: grid;
+  gap: var(--sp-6);
+}
+.avatar-picker-label {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.avatar-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+.avatar-picker-option {
+  display: block;
+  padding: var(--sp-2);
+  border: 0;
+  border-radius: var(--r-12);
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow var(--m-micro) var(--e-micro);
+}
+.avatar-picker-option:hover {
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+.avatar-picker-option[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.avatar-picker-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.avatar-picker-option[aria-disabled='true'] {
+  cursor: default;
+}
+.avatar-picker-option[aria-disabled='true']:not([aria-checked='true']) {
+  opacity: 0.45;
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, Plus, Search, SquarePen, WifiOff } from 'lucide-react'
-import { GENERAL_AGENT_ID, type CustomAgentList } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type CustomAgentList, type CustomAgentSummary } from '@latch/protocol'
 import { Button, Count, Hint, ICON_STROKE, IconButton, InlineNotice, Skeleton, EmptyState } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
@@ -11,8 +11,9 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import { AgentForm } from './AgentForm.tsx'
 import { AgentPage } from './AgentPage.tsx'
-import { agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
-import { AgentTile, Availability, EntryRows, LockedAgents } from './parts.tsx'
+import { AgentAvatar } from './AgentAvatar.tsx'
+import { agentActivity, agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
+import { ActivityWord, Availability, EntryRows, LockedAgents } from './parts.tsx'
 import { AppsGroup } from '../plugin-pages/AppsPage.tsx'
 import { useAgentDetail, useAgentList, type AgentRead } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
@@ -27,6 +28,21 @@ function entryLine(shell: ShellState, entry: AgentEntry): string {
 function EntryMark({ shell, entry }: { shell: ShellState; entry: AgentEntry }) {
   const harness = entry.kind === 'custom' ? shell.catalog?.harnesses.find(item => item.id === entry.summary.harnessId) : undefined
   return harness ? <HarnessTile harness={harness} size={14} /> : null
+}
+
+/** The face of an entry and what it shows now; 通用 rests in grey and has no state of its own. */
+function EntryAvatar({ shell, entry, size }: { shell: ShellState; entry: AgentEntry; size: number }) {
+  if (entry.kind === 'general') return <AgentAvatar avatar="general" size={size} />
+  return <AgentAvatar avatar={entry.summary.avatar} size={size} state={agentActivity(shell.snapshot, entry.summary)} />
+}
+
+/** The word beside a face: 等你处理 or 运行中 first, then why it cannot start, then a failure. */
+function EntryState({ shell, summary, offline }: { shell: ShellState; summary: CustomAgentSummary; offline: boolean }) {
+  const state = agentActivity(shell.snapshot, summary)
+  if (!offline && (state === 'waiting' || state === 'running')) return <ActivityWord state={state} />
+  if (offline || !summary.available)
+    return <Availability available={summary.available} reason={summary.unavailableReason} offline={offline} />
+  return <ActivityWord state={state} />
 }
 
 /** The list's rows while it loads: the size of what they stand for. */
@@ -47,7 +63,7 @@ function ListSkeleton() {
 }
 
 /**
- * The work panel's list (a phone's root page): each Agent with its glyph, name, duty, how it runs, where it works and
+ * The work panel's list (a phone's root page): each Agent with its face, name, duty, how it runs, where it works and
  * whether it can start now; 通用 first, marked as built in. One primary: 委托 the selected Agent, or 新建 Agent when there
  * is none of your own yet.
  */
@@ -121,7 +137,7 @@ function AgentList({
                   onClick={() => {
                     onOpen(entry.id)
                   }}>
-                  <AgentTile glyph={entry.kind === 'custom' ? entry.summary.glyph : undefined} size={40} />
+                  <EntryAvatar shell={shell} entry={entry} size={40} />
                   <span className="agents-list-text">
                     <span className="agents-list-name">
                       {entry.name}
@@ -137,9 +153,7 @@ function AgentList({
                       </span>
                     </span>
                   </span>
-                  {entry.kind === 'custom' && (offline || !entry.summary.available) && (
-                    <Availability available={entry.summary.available} reason={entry.summary.unavailableReason} offline={offline} />
-                  )}
+                  {entry.kind === 'custom' && <EntryState shell={shell} summary={entry.summary} offline={offline} />}
                 </button>
               </li>
             )
@@ -220,10 +234,13 @@ function AgentsNav({
                 onClick={() => {
                   onOpen(entry.id)
                 }}>
-                <span className="agents-nav-name">{entry.name}</span>
-                <span className="agents-nav-meta">
-                  <EntryMark shell={shell} entry={entry} />
-                  <span>{entry.kind === 'general' ? '内置' : runsWith(shell.catalog ?? undefined, entry.summary)}</span>
+                <EntryAvatar shell={shell} entry={entry} size={24} />
+                <span className="agents-nav-text">
+                  <span className="agents-nav-name">{entry.name}</span>
+                  <span className="agents-nav-meta">
+                    <EntryMark shell={shell} entry={entry} />
+                    <span>{entry.kind === 'general' ? '内置' : runsWith(shell.catalog ?? undefined, entry.summary)}</span>
+                  </span>
                 </span>
               </button>
             </li>

@@ -156,6 +156,18 @@
     --syn-function: #0f6e78;
     --syn-constant: #ad4f19;
     --syn-punctuation: var(--ink-2);
+    /* 我的 Agent's avatars: one muted hue per face, for its lines; the plate mixes 13% of it into the surface.
+     * neutral is 通用's grey. No red, orange, yellow, bright green or bright blue: those already mean something. */
+    --agent-neutral: #6b6b74;
+    --agent-ink: #3d4049;
+    --agent-slate: #5f7389;
+    --agent-pine: #4e7a68;
+    --agent-plum: #8a5a7a;
+    --agent-wisteria: #7a72b8;
+    --agent-cocoa: #8a6a55;
+    --agent-sand: #a88c5e;
+    --agent-moss: #7e8e5e;
+    --agent-mist: #7f96ae;
 
     /* Type: each role has a size and a line height, and a paragraph line height for text that can wrap. Weights are
      * 400, 500 and 600; 600 only for headings, titles and the check code. Letter spacing is 0 but for the check code.
@@ -219,8 +231,9 @@
     --r-16: 16px;
     --r-full: 999px;
 
-    /* Motion: short, calm and physical; it confirms a cause and its effect, and never idles, with one exception: the
-     * quiet field of points behind the work panel (--particle*), still under reduced motion. micro: hover and press
+    /* Motion: short, calm and physical; it confirms a cause and its effect, and never idles, with two exceptions: the
+     * quiet field of points behind the work panel (--particle*) and the faces of 我的 Agent (--agent-*), which blink and
+     * glance now and then; both still under reduced motion. micro: hover and press
      * fills, icon swaps and cross-fades of status words and tab content. enter: menus, popovers and tooltips (scale
      * .98 → 1 and a fade), rows and messages arriving (a fade and a 4px rise). panel: side panels, collapsing columns
      * and disclosures (grid rows). sheet: dialogs and phone sheets (scale .985 → 1 and a fade). push: phone pages
@@ -394,6 +407,16 @@
       --syn-number: #f2a072;
       --syn-function: #79d0d6;
       --syn-constant: #f2a072;
+      --agent-neutral: #9a9aa4;
+      --agent-ink: #b4b8c2;
+      --agent-slate: #8599b0;
+      --agent-pine: #6fa18b;
+      --agent-plum: #b582a5;
+      --agent-wisteria: #9d96d9;
+      --agent-cocoa: #b08e77;
+      --agent-sand: #c6aa7a;
+      --agent-moss: #a0b07e;
+      --agent-mist: #a0b6cd;
     }
   }
 
@@ -476,6 +499,16 @@
     --syn-number: #f2a072;
     --syn-function: #79d0d6;
     --syn-constant: #f2a072;
+    --agent-neutral: #9a9aa4;
+    --agent-ink: #b4b8c2;
+    --agent-slate: #8599b0;
+    --agent-pine: #6fa18b;
+    --agent-plum: #b582a5;
+    --agent-wisteria: #9d96d9;
+    --agent-cocoa: #b08e77;
+    --agent-sand: #c6aa7a;
+    --agent-moss: #a0b07e;
+    --agent-mist: #a0b6cd;
   }
 
   /*
@@ -568,6 +601,16 @@
     --syn-function: #0f6e78 !important;
     --syn-constant: #ad4f19 !important;
     --syn-punctuation: var(--ink-2) !important;
+    --agent-neutral: #6b6b74 !important;
+    --agent-ink: #3d4049 !important;
+    --agent-slate: #5f7389 !important;
+    --agent-pine: #4e7a68 !important;
+    --agent-plum: #8a5a7a !important;
+    --agent-wisteria: #7a72b8 !important;
+    --agent-cocoa: #8a6a55 !important;
+    --agent-sand: #a88c5e !important;
+    --agent-moss: #7e8e5e !important;
+    --agent-mist: #7f96ae !important;
     --fs-meta: 11px !important;
     --lh-meta: 14px !important;
     --fs-caption: 12px !important;
@@ -722,6 +765,16 @@
       --syn-number: #f2a072 !important;
       --syn-function: #79d0d6 !important;
       --syn-constant: #f2a072 !important;
+      --agent-neutral: #9a9aa4 !important;
+      --agent-ink: #b4b8c2 !important;
+      --agent-slate: #8599b0 !important;
+      --agent-pine: #6fa18b !important;
+      --agent-plum: #b582a5 !important;
+      --agent-wisteria: #9d96d9 !important;
+      --agent-cocoa: #b08e77 !important;
+      --agent-sand: #c6aa7a !important;
+      --agent-moss: #a0b07e !important;
+      --agent-mist: #a0b6cd !important;
     }
   }
 
@@ -803,5 +856,15 @@
     --syn-number: #f2a072 !important;
     --syn-function: #79d0d6 !important;
     --syn-constant: #f2a072 !important;
+    --agent-neutral: #9a9aa4 !important;
+    --agent-ink: #b4b8c2 !important;
+    --agent-slate: #8599b0 !important;
+    --agent-pine: #6fa18b !important;
+    --agent-plum: #b582a5 !important;
+    --agent-wisteria: #9d96d9 !important;
+    --agent-cocoa: #b08e77 !important;
+    --agent-sand: #c6aa7a !important;
+    --agent-moss: #a0b07e !important;
+    --agent-mist: #a0b6cd !important;
   }
 }

@@ -1,21 +1,20 @@
 import type { ModelRef, PluginInfo, TaskMode, TaskSummary } from './types.ts'
 
-/** Assigned by the Host when an agent is created; there is no picker. */
-export const AGENT_GLYPHS = [
-  'glasses',
-  'library',
-  'newspaper',
-  'package',
-  'pen-line',
-  'flask-conical',
-  'compass',
-  'hammer',
-  'lightbulb',
-  'list-checks',
-  'palette',
-  'telescope',
-] as const
-export type AgentGlyph = (typeof AGENT_GLYPHS)[number]
+/** The bracket face: a pair of brackets around two eyes on a soft plate. */
+export const AGENT_BRACKETS = ['round', 'curly', 'square', 'angle'] as const
+export type AgentBracket = (typeof AGENT_BRACKETS)[number]
+export const AGENT_EYES = ['dot', 'arc', 'oval', 'sleepy'] as const
+export type AgentEyes = (typeof AGENT_EYES)[number]
+/** Muted hues only: red, orange, yellow, bright green and bright blue already say something in the interface. */
+export const AGENT_HUES = ['ink', 'slate', 'pine', 'plum', 'wisteria', 'cocoa', 'sand', 'moss', 'mist'] as const
+export type AgentHue = (typeof AGENT_HUES)[number]
+/** The Host assigns one when an agent is created; the user changes it. `kind` leaves room for another kind later. */
+export interface AgentAvatar {
+  kind: 'face'
+  bracket: AgentBracket
+  eyes: AgentEyes
+  hue: AgentHue
+}
 
 export const GENERAL_AGENT_ID = 'general'
 
@@ -45,7 +44,7 @@ export interface CustomAgentConfig {
 }
 export interface CustomAgent extends CustomAgentConfig {
   id: string
-  glyph: AgentGlyph
+  avatar: AgentAvatar
   revision: number
   createdAt: string
   updatedAt: string
@@ -65,6 +64,7 @@ export type CustomAgentCreate = CustomAgentConfig & { requestId: string }
 export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'engineOptions'>> & {
   requestId: string
   baseRevision: number
+  avatar?: AgentAvatar
   model?: ModelRef | null
   engineOptions?: Record<string, string> | null
   tools?: string[] | null

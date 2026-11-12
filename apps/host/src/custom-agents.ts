@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
-  AGENT_GLYPHS,
+  AGENT_BRACKETS,
+  AGENT_EYES,
+  AGENT_HUES,
   GENERAL_AGENT_ID,
+  type AgentAvatar,
   type AgentBrief,
   type AgentExecutionContext,
-  type AgentGlyph,
   type AgentMemory,
   type AgentMemoryCreate,
   type AgentMemoryPatch,
@@ -62,6 +64,9 @@ const config = z.strictObject({
   tools: tools.optional(),
   defaultProjectId: projectId.optional(),
 })
+const avatar = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('face'), bracket: z.enum(AGENT_BRACKETS), eyes: z.enum(AGENT_EYES), hue: z.enum(AGENT_HUES) }),
+])
 const createSchema = config.extend({ requestId })
 const patchSchema = z.strictObject({
   name: name.optional(),
@@ -78,6 +83,7 @@ const patchSchema = z.strictObject({
   skills: skills.optional(),
   tools: tools.nullable().optional(),
   defaultProjectId: projectId.nullable().optional(),
+  avatar: avatar.optional(),
   requestId,
   baseRevision: revision,
 })
@@ -95,7 +101,7 @@ const memoryCreateSchema = z.strictObject({ requestId, content })
 const memoryPatchSchema = memoryCreateSchema.extend({ baseRevision: revision })
 const agentSchema = config.extend({
   id: agentId,
-  glyph: z.enum(AGENT_GLYPHS),
+  avatar,
   revision,
   createdAt: stamp,
   updatedAt: stamp,
@@ -114,7 +120,7 @@ export type AgentSessionSelection = z.infer<typeof selection>
 
 const stateSchema = z
   .strictObject({
-    version: z.literal(1),
+    version: z.literal(2),
     general: generalSchema,
     agents: z.array(agentSchema).max(MAX_AGENTS),
     memories: z.record(memoryOwner, z.array(memorySchema).max(MAX_MEMORIES)),
@@ -172,9 +178,9 @@ export class CustomAgents {
       options.dataDir,
       'custom.json',
       stateSchema,
-      { version: 1, general: { id: GENERAL_AGENT_ID, instructions: '', revision: 1 }, agents: [], memories: {}, starts: {}, receipts: {} },
+      { version: 2, general: { id: GENERAL_AGENT_ID, instructions: '', revision: 1 }, agents: [], memories: {}, starts: {}, receipts: {} },
       // Every snapshot and new session reads this, so a failed write must not wait for someone to retry that request.
-      { directory: 'agents', retryMs: 1000, ...(options.atomicFs ? { atomicFs: options.atomicFs } : {}) },
+      { directory: 'agents', retryMs: 1000, upgrade: upgradeState, ...(options.atomicFs ? { atomicFs: options.atomicFs } : {}) },
     )
     return new CustomAgents(options, journal)
   }
@@ -220,7 +226,7 @@ export class CustomAgents {
       const { requestId: _, ...definition } = parsed,
         at = this.at(),
         id = `agt_${randomUUID()}`
-      state.agents.push({ ...definition, id, glyph: glyphFor(state.agents), revision: 1, createdAt: at, updatedAt: at })
+      state.agents.push({ ...definition, id, avatar: avatarFor(state.agents), revision: 1, createdAt: at, updatedAt: at })
       return { target: id, customAgentId: id }
     }).then(result => ({ ...result, value: this.get(result.value) }))
   }
@@ -427,9 +433,63 @@ function assign<T extends object, K extends keyof T>(target: T, key: K, next: T[
   if (next === null) delete target[key]
   else if (next !== undefined) target[key] = next
 }
-function glyphFor(agents: ReadonlyArray<{ glyph: AgentGlyph }>): AgentGlyph {
-  const used = new Set(agents.map(agent => agent.glyph))
-  return AGENT_GLYPHS.find(glyph => !used.has(glyph)) ?? AGENT_GLYPHS[agents.length % AGENT_GLYPHS.length]!
+/**
+ * An unused bracket and hue first, with dot eyes. Stepping both together visits all 36 pairs, since 4 and 9 share no
+ * factor, so the first agents differ in bracket and in hue.
+ */
+export function avatarFor(agents: ReadonlyArray<{ avatar: AgentAvatar }>): AgentAvatar {
+  const used = new Set(agents.map(agent => `${agent.avatar.bracket}:${agent.avatar.hue}`))
+  const count = AGENT_BRACKETS.length * AGENT_HUES.length
+  const at = (step: number): AgentAvatar => ({
+    kind: 'face',
+    bracket: AGENT_BRACKETS[step % AGENT_BRACKETS.length]!,
+    eyes: 'dot',
+    hue: AGENT_HUES[step % AGENT_HUES.length]!,
+  })
+  for (let step = 0; step < count; step++) {
+    const next = at(step)
+    if (!used.has(`${next.bracket}:${next.hue}`)) return next
+  }
+  return at(agents.length % count)
+}
+
+/** The glyphs of version 1, in their order; each maps to a fixed avatar. */
+const V1_GLYPHS = [
+  'glasses',
+  'library',
+  'newspaper',
+  'package',
+  'pen-line',
+  'flask-conical',
+  'compass',
+  'hammer',
+  'lightbulb',
+  'list-checks',
+  'palette',
+  'telescope',
+] as const
+export function avatarOfGlyph(glyph: string): AgentAvatar | undefined {
+  const index = (V1_GLYPHS as readonly string[]).indexOf(glyph)
+  if (index < 0) return undefined
+  return {
+    kind: 'face',
+    bracket: AGENT_BRACKETS[index % AGENT_BRACKETS.length]!,
+    eyes: AGENT_EYES[Math.floor(index / AGENT_BRACKETS.length) % AGENT_EYES.length]!,
+    hue: AGENT_HUES[index % AGENT_HUES.length]!,
+  }
+}
+/** Version 1 named a glyph; version 2 has the avatar in its place. Anything else is left for the schema to refuse. */
+function upgradeState(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || (raw as { version?: unknown }).version !== 1) return raw
+  const state = raw as { version: number; agents?: unknown }
+  if (!Array.isArray(state.agents)) return raw
+  const agents = state.agents.map((agent: unknown) => {
+    if (typeof agent !== 'object' || agent === null || !('glyph' in agent)) return agent
+    const { glyph, ...rest } = agent as { glyph: unknown }
+    const mapped = typeof glyph === 'string' ? avatarOfGlyph(glyph) : undefined
+    return mapped ? { ...rest, avatar: mapped } : agent
+  })
+  return { ...state, version: 2, agents }
 }
 
 export interface AgentDelivery {

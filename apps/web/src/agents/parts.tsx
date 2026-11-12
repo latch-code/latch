@@ -1,45 +1,19 @@
-import {
-  Bot,
-  Code2,
-  Compass,
-  FlaskConical,
-  Glasses,
-  Hammer,
-  Library,
-  Lightbulb,
-  ListChecks,
-  LockKeyhole,
-  Newspaper,
-  Package,
-  Palette,
-  PenLine,
-  Telescope,
-  TriangleAlert,
-  WifiOff,
-} from 'lucide-react'
-import type { AgentGlyph } from '@latch/protocol'
-import { Hint, ICON_STROKE, StatusWord, type LucideIcon, type TileSize } from '@latch/ui'
-import { GlyphTile } from '../components/BrandTile.tsx'
+import { Code2, LockKeyhole, TriangleAlert, WifiOff } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { Hint, ICON_STROKE, StatusWord } from '@latch/ui'
 import type { ShellEntry } from '../shell/routes.ts'
+import { AgentsMark } from './AgentAvatar.tsx'
+import type { AvatarState } from './avatarFace.ts'
+import { ACTIVITY_WORDS } from './model.ts'
 
-const GLYPHS: Record<AgentGlyph, LucideIcon> = {
-  glasses: Glasses,
-  library: Library,
-  newspaper: Newspaper,
-  package: Package,
-  'pen-line': PenLine,
-  'flask-conical': FlaskConical,
-  compass: Compass,
-  hammer: Hammer,
-  lightbulb: Lightbulb,
-  'list-checks': ListChecks,
-  palette: Palette,
-  telescope: Telescope,
-}
-
-/** The Agent's glyph on the neutral plate; 通用 has the bot. */
-export function AgentTile({ glyph, size = 20 }: { glyph: AgentGlyph | undefined; size?: TileSize }) {
-  return <GlyphTile icon={glyph ? GLYPHS[glyph] : Bot} size={size} />
+/** The state word beside a face, for the states that have one. */
+export function ActivityWord({ state }: { state: AvatarState }) {
+  const word = ACTIVITY_WORDS[state]
+  return word ? (
+    <StatusWord tone={word.tone} className="agent-activity">
+      {word.words}
+    </StatusWord>
+  ) : null
 }
 
 /** Whether a session can start on the Agent now, in a few words; the Host's reason behind ⓘ. */
@@ -91,9 +65,9 @@ export function EntryRows({
   /** 我的 Agent is one of this device's entries. */
   agents?: boolean
 }) {
-  const rows: Array<{ entry: ShellEntry; label: string; icon: LucideIcon }> = [
-    { entry: 'sessions', label: 'Code', icon: Code2 },
-    ...(agents ? [{ entry: 'agents' as const, label: '我的 Agent', icon: Bot }] : []),
+  const rows: Array<{ entry: ShellEntry; label: string; icon: ReactNode }> = [
+    { entry: 'sessions', label: 'Code', icon: <Code2 size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" /> },
+    ...(agents ? [{ entry: 'agents' as const, label: '我的 Agent', icon: <AgentsMark size={16} /> }] : []),
   ]
   return (
     <div className="sidebar-entries" role="group" aria-label="入口">
@@ -106,7 +80,7 @@ export function EntryRows({
           onClick={() => {
             onEntry(row.entry)
           }}>
-          <row.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          {row.icon}
           <span>{row.label}</span>
         </button>
       ))}

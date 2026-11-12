@@ -28,6 +28,7 @@
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
 @import './agents.css' layer(app);
+@import './agent-avatar.css' layer(app);
 @import './apps.css' layer(app);
 @import './handoffs.css' layer(app);
 @import './workflows.css' layer(app);

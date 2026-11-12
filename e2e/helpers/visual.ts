@@ -41,8 +41,19 @@ const VOLATILE_TEXT = ['.fingerprint span', '.fingerprint-hash code', '.fingerpr
 const CAPTURE_STYLE = `${VOLATILE_TEXT.join(', ')} { color: transparent !important; }`
 
 /**
- * A browser device at a reference viewport: 1x pixels, a fixed clock, locale and time zone. Motion stays at the
- * default preference, as most people see the page; captures stop animations themselves.
+ * Freezes the motion that runs on its own (the faces of 我的 Agent blink, glance and squint at random): the page reads
+ * `data-motion="still"` on its root, as it reads reduced motion, so every capture shows the same frame with the state
+ * props at rest. It sits with the fixed clock, in visualContext; other captures call it on their context.
+ */
+export async function stillMotion(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    document.documentElement.dataset.motion = 'still'
+  })
+}
+
+/**
+ * A browser device at a reference viewport: 1x pixels, a fixed clock, locale and time zone, and still motion. Motion
+ * otherwise stays at the default preference, as most people see the page; captures stop animations themselves.
  */
 export async function visualContext(browser: Browser, viewport: VisualViewport): Promise<BrowserContext> {
   const context = await browser.newContext({
@@ -57,6 +68,7 @@ export async function visualContext(browser: Browser, viewport: VisualViewport):
   context.setDefaultTimeout(15_000)
   // Date is frozen while timers keep running, so the page still polls, reconnects and settles normally.
   await context.clock.setFixedTime(VISUAL_TIME)
+  await stillMotion(context)
   return context
 }
 

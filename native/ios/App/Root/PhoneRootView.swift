@@ -66,6 +66,7 @@ private struct RootTabs: View {
                     .tabItem {
                         // Not a count and not the system's red badge: amber says something waits on you in Code.
                         if entry.id == .code && dot { Label { Text(entry.label) } icon: { Self.dotted(entry.symbol, scheme: scheme) }.accessibilityValue("有等你处理") }
+                        else if entry.id == .agents { Label { Text(entry.label) } icon: { Self.agentsMark } }
                         else { Label(entry.label, systemImage: entry.symbol) }
                     }
                     .tag(entry.id)
@@ -81,6 +82,26 @@ private struct RootTabs: View {
         case .settings: PhoneSettingsView(addComputer: addComputer)
         }
     }
+    /**
+     * 我的 Agent's mark, the face as one still line drawing `(··)` as on the web, drawn once as a template image so the bar
+     * tints it like its other icons.
+     */
+    private static let agentsMark: Image = {
+        let size = CGSize(width: 24, height: 24)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            UIColor.black.setStroke(); UIColor.black.setFill()
+            for (top, control, bottom) in [((8.2, 5.6), (3.6, 12.0), (8.2, 18.4)), ((15.8, 5.6), (20.4, 12.0), (15.8, 18.4))] {
+                let path = UIBezierPath()
+                path.move(to: CGPoint(x: top.0, y: top.1))
+                path.addQuadCurve(to: CGPoint(x: bottom.0, y: bottom.1), controlPoint: CGPoint(x: control.0, y: control.1))
+                path.lineWidth = 1.9; path.lineCapStyle = .round
+                path.stroke()
+            }
+            for x in [10.1, 13.9] { UIBezierPath(ovalIn: CGRect(x: x - 1.4, y: 12.6 - 1.4, width: 2.8, height: 2.8)).fill() }
+        }
+        return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
+    }()
+
     /** The tab's symbol in the bar's unselected ink with an amber dot at its corner; drawn, since a tab item takes one image. */
     private static func dotted(_ symbol: String, scheme: ColorScheme) -> Image {
         let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)

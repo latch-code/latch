@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { CustomAgent, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostCatalog } from '@latch/protocol'
 import { Button, Checkbox, ConfirmDialog, Hint, InlineNotice, TextAreaField, TextField, ValuePicker } from '@latch/ui'
@@ -6,7 +6,18 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { agentHarnesses, draftOf, draftProblem, emptyDraft, normalizedDraft, patchOf, usesHostModels, type AgentDraft } from './model.ts'
+import {
+  agentHarnesses,
+  draftOf,
+  draftProblem,
+  emptyDraft,
+  normalizedDraft,
+  patchOf,
+  rebaseDraft,
+  saveWaits,
+  usesHostModels,
+  type AgentDraft,
+} from './model.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
@@ -146,10 +157,21 @@ export function AgentForm({
   const base = useMemo(() => (agent ? draftOf(agent) : emptyDraft(catalog)), [agent, catalog])
   const [draft, setDraft] = useState<AgentDraft>(base)
   const [deleting, setDeleting] = useState(false)
-  // A new revision from the Host replaces the form, unless the person is in the middle of changing it.
+  // A new revision from the Host (a save, a new avatar, an edit elsewhere) keeps what the person is in the middle of
+  // changing, laid over the new definition; a field changed both here and there says so.
   const revision = agent?.revision
+  const shown = useRef(base)
+  const [conflicts, setConflicts] = useState<Array<keyof AgentDraft>>([])
+  const elsewhere = conflicts.length > 0
   useEffect(() => {
-    setDraft(base)
+    const previous = shown.current
+    shown.current = base
+    if (previous === base) return
+    setDraft(current => {
+      const rebased = rebaseDraft(previous, base, current)
+      if (rebased.conflicts.length) setConflicts(known => [...new Set([...known, ...rebased.conflicts])])
+      return rebased.draft
+    })
   }, [revision])
   const harnesses = agentHarnesses(catalog)
   const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
@@ -164,14 +186,17 @@ export function AgentForm({
     setDraft(previous => ({ ...previous, ...patch }))
   }
   const save = async () => {
-    if (problem || locked) return
+    if (problem || locked || saveWaits(conflicts)) return
     const saved = agent
       ? await writes.run<CustomAgent>(key, `custom-agents/${encodeURIComponent(agent.id)}`, 'PATCH', {
           ...changes,
           baseRevision: agent.revision,
         })
       : await writes.run<CustomAgent>(key, 'custom-agents', 'POST', { ...normalized })
-    if (saved) onSaved(saved)
+    if (saved) {
+      setConflicts([])
+      onSaved(saved)
+    }
   }
   const retry = async () => {
     const saved = await writes.retry<CustomAgent>()
@@ -330,6 +355,22 @@ export function AgentForm({
         </Section>
       )}
       <WriteNotice state={state} onRetry={() => void retry()} {...(onReload ? { onReload } : {})} />
+      {elsewhere && !(state && 'kind' in state) && (
+        <InlineNotice
+          tone="warn"
+          title="已在别处修改"
+          action={
+            <Button
+              onClick={() => {
+                setConflicts([])
+                setDraft(base)
+              }}>
+              载入最新
+            </Button>
+          }>
+          这项记录已更新，请刷新后再修改。
+        </InlineNotice>
+      )}
       <div className="agent-form-actions">
         {agent && onDeleted && (
           <Button
@@ -351,9 +392,9 @@ export function AgentForm({
         <Button
           type="submit"
           variant="primary"
-          disabled={locked || problem !== undefined || !changed}
+          disabled={locked || problem !== undefined || !changed || saveWaits(conflicts)}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}
-          title={problem}>
+          title={saveWaits(conflicts) ? '已在别处修改，载入最新后再保存' : problem}>
           {agent ? '保存' : '创建'}
         </Button>
       </div>

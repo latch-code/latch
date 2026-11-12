@@ -62,11 +62,44 @@ public enum PhoneAgentAccess: String, Equatable, Sendable {
     case ready
 }
 
+/** The bracket face the Host gave an Agent: brackets around two eyes in one muted hue. 通用 is the same face in grey. */
+public struct PhoneAgentAvatar: Equatable, Sendable {
+    public static let brackets = ["round", "curly", "square", "angle"]
+    public static let eyeKinds = ["dot", "arc", "oval", "sleepy"]
+    public static let hues = ["ink", "slate", "pine", "plum", "wisteria", "cocoa", "sand", "moss", "mist"]
+    public static let general = PhoneAgentAvatar(bracket: "round", eyes: "dot", hue: "neutral")
+    public let bracket: String
+    public let eyes: String
+    public let hue: String
+    /** Only a face of known parts; anything else (a kind or value from a later Host) draws as 通用's grey face. */
+    public static func parse(_ value: NativeJSON) -> PhoneAgentAvatar {
+        guard value["kind"].string == "face", let bracket = value["bracket"].string, brackets.contains(bracket),
+              let eyes = value["eyes"].string, eyeKinds.contains(eyes), let hue = value["hue"].string, hues.contains(hue) else { return general }
+        return PhoneAgentAvatar(bracket: bracket, eyes: eyes, hue: hue)
+    }
+}
+
+/** What an Agent's face shows beside its state word. 刚完成 is a moment the view plays, not a state. */
+public enum PhoneAgentFace: String, Equatable, Sendable {
+    case idle, running, waiting, failed, resting
+    /** The word beside the face, where the state has one; 休息 says 不可用 through the availability line. */
+    public var words: String? {
+        switch self {
+        case .running: "运行中"
+        case .waiting: "等你处理"
+        case .failed: "失败"
+        case .idle, .resting: nil
+        }
+    }
+}
+
 public struct PhoneAgentEntry: Equatable, Sendable, Identifiable {
     public let id: String
     public let name: String
     public let general: Bool
-    public let glyph: String?
+    public let avatar: PhoneAgentAvatar
+    /** From the Agent's own sessions; 通用 stays idle. */
+    public let face: PhoneAgentFace
     public let duty: String
     /** 「Harness · 模型」, or for 通用 that each session picks its own. */
     public let runs: String
@@ -99,16 +132,33 @@ public enum PhoneAgents {
     public static func entries(_ snapshot: NativeJSON, windowOpen: Bool = true) -> [PhoneAgentEntry] {
         guard access(snapshot, windowOpen: windowOpen) == .ready else { return [] }
         let catalog = snapshot["catalog"]
-        let general = PhoneAgentEntry(id: generalId, name: generalName, general: true, glyph: nil, duty: generalDuty,
+        let general = PhoneAgentEntry(id: generalId, name: generalName, general: true, avatar: .general, face: .idle, duty: generalDuty,
             runs: "内置 · 每个会话自己选 Harness", harnessId: nil, place: nil, available: true, unavailableReason: nil)
         return [general] + snapshot["customAgents"].array.compactMap { agent in
             guard let id = agent["id"].string, validId(id), id != generalId else { return nil }
             let available = agent["available"].bool
-            return PhoneAgentEntry(id: id, name: agent["name"].string ?? "Agent", general: false, glyph: agent["glyph"].string,
+            return PhoneAgentEntry(id: id, name: agent["name"].string ?? "Agent", general: false, avatar: PhoneAgentAvatar.parse(agent["avatar"]),
+                face: face(snapshot, id: id, available: available),
                 duty: duty(agent), runs: runsWith(catalog, agent: agent), harnessId: agent["harnessId"].string,
                 place: worksIn(catalog, projectId: agent["defaultProjectId"].string), available: available,
                 unavailableReason: available ? nil : agent["unavailableReason"].string)
         }
+    }
+    /**
+     * The face's state from the Host's own data, as the web derives it: this Agent's sessions, 等你处理 before 运行中, then
+     * 休息 while it cannot start, then a failure of its latest unarchived session.
+     */
+    public static func face(_ snapshot: NativeJSON, id: String, available: Bool) -> PhoneAgentFace {
+        let own = snapshot["tasks"].array.filter { $0["agent"]["customAgentId"].string == id }
+        let asking = Set(snapshot["approvals"].array.compactMap { $0["sessionId"].string })
+        if own.contains(where: { PhoneSessions.waitsOnYou($0) || ($0["status"].string == "running" && asking.contains($0["id"].string ?? "")) }) {
+            return .waiting
+        }
+        if own.contains(where: { ["running", "waiting-approval"].contains($0["status"].string ?? "") }) { return .running }
+        if !available { return .resting }
+        let latest = own.filter { !$0["archived"].bool }.max { ($0["updatedAt"].string ?? "") < ($1["updatedAt"].string ?? "") }
+        if let latest, PhoneSessions.rowStatus(latest) == .failed { return .failed }
+        return .idle
     }
     public static func entry(_ snapshot: NativeJSON, id: String, windowOpen: Bool = true) -> PhoneAgentEntry? {
         entries(snapshot, windowOpen: windowOpen).first { $0.id == id }

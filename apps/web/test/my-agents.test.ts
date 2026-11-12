@@ -15,9 +15,12 @@ import {
   emptyDraft,
   normalizedDraft,
   patchOf,
+  rebaseDraft,
+  saveWaits,
   runsWith,
   scheduleWords,
   sessionAgent,
+  agentActivity,
   worksIn,
   writeOutcome,
 } from '../src/agents/model.ts'
@@ -46,7 +49,7 @@ const summary = (extra: Partial<CustomAgentSummary> = {}): CustomAgentSummary =>
   description: '',
   harnessId: 'standard',
   mode: 'agent',
-  glyph: 'library',
+  avatar: { kind: 'face', bracket: 'curly', eyes: 'dot', hue: 'pine' },
   revision: 3,
   skillCount: 0,
   memoryCount: 0,
@@ -113,9 +116,50 @@ describe('我的 Agent model', () => {
     ]
     expect(agentSessions(tasks, 'agt_1').map(item => item.id)).toEqual(['new', 'old'])
     expect(agentSessions(tasks, 'general')).toEqual([])
-    expect(sessionAgent({ customAgents: [summary()] }, tasks[0])).toEqual({ id: 'agt_1', name: '资料助手' })
+    expect(sessionAgent({ customAgents: [summary()] }, tasks[0])).toEqual({ id: 'agt_1', name: '资料助手', avatar: summary().avatar })
     expect(sessionAgent({}, tasks[3])).toEqual({ id: 'agt_2', name: 'Agent' })
     expect(sessionAgent({ customAgents: [summary()] }, tasks[4])).toBeUndefined()
+  })
+
+  it('shows on the face what the Agent’s own sessions say: 等你处理, then 运行中, then 休息, then a failure of its latest', () => {
+    const mine = (id: string, extra: Partial<TaskSummary> = {}) => task(id, { agent: { customAgentId: 'agt_1' }, ...extra })
+    const state = (tasks: TaskSummary[], extra: Partial<CustomAgentSummary> = {}, approvals: Array<{ sessionId: string }> = []) =>
+      agentActivity({ tasks, approvals: approvals as never }, summary(extra))
+    expect(state([])).toBe('idle')
+    expect(state([mine('a', { status: 'running' })])).toBe('running')
+    expect(state([mine('a', { status: 'running' }), mine('b', { status: 'waiting-approval' })])).toBe('waiting')
+    expect(state([mine('a', { status: 'running', pendingQuestions: 1 } as Partial<TaskSummary>)])).toBe('waiting')
+    // Another Agent's sessions say nothing about this one.
+    expect(state([task('x', { status: 'running', agent: { customAgentId: 'agt_2' } })])).toBe('idle')
+    expect(state([], { available: false })).toBe('resting')
+    expect(state([mine('a', { status: 'running' })], { available: false })).toBe('running')
+    expect(state([mine('a', { status: 'failed' })])).toBe('failed')
+    // Only the latest counts: a later success clears an earlier failure, and an archived failure is left out.
+    expect(state([mine('a', { status: 'failed' }), mine('b', { updatedAt: '2026-11-11T00:00:00.000Z' })])).toBe('idle')
+    expect(state([mine('a', { status: 'failed', archived: true })])).toBe('idle')
+  })
+
+  it('keeps edits in progress over a new revision, takes the rest, and says when the same field changed elsewhere', () => {
+    const before = draftOf(detail())
+    // A new avatar or name elsewhere: nothing the form shows changed, so the edits stay as they are.
+    const edited = { ...before, instructions: '只查资料' }
+    expect(rebaseDraft(before, { ...before }, edited)).toEqual({ draft: edited, conflicts: [] })
+    // Another field changed elsewhere: it comes in, and the person's edit stays.
+    expect(rebaseDraft(before, { ...before, description: '新的职责' }, edited)).toEqual({
+      draft: { ...edited, description: '新的职责' },
+      conflicts: [],
+    })
+    // An untouched form takes the new definition whole, cleared fields included.
+    const next = { ...before, defaultProjectId: 'notes', skills: ['p:s'] }
+    expect(rebaseDraft(before, next, before)).toEqual({ draft: next, conflicts: [] })
+    // Its own save: the edit matches what came back.
+    expect(rebaseDraft(before, edited, edited)).toEqual({ draft: edited, conflicts: [] })
+    // The same field changed there to something else: the person's text stays, and it is a conflict.
+    // The same field changed there to something else: the person's text stays to copy, and 保存 waits for 载入最新.
+    const clash = rebaseDraft(before, { ...before, instructions: '别的', description: '新的职责' }, edited)
+    expect(clash).toEqual({ draft: { ...edited, description: '新的职责' }, conflicts: ['instructions'] })
+    expect(saveWaits(clash.conflicts)).toBe(true)
+    expect(saveWaits(rebaseDraft(before, { ...before, description: '新的职责' }, edited).conflicts)).toBe(false)
   })
 
   it('sends only what changed, clearing with null', () => {

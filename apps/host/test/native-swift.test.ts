@@ -1981,6 +1981,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           mode: 'agent',
           defaultProjectId: 'latch',
           available: true,
+          avatar: { kind: 'face', bracket: 'curly', eyes: 'arc', hue: 'plum' },
         },
         {
           id: daily,
@@ -2001,6 +2002,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           available: false,
           unavailableReason: '没有安装。',
           defaultProjectId: 'removed',
+          // A value this App does not know draws as 通用's grey face.
+          avatar: { kind: 'face', bracket: 'round', eyes: 'dot', hue: 'red' },
         },
       ],
       automations: [
@@ -2036,11 +2039,29 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
     }
     const waiting = { ...snapshot, tasks: [{ id: 'w', status: 'waiting-approval', updatedAt: at(2) }] }
+    const mine = (id: string, extra: Record<string, unknown>) => ({ id, updatedAt: at(5), agent: { customAgentId: review }, ...extra })
+    const faceCase = (tasks: object[], available = true, approvals: object[] = []) => ({
+      snapshot: { tasks, approvals },
+      id: review,
+      available,
+    })
     const result = await invoke({
       operation: 'phoneAgents',
       snapshot,
       memoryOwner: review,
       memory,
+      faceCases: [
+        faceCase([]),
+        faceCase([mine('r', { status: 'running' })]),
+        faceCase([mine('r', { status: 'running' }), mine('w', { status: 'waiting-approval' })]),
+        faceCase([mine('q', { status: 'running', pendingQuestions: 1 })]),
+        faceCase([{ id: 'x', status: 'running', updatedAt: at(5), agent: { customAgentId: daily } }]),
+        faceCase([], false),
+        faceCase([mine('r', { status: 'running' })], false),
+        faceCase([mine('f', { status: 'failed' })]),
+        faceCase([mine('f', { status: 'idle', runOutcome: 'failed', updatedAt: at(1) }), mine('g', { status: 'idle', updatedAt: at(2) })]),
+        faceCase([mine('f', { status: 'failed', archived: true })]),
+      ],
       snapshots: [
         { catalog: { features: {} }, device: { dataScope: 'all' }, tasks: [], approvals: [] },
         snapshot,
@@ -2094,6 +2115,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         place: null,
         available: true,
         reason: null,
+        avatar: ['round', 'dot', 'neutral'],
+        face: 'idle',
       },
       {
         id: review,
@@ -2104,6 +2127,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         place: 'latch',
         available: true,
         reason: null,
+        avatar: ['curly', 'arc', 'plum'],
+        face: 'idle',
       },
       {
         id: daily,
@@ -2114,6 +2139,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         place: '各自的文件夹',
         available: true,
         reason: null,
+        avatar: ['round', 'dot', 'neutral'],
+        face: 'idle',
       },
       {
         id: docs,
@@ -2124,8 +2151,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         place: '项目已移除',
         available: false,
         reason: '没有安装。',
+        avatar: ['round', 'dot', 'neutral'],
+        face: 'resting',
       },
     ])
+    // The face from the Agent's own sessions: 等你处理, 运行中, 休息, then a failure of its latest unarchived session.
+    // At most three faces move a squint or a looping prop at once, and the places pass around all ten.
+    expect(result.slots).toEqual({ peak: 3, turns: 10, fourthWaits: true, afterRelease: true })
+    expect(result.faces).toEqual(['idle', 'running', 'waiting', 'waiting', 'idle', 'resting', 'running', 'failed', 'idle', 'idle'])
     expect(result.harnesses).toEqual(['standard', 'codex'])
     expect(result.choices).toEqual([
       { harness: 'codex', workspace: 'latch', model: '' },

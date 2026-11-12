@@ -65,6 +65,15 @@ import UIKit
             model.tab = .code; query = "relay"
             model.contentSearch = PhoneContentSearch(query: "relay", hits: PhoneSearch.results(json(hitsText)).hits, truncated: false)
         case "agents", "agents-locked": model.tab = .agents
+        case "agents-faces":
+            // Every state a face shows: 运行中 (代码审阅), 等你处理 (每日简报), 休息 (文档整理) and 失败 (发布检查).
+            model.tab = .agents
+            model.snapshot = patched(model.snapshot) { object in
+                object["customAgents"] = .array(object["customAgents"]!.array + [json(releaseAgent)])
+                object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask), json(failedTask)])
+            }
+        case "agent-waiting": model.tab = .agents; model.agentPath = [daily]; section = .delegate
+            model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask)]) }
         case "agent-delegate": model.tab = .agents; model.agentPath = [review]; section = .delegate
         case "agent-memory": model.tab = .agents; model.agentPath = [review]; section = .memory
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; section = .schedules
@@ -87,6 +96,16 @@ import UIKit
         return .missing
     }
 
+    private static var releaseAgent: String { """
+    {"id":"\(release)","name":"发布检查","avatar":{"kind":"face","bracket":"angle","eyes":"sleepy","hue":"wisteria"},"description":"发版前过一遍清单","harnessId":"standard","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1}
+    """ }
+    private static var waitingTask: String { """
+    {"id":"ses_brief","title":"汇总本周依赖更新","status":"waiting-approval","updatedAt":"{{-60}}","harnessId":"standard","mode":"chat","agent":{"customAgentId":"\(daily)"}}
+    """ }
+    private static var failedTask: String { """
+    {"id":"ses_release","title":"0.4 发版检查","status":"failed","updatedAt":"{{-3000}}","harnessId":"standard","workspaceId":"latch","mode":"agent","agent":{"customAgentId":"\(release)"}}
+    """ }
+    private static let release = "agt_9a1c3d40-5f7e-4b0d-8e4f-3d4e5f607183"
     private static let review = "agt_5d3f8a10-2c4b-4e7a-9b1c-0a1b2c3d4e5f"
     private static let daily = "agt_7e9a1b20-3d5c-4f8b-8c2d-1b2c3d4e5f60"
     private static let docs = "agt_8f0b2c30-4e6d-4a9c-9d3e-2c3d4e5f6071"
@@ -125,9 +144,9 @@ import UIKit
       "defaults":{"harnessId":"standard","workspaceId":"latch","model":{"providerId":"deepseek","model":"deepseek-chat"}},
       "skills":[{"id":"review","pluginId":"review-kit","pluginName":"审阅","name":"审阅清单","description":""}],"sessionFolders":true},
      "customAgents":[
-      {"id":"\(review)","name":"代码审阅","glyph":"glasses","description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":false,"skillCount":1,"memoryCount":2,"sessionCount":3,"revision":3},
-      {"id":"\(daily)","name":"每日简报","glyph":"newspaper","description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1},
-      {"id":"\(docs)","name":"文档整理","glyph":"library","description":"把散落的说明整理进 docs","harnessId":"gemini","mode":"agent","defaultProjectId":"site","available":false,"unavailableReason":"Gemini CLI 现在不能开始：没有安装。","canAutomate":false,"skillCount":0,"memoryCount":0,"sessionCount":0,"revision":1}],
+      {"id":"\(review)","name":"代码审阅","avatar":{"kind":"face","bracket":"curly","eyes":"dot","hue":"pine"},"description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":false,"skillCount":1,"memoryCount":2,"sessionCount":3,"revision":3},
+      {"id":"\(daily)","name":"每日简报","avatar":{"kind":"face","bracket":"round","eyes":"arc","hue":"slate"},"description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1},
+      {"id":"\(docs)","name":"文档整理","avatar":{"kind":"face","bracket":"square","eyes":"oval","hue":"cocoa"},"description":"把散落的说明整理进 docs","harnessId":"gemini","mode":"agent","defaultProjectId":"site","available":false,"unavailableReason":"Gemini CLI 现在不能开始：没有安装。","canAutomate":false,"skillCount":0,"memoryCount":0,"sessionCount":0,"revision":1}],
      "automations":[
       {"id":"\(checks)","name":"每日依赖检查","customAgentId":"\(daily)","schedule":{"kind":"weekdays","time":"09:00"},"enabled":true,"state":"ready","revision":2,"notify":true,"nextRunAt":"{{64800}}","lastRun":{"at":"{{-21600}}","state":"completed","trigger":"schedule","sessionId":"ses_daily"}},
       {"id":"auto_0b2d4e50-6a8f-4c1e-9f50-4e5f60718293","name":"周五周报","customAgentId":"\(daily)","schedule":{"kind":"weekly","day":5,"time":"17:30"},"enabled":false,"state":"paused","revision":4,"notify":false,"pause":{"reason":"unknown-outcome","message":"上一次运行的结果未知，确认后再开启。"},"lastRun":{"at":"{{-259200}}","state":"unknown","trigger":"schedule"}}],
@@ -186,7 +205,7 @@ import UIKit
      {"sessionId":"ses_arch2","messageId":"h2","title":"试验 relay 的 v2 填充","snippet":"relay 外层填充改为 v2 之后","match":{"start":0,"end":5},"archived":true}],"truncated":false}
     """
     private static var reviewDetail: String { """
-    {"agent":{"id":"\(review)","name":"代码审阅","glyph":"glasses","description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"revision":3,
+    {"agent":{"id":"\(review)","name":"代码审阅","avatar":{"kind":"face","bracket":"curly","eyes":"dot","hue":"pine"},"description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"revision":3,
       "instructions":"先读改动涉及的源码与测试，再下结论。\\n只报会出错的地方，每条写清复现方法。","skills":["review-kit:review"],"createdAt":"{{-864000}}","updatedAt":"{{-3600}}"},
      "memories":[
       {"id":"mem_1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d","content":"这个仓库用 pnpm，不要建议 npm 命令。","revision":1,"createdAt":"{{-600000}}","updatedAt":"{{-600000}}"},
@@ -194,7 +213,7 @@ import UIKit
      "sessions":[]}
     """ }
     private static var dailyDetail: String { """
-    {"agent":{"id":"\(daily)","name":"每日简报","glyph":"newspaper","description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"revision":1,
+    {"agent":{"id":"\(daily)","name":"每日简报","avatar":{"kind":"face","bracket":"round","eyes":"arc","hue":"slate"},"description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"revision":1,
       "instructions":"汇总昨晚以来的依赖更新与失败的 CI。","skills":[],"tools":[],"createdAt":"{{-864000}}","updatedAt":"{{-864000}}"},
      "memories":[],"sessions":[]}
     """ }

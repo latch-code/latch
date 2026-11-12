@@ -12,6 +12,8 @@ interface JournalOptions {
   maximumBytes?: number
   /** Finish a write whose result is unknown on its own. Only for state with no execution intent to reconcile afterwards. */
   retryMs?: number
+  /** Turns an older version of the file into the current one; a file it changed is written back at once. */
+  upgrade?: (raw: unknown) => unknown
 }
 interface Pending<State> {
   key: string
@@ -55,6 +57,7 @@ export class AgentJournal<State> {
     if (!folder.isDirectory() || folder.isSymbolicLink() || folder.mode & 0o077 || (uid !== undefined && folder.uid !== uid))
       throw new AppError(500, 'agent-private', 'Agent 记录目录必须只有本人可访问。')
     let state: State
+    let upgraded = false
     try {
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
@@ -69,7 +72,10 @@ export class AgentJournal<State> {
           count += read.bytesRead
         }
         if (count > maximum) throw new Error('Private record budget')
-        state = schema.parse(JSON.parse(buffer.subarray(0, count).toString('utf8')))
+        const raw: unknown = JSON.parse(buffer.subarray(0, count).toString('utf8'))
+        const current = options.upgrade ? options.upgrade(raw) : raw
+        upgraded = current !== raw
+        state = schema.parse(current)
       } finally {
         await file.close()
       }
@@ -80,6 +86,8 @@ export class AgentJournal<State> {
       if (Buffer.byteLength(JSON.stringify(state)) > maximum) throw new AppError(500, 'agent-journal-budget', 'Agent 初始记录超过容量。')
       await writeFileAtomic(path, JSON.stringify(state) + '\n')
     }
+    // The upgraded file goes back at once; a failed write leaves the original, upgraded again next time or by the next change.
+    if (upgraded) await writeFileAtomic(path, JSON.stringify(state) + '\n', { fs: options.atomicFs }).catch(() => {})
     return new AgentJournal(path, state, schema, options)
   }
   read(): State {

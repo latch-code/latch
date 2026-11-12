@@ -29,6 +29,28 @@ enum PhoneTheme {
     static let row = Font.system(size: 15, weight: .medium)
     static let caption = Font.system(size: 13)
     static let mono = Font.system(size: 14, design: .monospaced)
+
+    /** 我的 Agent's hues, the web's --agent-* tokens: muted, never red, orange, yellow, bright green or bright blue. */
+    private static let agentHues: [String: (light: UInt32, dark: UInt32)] = [
+        "neutral": (0x6B6B74, 0x9A9AA4), "ink": (0x3D4049, 0xB4B8C2), "slate": (0x5F7389, 0x8599B0), "pine": (0x4E7A68, 0x6FA18B),
+        "plum": (0x8A5A7A, 0xB582A5), "wisteria": (0x7A72B8, 0x9D96D9), "cocoa": (0x8A6A55, 0xB08E77), "sand": (0xA88C5E, 0xC6AA7A),
+        "moss": (0x7E8E5E, 0xA0B07E), "mist": (0x7F96AE, 0xA0B6CD),
+    ]
+    static func agentHue(_ hue: String) -> Color {
+        let pair = agentHues[hue] ?? agentHues["neutral"]!
+        return dynamic(pair.light, pair.dark)
+    }
+    /** The face's plate: 13% of the hue over the canvas, as the web mixes it over the surface. */
+    static func agentPlate(_ hue: String) -> Color {
+        let pair = agentHues[hue] ?? agentHues["neutral"]!
+        func mix(_ value: UInt32, _ ground: UInt32) -> UInt32 {
+            [16, 8, 0].reduce(UInt32(0)) { result, shift in
+                let top = Double(value >> UInt32(shift) & 255), base = Double(ground >> UInt32(shift) & 255)
+                return result | UInt32((top * 0.13 + base * 0.87).rounded()) << UInt32(shift)
+            }
+        }
+        return dynamic(mix(pair.light, 0xFFFFFF), mix(pair.dark, 0x111113))
+    }
 }
 
 /** These marks are loose files in the bundle, which SwiftUI's named images do not look through. */

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import type { AutomationConfig, TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { Automations, automationSummary, type AutomationPlan } from '../src/automations.ts'
-import type { AgentActor } from '../src/custom-agents.ts'
+import { CustomAgents, type AgentActor } from '../src/custom-agents.ts'
 
 const roots: string[] = []
 const services: Automations[] = []
@@ -266,6 +266,63 @@ test('an authorized edit of its agent keeps it on the new definition; a deleted 
   f.planFailure = new AppError(404, 'agent-not-found', 'gone')
   await service.edit(customAgentId, actor, async () => {})
   expect(service.get(value.id)).toMatchObject({ enabled: false, pause: { reason: 'agent-unavailable' } })
+})
+
+test('an avatar or name change leaves its automations, their grant and device alone, even with the Harness not ready', async () => {
+  const { f, service, dataDir } = await fixture()
+  const agents = await CustomAgents.open({ dataDir, audit: { append: vi.fn(async () => undefined as never) } })
+  const created = (
+    await agents.create(
+      {
+        requestId: randomUUID(),
+        name: '代码审阅',
+        description: '',
+        harnessId: 'standard',
+        mode: 'agent',
+        instructions: '只审阅',
+        skills: [],
+      },
+      actor,
+    )
+  ).value
+  const { value } = await service.create(definition({ customAgentId: created.id }), actor)
+  const grant = async () =>
+    (JSON.parse(await readFile(join(dataDir, 'automations.json'), 'utf8')) as { rows: Array<{ grant?: unknown }> }).rows[0]!.grant
+  const before = await grant()
+  expect(before).toMatchObject({ deviceId: 'dev_owner' })
+  // Another device changes the face and the name while the Harness cannot start.
+  const other: AgentActor = { actor: { deviceId: 'dev_phone', listener: 'unix' }, authorize: () => {} }
+  f.planFailure = new AppError(409, 'agent-unavailable', 'not ready')
+  const hash = () => agents.definitionHash(created.id)
+  await service.edit(
+    created.id,
+    other,
+    () =>
+      agents.patch(
+        created.id,
+        { requestId: randomUUID(), baseRevision: 1, avatar: { kind: 'face', bracket: 'angle', eyes: 'arc', hue: 'moss' } },
+        other,
+      ),
+    hash,
+  )
+  await service.edit(
+    created.id,
+    other,
+    () => agents.patch(created.id, { requestId: randomUUID(), baseRevision: 2, name: '审阅' }, other),
+    hash,
+  )
+  expect(service.get(value.id)).toMatchObject({ enabled: true, state: 'ready' })
+  expect(await grant()).toEqual(before)
+  // What a run receives does change on new instructions: that still binds to the editor, or pauses when it cannot.
+  f.planFailure = undefined
+  await service.edit(
+    created.id,
+    other,
+    () => agents.patch(created.id, { requestId: randomUUID(), baseRevision: 3, instructions: '只看测试' }, other),
+    hash,
+  )
+  expect(await grant()).toMatchObject({ deviceId: 'dev_phone' })
+  await agents.close()
 })
 
 test('a check during the save of an agent, or against a stale read of it, does not pause its automations', async () => {

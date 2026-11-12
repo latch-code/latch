@@ -38,7 +38,10 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
       }
       /** A change to what an agent's sessions and automations receive. */
       const edit = async <T>(owner: string, save: () => Promise<AgentMutation<T>>, code = 200) =>
-        reply(await deps.automations().edit(owner === GENERAL_AGENT_ID ? undefined : owner, actor, save), code)
+        reply(
+          await deps.automations().edit(owner === GENERAL_AGENT_ID ? undefined : owner, actor, save, () => agents.definitionHash(owner)),
+          code,
+        )
       if (method === 'GET') await agents.recover().catch(() => {})
       if (path === '/link/api/custom-agents') {
         if (method === 'GET') {

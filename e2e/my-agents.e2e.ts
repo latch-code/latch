@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
+import { stillMotion } from './helpers/visual.ts'
 
 const OUT = 'test-results/my-agents'
 
@@ -46,6 +47,15 @@ const settled = (page: Page) =>
     .locator('.agents-page')
     .evaluate(element => Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => undefined))))
 
+/** Picks one part of the face from the header's picker; the Host's answer is what the picker then shows. */
+async function pickAvatar(page: Page, owner: TestDevice, agentId: string, row: '括号' | '眼睛' | '颜色', name: string) {
+  const option = page.getByRole('radiogroup', { name: row }).getByRole('radio', { name, exact: true })
+  await option.click()
+  await expect.poll(() => option.getAttribute('aria-checked')).toBe('true')
+  const { agents } = await owner.json<CustomAgentList>('custom-agents')
+  return agents.find(agent => agent.id === agentId)!.avatar
+}
+
 const choice = (page: Page, name: RegExp) => page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
 
 it('creates an Agent, delegates real sessions to it, edits its memory, and says when a start is refused or unknown', async () => {
@@ -70,6 +80,7 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     const project = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.name === 'notes')!
 
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    await stillMotion(context)
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await fullScopeBrowser(page, host, owner, '我的 Agent 1440')
@@ -103,7 +114,51 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
       harnessId: 'fake-agent',
       defaultProjectId: project.id,
       description: '查资料，写成一页摘要',
+      avatar: { kind: 'face', bracket: 'round', eyes: 'dot', hue: 'ink' },
     })
+
+    // Its face opens the picker; a choice is the Host's at once, and stays after a reload.
+    await page.getByRole('button', { name: '资料助手 的头像', exact: true }).click()
+    expect(await pickAvatar(page, owner, agent.id, '括号', '花括号')).toEqual({ kind: 'face', bracket: 'curly', eyes: 'dot', hue: 'ink' })
+    expect(await pickAvatar(page, owner, agent.id, '颜色', '藤')).toEqual({ kind: 'face', bracket: 'curly', eyes: 'dot', hue: 'wisteria' })
+    // The keyboard: arrows move focus from the focused face (twice in a row), Space picks it, Tab goes to the next row.
+    const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
+    await page.getByRole('radiogroup', { name: '眼睛' }).getByRole('radio', { name: '圆点', exact: true }).focus()
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(focusedLabel).toBe('弯眼')
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(focusedLabel).toBe('椭圆')
+    await page.screenshot({ path: `${OUT}/avatar-picker-1440.png` })
+    await page.keyboard.press('Space')
+    const eyes = page.getByRole('radiogroup', { name: '眼睛' }).getByRole('radio', { name: '椭圆', exact: true })
+    await expect.poll(() => eyes.getAttribute('aria-checked')).toBe('true')
+    expect((await owner.json<CustomAgentList>('custom-agents')).agents[0]!.avatar.eyes).toBe('oval')
+    await page.keyboard.press('Tab')
+    await expect.poll(focusedLabel).toBe('藤')
+    await page.keyboard.press('Escape')
+    await page.reload()
+    await connected(page)
+    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
+    await page
+      .getByRole('navigation', { name: 'Agent 列表' })
+      .getByRole('button', { name: /资料助手/u })
+      .click()
+    await page.getByRole('tab', { name: '委托', exact: true, selected: true }).waitFor()
+    const head = page.locator('.agent-head-avatar .agent-avatar')
+    await expect.poll(() => head.getAttribute('data-hue')).toBe('wisteria')
+    expect(await page.locator('.agents-nav-row .agent-avatar').first().getAttribute('data-hue')).toBe('neutral')
+
+    // A new face while 设置 has unsaved edits keeps them: the avatar is not part of the form.
+    await page.getByRole('tab', { name: '设置', exact: true }).click()
+    const instructions = page.getByLabel('指令')
+    await instructions.fill('只用中文回答，结论放最前。')
+    await page.getByRole('button', { name: '资料助手 的头像', exact: true }).click()
+    expect((await pickAvatar(page, owner, agent.id, '颜色', '李')).hue).toBe('plum')
+    await page.keyboard.press('Escape')
+    await expect.poll(() => instructions.inputValue()).toBe('只用中文回答，结论放最前。')
+    expect(await page.getByText('已在别处修改').count()).toBe(0)
+    expect((await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).agent.instructions).toBe('只用中文回答。')
+    await page.getByRole('tab', { name: '委托', exact: true }).click()
 
     // Delegating starts a real session of the Agent, on its Harness and in its project.
     const input = page.getByRole('textbox', { name: '委托内容', exact: true })
@@ -183,6 +238,7 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
 
     // A phone: 我的 Agent is a tab; an Agent's page is pushed over the list and fits.
     const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', reducedMotion: 'reduce' })
+    await stillMotion(phone)
     const narrow = await phone.newPage()
     narrow.setDefaultTimeout(15_000)
     await fullScopeBrowser(narrow, host, owner, '我的 Agent 390')
@@ -198,6 +254,25 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await settled(narrow)
     await noHorizontalOverflow(narrow)
     await narrow.screenshot({ path: `${OUT}/agent-390-dark.png` })
+    // On a phone the picker is a sheet; the choice is the Host's and survives a reload.
+    await narrow.getByRole('button', { name: '资料助手 的头像', exact: true }).click()
+    expect(await pickAvatar(narrow, owner, agent.id, '眼睛', '弯眼')).toEqual({
+      kind: 'face',
+      bracket: 'curly',
+      eyes: 'arc',
+      hue: 'plum',
+    })
+    await noHorizontalOverflow(narrow)
+    await narrow.screenshot({ path: `${OUT}/avatar-picker-390-dark.png` })
+    await narrow.getByRole('button', { name: '完成', exact: true }).click()
+    await narrow.reload()
+    await connected(narrow)
+    await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
+    await narrow
+      .getByRole('button', { name: /资料助手/u })
+      .first()
+      .click()
+    await expect.poll(() => narrow.locator('.agent-head-avatar .agent-avatar path').nth(2).getAttribute('d')).toContain('Q16.9 19.4')
     await narrow.getByRole('button', { name: '返回', exact: true }).click()
     await narrow.getByRole('button', { name: /^委托资料助手/u }).waitFor()
     await settled(narrow)

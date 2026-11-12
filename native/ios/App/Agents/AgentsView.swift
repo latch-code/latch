@@ -32,24 +32,6 @@ struct HintButton: View {
     }
 }
 
-/** The Agent's glyph on the neutral plate; 通用 has its own. */
-struct AgentTile: View {
-    let glyph: String?
-    var size: CGFloat = 40
-    private static let symbols: [String: String] = [
-        "glasses": "eyeglasses", "library": "books.vertical", "newspaper": "newspaper", "package": "shippingbox",
-        "pen-line": "pencil.line", "flask-conical": "testtube.2", "compass": "safari", "hammer": "hammer",
-        "lightbulb": "lightbulb", "list-checks": "checklist", "palette": "paintpalette", "telescope": "binoculars",
-    ]
-    var body: some View {
-        Image(systemName: glyph.flatMap { Self.symbols[$0] } ?? "person.crop.circle")
-            .font(.system(size: size * 0.45)).foregroundStyle(PhoneTheme.ink2)
-            .frame(width: size, height: size)
-            .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: size * 0.26))
-            .accessibilityHidden(true)
-    }
-}
-
 struct BuiltInMark: View {
     var body: some View {
         Text("内置").font(.system(size: 11, weight: .medium)).foregroundStyle(PhoneTheme.muted)
@@ -154,7 +136,7 @@ private struct AgentRow: View {
     let entry: PhoneAgentEntry
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AgentTile(glyph: entry.glyph, size: 40)
+            AgentFace(avatar: entry.avatar, size: 40, face: entry.face)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(entry.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink).lineLimit(1)
@@ -166,7 +148,8 @@ private struct AgentRow: View {
                     Text(([entry.runs] + [entry.place].compactMap { $0 }).joined(separator: " · "))
                         .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
                 }
-                if !entry.available { Unavailable(reason: entry.unavailableReason) }
+                if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
+                else if !entry.available { Unavailable(reason: entry.unavailableReason) }
             }
             Spacer(minLength: 0)
         }.contentShape(Rectangle())
@@ -230,11 +213,12 @@ struct AgentPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 12) {
-                    AgentTile(glyph: entry.glyph, size: 44)
+                    AgentFace(avatar: entry.avatar, size: 56, face: entry.face)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
                             if entry.general { BuiltInMark() }
+                            if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
                         }
                         Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2)
                     }

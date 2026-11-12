@@ -27,7 +27,7 @@ import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
-import { AgentTile } from '../agents/parts.tsx'
+import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
 
@@ -111,7 +111,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     id: `my-agent:${agent.id}`,
     label: agent.name,
     ...(agent.description ? { sub: agent.description } : {}),
-    icon: <AgentTile glyph={agent.glyph} size={16} />,
+    icon: <AgentAvatar avatar={agent.avatar} size={16} />,
     run: () => {
       shell.openMyAgent({ id: agent.id })
     },

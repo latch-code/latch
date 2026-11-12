@@ -40,13 +40,16 @@ import {
   agentSessions,
   delegationChoice,
   delegationSubmission,
+  agentActivity,
   dutyLine,
   GENERAL_NAME,
   runsWith,
   usesHostModels,
   worksIn,
 } from './model.ts'
-import { AgentTile, Availability } from './parts.tsx'
+import { AgentAvatar } from './AgentAvatar.tsx'
+import { AvatarPicker } from './AvatarPicker.tsx'
+import { ActivityWord, Availability } from './parts.tsx'
 import { CarryResults } from './CarryResults.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { carriedText } from './scheduleModel.ts'
@@ -542,15 +545,20 @@ export function AgentPage({
   const duty = general ? '没选别的 Agent 的会话都带上它' : dutyLine(value?.kind === 'custom' ? value.detail.agent : (summary ?? {}))
   const held = offline || writes.held
   const memories = value?.detail.memories ?? []
-  const glyph = summary?.glyph
+  const activity = summary ? agentActivity(snapshot, summary) : 'idle'
   return (
     <div className="agent-page">
       <header className="agent-head">
-        <AgentTile glyph={glyph} size={40} />
+        {summary && shell.access.scopes.has('run') ? (
+          <AvatarPicker agent={summary} state={activity} writes={writes} disabled={held} onReload={onReload} />
+        ) : (
+          <AgentAvatar avatar={summary?.avatar ?? 'general'} size={56} state={activity} />
+        )}
         <div className="agent-head-text">
           <h1>
             {name}
             {general && <span className="agent-builtin">内置</span>}
+            {summary && !offline && <ActivityWord state={activity} />}
           </h1>
           {duty && <p>{duty}</p>}
         </div>

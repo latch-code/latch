@@ -412,12 +412,25 @@ export class Automations {
    * definition. The check leaves them alone from before the save until they are bound to it, or it would find the new
    * definition against the old grant and pause them. A failed bind leaves the old grant, and the next check pauses them.
    */
-  async edit<T>(customAgent: string | undefined, actor: AgentActor, save: () => Promise<T>): Promise<T> {
+  async edit<T>(customAgent: string | undefined, actor: AgentActor, save: () => Promise<T>, definition?: () => string): Promise<T> {
     const owner = customAgent ?? ''
+    // The grant follows `definitionHash`, which is part of every run's basis. A change outside it (a name, a description, an
+    // avatar) keeps the basis, so it neither moves the grant to the editor nor pauses the schedule; a new name still shows
+    // in later runs' first turn, which names the Agent. Unreadable before or after (a deletion, a write still unconfirmed)
+    // rebinds as before.
+    const hash = () => {
+      try {
+        return definition?.()
+      } catch {
+        return undefined
+      }
+    }
+    const before = hash()
     this.editing.set(owner, (this.editing.get(owner) ?? 0) + 1)
     try {
       const saved = await save()
-      await this.rebind(customAgent, actor)
+      const after = hash()
+      if (before === undefined || after === undefined || before !== after) await this.rebind(customAgent, actor)
       return saved
     } finally {
       const left = this.editing.get(owner)! - 1

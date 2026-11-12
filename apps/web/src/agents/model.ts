@@ -1,6 +1,6 @@
 import {
   GENERAL_AGENT_ID,
-  type AgentGlyph,
+  type AgentAvatar,
   type AutomationSummary,
   type AppSnapshot,
   type CustomAgentDetail,
@@ -16,6 +16,8 @@ import {
 import { ApiError, ApiTimeoutError, ClientError, isUncertain, type PendingSubmission } from '../core/api.ts'
 import { findProvider, harnessName, type ComposerChoice } from '../composerChoice.ts'
 import { projectName } from '../projects.tsx'
+import { rowStatus, waitsOnYou } from '../sessions.ts'
+import type { AvatarState } from './avatarFace.ts'
 
 /** One entry of 我的 Agent's list: 通用 first, then the Host's own order. */
 export type AgentEntry =
@@ -82,18 +84,41 @@ export function agentSessions(tasks: readonly TaskSummary[], id: string): TaskSu
 export function sessionAgent(
   snapshot: Pick<AppSnapshot, 'customAgents'>,
   task: TaskSummary | undefined,
-): { id: string; name: string } | undefined {
+): { id: string; name: string; avatar?: AgentAvatar } | undefined {
   const id = task?.agent?.customAgentId
   if (!id) return undefined
   const found = snapshot.customAgents?.find(agent => agent.id === id)
-  return { id, name: found?.name ?? 'Agent' }
+  return { id, name: found?.name ?? 'Agent', ...(found ? { avatar: found.avatar } : {}) }
 }
 
 /** Whether this device may read Agents at all: their contents are private to a device with the full data scope. */
 export const readsAgents = (snapshot: Pick<AppSnapshot, 'device'>) => snapshot.device.dataScope === 'all'
 
-/** The Agent's glyph, by name; 通用 has the bot. */
-export type AgentMark = AgentGlyph | 'general'
+/**
+ * What an Agent's face shows, from the Host's own data: its sessions by `agent.customAgentId`, 等你处理 before 运行中,
+ * then 休息 while it cannot start, then a failure of its latest session, else nothing.
+ */
+export function agentActivity(
+  snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
+  agent: Pick<CustomAgentSummary, 'id' | 'available'>,
+): AvatarState {
+  const own = snapshot.tasks.filter(task => task.agent?.customAgentId === agent.id)
+  const asking = new Set(snapshot.approvals.map(approval => approval.sessionId))
+  if (own.some(task => waitsOnYou(task) || (asking.has(task.id) && task.status === 'running'))) return 'waiting'
+  if (own.some(task => task.status === 'running' || task.status === 'waiting-approval')) return 'running'
+  if (!agent.available) return 'resting'
+  const latest = own
+    .filter(task => !task.archived)
+    .reduce<TaskSummary | undefined>((found, task) => (!found || task.updatedAt > found.updatedAt ? task : found), undefined)
+  return latest && rowStatus(latest).kind === 'failed' ? 'failed' : 'idle'
+}
+
+/** The words beside a face for the states that have one; 休息 says 不可用 through the Agent's availability. */
+export const ACTIVITY_WORDS: Partial<Record<AvatarState, { words: string; tone: 'running' | 'waiting' | 'failed' }>> = {
+  running: { words: '运行中', tone: 'running' },
+  waiting: { words: '等你处理', tone: 'waiting' },
+  failed: { words: '失败', tone: 'failed' },
+}
 
 /** What the form edits. */
 export interface AgentDraft {
@@ -173,6 +198,35 @@ export function patchOf(base: AgentDraft, next: AgentDraft): Omit<CustomAgentPat
   if (!same(base.tools, next.tools)) patch.tools = next.tools ?? null
   return patch
 }
+
+const DRAFT_FIELDS = ['name', 'description', 'instructions', 'harnessId', 'mode', 'model', 'defaultProjectId', 'skills', 'tools'] as const
+
+/**
+ * A new revision from the Host under a form being edited: the person's edits stay, laid over the new definition. A field
+ * both the person and the Host changed, to different values, is a conflict; the form then keeps the person's value,
+ * says it was changed elsewhere and does not save until the person loads the latest. An untouched form simply takes the new definition.
+ */
+export function rebaseDraft(
+  previous: AgentDraft,
+  next: AgentDraft,
+  draft: AgentDraft,
+): { draft: AgentDraft; conflicts: Array<keyof AgentDraft> } {
+  const result: Record<string, unknown> = { ...next }
+  const conflicts: Array<keyof AgentDraft> = []
+  for (const field of DRAFT_FIELDS) {
+    if (same(draft[field], previous[field])) continue
+    if (!same(previous[field], next[field]) && !same(draft[field], next[field])) conflicts.push(field)
+    result[field] = draft[field]
+  }
+  for (const field of DRAFT_FIELDS) if (result[field] === undefined) delete result[field]
+  return { draft: result as unknown as AgentDraft, conflicts }
+}
+
+/**
+ * Whether 保存 waits: a field changed both here and elsewhere stays shown so the person can copy it, but saving it would
+ * write over the other edit, so 保存 waits for 载入最新.
+ */
+export const saveWaits = (conflicts: ReadonlyArray<keyof AgentDraft>) => conflicts.length > 0
 
 /** What became of a write: the Host refused it, it changed under us, or nobody knows yet (retry the same request). */
 export type WriteOutcome =

@@ -1,7 +1,6 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import {
-  Bot,
   ChevronDown,
   ChevronLeft,
   CornerDownLeft,
@@ -15,7 +14,14 @@ import {
   Pencil,
   RefreshCw,
 } from 'lucide-react'
-import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  type AgentAvatar as AgentAvatarValue,
+  type ChangeTotals,
+  type HarnessInfo,
+  type RunLive,
+  type TaskSummary,
+} from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -33,6 +39,7 @@ import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { sessionAgent } from '../agents/model.ts'
+import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
@@ -226,12 +233,14 @@ function ProjectCrumb({
 /** The Agent a session was delegated to, as 「为 <Agent> 委托」, which goes back to the Agent's page. */
 export interface HeaderAgent {
   name: string
+  /** Absent once the Agent is deleted: the face is grey. */
+  avatar?: AgentAvatarValue | undefined
   onOpen: () => void
 }
 function AgentLink({ agent }: { agent: HeaderAgent }) {
   return (
     <button type="button" className="topbar-agent" title={`回到 ${agent.name}`} onClick={agent.onOpen}>
-      <Bot size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      <AgentAvatar avatar={agent.avatar ?? 'general'} size={24} />
       <span>
         为 <VisibleText text={agent.name} /> 委托
       </span>
@@ -643,6 +652,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         ? {
             agent: {
               name: delegated.name,
+              avatar: delegated.avatar,
               onOpen: () => {
                 openMyAgent({ id: delegated.id, tab: 'delegate' })
               },

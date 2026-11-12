@@ -26,14 +26,14 @@ sources:
 ---
 # 我的 Agent
 
-Agent 是用户使用的那个东西：名称、图标、说明、指令、技能、Harness、模型，再加记忆与默认项目。Harness（代码里仍叫 Harness）是运行它的程序，自带基础提示和工具。Agent 不替换 Harness，只往上加。
+Agent 是用户使用的那个东西：名称、头像、说明、指令、技能、Harness、模型，再加记忆与默认项目。Harness（代码里仍叫 Harness）是运行它的程序，自带基础提示和工具。Agent 不替换 Harness，只往上加。
 
 `catalog.features.customAgents` 声明下面的接口。这些路由与 `/link/api/agents` 无关：后者仍指 Harness 定义。
 
 | 接口 | 作用 |
 | --- | --- |
 | `GET /custom-agents` | 「通用」、我的 Agent 摘要与可选插件 |
-| `POST /custom-agents` | 新建；图标由 Host 分配 |
+| `POST /custom-agents` | 新建；头像由 Host 分配 |
 | `GET`、`PATCH`、`DELETE /custom-agents/:id` | 详情（含指令、记忆、会话）、按 `baseRevision` 修改、删除；可选字段传 `null` 清除 |
 | `GET`、`POST /custom-agents/:id/memories`，`PATCH`、`DELETE …/:mid` | 记忆，只有用户能写，只有这个 Agent 能用 |
 | `GET`、`PATCH /custom-agents/general` | 「通用」，不能删除；记忆路由同样可用 |
@@ -48,6 +48,7 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 - `instructions`：指令。`skills`：`catalog.skills` 里的 `pluginId:skillId`。
 - `tools`：「可以使用」，只对内置 Harness 生效，是可调用工具的插件 ID；缺省时不额外限制。它只收紧，不授予新能力。
 - `defaultProjectId`：新会话的默认项目。
+- `avatar`：头像，`{ kind: 'face', bracket, eyes, hue }`，括号 `round`、`curly`、`square`、`angle`，眼睛 `dot`、`arc`、`oval`、`sleepy`，颜色 `ink`、`slate`、`pine`、`plum`、`wisteria`、`cocoa`、`sand`、`moss`、`mist`（`AGENT_BRACKETS`、`AGENT_EYES`、`AGENT_HUES`）。新建时 Host 分配一个还没用过的括号 × 颜色组合，眼睛用圆点；`PATCH` 带 `avatar` 修改，和其他字段一样经 `baseRevision`、`requestId`、先审计再写和回执，审计 detail 只有哈希。未知的字段与取值都拒绝。头像不进 `definitionHash`，会话收不到它。只有 `definitionHash` 变了的修改才把这个 Agent 的定时任务重新绑定到修改的设备（读不到时照旧重新绑定）；改名称、说明或头像既不移动也不暂停定时任务，但新名称会出现在之后运行的第一轮文本块里，因为它写着 Agent 的名称。`kind` 为以后上传图片留位，尚未实现。
 
 摘要里的 `available` 与 `unavailableReason` 说明现在能否开始会话，`canAutomate` 说明能否用于定时任务。
 
@@ -83,9 +84,11 @@ Agent 是用户使用的那个东西：名称、图标、说明、指令、技�
 
 「我的 Agent」是侧栏里「Code」下面的第二个入口（手机是底部标签栏里的一个标签），只在 `catalog.features.customAgents` 存在时出现。宽窗口上，侧栏的位置换成「通用」与各个 Agent 的列表，工作面板是列表页或某个 Agent 的页面；手机上列表是根页，Agent 页推入在它之上。和设置一样，它盖在会话各栏上而不卸载会话。
 
-- **列表**：「通用」在最前并标「内置」，其余按 Host 的顺序；每行是图标、名称、一行职责（说明，没有时是指令的第一行）、Harness · 模型、默认项目与 `available`/`unavailableReason`。主按钮是「委托<名称>…」，还没有自己的 Agent 时是「新建 Agent」。
+- **列表**：「通用」在最前并标「内置」，其余按 Host 的顺序；每行是头像、名称、一行职责（说明，没有时是指令的第一行）、Harness · 模型、默认项目与 `available`/`unavailableReason`。主按钮是「委托<名称>…」，还没有自己的 Agent 时是「新建 Agent」。
 - **Agent 页**：标签「委托 · 记忆 · 定时 · 设置」，「通用」没有「委托」。「委托」用会话的输入框经 `POST /tasks` 开始带 `customAgentId` 的会话，Agent 的 Harness、模型和默认项目预先选好，这一次可以换项目、文件夹（新工作树的起点按所选发送）、Harness 和模型（Harness 只列有 `agentContext` 的）；外部 Harness 的 `engineOptions` 尚未在开始时设置。下面的「近期委托」是 `TaskSummary.agent` 指向它的会话，打开的是普通对话，对话标题前写「为 <Agent> 委托」，点它回到 Agent 页；定时任务开始的会话（`automationId`）在这里和「带入上次成果」里带「定时」标记。输入框下方的「带入上次成果」选这个 Agent 之前的一个或多个委托，从每个读出最后一条回复（默认勾选）和它提到的文件，作为引用文字（从「> 上次成果「标题」：」起每行都是 `>` 引用，文件只写路径）插在已写的文字后面；它不建交接记录，也不接着原来的上下文。旁边的「新会话」提示说明这里总按 Agent 现在的定义开始新会话，要接着原来的对话就在近期委托里打开那个会话直接输入。手机上选择在底部面板里。
+- **头像**：一对括号围着两只眼睛，放在浅色圆角方块上，颜色取 `--agent-<hue>` 令牌（「通用」是中性灰的圆括号加圆点）。列表 40、Agent 页头 56、侧栏 24、委托会话页头 24、命令面板 16；「我的 Agent」入口是单色线稿 `(··)`，不动。Agent 页头的头像打开选择器（桌面是弹层，手机是底部面板）：会动的预览，下面是括号、眼睛、颜色三行，选项本身就是头像，选中项是墨色环，每行一个 Tab 停靠点，方向键从当前焦点移动，空格或回车选择；「设置」里没保存的修改在 Agent 有新版本时保留，同一字段在别处也改了时提示「已在别处修改」；选了立即提交，只显示 Host 读回的值，失败、结果未知与离线沿用「写入」的提示与原 `requestId` 重试。
+- **头像的状态**：只由 Host 已有的数据推出，来自这个 Agent 的会话（`TaskSummary.agent.customAgentId`）：等你处理 > 运行中 > 休息（摘要 `available: false`）> 最近一次未归档会话失败 > 空闲（`agentActivity`）。状态词始终写在旁边（运行中、等你处理、失败；休息时是「不可用」），头像只陪衬：运行中右下角闪烁的 `_`、眼睛看向它；等你处理眼睛抬起，右上角不时冒出琥珀色「?」；失败眼睛低下，右上角红色「!」；休息闭眼，飘出「z」；会话在页面打开时结束，笑眯眯一次。空闲时每隔几秒随机眨眼、看一眼或笑眯眯。32 px 起有全部动作与配件，20–31 px 只偶尔眨眼，16 px 不动。全页一个调度器（`avatarMotion.ts`）、一个计时器，只驱动视口内的头像，页面隐藏时停；同时笑眯眯或冒配件的不超过 3 个；只动 transform 与 opacity。减少动态效果或根元素 `data-motion="still"`（e2e 的 `stillMotion`，与固定时钟一起在 `visualContext` 里）时完全不动，配件静态显示。
 - **定时**：这个 Agent 的定时任务（「通用」的是不指定 Agent 的那些），界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
 - **写入**：新建、修改（带打开表单时的 `baseRevision`，只发改了的字段）、删除与记忆都带 `requestId`；结果未知时保留原请求，「重试同一请求」原样重发，`agent-changed` 显示为已在别处修改并可载入最新。委托的待确认请求单独存放，不占用新会话的草稿，重试同样沿用原 `requestId`。
 - **数据范围**：没有完整数据范围的设备看到「这台设备看不到 Agent」，不显示空列表；Host 返回 `agent-scope-required` 时同样处理，`agent-write-unknown` 时显示正在确认并稍后重读。
-- **iPhone/iPad**：标签栏同样是 Code / 我的 Agent / 应用 / 设置，判断在 `PhoneTabs`、`PhoneAgents`。手机只在正文窗口内拿到快照的 `customAgents` 与 `automations`，所以窗口外不显示任何 Agent 的名称、职责与定时，列表写「查看」（Face ID 关闭时自动打开）；离线保存的列表不含它们，窗口关闭时也从内存撤下，委托的会话在窗口外页头只写「委托」。Agent 页的「委托」经同一 `POST /tasks` 带 `customAgentId`，Harness 只列有 `agentContext` 的，所选的文件夹照网页一样作为 `workspaceId` 发送（起始文件夹 `default` 也发送，Host 用它代替 Agent 自己的项目）；成功后转到 Code 打开会话，会话页头写「为 <Agent> 委托」。「记忆」可以添加、修改、删除，写入与委托都占用手机唯一的待确认写入，结果未知时「重试同一请求」，`agent-changed` 显示「已在别处修改」。「定时」只读，列出计划与运行记录；「设置」只读；新建与修改 Agent 或定时任务写「尚未实现」，在网页或桌面端修改。
+- **iPhone/iPad**：标签栏同样是 Code / 我的 Agent / 应用 / 设置，判断在 `PhoneTabs`、`PhoneAgents`。手机只在正文窗口内拿到快照的 `customAgents` 与 `automations`，所以窗口外不显示任何 Agent 的名称、职责与定时，列表写「查看」（Face ID 关闭时自动打开）；离线保存的列表不含它们，窗口关闭时也从内存撤下，委托的会话在窗口外页头只写「委托」。Agent 页的「委托」经同一 `POST /tasks` 带 `customAgentId`，Harness 只列有 `agentContext` 的，所选的文件夹照网页一样作为 `workspaceId` 发送（起始文件夹 `default` 也发送，Host 用它代替 Agent 自己的项目）；成功后转到 Code 打开会话，会话页头写「为 <Agent> 委托」。「记忆」可以添加、修改、删除，写入与委托都占用手机唯一的待确认写入，结果未知时「重试同一请求」，`agent-changed` 显示「已在别处修改」。「定时」只读，列出计划与运行记录；「设置」只读；新建与修改 Agent 或定时任务写「尚未实现」，在网页或桌面端修改。头像用 SwiftUI 画同样的几何与动作（`AgentFace`，状态由 `PhoneAgents.face` 推出），列表 40、Agent 页 56，一个共享时钟只在头像显示、App 在前台时走；开启「减弱动态效果」时不动；标签栏的「我的 Agent」是不动的 `(··)` 线稿；手机上换头像的选择器尚未实现。
