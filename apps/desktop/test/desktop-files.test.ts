@@ -545,8 +545,16 @@ describe('desktop shell files', () => {
       'latch:files:reveal',
       'latch:files:quicklook',
       'latch:files:open',
+      'latch:files:editor',
     ])
-    for (const match of channels) expect(match[2]).toMatch(/\(trusted\(event\) \? actions\.\w+\(input\) : refusedFolders\)/u)
+    for (const match of channels.slice(0, -1)) expect(match[2]).toMatch(/\(trusted\(event\) \? actions\.\w+\(input\) : refusedFolders\)/u)
+    // The editor starts an application: the main window's own page, a real gesture there, and a chosen editor first.
+    const editor = source.slice(source.indexOf("ipcMain.handle('latch:files:editor'"))
+    const body = editor.slice(0, editor.indexOf('\n  })'))
+    expect(body).toMatch(/if \(!trusted\(event\)\) return refusedFolders/u)
+    expect(body).toMatch(/gestures\.get\(event\.sender\)\?\.take\(\) !== true/u)
+    expect(body.indexOf('take()')).toBeLessThan(body.indexOf('actions.editorFile'))
+    expect(source).toMatch(/execFile\('\/usr\/bin\/open', args, \{ timeout: 15_000, shell: false \}/u)
   })
 })
 

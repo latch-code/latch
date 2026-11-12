@@ -61,9 +61,10 @@ export type FileInspection =
   | {
       status: 'ok'
       name: string
-      actions: { reveal: boolean; quickLook: boolean; open: boolean }
+      /** `editor`: shells from before 在编辑器中打开 leave it out. */
+      actions: { reveal: boolean; quickLook: boolean; open: boolean; editor?: boolean }
       /** Why an action is not offered: an error code (`file-secret`, `file-type-refused`, `unsupported`…). */
-      refused?: { quickLook?: string; open?: string }
+      refused?: { quickLook?: string; open?: string; editor?: string }
     }
   /** Not a file the Host will act on: `file-missing`, `file-outside-folders`, `file-protected`… */
   | { status: 'refused'; code: string }
@@ -97,6 +98,24 @@ export interface ShellFiles {
     target: string | { handle: string },
   ) => Promise<FileActionResult>
   open: (context: string | { workspaceId: string; harnessId: string }, target: string | { handle: string }) => Promise<FileActionResult>
+  /**
+   * 在编辑器中打开 in the editor chosen in 设置 (`ShellEditors`), at `line` when known. Main starts it only right after a
+   * real click or key on this page; shells from before it do not have it.
+   */
+  editor?: (
+    context: string | { workspaceId: string; harnessId: string },
+    target: string | { handle: string },
+    line?: number,
+  ) => Promise<FileActionResult>
+}
+
+/** The code editors main found on this Mac (a fixed list of bundle IDs) and the one the person chose. */
+export type EditorList = { status: 'ok'; editors: { id: string; name: string }[]; chosen: string | null }
+
+export interface ShellEditors {
+  protocolVersion: 1
+  list(): Promise<EditorList | { status: 'failed' | 'refused'; code: string }>
+  choose(id: string): Promise<EditorList | { status: 'failed' | 'refused'; code: string }>
 }
 
 export interface NotificationPreferences {
@@ -243,6 +262,12 @@ export interface LatchShell {
   }
   /** Shells from before file actions do not have it. */
   files?: ShellFiles
+  /** Shells from before 在编辑器中打开 do not have it; other computers' windows never do. */
+  editors?: ShellEditors
+  /** 诊断导出: main asks the Host and saves the bundle where the person chooses; absent elsewhere. */
+  diagnostics?: {
+    export(): Promise<{ status: 'saved' | 'canceled' | 'busy' } | { status: 'failed' | 'refused'; code: string }>
+  }
   /** Shells from before updates do not have it. */
   updates?: ShellUpdates
   /** Code or 我的 Agent chosen in the menu bar. Shells from before the two places do not have it. */
@@ -279,6 +304,15 @@ export function shellFiles(): ShellFiles | null {
     && typeof files.open === 'function'
     ? files
     : null
+}
+
+/** The shell's editors with the file action that uses them, or null (a browser, another computer's window, an older shell). */
+export function shellEditors(): (ShellEditors & { open: NonNullable<ShellFiles['editor']> }) | null {
+  const shell = currentShell()
+  const editors = shell?.editors
+  const files = shellFiles()
+  if (shell?.remote || !editors || editors.protocolVersion !== 1 || typeof files?.editor !== 'function') return null
+  return typeof editors.list === 'function' && typeof editors.choose === 'function' ? { ...editors, open: files.editor } : null
 }
 
 /** The shell's computers, when it has them. */

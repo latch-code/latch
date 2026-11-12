@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
-import { InlineNotice, SegmentedControl, SwitchRow } from '@latch/ui'
+import { CodeGlyph, InlineNotice, Menu, SegmentedControl, SelectButton, SwitchRow } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
@@ -9,6 +9,7 @@ import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLi
 import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
+import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
@@ -79,9 +80,44 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
     setBusy(null)
   }
   const view = lifecycle.view
+  const editors = useEditors()
+  const chosenEditor = editors?.editors.find(editor => editor.id === editors.chosen)
   return (
     <SettingsGroup title={computerLabel(local, hostName)}>
       <SettingsRow title="名称" trailing={<span className="settings-row-value">{hostName || '这台 Mac'}</span>} />
+      {local && editors && editors.editors.length > 0 && (
+        <SettingsRow
+          title="编辑器"
+          trailing={
+            <Menu
+              label="编辑器"
+              align="end"
+              selection
+              sections={[
+                {
+                  id: 'editors',
+                  items: editors.editors.map(editor => ({
+                    id: editor.id,
+                    label: editor.name,
+                    checked: editor.id === editors.chosen,
+                    onSelect: () => {
+                      setError('')
+                      void chooseEditor(editor.id).then(next => {
+                        if (next?.chosen !== editor.id) setError('没有保存编辑器，请重试')
+                      })
+                    },
+                  })),
+                },
+              ]}
+              trigger={menu => (
+                <SelectButton {...menu} icon={CodeGlyph}>
+                  {chosenEditor?.name ?? '未选择'}
+                </SelectButton>
+              )}
+            />
+          }
+        />
+      )}
       {view?.loginItem.available && (
         <SwitchRow
           className="settings-row"

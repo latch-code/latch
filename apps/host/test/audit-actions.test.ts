@@ -111,6 +111,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'file.reveal': fileAction,
   'file.quicklook': fileAction,
   'file.open': fileAction,
+  'file.editor': fileAction,
+  'diagnostics.exported': { logLines: 12, errors: 1, harnesses: 2, plugins: 5 },
   'file.view': { ...fileAction, bytes: 2048 },
   'file.edit': { sessionId, pathHash: hex, type: 'other', protection: 'none', before: 10, after: 12 },
   'file.list': { workspaceId: 'ws-1', rootHash: hex, dirHash: hex, hidden: false, count: 3, truncated: false },

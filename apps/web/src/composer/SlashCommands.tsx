@@ -24,11 +24,17 @@ export function slashMatches(draft: string, commands: readonly SessionCommand[])
         .map(item => item.command)
 }
 
-/** Something Latch does in this session, not text for the Harness: choosing it runs it and empties the input. */
+/**
+ * Something Latch does in this session, not text for the Harness: choosing it runs it and empties the input, or, with
+ * `text`, puts that in the input for the rest (`/btw ` waits for its question). `unavailable`: listed, says why, does
+ * nothing.
+ */
 export interface SlashAction {
   name: string
   description: string
-  run(): void
+  run?(): void
+  text?: string
+  unavailable?: string
 }
 
 export interface SlashOption {
@@ -39,6 +45,8 @@ export interface SlashOption {
   text: string
   score: number
   run?: () => void
+  /** Listed with its reason; choosing it does nothing. */
+  unavailable?: true
 }
 export function slashOptions(
   draft: string,
@@ -53,10 +61,11 @@ export function slashOptions(
       id: 'action:' + action.name,
       kind: 'action' as const,
       label: '/' + action.name,
-      description: action.description,
-      text: '',
+      description: action.unavailable ?? action.description,
+      text: action.text ?? '',
       score: rank(action.name, query),
-      run: action.run,
+      ...(action.run && !action.unavailable ? { run: action.run } : {}),
+      ...(action.unavailable ? { unavailable: true as const } : {}),
     })),
     ...templates.map(template => {
       // A template made in 设置 has a random ID: it is named, and found, by its name alone.
@@ -109,6 +118,7 @@ export function useSlashCommands({
     enabled && slashQuery(draft) !== null && dismissed !== draft && (commands.length > 0 || templates.length > 0 || actions.length > 0)
   const active = selection.draft === draft ? Math.min(selection.index, Math.max(0, options.length - 1)) : 0
   const select = (option: SlashOption) => {
+    if (option.unavailable) return
     onDraft(option.text)
     option.run?.()
   }
@@ -165,6 +175,7 @@ export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashComman
                     role="option"
                     id={menu.id + '-' + index}
                     aria-selected={index === menu.active}
+                    aria-disabled={option.unavailable ? true : undefined}
                     tabIndex={-1}
                     key={option.id}
                     onMouseDown={event => event.preventDefault()}

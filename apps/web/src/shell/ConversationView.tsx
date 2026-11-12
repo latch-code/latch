@@ -34,6 +34,7 @@ import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
 import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
+import { SideQuestionPanel } from '../conversation/SideQuestion.tsx'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -428,6 +429,19 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                 />
                 <TargetHandoffDock key={`target:${current.summary.id}`} shell={shell} handoffs={handoffs} />
               </>
+            )}
+            {selectedId && (
+              <SideQuestionPanel
+                key={selectedId}
+                sourceId={selectedId}
+                tasks={shell.snapshot.tasks ?? []}
+                phone={phone}
+                onInsert={text => {
+                  submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
+                  composerRef.current?.focus()
+                }}
+                onOpen={id => choose(id)}
+              />
             )}
             <SessionComposer shell={shell} />
           </div>

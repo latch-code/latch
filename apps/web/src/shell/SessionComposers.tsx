@@ -38,6 +38,7 @@ import { ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { HarnessInstallCard, SetupCard } from '../newSession/NewSession.tsx'
 import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
 import { SendingMessage } from '../components/SendingMessage.tsx'
+import { askSideQuestion, sideQuestionBlock, sideQuestionOf, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The message on its way, until the Host lists it. */
@@ -418,6 +419,13 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
         : shell.snapshot.tasks.some(task => task.id === held.sessionId)
           ? held.sessionId
           : undefined
+  // /btw: a side question beside this session, offered where its Harness can fork into a chat; it never joins the turn.
+  const sideOffered =
+    selectedId !== null && !!current && current.summary.id === selectedId && !!summary && !summary.personal && access.scopes.has('run')
+  const sideRefusal = sideOffered ? sideQuestionRefusal(catalog, harnessInfo) : undefined
+  const sideQuestion = sideOffered && !sideRefusal ? sideQuestionOf(submission.draft) : undefined
+  // `/btw …` where it is not available stays in the input with the reason; it never goes to the Harness.
+  const sideBlocked = sideQuestionBlock(submission.draft, sideOffered, sideRefusal)
   const answer = asked
     ? answersQuestion
       ? {
@@ -430,7 +438,16 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       : undefined
     : noteComposer
       ? { kind: 'reject' as const, onSubmit: noteComposer.submit }
-      : undefined
+      : sideQuestion !== undefined && current
+        ? {
+            kind: 'question' as const,
+            onSubmit: () => {
+              if (!sideQuestion) return
+              setSubmissionDraft('')
+              void askSideQuestion(current, sideQuestion, projectFor(catalog, current.summary), shell.active)
+            },
+          }
+        : undefined
   return (
     <Composer
       textareaRef={composerRef}
@@ -438,17 +455,20 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
       commands={shell.active ? current?.commands?.filter(command => !command.idleOnly) : current?.commands}
-      {...(shell.clearable && !shell.active
-        ? {
-            actions: [
+      actions={[
+        ...(shell.clearable && !shell.active
+          ? [
               {
                 name: 'clear',
                 description: '清空上下文',
                 run: () => shell.armClear(true),
               },
-            ],
-          }
-        : {})}
+            ]
+          : []),
+        ...(sideOffered
+          ? [{ name: 'btw', description: '旁支提问，不打断这一轮', text: '/btw ', ...(sideRefusal ? { unavailable: sideRefusal } : {}) }]
+          : []),
+      ]}
       templates={scopedTemplates(
         promptTemplates,
         selectedId === null
@@ -473,7 +493,9 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             },
           })}
       sending={submission.sending}
-      error={noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '')}
+      error={
+        noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '') || (sideBlocked ?? '')
+      }
       {...(!noteComposer?.error && submission.error ? composerFailure(submission.errorCode, owner, openSettings) : {})}
       pendingReason={submission.pendingReason}
       onRetry={() => {
@@ -487,8 +509,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       pendingNote={
         pendingQueued === 'waiting' ? '队列里有同样的一条在等待' : pendingQueued === 'parked' ? '队列里有同样的一条已暂停' : undefined
       }
-      canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined)}
-      blockReason={block?.message ?? sessionBlock}
+      canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined) && !sideBlocked}
+      blockReason={block?.message ?? sessionBlock ?? sideBlocked}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
       {...(answer ? { answer } : {})}
       drawers={drawers}

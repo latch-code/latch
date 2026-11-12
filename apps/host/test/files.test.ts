@@ -498,6 +498,37 @@ describe('file routes', () => {
     expect(t.host.security.audit.lastOf('file.reveal')?.detail).toMatchObject({ type: 'other' })
   })
 
+  it('audits 在编辑器中打开 for a text file first, and refuses binary, secret and workspace files unrecorded', async () => {
+    const { t, desktop, sessionId } = await desktopSession()
+    await writeFile(join(t.workspaceRoot, 'main.ts'), 'export const a = 1\n')
+    await writeFile(join(t.workspaceRoot, 'team.code-workspace'), '{ "folders": [] }\n')
+    await writeFile(join(t.workspaceRoot, '.env'), 'API_KEY=sk-test\n')
+    const { files } = (await (await resolve(desktop, sessionId, ['main.ts:4', 'out/deck.pptx', 'team.code-workspace', '.env'])).json()) as {
+      files: Resolved[]
+    }
+    expect(files.map(entry => entry.file?.actions.editor)).toEqual([true, false, false, false])
+    expect(files.map(entry => entry.file?.refused?.editor)).toEqual([undefined, 'file-not-text', 'file-type-refused', 'file-secret'])
+    const before = t.host.security.audit.head().seq
+    for (const entry of files.slice(1)) {
+      const refused = await act(desktop, entry.file!.handle, sessionId, 'editor')
+      expect(refused.status).toBe(403)
+    }
+    expect(t.host.security.audit.head().seq).toBe(before)
+    const mainPath = join(await realpath(t.workspaceRoot), 'main.ts')
+    const opened = await act(desktop, files[0]!.file!.handle, sessionId, 'editor')
+    expect(opened.status).toBe(200)
+    expect(await opened.json()).toEqual({ file: { path: mainPath, name: 'main.ts', ext: 'ts' } })
+    expect(t.host.security.audit.lastOf('file.editor')).toMatchObject({
+      actor: { deviceId: desktop.id, listener: 'unix' },
+      target: sessionId,
+      detail: { sessionId, pathHash: sha256Hex(mainPath), type: 'other' },
+    })
+    // Starting an editor is starting a program on this Mac: a device that may only look gets nothing.
+    const viewer = await t.enroll({ listener: 'unix', name: '只看', scopes: ['view'] })
+    const viewerHandle = await handleOf(viewer, sessionId, 'main.ts')
+    expect((await act(viewer, viewerHandle, sessionId, 'editor')).status).toBe(403)
+  })
+
   it('refuses the action and gives no path when the audit log cannot be written', async () => {
     const { t, desktop, sessionId } = await desktopSession()
     const deck = await handleOf(desktop, sessionId, 'out/deck.pptx')

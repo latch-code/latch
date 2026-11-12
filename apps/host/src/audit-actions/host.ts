@@ -151,10 +151,11 @@ export const HOST_ACTIONS = {
   /** A settings write by the Host, with the canonical hashes before and after. */
   'settings.changed': z.strictObject({ before: z.union([hex64, z.literal('')]), after: hex64 }),
   'settings.changed-outside': z.strictObject({ expected: z.union([hex64, z.literal('')]), actual: hex64 }),
-  /** Written before the desktop app shows a file in Finder, previews it with Quick Look or opens it with its default app. */
+  /** Written before the desktop app shows a file in Finder, previews it with Quick Look, opens it with its default app or in the chosen editor. */
   'file.reveal': fileAction,
   'file.quicklook': fileAction,
   'file.open': fileAction,
+  'file.editor': fileAction,
   'file.view': fileAction.extend({ bytes: count }),
   /** Written before the person's edit of a session file replaces it; sizes only, never the content. */
   'file.edit': z.strictObject({
@@ -167,6 +168,8 @@ export const HOST_ACTIONS = {
     after: count,
   }),
   'file.list': z.strictObject({ ...fileContext, rootHash: hex64, dirHash: hex64, hidden: z.boolean(), count, truncated: z.boolean() }),
+  /** 诊断导出: written before the bundle is answered; counts only, never what it holds. */
+  'diagnostics.exported': z.strictObject({ logLines: count, errors: count, harnesses: count, plugins: count }),
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
 } as const

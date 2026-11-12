@@ -23,6 +23,8 @@ export interface EditorState {
   phase: EditPhase
   sent?: EditSent
   theirs?: EditTheirs
+  /** After 载入最新: the version the editor works from now, in place of the one it opened. */
+  base?: { text: string; hash: string }
 }
 
 /** One open editor: the version it started from, and its state. */

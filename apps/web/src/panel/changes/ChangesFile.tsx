@@ -9,6 +9,7 @@ import {
   useCopy,
   ChevronRightGlyph,
   AlertGlyph,
+  CodeGlyph,
   CopyGlyph,
   FileGlyph,
   MessageGlyph,
@@ -66,6 +67,8 @@ export interface FileRowProps {
   onUndo?: () => void
   onToggle: () => void
   onOpenFile: () => void
+  /** 在 <编辑器> 中打开, in the desktop app's own window: the label, and what it does. */
+  editor?: { label: string; run(): void }
   notes?: FileNotes
   read: (file: Pick<ChangedFile, 'root' | 'path'>, signal: AbortSignal) => Promise<FileChangeDetail>
   /** The phone's rows: the name over its folder, with the note. */
@@ -388,6 +391,7 @@ export function ChangesFile({
   onUndo,
   onToggle,
   onOpenFile,
+  editor,
   notes,
   read,
   twoLines,
@@ -447,6 +451,9 @@ export function ChangesFile({
         {showActions && (
           <span className="changes-file-actions">
             <IconButton size="xs" icon={FileGlyph} label="打开文件" onClick={onOpenFile} />
+            {editor && !file.secret && !file.binary && file.status !== 'D' && (
+              <IconButton size="xs" icon={CodeGlyph} label={editor.label} onClick={editor.run} />
+            )}
             {onUndo && <IconButton size="xs" icon={UndoGlyph} label="撤销此文件" onClick={onUndo} />}
             <IconButton
               size="xs"

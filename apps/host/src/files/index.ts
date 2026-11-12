@@ -1,4 +1,4 @@
-// The desktop app's file actions: 在访达中显示, 快速查看 and 用默认应用打开 for a file a message refers to. Only the desktop
+// The desktop app's file actions: 在访达中显示, 快速查看, 用默认应用打开 and 在编辑器中打开 for a file a message refers to. Only the desktop
 // app's main process calls these routes, over host.sock with its own device credential; the shell proxy refuses them
 // from the page (apps/desktop/src/proxy.cjs). The Host decides whether the file is a regular file inside the session's
 // folders and what may be done with it, records the action in the audit log, and only then tells main the real path.
@@ -47,7 +47,7 @@ export type { FileRoot } from './resolve.ts'
 
 /** References one resolve request may carry. */
 export const RESOLVE_LIMIT = 64
-const FILE_ACTIONS = ['reveal', 'quicklook', 'open'] as const
+const FILE_ACTIONS = ['reveal', 'quicklook', 'open', 'editor'] as const
 export type FileAction = (typeof FILE_ACTIONS)[number]
 
 const resolveSchema = z.strictObject({
@@ -94,6 +94,7 @@ const REFUSAL_MESSAGE = {
   'file-type-refused': '为安全起见，Latch 不直接打开这种文件',
   'file-preview-unverified': '快速查看暂不用于这种文件：还没有确认系统的预览不会加载文件里引用的网络资源',
   'file-content-mismatch': '文件内容与扩展名不符，Latch 不直接打开它',
+  'file-not-text': '这不是文本文件，Latch 不用编辑器打开它',
 } as const
 
 interface FileCaller {
@@ -172,7 +173,7 @@ function admitRead(caller: FileCaller): asserts caller is FileCaller & { device:
   if (!caller.device.scopes.includes('view')) throw scopeRequired('view')
 }
 
-const scopeOf = (action: FileAction): DeviceScope => (action === 'open' ? 'run' : 'view')
+const scopeOf = (action: FileAction): DeviceScope => (action === 'open' || action === 'editor' ? 'run' : 'view')
 
 const EDIT_REFUSALS = {
   'file-code-root': { status: 403, message: 'Latch 程序目录里的文件不能在这里编辑。' },
@@ -455,15 +456,22 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const dimensions = format.kind === 'image' ? imageDimensions(file.head, format.mime) : undefined
       const imageTooLarge = !!dimensions && dimensions.width * dimensions.height > (local ? 100_000_000 : 50_000_000)
       const imageUnknown = format.kind === 'image' && !dimensions
-      const offered =
+      const editableFile =
         !!options.edits
         && context.kind === 'session'
         && options.edits.writable(context.sessionId)
-        && caller.device.scopes.includes('run')
-        && caller.device.dataScope === 'all'
         && !file.secret
         && EDIT_KINDS.has(format.kind)
         && file.size <= FILE_EDIT_LIMIT
+      // A text file this device may read but not edit: the client names the reason instead of hiding 编辑.
+      const scopeRefusal = !editableFile
+        ? undefined
+        : !caller.device.scopes.includes('run')
+          ? 'file-edit-scope'
+          : caller.device.dataScope !== 'all'
+            ? 'file-edit-data-scope'
+            : undefined
+      const offered = editableFile && scopeRefusal === undefined
       const editRoot = access.roots.find(root => root.id === file.rootId)
       const gate = offered && editRoot ? editProtection(caller.device, file, editRoot, options.codeRoot) : undefined
       const editRefusal: EditRefusal | undefined =
@@ -474,7 +482,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
         Object.entries(verdicts).flatMap(([action, verdict]) => (verdict.ok ? [] : [[action, verdict.code]])),
       )
       if (imageTooLarge || imageUnknown) refused.preview = imageTooLarge ? 'file-too-large' : 'file-image-dimensions'
-      if (editRefusal) refused.edit = editRefusal
+      if (editRefusal ?? scopeRefusal) refused.edit = (editRefusal ?? scopeRefusal)!
       files.push({
         input: path,
         status: 'ok',
@@ -511,6 +519,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
             reveal: local && verdicts.reveal.ok,
             quicklook: local && verdicts.quicklook.ok,
             open: local && verdicts.open.ok,
+            editor: local && verdicts.editor.ok,
             ...(options.sessionDetail
               ? {
                   download: canRead && file.size <= limit && !imageTooLarge,

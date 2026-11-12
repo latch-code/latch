@@ -12,6 +12,7 @@ import {
   Tooltip,
   useCopy,
   type MenuItem,
+  CodeGlyph,
   CopyGlyph,
   MoreGlyph,
   ExternalGlyph,
@@ -26,6 +27,7 @@ import { fileRefusalText } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { editorLabel, openInEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 
@@ -76,6 +78,7 @@ export function FileTree({
 }) {
   const open = useContext(FileOpenContext)
   const copy = useCopy()
+  const editors = useEditors()
   const [roots, setRoots] = useState<FileDirectoryListing['roots']>([])
   const [branches, setBranches] = useState<Record<string, Branch>>({})
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialView?.expanded ?? []))
@@ -259,7 +262,7 @@ export function FileTree({
       if (!branches[child]?.listing) void load(location.root, `${location.path}/${only}`)
     }
   }, [branches, expanded, load])
-  const fileAction = async (row: TreeRow, kind: 'copy' | 'reveal' | 'open' | 'quickLook') => {
+  const fileAction = async (row: TreeRow, kind: 'copy' | 'reveal' | 'open' | 'quickLook' | 'editor') => {
     if (action.current || !local) return
     const controller = new AbortController()
     action.current = controller
@@ -274,12 +277,19 @@ export function FileTree({
         await copy.copy(path)
       } else {
         const shell = shellFiles()
-        const allowed = kind === 'reveal' ? file.actions.reveal : kind === 'open' ? file.actions.open : file.actions.quicklook
+        const allowed =
+          kind === 'reveal'
+            ? file.actions.reveal
+            : kind === 'open'
+              ? file.actions.open
+              : kind === 'editor'
+                ? file.actions.editor === true
+                : file.actions.quicklook
         if (!shell || shell.protocolVersion !== 2 || !allowed) throw new Error('当前桌面端无法这样打开这个文件。')
-        const result = await shell[kind](
-          context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId },
-          { handle: file.handle },
-        )
+        const owner = context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId }
+        const result =
+          kind === 'editor' ? await openInEditor(owner, { handle: file.handle }) : await shell[kind](owner, { handle: file.handle })
+        if (result.status === 'canceled') return
         if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
         if (result.status === 'refused' || result.status === 'failed') throw new Error(fileRefusalText(result.code))
       }
@@ -418,6 +428,7 @@ export function FileTree({
       ...(reveal ? [{ id: 'reveal', label: revealLabel(currentShell()?.platform), icon: FolderOpenGlyph, onSelect: reveal }] : []),
     ]
   }
+  const editorText = editorLabel(editors)
   const fileItems = (row: TreeRow): MenuItem[] => {
     const full = local ? treeFullPath({ root: row.root, path: row.path }, folders, cwd) : undefined
     const native = local && shellFiles()?.protocolVersion === 2
@@ -467,6 +478,9 @@ export function FileTree({
             },
             { id: 'open', label: '用默认应用打开', icon: ExternalGlyph, ...busy, onSelect: () => void fileAction(row, 'open') },
             { id: 'quicklook', label: '快速查看', icon: EyeGlyph, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
+            ...(editorText
+              ? [{ id: 'editor', label: editorText, icon: CodeGlyph, ...busy, onSelect: () => void fileAction(row, 'editor') }]
+              : []),
           ]
         : []),
     ]

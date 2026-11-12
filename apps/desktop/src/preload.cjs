@@ -599,6 +599,26 @@ if (!REMOTE)
         reveal: fileCall('latch:files:reveal'),
         quickLook: fileCall('latch:files:quicklook'),
         open: fileCall('latch:files:open'),
+        /** 在编辑器中打开, at `line` when it is known; needs a real click or key on the page a moment before. */
+        editor: (context, target, line) => {
+          const input = fileInput(context, target)
+          if (!input) return Promise.resolve(INVALID)
+          if (line === undefined || line === null) return ipcRenderer.invoke('latch:files:editor', input)
+          return Number.isSafeInteger(line) && line >= 1 && line <= 10_000_000
+            ? ipcRenderer.invoke('latch:files:editor', { ...input, line })
+            : Promise.resolve(INVALID)
+        },
+      }),
+      // 诊断导出 (设置 › 关于): main shows the save panel, asks the Host and writes the file; the page learns the outcome.
+      diagnostics: Object.freeze({ export: () => ipcRenderer.invoke('latch:diagnostics:export') }),
+      // The editors found on this Mac and the one chosen (设置 › 通用); main finds, remembers and starts them.
+      editors: Object.freeze({
+        protocolVersion: 1,
+        list: () => ipcRenderer.invoke('latch:editors:list'),
+        choose: id =>
+          typeof id === 'string' && /^[a-z][a-z-]{0,31}$/.test(id)
+            ? ipcRenderer.invoke('latch:editors:choose', id)
+            : Promise.resolve(INVALID),
       }),
       // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
       // could reach the shell or the Host shut.

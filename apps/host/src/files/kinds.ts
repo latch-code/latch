@@ -98,6 +98,19 @@ export const PREVIEW_UNVERIFIED: ReadonlySet<string> = new Set(['docx', 'pptx', 
 
 export const OPEN_TYPES: ReadonlySet<string> = new Set([...QUICK_LOOK_TYPES, ...PREVIEW_UNVERIFIED, 'yaml', 'yml', 'ipynb'])
 
+/**
+ * Files an editor opens as a project or workspace rather than as text (its settings and tasks come with it): never
+ * handed to an editor. Mirrors apps/desktop/src/editors.cjs.
+ */
+export const EDITOR_REFUSED_TYPES: ReadonlySet<string> = new Set([
+  'code-workspace',
+  'sublime-project',
+  'sublime-workspace',
+  'ipr',
+  'iws',
+  'iml',
+])
+
 /** The `ext` values an audit record may carry: an allowed type, `other` or `none` (no extension). */
 export const AUDIT_FILE_TYPES: readonly [string, ...string[]] = ['other', 'none', ...OPEN_TYPES]
 

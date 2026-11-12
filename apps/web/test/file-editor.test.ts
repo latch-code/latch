@@ -66,6 +66,29 @@ describe('file editor', () => {
     expect(editor({ phone: true })).toContain('data-phone=""')
   })
 
+  it('on a conflict keeps both versions and offers only 复制我的修改 and 载入最新: nothing is written over the other change', () => {
+    const html = editor({ initial: { draft: 'mine', phase: 'conflict', theirs: { hash: 'c'.repeat(64), text: 'theirs' } } })
+    expect(html).toContain('文件已在别处修改')
+    expect(html).toContain('复制我的修改')
+    expect(html).toContain('载入最新')
+    expect(html).toContain('theirs')
+    expect(html).toContain('mine')
+    expect(html).not.toContain('覆盖')
+    expect(html).not.toMatch(/>保存</u)
+  })
+
+  it('keeps an unanswered save for 重试保存 and edits from the loaded version after 载入最新', () => {
+    const unknown = editor({
+      initial: { draft: 'x', phase: 'unknown', sent: { requestId: 'r'.repeat(16), baseHash: 'b'.repeat(64), content: 'x' } },
+    })
+    expect(unknown).toContain('重试保存')
+    expect(unknown).toContain('结果未知')
+    // The loaded version is the base: the same text there is not a change, so 保存 waits.
+    const loaded = editor({ initial: { draft: 'theirs', phase: 'editing', base: { text: 'theirs', hash: 'c'.repeat(64) } } })
+    expect(loaded).not.toContain('未保存')
+    expect(loaded).toMatch(/<button[^>]*aria-disabled="true"[^>]*>保存/u)
+  })
+
   it('marks a result checked before the last saved edit as needing a re-check', () => {
     expect(needsRecheck(undefined, 5)).toBe(false)
     expect(needsRecheck(5, undefined)).toBe(false)

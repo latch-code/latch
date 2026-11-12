@@ -29,6 +29,9 @@ import { errorMessage } from '../../core/api.ts'
 import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import { setPreference, usePreferences } from '../../preferences.ts'
 import { ChangesFile } from './ChangesFile.tsx'
+import { editorLabel, openInEditor, useEditors } from '../../components/OpenInEditor.tsx'
+import { readTreeFile } from '../../preview/treeFiles.ts'
+import { fileRefusalText } from '../../core/securityCopy.ts'
 import {
   baseLabel,
   canUndoFile,
@@ -585,6 +588,26 @@ function ReadableChanges({
   })
   const [askClear, setAskClear] = useState(false)
   const [askUndoFile, setAskUndoFile] = useState<ChangedFile>()
+  const editors = useEditors()
+  const editorText = local ? editorLabel(editors) : undefined
+  const [editorError, setEditorError] = useState('')
+  /** The Host resolves the row's file for this device first, so main is handed only what the Host checked. */
+  const openEditor = async (file: ChangedFile) => {
+    setEditorError('')
+    try {
+      const meta = await readTreeFile(
+        { kind: 'session', sessionId: summary.id },
+        { root: file.root, path: file.path },
+        new AbortController().signal,
+      )
+      if (meta.actions.editor !== true) throw new Error(fileRefusalText(meta.refused?.editor ?? 'file-type-refused'))
+      const result = await openInEditor(summary.id, { handle: meta.handle })
+      if (result.status === 'refused' || result.status === 'failed') throw new Error(fileRefusalText(result.code))
+      if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
+    } catch (cause) {
+      setEditorError(errorMessage(cause))
+    }
+  }
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set())
   const [selected, setSelected] = useState<string>()
   const [limit, setLimit] = useState(LIST_PAGE)
@@ -860,9 +883,9 @@ function ReadableChanges({
         />
       </div>
       {result && <Receipt result={result} engine={engine} />}
-      {actionError && (
+      {(actionError || editorError) && (
         <Line tone="amber" icon={WarningGlyph}>
-          {actionError}
+          {actionError || editorError}
         </Line>
       )}
       {undone && (
@@ -964,6 +987,7 @@ function ReadableChanges({
                     onOpenFile={() => {
                       onOpenFile(file)
                     }}
+                    {...(editorText ? { editor: { label: editorText, run: () => void openEditor(file) } } : {})}
                     {...(canUndoRow(file)
                       ? {
                           onUndo: () => {

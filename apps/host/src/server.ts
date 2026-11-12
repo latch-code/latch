@@ -87,6 +87,7 @@ import {
   type TaskSummary,
   type UnusableProvider,
   type WorkspaceInfo,
+  type ListenerClass,
 } from '@latch/protocol'
 import {
   AppError,
@@ -209,6 +210,7 @@ import { AgentProbes } from './agent-probes.ts'
 import type { HostInfo } from './host-state.ts'
 import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
+import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
   checkProvider,
   isPresetKeyOrigin,
@@ -278,6 +280,7 @@ const ANONYMOUS_UNIX = new Set([
   'POST /link/api/pairings',
   'GET /link/api/native/info',
   'GET /link/api/traffic',
+  'POST /link/api/diagnostics',
 ])
 
 const httpURL = z
@@ -1057,7 +1060,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
   const clock = options.clock ?? Date.now
   const hostTime = () => new Date(clock()).toISOString()
   const sink = options.log ?? (text => console.error(`[Latch] ${text}`))
+  // The recent lines stay in memory for 诊断导出, as redacted as the log itself.
+  const diagnosticLog = new DiagnosticLog(options.clock ?? Date.now)
   const log = (text: string) => sink(redactSecrets(text))
+  // 诊断导出 keeps no log line: only these Host-written sites note an event, as a category, an ID and an error code.
+  const logNoted = (category: DiagnosticCategory, detail: { id?: string; error?: unknown }, text: string) => {
+    diagnosticLog.note(category, detail)
+    log(text)
+  }
   const startedAt = new Date().toISOString()
   const dataDir = resolve(options.dataDir)
   const workspaceRoot = resolve(options.workspaceRoot)
@@ -1094,7 +1104,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     if (policy.needsAddressMigration) {
       await policy
         .migrateConfirmedAddresses(addressesConfirmedBefore(config.providers(), policy.get().hostEgressAllow))
-        .catch(error => log(`无法记录已确认的模型服务地址，自定义地址的服务在本次运行中不可用：${errorText(error)}`))
+        .catch(error =>
+          logNoted(
+            'confirmed-addresses-failed',
+            { error: error },
+            `无法记录已确认的模型服务地址，自定义地址的服务在本次运行中不可用：${errorText(error)}`,
+          ),
+        )
     }
 
     /** The TLS files checked as at startup; the HTTPS entry calls it again when they change on disk. */
@@ -1197,7 +1213,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     devices.onRevoked(() => {
       nativeRoutes.invalidate()
-      void synchronizeNativeDiscovery().catch(() => log('Native discovery key rotation failed'))
+      void synchronizeNativeDiscovery().catch(() => logNoted('discovery-rotation-failed', {}, 'Native discovery key rotation failed'))
     })
     const limits = createRateLimits(options.rateLimits ?? 'default', now)
     const tlsKeyPath = options.tls ? resolve(options.tls.keyPath) : undefined
@@ -1214,9 +1230,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Until the listeners are up: `workspace.disabled` records name the startup check as their actor. */
     let starting = true
     if (defaultFlags.sensitive) throw new AppError(409, 'workspace-overlap', defaultFlags.sensitive.message)
-    if (defaultFlags.insideData) log(`工作区位于数据目录内（${realWorkspace}）。迁出之前只能使用内置 Harness。`)
+    if (defaultFlags.insideData)
+      logNoted('workspace-in-data-dir', {}, `工作区位于数据目录内（${realWorkspace}）。迁出之前只能使用内置 Harness。`)
     if (defaultFlags.codeRoot)
-      log(`工作区与 Latch 程序目录重叠（${realWorkspace}），内置 Harness 的每次写入都需要在本机确认，ACP Agent 不可用。`)
+      logNoted(
+        'workspace-overlaps-code',
+        {},
+        `工作区与 Latch 程序目录重叠（${realWorkspace}），内置 Harness 的每次写入都需要在本机确认，ACP Agent 不可用。`,
+      )
     // Path spellings (case, firmlinks) differ between APIs; code-root decisions compare canonical forms only.
     const canonicalCodeRoot = await canonicalPath(codeRoot)
     const canonicalWorkspace = await canonicalPath(realWorkspace)
@@ -1272,7 +1293,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         actor: startupActor,
         detail: { expected: expectedSettings, actual: settingsHash },
       })
-      log('settings.json 在 Latch 之外被修改过，已记入审计；其中的项目已重新检查。')
+      logNoted('settings-changed-outside', {}, 'settings.json 在 Latch 之外被修改过，已记入审计；其中的项目已重新检查。')
     }
     /**
      * The last computed state of each saved project. A project is usable only while every folder passes R1–R7 and the
@@ -1329,7 +1350,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (unusableProjects.has(record.id)) return state
       unusableProjects.add(record.id)
-      log(`项目「${record.name}」暂不可用：${state.failure.message}`)
+      logNoted('project-unavailable', { id: record.id }, `项目「${record.name}」暂不可用：${state.failure.message}`)
       // Disabling only removes access, so a failed record never keeps the project usable.
       await audit
         .append({
@@ -1342,7 +1363,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(state.failure.index !== undefined ? { folderIndex: state.failure.index } : {}),
           },
         })
-        .catch(cause => log(`审计记录写入失败（workspace.disabled）：${errorText(cause)}`))
+        .catch(cause => logNoted('audit-write-failed', { error: cause }, `审计记录写入失败（workspace.disabled）：${errorText(cause)}`))
       return state
     }
 
@@ -1464,13 +1485,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         registry.register(buildProviderPlugin(record), { managed: 'provider', revision: providerExecutionRevision(record) })
       } catch (error) {
-        log(`模型服务 ${record.id} 未加载：${errorText(error)}`)
+        logNoted('provider-load-failed', { id: record.id, error: error }, `模型服务 ${record.id} 未加载：${errorText(error)}`)
         continue
       }
-      if (record.enabled) await registry.enable(record.id).catch(error => log(`模型服务 ${record.id} 启用失败：${errorText(error)}`))
+      if (record.enabled)
+        await registry
+          .enable(record.id)
+          .catch(error =>
+            logNoted('provider-load-failed', { id: record.id, error: error }, `模型服务 ${record.id} 启用失败：${errorText(error)}`),
+          )
     }
     for (const agent of config.settings().agents)
-      await installAgent(agent).catch(error => log(`Agent ${agent.id} 未加载：${errorText(error)}`))
+      await installAgent(agent).catch(error =>
+        logNoted('agent-load-failed', { id: agent.id, error: error }, `Agent ${agent.id} 未加载：${errorText(error)}`),
+      )
 
     const pluginAssets = await PluginAssets.open(dataDir, { audit })
     startupCleanup.push(() => pluginAssets.close())
@@ -1491,7 +1519,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (newlyHeld.length)
         await audit
           .append({ action: 'host.update.plugins-held', actor: { listener: 'host', via: 'startup' }, detail: { count: newlyHeld.length } })
-          .catch(error => log(`审计记录写入失败（host.update.plugins-held）：${errorText(error)}`))
+          .catch(error =>
+            logNoted('audit-write-failed', { error: error }, `审计记录写入失败（host.update.plugins-held）：${errorText(error)}`),
+          )
     } catch (error) {
       log(`无法核对更新后停用的插件：${errorText(error)}`)
     }
@@ -1502,7 +1532,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assetPluginIds.add(record.id)
         if (record.enabled && !heldPlugins.isHeld(record.id)) await registry.enable(record.id)
       } catch {
-        log(`自定义插件 ${record.id} 未加载，请检查本地声明与依赖。`)
+        logNoted('plugin-load-failed', { id: record.id }, `自定义插件 ${record.id} 未加载，请检查本地声明与依赖。`)
       }
     }
 
@@ -1821,8 +1851,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
         fileRoutes.forgetSession(id)
-        await attachmentStore.removeTask(id).catch(() => log('未能清理已删除会话的附件'))
-        await fileReferences.remove(id).catch(() => log('未能清理已删除会话的文件引用记录'))
+        await attachmentStore.removeTask(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的附件'))
+        await fileReferences.remove(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的文件引用记录'))
         summaries.delete(id)
         refresh()
       },
@@ -1943,7 +1973,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await heldPlugins.unplan().catch(error => log(`无法清除插件计划：${errorText(error)}`))
       await audit
         .append({ action: 'host.update-window', actor: { listener: 'host' }, detail: { state: 'left', reason: 'expired', busy: 0 } })
-        .catch(error => log(`审计记录写入失败（host.update-window）：${errorText(error)}`))
+        .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败（host.update-window）：${errorText(error)}`))
     }
     startupCleanup.push(() => clearTimeout(commitTimer))
     /** Session starts and turns by device and request ID: in flight, their outcome is not known yet; accepted, a retry gets its answer. */
@@ -2551,7 +2581,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return (await audit.append(event)).seq
       } catch (error) {
         if (!tolerant) throw error
-        log(`审计记录写入失败（${event.action}）：${errorText(error)}`)
+        logNoted('audit-write-failed', { error: error }, `审计记录写入失败（${event.action}）：${errorText(error)}`)
         if (!tolerant.headersSent) tolerant.setHeader('x-latch-audit', 'failed')
         return undefined
       }
@@ -2562,7 +2592,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (refSeq === undefined) return
       void audit
         .append({ action: 'action.failed', actor: actorOf(caller), detail: { refSeq } })
-        .catch(error => log(`审计记录写入失败：${errorText(error)}`))
+        .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
     }
 
     /**
@@ -2861,7 +2891,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           },
         )
       } catch (error) {
-        if (disabling) await registry.enable(live.id).catch(cause => log(`模型服务 ${live.id} 恢复失败：${errorText(cause)}`))
+        if (disabling)
+          await registry
+            .enable(live.id)
+            .catch(cause =>
+              logNoted('provider-restore-failed', { id: live.id, error: cause }, `模型服务 ${live.id} 恢复失败：${errorText(cause)}`),
+            )
         throw error
       }
       if (envProvider?.id === live.id) envProvider = structuredClone(live)
@@ -2891,7 +2926,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       } catch (error) {
         if (unregistered) {
           registry.register(buildProviderPlugin(current), { managed: 'provider', revision: providerExecutionRevision(current) })
-          if (current.enabled) await registry.enable(id).catch(cause => log(`模型服务 ${id} 恢复失败：${errorText(cause)}`))
+          if (current.enabled)
+            await registry
+              .enable(id)
+              .catch(cause => logNoted('provider-restore-failed', { id: id, error: cause }, `模型服务 ${id} 恢复失败：${errorText(cause)}`))
         }
         throw error
       }
@@ -3169,7 +3207,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (event.type === 'tool-judged') {
         const { type: _type, ...detail } = event
         const written = audit.append({ action: 'task.tool.judged', actor: { listener: 'host' }, target: event.sessionId, detail })
-        written.catch(error => log(`审计记录写入失败：${errorText(error)}`))
+        written.catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
         return written.then(() => undefined)
       }
       try {
@@ -3182,11 +3220,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               target: event.sessionId,
               detail: { sessionId: event.sessionId, observedHash: event.observedHash },
             })
-            .catch(error => log(`审计记录写入失败：${errorText(error)}`))
+            .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
         } else if (event.type === 'model-route-bypassed') {
           void audit
             .append({ action: 'task.model.bypassed', actor, target: event.sessionId, detail: { sessionId: event.sessionId } })
-            .catch(error => log(`审计记录写入失败：${errorText(error)}`))
+            .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
         } else if (event.type === 'approval-auto-rejected') {
           void audit
             .append({
@@ -3195,13 +3233,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               target: event.sessionId,
               detail: { sessionId: event.sessionId, reason: event.reason },
             })
-            .catch(error => log(`审计记录写入失败：${errorText(error)}`))
+            .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
         } else {
-          log(`会话 ${event.sessionId} 无法确认权限模式，未发送输入。`)
+          logNoted('permission-unconfirmed', { id: event.sessionId }, `会话 ${event.sessionId} 无法确认权限模式，未发送输入。`)
         }
         refresh(event.sessionId)
       } catch (error) {
-        log(`安全事件处理失败：${errorText(error)}`)
+        logNoted('security-event-failed', { error: error }, `安全事件处理失败：${errorText(error)}`)
       }
     }
 
@@ -3321,7 +3359,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const ids = new Set(pluginHarnesses(pluginId))
       for (const driver of registry.harnesses()) {
         if (ids.has(driver.id) && !hub!.has(driver.id))
-          await mount(driver).catch(error => log(`Harness ${driver.id} 加载失败：${errorText(error)}`))
+          await mount(driver).catch(error =>
+            logNoted('harness-load-failed', { id: driver.id, error: error }, `Harness ${driver.id} 加载失败：${errorText(error)}`),
+          )
       }
     }
 
@@ -3367,7 +3407,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (previous && !created) await mountPlugin(previous)
         throw error
       }
-      await removeAgentPlugin(next.id).catch(error => log(`Agent ${next.id} 旧插件清理失败：${errorText(error)}`))
+      await removeAgentPlugin(next.id).catch(error =>
+        logNoted('plugin-cleanup-failed', { id: next.id, error: error }, `Agent ${next.id} 旧插件清理失败：${errorText(error)}`),
+      )
       registry.register(plugin, { managed: 'agent' })
       agentPlugins.set(plugin.id, next.id)
       if (!next.enabled) return
@@ -3388,7 +3430,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (pluginId) await mountPlugin(pluginId)
         throw error
       }
-      await removeAgentPlugin(id).catch(error => log(`Agent ${id} 插件清理失败：${errorText(error)}`))
+      await removeAgentPlugin(id).catch(error =>
+        logNoted('plugin-cleanup-failed', { id: id, error: error }, `Agent ${id} 插件清理失败：${errorText(error)}`),
+      )
     }
 
     async function setPluginEnabled(caller: Caller, id: string, enabled: boolean): Promise<void> {
@@ -3418,7 +3462,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         try {
           await persist()
         } catch (error) {
-          await registry.disable(id).catch(cause => log(`插件 ${id} 回滚失败：${errorText(cause)}`))
+          await registry
+            .disable(id)
+            .catch(cause => logNoted('plugin-rollback-failed', { id, error: cause }, `插件 ${id} 回滚失败：${errorText(cause)}`))
           throw error
         }
         await mountPlugin(id)
@@ -3436,7 +3482,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       } catch (error) {
         await registry.enable(id).then(
           () => mountPlugin(id),
-          cause => log(`插件 ${id} 回滚失败：${errorText(cause)}`),
+          cause => logNoted('plugin-rollback-failed', { id, error: cause }, `插件 ${id} 回滚失败：${errorText(cause)}`),
         )
         throw error
       }
@@ -3458,7 +3504,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         try {
           seq = (await audit.append({ action: 'settings.changed', actor: actorOf(caller), detail: { before, after } })).seq
         } catch (error) {
-          log(`审计记录写入失败（settings.changed）：${errorText(error)}`)
+          logNoted('audit-write-failed', { error: error }, `审计记录写入失败（settings.changed）：${errorText(error)}`)
         }
         try {
           await commit()
@@ -3499,7 +3545,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await audit.append({ action: 'plugin.package.build', actor: actor.actor, target: id, detail })
           return true
         } catch (error) {
-          log(`审计记录写入失败（plugin.package.build）：${errorText(error)}`)
+          logNoted('audit-write-failed', { error: error }, `审计记录写入失败（plugin.package.build）：${errorText(error)}`)
           return false
         }
       },
@@ -4626,7 +4672,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * rather than reported: the receipt still answers retries until the Host stops, and goes into the next write.
      */
     async function keepReceipt(sessionId: string, receipt: ApprovalRecord | CancelRecord): Promise<void> {
-      await hub!.receipts.record(sessionId, receipt).catch(error => log(`回执未能保存：${errorText(error)}`))
+      await hub!.receipts
+        .record(sessionId, receipt)
+        .catch(error => logNoted('receipt-save-failed', { error: error }, `回执未能保存：${errorText(error)}`))
     }
 
     /**
@@ -4877,7 +4925,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res,
         )
         // Before the cancel, which can settle the session and let the queue send its next item.
-        await promptQueues.stopped(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
+        await promptQueues.stopped(sessionId).catch(() => logNoted('queue-update-failed', {}, '排队状态未能更新，请手动检查队列'))
         const cancelled = await hub!.cancel(sessionId, runId === undefined ? undefined : { runId })
         const stopped = cancelled === true || (cancelled === undefined && (!before || ACTIVE_STATUSES.has(before.status)))
         outcome = stopped ? 'stopped' : 'ended'
@@ -5097,7 +5145,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             else if (invalidated) send(res, invalidated)
           }
         }
-        for (const [sessionId] of tasks) void promptQueues.changed(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
+        for (const [sessionId] of tasks)
+          void promptQueues.changed(sessionId).catch(() => logNoted('queue-update-failed', {}, '排队状态未能更新，请手动检查队列'))
         if (fallback && !global) {
           const event = nativeReplay.publish({
             type: 'refresh',
@@ -5680,7 +5729,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             await worktrees
               .bind(made.path, folderRequest, created.sessionId, hub!.sessionRecord(created.sessionId)?.private === true)
               .catch(error =>
-                log(`会话 ${created.sessionId} 的工作树标记写入失败：${error instanceof Error ? error.message : String(error)}`),
+                logNoted(
+                  'worktree-mark-failed',
+                  { id: created.sessionId },
+                  `会话 ${created.sessionId} 的工作树标记写入失败：${error instanceof Error ? error.message : String(error)}`,
+                ),
               )
           return created
         }
@@ -6159,7 +6212,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         memoryRefusals.delete(id)
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
-        await attachmentStore.removeTask(id).catch(() => log('未能清理已删除会话的附件'))
+        await attachmentStore.removeTask(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的附件'))
         summaries.delete(id)
         refresh()
         json(res, { deleted: true })
@@ -7219,6 +7272,61 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, traffic.summary())
         return
       }
+      if (path === '/link/api/diagnostics' && method === 'POST') {
+        // This computer's owner only: the command line on host.sock, or the desktop app's admin device there. Counts in
+        // the audit record, never what the bundle holds.
+        requireLocal(caller)
+        if (caller.device) {
+          requireScope(caller, 'admin')
+          requireDesktop(caller)
+        }
+        await optionalJsonBody(req, 1024)
+        const known = devices.list()
+        const streamCounts: Partial<Record<ListenerClass, number>> = {}
+        for (const stream of streams.values()) {
+          const listener = devices.get(stream.deviceId)?.listener
+          if (listener) streamCounts[listener] = (streamCounts[listener] ?? 0) + 1
+        }
+        const bundle = diagnosticsBundle({
+          version: LATCH_VERSION,
+          startedAt,
+          now,
+          home,
+          harnesses: hub!.drivers(),
+          plugins: registry.list(),
+          policy: policy.get(),
+          devices: {
+            active: known.filter(device => device.status === 'active').length,
+            revoked: known.filter(device => device.status === 'revoked').length,
+          },
+          streams: streamCounts,
+          log: diagnosticLog,
+          private: [
+            ...known.map(device => device.name),
+            ...config.settings().workspaces.flatMap(record => [record.name ?? '', ...record.folders.map(folder => folder.path)]),
+            ...(await hub!.listTasks()).map(task => task.title ?? ''),
+            workspaceRoot,
+            realWorkspace,
+            dataDir,
+            realDataDir,
+            // Hosts never enter as events; a Harness's status line might still name one.
+            ...policy.get().hostEgressAllow.flatMap(entry => [entry, entry.replace(/:\d+$/u, '')]),
+            ...(options.egressAllow ?? []).flatMap(entry => [entry, entry.replace(/:\d+$/u, '')]),
+          ],
+        })
+        await audit.append({
+          action: 'diagnostics.exported',
+          actor: actorOf(caller),
+          detail: {
+            logLines: bundle.events.length,
+            errors: bundle.errors.length,
+            harnesses: bundle.harnesses.length,
+            plugins: bundle.plugins.length,
+          },
+        })
+        json(res, bundle)
+        return
+      }
       if (path === '/link/api/tasks' && method === 'POST') {
         requireScope(caller, 'run')
         await createTask(req, res, caller)
@@ -7568,7 +7676,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { error: 'invalid-input', message: '输入格式不正确，请检查必填内容' }, 400)
         return
       }
-      log(`Request failed: ${errorText(failure)}`)
+      logNoted('request-failed', { error: failure }, `Request failed: ${errorText(failure)}`)
       json(res, { error: 'internal-error', message: '操作未完成，请刷新确认状态后重试' }, 500)
     }
 

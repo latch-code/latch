@@ -277,6 +277,28 @@ describe('latch CLI', () => {
     expect(missing.output.stderr).toContain('没有可确认的运行中 Host')
   })
 
+  it('exports diagnostics to a new 0600 file and never overwrites one', async () => {
+    const t = await runningHost()
+    await t.enroll({ listener: 'unix', name: '诊断测试设备' })
+    const directory = await temporaryDirectory()
+    const target = join(directory, 'diagnostics.json')
+    const { output, latch } = cli()
+    expect(await latch('diagnostics', '--out', target, '--data-dir', t.dataDir)).toBe(0)
+    expect(output.stdout).toContain('已导出诊断文件')
+    expect((await stat(target)).mode & 0o777).toBe(0o600)
+    const text = await readFile(target, 'utf8')
+    expect(JSON.parse(text)).toMatchObject({ format: 'latch-diagnostics', connections: { devices: { active: 1 } } })
+    expect(text).not.toContain('诊断测试设备')
+    expect(t.host.security.audit.lastOf('diagnostics.exported')).toMatchObject({ actor: { listener: 'unix', via: 'cli' } })
+    const again = cli()
+    expect(await again.latch('diagnostics', '--out', target, '--data-dir', t.dataDir)).toBe(1)
+    expect(again.output.stderr).toContain('已存在')
+    expect(await readFile(target, 'utf8')).toBe(text)
+    const noOut = cli()
+    expect(await noOut.latch('diagnostics', '--data-dir', t.dataDir)).toBe(1)
+    expect(noOut.output.stderr).toContain('--out')
+  })
+
   it('prints an invitation only to a terminal or a 0600 file', async () => {
     const t = await runningHost({ tls: true })
     const refused = cli()

@@ -133,7 +133,16 @@ export interface FileMetadata {
    * `edit`: the Host takes a small text edit of this file from this device (`PUT tasks/:id/files/:handle`); absent from
    * older Hosts and outside a session.
    */
-  actions: { reveal: boolean; quicklook: boolean; open: boolean; download: boolean; preview: boolean; edit?: boolean }
+  actions: {
+    reveal: boolean
+    quicklook: boolean
+    open: boolean
+    download: boolean
+    preview: boolean
+    edit?: boolean
+    /** 在编辑器中打开 in the desktop app on this Mac; absent from older Hosts. */
+    editor?: boolean
+  }
   refused?: Record<string, string>
 }
 
@@ -220,6 +229,7 @@ export function isFileMetadata(value: unknown): value is FileMetadata {
   for (const key of ['reveal', 'quicklook', 'open', 'download', 'preview'] as const)
     if (typeof value.actions[key] !== 'boolean') return false
   if (value.actions.edit !== undefined && typeof value.actions.edit !== 'boolean') return false
+  if (value.actions.editor !== undefined && typeof value.actions.editor !== 'boolean') return false
   for (const key of ['width', 'height'] as const)
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isInteger(value[key]) || value[key] < 1)) return false
   return true

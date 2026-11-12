@@ -48,6 +48,8 @@ const {
   handleNotificationRequests,
 } = require('./notifications.cjs')
 const { createFileActions } = require('./files.cjs')
+const { createEditors, readEditorChoice, writeEditorChoice } = require('./editors.cjs')
+const { execFile } = require('node:child_process')
 const { createNetworkSink } = require('./network.cjs')
 const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
@@ -639,6 +641,39 @@ async function startUpdates({ proxy, supervisor }) {
  * audits the action and gives main the real path. Every call from anything but the main window's own page is refused.
  */
 function handleFiles(proxy) {
+  const home = app.getPath('home')
+  const editors = createEditors({
+    // Application bundles in the usual folders only; JetBrains Toolbox keeps its IDEs in a folder of its own.
+    async listApps() {
+      const folders = ['/Applications', join(home, 'Applications'), join(home, 'Applications', 'JetBrains Toolbox')]
+      const lists = await Promise.all(
+        folders.map(folder =>
+          readdir(folder)
+            .then(names => names.filter(name => name.endsWith('.app')).map(name => join(folder, name)))
+            .catch(() => []),
+        ),
+      )
+      // The real bundle: the one whose Info.plist is checked is the one `open -a` starts.
+      const real = await Promise.all(lists.flat().map(path => realpath(path).catch(() => undefined)))
+      return [...new Set(real.flatMap(path => (path !== undefined && path.endsWith('.app') ? [path] : [])))]
+    },
+    bundleIdOf: appPath =>
+      new Promise(done => {
+        execFile(
+          '/usr/bin/plutil',
+          ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')],
+          { timeout: 5_000, maxBuffer: 4096, shell: false },
+          (error, stdout) => done(error ? undefined : String(stdout).trim()),
+        )
+      }),
+    launch: args =>
+      new Promise((done, fail) => {
+        execFile('/usr/bin/open', args, { timeout: 15_000, shell: false }, error => (error ? fail(error) : done()))
+      }),
+    readChoice: () => readEditorChoice(app.getPath('userData')),
+    writeChoice: id => writeEditorChoice(app.getPath('userData'), id),
+    platform: process.platform,
+  })
   const actions = createFileActions({
     request: (method, path, body) => hostRequest(proxy, method, path, body),
     show: path => {
@@ -649,6 +684,7 @@ function handleFiles(proxy) {
       mainWindow.previewFile(path, name)
     },
     open: path => shell.openPath(path),
+    editor: (path, line) => editors.openPath(path, line),
     async inspect(path) {
       const info = await lstat(path)
       return { real: await realpath(path), file: info.isFile(), symlink: info.isSymbolicLink() }
@@ -671,6 +707,67 @@ function handleFiles(proxy) {
   ipcMain.handle('latch:files:reveal', (event, input) => (trusted(event) ? actions.revealFile(input) : refusedFolders))
   ipcMain.handle('latch:files:quicklook', (event, input) => (trusted(event) ? actions.quickLookFile(input) : refusedFolders))
   ipcMain.handle('latch:files:open', (event, input) => (trusted(event) ? actions.openFile(input) : refusedFolders))
+  // An application starts only for the main window's own page, right after a real click or key there, and only once a
+  // chosen editor is installed: the Host's audit record is not written for a launch that cannot happen.
+  ipcMain.handle('latch:files:editor', async (event, input) => {
+    if (!trusted(event)) return refusedFolders
+    if (gestures.get(event.sender)?.take() !== true) return { status: 'refused', code: 'gesture-required' }
+    if ((await editors.list()).chosen === null) return { status: 'refused', code: 'no-editor' }
+    return actions.editorFile(input)
+  })
+  ipcMain.handle('latch:editors:list', event => (trusted(event) ? editors.list() : refusedFolders))
+  // 诊断导出 (设置 › 关于): main asks the Host for the bundle and writes it where the person chose in the save panel.
+  // The page learns only whether a file was written; the bundle never passes through it.
+  ipcMain.handle('latch:diagnostics:export', async event => {
+    if (!trusted(event)) return refusedFolders
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) return { status: 'refused', code: 'not-focused' }
+    const stamp = new Date().toISOString().slice(0, 10)
+    if (!dialogGate.enter()) return { status: 'busy' }
+    let chosen
+    try {
+      chosen = await dialog.showSaveDialog(mainWindow, {
+        title: '导出诊断',
+        defaultPath: join(app.getPath('downloads'), `latch-diagnostics-${stamp}.json`),
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        properties: ['createDirectory', 'showOverwriteConfirmation'],
+      })
+    } finally {
+      dialogGate.leave()
+    }
+    if (!chosen || chosen.canceled || !chosen.filePath) return { status: 'canceled' }
+    try {
+      const answer = await hostRequest(proxy, 'POST', '/link/api/diagnostics', {})
+      if (answer.status !== 200 || answer.json?.format !== 'latch-diagnostics') {
+        const code =
+          typeof answer.json?.error === 'string' && /^[a-z0-9-]{1,64}$/.test(answer.json.error) ? answer.json.error : 'host-unavailable'
+        return { status: 'failed', code }
+      }
+      const handle = await openFile(
+        chosen.filePath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | (fsConstants.O_NOFOLLOW ?? 0),
+        0o600,
+      )
+      try {
+        await handle.chmod(0o600)
+        await handle.writeFile(JSON.stringify(answer.json, null, 2) + '\n')
+      } finally {
+        await handle.close()
+      }
+      return { status: 'saved' }
+    } catch {
+      log('无法导出诊断')
+      return { status: 'failed', code: 'write-failed' }
+    }
+  })
+  ipcMain.handle('latch:editors:choose', async (event, id) => {
+    if (!trusted(event)) return refusedFolders
+    try {
+      return await editors.choose(id)
+    } catch {
+      log('无法保存编辑器设置')
+      return { status: 'failed', code: 'save-failed' }
+    }
+  })
 }
 
 /** This Mac's name as other computers list this app: `<name> 上的 Latch`, one plain line. */

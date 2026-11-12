@@ -11,8 +11,10 @@ import type { EditPhase as Phase, EditSent as Sent, EditTheirs as Theirs, Editor
 
 /**
  * A plain editor for a small text file of a session, opened from its preview: a monospace text area with line numbers,
- * 取消 and 保存. A save names the version it started from; when the file changed meanwhile, both versions stay on screen
- * and nothing of the person's text is lost. On a phone it is a page of its own with the bar on top, clear of the keyboard.
+ * 取消 and 保存. A save names the version it started from; when the file changed elsewhere meanwhile nothing is written:
+ * both versions stay on screen, the person copies their text (复制我的修改) or loads the file as it is now (载入最新) and
+ * edits from there, as on iOS. A save without an answer keeps its request for 重试保存. On a phone it is a page of its
+ * own with the bar on top, clear of the keyboard.
  */
 export function FileEditor({
   sessionId,
@@ -42,6 +44,8 @@ export function FileEditor({
   /** `reread`: the file changed, so the preview reads it again. */
   onClose(reread: boolean): void
 }) {
+  // 载入最新 moves the version the editor works from; until then it is the one the preview read.
+  const [base, setBase] = useState(initial?.base ?? { text, hash: baseHash })
   const [draft, setDraft] = useState(initial?.draft ?? text)
   // A save that was under way when the editor went away has no answer here: it is retried with the same request.
   const [phase, setPhase] = useState<Phase>(initial?.phase === 'saving' ? 'unknown' : (initial?.phase ?? 'editing'))
@@ -50,17 +54,18 @@ export function FileEditor({
   const report = useRef(onState)
   report.current = onState
   useEffect(() => {
-    report.current?.({ draft, phase, ...(sent ? { sent } : {}), ...(theirs ? { theirs } : {}) })
-  }, [draft, phase, sent, theirs])
+    const moved = base.hash !== baseHash || base.text !== text
+    report.current?.({ draft, phase, ...(sent ? { sent } : {}), ...(theirs ? { theirs } : {}), ...(moved ? { base } : {}) })
+  }, [draft, phase, sent, theirs, base, baseHash, text])
   const [error, setError] = useState('')
   /** The refusal was a turn running: a wait, not a failure. */
   const [waiting, setWaiting] = useState(false)
-  const [asking, setAsking] = useState<'overwrite' | 'discard'>()
+  const [asking, setAsking] = useState<'latest' | 'discard'>()
   const area = useRef<HTMLTextAreaElement>(null)
   const gutter = useRef<HTMLPreElement>(null)
   const root = useRef<HTMLElement>(null)
   const copied = useCopy()
-  const dirty = draft !== text
+  const dirty = draft !== base.text
   const busy = phase === 'saving'
 
   useEffect(() => {
@@ -122,14 +127,20 @@ export function FileEditor({
 
   const save = () => {
     if (busy || running || !dirty) return
-    void send({ requestId: newRequestId(), baseHash, content: draft })
+    void send({ requestId: newRequestId(), baseHash: base.hash, content: draft })
   }
-  const overwrite = async () => {
-    if (!theirs?.hash) return
-    await send({ requestId: newRequestId(), baseHash: theirs.hash, content: draft })
-  }
-  const discardMine = () => {
-    onClose(true)
+  /** The file as it is now becomes the version to edit; the person's text goes, unless they copied it. */
+  const loadLatest = () => {
+    if (theirs?.text === undefined || !theirs.hash) {
+      onClose(true)
+      return
+    }
+    setBase({ text: theirs.text, hash: theirs.hash })
+    setDraft(theirs.text)
+    setTheirs(undefined)
+    setPhase('editing')
+    setError('')
+    requestAnimationFrame(() => area.current?.focus({ preventScroll: true }))
   }
   const cancel = () => {
     if (busy) return
@@ -154,7 +165,7 @@ export function FileEditor({
     ) : phase === 'unknown' ? (
       <StatusWord tone="warn">结果未知</StatusWord>
     ) : phase === 'conflict' ? (
-      <StatusWord tone="waiting">文件已被改动</StatusWord>
+      <StatusWord tone="waiting">文件已在别处修改</StatusWord>
     ) : running ? (
       <StatusWord tone="neutral">Agent 运行中</StatusWord>
     ) : dirty ? (
@@ -195,7 +206,6 @@ export function FileEditor({
       {error && <InlineNotice tone={waiting ? 'warn' : 'error'}>{error}</InlineNotice>}
       {phase === 'conflict' ? (
         <div className="file-editor-conflict">
-          <InlineNotice tone="warn">文件在你打开之后被改过，你的修改还没有保存。</InlineNotice>
           <div className="file-editor-versions">
             <section className="file-editor-version" aria-label="文件现在的内容">
               <h3 className="file-editor-version-title">文件现在的内容</h3>
@@ -210,33 +220,30 @@ export function FileEditor({
               )}
             </section>
             <section className="file-editor-version" aria-label="你的修改">
-              <h3 className="file-editor-version-title">
-                你的修改
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  icon={CopyGlyph}
-                  onClick={() => {
-                    void copied.copy(draft)
-                  }}>
-                  {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用' : '复制我的'}
-                </Button>
-              </h3>
+              <h3 className="file-editor-version-title">你的修改</h3>
               <pre className="file-editor-version-text" tabIndex={0}>
                 {draft}
               </pre>
             </section>
           </div>
           <div className="file-editor-choices">
-            <Button size={phone ? 'lg' : 'sm'} onClick={() => setAsking('discard')}>
-              放弃我的
+            <Button
+              size={phone ? 'lg' : 'sm'}
+              icon={CopyGlyph}
+              onClick={() => {
+                void copied.copy(draft)
+              }}>
+              {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用' : '复制我的修改'}
             </Button>
             <Button
               variant="primary"
               size={phone ? 'lg' : 'sm'}
-              disabled={!theirs?.hash || running || busy}
-              onClick={() => setAsking('overwrite')}>
-              用我的覆盖
+              disabled={theirs === undefined || busy}
+              onClick={() => {
+                if (copied.state === 'copied' || theirs?.text === draft) loadLatest()
+                else setAsking('latest')
+              }}>
+              载入最新
             </Button>
           </div>
         </div>
@@ -267,17 +274,17 @@ export function FileEditor({
         </div>
       )}
       <span className="sr-only" role="status">
-        {phase === 'conflict' ? '文件已被改动，你的修改还没有保存' : phase === 'unknown' ? '保存结果未知' : ''}
+        {phase === 'conflict' ? '文件已在别处修改，你的修改还没有保存' : phase === 'unknown' ? '保存结果未知' : ''}
       </span>
-      {asking === 'overwrite' && (
+      {asking === 'latest' && (
         <ConfirmDialog
-          title="用你的修改覆盖？"
-          message="文件现在的内容会被你的修改替换。"
-          confirmLabel="覆盖"
+          title="载入最新？"
+          message="你的修改会被替换，需要的话先复制。"
+          confirmLabel="载入"
           danger
           onConfirm={async () => {
             setAsking(undefined)
-            await overwrite()
+            loadLatest()
           }}
           onClose={() => setAsking(undefined)}
         />
@@ -290,8 +297,7 @@ export function FileEditor({
           danger
           onConfirm={async () => {
             setAsking(undefined)
-            if (phase === 'conflict') discardMine()
-            else onClose(false)
+            onClose(phase === 'conflict')
           }}
           onClose={() => setAsking(undefined)}
         />

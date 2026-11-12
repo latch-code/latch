@@ -15,6 +15,7 @@ import {
   useCopy,
   CheckGlyph,
   AlertGlyph,
+  CodeGlyph,
   CopyGlyph,
   EyeGlyph,
   FolderOpenGlyph,
@@ -24,6 +25,7 @@ import {
 import { FILE_COPY, fileNote, type FileNote } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
 import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
+import { editorLabel, openInEditor, useEditors } from './OpenInEditor.tsx'
 
 /** The session whose replies are shown and its folder: the desktop app asks about a file of that session. */
 export interface FileSessionInfo {
@@ -88,6 +90,7 @@ export function FileChip(props: ChipProps) {
       label={props.label ?? props.path}
       actionPath={nativePath}
       onPreview={preview}
+      {...(line ? { line } : {})}
       files={files}
       session={session}
     />
@@ -257,7 +260,7 @@ function CopyFileChip(props: ChipProps) {
   )
 }
 
-type Action = 'quickLook' | 'open' | 'reveal'
+type Action = 'quickLook' | 'open' | 'reveal' | 'editor'
 
 /** One line at the foot of the menu saying why something is not offered, or what went wrong. */
 function noteOf(inspection: FileInspection | undefined, context: { name: string; platform?: string }): FileNote | undefined {
@@ -272,8 +275,9 @@ function noteOf(inspection: FileInspection | undefined, context: { name: string;
   return fileNote(open, context)
 }
 
-function DesktopFileChip({ files, session, ...props }: ChipProps & { files: ShellFiles; session: FileSessionInfo }) {
+function DesktopFileChip({ files, session, line, ...props }: ChipProps & { files: ShellFiles; session: FileSessionInfo; line?: number }) {
   const { state, copy } = useCopy()
+  const editors = useEditors()
   const [inspection, setInspection] = useState<FileInspection | undefined>()
   const [outcome, setOutcome] = useState<FileNote | undefined>()
   const asking = useRef(false)
@@ -311,12 +315,16 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
 
   /** A refusal or failure reopens the menu with the reason at its foot; success shows itself. */
   const run = async (action: Action) => {
+    const target = props.actionPath ?? props.path
     const call = action === 'quickLook' ? files.quickLook : action === 'open' ? files.open : files.reveal
-    const result = await call(session.id, props.actionPath ?? props.path).catch((): FileActionResult => ({
-      status: 'failed',
-      code: 'shell-failed',
-    }))
-    if (result.status === 'shown' || result.status === 'opened') return
+    const result =
+      action === 'editor'
+        ? await openInEditor(session.id, target, line)
+        : await call(session.id, target).catch((): FileActionResult => ({
+            status: 'failed',
+            code: 'shell-failed',
+          }))
+    if (result.status === 'shown' || result.status === 'opened' || result.status === 'canceled') return
     setOutcome(result.status === 'busy' ? fileNote('busy') : fileNote(result.code, context))
     if (trigger.current && !trigger.current['aria-expanded']) trigger.current.onClick()
   }
@@ -341,6 +349,7 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
       items: [
         ...item('quickLook', FILE_COPY.quickLook, EyeGlyph),
         ...item('open', FILE_COPY.open, AppWindow),
+        ...(editorLabel(editors) ? item('editor', editorLabel(editors)!, CodeGlyph) : []),
         ...item('reveal', revealLabel(platform), FolderOpenGlyph),
       ],
     },

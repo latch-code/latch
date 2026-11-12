@@ -929,6 +929,9 @@ describe('desktop shell policy', () => {
     for (const path of ['/link/api/pairings', '/link/api//pairings/', '/link/api/%70airings', '/LINK/API/Pairings'])
       expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'forward', pairing: true })
     expect(proxy.classifyRoute('GET', '/link/api/snapshot')).toEqual({ kind: 'forward' })
+    // 诊断导出 is main's alone: the page cannot ask the Host for the bundle, however the path is spelled.
+    for (const path of ['/link/api/diagnostics', '/link/api/Diagnostics', '/link/api/diagnostics/', '/link//api/%64iagnostics'])
+      expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'diagnostics' })
     for (const path of [
       '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/local',
       '/link/api/files',

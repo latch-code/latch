@@ -16,7 +16,7 @@ import {
   TerminalGlyph,
   WarningGlyph,
 } from '@latch/ui'
-import type { UpdateView } from '../core/shell.ts'
+import { currentShell, type UpdateView } from '../core/shell.ts'
 import { computerState, olderVersion, useComputers } from '../core/computers.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
 import { formatSize, relativeTime } from '../format.ts'
@@ -348,6 +348,50 @@ const TERMINAL_ELSEWHERE = {
   detail: '终端以你在那台 Mac 上的账户运行，只在那台 Mac 的 Latch 桌面端打开；其他设备上没有终端，也看不到它的输出。',
 }
 
+type DiagnosticsExport = NonNullable<NonNullable<ReturnType<typeof currentShell>>['diagnostics']>['export']
+
+/**
+ * 导出诊断: versions, Harness and plugin states and the Host's recent log, already redacted, for whoever helps. Main
+ * shows the save panel and writes the file; never a conversation, a file's content or a key (the ⓘ says so).
+ */
+function DiagnosticsRow({ export: run }: { export: DiagnosticsExport }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'saved' | 'failed'>('idle')
+  return (
+    <SettingsGroup
+      note={
+        <NoteLine
+          icon={ShieldGlyph}
+          brief={{
+            label: '不含对话、文件内容与密钥',
+            detail: '只有版本、Harness 与插件状态、连接计数与近期事件（类别与错误代码，不含日志原文）；设备名与项目名隐去，主目录写作 ~。',
+          }}
+        />
+      }>
+      <SettingsRow
+        title="诊断"
+        trailing={
+          <span className="about-diagnostics">
+            {state === 'saved' && <StatusWord tone="done">已导出</StatusWord>}
+            {state === 'failed' && <StatusWord tone="failed">没有导出</StatusWord>}
+            <Button
+              variant="ghost"
+              loading={state === 'busy'}
+              loadingLabel="正在导出"
+              onClick={() => {
+                setState('busy')
+                void run()
+                  .then(result => setState(result.status === 'saved' ? 'saved' : result.status === 'canceled' ? 'idle' : 'failed'))
+                  .catch(() => setState('failed'))
+              }}>
+              导出诊断…
+            </Button>
+          </span>
+        }
+      />
+    </SettingsGroup>
+  )
+}
+
 export function AboutSettings({
   snapshot,
   access,
@@ -359,6 +403,7 @@ export function AboutSettings({
 }) {
   const [licences, setLicences] = useState(false)
   const updates = useShellUpdates()
+  const diagnostics = currentShell()?.remote ? undefined : currentShell()?.diagnostics
   // The desktop app shows its own version beside the Host's; a browser or a phone sees the Host's only, and nothing to install.
   const desktop = updates.view !== null
   const host = access.legacy ? undefined : hostView(snapshot)
@@ -426,6 +471,7 @@ export function AboutSettings({
           }}
         />
       )}
+      {access.local && diagnostics && <DiagnosticsRow export={diagnostics.export} />}
       <SettingsGroup
         note={
           <NoteLine

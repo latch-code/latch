@@ -252,6 +252,8 @@ describe('file edits', () => {
     await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
     const seen = await open(viewer, 'notes.txt')
     expect(seen.actions.edit).toBe(false)
+    // The page says why 编辑 is not offered instead of leaving it out.
+    expect(seen.refused?.edit).toBe('file-edit-scope')
     expect(await errorOf(await save(viewer, seen.handle, { baseHash: base, content: 'x' }))).toEqual({
       status: 403,
       error: 'scope-required',

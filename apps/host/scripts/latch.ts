@@ -131,12 +131,14 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
   presence test                            显示一次示例本机确认（人工检查）
   audit verify                             校验审计记录
   traffic [--json]                         Host 本次启动以来发出的字节数与帧大小分布（Host 运行中）
+  diagnostics --out <文件>                 导出诊断文件：版本、Harness 与插件状态、近期事件（不含日志原文），
+                                           不含对话、文件内容与密钥；写入新建的 0600 文件，不覆盖（Host 运行中）
 `
 
 function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, string | true> } {
   const positional: string[] = []
   const flags = new Map<string, string | true>()
-  const valued = new Set(['--data-dir', '--scopes', '--code-file', '--port', '--name', '--workspace', '--expect-url'])
+  const valued = new Set(['--data-dir', '--scopes', '--code-file', '--port', '--name', '--workspace', '--expect-url', '--out'])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!
     if (!arg.startsWith('--')) {
@@ -975,6 +977,22 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       } finally {
         await lock.release()
       }
+      return 0
+    }
+    if (group === 'diagnostics' && command === undefined) {
+      const target = flags.get('--out')
+      if (typeof target !== 'string') throw new CliError('请用 --out <文件> 指定诊断文件的位置')
+      const { state } = await runningHost(dataDir)
+      // The file is made first, so a path in use is refused before the Host records an export.
+      const file = await createSecretFile(resolve(io.cwd, target))
+      try {
+        const bundle = await api(state, 'POST', 'diagnostics', {})
+        await file.write(JSON.stringify(bundle, null, 2))
+      } catch (error) {
+        await file.discard()
+        throw error
+      }
+      out(`已导出诊断文件：${target}`)
       return 0
     }
     if (group === 'traffic' && command === undefined) {

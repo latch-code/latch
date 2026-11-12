@@ -5,9 +5,9 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isInsidePath } from '../paths.ts'
-import { FAMILY_OF, OPEN_TYPES, PREVIEW_UNVERIFIED, QUICK_LOOK_TYPES, extensionOf } from './kinds.ts'
+import { EDITOR_REFUSED_TYPES, FAMILY_OF, OPEN_TYPES, PREVIEW_UNVERIFIED, QUICK_LOOK_TYPES, extensionOf } from './kinds.ts'
 import { hasSecretContent, isSecretPath } from './secrets.ts'
-import { SNIFF_BYTES, matchesFamily } from './sniff.ts'
+import { SNIFF_BYTES, looksLikeText, matchesFamily } from './sniff.ts'
 
 /** Windows has no O_NOFOLLOW; the identity checks below still apply there. */
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
@@ -52,7 +52,7 @@ export type Resolution =
   | { status: Exclude<ResolveStatus, 'ok'>; line?: number; column?: number }
 
 /** Why an action is not offered for a file the Host resolved. */
-export type ActionRefusal = 'file-secret' | 'file-type-refused' | 'file-preview-unverified' | 'file-content-mismatch'
+export type ActionRefusal = 'file-secret' | 'file-type-refused' | 'file-preview-unverified' | 'file-content-mismatch' | 'file-not-text'
 export type ActionVerdict = { ok: true } | { ok: false; code: ActionRefusal }
 
 export interface ResolveOptions {
@@ -279,7 +279,25 @@ function verdict(allowed: ReadonlySet<string>, file: ResolvedFile, unverified?: 
   return { ok: true }
 }
 
+/** 在编辑器中打开: a text file that is not a secret nor a project or workspace definition. */
+function editorVerdict(file: ResolvedFile): ActionVerdict {
+  if (file.secret) return { ok: false, code: 'file-secret' }
+  if (EDITOR_REFUSED_TYPES.has(file.ext)) return { ok: false, code: 'file-type-refused' }
+  if (!looksLikeText(file.head)) return { ok: false, code: 'file-not-text' }
+  return { ok: true }
+}
+
 /** What the desktop app may do with a resolved file. Showing it in Finder reads and starts nothing, so it is always offered. */
-export function fileVerdicts(file: ResolvedFile): { reveal: ActionVerdict; quicklook: ActionVerdict; open: ActionVerdict } {
-  return { reveal: { ok: true }, quicklook: verdict(QUICK_LOOK_TYPES, file, PREVIEW_UNVERIFIED), open: verdict(OPEN_TYPES, file) }
+export function fileVerdicts(file: ResolvedFile): {
+  reveal: ActionVerdict
+  quicklook: ActionVerdict
+  open: ActionVerdict
+  editor: ActionVerdict
+} {
+  return {
+    reveal: { ok: true },
+    quicklook: verdict(QUICK_LOOK_TYPES, file, PREVIEW_UNVERIFIED),
+    open: verdict(OPEN_TYPES, file),
+    editor: editorVerdict(file),
+  }
 }

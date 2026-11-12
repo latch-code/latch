@@ -1970,6 +1970,13 @@
   font-family: var(--mono);
 }
 
+/* 关于: 导出诊断 with its outcome beside the button. */
+.about-diagnostics {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
 /* 关于: another computer's Host version, with its state while it does not answer and an amber 版本较旧 when older. */
 .about-remote-version {
   display: inline-flex;

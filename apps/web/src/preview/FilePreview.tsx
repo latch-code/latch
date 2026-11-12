@@ -21,6 +21,7 @@ import {
 } from '@latch/ui'
 import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
+import { editorLabel, openInEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { describeFailure, fileRefusalText } from '../core/securityCopy.ts'
 import { basename } from '../format.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -72,6 +73,7 @@ export function FilePreview({
   onMention?(mention: FileMention): void
   onQuote?(value: FileQuote): void
 }) {
+  const editors = useEditors()
   const [file, setFile] = useState<FileMetadata>(),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -337,6 +339,7 @@ export function FilePreview({
   }
   const base = file ? (folders?.length ? folders.find(folder => folder.id === file.root)?.path : cwd) : undefined
   const fullPath = file && base ? `${base.replace(/[\\/]+$/u, '')}/${file.path}` : (file?.path ?? reference)
+  const editorText = editorLabel(editors)
   const shell = shellFiles()
   const nativeFiles = local && file?.source !== 'attachment' && (context.kind === 'session' || shell?.protocolVersion === 2) ? shell : null
   const native = async (action: 'reveal' | 'quickLook' | 'open') => {
@@ -545,6 +548,25 @@ export function FilePreview({
                 {
                   id: 'file',
                   items: [
+                    ...(nativeFiles && file.actions.editor === true && editorText
+                      ? [
+                          {
+                            id: 'editor',
+                            label: editorText,
+                            icon: CodeGlyph,
+                            onSelect: () => {
+                              const owner =
+                                context.kind === 'session'
+                                  ? context.sessionId
+                                  : { workspaceId: context.workspaceId, harnessId: context.harnessId }
+                              void openInEditor(owner, { handle: file.handle }, tab.target.line).then(result => {
+                                if (result.status === 'refused' || result.status === 'failed') setError(fileRefusalText(result.code))
+                                if (result.status === 'busy') setError('上一个操作还没有完成，请稍后再试。')
+                              })
+                            },
+                          },
+                        ]
+                      : []),
                     ...(nativeFiles && file.actions.quicklook
                       ? [
                           {

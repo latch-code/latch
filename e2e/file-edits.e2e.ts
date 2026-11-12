@@ -88,7 +88,7 @@ describe('editing a file from its preview', () => {
     return { context, page, preview, owner }
   }
 
-  it('saves an edit, keeps both versions on a conflict, overwrites only after a confirmation, and tells the next turn', async () => {
+  it('saves an edit, keeps both versions on a conflict, writes nothing over the other change, and tells the next turn', async () => {
     const { context, page, preview, owner } = await open(1440, 900)
     try {
       await preview.getByRole('button', { name: '编辑', exact: true }).click()
@@ -113,7 +113,8 @@ describe('editing a file from its preview', () => {
       await editor.locator('.file-editor-version-text', { hasText: 'theirs' }).waitFor()
       await editor.locator('.file-editor-version-text', { hasText: 'mine' }).waitFor()
       expect(await readFile(notes(), 'utf8')).toBe('theirs\n')
-      await editor.getByRole('button', { name: '复制我的', exact: true }).click()
+      await editor.getByText('文件已在别处修改', { exact: true }).waitFor()
+      await editor.getByRole('button', { name: '复制我的修改', exact: true }).click()
       await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('mine\n')
       await page.screenshot({ path: `${OUT}/conflict-1440-light.png`, animations: 'disabled' })
       // Another tab and back: the conflict and the person's text are still there.
@@ -122,12 +123,18 @@ describe('editing a file from its preview', () => {
       await page.getByRole('tab', { name: /notes\.txt/u }).click()
       await editor.locator('.file-editor-version-text', { hasText: 'mine' }).waitFor()
       await editor.locator('.file-editor-version-text', { hasText: 'theirs' }).waitFor()
-      await editor.getByRole('button', { name: '用我的覆盖', exact: true }).click()
-      const confirm = page.getByRole('dialog', { name: '用你的修改覆盖？', exact: true })
+      // 载入最新 replaces the person's text only after asking (the copy was in the other tab's life): 取消 keeps both.
+      await editor.getByRole('button', { name: '载入最新', exact: true }).click()
+      const confirm = page.getByRole('dialog', { name: '载入最新？', exact: true })
       await confirm.getByRole('button', { name: '取消', exact: true }).click()
+      await editor.locator('.file-editor-version-text', { hasText: 'mine' }).waitFor()
       expect(await readFile(notes(), 'utf8')).toBe('theirs\n')
-      await editor.getByRole('button', { name: '用我的覆盖', exact: true }).click()
-      await confirm.getByRole('button', { name: '覆盖', exact: true }).click()
+      await editor.getByRole('button', { name: '载入最新', exact: true }).click()
+      await confirm.getByRole('button', { name: '载入', exact: true }).click()
+      // The file as it is now is the version to edit; a save from it goes through.
+      await expect.poll(() => area.inputValue()).toBe('theirs\n')
+      await area.fill('mine\n')
+      await editor.getByRole('button', { name: '保存', exact: true }).click()
       await preview.getByText('mine', { exact: true }).waitFor()
       expect(await readFile(notes(), 'utf8')).toBe('mine\n')
 
@@ -202,11 +209,13 @@ describe('editing a file from its preview', () => {
           await writeFile(notes(), 'theirs\n')
           await save.click()
           await editor.locator('.file-editor-version-text', { hasText: 'theirs' }).waitFor()
-          await editor.getByRole('button', { name: '用我的覆盖', exact: true }).waitFor()
+          await editor.getByRole('button', { name: '复制我的修改', exact: true }).waitFor()
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
           await page.screenshot({ path: `${OUT}/conflict-${width}-${theme}.png`, animations: 'disabled' })
-          await editor.getByRole('button', { name: '放弃我的', exact: true }).click()
-          await page.getByRole('button', { name: '放弃', exact: true }).click()
+          await editor.getByRole('button', { name: '载入最新', exact: true }).click()
+          await page.getByRole('button', { name: '载入', exact: true }).click()
+          await expect.poll(() => area.inputValue()).toBe('theirs\n')
+          await editor.getByRole('button', { name: '取消', exact: true }).click()
           await preview.getByText('theirs', { exact: true }).waitFor()
           expect(await readFile(notes(), 'utf8')).toBe('theirs\n')
         }

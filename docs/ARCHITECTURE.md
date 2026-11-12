@@ -257,7 +257,11 @@ Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` �
 
 ### 会话文件
 
-回复里提到的文件在客户端是路径标记，从不让页面导航（见 [DESIGN.md](DESIGN.md)「路径标记」）。桌面端可以把这样的文件在访达中显示、用快速查看预览或用默认应用打开；判断都在 Host（`apps/host/src/files/`），读取内容需要 `view`，本机外部动作只在 `host.sock` 上进行。
+回复里提到的文件在客户端是路径标记，从不让页面导航（见 [DESIGN.md](DESIGN.md)「路径标记」）。桌面端可以把这样的文件在访达中显示、用快速查看预览、用默认应用打开或在编辑器中打开；判断都在 Host（`apps/host/src/files/`），读取内容需要 `view`，本机外部动作只在 `host.sock` 上进行。
+
+**在编辑器中打开。** 只在这台 Mac 的主窗口（`latch://app/` 顶层页）出现；其他电脑的窗口、浏览器与 iOS 没有这一项，也不提它。主进程按固定的 bundle ID 白名单（VS Code、VS Code Insiders、Cursor、Windsurf、Zed、Sublime Text、IntelliJ IDEA、WebStorm、GoLand、PyCharm、Xcode、Nova）在 `/Applications`、`~/Applications` 与 JetBrains Toolbox 的文件夹里找应用包，以 `Info.plist` 的 `CFBundleIdentifier` 为准，不找 PATH 上的程序。人在「设置 › 通用」或第一次打开文件时选一个，主进程记在桌面端数据目录的 0600 `editor.json`。打开时 Host 按其他文件动作的规则裁决并先审计（`file.editor`，需要 `run`）：会话或项目文件夹里的普通文本文件，不是可能含密钥的文件，也不是编辑器当作项目打开的定义文件（`.code-workspace`、`.sublime-project`、`.sublime-workspace`、`.ipr`、`.iws`、`.iml`）；主进程复查真实路径、普通文件与文件头是文本。主进程还拒绝打开时会执行或导入项目的文件：Xcode 不收 `Package.swift`，JetBrains IDE 不收 `pom.xml`、`build.gradle(.kts)` 与 `settings.gradle(.kts)`。启动只用 `/usr/bin/open -a <检查过的应用包> <目标>`（execFile，无 shell），目标是主进程按该编辑器文档里的固定模板拼出的地址（`vscode://file/<逐段编码的绝对路径>:<行>`，Cursor、Windsurf、VS Code Insiders、Zed 同理），没有这种地址的编辑器就是文件的绝对路径这一个参数，不带行号。VS Code 一系把地址里每个 `:<数字>` 段（空段算 0）都读成位置，所以文件名含 `:` 时改为把路径作为参数交给它（它的 macOS 打开文件处理以 `gotoLineMode: false` 打开，不解析位置），也不带行号；Zed 在路径与地址里都解析位置，文件名含 `:` 或以 `(n)`、`(n,m)` 结尾时拒绝。含控制字符、换行、行或段分隔符、未规范化的路径一律拒绝；从不交出文件夹，Latch 自己不运行项目里的文件。编辑器打开文件后按它自己的工作区信任行事，可能加载项目的设置与语言服务器，这不是 Latch 的隔离。主进程只在主窗口页面一秒内的真实点按或按键之后、且已选的编辑器仍在时才启动它，否则不请 Host 审计。
+
+**诊断导出。** `POST /link/api/diagnostics` 只回答 `host.sock`：命令行（`pnpm latch diagnostics --out <文件>`，写入新建的 0600 文件，已存在时拒绝）或桌面端主进程（「设置 › 关于 › 导出诊断…」，主进程弹出保存面板并写文件；桌面代理拒绝页面自己请求这条路由）。设备调用还需 `admin` 并在 `host.sock` 上登记；其他设备 403 `local-only`。内容按固定字段生成（`apps/host/src/diagnostics.ts`）：Host、Node 与系统版本，各 Harness 的状态、级别、版本与状态说明的第一行（最多 200 字），插件列表（ID、版本、启用、运行数），策略的形状（本机确认后端、出站与已确认地址的条数、无人值守上限，不含主机与密钥），设备与连接计数，以及最近 400 个事件与其中最近 100 个失败。事件不是日志行：Host 只在自己写的一组固定日志处（`DIAGNOSTIC_CATEGORIES`：审计写入失败、Harness 或模型服务加载失败、项目不可用等）记下类别、按形状检查过的 ID 与错误代码，Agent 的 stderr、Agent 写的文字、提示词与出站白名单的主机从不进入。剩下的文字再经一次 `redactSecrets`，设备名、项目名与文件夹、会话标题、数据目录与出站主机替换为「‹已隐去›」，主目录写作 `~`，其他用户的主目录写作 `~other`，其他绝对路径写作「‹路径›」。不含对话、文件内容、记忆与 `auth/`、`providers.json` 里的任何东西。先写审计 `diagnostics.exported`（只有事件数、失败数、Harness 数与插件数）再回答。
 
 ## Harness 与会话路由
 
@@ -531,6 +535,8 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 ### 会话分叉
 
 `catalog.features.fork` 表示 `POST /tasks` 接受 `forkOf: { taskId, upToMessageId }`。请求仍需 `run`，且必须有 `view` 才能读取来源；Host 在启动前再次核对权限并生成种子，客户端不提交历史。只允许从已结束的轮次分叉，后续轮次和隐藏推理不进入种子；分叉点之前清空过上下文时，种子从最后一次清空开始，那是 Agent 当时知道的。文本保留最后 20 万 UTF-16 字符，截断时说明，边界不拆开代理对。来源名称取不可变的首条输入，重命名不改变重试内容。项目和 Harness 可重新选择，L3 照常写新会话的启动审计。默认启动目录内 Host 已知的自有目录在分叉时复用，换项目则使用新项目；文件不复制或回滚。来源、位置、轮次与种子长度写入 `sessions-meta.json` 的 zod schema，由 Hub 投影到 `TaskSummary.forkOf` 与首条消息的 `forkContext`，第三方 Driver 的来源声明不作为 Host 元数据。
+
+**旁支提问（`/btw`）。** 在会话的输入框里写 `/btw <问题>`，客户端用同一个 `POST /tasks` 开一个只对话（`mode: 'chat'`）的分叉：同一个 Harness 与模型服务，分叉点是最后一轮已结束的回复，正在运行的一轮不进入种子，也不排进或打断它；来源会话的历史不变。回答显示在会话旁的面板里（手机上是单独一页），可「插入到输入框」（以引用加进主输入框的草稿）或「打开为会话」；插入或关闭面板后分叉被归档，在 Code 的「已归档」里能找到；回答还在运行时先取消再归档，关闭之后才到的启动结果或读取结果不再打开面板（迟到的分叉同样取消并归档）。Harness 没有只对话方式或 Host 没有 `features.fork` 时，斜杠菜单里的 `/btw` 写「这个 Harness 尚不支持」，输入框里的 `/btw …` 不发送、不排队也不追加进运行中的一轮，原因写在输入框下。
 
 Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到与来源同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`；Host 照常生成种子并放在 prompt 开头，`prefixLength` 是它的长度。Driver 在第一轮打开新会话时让 Harness 分叉它自己的记录（第一轮在会话打开前就结束时，之后不再分叉），成功时第一轮不发这段种子，首条用户消息带 `nativeFork`（ACP 消息存储的 zod schema 保留它），页面不再展开种子，写「pi 自己带着会话「…」到第 N 轮为止的记录」；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话、同一个工作目录；Host 不比较目录，由 Driver 核对。没有声明的 Harness 收不到 `fork`，`capabilities.fork` 缺省即只用种子。pi 的做法见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式)。
 
