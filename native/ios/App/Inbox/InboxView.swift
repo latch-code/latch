@@ -16,26 +16,36 @@ struct InboxView: View {
     var body: some View {
         NavigationSplitView {
             let workspaces = model.snapshot["catalog"]["workspaces"].array
-            let shelves = model.shelves(query: query)
+            let tasks = model.snapshot["tasks"].array
+            let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
+            let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
             List(selection: selection) {
                 if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
                 if model.offline, let host = model.selectedHost { OfflineBanner(host: host.name).plainRow() }
+                if model.showArchived {
+                    Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
+                }
                 ForEach(shelves, id: \.id) { shelf in
                     Section {
                         ForEach(shelf.tasks, id: \.id) { task in
                             InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
                                 .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)).listRowBackground(Color.clear)
+                                .sessionActions(task, model: model)
                         }
-                    } header: { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) }
+                    } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
                 }
-                if shelves.isEmpty { emptyState.plainRow() }
+                if shelves.isEmpty && !searching { emptyState.plainRow() }
+                if searching { ContentSearchSection(query: query) }
+                if !model.showArchived, query.isEmpty, case let count = PhoneSessions.archived(tasks).count, count > 0 {
+                    Button { model.showArchived = true } label: { ArchivedLine(back: false, count: count) }.buttonStyle(.plain).plainRow()
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(PhoneTheme.canvas)
             .navigationTitle("会话")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $query, prompt: "搜索")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索")
             .refreshable { await model.refresh() }
             .toolbar {
                 if model.hosts.count > 1 {
@@ -54,12 +64,25 @@ struct InboxView: View {
                     Button("新会话", systemImage: "square.and.pencil") { creating = true }.labelStyle(.iconOnly).disabled(!model.connected)
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { ControlPendingBar() }
+            .safeAreaInset(edge: .bottom, spacing: 0) { VStack(spacing: 6) { PendingWritesBar(); ControlPendingBar() } }
         } detail: {
             if let id = model.sessionId { ConversationView(id: id) }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
         .sheet(isPresented: $creating) { NewSessionSheet().presentationCornerRadius(28) }
+        .modifier(SessionDialogs())
+        #if LATCH_SCREENS
+        .onAppear { if model.staged, !ScreensStage.query.isEmpty { query = ScreensStage.query } }
+        #endif
+        // The Host searches once the typing settles; a later query or a closed window drops what an earlier one finds.
+        .task(id: [query, model.verifiedUntil == nil ? "closed" : "open"]) {
+            #if LATCH_SCREENS
+            if model.staged { return }
+            #endif
+            guard PhoneSearch.query(query) != nil, model.canSearchContent, !model.showArchived else { model.contentSearch = PhoneContentSearch(); return }
+            try? await Task.sleep(for: .milliseconds(300))
+            if !Task.isCancelled { await model.searchContent(query) }
+        }
         .task(id: model.selectedHost == nil || model.connected || model.offline) {
             // A connection that settles within a second never mentions connecting.
             showConnecting = false
@@ -69,7 +92,8 @@ struct InboxView: View {
         }
     }
     @ViewBuilder private var emptyState: some View {
-        if !query.isEmpty { Text("没有符合的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
+        if model.showArchived { Text("没有已归档的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
+        else if !query.isEmpty { Text("没有符合的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
         else if model.connected {
             VStack(spacing: 8) {
                 Text("还没有会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
@@ -81,6 +105,39 @@ struct InboxView: View {
 
 private extension View {
     func plainRow() -> some View { listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
+    /** The session menu held down, and swiped: 置顶 from the leading edge, 归档 and 删除 from the trailing one. */
+    @ViewBuilder func sessionActions(_ task: NativeJSON, model: PhoneModel) -> some View {
+        if PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty { self }
+        else {
+            let busy = model.busy || !model.connected
+            contextMenu { SessionMenuButtons(task: task) }
+                .swipeActions(edge: .leading) {
+                    Button(task["pinned"].bool ? "取消置顶" : "置顶", systemImage: task["pinned"].bool ? "pin.slash" : "pin") { Task { await model.choose(.pin, task: task) } }
+                        .tint(PhoneTheme.muted).disabled(busy)
+                }
+                .swipeActions(edge: .trailing) {
+                    if !PhoneSessionMenu.active(task) {
+                        Button("删除", systemImage: "trash", role: .destructive) { Task { await model.choose(.delete, task: task) } }.disabled(busy)
+                    }
+                    Button(task["archived"].bool ? "取消归档" : "归档", systemImage: "archivebox") { Task { await model.choose(.archive, task: task) } }
+                        .tint(PhoneTheme.ink2).disabled(busy)
+                }
+        }
+    }
+}
+
+/** 已归档 at the end of the list, and the way back from it, as the phone web draws them. */
+private struct ArchivedLine: View {
+    let back: Bool
+    let count: Int
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: back ? "chevron.left" : "archivebox").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
+            Text("已归档").font(.system(size: 15)).foregroundStyle(back ? PhoneTheme.ink : PhoneTheme.ink2)
+            Text("\(count)").font(.system(size: 13)).foregroundStyle(PhoneTheme.faint)
+            Spacer()
+        }.frame(minHeight: 44).contentShape(Rectangle()).accessibilityElement(children: .combine).accessibilityLabel(back ? "返回会话 · 已归档 \(count)" : "已归档的会话（\(count)）")
+    }
 }
 
 private struct ShelfHeader: View {
@@ -165,4 +222,21 @@ private struct RowStatusSlot: View {
 
 struct TightLabel: LabelStyle {
     func makeBody(configuration: Configuration) -> some View { HStack(spacing: 4) { configuration.icon; configuration.title } }
+}
+
+/**
+ * A write whose answer never came blocks every later one until it is sent again, so the list offers it too, not only the
+ * conversation it belongs to.
+ */
+private struct PendingWritesBar: View {
+    @EnvironmentObject private var model: PhoneModel
+    var body: some View {
+        ForEach(model.pending, id: \.requestId) { pending in
+            HStack {
+                Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                Spacer()
+                Button("重试这次提交") { Task { await model.submit(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+            }.padding(.horizontal, 16).padding(.vertical, 6)
+        }
+    }
 }

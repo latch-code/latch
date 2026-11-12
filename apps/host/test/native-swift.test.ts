@@ -36,7 +36,7 @@ import {
   parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
-import { swiftFixturePath, testHarness } from '@latch/testkit'
+import { FAKE_ACP_AGENT, swiftFixturePath, testHarness } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -912,7 +912,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: 'write_file', canAllow: true, option: 'o1', refusal: '', clause: '' },
-      { heading: 'write_file', canAllow: false, option: '', refusal: '这一步不能只允许一次', clause: '' },
+      // As the web: an ordinary step offers what the Host gave, so its only allow is the session-wide one.
+      { heading: 'write_file', canAllow: true, option: 'o2', refusal: '', clause: '' },
       { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '在项目文件夹之外' },
       { heading: 'shell', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '高风险' },
@@ -923,14 +924,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { id: 'codex', name: 'Codex' },
     ])
     expect(result.projects).toEqual([{ id: 'sealed' }, { id: 'latch' }])
-    expect(result.choice).toEqual({ harness: 'codex', workspace: 'sealed', model: 'm2' })
+    // Codex chooses its own model, so the sheet picks none and sends none.
+    expect(result.choice).toEqual({ harness: 'codex', workspace: 'sealed', model: '' })
     expect(result.blocker).toBe('')
     expect(result.fields).toEqual({
       prompt: '开始',
       harnessId: 'codex',
       workspaceId: 'sealed',
       mode: 'agent',
-      model: { providerId: 'p', model: 'm2' },
     })
   })
   it('matches the existing strict WebSocket wire codec with fragmented input and refuses unsupported frames', async () => {
@@ -1353,6 +1354,577 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('stops a subagent, steers, retries, forks, changes a setting, clears context, searches and manages sessions from the actual Swift workspace', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      // This Host looks up no command by name, so no agent installed on this computer can be found or started.
+      await owner.json('agents', {
+        method: 'POST',
+        body: {
+          id: 'fake',
+          name: 'Fake agent',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: {
+            FAKE_ACP_STATE: join(host.root, 'acp-state.json'),
+            FAKE_ACP_CAPS: 'steer',
+            FAKE_ACP_MODES: 'read-only,auto',
+            FAKE_ACP_CONFIG: 'options',
+          },
+        },
+      })
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      const result = await invoke({ operation: 'nativeActions', payload: invitation.payload, port: host.host.nativePort })
+      expect(result).toEqual({
+        window: true,
+        subagent: true,
+        steer: true,
+        retry: true,
+        fork: true,
+        config: true,
+        clear: true,
+        search: true,
+        menu: true,
+      })
+      expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
+    } finally {
+      await host.close()
+    }
+  }, 60_000)
+  it('runs the App’s stop and search flows: a refused stop clears, and no earlier query’s hits show under a new one', async () => {
+    const result = await invoke({ operation: 'phoneFlows' })
+    // Refused: cleared. Answered: kept until the Host settles it. Pressed again meanwhile: not sent. Another connection: untouched.
+    expect(result.stops).toEqual(['failed:', 'ok:b', 'not sent:b', 'failed:bc'])
+    expect(result.sent).toBe(3)
+    // Five busy answers for a new query: an empty list with the Host's words, never the old query's hits.
+    expect(result.busyOther).toEqual({
+      loadingHits: [],
+      hits: [],
+      error: '正在完成一次正文搜索，请稍后再试。',
+      asked: 5,
+      paused: 4,
+      loading: false,
+    })
+    // The same query keeps what it found.
+    expect(result.busySame).toEqual({ loadingHits: ['old'], hits: ['old'], error: '', asked: 5, paused: 4, loading: false })
+    expect(result.afterBusy).toEqual({ loadingHits: [], hits: ['new'], error: '', asked: 2, paused: 1, loading: false })
+  })
+  it('derives the session actions the phone offers and the writes it sends for them', async () => {
+    const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
+    const result = await invoke({
+      operation: 'phoneActions',
+      subagents: [
+        {
+          message: { id: 's1', role: 'tool', subagent: { title: 'Test runner', status: 'running', stoppable: true, steps: [{ id: 'x' }] } },
+          canStop: true,
+        },
+        {
+          message: { id: 's2', role: 'tool', subagent: { title: 'Test runner', status: 'running', stoppable: true, steps: [] } },
+          requested: true,
+          canStop: true,
+        },
+        {
+          message: { id: 's3', role: 'tool', subagent: { title: 'Linter', status: 'waiting', stopping: true, stoppable: true, steps: [] } },
+          canStop: true,
+        },
+        { message: { id: 's4', role: 'tool', subagent: { title: 'Docs', status: 'done', steps: [] } }, canStop: true },
+        { message: { id: 's5', role: 'tool', subagent: { title: 'Plain', stoppable: true, steps: [] } }, canStop: false },
+        { message: { id: 's6', role: 'tool', toolName: 'shell' } },
+      ],
+      detail: {
+        messages: [
+          { id: 'm1', role: 'user', text: '[Latch] 撤销了上一轮的改动\n\n先读一下' },
+          { id: 'm2', role: 'tool', state: 'completed', tool: { kind: 'read' } },
+          { id: 'm3', role: 'assistant', text: '读完了' },
+          { id: 'm4', role: 'user', text: '改一下' },
+          { id: 'm5', role: 'tool', state: 'completed', tool: { kind: 'edit' }, startedAt: at(1) },
+          { id: 'm6', role: 'tool', state: 'failed', tool: { kind: 'execute', output: 'exit 1' }, startedAt: at(1) },
+          { id: 'm7', role: 'tool', state: 'running', tool: { kind: 'other' }, startedAt: at(1) },
+          { id: 'm8', role: 'tool', state: 'failed', startedAt: null, tool: { kind: 'edit', decision: { outcome: 'rejected' } } },
+          { id: 'm9', role: 'assistant', text: '改好了' },
+        ],
+      },
+      resend: [
+        { text: 'plain' },
+        { text: '源会话的记录\n\n继续', forkContext: { prefixLength: 8 }, nativeFork: true },
+        { text: '源会话的记录\n\n继续', forkContext: { prefixLength: 8 } },
+        { text: '😀接着', importContext: { prefixLength: 2 } },
+        { text: '[Latch] 只有说明' },
+      ],
+      followUps: [
+        { status: 'idle', detail: {}, queues: true },
+        { status: 'running', detail: { steer: true }, queues: false },
+        { status: 'waiting-approval', detail: {}, queues: true },
+        { status: 'running', detail: {}, queues: false },
+      ],
+      harness: { level: 'L3' },
+      config: {
+        summary: { mode: 'agent', level: 'L3' },
+        permission: {
+          modeTiers: {
+            plan: { tier: 'plan' },
+            default: { tier: 'ask', line: '每一步先问你' },
+            edits: { tier: 'rule' },
+            judge: { tier: 'model' },
+            yolo: { tier: 'never' },
+          },
+        },
+        config: [
+          {
+            id: 'mode',
+            category: 'mode',
+            currentValue: 'yolo',
+            options: [
+              { value: 'default', name: 'Default' },
+              { value: 'plan', name: 'Plan' },
+              { value: 'edits', name: 'Accept edits' },
+              { value: 'judge', name: 'Auto' },
+              { value: 'yolo', name: 'Bypass' },
+              { value: 'odd', name: 'Odd' },
+            ],
+          },
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'small',
+            options: [
+              { value: 'small', name: 'Small' },
+              { value: 'large', name: 'Large' },
+              { value: 'large', name: 'Again' },
+            ],
+          },
+          { id: 'effort', category: 'thought_level', currentValue: 'high', options: [{ value: 'high', name: '高' }] },
+          { id: 'other', category: 'model_config', currentValue: 'a', options: [{ value: 'a', name: 'A' }] },
+        ],
+      },
+      menuTasks: [
+        { id: 'a', title: '空闲', status: 'idle', offered: true },
+        { id: 'b', title: '运行', status: 'running', pinned: true, offered: true },
+        { id: 'c', title: '运行中清空', status: 'running', offered: true, clearing: true },
+        { id: 'd', title: '已归档', status: 'idle', archived: true },
+      ],
+      catalog: {
+        harnesses: [
+          {
+            id: 'standard',
+            status: 'ready',
+            modes: ['chat', 'agent'],
+            capabilities: { models: { owner: 'latch' }, permission: { enforcement: 'latch' } },
+          },
+          { id: 'codex', status: 'ready', modes: ['agent'], capabilities: { models: { owner: 'harness' } } },
+        ],
+        workspaces: [
+          { id: 'latch', name: 'latch' },
+          { id: 'site', name: '官网' },
+        ],
+        providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'] }],
+        defaults: { harnessId: 'standard', workspaceId: 'latch', model: { providerId: 'p', model: 'm1' } },
+      },
+      forkSource: { harnessId: 'codex', workspaceId: 'site', mode: 'agent', providerId: 'p', model: 'm2' },
+      forkCatalog: {
+        harnesses: [
+          {
+            id: 'standard',
+            status: 'ready',
+            modes: ['chat', 'agent'],
+            level: 'L1',
+            capabilities: { display: { label: 'Latch' }, models: { owner: 'latch' }, permission: { enforcement: 'latch' } },
+          },
+          {
+            id: 'codex',
+            status: 'ready',
+            modes: ['agent'],
+            level: 'L3',
+            capabilities: { display: { label: 'Codex' }, models: { owner: 'harness' } },
+            permission: { modeTiers: { read: { tier: 'plan' }, ask: { tier: 'ask' }, auto: { tier: 'model' }, full: { tier: 'never' } } },
+            catalogue: {
+              options: [
+                {
+                  id: 'model',
+                  category: 'model',
+                  currentValue: 'small',
+                  options: [
+                    { value: 'small', name: 'Small' },
+                    { value: 'large', name: 'Large' },
+                  ],
+                },
+                {
+                  id: 'effort',
+                  category: 'thought_level',
+                  currentValue: 'medium',
+                  options: [
+                    { value: 'low', name: '低' },
+                    { value: 'medium', name: '中' },
+                    { value: 'high', name: '高' },
+                  ],
+                },
+                {
+                  id: 'mode',
+                  category: 'mode',
+                  currentValue: 'ask',
+                  options: [
+                    { value: 'read', name: 'Read' },
+                    { value: 'ask', name: 'Ask' },
+                    { value: 'auto', name: 'Auto' },
+                    { value: 'full', name: 'Full' },
+                  ],
+                },
+              ],
+              perModel: [
+                {
+                  model: 'large',
+                  options: [{ id: 'effort', category: 'thought_level', currentValue: 'high', options: [{ value: 'high', name: '高' }] }],
+                },
+              ],
+            },
+          },
+          {
+            id: 'other',
+            status: 'ready',
+            modes: ['agent'],
+            level: 'L3',
+            capabilities: { display: { label: 'Other' }, models: { owner: 'harness' } },
+            permission: { modeTiers: { safe: { tier: 'ask' }, yolo: { tier: 'never' } } },
+            catalogue: {
+              options: [{ id: 'm', category: 'mode', currentValue: 'safe', options: [{ value: 'safe' }, { value: 'yolo' }] }],
+              perModel: [],
+            },
+          },
+          {
+            id: 'unread',
+            status: 'ready',
+            modes: ['agent'],
+            level: 'L3',
+            capabilities: { display: { label: 'Unread' }, models: { owner: 'harness' } },
+            permission: { modeTiers: {} },
+          },
+        ],
+        workspaces: [{ id: 'latch', name: 'latch' }],
+        providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'], modelCapabilities: { m2: { thinking: ['low', 'high'] } } }],
+        defaults: { harnessId: 'standard', workspaceId: 'latch', model: { providerId: 'p', model: 'm1' } },
+      },
+      agentSource: {
+        summary: { harnessId: 'codex', workspaceId: 'latch', mode: 'agent' },
+        permission: {
+          expectedMode: 'auto',
+          modeTiers: { read: { tier: 'plan' }, ask: { tier: 'ask' }, auto: { tier: 'model' }, full: { tier: 'never' } },
+        },
+        config: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'large',
+            options: [
+              { value: 'small', name: 'Small' },
+              { value: 'large', name: 'Large' },
+            ],
+          },
+          { id: 'effort', category: 'thought_level', currentValue: 'high', options: [{ value: 'high', name: '高' }] },
+          {
+            id: 'mode',
+            category: 'mode',
+            currentValue: 'auto',
+            options: [
+              { value: 'ask', name: 'Ask' },
+              { value: 'auto', name: 'Auto' },
+            ],
+          },
+        ],
+      },
+      routedSource: {
+        summary: { harnessId: 'codex', workspaceId: 'latch', mode: 'agent', modelRoute: { providerId: 'p', model: 'm2' } },
+        config: [{ id: 'effort', category: 'thought_level', currentValue: 'high', options: [{ value: 'high', name: '高' }] }],
+      },
+      builtinSource: {
+        summary: { harnessId: 'standard', workspaceId: 'latch', mode: 'agent', providerId: 'p', model: 'm2', effort: 'high' },
+      },
+      chatSource: { summary: { harnessId: 'standard', mode: 'chat', providerId: 'p', model: 'm1' } },
+      startCatalog: {
+        harnesses: [
+          {
+            id: 'standard',
+            status: 'ready',
+            modes: ['chat', 'agent'],
+            capabilities: { models: { owner: 'latch' }, permission: { enforcement: 'latch' } },
+          },
+          { id: 'codex', status: 'ready', modes: ['agent'], capabilities: { models: { owner: 'harness' } } },
+        ],
+        workspaces: [{ id: 'latch', name: 'latch' }],
+        providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'] }],
+        defaults: { harnessId: 'codex', workspaceId: 'latch', model: { providerId: 'p', model: 'm2' } },
+      },
+      stopsDetail: {
+        messages: [
+          { id: 's1', role: 'tool', subagent: { title: 'a', stoppable: true, steps: [] } },
+          {
+            id: 'p',
+            role: 'tool',
+            subagent: {
+              title: 'b',
+              steps: [{ id: 's3', role: 'tool', subagent: { title: 'c', stoppable: true, stopping: true, steps: [] } }],
+            },
+          },
+          { id: 's4', role: 'tool', subagent: { title: 'd', status: 'done', steps: [] } },
+        ],
+      },
+
+      forked: { forkOf: { taskId: 'ses_source', title: '源会话', turn: 3, upToMessageId: 'm4', prefixLength: 10 } },
+      search: {
+        hits: [
+          {
+            sessionId: 'ses_1',
+            messageId: 'm1',
+            title: '修 relay',
+            snippet: '😀 改了 relay 的超时',
+            match: { start: 6, end: 11 },
+            archived: false,
+          },
+          { sessionId: 'ses_2', messageId: 'm2', title: '', snippet: 'relay', match: { start: 3, end: 99 }, archived: true },
+          { sessionId: '../x', messageId: 'm3', title: 'bad', snippet: 'x', match: { start: 0, end: 1 } },
+        ],
+        truncated: true,
+      },
+      tasks: [
+        { id: 'old', title: 'Relay 旧', archived: true, updatedAt: at(1) },
+        { id: 'new', title: '新的', archived: true, updatedAt: at(9) },
+        { id: 'live', title: 'Relay', updatedAt: at(5) },
+      ],
+      approvals: [
+        {
+          risk: 'R1',
+          standard: true,
+          options: [
+            { id: 'o1', kind: 'allow_once', label: 'Allow' },
+            { id: 'o2', kind: 'allow_always', label: 'Always' },
+            { id: 'o3', kind: 'reject_once', label: 'Reject' },
+            { id: 'o4', kind: 'reject_always', label: '一直拒绝' },
+          ],
+        },
+        {
+          risk: 'R1',
+          standard: false,
+          options: [
+            { id: 'o1', kind: 'allow_once' },
+            { id: 'o3', kind: 'reject_once' },
+            { id: 'o4', kind: 'reject_always', label: 'Never' },
+          ],
+        },
+        {
+          risk: 'R2',
+          elevated: true,
+          options: [
+            { id: 'o1', kind: 'allow_once' },
+            { id: 'o2', kind: 'allow_always' },
+            { id: 'o3', kind: 'reject_once' },
+          ],
+        },
+        {
+          advisory: true,
+          risk: 'R2',
+          options: [
+            { id: 'allow', kind: 'allow_once' },
+            { id: 'always', kind: 'allow_always' },
+            { id: 'reject', kind: 'reject_once' },
+            { id: 'never', kind: 'reject_always', label: 'Never' },
+          ],
+        },
+        {
+          risk: 'R1',
+          standard: true,
+          toolName: 'write\u202Efile',
+          options: [
+            { id: 'o1', kind: 'allow_once' },
+            { id: 'o2', kind: 'allow_always' },
+          ],
+        },
+        {
+          risk: 'R1',
+          standard: true,
+          toolName: 'write',
+          tool: { locations: ['src/a\u200B.ts'] },
+          options: [{ id: 'o2', kind: 'allow_always' }],
+        },
+      ],
+    })
+    expect(result.subagents).toEqual([
+      { id: 's1', title: 'Test runner', status: '运行中', canStop: true, stopping: false, waiting: false, steps: 1 },
+      { id: 's2', title: 'Test runner', status: '正在停止…', canStop: false, stopping: true, waiting: false, steps: 0 },
+      { id: 's3', title: 'Linter', status: '正在停止…', canStop: false, stopping: true, waiting: false, steps: 0 },
+      { id: 's4', title: 'Docs', status: '已完成', canStop: false, stopping: false, waiting: false, steps: 0 },
+      { id: 's5', title: 'Plain', status: null, canStop: false, stopping: false, waiting: false, steps: 0 },
+      null,
+    ])
+    expect(result.turnActions).toEqual([
+      { copy: '读完了', retry: null, warning: null, fork: 'm3' },
+      {
+        copy: '改好了',
+        retry: '改一下',
+        warning:
+          '上一次已经执行了 2 个操作：修改 1 个文件、运行 1 条命令。上一次有 1 个操作结果未知，可能已经执行。重新发送后，Harness 可能再次执行它们。',
+        fork: 'm9',
+      },
+    ])
+    expect(result.latestRunning).toEqual({ copy: null, retry: null, warning: null, fork: null })
+    expect(result.readOnly).toEqual({ copy: '改好了', retry: null, warning: null, fork: null })
+    expect(result.resend).toEqual(['plain', '继续', '源会话的记录\n\n继续', '接着', ''])
+    expect(result.followUp).toEqual(['send', 'steer', 'queue', 'none'])
+    expect(result.controls).toEqual([
+      // The main rows are asking, the model's and never; reading and the rules' go under 更多, a mode with no tier is left out.
+      {
+        kind: 'permission',
+        id: 'mode',
+        label: '不再询问',
+        amber: true,
+        rows: ['只看不改+', '先问你', '按规则放行+', '由模型判断', '不再询问*'],
+      },
+      { kind: 'model', id: 'model', label: 'Small', amber: false, rows: ['Small*', 'Large'] },
+      { kind: 'thinking', id: 'effort', label: '高', amber: false, rows: ['高*'] },
+    ])
+    expect(result.chatControls).toEqual(['model', 'thinking'])
+    expect(result.configWrites).toEqual([
+      {
+        method: 'POST',
+        path: '/link/api/tasks/ses_1/config',
+        body: { configId: 'model', value: 'large', requestId: '<id>' },
+        words: '切换结果待确认',
+      },
+      'refused',
+      'refused',
+      'refused',
+      'refused',
+    ])
+    expect(result.menus).toEqual([
+      [['重命名', '置顶'], ['清空上下文'], ['归档'], ['删除']],
+      [['重命名', '取消置顶'], ['清空上下文（这一轮结束后才能清空上下文）'], ['归档'], ['删除（运行中的会话需要先停止）']],
+      [['重命名', '置顶'], ['保留上下文'], ['归档'], ['删除（运行中的会话需要先停止）']],
+      [['重命名', '置顶'], ['取消归档'], ['删除']],
+    ])
+    expect(result.noRunMenu).toBe(0)
+    expect(result.listMenu).toEqual(['重命名', '置顶', '归档', '删除'])
+    expect(result.deleteQuestion).toEqual([
+      '删除「修 relay」及其全部记录？此操作无法撤销。',
+      '删除「未命名会话」及其全部记录？此操作无法撤销。',
+    ])
+    // Plain requests as the web sends them: no requestId, nothing kept; limits counted in UTF-16 units.
+    expect(result.sessionWrites).toEqual([
+      { method: 'PATCH', path: '/link/api/tasks/ses_1', body: { title: '新名字' } },
+      'refused',
+      { method: 'PATCH', path: '/link/api/tasks/ses_1', body: { title: '长'.repeat(120) } },
+      'refused',
+      { method: 'PATCH', path: '/link/api/tasks/ses_1', body: { pinned: true } },
+      { method: 'PATCH', path: '/link/api/tasks/ses_1', body: { archived: false } },
+      { method: 'DELETE', path: '/link/api/tasks/ses_1', body: {} },
+      'refused',
+    ])
+    expect(result.fork).toEqual({
+      origin: '从「源会话」第 2 轮分叉',
+      harness: 'codex',
+      workspace: 'site',
+      model: '',
+      fields: {
+        prompt: '请接着这个会话继续。',
+        harnessId: 'codex',
+        workspaceId: 'site',
+        mode: 'agent',
+        forkOf: { taskId: 'ses_source', upToMessageId: 'm4' },
+      },
+      words: {
+        method: 'POST',
+        path: '/link/api/tasks',
+        body: expect.objectContaining({ forkOf: { taskId: 'ses_source', upToMessageId: 'm4' } }),
+        words: '分叉结果待确认',
+      },
+      from: ['ses_source', '从「源会话」第 3 轮分叉'],
+    })
+    const place = { harnessId: 'codex', workspaceId: 'latch', mode: 'agent' }
+    expect(result.plans).toEqual({
+      // The same Harness keeps the model, its level (as that model reported it) and the exact row.
+      same: {
+        missed: [],
+        fields: {
+          ...place,
+          config: [
+            { configId: 'model', value: 'large' },
+            { configId: 'effort', value: 'high' },
+            { configId: 'mode', value: 'auto' },
+          ],
+        },
+        rows: ['', '高', '由模型判断'],
+      },
+      // Another Harness takes the widest row no wider than the source's and says what it could not keep.
+      other: {
+        missed: ['没有沿用来源会话的模型「Large」与思考「高」：Other 在这里不能选。', '权限「由模型判断」→ 更严的「先问你」'],
+        fields: { ...place, harnessId: 'other', config: [{ configId: 'm', value: 'safe' }] },
+        rows: ['', '', '先问你'],
+      },
+      unread: {
+        missed: ['来源会话的模型「Large」、思考「高」与权限「由模型判断」要等读到 Unread 的选项后才能沿用。'],
+        fields: { ...place, harnessId: 'unread' },
+        rows: ['', '', ''],
+      },
+      // The service Latch forwarded the same Harness to goes with it and shows in the model row.
+      routed: {
+        missed: ['没有沿用来源会话的思考「高」：Codex 在这里不能选。'],
+        fields: { ...place, model: { providerId: 'p', model: 'm2' } },
+        rows: ['m2', '', ''],
+      },
+      routedElsewhere: {
+        missed: ['没有沿用来源会话的模型「m2」与思考「高」：Other 在这里不能选。'],
+        fields: { ...place, harnessId: 'other' },
+        rows: ['', '', ''],
+      },
+      builtin: {
+        missed: [],
+        fields: { ...place, harnessId: 'standard', model: { providerId: 'p', model: 'm2', effort: 'high' } },
+        rows: ['m2', '高', ''],
+      },
+      builtinPicked: {
+        missed: ['没有沿用来源会话的思考「高」：Latch 在这里不能选。'],
+        fields: { ...place, harnessId: 'standard', model: { providerId: 'p', model: 'm1' } },
+        rows: ['m1', '', ''],
+      },
+      builtinToAgent: {
+        missed: ['没有沿用来源会话的模型「m2」：Codex 在这里不能选。'],
+        fields: { ...place, config: [{ configId: 'effort', value: 'high' }] },
+        rows: ['', '高', ''],
+      },
+      fromChat: {
+        missed: ['没有沿用来源会话的模型「m1」：Codex 在这里不能选。', '来源不读写文件，用 Codex 的默认项'],
+        fields: place,
+        rows: ['', '', ''],
+      },
+    })
+    // A Harness with its own models is given none, not even one forced into the choice; one on Latch's services gets the default.
+    expect(result.starts).toEqual([
+      { default: '', fields: null, forced: null },
+      { default: 'm2', fields: { providerId: 'p', model: 'm2' }, forced: { providerId: 'p', model: 'm2' } },
+    ])
+    expect(result.startDefault).toBe('')
+    // A stop goes on failure and once the Host shows the subagent stopping or no longer stoppable, nested rows too.
+    expect(result.stops).toEqual([['s1', 's2', 's3', 's4'], ['s1', 's3', 's4'], ['s1']])
+    expect(result.search).toEqual({
+      hits: [
+        ['ses_1', '修 relay', '😀 改了 ', 'relay', ' 的超时', ''],
+        ['ses_2', '', 'relay', '', '', 'archived'],
+      ],
+      truncated: true,
+    })
+    expect(result.queries).toEqual(['relay', '', '', ''])
+    expect(result.archived).toEqual(['new', 'old'])
+    expect(result.archivedFound).toEqual(['old'])
+    expect(result.approvals).toEqual([
+      { allow: '允许', option: 'o1', more: ['o2:这个会话都允许这类操作:true', 'o4:一直拒绝:false'], hidden: false, places: [] },
+      { allow: '', option: '', more: ['o4:Never:false'], hidden: false, places: [] },
+      { allow: '允许', option: 'o1', more: [], hidden: false, places: [] },
+      { allow: '允许', option: 'allow', more: ['never:始终拒绝:false'], hidden: false, places: [] },
+      // A request that may read as something else keeps the broadest choices out of reach; the drawer demotes its allow.
+      { allow: '允许', option: 'o1', more: [], hidden: true, places: [] },
+      // A place is shown as it is, so a hidden character there counts and is drawn marked.
+      { allow: '这个会话都允许这类操作', option: 'o2', more: [], hidden: true, places: ['src/a\\u{200B}.ts'] },
+    ])
+  })
   it('derives the tabs, 我的 Agent and 应用 the phone shows, and the memory writes it sends', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
     const review = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
@@ -1565,7 +2137,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.cannotRun).toBe('这台设备不能开始会话')
     expect(result.fields).toEqual([
       { prompt: '看一下', customAgentId: review, harnessId: 'codex', mode: 'agent', workspaceId: 'latch' },
-      { prompt: '看一下', customAgentId: daily, harnessId: 'standard', mode: 'chat', model: { providerId: 'svc', model: 'm2' } },
+      // The start folder is sent as picked; the Host takes it over the Agent's own project.
+      {
+        prompt: '看一下',
+        customAgentId: daily,
+        harnessId: 'standard',
+        mode: 'chat',
+        workspaceId: 'default',
+        model: { providerId: 'svc', model: 'm2' },
+      },
       null,
     ])
     expect(result.recent).toEqual([['a', 'b'], [], []])

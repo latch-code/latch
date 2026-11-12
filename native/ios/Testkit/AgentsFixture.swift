@@ -106,7 +106,9 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         guard PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: true, canRun: true) == nil else { throw NativeFailure.invalidRecord }
         // 委托 through the same start path; the retry of the same request answers with the same session.
         let delegation = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: "Review from the phone"))
-        guard PhonePending.kind(delegation) == .delegation(agentId: agentId) else { throw NativeFailure.invalidRecord }
+        // The Agent has no project of its own, so the start folder goes as picked; since 45740a5d the Host takes it.
+        guard PhonePending.kind(delegation) == .delegation(agentId: agentId),
+              try NativeJSON.decode(delegation.body)["workspaceId"].string == choice.workspaceId, choice.workspaceId == "default" else { throw NativeFailure.invalidRecord }
         guard let sessionId = try await workspace.submit(delegation)["sessionId"].string else { throw NativeFailure.invalidRecord }
         let settled = try await settle(sessionId)
         guard settled["summary"]["agent"]["customAgentId"].string == agentId,

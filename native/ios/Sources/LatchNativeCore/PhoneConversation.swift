@@ -49,6 +49,12 @@ public struct PhoneRunEnd: Equatable, Sendable {
     public let text: String
     public let unknown: [String]
 }
+/** One of the approval's other choices, under 更多. */
+public struct PhoneApprovalChoice: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let label: String
+    public let allows: Bool
+}
 public struct PhoneApprovalGate: Equatable, Sendable {
     public let heading: String
     /** The Host's reason for a risky request, on its own line. */
@@ -57,6 +63,12 @@ public struct PhoneApprovalGate: Equatable, Sendable {
     public let canAllow: Bool
     /** Why this phone may not allow it. */
     public let refusal: String?
+    /** The primary button's words: 允许, or the web's words for the allow choice it stands for. */
+    public var allowLabel = "允许"
+    /** 更多: the choices besides one reject and one allow, never while the request holds text that may read as something else. */
+    public var more: [PhoneApprovalChoice] = []
+    /** The request holds text that may read as something else: allowing is no longer the prominent choice, as on the web. */
+    public var hidden = false
 }
 
 public enum PhoneConversation {
@@ -408,27 +420,82 @@ public enum PhoneConversation {
     }
     private static let riskWords = ["code-root": "Latch 自己的代码", "protected-path": "受保护的文件", "outside-workspace": "在项目文件夹之外",
         "unresolved-path": "不是项目里的相对路径", "unlisted-tool": "Latch 不认识的工具", "unparsable-arguments": "参数无法解析"]
+    private static let optionWords = ["reject_once": "拒绝", "allow_once": "允许一次", "reject_always": "始终拒绝", "allow_always": "本会话始终允许"]
+    /** The web's words on an option: an agent's ask shows the product's words for its kind; every other request comes in the Host's. */
+    private static func optionLabel(_ option: NativeJSON, advisory: Bool) -> String {
+        let kind = option["kind"].string ?? ""
+        if kind == "allow_once" { return "允许" }
+        if kind == "allow_always" { return "这个会话都允许这类操作" }
+        if advisory, let words = optionWords[kind] { return words }
+        return option["label"].string ?? optionWords[kind] ?? "拒绝"
+    }
     /**
-     * What this phone may do with an approval, by its own scopes: an agent's question needs `run`, an ordinary step of the
-     * built-in engine `approve:standard`, a high-risk one `approve:elevated`. Allowing is once only: the phone never offers
-     * allow-always. A request it cannot allow says so plainly, with no button that looks dead.
+     * Whether any text of the request holds a character that draws as nothing or as something else. Stricter than the
+     * web's escape: any control, format, private-use or unassigned scalar counts, emoji joiners too.
+     */
+    public static func hidesText(_ approval: NativeJSON) -> Bool {
+        let tool = approval["tool"]
+        // Everything the drawer can show: the heading, each place, the arguments and every diff.
+        let texts = [toolHeading(tool, toolName: approval["toolName"].string), approval["toolName"].string, approval["reason"].string, approval["subagent"].string,
+            tool["input"].string ?? approval["arguments"].string, tool["title"].string, tool["toolTitle"].string] + tool["locations"].array.map(\.string)
+            + tool["diffs"].array.flatMap { [$0["path"].string, $0["newText"].string, $0["oldText"].string] }
+        return texts.contains { text in (text ?? "").unicodeScalars.contains(where: hidden) }
+    }
+    private static func hidden(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar == "\n" || scalar == "\t" || scalar == "\r" { return false }
+        switch scalar.properties.generalCategory {
+        case .control, .format, .privateUse, .surrogate, .unassigned, .lineSeparator, .paragraphSeparator: return true
+        default: return false
+        }
+    }
+    /** The text with each hidden character drawn as `\u{XXXX}`, as the web marks them. */
+    public static func visible(_ text: String) -> String {
+        var result = ""
+        for scalar in text.unicodeScalars {
+            if hidden(scalar) { result += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}" } else { result.unicodeScalars.append(scalar) }
+        }
+        return result
+    }
+    /** A diff with its path and text marked the same way. */
+    public static func visibleDiff(_ diff: NativeJSON) -> NativeJSON {
+        var object = diff.object
+        for key in ["path", "newText", "oldText"] { if let text = object[key]?.string { object[key] = .string(visible(text)) } }
+        return .object(object)
+    }
+    public static let hiddenNote = "含有不可见字符，已标出"
+    /**
+     * What this phone may do with an approval, by its own scopes, as the web decides it: an agent's question needs `run`,
+     * an ordinary step of the built-in engine `approve:standard`, a high-risk one `approve:elevated`. An ordinary step
+     * offers every choice the Host gave; an agent's ask and a high-risk step only reject or allow once. The primary allow
+     * is the once-choice, else the first allow; the rest go under 更多. A request it cannot allow says so plainly.
      */
     public static func approvalGate(_ approval: NativeJSON, canApproveStandard: Bool, canApproveElevated: Bool, canRun: Bool) -> PhoneApprovalGate {
         // A subagent's request says whose it is: its call is no row of the session's own.
         let asker = approval["subagent"].string.map { "子 Agent \($0) · " } ?? ""
         let heading = asker + toolHeading(approval["tool"], toolName: approval["toolName"].string)
-        let options = approval["options"].array
-        let once = options.first { $0["kind"].string == "allow_once" }
+        let options = approval["options"].array.filter { $0["id"].string != nil && $0["kind"].string != nil }
         let advisory = approval["advisory"].bool
         let ordinary = approval["risk"].string == "R1" && !advisory
         let clause: String? = !ordinary && !advisory ? riskWords[approval["riskReason"].string ?? ""] ?? "高风险" : nil
-        guard advisory ? canRun : ordinary ? canApproveStandard : canApproveElevated else {
-            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这台手机没有允许的权限")
+        let allowed = advisory ? canRun : ordinary ? canApproveStandard : canApproveElevated
+        let allows: (NativeJSON) -> Bool = { $0["kind"].string?.hasPrefix("allow") == true }
+        let rejects = options.filter { !allows($0) }
+        let offered = !allowed ? rejects : ordinary ? options : rejects + options.filter { $0["kind"].string == "allow_once" }
+        let reject = rejects.first { $0["kind"].string == "reject_once" } ?? rejects.first
+        let allow = offered.first { $0["kind"].string == "allow_once" } ?? offered.first(where: allows)
+        let hidden = hidesText(approval)
+        let more = hidden ? [] : offered.compactMap { option -> PhoneApprovalChoice? in
+            guard option != reject, option != allow, let id = option["id"].string else { return nil }
+            return PhoneApprovalChoice(id: id, label: optionLabel(option, advisory: advisory), allows: allows(option))
         }
-        guard options.isEmpty || once != nil else {
-            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这一步不能只允许一次")
+        guard allowed else {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这台手机没有允许的权限", more: more, hidden: hidden)
         }
-        return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: once?["id"].string, canAllow: true, refusal: nil)
+        guard options.isEmpty || allow != nil else {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, refusal: "这一步不能只允许一次", more: more, hidden: hidden)
+        }
+        return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: allow?["id"].string, canAllow: true, refusal: nil,
+            allowLabel: allow.map { optionLabel($0, advisory: advisory) } ?? "允许", more: more, hidden: hidden)
     }
     /** What the Host would refuse in a rejection's note, said before sending. The Host also refuses invisible characters, and its word stands. */
     public static let rejectionNoteLimit = 500
@@ -481,7 +548,7 @@ public enum PhoneConversation {
     private static func modelStep(_ turn: PhoneTurn) -> NativeJSON? {
         turn.replies.first { $0["role"].string == "assistant" && !($0["model"].string ?? "").isEmpty }
     }
-    private static let thinkingWords = ["none": "不思考", "minimal": "最少", "low": "低", "medium": "中", "high": "高", "xhigh": "超高", "max": "最高"]
+    public static let thinkingWords = ["none": "不思考", "minimal": "最少", "low": "低", "medium": "中", "high": "高", "xhigh": "超高", "max": "最高"]
     /**
      * Where the model or thinking level changed from the turn before, by turn ID: what changed, as `from → to`. Only a
      * value the Host recorded on both sides counts; a turn with no answer carries the last one recorded across it.

@@ -86,7 +86,7 @@ import LatchNativeCore
         let live = try await workspace.snapshot()
         let choice = PhoneStart.defaults(live["catalog"])
         guard PhoneStart.blocker(live["catalog"], choice: choice) == nil else { throw NativeFailure.invalidRecord }
-        let started = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(choice, prompt: "Started from the phone")))
+        let started = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(live["catalog"], choice: choice, prompt: "Started from the phone")))
         guard let startedId = started["sessionId"].string else { throw NativeFailure.invalidRecord }
         for _ in 0..<100 {
             if try await workspace.detail(startedId)["summary"]["status"].string == "idle" { break }

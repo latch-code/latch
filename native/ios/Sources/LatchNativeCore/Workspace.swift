@@ -557,6 +557,56 @@ public actor NativeWorkspace {
         try? await vault.remove(name: "control-pending", body: false)
         return value
     }
+    /**
+     * Stops one subagent alone. It narrows like a cancel and the Host's schema takes no requestId, so nothing is kept to
+     * replay: a lost answer leaves the row to say what the subagent reports. It still needs the content window.
+     */
+    public func stopSubagent(sessionId: String, subagentId: String) async throws -> NativeJSON {
+        guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), !subagentId.isEmpty, subagentId.utf8.count <= 256,
+              subagentId.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }) else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let body = try NativeJSON.object(["subagentId": .string(subagentId)]).encoded()
+        let response: NativeHTTPResponse
+        do { response = try await connection.request(.post, path: "/link/api/tasks/\(sessionId)/stop-subagent", body: body) }
+        catch { throw NativeFailure.resultUnknown }
+        guard epoch == current else { throw NativeFailure.resultUnknown }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)
+    }
+    /**
+     * Rename, pin, archive or delete, as the web sends them: inside the window, no requestId and nothing kept to replay.
+     * A lost answer is unknown; the caller reads the list again, and what the Host lists is the truth.
+     */
+    public func sessionAction(_ request: PhoneSessionRequest) async throws -> NativeJSON {
+        guard request.method == .patch || request.method == .delete, LinkBytes.matches(request.path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}"),
+              request.fields["requestId"] == nil else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let body = request.method == .delete ? nil : try NativeJSON.object(request.fields).encoded()
+        let response: NativeHTTPResponse
+        do { response = try await connection.request(request.method, path: request.path, body: body) }
+        catch { throw NativeFailure.resultUnknown }
+        guard epoch == current else { throw NativeFailure.resultUnknown }
+        guard (200..<300).contains(response.status) else { throw await responseFailure(response, lease: lease) }
+        return (try? NativeJSON.decode(response.body)) ?? .null
+    }
+    /** The Host's full-text search. Its hits are content: read inside a window, returned, never stored. */
+    public func search(_ query: String) async throws -> NativeJSON {
+        guard let q = PhoneSearch.query(query) else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let body = try NativeJSON.object(["q": .string(q), "limit": .number(Double(PhoneSearch.limit))]).encoded()
+        let response = try await connection.request(.post, path: "/link/api/search", body: body)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)
+    }
     /** Only ever lengthens how long the Host stays quiet about silence; it needs view scope, not a write identity. */
     public func keepWaiting(sessionId: String, runId: String, thresholdMs: UInt64) async throws -> NativeJSON {
         guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), LinkBytes.matches(runId, "[A-Za-z0-9_-]{1,160}"), thresholdMs > 0, thresholdMs <= LinkBytes.maximumInteger else { throw NativeFailure.invalidRecord }
@@ -709,6 +759,9 @@ public actor NativeWorkspace {
         }
         if ["workspace-changed", "workspace-disabled", "permission-drift"].contains(code ?? "") { return .contextChanged }
         if ["agent-changed", "agent-memory-deleted"].contains(code ?? "") { return .changedElsewhere }
+        if code == "terminal-running" { return .terminalOpen }
+        if response.status == 429 { return .busy }
+        if code == "subagent-not-stoppable" { return .notStoppable }
         if response.status == 401 || response.status == 403 { return .forbidden }
         if response.status == 408 || response.status >= 500 { return .resultUnknown }
         return .unsupported

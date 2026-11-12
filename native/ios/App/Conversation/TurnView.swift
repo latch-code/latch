@@ -16,11 +16,16 @@ struct TurnView: View, Equatable {
     let engine: String
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
+    /** 复制, 重试 and 从这里分叉, and where the turn is in the session. */
+    var actions = PhoneTurnActions.none
+    var index = 0
     let open: (String, String?) -> Void
     @State private var unfolded = false
+    /** An earlier turn shows its actions once its author line is tapped, as the web's touch layout does. */
+    @State private var tapped = false
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
-            && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid
+            && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
@@ -30,7 +35,10 @@ struct TurnView: View, Equatable {
             if let words = PhoneConversation.divider(turn) { TimelineDivider(words: words, symbol: "eraser") }
             if let switched { TimelineDivider(words: switched, symbol: nil) }
             if let user = turn.user { UserBubble(message: user, delivery: delivery) }
-            if !turn.replies.isEmpty || running { AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn)) }
+            if !turn.replies.isEmpty || running {
+                AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn))
+                    .contentShape(Rectangle()).onTapGesture { if !latest && !actions.isEmpty { withAnimation(.easeOut(duration: 0.15)) { tapped.toggle() } } }
+            }
             if folds {
                 Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
                     HStack(spacing: 4) {
@@ -71,6 +79,7 @@ struct TurnView: View, Equatable {
         case "interrupted": Text("回复中断").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
         default: EmptyView()
         }
+        if !actions.isEmpty && (latest || tapped) { TurnActionBar(actions: actions, index: index).padding(.leading, -8) }
     }
 }
 
@@ -116,7 +125,8 @@ private struct WorkRow: View {
             row(icon: "brain", words: Text(thinkingWords(message)), detail: message["reasoning"].string, stat: nil, tail: nil)
         case let .reads(messages):
             row(icon: "doc.text", words: Text("读取 \(messages.count) 个文件"), detail: nil, stat: nil, tail: nil, places: messages.flatMap { $0["tool"]["locations"].array.compactMap(\.string) })
-        case let .tool(message): tool(message)
+        case let .tool(message):
+            if case .object = message["subagent"] { SubagentRowView(message: message) } else { tool(message) }
         }
     }
     private func thinkingWords(_ message: NativeJSON) -> String {

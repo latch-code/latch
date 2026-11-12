@@ -172,8 +172,9 @@ public enum PhoneAgents {
         guard let id = agent["id"].string, validId(id), id != generalId, let harnessId = choice.harnessId else { throw NativeFailure.invalidRecord }
         var result: [String: NativeJSON] = ["prompt": .string(prompt), "customAgentId": .string(id), "harnessId": .string(harnessId),
             "mode": .string(mode(catalog, harnessId: harnessId, agentMode: agent["mode"].string))]
-        // The default folder is no saved project: naming it would read as a removed one, so it is left to the Agent.
-        if let workspaceId = choice.workspaceId, workspaceId != "default" { result["workspaceId"] = .string(workspaceId) }
+        // The folder as picked, as the web sends it: the Agent's project, another one, or the start folder ('default'), which
+        // the Host takes for one session over the Agent's own project.
+        if let workspaceId = choice.workspaceId { result["workspaceId"] = .string(workspaceId) }
         let harness = catalog["harnesses"].array.first { $0["id"].string == harnessId } ?? .null
         if PhoneStart.usesServices(harness), let model = choice.model {
             result["model"] = .object(["providerId": .string(model.providerId), "model": .string(model.model)])
@@ -292,9 +293,12 @@ public enum PhonePending {
     }
     public static func words(_ write: NativePendingWrite) -> String {
         switch kind(write) {
-        case .delegation: "委托结果待确认"
-        case .memory: "记忆的修改结果待确认"
-        default: "提交结果待确认"
+        case .delegation: return "委托结果待确认"
+        case .memory: return "记忆的修改结果待确认"
+        case .start: return (try? NativeJSON.decode(write.body))?["forkOf"] != .null ? "分叉结果待确认" : "提交结果待确认"
+        case .session:
+            return write.path.hasSuffix("/config") ? "切换结果待确认" : "提交结果待确认"
+        case .other: return "提交结果待确认"
         }
     }
 }

@@ -75,6 +75,6 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "projects": PhoneStart.projects(catalog).map { ["id": $0.id] },
         "choice": ["harness": choice.harnessId ?? "", "workspace": choice.workspaceId ?? "", "model": choice.model?.model ?? ""],
         "blocker": PhoneStart.blocker(catalog, choice: choice) ?? "",
-        "fields": try fieldValue(.object(PhoneStart.fields(choice, prompt: "开始"))),
+        "fields": try fieldValue(.object(PhoneStart.fields(catalog, choice: choice, prompt: "开始"))),
     ]
 }

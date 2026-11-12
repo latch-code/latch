@@ -93,12 +93,13 @@ extension PhoneModel {
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(choice, prompt: prompt)))
+            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(snapshot["catalog"], choice: choice, prompt: prompt)))
             if done, sessionId != nil { startEvents() }
             return done
         } catch { report(error); return false }
     }
-    @discardableResult func send(text: String, queue: Bool = false, nextModel: PhoneModelChoice? = nil) async -> Bool {
+    /** `steer`: into the running turn, where the Harness takes that now. A message after 清空上下文 starts a new context; it is never queued or steered. */
+    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil) async -> Bool {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16_000 else { return false }
         let current = generation
         do {
@@ -109,9 +110,15 @@ extension PhoneModel {
             let path = sessionId.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
             var fields: [String: NativeJSON] = ["prompt": .string(text)]
             if let nextModel, sessionId != nil { fields["model"] = .object(["providerId": .string(nextModel.providerId), "model": .string(nextModel.model)]) }
-            if queue { fields["queue"] = .bool(true) }
+            if steer { fields["steer"] = .bool(true) }
+            else if queue { fields["queue"] = .bool(true) }
             else if sessionId == nil { fields["mode"] = .string("agent") }
-            return await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
+            let fresh = sessionId.map { clearing.contains($0) && !queue && !steer } ?? false
+            if fresh { fields["freshContext"] = .bool(true) }
+            let selected = sessionId
+            let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
+            if sent, fresh, pending.isEmpty, let selected { clearing.remove(selected) }
+            return sent
         } catch { report(error); return false }
     }
     @discardableResult func submit(_ request: NativePendingWrite) async -> Bool {
@@ -165,6 +172,10 @@ extension PhoneModel {
         var fields: [String: NativeJSON] = ["decision": .string("allow")]
         if let option { fields["optionId"] = .string(option) }
         await mutate(.post, path: "/link/api/approvals/" + id, fields: fields)
+    }
+    /** One of 更多's choices: the option the Host named, kept with its requestId until it is answered. */
+    func decide(_ id: String, option: String, allows: Bool) async {
+        await mutate(.post, path: "/link/api/approvals/" + id, fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)])
     }
     /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
     func keepWaiting() async {

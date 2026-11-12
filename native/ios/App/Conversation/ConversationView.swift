@@ -35,6 +35,7 @@ struct ConversationView: View {
         .sheet(isPresented: Binding(get: { fileList != nil }, set: { if !$0 { fileList = nil } })) {
             SessionFilesSheet(files: fileList ?? [], open: { path, root in fileList = nil; openFile(path, root) })
         }
+        .sheet(item: $model.forkDraft) { draft in NewSessionSheet(fork: draft).presentationCornerRadius(28) }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
         .onChange(of: model.contentGeneration) { _, _ in preview = nil; cancelFile() }
         .onDisappear { cancelFile(); preview = nil; PreviewFiles.clear() }
@@ -42,13 +43,20 @@ struct ConversationView: View {
     @ToolbarContentBuilder private var header: some ToolbarContent {
         if let back { ToolbarItem(placement: .topBarLeading) { Button("返回", systemImage: "chevron.left", action: back).labelStyle(.iconOnly) } }
         if #available(iOS 26, *) {
-            ToolbarItem(placement: .topBarLeading) { title }.sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .topBarLeading) { titleMenu }.sharedBackgroundVisibility(.hidden)
         } else {
-            ToolbarItem(placement: .topBarLeading) { title }
+            ToolbarItem(placement: .topBarLeading) { titleMenu }
         }
         if hasContent && PhoneConversation.hasFiles(model.detail) {
             ToolbarItem(placement: .topBarTrailing) { Button("文件", systemImage: "folder") { fileList = sessionFiles }.labelStyle(.iconOnly) }
         }
+    }
+    /** The title opens the session menu, as the web's title row does; a phone that may not run sessions has none. */
+    @ViewBuilder private var titleMenu: some View {
+        let task = summary
+        if !PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty {
+            Menu { SessionMenuButtons(task: task, open: true) } label: { title }.accessibilityHint("会话操作")
+        } else { title }
     }
     private var title: some View {
         let line: (parts: [String], neverAsks: Bool) = hasContent ? PhoneConversation.subtitle(model.detail, engine: engine) : ([engine], false)
@@ -78,14 +86,23 @@ struct ConversationView: View {
         let switches = PhoneConversation.switches(turns)
         let status = summary["status"].string ?? model.detail["summary"]["status"].string
         let running = status == "running" || status == "waiting-approval"
+        let canSend = model.connected && PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) == nil
+        let canFork = model.connected && model.canFork && summary["personal"] == .null
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                if let origin = PhoneForkDraft.origin(model.detail["summary"]) {
+                    Button { Task { await model.openSession(origin.taskId) } } label: {
+                        Label(origin.words, systemImage: "arrow.triangle.branch").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                    }.buttonStyle(.plain).disabled(!model.snapshot["tasks"].array.contains { $0["id"].string == origin.taskId }).accessibilityHint("返回来源会话")
+                }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
                         mark: model.engineMark(summary["harnessId"].string), engine: engine,
-                        endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil, open: openFile).equatable()
+                        endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
+                        actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
+                        index: index, open: openFile).equatable()
                 }
                 if running { RunStatusLine().id("status") }
                 else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
@@ -119,16 +136,7 @@ struct ConversationView: View {
                     ApprovalDrawer(approval: approval, total: model.detail["approvals"].array.count)
                 }
                 if !model.detail["queue"].array.isEmpty { QueueChips(items: model.detail["queue"].array, sessionId: id) }
-                if let cleared = PhoneConversation.clearedNote(model.detail, engine: engine) {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "eraser").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(cleared.title).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
-                            Text(cleared.line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                        }
-                        Spacer(minLength: 0)
-                    }.padding(.horizontal, 16).accessibilityElement(children: .combine)
-                }
+                ClearingDrawer(sessionId: id, engine: engine)
             }
             // A stop needs no window, so it stays in reach while the content is closed.
             PromptComposer(draftId: id, gate: hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)

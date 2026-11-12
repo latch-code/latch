@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public enum NativeFailure: String, Error, LocalizedError, Sendable {
-    case invalidRecord, identityMismatch, expired, unavailable, unsupported, resultUnknown, storageUnavailable, revoked, eventOverflow, forbidden, contextChanged, declined, notVerified, changedElsewhere
+    case invalidRecord, identityMismatch, expired, unavailable, unsupported, resultUnknown, storageUnavailable, revoked, eventOverflow, forbidden, contextChanged, declined, notVerified, changedElsewhere, terminalOpen, notStoppable, busy
     public var errorDescription: String? {
         switch self {
         case .invalidRecord: "连接资料无法验证。"
@@ -20,6 +20,10 @@ public enum NativeFailure: String, Error, LocalizedError, Sendable {
         case .declined: "你取消了这次确认。"
         case .notVerified: "没能确认是你本人，请再试一次。"
         case .changedElsewhere: "这项记录已在别处修改。"
+        // The Host's own words for both.
+        case .terminalOpen: "这个会话还有终端在运行，请先在 Mac 上关闭终端"
+        case .busy: "请稍后再试。"
+        case .notStoppable: "这个子 Agent 已经结束，或它的 Harness 不能单独停止它。"
         }
     }
 }

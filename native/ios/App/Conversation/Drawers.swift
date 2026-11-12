@@ -26,8 +26,8 @@ private struct BoundedScroll<Content: View>: View {
 }
 
 /**
- * Above the composer: what is asked, and the answers this phone really has. Allowing is once only; what this phone's scopes
- * do not cover says so plainly.
+ * Above the composer: what is asked, and the answers this phone really has, as the web offers them: 拒绝 and one allow,
+ * the other choices under 更多. What this phone's scopes do not cover says so plainly.
  */
 struct ApprovalDrawer: View {
     @EnvironmentObject private var model: PhoneModel
@@ -39,9 +39,11 @@ struct ApprovalDrawer: View {
     private static let argumentsLimit = 16_000
     var body: some View {
         let gate = PhoneConversation.approvalGate(approval, canApproveStandard: model.canApproveStandard, canApproveElevated: model.canApproveElevated, canRun: model.canRun)
-        let arguments = approval["tool"]["input"].string ?? approval["arguments"].string
-        let diffs = approval["tool"]["diffs"].array
-        let places = approval["tool"]["locations"].array.compactMap(\.string)
+        // What may read as something else is drawn with its hidden characters marked, as the web does.
+        let mark: (String) -> String = { gate.hidden ? PhoneConversation.visible($0) : $0 }
+        let arguments = (approval["tool"]["input"].string ?? approval["arguments"].string).map(mark)
+        let diffs = approval["tool"]["diffs"].array.map { gate.hidden ? PhoneConversation.visibleDiff($0) : $0 }
+        let places = approval["tool"]["locations"].array.compactMap(\.string).map(mark)
         let id = approval["id"].string
         let rejecting = id.map { model.controlsInFlight.contains(PhoneModel.approvalPath($0)) } ?? false
         DrawerCard {
@@ -56,10 +58,11 @@ struct ApprovalDrawer: View {
             }
             // What is being allowed is never cut: a command's tail is where it does its damage.
             HStack(alignment: .top, spacing: 6) {
-                BoundedScroll(limit: 124) { Text(gate.heading).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink).frame(maxWidth: .infinity, alignment: .leading) }
+                BoundedScroll(limit: 124) { Text(mark(gate.heading)).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink).frame(maxWidth: .infinity, alignment: .leading) }
                 if let stat { DiffStatText(add: stat.add, del: stat.del) }
             }
             if let clause = gate.riskClause { Text(clause).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.red) }
+            if gate.hidden { Label(PhoneConversation.hiddenNote, systemImage: "exclamationmark.triangle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
             if details {
                 BoundedScroll(limit: 220) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -76,17 +79,28 @@ struct ApprovalDrawer: View {
             else {
                 if let line = gate.refusal { Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 HStack(spacing: 8) {
+                    if !gate.more.isEmpty, let id {
+                        Menu {
+                            ForEach(gate.more) { choice in
+                                Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows) } }
+                            }
+                            Button("停止这一轮") { Task { await model.stop() } }
+                        } label: {
+                            Text("更多").font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink).padding(.horizontal, 14).frame(height: 40)
+                                .overlay(Capsule().stroke(PhoneTheme.lineStrong)).contentShape(Capsule())
+                        }.disabled(rejecting || model.stoppingCurrent)
+                    }
                     // A stop on its way answers this request too, so a rejection could only be told it came second.
                     button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id) } } }.disabled(rejecting || model.stoppingCurrent)
                     if gate.canAllow {
-                        button("允许", prominent: true) { if let id { Task { await model.allow(id, option: gate.allowOption) } } }.disabled(model.stoppingCurrent)
+                        button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption) } } }.disabled(model.stoppingCurrent)
                     } else {
                         button(model.stoppingCurrent ? "正在停止…" : "停止", prominent: false) { Task { await model.stop() } }.disabled(model.stoppingCurrent)
                     }
                 }.disabled(model.busy)
             }
         }
-        .task(id: id) { stat = PhoneConversation.diffStat(approval["tool"]) }
+        .task(id: id) { stat = PhoneConversation.diffStat(approval["tool"]); if PhoneConversation.hidesText(approval) { details = true } }
     }
     private func button(_ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {

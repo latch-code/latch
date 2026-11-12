@@ -5,14 +5,27 @@ import SwiftUI
 struct NewSessionSheet: View {
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
+    /** 从这里分叉: the same sheet, keeping the source up to the turn it was opened from. */
+    var fork: PhoneForkDraft? = nil
     @State private var choice = PhoneStartChoice()
     @State private var prompt = ""
     @State private var height: CGFloat = 520
     @State private var starting = false
+    /** A model the person chose in a fork's sheet; it wins over the source's. */
+    @State private var picked: PhoneModelChoice?
     private var catalog: NativeJSON { model.snapshot["catalog"] }
+    /** The source's detail when it is the open session, else its list row: what a fork can carry. */
+    private var source: NativeJSON {
+        guard let fork else { return .null }
+        return model.detail["summary"]["id"].string == fork.taskId ? model.detail : .object(["summary": model.summary(of: fork.taskId)])
+    }
+    private var plan: PhoneForkPlan? { fork?.plan(catalog, source: source, choice: choice, picked: picked) }
+    private var shownModel: PhoneModelChoice? { plan.map { $0.choice.model ?? $0.forwarded } ?? choice.model }
     private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
     private var blocker: String? { PhoneStart.blocker(catalog, choice: choice) }
-    private var canStart: Bool { blocker == nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.canRun && !starting && model.pending.isEmpty }
+    private var canStart: Bool {
+        blocker == nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
+    }
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
@@ -23,14 +36,19 @@ struct NewSessionSheet: View {
                     Divider().overlay(PhoneTheme.line)
                     modelRow
                     Divider().overlay(PhoneTheme.line)
-                    row("思考") { Text("模型默认").foregroundStyle(PhoneTheme.muted) }
+                    row("思考") { Text(plan?.thinkingWords ?? "模型默认").foregroundStyle(plan?.thinkingWords == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
                     Divider().overlay(PhoneTheme.line)
-                    row("权限") { HStack(spacing: 6) { Image(systemName: "shield").font(.system(size: 13)); Text("先问你") }.foregroundStyle(PhoneTheme.ink2) }
+                    row("权限") { HStack(spacing: 6) { Image(systemName: "shield").font(.system(size: 13)); Text(plan?.pick(.permission)?.name ?? "先问你") }.foregroundStyle(PhoneTheme.ink2) }
                 }
                 .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(PhoneTheme.line))
-                Text(blocker ?? "开始后可以换权限。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
+                Text(blocker ?? fork?.origin ?? "开始后可以换权限。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                // What the fork could not keep from its source, in the web's words.
+                ForEach(plan?.missed ?? [], id: \.self) { line in
+                    Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                }
                 LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: 6)
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
                     .padding(14).frame(minHeight: 110, alignment: .topLeading)
@@ -46,7 +64,7 @@ struct NewSessionSheet: View {
             .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 16)
             .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.size.height, initial: true) { _, value in height = value + 72 } })
             .frame(maxHeight: .infinity, alignment: .top)
-            .navigationTitle("新会话").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(fork == nil ? "新会话" : "从这里分叉").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly) }
                 ToolbarItem(placement: .confirmationAction) {
@@ -54,14 +72,22 @@ struct NewSessionSheet: View {
                 }
             }
         }
+        // Another Harness starts on its own default model: Latch's for one that uses its services, none otherwise.
+        .onChange(of: choice.harnessId) { old, new in if old != nil, old != new { choice.model = PhoneStart.defaultModel(catalog, harnessId: new); picked = nil } }
         .presentationDetents([.height(height), .large])
         .presentationDragIndicator(.visible)
-        .onAppear { choice = PhoneStart.defaults(catalog) }
+        .onAppear {
+            if let fork {
+                let source = model.detail["summary"]["id"].string == fork.taskId ? model.detail["summary"] : model.summary(of: fork.taskId)
+                choice = fork.choice(catalog, source: source); if prompt.isEmpty { prompt = PhoneForkDraft.prompt }
+            } else { choice = PhoneStart.defaults(catalog) }
+        }
     }
     private func start() {
         starting = true
         Task {
-            let started = await model.start(choice, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+            let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let started = if let fork, let plan { await model.startFork(fork, plan: plan, prompt: text) } else { await model.start(choice, prompt: text) }
             starting = false
             if started, model.pending.isEmpty { dismiss() }
         }
@@ -104,14 +130,16 @@ struct NewSessionSheet: View {
         }
     }
     @ViewBuilder private var modelRow: some View {
-        if !PhoneStart.usesServices(harness) { row("模型") { Text("由 Harness 决定").foregroundStyle(PhoneTheme.muted) } }
-        else {
+        if !PhoneStart.usesServices(harness) {
+            // A fork that keeps the service Latch forwarded this Harness's requests to says so.
+            row("模型") { Text(plan?.forwarded?.model ?? "由 Harness 决定").foregroundStyle(plan?.forwarded == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
+        } else {
             NavigationLink {
-                ModelList(models: PhoneStart.models(catalog), chosen: $choice.model)
+                ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }))
             } label: {
                 row("模型") {
                     HStack(spacing: 6) {
-                        Text(choice.model?.model ?? "还没有模型").foregroundStyle(choice.model == nil ? PhoneTheme.muted : PhoneTheme.ink2)
+                        Text(shownModel?.model ?? "还没有模型").foregroundStyle(shownModel == nil ? PhoneTheme.muted : PhoneTheme.ink2)
                         Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
                     }
                 }

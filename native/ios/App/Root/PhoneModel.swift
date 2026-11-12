@@ -8,7 +8,7 @@ import UIKit
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
     @Published var snapshot = NativeJSON.null { didSet { shelfCache = nil } }
-    @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil } } }
+    @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil }; subagentStops.observe(detail) } }
     /** The conversation on screen is what this window read before the Mac went away. */
     @Published var detailCached = false
     /** The session whose content could not be read, with the Mac still in reach. */
@@ -47,6 +47,20 @@ import UIKit
     /** A screenshot scene: canned Host data, no network, no keys. Only the LatchScreens target compiles this. */
     @Published var staged = false
     #endif
+    /** Sessions whose next message starts a new context, chosen on this phone and not yet sent. In memory only. */
+    @Published var clearing: Set<String> = []
+    /** Subagents this phone asked to stop that the Host has not shown stopping yet, by row ID. */
+    @Published var subagentStops = PhoneSubagentStops()
+    /** The fork being drafted from a turn, the rename and the delete being asked about. */
+    @Published var forkDraft: PhoneForkDraft?
+    @Published var renaming: NativeJSON? { didSet { if renaming?["id"] != oldValue?["id"] { renameDraft = renaming?["title"].string ?? "" } } }
+    /** The rename field's text, starting from the session's title. */
+    @Published var renameDraft = ""
+    @Published var deleting: NativeJSON?
+    /** 内容中包含: hits beside the open window only, gone with it. */
+    @Published var contentSearch = PhoneContentSearch()
+    /** The list shows 已归档 in place of the shelves. */
+    @Published var showArchived = false
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
     var heldDrafts: [String: String] = [:]
     private var shelfCache: (query: String, shelves: [PhoneShelf])?
@@ -127,7 +141,7 @@ import UIKit
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        agentPath = []; appPath = []
+        agentPath = []; appPath = []; resetSessionActions()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
@@ -139,7 +153,7 @@ import UIKit
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
+        clearPrivateContent(); resetSessionActions(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
@@ -498,6 +512,7 @@ import UIKit
     private func clearPrivateContent() {
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        contentSearch = PhoneContentSearch(); forkDraft = nil
         // Agents' names, duties and schedules came with the window and go with it.
         snapshot = PhoneAgents.withoutPrivate(snapshot)
     }

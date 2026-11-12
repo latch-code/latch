@@ -74,6 +74,11 @@ do {
         result = try await runNativeWorkspace(input)
     case "phoneProjection": result = try phoneProjectionFixture(input)
     case "phoneAgents": result = try phoneAgentsFixture(input)
+    case "phoneActions": result = try phoneActionsFixture(input)
+    case "phoneFlows": result = try await phoneFlowsFixture()
+    case "nativeActions":
+        stage = "actions"
+        result = try await runNativeActions(input)
     case "nativeAgents":
         stage = "agents"
         result = try await runNativeAgents(input)
@@ -799,6 +804,6 @@ do {
     }
     FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]))
 } catch {
-    FileHandle.standardError.write(Data("Native fixture rejected the input (\(stage),\((error as? NativeFailure)?.rawValue ?? "failure"))\n".utf8))
+    FileHandle.standardError.write(Data("Native fixture rejected the input (\(stage),\((error as? NativeFailure)?.rawValue ?? (error as? FixtureStage)?.name ?? "failure"))\n".utf8))
     exit(1)
 }

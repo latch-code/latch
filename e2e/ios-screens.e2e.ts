@@ -7,12 +7,25 @@ import { expect, it } from 'vitest'
 
 const run = promisify(execFile)
 const simctl = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 120_000, maxBuffer: 16_777_216 })
+/** A runtime's first boot migrates its data and can take minutes. */
+const simctlSlow = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 600_000, maxBuffer: 16_777_216 })
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
 
 /** Scenes of the LatchScreens target (`native/ios/Screens/ScreensStage.swift`), chosen by a launch argument. */
 const SCENES = [
   'code',
   'conversation',
+  'conversation-actions',
+  'subagents',
+  'steer',
+  'clearing',
+  'approval-more',
+  'approval-hidden',
+  'fork',
+  'rename',
+  'delete',
+  'archived',
+  'search',
   'agents',
   'agents-locked',
   'agent-delegate',
@@ -42,13 +55,24 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
   'screenshots the App’s scenes from the LatchScreens target on simulators of its own',
   async context => {
     const runtimes = JSON.parse((await simctl('list', 'runtimes', '-j')).stdout) as {
-      runtimes: Array<{ identifier: string; platform?: string; isAvailable?: boolean }>
+      runtimes: Array<{ identifier: string; version?: string; isAvailable?: boolean; supportedDeviceTypes?: Array<{ identifier: string }> }>
     }
-    const runtime = runtimes.runtimes.filter(item => item.isAvailable && item.identifier.includes('iOS')).at(-1)
+    // A runtime may be for one device alone (iOS 27.2's iPhone Duo build), so it is chosen by what it can run: the newest
+    // that has a type from each list, never simply the last one listed.
+    const typeId = (name: string) => `com.apple.CoreSimulator.SimDeviceType.${name}`
+    const newer = (a: string, b: string) => b.localeCompare(a, undefined, { numeric: true })
+    const runtime = runtimes.runtimes
+      .filter(item => item.isAvailable && item.identifier.includes('iOS'))
+      .filter(item => {
+        const supported = new Set((item.supportedDeviceTypes ?? []).map(type => type.identifier))
+        return DEVICES.every(device => device.types.some(name => supported.has(typeId(name))))
+      })
+      .toSorted((a, b) => newer(a.version ?? '', b.version ?? ''))[0]
     if (!runtime) {
-      context.skip()
+      context.skip('No installed iOS Simulator runtime supports a narrow iPhone, a wide iPhone and an iPad from the lists')
       return
     }
+    const supported = new Set((runtime.supportedDeviceTypes ?? []).map(type => type.identifier))
     const types = JSON.parse((await simctl('list', 'devicetypes', '-j')).stdout) as { devicetypes: Array<{ identifier: string }> }
     const known = new Set(types.devicetypes.map(item => item.identifier))
     const output = resolve(process.env.LATCH_IOS_SCREENS_DIR ?? 'test-results/ios-screens')
@@ -92,12 +116,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
       )
       expect(product.includes(Buffer.from('LatchScreens fixture state'))).toBe(true)
       for (const device of DEVICES) {
-        const type = device.types.map(name => `com.apple.CoreSimulator.SimDeviceType.${name}`).find(id => known.has(id))
+        const type = device.types.map(typeId).find(id => known.has(id) && supported.has(id))
         if (!type) continue
         const udid = (await simctl('create', `latch-screens-${device.name}-${Date.now()}`, type, runtime.identifier)).stdout.trim()
         created.push(udid)
-        await simctl('boot', udid)
-        await simctl('bootstatus', udid, '-b')
+        await simctlSlow('boot', udid)
+        await simctlSlow('bootstatus', udid, '-b')
         await simctl('install', udid, application)
         await simctl('privacy', udid, 'grant', 'camera', 'dev.latch.ios.screens').catch(() => {})
         for (const theme of ['light', 'dark']) {

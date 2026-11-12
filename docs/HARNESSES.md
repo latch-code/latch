@@ -326,6 +326,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 
 Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent 草案）。Agent 在一个会话上发 `subagent_update` 宣告它启动的子 Agent 后，Latch 在宣告到达的位置放一行 `Message.subagent`：名字、说明、它自己最后报告的状态（`running`、`requires_action`、`idle` 及停止原因、`unknown`），以及它的回复与工具调用（不含思考，最多 200 步，每段文字最多 64 KiB）。子 Agent 自己的子 Agent 放在它的步骤里，最多 4 层；同一进程同时最多 64 行，报告已停止的子 Agent 在一轮结束后不再计入。超出行数、层数或 200 步的部分不显示，会话里写一条说明，但它们请求的审批照常出现，不会被替人取消。子 Agent 不是 Latch 会话，不能发消息、不进侧栏。
 
+- 宣告了 `capabilities.cancel` 的子 Agent（`stoppable`）在网页、桌面端与 iPhone/iPad 的行尾都有「停止」（`POST /tasks/:id/stop-subagent`，只要 `view`）；发出后行写「正在停止…」，直到 Host 报告它在停止或已不能单独停止；请求失败或没有答复时这几个字立即撤下。iPhone 的请求不带 requestId（Host 的结构不收），不重发，行只显示 Host 读回的状态；已经结束的子 Agent 回答 409 `subagent-not-stoppable`，手机照 Host 的话说。
 - 子 Agent 在自己的会话上请求权限时，审批出现在启动它的会话里，`Approval.subagent` 写明是谁；它的调用只在子 Agent 的步骤里，不在会话自己的记录中。规则与会话自己的审批相同（可选项过滤、任何有 `run` 的设备都能允许）。
 - 子 Agent 的调用与会话自己的一样标出并记录模型的判断（见「权限菜单」）：Codex 在子 Agent 会话上报告的审阅显示「放行」「拦下」或「没有判断」，不报告判断的 Harness 在「由模型判断」档里没有问人就运行的调用写「没有问你」，每个都写一条 `task.tool.judged`；Claude Agent 在子 Agent 里拦下的调用同样写「拦下」，只有它的模型拦下的写这条记录。Latch 不知道子 Agent 自己的模式，按启动它的会话的模式判断。超出 200 步或没有行的调用不显示，记录照写（每个子 Agent 最多跟踪 200 个这样的调用，满了先忘掉最早结束的一个）。
 - **以会话的权限为上限。** 子 Agent 的请求不会让它比启动它的会话宽：会话在「只看不改」时，子 Agent 只有只看的请求（`read`、`search`、`think`、`fetch`）会交给你，其他种类（改文件、删除、移动、运行命令，以及 `other`、没有种类或 Latch 不认识的）Latch 直接拒绝，即使这个 Harness 在这一档自己会为只读命令问你（如 Claude Agent 的 `plan`），因为 Latch 分不出子 Agent 的命令是否只读；回答会换模式的选项（`modeAnswers`）只在换到的模式不比会话宽时给你，换到哪一档 Latch 认不出的（比如没有 profile 的 Harness、`switch_mode` 调用上没列出的选项）不给你。拿掉之后没有「仅此一次允许」时，Latch 不展示审批，直接以「仅此一次拒绝」答复（没有时答复为取消），会话里写「已拒绝：子 Agent「<名字>」请求「<调用>」，这个会话是「只看不改」，Latch 没有交给你。」或「…会把权限换得比这个会话宽，或换到 Latch 认不出的模式…」，并写审计 `task.approval-auto-rejected`（原因 `subagent-wider`），和会话自己被自动拒绝的请求一样。子 Agent 的回答从不算作人为会话选的档位。其他档位的子 Agent 请求照旧交给你：「按规则放行」「由模型判断」的规则由 Harness 自己执行，Latch 不知道它放行的范围，所以不替它放行任何请求；「不再询问」档里 Agent 仍然问的，是它自己的规则或安全检查要人看。
@@ -415,7 +416,6 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | OpenCode 1.x 的子 Agent | 未实现；1.x 的 ACP 不回答子会话的权限请求，`task` 保持禁用 |
 | OpenCode 2.x 在后来的一轮里继续的子 Agent 的请求 | 未实现；OpenCode 的 ACP 不转发它们，Latch 收不到，这一轮会一直等到你停止（见「子 Agent」） |
 | 单独停止没有宣告 `capabilities.cancel` 的子 Agent | 未实现；ACP 不允许客户端停止没有宣告的子会话，停止只能作用于整个会话。OpenCode 2.x 不宣告：它在后台运行的子 Agent 在一轮结束或停止后仍可能继续，停止会话只答复它已经发来的请求；会话空闲到进程被结束时，它随进程结束 |
-| 在 iPhone 上单独停止子 Agent | 未实现；手机只显示子 Agent 的状态，要在网页或桌面端停止 |
 | 让启动子 Agent 的 Agent 回答子 Agent 的请求 | 未实现；没有 Harness 经 ACP 提供这件事，ACP 也没有把客户端收到的权限请求交给另一个 Agent 回答的方法。子 Agent 的请求由你在会话里回答，并以会话的权限为上限（见「子 Agent」） |
 | goose 的运行中追加 | 未实现；它的私有方法要 goose 自己的运行标识，也没有声明字段，要等真实录制核对 |
 | 按会话放行 OpenCode 访问其他文件夹 | 未实现；需要按会话改变 OpenCode 的配置并提高其 profile 版本。OpenCode 访问其他文件夹时逐次询问；2.x 的 ACP 字段尚未使用 |
@@ -426,7 +426,6 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
 | Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单收起的那一行点开后写「尚未实现」 |
 | 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
-| 在 iPhone 上选清空上下文 | 未实现；手机只显示「清空了上下文」的线与 Host 已经清空时的提示，要在网页或桌面端选 |
 
 ## 测试
 

@@ -24,8 +24,16 @@ struct PromptComposer: View {
     }
     private var placeholder: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : "回复 " + engine + "…" }
     private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(text) }
+    /** While a turn runs: 追加 where the Harness takes more text now, else 排队 where the Host queues. */
+    private var followUp: PhoneFollowUp {
+        PhoneFollowUp.of(detail: model.detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent)
+    }
+    private var controls: [PhoneConfigControl] {
+        guard model.sessionId != nil, model.detail["summary"]["id"].string == model.sessionId else { return [] }
+        return PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
+    }
     private var canSend: Bool {
-        !trimmed.isEmpty && model.canRun && !model.busy && model.pending.isEmpty && !noteTooLong && (!running || rejecting != nil || model.canQueueCurrent)
+        !trimmed.isEmpty && model.canRun && !model.busy && model.pending.isEmpty && !noteTooLong && (!running || rejecting != nil || followUp != .none)
     }
     var body: some View {
         VStack(spacing: 8) {
@@ -40,7 +48,7 @@ struct PromptComposer: View {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
             if let gate { gateLine(gate) } else { field }
-            if gate == nil && focused && model.sessionId != nil { chips }
+            if gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
         .animation(.easeOut(duration: 0.2), value: focused)
@@ -49,6 +57,8 @@ struct PromptComposer: View {
         // An iPad keeps this composer while the session beside the list changes.
         .onChange(of: draftId) { old, new in model.holdDraft(text, for: old); text = model.takeDraft(for: new) ?? ""; nextModel = nil }
         .onChange(of: model.selectedHost?.id) { _, _ in text = ""; nextModel = nil }
+        // A turn that starts takes back 清空上下文, as the web's composer does.
+        .onChange(of: running) { _, now in if now, let id = draftId { model.clearing.remove(id) } }
         .onChange(of: model.verifiedUntil) { old, value in
             if value == nil { model.holdDraft(text, for: draftId); text = "" }
             else if old == nil, let held = model.takeDraft(for: draftId) { text = held }
@@ -87,7 +97,13 @@ struct PromptComposer: View {
     /** Empty while a turn runs, the circle stops it; with text it queues. */
     @ViewBuilder private var action: some View {
         if running && trimmed.isEmpty { stopButton(quiet: drawerOpen) }
-        else {
+        else if running && rejecting == nil && followUp != .none {
+            let steer = followUp == .steer
+            Button { send() } label: {
+                Text(steer ? "追加" : "排队").font(.system(size: 14, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
+                    .padding(.horizontal, 14).frame(height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Capsule())
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(steer ? "追加到本轮" : "排队发送")
+        } else {
             Button { send() } label: {
                 Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .frame(width: 36, height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
@@ -104,12 +120,13 @@ struct PromptComposer: View {
         }.buttonStyle(.plain).disabled(model.stoppingCurrent).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private func send() {
-        let input = text, reject = rejecting, queue = running && reject == nil
+        let input = text, reject = rejecting, next = followUp
+        let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         let chosen = nextModel
         Task {
             let sent: Bool
             if let reject { sent = await model.mutate(.post, path: PhoneModel.approvalPath(reject), fields: ["decision": .string("reject"), "note": .string(input)]) }
-            else { sent = await model.send(text: input, queue: queue, nextModel: chosen) }
+            else { sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen) }
             if sent, text == input { text = "" }
         }
     }
@@ -119,6 +136,7 @@ struct PromptComposer: View {
         let current = nextModel?.model ?? summary["model"].string
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                ConfigChips(controls: controls) { label in AnyView(chip { label }) }
                 if !models.isEmpty, PhoneStart.usesServices(model.engineInfo(summary["harnessId"].string)) {
                     Menu {
                         ForEach(models) { item in

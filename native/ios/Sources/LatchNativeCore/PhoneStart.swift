@@ -63,9 +63,16 @@ public enum PhoneStart {
         let projects = projects(catalog)
         let chat = defaults["mode"].string == "chat"
         let workspaceId = chat ? nil : projects.first { $0.id == defaults["workspaceId"].string }?.id ?? projects.first?.id
-        let models = models(catalog)
-        let model = models.first { $0.providerId == defaults["model"]["providerId"].string && $0.model == defaults["model"]["model"].string } ?? models.first
-        return PhoneStartChoice(harnessId: harnessId, workspaceId: workspaceId, model: model)
+        return PhoneStartChoice(harnessId: harnessId, workspaceId: workspaceId, model: defaultModel(catalog, harnessId: harnessId))
+    }
+    /** The Host's default model for a Harness that uses Latch's services; a Harness that chooses its own gets none. */
+    public static func defaultModel(_ catalog: NativeJSON, harnessId: String?) -> PhoneModelChoice? {
+        guard usesServices(harness(catalog, harnessId)) else { return nil }
+        let models = models(catalog), defaults = catalog["defaults"]
+        return models.first { $0.providerId == defaults["model"]["providerId"].string && $0.model == defaults["model"]["model"].string } ?? models.first
+    }
+    public static func harness(_ catalog: NativeJSON, _ id: String?) -> NativeJSON {
+        catalog["harnesses"].array.first { $0["id"].string == id } ?? .null
     }
     public static func acceptsChat(_ catalog: NativeJSON, harnessId: String?) -> Bool {
         catalog["harnesses"].array.first { $0["id"].string == harnessId }?["modes"].array.contains(.string("chat")) == true
@@ -83,7 +90,16 @@ public enum PhoneStart {
         if usesServices(harness) && choice.model == nil { return "还没有模型服务。在 Mac 上的 Latch 里添加。" }
         return nil
     }
-    public static func fields(_ choice: PhoneStartChoice, prompt: String) -> [String: NativeJSON] {
+    /**
+     * A start's fields. A model goes only to a Harness that uses Latch's services; `forwarded` is a service the person sees
+     * in the sheet for another Harness (a fork's), the only way a Harness with its own models is sent one.
+     */
+    public static func fields(_ catalog: NativeJSON, choice: PhoneStartChoice, prompt: String, forwarded: PhoneModelChoice? = nil) -> [String: NativeJSON] {
+        var choice = choice
+        choice.model = usesServices(harness(catalog, choice.harnessId)) ? choice.model : forwarded
+        return fields(choice, prompt: prompt)
+    }
+    static func fields(_ choice: PhoneStartChoice, prompt: String) -> [String: NativeJSON] {
         var result: [String: NativeJSON] = ["prompt": .string(prompt)]
         if let harnessId = choice.harnessId { result["harnessId"] = .string(harnessId) }
         if let workspaceId = choice.workspaceId { result["workspaceId"] = .string(workspaceId); result["mode"] = .string("agent") }

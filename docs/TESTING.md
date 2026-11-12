@@ -109,7 +109,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ## 按改动选择回归
 
-原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。`e2e/ios-screens.e2e.ts`（`LATCH_IOS_SCREENS=1`，需要已安装的 iOS 模拟器运行时）构建独立的 `LatchScreens` 目标，在自己新建并在结束时删除的模拟器上按启动参数 `-LatchScene` 截各场景的浅深色，写入 `LATCH_IOS_SCREENS_DIR` 或 `test-results/ios-screens/`；场景数据是固定样本，不连 Host，不等于对真实 Host 的验收。
+原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。`e2e/ios-screens.e2e.ts`（`LATCH_IOS_SCREENS=1`，需要已安装的 iOS 模拟器运行时）构建独立的 `LatchScreens` 目标，选能同时运行窄屏 iPhone、宽屏 iPhone 与 iPad 的最新运行时（只支持一种设备的运行时不选），在自己新建并在结束时删除的模拟器上按启动参数 `-LatchScene` 截各场景的浅深色，写入 `LATCH_IOS_SCREENS_DIR` 或 `test-results/ios-screens/`；场景数据是固定样本，不连 Host，不等于对真实 Host 的验收。
 
 | 改动 | 用例 |
 | --- | --- |
@@ -557,7 +557,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 `automations.test.ts` 用确定性时钟检查排队与错过、运行期间经过的时间、暂停原因、编辑期间的检查和单行失败不影响其他行；`automations-bundle.test.ts` 构建生产 Host bundle，启用 Harness 后重启，核对「通用」上的定时任务仍开启并实际运行。`agent-routes.test.ts` 用真实 Standard 和假模型检查范围较小的设备收不到「通用」、收到过的会话与定时任务运行私有，以及 Host 停止时不再检查。这些都不代替真实模型或真实 Agent 的验收。
 
-原生工作台：native-swift.test.ts 的 Workspace 用例通过实际 Swift Workspace 连接临时 Host，验证正文窗口、同一请求的重试、离线列表只留行上需要的字段、继续等、手机默认的新会话选择、排队的原始请求身份，以及丢失回执后严格恢复的停止。App 的 iPhone/iPad SDK 双架构编译不代替安装后的视觉或真机身份验收。
+原生工作台：native-swift.test.ts 的 Workspace 用例通过实际 Swift Workspace 连接临时 Host，验证正文窗口、同一请求的重试、离线列表只留行上需要的字段、继续等、手机默认的新会话选择、排队的原始请求身份，以及丢失回执后严格恢复的停止；会话动作用例经同一 Workspace 对带假 ACP Agent 的临时 Host 以表单的选择开始不带模型的新会话、单独停止子 Agent（窗口外拒绝、等假 Agent 的请求后核对审批选项、被拒的停止撤下「正在停止…」、第二次是 Host 的拒绝）、追加并重试同一请求、重试、带着来源的模型与权限分叉并重试同一请求、会话中改模型并读回、清空上下文、正文搜索（命中不进离线列表）、重命名/置顶/归档/删除与被拒后不留待确认写入；`phoneActions` 夹具覆盖这些动作的界面判断（子 Agent 行与停止的撤下、轮次动作与重试警告、追加或排队、权限/模型/思考的行与「更多」、会话菜单、请求与拒绝、分叉草稿沿用与说明、新会话的模型、搜索命中的 UTF-16 范围、已归档、审批的「更多」选项与不可见字符）。App 的 iPhone/iPad SDK 双架构编译不代替安装后的视觉或真机身份验收。
 
 客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
 
