@@ -218,7 +218,7 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         action = match[2]
       if (method === 'DELETE' && !action) {
         options.authorize(caller, 'run')
-        await options.store.remove(id, device.id)
+        await options.store.remove(id, device.id, requestId => options.busy(caller, requestId))
         json(res, { removed: true })
         return true
       }

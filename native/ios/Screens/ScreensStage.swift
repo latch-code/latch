@@ -100,8 +100,69 @@ import UIKit
         case _ where stageComputers(model, name): break
         case _ where stageReview(model, name, snapshot: value): break
         case _ where stageHistory(model, name, snapshot: value): break
+        case _ where stageAttachments(model, name): break
         default: model.tab = .code
         }
+    }
+    /** The composer's attachments in each state, the reason ＋ gives, a held-back follow-up, the new-session sheet and sent chips. */
+    fileprivate static func stageAttachments(_ model: PhoneModel, _ name: String) -> Bool {
+        guard name.hasPrefix("attach") else { return false }
+        model.tab = .code
+        let both = PhoneAttachCaps(images: true, text: true, textBytes: 262_144, fileBytes: 10_485_760, imageBytes: 5_242_880)
+        func photo(_ hue: CGFloat) -> Data {
+            UIGraphicsImageRenderer(size: CGSize(width: 120, height: 90)).image { context in
+                UIColor(hue: hue, saturation: 0.35, brightness: 0.85, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 0, width: 120, height: 90))
+                UIColor(hue: hue, saturation: 0.5, brightness: 0.6, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 55, width: 120, height: 35))
+            }.jpegData(compressionQuality: 0.8) ?? Data()
+        }
+        func ref(_ id: String, _ name: String, image: Bool, size: Int) -> NativeJSON {
+            .object(["id": .string(id), "name": .string(name), "mime": .string(image ? "image/jpeg" : "text/plain"), "kind": .string(image ? "image" : "text"),
+                "size": .number(Double(size)), "sha256": .string(String(repeating: "a", count: 64))])
+        }
+        func tray(_ rows: [(String, PhoneAttachKind, PhoneAttachStatus)]) -> PhoneAttachTray {
+            var tray = PhoneAttachTray()
+            for (index, row) in rows.enumerated() {
+                let draft = PhoneAttachDraft(name: row.0, kind: row.1, data: row.1 == .image ? photo(CGFloat(index) * 0.17 + 0.55) : Data(repeating: 0x61, count: 18_000))
+                _ = tray.add(draft)
+                if row.2 == .ready { _ = tray.ready(draft.id, ref: ref(String(format: "att%019d", index), row.0, image: row.1 == .image, size: draft.size)) }
+                else { tray.set(draft.id, row.2) }
+            }
+            return tray
+        }
+        switch name {
+        case "attach":
+            model.sessionId = "ses_review"; model.detail = conversation()
+            model.attachStates["ses_review"] = PhoneAttachState(revision: "staged", caps: both)
+            model.attachTrays["ses_review"] = tray([("IMG_0412.jpg", .image, .ready), ("build.log", .text, .uploading(0.6)),
+                ("IMG_0413.jpg", .image, .unknown), ("notes.pdf.txt", .text, .refused("当前 Harness 只接受 256 KB 以内的文本附件。"))])
+            model.heldDrafts["ses_review"] = "这两张截图里按钮的间距不一样，看看是哪里的样式"
+        case "attach-unavailable":
+            model.sessionId = "ses_review"; model.detail = conversation()
+            model.attachStates["ses_review"] = PhoneAttachState(revision: "staged",
+                caps: PhoneAttachCaps(images: false, text: false, textBytes: 0, reason: "这个 Harness 不接收图片和文件。"))
+            var held = PhoneAttachTray(); held.note = "这个 Harness 不接收图片和文件。"; model.attachTrays["ses_review"] = held
+        case "attach-held":
+            model.sessionId = "ses_run"; model.detail = json(steerText)
+            model.attachStates["ses_run"] = PhoneAttachState(revision: "staged", caps: both)
+            model.attachTrays["ses_run"] = tray([("IMG_0420.jpg", .image, .ready)])
+            model.heldDrafts["ses_run"] = "顺便看一下这张截图"
+        case "attach-new":
+            creating = true
+            model.attachStates[PhoneModel.newSessionTray] = PhoneAttachState(revision: "staged", caps: both)
+            model.attachTrays[PhoneModel.newSessionTray] = tray([("IMG_0431.jpg", .image, .ready), ("crash.txt", .text, .ready)])
+        case "attach-topic":
+            model.tab = .agents; model.agentPath = [review]; newTopic = true
+            let key = PhoneModel.topicTray(review)
+            model.attachStates[key] = PhoneAttachState(revision: "staged", caps: both)
+            var held = tray([("IMG_0440.jpg", .image, .ready), ("trace.log", .text, .uploading(0.4))]); held.note = PhoneAttachments.pickedNothing
+            model.attachTrays[key] = held
+        case "attach-sent":
+            model.sessionId = "ses_review"
+            model.detail = json(conversationText.replacingOccurrences(of: #""text":"看一下 PhoneAgents 的改动，只报真实的问题。","#,
+                with: #""text":"看一下这两个附件里的问题。","attachments":[{"id":"att0000000000000000001","name":"IMG_0412.jpg","mime":"image/jpeg","kind":"image","size":412000,"sha256":"\#(String(repeating: "a", count: 64))","width":2048,"height":1536},{"id":"att0000000000000000002","name":"build.log","mime":"text/plain","kind":"text","size":18000,"sha256":"\#(String(repeating: "b", count: 64))"}],"#))
+        default: return false
+        }
+        return true
     }
     static func read(_ path: String) -> PhoneAgentRead {
         if locked { return .locked }

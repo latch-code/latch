@@ -78,6 +78,10 @@ do {
     case "phoneActions": result = try phoneActionsFixture(input)
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)
+    case "phoneAttachments": result = try phoneAttachmentsFixture(input)
+    case "nativeAttachments":
+        stage = "attachments"
+        result = try await runNativeAttachments(input)
     case "phoneHistory": result = try phoneHistoryFixture(input)
     case "nativeHistory":
         stage = "history"

@@ -102,6 +102,7 @@ public actor NativeWorkspace {
     private var bulkCover: Task<Void, Never>?
     private var bulkClosing: Task<Void, Never>?
     private var bulkRun: Task<Data, Error>?
+    private var uploading = false
     private struct AppliedCursor: Codable, Sendable {
         let selection: String
         let cursor: NativeEventCursor
@@ -345,17 +346,18 @@ public actor NativeWorkspace {
         guard response.status == 200 else { throw await responseFailure(response, lease: lease) }; try lease.requireValid()
         return try NativeJSON.decode(response.body)
     }
-    public func fileBytes(handle: String, etag: String, offset: Int, count: Int, explicitOpen: Bool = false,
+    /** `attachment`: a handle from `resolveAttachment`, read from the attachment content route, never through a bulk companion. */
+    public func fileBytes(handle: String, etag: String, offset: Int, count: Int, explicitOpen: Bool = false, attachment: Bool = false,
         progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> Data {
         guard LinkBytes.matches(handle, "[A-Za-z0-9_-]{22}"), LinkBytes.matches(etag, "\"[a-f0-9]{32}\""),
               offset >= 0, offset <= 8_388_608, count > 0, count <= 1_048_576 else { throw NativeFailure.invalidRecord }
         let (primary, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
-        let useBulk = explicitOpen && primary.usesRelay && count >= 131_072 && metadata["catalog"]["features"]["nativeBulk"].bool
+        let useBulk = !attachment && explicitOpen && primary.usesRelay && count >= 131_072 && metadata["catalog"]["features"]["nativeBulk"].bool
         guard !useBulk || !bulkBusy else { throw NativeFailure.unavailable }
         if !useBulk {
             return try await readFile(connection: primary, handle: handle, etag: etag, offset: offset, count: count,
-                epoch: current, lease: lease, progress: progress)
+                epoch: current, lease: lease, attachment: attachment, progress: progress)
         }
         bulkBusy = true
         let operation = Task { try await self.readBulk(handle: handle, etag: etag, offset: offset, count: count,
@@ -428,10 +430,10 @@ public actor NativeWorkspace {
         guard bulk?.connection === connection else { return }; await closeCompanion()
     }
     private func readFile(connection: NativeHTTPConnection, handle: String, etag: String, offset: Int, count: Int,
-        epoch current: UUID, lease: BodyLease, progress: (@Sendable (Int, Int) -> Void)?) async throws -> Data {
+        epoch current: UUID, lease: BodyLease, attachment: Bool = false, progress: (@Sendable (Int, Int) -> Void)?) async throws -> Data {
         // The first bounded block can render before the rest. At most four independently checked ranges are in flight.
         let first = min(16_384, count)
-        let initial = try await fileChunk(connection: connection, handle: handle, etag: etag, start: offset, amount: first, epoch: current, lease: lease)
+        let initial = try await fileChunk(connection: connection, handle: handle, etag: etag, start: offset, amount: first, epoch: current, lease: lease, attachment: attachment)
         let total = initial.1
         guard total >= offset + count else { throw NativeFailure.invalidRecord }
         var result = initial.0, received = first
@@ -444,7 +446,7 @@ public actor NativeWorkspace {
                 let range = ranges[index]
                 group.addTask {
                     let chunk = try await self.fileChunk(connection: connection, handle: handle, etag: etag,
-                        start: range.0, amount: range.1, epoch: current, lease: lease)
+                        start: range.0, amount: range.1, epoch: current, lease: lease, attachment: attachment)
                     guard chunk.1 == total else { throw NativeFailure.invalidRecord }; return (index, chunk.0)
                 }
             }
@@ -461,10 +463,10 @@ public actor NativeWorkspace {
         guard epoch == current, result.count == count else { throw NativeFailure.unavailable }; return result
     }
     private func fileChunk(connection: NativeHTTPConnection, handle: String, etag: String, start: Int, amount: Int,
-        epoch current: UUID, lease: BodyLease) async throws -> (Data, Int) {
+        epoch current: UUID, lease: BodyLease, attachment: Bool = false) async throws -> (Data, Int) {
         try Task.checkCancellation(); try lease.requireValid()
         guard epoch == current else { throw NativeFailure.unavailable }
-        let response = try await connection.request(.get, path: "/link/api/files/" + handle,
+        let response = try await connection.request(.get, path: attachment ? "/link/api/attachments/" + handle + "/content" : "/link/api/files/" + handle,
             headers: ["if-match": etag, "range": "bytes=\(start)-\(start + amount - 1)"], maximum: max(amount, 8192))
         try Task.checkCancellation(); try lease.requireValid()
         guard epoch == current else { throw NativeFailure.unavailable }
@@ -473,6 +475,65 @@ public actor NativeWorkspace {
               LinkBytes.matches(range, "bytes \(start)-\(start + amount - 1)/[0-9]+"), response.body.count == amount,
               let size = range.split(separator: "/").last.flatMap({ Int($0) }), size >= start + amount else { throw NativeFailure.invalidRecord }
         return (response.body, size)
+    }
+    /** What this composer's Harness and model take; inside a body window, as every other read of a session's setup. */
+    public func attachmentCapabilities(selection: NativeJSON, sessionId: String?) async throws -> PhoneAttachCaps {
+        if let sessionId { guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        let body = try NativeJSON.object(PhoneAttachments.context(selection: selection, sessionId: sessionId)).encoded()
+        let response = try await connection.request(.post, path: "/link/api/attachments/capabilities", body: body, maximum: 65_536)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        guard let caps = PhoneAttachCaps.parse(try NativeJSON.decode(response.body)) else { throw NativeFailure.invalidRecord }
+        return caps
+    }
+    /**
+     * One attachment's bytes, one at a time. The Host keeps an upload by device and requestId, so a retry of the same
+     * bytes after an unknown answer gets the same attachment; nothing here retries by itself. A refusal comes back as the
+     * Host's own code and words.
+     */
+    public func uploadAttachment(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
+        progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> NativeJSON {
+        guard LinkBytes.matches(draft.requestId, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
+              (1...PhoneAttachments.streamBytes).contains(draft.size) else { throw NativeFailure.invalidRecord }
+        if let sessionId { guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
+        let header = try PhoneAttachments.header(draft, selection: selection, sessionId: sessionId)
+        let (connection, current) = try transport()
+        guard !uploading else { throw NativeFailure.busy }
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        uploading = true; defer { uploading = false }
+        let response = try await connection.upload(metadata: header, body: draft.data, lease: lease, timeoutSeconds: 60, progress: progress)
+        // A path replacement leaves this upload unknown; the same requestId tells the Host it is the same one.
+        guard epoch == current else { throw NativeFailure.resultUnknown }
+        if response.status == 201 {
+            guard let ref = try? NativeJSON.decode(response.body)["attachment"], PhoneAttachments.validRef(ref) else { throw NativeFailure.resultUnknown }
+            return ref
+        }
+        if response.status == 408 || response.status >= 500 { throw NativeFailure.resultUnknown }
+        let failure = await responseFailure(response, lease: lease)
+        if failure != .expired, let refusal = NativeHostRefusal.parse(status: response.status, body: response.body) { throw refusal }
+        throw failure
+    }
+    /** Drops this device's unsent upload on the Host; a draft it cannot drop expires there within the hour. */
+    public func removeAttachment(_ id: String) async throws {
+        guard LinkBytes.matches(id, "[A-Za-z0-9_-]{22}") else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        let response = try await connection.request(.delete, path: "/link/api/attachments/" + id, maximum: 65_536)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 || response.status == 404 else { throw await responseFailure(response, lease: lease) }
+    }
+    /** A short-lived handle for a sent attachment's bytes, bound to this device; the same metadata a file preview reads. */
+    public func resolveAttachment(_ id: String) async throws -> NativeJSON {
+        guard LinkBytes.matches(id, "[A-Za-z0-9_-]{22}") else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        let response = try await connection.request(.post, path: "/link/api/attachments/" + id + "/resolve", body: Data("{}".utf8), maximum: 65_536)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)["file"]
     }
     /**
      * `timeoutSeconds`: how long this write may take on the Host, at most eleven minutes (a commit's hooks). `explain`: a

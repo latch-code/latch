@@ -1670,6 +1670,143 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 60_000)
+  it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
+    const result = await invoke({ operation: 'phoneAttachments' })
+    // One stream bounds every file this phone sends, under the Host's own limits.
+    expect(result.limits).toEqual(['图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个', '文字文件 1 MB 内 · 每条 8 个', ''])
+    expect(result.unavailable).toEqual([
+      '',
+      '这个 Harness 不接收图片和文件。',
+      '这个 Harness 不接收图片和文件。',
+      '正在读取这个 Harness 能收的附件…',
+      '没能读取这个 Harness 能收的附件，稍后再试。',
+    ])
+    expect(result.revision).toEqual(['ready:-', 'ready:'])
+    expect(result.malformedCaps).toBe(true)
+    expect(result.kinds).toEqual(['image', 'image', 'text', 'text', 'text', '-', '-', '-'])
+    expect(result.admit).toEqual([
+      'ok',
+      '「big.log」超过 256 KB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      '「huge.log」超过 1 MB，没有添加。可以添加：文字文件 1 MB 内 · 每条 8 个。',
+      // An original larger than one stream is re-encoded first; only one past what the phone reads is refused.
+      'ok',
+      '「IMG_2.heic」超过 50 MB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      '这个 Harness 不接收图片。',
+      '「deck.pdf」不能添加：只收图片和文字文件。',
+      '空文件不能添加。',
+      '每条消息最多添加 8 个附件。',
+      '这个 Harness 不接收图片和文件。',
+    ])
+    expect(result.admitBytes).toEqual([
+      '「nul.txt」不是 UTF-8 文字文件，没有添加。',
+      '「latin.txt」不是 UTF-8 文字文件，没有添加。',
+      'ok',
+      '「big.jpg」超过 1 MB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+    ])
+    expect(result.classes).toEqual(['refused', 'refused', 'refused', 'retry', 'released', 'confirm', 'retry'])
+    expect(result.heldBack).toEqual(['排队的消息不能带附件，本轮结束后再发送。', '追加的消息不能带附件，本轮结束后再发送。', '', ''])
+    // A pick that yields nothing always says why; only a cancel is silent.
+    expect(result.picks).toEqual(['', '没有收到选中的文件，请再选一次。', '没有收到选中的文件，请再选一次。', ''])
+    expect(result.startSelection).toEqual([
+      '{"harnessId":"fake","mode":"agent","model":{"model":"m","providerId":"p"},"workspaceId":"default"}',
+      'none',
+    ])
+    expect(result.names).toEqual(['IMG_0001.jpg', 'gpj.txt', '图片.png'])
+    // The file and camera paths keep pixels only; the picker's copy is gone after one read; nothing else is written.
+    expect(result.loader).toEqual({
+      file: [],
+      fileName: 'IMG_9001.jpg',
+      camera: [],
+      cameraName: '照片.jpg',
+      bigRead: false,
+      bigSize: 300000,
+      left: ['note.md'],
+      purged: 2,
+      afterPurge: [],
+    })
+    expect(result.hugeImage).toBe('图片超过 4000 万像素，没有添加。')
+    expect(result.keys).toEqual(['~new', '~topic:agt_1', 'ses_1'])
+    expect(result.locked).toEqual([true, false, true, false, true])
+    // Closing the sheet lets go only when nothing is starting, opening, covering it or unconfirmed for it.
+    expect(result.dropsOnClose).toEqual([true, false, false, false, false, true])
+    expect(result.send).toEqual(['moved', 'moved', 'snd0000000000000000000', 'gone'])
+    expect(result.trayAdded).toBe(8)
+    expect(result.trayNote).toBe('每条消息最多添加 8 个附件。')
+    expect(result.tray).toEqual({
+      waiting: true,
+      ready: 8,
+      mismatch: true,
+      statuses: [
+        'refused:当前 Harness 只接受 256 KB 以内的文本附件。',
+        'failed:附件上传已中断。',
+        'unknown',
+        'failed:上传已取消，可以重试。',
+        'confirm:这个文件可能含有密钥。',
+      ],
+      blocked: true,
+      removed: 'att0000000000000000000',
+      released: ['已在 设置 › 设备 里释放，请移除后重新添加'],
+      cleared: 7,
+      empty: true,
+      badRef: true,
+    })
+    expect(result.header).toEqual({
+      keys: ['name', 'requestId', 'selection', 'sessionId', 'size'],
+      requestId: true,
+      size: 10,
+      selection: ['harnessId', 'mode', 'workspaceId'],
+      mode: 'agent',
+    })
+    expect(result.pendingCount).toBe(2)
+    // A GIF is listed but not previewed: Quick Look stays with text and PNG/JPEG; a malformed reference is left out.
+    expect(result.chips).toEqual(['shot.png|true|200 KB|true', 'anim.gif|true|1 KB|false'])
+    expect(result.image).toEqual({
+      sourceMetadata: ['gps', 'make', 'comment'],
+      metadata: [],
+      ext: 'jpg',
+      fits: true,
+      // Noise is the worst case for JPEG: it steps down from 2048 until it fits.
+      longSide: 1600,
+      alphaExt: 'png',
+      alphaMetadata: [],
+      tooBig: true,
+    })
+  })
+  it('uploads in bounded chunks, retries by requestId, cancels, sends with a message and reads back from the actual Swift workspace', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      for (const [id, caps] of [
+        ['fake', 'images,embedded'],
+        ['plain', ''],
+      ])
+        await owner.json('agents', {
+          method: 'POST',
+          body: { id, name: id, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } },
+        })
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      const result = await invoke({ operation: 'nativeAttachments', payload: invitation.payload, port: host.host.nativePort }, 60_000)
+      expect(result).toEqual({
+        window: true,
+        freshReason: '这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。',
+        reported: 'ready:it',
+        caps: '图片 1 MB 内 · 文字文件 1 MB 内 · 每条 8 个',
+        sameRequest: true,
+        cancel: true,
+        oversize: true,
+        sent: ['IMG_0001.jpg', 'notes.md'],
+        readBack: true,
+        plainReason: '这个 Harness 不接收图片和文件。',
+        plainRefusal: 'attachments-unsupported:refused',
+        earlyRefusal: 'attachments-unsupported',
+        cancelMid: { stopped: true, afterCancel: 0, partial: true },
+        queue: 'queue-attachments-unsupported',
+      })
+    } finally {
+      await host.close()
+    }
+  }, 90_000)
   it('runs the App’s stop and search flows: a refused stop clears, and no earlier query’s hits show under a new one', async () => {
     const result = await invoke({ operation: 'phoneFlows' })
     // Refused: cleared. Answered: kept until the Host settles it. Pressed again meanwhile: not sent. Another connection: untouched.

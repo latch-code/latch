@@ -170,6 +170,13 @@ private struct NewTopicView: View {
     @State private var prompt = ""
     @State private var sending = false
     @State private var focused = false
+    /** The picker the ＋ opened. */
+    @State private var attachSource: AttachSource?
+    private var attachKey: String { PhoneModel.topicTray(frame.owner) }
+    /** Checked against this one topic's Harness, project and model, as the start will send them. */
+    private var attachSelection: NativeJSON? {
+        (try? model.topicFields(owner: frame.owner, agent: agent, choice: choice, prompt: "")).flatMap { PhoneAttachments.selection(startFields: $0) }
+    }
     private var general: Bool { frame.owner == PhoneAgents.generalId }
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     private var agent: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == frame.owner } ?? .null }
@@ -181,7 +188,9 @@ private struct NewTopicView: View {
         if general { return PhoneAgentChat.generalBlocker(catalog, choice: choice, connected: model.connected, canRun: model.canRun) }
         return PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: model.connected, canRun: model.canRun)
     }
-    private var canSend: Bool { blocker == nil && mine.isEmpty && !sending && !model.busy && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool {
+        blocker == nil && mine.isEmpty && !sending && !model.busy && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
+    }
     var body: some View {
         VStack(spacing: 10) {
             AgentFace(avatar: frame.entry.avatar, size: 56, face: frame.entry.face)
@@ -195,6 +204,13 @@ private struct NewTopicView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
         .task(id: frame.owner + "\(agent["revision"].integer ?? 0)") {
             choice = general ? PhoneAgentChat.generalChoice(catalog) : PhoneAgents.choice(catalog, agent: agent)
+        }
+        .modifier(AttachSupport(key: attachKey, selection: attachSelection, harness: harness, source: $attachSource))
+        // Not delivered, for certain: the text comes back into this input.
+        .onChange(of: model.returnedText[attachKey]) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
+        // Leaving the new topic lets go of what was attached here, unless a start that carries them is still unconfirmed.
+        .onDisappear {
+            if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: sending, verifying: model.verifying, covered: false) { model.dropAttachments(attachKey) }
         }
     }
     private var dock: some View {
@@ -212,6 +228,7 @@ private struct NewTopicView: View {
             }
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
             picks
+            AttachmentRows(key: attachKey, selection: attachSelection)
             field
         }.padding(.bottom, 8).padding(.top, 4)
     }
@@ -247,6 +264,7 @@ private struct NewTopicView: View {
     private var field: some View {
         let placeholder = PhoneAgentChat.placeholder(frame.entry.name)
         return HStack(alignment: .bottom, spacing: 8) {
+            AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource).padding(.leading, -8).padding(.bottom, 8)
             LocalTextEditor(text: $prompt, placeholder: placeholder, focused: $focused)
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty { Text(placeholder).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) }
@@ -279,7 +297,14 @@ private struct NewTopicView: View {
         sending = true
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            let done = await model.startTopic(owner: frame.owner, agent: agent, choice: choice, prompt: text)
+            var ids: [String] = []
+            if !model.tray(attachKey).isEmpty {
+                // Waits for uploads still on their way; one that cannot go keeps the message here.
+                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); sending = false; return }
+                ids = value
+            }
+            let done = await model.startTopic(owner: frame.owner, agent: agent, choice: choice, prompt: text, attachments: ids)
+            model.endAttachmentSend(attachKey)
             prompt = PhoneAgentChat.promptAfterStart(prompt, pending: model.pending, owner: frame.owner, started: done)
             if done, let id = model.sessionId { started(id) }
             sending = false

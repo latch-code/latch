@@ -34,7 +34,7 @@ struct TurnView: View, Equatable {
         VStack(alignment: .leading, spacing: 12) {
             if let words = PhoneConversation.divider(turn) { TimelineDivider(words: words, symbol: "eraser") }
             if let switched { TimelineDivider(words: switched, symbol: nil) }
-            if let user = turn.user { UserBubble(message: user, delivery: delivery) }
+            if let user = turn.user { UserBubble(message: user, delivery: delivery, open: open) }
             if !turn.replies.isEmpty || running {
                 AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn))
                     .contentShape(Rectangle()).onTapGesture { if !latest && !actions.isEmpty { withAnimation(.easeOut(duration: 0.15)) { tapped.toggle() } } }
@@ -55,7 +55,7 @@ struct TurnView: View, Equatable {
                 case let .note(message) where message["steered"].bool:
                     VStack(alignment: .trailing, spacing: 4) {
                         Text("已追加到本轮").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                        UserBubble(message: message, delivery: nil)
+                        UserBubble(message: message, delivery: nil, open: open)
                     }.frame(maxWidth: .infinity, alignment: .trailing)
                 case let .note(message):
                     Text(message["text"].string ?? "").font(PhoneTheme.caption).foregroundStyle(message["state"].string == "failed" ? PhoneTheme.red : PhoneTheme.muted)
@@ -88,6 +88,7 @@ extension NativeJSON { var path: String { self["path"].string ?? "" } }
 private struct UserBubble: View {
     let message: NativeJSON
     let delivery: String?
+    var open: ((String, String?) -> Void)? = nil
     /** A text rebuild's first message: the rebuilt conversation shown only when asked for. */
     @State private var unfolded = false
     var body: some View {
@@ -104,7 +105,12 @@ private struct UserBubble: View {
                     }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
                     if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
                 }
-                ConversationText(text: fold?.rest ?? message["text"].string ?? "")
+                let text = fold?.rest ?? message["text"].string ?? ""
+                if !text.isEmpty || fold != nil { ConversationText(text: text) }
+                let chips = PhoneAttachments.chips(message)
+                if !chips.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) { ForEach(chips) { chip in SentAttachmentChip(chip: chip) { open?(chip.id, PreviewFiles.attachmentRoot) } } }
+                }
             }.padding(.horizontal, 14).padding(.vertical, 9)
                 .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 18))
                 .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.86 }

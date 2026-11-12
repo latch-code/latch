@@ -85,22 +85,27 @@ extension PhoneModel {
     }
     /** Back to the list; the window stays open for the next conversation. */
     func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
-    func start(_ choice: PhoneStartChoice, prompt: String) async -> Bool {
+    func start(_ choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
         let current = generation
         do {
-            guard canRun, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
+            guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
             sessionId = nil; detail = .null; contentGeneration = UUID()
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(snapshot["catalog"], choice: choice, prompt: prompt)))
+            var fields = PhoneStart.fields(snapshot["catalog"], choice: choice, prompt: prompt)
+            if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
+            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
             if done, sessionId != nil { startEvents() }
             return done
         } catch { report(error); return false }
     }
     /** `steer`: into the running turn, where the Harness takes that now. A message after 清空上下文 starts a new context; it is never queued or steered. */
-    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil) async -> Bool {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16_000 else { return false }
+    /** `target`: with attachments, the session the send began in; the message goes nowhere else. */
+    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], target: String?? = nil) async -> Bool {
+        if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
+              attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!queue && !steer) else { return false }
         let current = generation
         do {
             guard canRun else { throw NativeFailure.forbidden }
@@ -115,6 +120,7 @@ extension PhoneModel {
             else if sessionId == nil { fields["mode"] = .string("agent") }
             let fresh = sessionId.map { clearing.contains($0) && !queue && !steer } ?? false
             if fresh { fields["freshContext"] = .bool(true) }
+            if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             let selected = sessionId
             let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
             if sent, fresh, pending.isEmpty, let selected { clearing.remove(selected) }
@@ -128,15 +134,28 @@ extension PhoneModel {
         guard current == generation, initialReading == contentGeneration else { return false }
         let selected = sessionId, reading = contentGeneration
         busy = true; defer { if generation == current { busy = false } }
+        // A message with attachments hears the Host's own refusal: `attachment-released` proves it was not delivered, even on a retry.
+        let attached = PhoneAttachments.count(request) > 0, retried = pending.contains { $0.requestId == request.requestId }
         do {
-            if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
-            let value = try await workspace.submit(request)
+            if !retried { pending.append(request) }
+            let value = attached ? try await workspace.submit(request, explain: true, retryAnswered: { $0.code == "attachment-released" }) : try await workspace.submit(request)
             guard generation == current else { return false }
             pending.removeAll { $0.requestId == request.requestId }
+            if attached, let key = Self.trayKey(request) { attachmentsSent(key) }
             guard contentGeneration == reading else { return false }
             if sessionId == selected, contentGeneration == reading, let id = value["sessionId"].string { sessionId = id }
             await refresh()
             return true
+        } catch let unsettled as NativeUnsettledRefusal {
+            // Still unknown: the pending row stays, with the Host's words.
+            guard generation == current, contentGeneration == reading else { return false }
+            error = unsettled.refusal.message.isEmpty ? NativeFailure.resultUnknown.errorDescription : unsettled.refusal.message
+            return false
+        } catch let refusal as NativeHostRefusal {
+            guard generation == current, contentGeneration == reading else { return false }
+            pending.removeAll { $0.requestId == request.requestId }
+            attachmentRefused(request, refusal: refusal, retried: retried)
+            return false
         } catch {
             guard generation == current, contentGeneration == reading else { return false }
             if (error as? NativeFailure) != .resultUnknown { pending.removeAll { $0.requestId == request.requestId } }
@@ -147,6 +166,25 @@ extension PhoneModel {
             report(error)
             return (error as? NativeFailure) == .resultUnknown
         }
+    }
+    /** The composer a message's attachments came from. */
+    static func trayKey(_ request: NativePendingWrite) -> String? { PhoneAttachments.key(of: request) }
+    /**
+     * A message with attachments the Host refused for certain. Released uploads mark their rows (only 移除 is left) and a
+     * retried message's text goes back into its input, as the web's does; anything else is said in the Host's words.
+     */
+    private func attachmentRefused(_ request: NativePendingWrite, refusal: NativeHostRefusal, retried: Bool) {
+        let key = Self.trayKey(request)
+        if refusal.code == "attachment-released", let key {
+            attachTrays[key, default: PhoneAttachTray()].markReleased()
+            attachTrays[key]?.note = PhoneAttachments.releasedWords
+            // A session's composer takes it as an insert; the sheet and a new topic take it back into their own field.
+            if retried, let text = PhonePending.prompt(request), !text.isEmpty {
+                if key.hasPrefix("\u{0}") { returnedText[key] = text } else { draftInserts[key] = text }
+            }
+            return
+        }
+        error = refusal.message.isEmpty ? "暂时无法完成，请稍后重试。" : refusal.message
     }
     /**
      * 放弃这次提交: this phone stops waiting for a message's answer. When the open session already lists it by its
@@ -169,6 +207,11 @@ extension PhoneModel {
         do { try await workspace.settlePending(request.requestId) } catch { report(error); return nil }
         guard generation == current else { return nil }
         pending.removeAll { $0.requestId == request.requestId }
+        // Its uploads stay held for that request on the Host (设置 › 设备 releases them); they cannot go with another.
+        if PhoneAttachments.count(request) > 0, let key = Self.trayKey(request) {
+            attachTrays[key] = nil
+            if !delivered { attachTrays[key, default: PhoneAttachTray()].note = "附件随这次提交放下了，需要时重新添加" }
+        }
         // Delivered, it took its 清空上下文 with it, as an answered send does.
         if delivered, case let .session(id) = PhonePending.kind(request) { clearing.remove(id) }
         return delivered ? .delivered : .text(text, queuedTwin: twin != nil)

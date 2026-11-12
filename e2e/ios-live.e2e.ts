@@ -50,6 +50,12 @@ const KEEP = process.env.LATCH_IOS_LIVE_KEEP === '1'
 const HISTORY = process.env.LATCH_IOS_LIVE_HISTORY === '1'
 /** `LATCH_IOS_LIVE_AGENTS=1`: also an Agent of yours on the built-in Harness (demo model) with a daily schedule, for 我的 Agent. */
 const AGENTS = process.env.LATCH_IOS_LIVE_AGENTS === '1'
+/**
+ * `LATCH_IOS_LIVE_ATTACH=1`: also the fake agent declaring images and text (「Fake Images」), so attachments can be sent; the
+ * plain 「Fake Agent」 takes none. With hold, `<file>.received` writes the attachment references the Host's sessions hold
+ * (names, kinds, sizes and types, never bytes) to `<file>.received.json`.
+ */
+const ATTACH = process.env.LATCH_IOS_LIVE_ATTACH === '1'
 type Simulators = { devices: Record<string, Array<{ name: string; udid: string; state?: string }>> }
 const listSimulators = (): Simulators['devices'][string] =>
   Object.values(
@@ -271,6 +277,13 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         return enrolled
       }
       const owner = await prepare(host)
+      if (ATTACH) {
+        const images = await owner.request('agents', {
+          method: 'POST',
+          body: { name: 'Fake Images', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: 'images,embedded' } },
+        })
+        expect(images.status).toBe(201)
+      }
       if (HISTORY) await addHistory(host, owner)
       if (AGENTS) await addAgent(owner)
       other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
@@ -330,6 +343,20 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
             const why = await place(other, otherOwner).catch((error: unknown) => `no code: ${String(error).slice(0, 200)}`)
             await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
           }
+          if (ATTACH && existsSync(`${HOLD}.received`)) {
+            await rm(`${HOLD}.received`, { force: true })
+            const { tasks } = await owner.json<{ tasks: Array<{ id: string }> }>('snapshot')
+            const received: unknown[] = []
+            for (const task of tasks) {
+              const detail = await owner.json<{ messages: Array<{ role: string; attachments?: Array<Record<string, unknown>> }> }>(
+                `tasks/${encodeURIComponent(task.id)}`,
+              )
+              for (const message of detail.messages)
+                for (const ref of message.attachments ?? [])
+                  received.push({ session: task.id, name: ref.name, kind: ref.kind, mime: ref.mime, size: ref.size, width: ref.width })
+            }
+            await writeFile(`${HOLD}.received.json`, JSON.stringify(received, null, 2) + '\n')
+          }
           for (const [index, [target, by]] of (other && otherOwner
             ? ([
                 [host, owner],
@@ -359,6 +386,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await rm(HOLD, { force: true })
         await rm(`${HOLD}.info`, { force: true })
         await rm(`${HOLD}.pair2`, { force: true })
+        await rm(`${HOLD}.received.json`, { force: true })
       } else if (PAIR_MS) {
         const deadline = Date.now() + PAIR_MS
         while (host.host.security.devices.nativeCandidates().length === 0 && Date.now() < deadline) {

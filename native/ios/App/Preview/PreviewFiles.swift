@@ -46,11 +46,22 @@ struct PreviewEdit: Equatable {
             try? FileManager.default.removeItem(at: url)
         }
     }
+    /** The root a sent attachment's chip opens with; no folder ID has this shape. */
+    static let attachmentRoot = "@attachment"
     static func load(reference: String, root: String?, session: String, workspace: NativeWorkspace, progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> PreviewItem {
         guard let lease = await workspace.lease() else { throw NativeFailure.expired }
+        if root == attachmentRoot {
+            // A message's own attachment: a short-lived handle bound to this device, read through the same bounded ranges.
+            let meta = try await workspace.resolveAttachment(reference)
+            guard meta["source"].string == "attachment", meta["attachmentId"].string == reference else { throw NativeFailure.unsupported }
+            return try await load(meta: meta, lease: lease, reference: reference, root: nil, session: session, workspace: workspace, attachment: true, progress: progress)
+        }
         let resolved = try await workspace.resolveFile(sessionId: session, reference: reference, rootId: root)
         guard let entry = resolved["files"].array.first, entry["status"].string == "ok" else { throw NativeFailure.unsupported }
-        let meta = entry["file"]
+        return try await load(meta: entry["file"], lease: lease, reference: reference, root: root, session: session, workspace: workspace, attachment: false, progress: progress)
+    }
+    private static func load(meta: NativeJSON, lease: BodyLease, reference: String, root: String?, session: String, workspace: NativeWorkspace,
+        attachment: Bool, progress: (@Sendable (Int, Int) -> Void)?) async throws -> PreviewItem {
         guard !meta["secret"].bool, meta["actions"]["preview"].bool,
               let handle = meta["handle"].string, let etag = meta["etag"].string, let kind = meta["kind"].string,
               let name = meta["name"].string, let size = meta["size"].integer, size <= 8_388_608 else { throw NativeFailure.unsupported }
@@ -62,12 +73,12 @@ struct PreviewEdit: Equatable {
         while data.count < size {
             try Task.checkCancellation(); try lease.requireValid()
             let offset = data.count, total = Int(size), count = min(1_048_576, total - offset)
-            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: offset, count: count, explicitOpen: true) { done, _ in progress?(offset + done, total) })
+            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: offset, count: count, explicitOpen: true, attachment: attachment) { done, _ in progress?(offset + done, total) })
         }
         try Task.checkCancellation(); try lease.requireValid()
         if text {
             guard let value = String(data: data, encoding: .utf8) else { throw NativeFailure.unsupported }
-            let edit = PhoneFileEdit.offered(meta, canRun: true, wholeText: data.count == Int(size), text: value)
+            let edit = !attachment && PhoneFileEdit.offered(meta, canRun: true, wholeText: data.count == Int(size), text: value)
                 ? PreviewEdit(sessionId: session, handle: handle, baseHash: PhoneFileEdit.baseHash(data), reference: reference, root: root) : nil
             return PreviewItem(name: name, text: value, url: nil, lease: lease, edit: edit)
         }

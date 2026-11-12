@@ -184,6 +184,60 @@ public actor NativeHTTPConnection {
             throw error
         }
     }
+    /**
+     * One attachment as one stream of at most 1 MiB, written in 64 KiB chunks; before each chunk the body window and this
+     * connection are checked again. Cancel closes the stream and waits for it; a lost or late answer is result unknown.
+     */
+    func upload(metadata: String, body: Data, lease: BodyLease, timeoutSeconds: Int64,
+        progress: (@Sendable (Int, Int) -> Void)?) async throws -> NativeHTTPResponse {
+        guard !closed, channel.isActive, requests < 16, (1...1_048_576).contains(body.count), (1...600).contains(timeoutSeconds),
+              metadata.utf8.count <= 4096, LinkBytes.matches(metadata, "[A-Za-z0-9_-]{1,4096}") else { throw NativeFailure.invalidRecord }
+        // Before a stream exists there is nothing of this upload to close; the connection is shared and stays open.
+        let permit = NativeFileReadPermit(lease: lease) {}
+        try permit.requireValid(); requests += 1
+        defer { requests -= 1; permit.finish() }
+        let response = channel.eventLoop.makePromise(of: NativeHTTPResponse.self), streamPromise = channel.eventLoop.makePromise(of: (any Channel).self)
+        streams.createStreamChannel(promise: streamPromise) { stream in
+            stream.eventLoop.makeCompletedFuture {
+                try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
+                    HTTPResponseCollector(promise: response, maximum: 65_536, timeoutSeconds: timeoutSeconds))
+            }
+        }
+        let stream = try await streamPromise.futureResult.get()
+        permit.bind(stream)
+        // The Host may answer before the whole body went (a refusal by size, scope or capability): that answer wins.
+        let early = NativeEarlyAnswer()
+        response.futureResult.whenSuccess { early.set($0) }
+        let parent = channel
+        do {
+            return try await withTaskCancellationHandler {
+                func current() throws { try Task.checkCancellation(); try permit.requireValid(); guard parent.isActive, stream.isActive else { throw NativeFailure.unavailable } }
+                try current()
+                let fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "application/json"), ("content-type", "application/octet-stream"),
+                    ("content-length", String(body.count)), ("x-latch-attachment", metadata)])
+                try await stream.writeAndFlush(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: .POST, uri: "/link/api/attachments", headers: fields))).get()
+                var offset = 0
+                while offset < body.count {
+                    try current()
+                    let end = min(offset + 65_536, body.count)
+                    var buffer = stream.allocator.buffer(capacity: end - offset); buffer.writeBytes(body[body.startIndex + offset..<body.startIndex + end])
+                    try await stream.writeAndFlush(HTTPClientRequestPart.body(.byteBuffer(buffer))).get()
+                    offset = end; progress?(offset, body.count)
+                }
+                try current()
+                try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+                return try await response.futureResult.get()
+            } onCancel: { permit.cancel() }
+        } catch {
+            permit.cancel(); stream.close(promise: nil)
+            // Waits until the stream is really closed, as a cancelled file read does.
+            try? await stream.closeFuture.get()
+            if let answer = early.value { return answer }
+            if Task.isCancelled { throw CancellationError() }
+            if let failure = error as? NativeFailure, failure == .expired { throw failure }
+            throw NativeFailure.resultUnknown
+        }
+    }
     public func events(sessionId: String? = nil, lease: BodyLease? = nil, cursor: NativeEventCursor? = nil) async throws -> NativeEventStream {
         guard !closed, channel.isActive, eventCount < 2 else { throw NativeFailure.unavailable }
         if let sessionId {
@@ -224,6 +278,14 @@ public actor NativeHTTPConnection {
     }
     private func eventEnded() { eventCount = max(0, eventCount - 1) }
     public func isClosed() -> Bool { closed || !channel.isActive }
+}
+
+/** An upload's answer that came before its body finished. */
+private final class NativeEarlyAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer: NativeHTTPResponse?
+    func set(_ value: NativeHTTPResponse) { lock.lock(); answer = value; lock.unlock() }
+    var value: NativeHTTPResponse? { lock.lock(); defer { lock.unlock() }; return answer }
 }
 
 /** Confined to its child stream's event loop. Every response has an explicit byte and time budget. */

@@ -64,6 +64,12 @@ const SCENES = [
   'licenses',
   'computers',
   'computers-settings',
+  'attach',
+  'attach-unavailable',
+  'attach-held',
+  'attach-new',
+  'attach-topic',
+  'attach-sent',
 ]
 /** A narrow and a wide iPhone, and an iPad; the first device type of each list that this Xcode has. */
 const DEVICES = [

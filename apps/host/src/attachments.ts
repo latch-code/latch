@@ -392,10 +392,17 @@ export class AttachmentStore {
       await this.bind(entry.owner, [ref.id], sessionId, entry.creationRequestId)
     }
   }
-  async remove(id: string, owner: string): Promise<void> {
+  /**
+   * Drops the owner's unsent draft. One reserved for a create or prompt that is on its way, was accepted in this run or
+   * waits in a queue (`busy`, the same rule as releasing) stays: that message may still need its bytes.
+   */
+  async remove(id: string, owner: string, busy: (requestId: string) => boolean = () => false): Promise<void> {
     await this.mutate(async () => {
       const entry = this.state.entries[id]
       if (!entry || entry.taskId || entry.owner !== owner) return
+      const claim = entry.claim ?? (entry.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
+      if (claim && busy(claim.requestId))
+        throw new AppError(409, 'attachment-in-use', '这个附件属于一条还在发送的消息，确认结果前不能移除。')
       const next = structuredClone(this.state)
       delete next.entries[id]
       await this.commit(next)

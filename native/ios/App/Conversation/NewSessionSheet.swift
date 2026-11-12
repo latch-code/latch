@@ -15,6 +15,12 @@ struct NewSessionSheet: View {
     @State private var picked: PhoneModelChoice?
     /** 接入已有会话, over the sheet: the project and Harnesses as they were when it opened, so it never goes blank. */
     @State private var importing: HistoryScope?
+    /** The picker the ＋ opened. */
+    @State private var attachSource: AttachSource?
+    private let attachKey = PhoneModel.newSessionTray
+    /** A fork carries its source's conversation; attachments go with a plain new session only. */
+    private var attaches: Bool { fork == nil }
+    private var attachSelection: NativeJSON? { PhoneAttachments.selection(startFields: PhoneStart.fields(catalog, choice: choice, prompt: "")) }
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     /** The source's detail when it is the open session, else its list row: what a fork can carry. */
     private var source: NativeJSON {
@@ -26,7 +32,8 @@ struct NewSessionSheet: View {
     private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
     private var blocker: String? { PhoneStart.blocker(catalog, choice: choice) }
     private var canStart: Bool {
-        blocker == nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
+        let attached = attaches && !model.tray(attachKey).isEmpty
+        return blocker == nil && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attached) && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
     }
     var body: some View {
         NavigationStack {
@@ -51,10 +58,17 @@ struct NewSessionSheet: View {
                     Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
                 }
+                // Rows above the field, as in the composer: they stay in view with the keyboard up.
+                if attaches && (!model.tray(attachKey).isEmpty || model.tray(attachKey).note != nil) {
+                    AttachmentRows(key: attachKey, selection: attachSelection, inset: 0).padding(.vertical, 2)
+                }
                 LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: 6)
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
-                    .padding(14).frame(minHeight: 110, alignment: .topLeading)
+                    .padding(14).padding(.bottom, attaches ? 40 : 0).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(alignment: .bottomLeading) {
+                        if attaches { AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource).padding(10) }
+                    }
                 if fork == nil { HistoryEntryRow(entry: PhoneHistory.entry(model.snapshot, workspaceId: choice.workspaceId)) { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) } }
                 ForEach(model.pending, id: \.requestId) { pending in
                     HStack {
@@ -89,6 +103,16 @@ struct NewSessionSheet: View {
                 model.openAfterDismiss = taskId; importing = nil
             }
         }
+        .modifier(AttachSupport(key: attaches ? attachKey : nil, selection: attachSelection, harness: harness, source: $attachSource))
+        // Not delivered, for certain: the text comes back into the sheet.
+        .onChange(of: model.returnedText[attachKey]) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
+        // Closing the sheet lets go of what was attached here; the Host's drafts go too.
+        // Only a real dismiss lets go: not while starting or opening the window for it, an unconfirmed start, or 接入已有会话 over it.
+        .onDisappear {
+            if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: starting, verifying: model.verifying, covered: importing != nil) {
+                model.dropAttachments(attachKey)
+            }
+        }
         .presentationDetents([.height(height), .large])
         .presentationDragIndicator(.visible)
         .onAppear {
@@ -105,7 +129,14 @@ struct NewSessionSheet: View {
         starting = true
         Task {
             let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            let started = if let fork, let plan { await model.startFork(fork, plan: plan, prompt: text) } else { await model.start(choice, prompt: text) }
+            var ids: [String] = []
+            if attaches, !model.tray(attachKey).isEmpty {
+                // Waits for uploads still on their way; one that cannot go, or rows taken away meanwhile, keep the sheet open.
+                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); starting = false; return }
+                ids = value
+            }
+            let started = if let fork, let plan { await model.startFork(fork, plan: plan, prompt: text) } else { await model.start(choice, prompt: text, attachments: ids) }
+            model.endAttachmentSend(attachKey)
             starting = false
             if started, model.pending.isEmpty { dismiss() }
         }

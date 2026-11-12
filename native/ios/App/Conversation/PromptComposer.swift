@@ -17,6 +17,16 @@ struct PromptComposer: View {
     /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
     @State private var settled: String?
     @AppStorage(PhoneFaceID.key) private var faceID = false
+    /** The picker the ＋ opened; held here, as the field changes shape when focus leaves it. */
+    @State private var attachSource: AttachSource?
+    /** Waiting for uploads before the message goes. */
+    @State private var sending = false
+    private var harness: NativeJSON { model.engineInfo(model.currentSummary["harnessId"].string) }
+    private var attachKey: String? { draftId.flatMap { model.sessionId == $0 ? $0 : nil } }
+    private var attachments: PhoneAttachTray { attachKey.map { model.tray($0) } ?? PhoneAttachTray() }
+    private var heldBack: String? {
+        PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
+    }
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
     /** The drawer above already holds the answers, stop among them where it cannot be allowed. */
     private var drawerOpen: Bool { !model.detail["approvals"].array.isEmpty || !model.detail["questions"].array.isEmpty }
@@ -37,7 +47,9 @@ struct PromptComposer: View {
         return PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
     }
     private var canSend: Bool {
-        !trimmed.isEmpty && model.canRun && !model.busy && model.pending.isEmpty && !noteTooLong && (!running || rejecting != nil || followUp != .none)
+        let attached = !attachments.isEmpty && rejecting == nil
+        return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !sending && model.pending.isEmpty && !noteTooLong
+            && (!running || rejecting != nil || followUp != .none) && heldBack == nil
     }
     var body: some View {
         VStack(spacing: 8) {
@@ -58,6 +70,12 @@ struct PromptComposer: View {
             if let settled {
                 Label(settled, systemImage: settled == "已送达" ? "checkmark" : "info.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
                     .task { try? await Task.sleep(for: .seconds(4)); self.settled = nil }
+            }
+            if let attachKey, gate == nil {
+                AttachmentRows(key: attachKey, selection: model.attachSelection(attachKey))
+                if let heldBack {
+                    Text(heldBack).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                }
             }
             if noteTooLong {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
@@ -80,6 +98,7 @@ struct PromptComposer: View {
             if value == nil { model.holdDraft(text, for: draftId); text = "" }
             else if old == nil, let held = model.takeDraft(for: draftId) { text = held }
         }
+        .modifier(AttachSupport(key: attachKey, selection: attachKey.flatMap { model.attachSelection($0) }, harness: harness, source: $attachSource))
     }
     private func insert() {
         guard let added = model.takeInsert(for: draftId) else { return }
@@ -101,9 +120,15 @@ struct PromptComposer: View {
         let open = focused || !text.isEmpty
         // One layout that changes shape: separate branches would replace the text view, and with it the keyboard, on every focus.
         let layout = open ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        let attach = attachKey != nil && rejecting == nil
         return layout {
+            if attach && !open { AttachButton(key: attachKey!, harness: harness, selection: model.attachSelection(attachKey!), source: $attachSource).padding(.leading, -8) }
             editor.layoutPriority(1)
-            action.frame(maxWidth: open ? .infinity : nil, alignment: .trailing)
+            HStack(spacing: 8) {
+                if attach && open { AttachButton(key: attachKey!, harness: harness, selection: model.attachSelection(attachKey!), source: $attachSource).padding(.leading, -6) }
+                Spacer(minLength: 0)
+                action
+            }.frame(maxWidth: open ? .infinity : nil, alignment: .trailing)
         }
         .padding(.leading, 16).padding(.trailing, open ? 10 : 8).padding(.top, open ? 12 : 0).padding(.bottom, open ? 10 : 0).frame(minHeight: 52)
         .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: open ? 22 : 26))
@@ -126,9 +151,11 @@ struct PromptComposer: View {
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(steer ? "追加到本轮" : "排队发送")
         } else {
             Button { send() } label: {
-                Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
-                    .frame(width: 36, height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(running ? "排队发送" : "发送")
+                Group {
+                    if sending { ProgressView().controlSize(.small).tint(Color.white) }
+                    else { Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint) }
+                }.frame(width: 36, height: 36).background(canSend || sending ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(sending ? "等待附件上传" : running ? "排队发送" : "发送")
         }
     }
     /** While a drawer waits on you, stop steps back without going away. */
@@ -143,11 +170,24 @@ struct PromptComposer: View {
     private func send() {
         let input = text, reject = rejecting, next = followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
-        let chosen = nextModel
+        // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
+        let chosen = nextModel, key = attachKey, target = model.sessionId
         Task {
             let sent: Bool
             if let reject { sent = await model.mutate(.post, path: PhoneModel.approvalPath(reject), fields: ["decision": .string("reject"), "note": .string(input)]) }
-            else { sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen) }
+            else {
+                // A send waits for the uploads still on their way; one that cannot go keeps the message here.
+                var ids: [String] = []
+                if let key, !model.tray(key).isEmpty {
+                    sending = true
+                    let ready = await model.attachmentsToSend(key, target: target)
+                    sending = false
+                    guard case let .success(value) = ready else { model.endAttachmentSend(key); return }
+                    ids = value
+                }
+                sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, target: ids.isEmpty ? nil : .some(target))
+                if let key { model.endAttachmentSend(key) }
+            }
             if sent, text == input { text = "" }
         }
     }

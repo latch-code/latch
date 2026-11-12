@@ -232,6 +232,28 @@ describe('private attachment store', () => {
     await expect(reopened.claim('device-a', [free.id, held.id], b)).rejects.toMatchObject({ code: 'attachment-claimed' })
     await reopened.claim('device-a', [free.id], b)
   })
+  it('refuses to remove a draft whose create or prompt is still on its way, accepted or queued, and removes it once that ends', async () => {
+    const store = await AttachmentStore.open(await directory()),
+      ref = await store.add(input('claimed')),
+      free = await store.add(input('free')),
+      requestId = randomUUID()
+    await store.claim('device-a', [ref.id], requestId, 'task-existing')
+    let busy = true
+    const asked: string[] = []
+    const check = (id: string) => {
+      asked.push(id)
+      return busy
+    }
+    await expect(store.remove(ref.id, 'device-a', check)).rejects.toMatchObject({ status: 409, code: 'attachment-in-use' })
+    expect(asked).toEqual([requestId])
+    expect(store.get(ref.id)).toBeDefined()
+    // A draft no message holds is removed whatever is in flight.
+    await store.remove(free.id, 'device-a', check)
+    expect(store.get(free.id)).toBeUndefined()
+    busy = false
+    await store.remove(ref.id, 'device-a', check)
+    expect(store.get(ref.id)).toBeUndefined()
+  })
   it('keeps a dispatched unknown claim beyond draft TTL until it is resolved, even before its driver is available', async () => {
     const path = await directory()
     let now = 10

@@ -85,6 +85,16 @@ import UIKit
     var handoffSignature = ""
     /** The handoff being drafted from a turn. */
     @Published var handoffDraft: PhoneHandoffDraft?
+    /** Each composer's attachments, by session or the new-session sheet; their bytes live only in memory and go with the window. */
+    @Published var attachTrays: [String: PhoneAttachTray] = [:]
+    /** What each composer may attach, as the Host last said for its selection. */
+    @Published var attachStates: [String: PhoneAttachState] = [:]
+    var uploadJobs: [UUID: Task<Void, Never>] = [:]
+    var uploadTail: Task<Void, Never>?
+    /** Places whose message with attachments is being sent now; their attachments are locked. */
+    @Published var attachSending: Set<String> = []
+    /** A start's text the Host proved was not delivered (its attachments were released), by the place that takes it back. */
+    @Published var returnedText: [String: String] = [:]
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
     var heldDrafts: [String: String] = [:]
     /** Text put into a session's draft from the commit page or a returned result, not yet in its composer. In memory only. */
@@ -149,6 +159,8 @@ import UIKit
     func open() async {
         guard store == nil, UIApplication.shared.isProtectedDataAvailable else { return }
         PreviewFiles.purgeAbandoned()
+        // Copies a document picker left when its callback never came.
+        PhoneAttachLoader.purgeInbox(temporary: FileManager.default.temporaryDirectory)
         let current = generation
         do {
             let opened = try await PhoneStore.open()
@@ -182,7 +194,7 @@ import UIKit
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         agentPath = []; appPath = []; proposals.clear(); resetSessionActions(); resetReview()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
-        PreviewFiles.clear()
+        PreviewFiles.clear(); clearAttachments()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
     }
     func connect(_ host: RegisteredHost) async {
@@ -299,7 +311,7 @@ import UIKit
             if let lease { try bindBodyLease(lease, current: current) }
             else {
                 if verifiedUntil != nil { clearPrivateContent() }
-                else { detail = .null; pending = []; PreviewFiles.clear() }
+                else { detail = .null; pending = []; PreviewFiles.clear(); clearAttachments() }
                 verifiedUntil = nil
             }
             let value = try await workspace.snapshot()
@@ -528,7 +540,7 @@ import UIKit
         if isCurrent {
             generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
             clearPrivateContent(); controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
-            PreviewFiles.clear(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
+            PreviewFiles.clear(); clearAttachments(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
             let old = workspace; workspace = nil
             await paths.close(); await old?.closeOpening()
         }
@@ -557,7 +569,7 @@ import UIKit
     }
     private func clearPrivateContent() {
         cancelPreview()
-        detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear(); clearAttachments()
         contentSearch = PhoneContentSearch(); forkDraft = nil; draftInserts = [:]; editPaths = [:]
         // Diffs, notes and handoffs are content: they go with the window, and the review page with them.
         reviewTarget = nil; sessionHandoffs = nil; handoffSignature = ""; handoffDraft = nil

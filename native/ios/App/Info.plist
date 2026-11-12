@@ -32,7 +32,7 @@
 		<string>_latch._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>扫描 Mac 上的配对二维码。</string>
+	<string>扫描 Mac 上的配对二维码，或拍照作为消息的附件。</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>你在设置中打开「查看会话前用 Face ID」后，用它验证再查看会话。</string>
 	<key>NSLocalNetworkUsageDescription</key>

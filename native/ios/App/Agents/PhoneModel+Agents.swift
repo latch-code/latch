@@ -99,19 +99,23 @@ extension PhoneModel {
      * A new topic: the first message to an Agent (or 通用) starts its session through the same start as 新会话, with the same
      * request kept while its result is unknown. Only while the new topic is still what is shown does the answer open it.
      */
-    func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) async -> Bool {
+    func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
         let current = generation
         do {
-            guard canRun, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
-            let catalog = snapshot["catalog"]
-            let fields = owner == PhoneAgents.generalId ? try PhoneAgentChat.generalFields(catalog, choice: choice, prompt: prompt)
-                : try PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: prompt)
+            guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
+            var fields = try topicFields(owner: owner, agent: agent, choice: choice, prompt: prompt)
+            if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             if sessionId != nil { closeSession() }
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
             return await finishTopic(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
         } catch { report(error); return false }
+    }
+    func topicFields(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) throws -> [String: NativeJSON] {
+        let catalog = snapshot["catalog"]
+        return owner == PhoneAgents.generalId ? try PhoneAgentChat.generalFields(catalog, choice: choice, prompt: prompt)
+            : try PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: prompt)
     }
     /** The first try, or a retry of the very same request; true once the Host answered with the new topic, now open. */
     func finishTopic(_ write: NativePendingWrite) async -> Bool {
