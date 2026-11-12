@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AUDIT_DETAIL, AuditLog, type AuditAction } from '../src/audit.ts'
 import { AGENT_ACTIONS } from '../src/audit-actions/agents.ts'
+import { BROWSER_ACTIONS } from '../src/audit-actions/browser.ts'
 import { CHANGE_ACTIONS } from '../src/audit-actions/changes.ts'
 import { DEVICE_ACTIONS } from '../src/audit-actions/devices.ts'
 import { GIT_ACTIONS } from '../src/audit-actions/git.ts'
@@ -31,6 +32,19 @@ const fileAction = { sessionId, pathHash: hex, type: 'other' }
 /** One detail each action accepts. */
 const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'terminal.open': { sessionId: 'task_1', terminalId: 'term_1' },
+  'browser.call': {
+    sessionId,
+    callId: '00000000-0000-4000-8000-000000000000',
+    tool: 'browser_click',
+    tabId: `brw_${'E'.repeat(22)}`,
+    origin: 'loopback',
+    originHash: hex,
+    risk: 'R1',
+    toolCallId: 'call_1',
+    approvalId: 'approval-1',
+  },
+  'browser.provider.registered': {},
+  'browser.provider.ended': {},
   'history.list': { harnessId: 'codex', workspaceId: 'proj' },
   'history.preview': { harnessId: 'codex', workspaceId: 'proj', agentSessionHash: hex },
   'history.import': {
@@ -134,6 +148,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     decision: 'allow',
     optionKind: 'allow_once',
     previewHash: hex,
+    toolCallId: 'call_1',
   },
   'approval.stale': { approvalId: 'approval-1' },
   'task.l3.start-requested': { harnessId: 'codex', launchHash: hex, folderCount: 1, configHash: hex },
@@ -218,6 +233,7 @@ describe('audit actions', () => {
       CHANGE_ACTIONS,
       GIT_ACTIONS,
       TERMINAL_ACTIONS,
+      BROWSER_ACTIONS,
       NATIVE_APPROVAL_ACTIONS,
       PUSH_ACTIONS,
     ]

@@ -50,6 +50,8 @@ export const SESSION_ACTIONS = {
     decision: z.enum(['allow', 'reject']),
     optionKind: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u),
     previewHash: hex64.optional(),
+    /** The tool call it was asked for, as the session records it, to find the same call in `browser.call`. */
+    toolCallId: opaqueId.optional(),
   }),
   'approval.stale': z.strictObject({ approvalId: opaqueId }),
   /** Written before a full-access session is spawned; nothing is spawned without it. */

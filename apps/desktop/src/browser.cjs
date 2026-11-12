@@ -7,12 +7,14 @@
 // goes only to http(s) addresses, and a page cannot send it to another private address unless the person clicked.
 // The page drives tabs through `latchShell.browser`; main answers only the main window's own page. A tab belongs to a
 // session of the page's: a reload of the page hides the tabs (the page lists them again), closing the window ends them.
+// The built-in harness's Agent drives them too, through browser-agent.cjs, with a fixed list of actions: its input never
+// counts as the person's click, and while it acts (and a second after) the tab's main frame goes nowhere but this Mac.
 // See docs/PREVIEW-BROWSER.md. The exported helpers are pure so they can be unit-tested without Electron.
 const { randomBytes } = require('node:crypto')
 const { isIP } = require('node:net')
 const { createExternalGesture } = require('./proxy.cjs')
 
-const PROTOCOL_VERSION = 2
+const PROTOCOL_VERSION = 3
 /** The IPC channels. preload.cjs names them literally: a sandboxed preload cannot load this file. */
 const CHANNELS = Object.freeze({
   open: 'latch:browser:open',
@@ -33,6 +35,9 @@ const CHANNELS = Object.freeze({
   colorScheme: 'latch:browser:color-scheme',
   hitTest: 'latch:browser:hit-test',
   logs: 'latch:browser:logs',
+  takeOver: 'latch:browser:take-over',
+  handBack: 'latch:browser:hand-back',
+  showing: 'latch:browser:showing',
   /** Main to the page: a tab's state, a notice about something refused, or the end of a tab. */
   event: 'latch:browser:event',
 })
@@ -95,6 +100,8 @@ const SELECTOR_LIMIT = 512
 const ANNOTATION_WORLD = 1037
 const SCRIPT_TIMEOUT_MS = 3_000
 const STATE_DELAY_MS = 32
+/** After an Agent action, how long its effects still count as the Agent's: no click of the person's, no leaving this Mac. */
+const AGENT_AFTERMATH_MS = 1_000
 const NOTICE_INTERVAL_MS = 1_000
 const ZOOM_FACTORS = Object.freeze([0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3])
 const GO_ACTIONS = new Set(['back', 'forward', 'reload', 'stop'])
@@ -472,6 +479,10 @@ const INPUTS = Object.freeze({
       ? { tabId: input.tabId, direction: input.direction }
       : undefined,
   project: input => (hasOnlyKeys(input, ['projectId']) && isProjectId(input.projectId) ? { projectId: input.projectId } : undefined),
+  showing: input =>
+    hasOnlyKeys(input, ['sessionId']) && (input.sessionId === null || isSessionId(input.sessionId))
+      ? { sessionId: input.sessionId }
+      : undefined,
 })
 
 const clamp = (value, max) => Math.min(Math.max(value, 0), max)
@@ -839,6 +850,9 @@ function stateOf(tab) {
     viewport: { preset: tab.viewport.preset, rotated: tab.viewport.rotated },
     colorScheme: tab.scheme,
     logs: { errors: tab.counts.errors, warnings: tab.counts.warnings, failed: tab.counts.failed },
+    opener: tab.opener,
+    control: tab.control,
+    activity: tab.activity,
   }
 }
 
@@ -857,6 +871,32 @@ function load(tab, url) {
 }
 
 const frameKey = (frame, main) => (main ? 'main' : `frame:${frame?.frameTreeNodeId ?? 'gone'}`)
+
+/**
+ * This Mac as the Agent may use it, exactly the set the Host's broker uses (`originClass` in browser-broker.ts):
+ * localhost, `*.localhost`, 127/8, ::1 and IPv4-mapped 127/8. Not 0.0.0.0 or ::, which name no one address.
+ */
+function agentLocalHost(hostname) {
+  const host = bareHost(hostname)
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  const v4 = isIP(host) === 4 ? ipv4Bytes(host) : undefined
+  if (v4) return v4[0] === 127
+  if (!host.startsWith('[')) return false
+  const groups = ipv6Groups(host.slice(1, -1))
+  if (!groups) return false
+  if (groups.slice(0, 7).every(group => group === 0) && groups[7] === 1) return true
+  return groups.slice(0, 5).every(group => group === 0) && groups[5] === 0xffff && (groups[6] ?? 0) >> 8 === 127
+}
+
+/** Where a tab's main frame may go while the Agent drives it: http(s) on this Mac alone. */
+function agentMayGo(raw) {
+  try {
+    const url = new URL(raw)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && agentLocalHost(url.hostname)
+  } catch {
+    return false
+  }
+}
 
 /** What a developer tools window may show: its own devtools: pages, and about:, data: and blob: documents in frames. */
 function devToolsMayGo(event) {
@@ -879,9 +919,11 @@ function applyVisibility(tab) {
   if (!visible && !tab.contents.isDestroyed() && tab.contents.isFocused() && !tab.window.isDestroyed()) tab.window.webContents.focus()
 }
 
-async function snapshot(tab, rect) {
-  const image = await tab.contents.capturePage(rect)
-  return encodeImage(image, rect ? CROP_LIMITS : CAPTURE_LIMITS)
+/** A capture of the tab; a tab out of sight (the Agent's, the panel shut) stays hidden while it is taken. */
+async function snapshot(tab, rect, limits) {
+  const shown = tab.bounds !== null && !tab.occluded
+  const image = shown ? await tab.contents.capturePage(rect) : await tab.contents.capturePage(rect, { stayHidden: true })
+  return encodeImage(image, limits ?? (rect ? CROP_LIMITS : CAPTURE_LIMITS))
 }
 
 /** One capture or hit test at a time per tab. */
@@ -947,7 +989,67 @@ function createPreviewBrowser(options) {
       tab.timer = undefined
       const state = tabs.get(tab.id) === tab ? stateOf(tab) : undefined
       if (state) emit(tab, { type: 'state', state })
+      tabsChanged(false)
     }, STATE_DELAY_MS)
+  }
+
+  /** Who hears that the tab table changed (the provider's report): `urgent` for who acts in a tab. */
+  const tabListeners = new Set()
+  function tabsChanged(urgent) {
+    for (const listener of tabListeners) {
+      try {
+        listener(urgent)
+      } catch {
+        /* One listener cannot keep the others from hearing. */
+      }
+    }
+  }
+
+  /**
+   * The session whose 浏览器 panel the page shows now, or null. A tab out of sight neither lays out, paints nor takes
+   * input on macOS, so the Agent works only in a session whose panel is open, in a tab the panel shows.
+   */
+  let showingSession = null
+
+  /** The gesture recorder of each tab's WebContents, so an Agent action can drop a click the person made before it. */
+  const gestures = new WeakMap()
+
+  /** Whether the Agent's input is going into a tab now, or did less than a second ago. */
+  function agentWindow(tab) {
+    return tab !== undefined && (tab.agentBusy || now() < tab.agentUntil)
+  }
+
+  /**
+   * Whether the tab's main frame must stay on this Mac: while the Agent's input goes in and a second after, and for
+   * the rest of a turn in which the Agent worked in it (a page can leave later, by a timer), unless the person took it.
+   */
+  function agentHolds(tab) {
+    return tab !== undefined && (agentWindow(tab) || (tab.touched && tab.control !== 'person'))
+  }
+
+  /** Who hears that the person took a tab over (browser-agent.cjs stops what the Agent was doing in it). */
+  const controlListeners = new Set()
+  function controlChanged(tab) {
+    for (const listener of controlListeners) {
+      try {
+        listener(tab)
+      } catch {
+        /* One listener cannot keep the others from hearing. */
+      }
+    }
+  }
+
+  /**
+   * The person clicked or pressed a key in a tab the Agent has worked in this turn, while no Agent action ran: they
+   * take it over, and the Agent's calls to it wait.
+   */
+  function personActed(tab) {
+    if (!tab.touched || tab.control === 'person') return
+    tab.control = 'person'
+    tab.activity = null
+    changed(tab)
+    tabsChanged(true)
+    controlChanged(tab)
   }
 
   /** A quiet line for the chrome, at most once a second for each kind (and permission or reason). */
@@ -1003,6 +1105,9 @@ function createPreviewBrowser(options) {
       if (typeof details.webContentsId === 'number' && tabByContentsId.has(details.webContentsId)) {
         if (starts.size >= STARTS_LIMIT) starts.delete(starts.keys().next().value)
         starts.set(details.id, details.timestamp)
+        const tab = tabByContentsId.get(details.webContentsId)
+        tab.inflight++
+        tab.quietSince = now()
       }
       callback({ cancel: !requestAllowed(details, ports, devTools) })
     })
@@ -1012,6 +1117,8 @@ function createPreviewBrowser(options) {
       starts.delete(details.id)
       const tab = typeof details.webContentsId === 'number' ? tabByContentsId.get(details.webContentsId) : undefined
       if (!tab || tabs.get(tab.id) !== tab) return
+      tab.inflight = Math.max(0, tab.inflight - 1)
+      tab.quietSince = now()
       const status = !error && Number.isInteger(details.statusCode) && details.statusCode > 0 ? details.statusCode : null
       const entry = {
         method: typeof details.method === 'string' && /^[A-Z]{1,16}$/u.test(details.method) ? details.method : 'GET',
@@ -1095,13 +1202,27 @@ function createPreviewBrowser(options) {
     }
     contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
     const gesture = createExternalGesture(now)
+    gestures.set(contents, gesture)
     /** Where each frame's navigation in flight has got to, for the redirects that follow. */
     const hops = new Map()
-    contents.on('before-mouse-event', (_event, input) => gesture.mouse(input))
+    // While the Agent acts and a second after, input is the Agent's: never the person's click, never a takeover.
+    contents.on('before-mouse-event', (_event, input) => {
+      const tab = tabOf(contents)
+      if (tab && agentWindow(tab)) {
+        gesture.clear()
+        return
+      }
+      gesture.mouse(input)
+      if (tab && input.type === 'mouseDown') personActed(tab)
+    })
     contents.on('before-input-event', (event, input) => {
-      gesture.key(input)
       const tab = tabOf(contents)
       const shortcut = tab ? forwardedShortcut(input, platform) : undefined
+      if (tab && agentWindow(tab)) gesture.clear()
+      else {
+        gesture.key(input)
+        if (tab && !shortcut && input.type === 'keyDown') personActed(tab)
+      }
       if (!shortcut) return
       event.preventDefault()
       if (input.type === 'keyDown' && !input.isAutoRepeat) forward(tab, shortcut)
@@ -1116,6 +1237,11 @@ function createPreviewBrowser(options) {
     contents.on('will-frame-navigate', event => {
       if (!tabOf(contents)) {
         if (!devToolsMayGo(event)) event.preventDefault()
+        return
+      }
+      const tab = tabOf(contents)
+      if (event.isMainFrame && agentHolds(tab) && !agentMayGo(event.url)) {
+        refuseNavigation(contents, event, 'not-local')
         return
       }
       const verdict = navigationVerdict(
@@ -1134,6 +1260,10 @@ function createPreviewBrowser(options) {
     contents.on('will-navigate', event => {
       if (!tabOf(contents)) {
         if (!devToolsMayGo(event)) event.preventDefault()
+        return
+      }
+      if (agentHolds(tabOf(contents)) && !agentMayGo(event.url)) {
+        refuseNavigation(contents, event, 'not-local')
         return
       }
       const verdict = navigationVerdict({ url: event.url, kind: 'typed' }, ports)
@@ -1160,6 +1290,10 @@ function createPreviewBrowser(options) {
         return
       }
       const key = frameKey(event.frame, event.isMainFrame)
+      if (event.isMainFrame && agentHolds(tabOf(contents)) && !agentMayGo(event.url)) {
+        refuseNavigation(contents, event, 'not-local')
+        return
+      }
       const verdict = navigationVerdict({ url: event.url, kind: 'redirect', from: hops.get(key), frame: !event.isMainFrame }, ports)
       if (verdict.ok) hops.set(key, event.url)
       else refuseNavigation(contents, event, verdict.reason)
@@ -1239,6 +1373,7 @@ function createPreviewBrowser(options) {
       tab.contents.close()
     }
     emit(tab, { type: 'closed' })
+    tabsChanged(false)
   }
 
   function closeAll() {
@@ -1250,6 +1385,7 @@ function createPreviewBrowser(options) {
    * lists them again and places them.
    */
   function hideAll() {
+    showingSession = null
     for (const tab of tabs.values()) {
       tab.bounds = null
       tab.occluded = false
@@ -1379,7 +1515,10 @@ function createPreviewBrowser(options) {
     },
     /** Tabs live as long as the window: a new document or a crash of its page hides them, closing the window ends them. */
     attach(window) {
-      window.on('closed', closeAll)
+      window.on('closed', () => {
+        showingSession = null
+        closeAll()
+      })
       // Only a navigation of the page that commits: one the app's rules refuse leaves the page, and its tabs, in place.
       window.webContents.on('did-navigate', () => hideAll())
       window.webContents.on('render-process-gone', hideAll)
@@ -1463,6 +1602,20 @@ function createPreviewBrowser(options) {
         busy: false,
         timer: undefined,
         notices: new Map(),
+        opener: input.opener === 'agent' ? 'agent' : 'person',
+        /** `agent` while an Agent action runs in it, `person` once the person took it over. */
+        control: null,
+        /** What the Agent is doing in it, for the panel's foot: 「正在点击「保存」」. */
+        activity: null,
+        agentBusy: false,
+        agentUntil: 0,
+        /** The Agent worked in it this turn: the person's own click then takes it over. */
+        touched: false,
+        /** Bumped when the person hands it back: every element reference handed out before is void. */
+        refEpoch: 0,
+        handedBack: false,
+        inflight: 0,
+        quietSince: now(),
       }
       tabs.set(tab.id, tab)
       tabByContents.set(contents, tab)
@@ -1474,7 +1627,74 @@ function createPreviewBrowser(options) {
       view.setVisible(false)
       window.contentView.addChildView(view)
       if (target) load(tab, target)
-      return { ok: true, tabId: tab.id, state: stateOf(tab) }
+      const state = stateOf(tab)
+      // Every page hears of a new tab, so another session's list stays whole, and so does a tab the Agent opened.
+      emit(tab, { type: 'opened', projectId: tab.projectId, sessionId: tab.sessionId, state })
+      tabsChanged(false)
+      return { ok: true, tabId: tab.id, state }
+    },
+    /** Which session's 浏览器 panel the page shows now, or null when it shows none. */
+    showing(input) {
+      showingSession = input.sessionId
+      return { ok: true }
+    },
+    /** 接手: the person takes a tab; the Agent's calls to it wait until they hand it back. */
+    takeOver(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      if (tab.control !== 'person') {
+        tab.control = 'person'
+        tab.activity = null
+        changed(tab)
+        tabsChanged(true)
+        controlChanged(tab)
+      }
+      return { ok: true }
+    },
+    /** 交还给 Agent: the Agent's calls go on, and the references it holds are void (the person may have changed the page). */
+    handBack(input) {
+      const tab = tabFor(input)
+      if (!tab) return NOT_FOUND
+      if (tab.control === 'person') {
+        tab.control = null
+        tab.refEpoch++
+        tab.handedBack = true
+        changed(tab)
+        tabsChanged(true)
+      }
+      return { ok: true }
+    },
+    /**
+     * What browser-agent.cjs works with: the tabs themselves and main's own ways to load, show and capture them. Only
+     * main holds it; the page never reaches it.
+     */
+    agentAccess() {
+      return {
+        tabs: () => [...tabs.values()].filter(tab => !tab.contents.isDestroyed()),
+        tab: tabId => tabFor({ tabId }),
+        stateOf,
+        load,
+        drop,
+        changed: (tab, urgent = false) => {
+          changed(tab)
+          if (urgent) tabsChanged(true)
+        },
+        verdict: url => navigationVerdict({ url, kind: 'typed' }, ports),
+        snapshot,
+        gesture: tab => gestures.get(tab.contents),
+        showing: () => showingSession,
+        /** Asks the page to show a tab of the session its panel shows. */
+        reveal: tab => emit(tab, { type: 'reveal' }),
+        aftermath: AGENT_AFTERMATH_MS,
+        onControl: listener => {
+          controlListeners.add(listener)
+          return () => controlListeners.delete(listener)
+        },
+        onTabs: listener => {
+          tabListeners.add(listener)
+          return () => tabListeners.delete(listener)
+        },
+      }
     },
     close(input) {
       const tab = tabs.get(input.tabId)
@@ -1724,6 +1944,9 @@ function handleBrowserRequests({ ipcMain, trusted, controller }) {
   route(CHANNELS.colorScheme, INPUTS.colorScheme, input => controller.colorScheme(input))
   route(CHANNELS.hitTest, INPUTS.hitTest, input => controller.hitTest(input))
   route(CHANNELS.logs, INPUTS.tab, input => controller.logs(input))
+  route(CHANNELS.takeOver, INPUTS.tab, input => controller.takeOver(input))
+  route(CHANNELS.handBack, INPUTS.tab, input => controller.handBack(input))
+  route(CHANNELS.showing, INPUTS.showing, input => controller.showing(input))
 }
 
 module.exports = {
@@ -1743,6 +1966,10 @@ module.exports = {
   INPUTS,
   isPrivateHost,
   isLoopbackHost,
+  agentMayGo,
+  agentLocalHost,
+  cleanText,
+  reportedUrl,
   reachesHost,
   previewUrl,
   addressUrl,

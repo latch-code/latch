@@ -43,7 +43,12 @@ type WireBlock =
   | { type: 'thinking'; thinking: string; signature: string }
   | { type: 'redacted_thinking'; data: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content?: string; is_error?: true }
+  | {
+      type: 'tool_result'
+      tool_use_id: string
+      content?: string | Array<Extract<WireBlock, { type: 'text' } | { type: 'image' }>>
+      is_error?: true
+    }
 interface WireMessage {
   role: 'user' | 'assistant'
   content: WireBlock[]
@@ -122,11 +127,21 @@ function messagesOnWire(messages: ModelMessage[], signer: string): { system?: st
       )
     } else {
       if (!message.toolCallId) throw new ProviderError('工具结果缺少 toolCallId。', 'invalid-history')
+      // The Messages API takes a tool's images inside its result.
+      const images = (message.attachments ?? []).flatMap(part =>
+        part.type === 'image'
+          ? [{ type: 'image' as const, source: { type: 'base64' as const, media_type: part.mimeType, data: part.data } }]
+          : [],
+      )
       append('user', [
         {
           type: 'tool_result',
           tool_use_id: message.toolCallId,
-          ...(message.content ? { content: message.content } : {}),
+          ...(images.length
+            ? { content: [...(message.content ? [{ type: 'text' as const, text: message.content }] : []), ...images] }
+            : message.content
+              ? { content: message.content }
+              : {}),
           ...(message.isError ? { is_error: true as const } : {}),
         },
       ])

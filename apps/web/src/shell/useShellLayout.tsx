@@ -302,7 +302,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const browserShell = shellBrowser()
   const browserProject =
     summary && catalog && access.local && !summary.archived && !summary.personal ? projectOf(summary, catalog.workspaces) : undefined
-  const canBrowser = browserShell !== null && browserProject !== undefined
+  // Anywhere else (a phone, a browser, another computer), the session's tabs on the Mac as a read-only list.
+  const browserList =
+    browserShell === null
+    && catalog?.features?.browserTabs === true
+    && !!summary
+    && !summary.archived
+    && !summary.personal
+    && projectOf(summary, catalog.workspaces) !== undefined
+  const canBrowser = (browserShell !== null && browserProject !== undefined) || browserList
   const [browserWanted, setBrowserWanted] = useState(false)
   const browserOpen = browserWanted && canBrowser
   useEndedSessionTabs(browserShell, snapshot, snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view'))
@@ -849,7 +857,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   /** A local service from the terminal: in the 浏览器 tab where there is one. */
   const openInBrowser = (url: string) => {
-    if (!canBrowser) return false
+    if (!canBrowser || !browserShell) return false
     setBrowserRequest(previous => ({ url, nonce: (previous?.nonce ?? 0) + 1 }))
     showSurface({ kind: 'browser' })
     return true
@@ -1391,6 +1399,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     browserShell,
     browserProject,
     canBrowser,
+    browserList,
     browserOpen,
     toggleBrowser,
     browserRequest,

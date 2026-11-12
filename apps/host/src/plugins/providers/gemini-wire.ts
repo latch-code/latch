@@ -11,6 +11,7 @@ import {
   ProviderError,
   errorMessage,
   invalidListing,
+  toolImageLabel,
   parseBaseURL,
   sseData,
   type ModelPage,
@@ -64,7 +65,14 @@ function contentsOnWire(messages: ModelMessage[], signer: string): { systemInstr
     if (last?.role === role) last.parts.push(...parts)
     else contents.push({ role, parts })
   }
+  // A tool's images go after every response of its step, which must come first in the turn.
+  let pending: Part[] = []
+  const flush = () => {
+    append('user', pending)
+    pending = []
+  }
   for (const message of messages) {
+    if (message.role !== 'tool') flush()
     if (message.role === 'system') {
       if (message.content.trim()) system.push(message.content)
     } else if (message.role === 'user') {
@@ -92,6 +100,10 @@ function contentsOnWire(messages: ModelMessage[], signer: string): { systemInstr
     } else {
       const name = message.toolCallId ? names.get(message.toolCallId) : undefined
       if (!message.toolCallId || !name) throw new ProviderError('工具结果找不到对应的工具调用。', 'invalid-history')
+      // The images ride in the same user turn as the responses, after them, with the call they came from.
+      const images = (message.attachments ?? []).flatMap(part =>
+        part.type === 'image' ? [{ inlineData: { mimeType: part.mimeType, data: part.data } }] : [],
+      )
       append('user', [
         {
           functionResponse: {
@@ -101,8 +113,10 @@ function contentsOnWire(messages: ModelMessage[], signer: string): { systemInstr
           },
         },
       ])
+      if (images.length) pending.push({ text: toolImageLabel(message.toolCallId) }, ...images)
     }
   }
+  flush()
   return { ...(system.length ? { systemInstruction: { parts: [{ text: system.join('\n\n') }] } } : {}), contents }
 }
 

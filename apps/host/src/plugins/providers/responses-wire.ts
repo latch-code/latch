@@ -13,6 +13,7 @@ import {
   replayLayout,
   sameIds,
   sseData,
+  toolImageLabel,
   toolArguments,
   turnStart,
   type ModelWire,
@@ -74,7 +75,14 @@ function inputOnWire(messages: ModelMessage[], signer: string): { instructions?:
   const system: string[] = []
   const input: InputItem[] = []
   const start = turnStart(messages)
+  // A tool's images follow the outputs of its step, in one user message that says which call they came from.
+  let images: Array<Record<string, unknown>> = []
+  const flush = () => {
+    if (images.length) input.push({ role: 'user', content: images } as InputItem)
+    images = []
+  }
   for (const [index, message] of messages.entries()) {
+    if (message.role !== 'tool') flush()
     if (message.role === 'system') {
       if (message.content.trim()) system.push(message.content)
     } else if (message.role === 'tool') {
@@ -84,6 +92,10 @@ function inputOnWire(messages: ModelMessage[], signer: string): { instructions?:
         call_id: message.toolCallId,
         output: message.isError ? `Tool failed: ${message.content}` : message.content,
       })
+      const parts = (message.attachments ?? []).flatMap(part =>
+        part.type === 'image' ? [{ type: 'input_image', image_url: `data:${part.mimeType};base64,${part.data}`, detail: 'auto' }] : [],
+      )
+      if (parts.length) images.push({ type: 'input_text', text: toolImageLabel(message.toolCallId) }, ...parts)
     } else if (message.role === 'user') {
       input.push({
         role: 'user',
@@ -110,6 +122,7 @@ function inputOnWire(messages: ModelMessage[], signer: string): { instructions?:
         input.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: JSON.stringify(call.arguments) })
     }
   }
+  flush()
   return { ...(system.length ? { instructions: system.join('\n\n') } : {}), input }
 }
 

@@ -69,6 +69,12 @@ export function useBrowserTabs({
         hiddenRef.current?.(event.tabId)
         return
       }
+      // The Agent works only in a tab in sight: the panel follows it to the tab it needs, or one it opened.
+      if (event.type === 'reveal') {
+        if (allRef.current.some(tab => tab.tabId === event.tabId && tab.sessionId === sessionId)) setActive(event.tabId)
+        return
+      }
+      if (event.type === 'opened' && event.sessionId === sessionId && event.state.opener === 'agent') setActive(event.tabId)
       if (event.type === 'notice') {
         if (allRef.current.some(tab => tab.tabId === event.tabId && tab.sessionId === sessionId))
           say(noticeText(event.notice, event.detail))
@@ -141,6 +147,9 @@ export function useBrowserTabs({
     open,
     navigate,
     close,
+    /** 接手 and 交还给 Agent; absent from a shell without the Agent's browser. */
+    takeOver: shell.takeOver ? (tabId: string) => settle(shell.takeOver!(tabId), '没有接手，请重试') : undefined,
+    handBack: shell.handBack ? (tabId: string) => settle(shell.handBack!(tabId), '没有交还，请重试') : undefined,
     viewport: (tabId: string, preset: BrowserPreset, rotated: boolean) => settle(shell.setViewport(tabId, preset, rotated), '没有改变视口'),
     colorScheme: (tabId: string, scheme: BrowserColorScheme) =>
       settle(shell.setColorScheme(tabId, scheme), '这个标签现在不能模拟外观（开发者工具可能占用了它）'),

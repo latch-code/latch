@@ -5,6 +5,7 @@ import { LISTENER_CLASSES, type ListenerClass } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AGENT_ACTIONS } from './audit-actions/agents.ts'
+import { BROWSER_ACTIONS } from './audit-actions/browser.ts'
 import { CHANGE_ACTIONS } from './audit-actions/changes.ts'
 import { DEVICE_ACTIONS } from './audit-actions/devices.ts'
 import { attachmentId, deviceId, hex64, opaqueId } from './audit-actions/fields.ts'
@@ -38,6 +39,7 @@ export const AUDIT_DETAIL = {
   ...CHANGE_ACTIONS,
   ...GIT_ACTIONS,
   ...TERMINAL_ACTIONS,
+  ...BROWSER_ACTIONS,
   ...NATIVE_APPROVAL_ACTIONS,
   ...PUSH_ACTIONS,
 } as const

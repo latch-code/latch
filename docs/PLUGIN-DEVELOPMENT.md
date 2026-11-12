@@ -217,12 +217,15 @@ export default {
 }
 ```
 
-- `execute` 收到 `sessionId`、`callId`、`workspaceRoot`（会话项目的主文件夹，即会话的工作目录）、`workspaceFolders`（会话的全部文件夹 `{ id, path, primary }`，主文件夹在前；Standard 总是提供，旧的 Driver 可能省略，此时 `workspaceRoot` 是唯一的文件夹）与 `signal`，返回 `{ text }`；抛错会作为错误结果交回模型。Standard 不会替工具执行完整的 JSON Schema 校验，工具必须自行校验输入。
+- `execute` 收到 `sessionId`、`callId`、`workspaceRoot`（会话项目的主文件夹，即会话的工作目录）、`workspaceFolders`（会话的全部文件夹 `{ id, path, primary }`，主文件夹在前；Standard 总是提供，旧的 Driver 可能省略，此时 `workspaceRoot` 是唯一的文件夹）与 `signal`，返回 `{ text, images? }`；抛错会作为错误结果交回模型。Standard 不会替工具执行完整的 JSON Schema 校验，工具必须自行校验输入。
 - 项目可以有多个文件夹。让模型用文件夹的 `id` 选择文件夹，路径相对于所选文件夹；不要把绝对路径交给模型。内置 [workspace-files](../apps/host/src/plugins/tools/workspace-files/index.ts) 的做法：`list_folders` 只返回 `{ folder, name, primary }`（标识、文件夹名、是否为主文件夹），其他工具带可选参数 `folder`，缺省为主文件夹，不是会话的文件夹时拒绝。
 - `kind`（`read | edit | delete | move | search | execute | think | fetch | other`）决定工具卡片的图标。
 - 可选的 `title` 是工具做什么的简短说法，用产品的语言写（「读取文件」「写入文件」）。过程行与审批卡写它加这次调用的对象（路径、命令、搜索词或地址，从参数 `path`、`command`、`query`、`url` 等读出）：「写入文件 notes/plan.md」，运行中是「正在写入文件 notes/plan.md」。标题只用于显示：Host 截到 40 个字符、把不可见与改变方向的字符显示为 `\u{…}`，它不参与风险分级，审批卡仍写出工具名。没有 `title` 时过程行按 `kind` 写动词与对象，读不出对象时写工具名（等宽），不猜。
 - 把 `signal` 传给网络与子进程；在不可逆写入前再次检查；取消清理完成后才结束 Promise。`callId` 可作为外部系统的幂等键，但本身不提供幂等性。
 - 工具 SDK 返回一次最终结果，没有 stdout 分片或百分比进度。
+- 结果可以带图片：`images: [{ mimeType, data }]`（`image/png | jpeg | gif | webp`，base64，每张不超过 5 MB，每个结果最多 4 张）。Standard 把它们存进 Host 的私有附件存储，历史只存引用，工具卡里是附件按钮，按附件的规则在能读这个会话的设备上打开；存不下的图片丢掉，并在结果文字里说明。模型协议能在工具结果里带图的（Anthropic Messages）放在结果里；不能的（Chat Completions、Responses、Gemini）放在这一步全部结果之后的一条用户消息里，前面写明「工具调用 … 返回的图片，不是用户发送的」。声明 `returnsImages: true` 的工具，在模型没有 `vision` 的运行里不提供；别的工具在这样的运行里返回图片会被丢掉，换了没有 `vision` 的模型后，历史里工具的图片也不再发送。每次请求只再发最近 3 张工具图片（`TOOL_IMAGES_SENT`），更早的结果只带文字与一句说明，截图不会在每一步越积越多。
+- 人批准过的调用，`execute` 的上下文带 `approvalId`（审批的 ID），工具可以拿它与自己的记录对应；`callId` 是运行时的工具调用 ID，`approval.decided` 审计同样记它。
+- `execute` 的上下文还有 `waitForUser()`：调用它开始一段「等人」的时间、调用它返回的函数结束，这段时间不计入工作用时（例如浏览器工具等人交还标签）；旧的 Driver 可能没有它。
 - 等待用户输入的协作式工具可设 `waitsForUser: true`：Standard 将等待排除在工作用时之外；这不改变 Host 的风险分级。可选的 `resultCommitted({sessionId, callId, state})` 在工具结果落盘后、模型继续前调用，`state` 为 `completed | failed | cancelled`。回调必须真实结算，不能确认尚未落盘的结果。内置问答使用这一回调确认回答。
 
 内置 `ask_user` 接受 `{prompt, questions:[{id,label,multiple?,options:[{id,label,description?}]}]}`，每题必答，单选或多选均提供「其他」。最多十题、每题二十个选项，完整题包最多 32000 字符；只在 Agent 模式提供，不索取密钥。回答作为 `latch.question-result` 工具结果交回当前模型。ACP 尚未接入这项功能：只有 Agent 声明支持且对应方法进入稳定 schema 后才会实现。
@@ -248,10 +251,11 @@ Standard 在每次工具调用执行前请 Host 分级（`HarnessHostOptions.cla
 
 | 等级 | 哪些调用 | 审批 |
 | --- | --- | --- |
-| R0 | 内置 `workspace-files` 的 `list_folders`，以及会话任一文件夹中的 `list_files`、`read_file`；`--demo` 时的演示工具 `long_task` | 直接执行 |
-| R1 | 内置 `write_file` 写入会话任一文件夹内的普通路径；`--demo` 时的演示工具 `write_report` | 每次询问，可选"本会话始终允许" |
+| R0 | 内置 `workspace-files` 的 `list_folders`，以及会话任一文件夹中的 `list_files`、`read_file`；内置浏览器工具里只看不动的（列标签、读取、查找、截图、滚动、视口、控制台、网络、等待）与关闭 Agent 自己开的标签；`--demo` 时的演示工具 `long_task` | 直接执行 |
+| R1 | 内置 `write_file` 写入会话任一文件夹内的普通路径；内置浏览器工具的打开、导航、点击、按键、选择、往普通输入框输入，关闭人开的标签；`--demo` 时的演示工具 `write_report` | 每次询问，可选"本会话始终允许" |
 | R2 | 其他所有工具，包括所有第三方插件注册的工具；内置文件工具的 `folder` 不是会话的文件夹；`write_file` 写入受保护路径（如 `.git/`、`.env*`、`package.json`、锁文件、`.github/workflows/`、`node_modules`、`.codex`、`.opencode`、`AGENTS.md` 等 Agent 配置，按所选文件夹判断，完整列表见 [paths.ts](../apps/host/src/paths.ts)）、越出所选文件夹的路径，或所选文件夹与 Latch 程序目录重叠（或无法解析）时的任何写入 | 每次询问，没有"始终允许"，即使同一工具此前在本会话被"始终允许" |
 
+- 浏览器工具的分级要看标签：往密码框、一次性验证码、卡号或隐藏字段输入（或往从没读到过的元素输入）是 R2，原因 `sensitive-field`。标签不在这台 Mac 的本机地址（localhost、`*.localhost`、127/8、::1）上时，除列标签与关标签外，Host 的 broker 一律拒绝，不论批准与否，所以「本会话始终允许」带不到别的地址。分级本身不看标签现在在哪，因为它可以在分级与执行之间变。见 [PREVIEW-BROWSER](PREVIEW-BROWSER.md#agent-的工具)。
 - 分级表只列出内置工具。第三方工具的 `requiresApproval: false` 会被忽略，它们一律是 R2，只读工具同样每次询问。`requiresApproval` 只在没有分级器的场合（例如直接用 `createRuntime` 写的测试）决定是否询问。
 - 分级器抛错或返回未知值时按 R2 处理。审批的 `risk` 字段由 Host 按当前分级重新计算（不低于运行时记录的值，至少为 R1），并与待处理审批一起持久化；Host 重启后旧审批失效，不会被重新批准。Host 的分级为 R2 时，审批另带原因 `riskReason`（第三方工具为 `unlisted-tool`），审批卡写成「高风险 · Latch 不认识的工具」。工具的 `title` 与 `kind` 不参与分级：把自己叫作「读取文件」的插件工具仍是 R2。
 - R2 每次询问，不提供「始终允许」；持有 `approve:elevated` 的设备都能允许，其他设备只能拒绝或取消。每次决定都有审计。

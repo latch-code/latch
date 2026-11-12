@@ -65,6 +65,16 @@
   flex-shrink: 0;
 }
 /* Who stopped a call the harness refused itself, and why in its own words: a record, not a failure. */
+.tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0 var(--sp-2) calc(40px + var(--sp-8));
+}
+.tool-images .message-attachments {
+  margin: 0;
+}
 .tool-block-line {
   margin: 0;
   padding-left: calc(40px + var(--sp-8));

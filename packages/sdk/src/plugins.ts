@@ -62,6 +62,20 @@ export interface SessionFolder {
   /** The primary folder: the session's working directory and `workspaceRoot`. */
   primary: boolean
 }
+/** An image a tool returns with its text, base64 encoded: the Host keeps it as a private attachment of the session. */
+export interface ToolImage {
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+  data: string
+}
+/**
+ * What `execute` resolves to. `images` reach the model with the result: inside the tool result where its protocol takes
+ * images there, otherwise in a user message right after the results that names the tool. A run whose model cannot see
+ * images (`vision`) does not offer a tool that declares `returnsImages`, and drops images from any other tool.
+ */
+export interface ToolResult {
+  text: string
+  images?: ToolImage[]
+}
 export interface ToolDefinition {
   name: string
   description: string
@@ -69,6 +83,8 @@ export interface ToolDefinition {
   requiresApproval: boolean
   /** A cooperative user-input tool: waiting time is excluded from the run's working duration. Does not change risk. */
   waitsForUser?: boolean
+  /** It answers with images (`ToolResult.images`): a run whose model cannot see images does not offer it. */
+  returnsImages?: boolean
   /** Called after the tool result is durably stored, before the model continues. Never acknowledges an uncommitted result. */
   resultCommitted?(context: { sessionId: string; callId: string; state: 'completed' | 'failed' | 'cancelled' }): Promise<void>
   /**
@@ -94,8 +110,15 @@ export interface ToolDefinition {
       /** Every folder of the session, primary first. Latch's runtime always sets it; absent from older drivers, where `workspaceRoot` is the only folder. */
       workspaceFolders?: ReadonlyArray<SessionFolder>
       signal: AbortSignal
+      /** The approval the person gave this call, when it asked for one. */
+      approvalId?: string
+      /**
+       * Marks time the call spends waiting for a person (a takeover, say) as waiting rather than working: calling it
+       * opens such a wait, and calling what it returns closes it. Absent from older drivers.
+       */
+      waitForUser?: () => () => void
     },
-  ): Promise<{ text: string }>
+  ): Promise<ToolResult>
 }
 export interface ModelProvider {
   modelCapabilities?: Readonly<Record<string, ModelCapabilities>>

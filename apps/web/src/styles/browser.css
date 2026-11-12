@@ -322,9 +322,95 @@
 .browser-foot-pick {
   color: var(--ink-2);
 }
+/* The Agent acts in the tab, or the person took it over: what is going on and the one way to change it. */
+.browser-foot-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  color: var(--ink-2);
+}
+.browser-foot-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The native view covers the canvas, so the frame that says the Agent acts is drawn just outside it, in ink. */
+.browser-canvas[data-agent] {
+  outline: 2px solid var(--ink);
+  outline-offset: 0;
+}
 .browser-space {
   flex: 1;
 }
 .browser-hint {
   flex: none;
+}
+
+/* The 浏览器 page away from the Mac: the session's tabs there, read-only. */
+.browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-height: 0;
+  padding: var(--sp-12) var(--sp-16);
+  overflow: auto;
+  background: var(--canvas);
+  color: var(--ink);
+}
+.browser-list-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.browser-list-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.browser-list-items {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.browser-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 44px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.browser-list-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.browser-list-title,
+.browser-list-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-list-title {
+  color: var(--ink);
+}
+.browser-list-url {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.browser-list-state {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }

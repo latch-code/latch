@@ -13,6 +13,8 @@ const HTML_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; frame-src latch-frame: blob:; worker-src 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types latch-runtime; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 /** Buffering bounded JSON lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
+const BROWSER_IMAGE_BODY_LIMIT = 5 * 1024 * 1024
+const BROWSER_IMAGE_PATH = /^\/link\/api\/browser-provider\/results\/[0-9a-f-]{36}\/image$/u
 const PLUGIN_DRAFT_BODY_LIMIT = 8 * 1024 * 1024 + 65536
 /** A 1 MiB text file in JSON, every character escaped at worst: the Host's own limit for an edit. */
 const FILE_EDIT_BODY_LIMIT = 6 * 1024 * 1024 + 4096
@@ -529,6 +531,8 @@ function classifyRoute(method, pathname) {
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
   if (method === 'POST' && pathname === '/link/api/attachments') return { kind: 'attachment-upload' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
+  // The browser provider is main itself (browser-agent.cjs): the page can neither register as one nor answer its calls.
+  if (lower === '/link/api/browser-provider' || lower.startsWith('/link/api/browser-provider/')) return { kind: 'browser-provider' }
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
   if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
   // The install window is main's alone (updater.cjs): the page can ask main to install, never hold the Host's starts.
@@ -1050,9 +1054,17 @@ function createShellProxy(options) {
       return errorResponse(403, 'shell-managed', LINK_MANAGED)
     }
     const fileEdit = request.method === 'PUT' && FILE_EDIT_PATH.test(target.pathname)
+    // Only main reaches this path (classifyRoute): an Agent's screenshot, at most 5 MiB.
+    const browserImage = request.method === 'PUT' && BROWSER_IMAGE_PATH.test(target.pathname)
     const body = await readRequestBody(
       request,
-      pluginDraft ? PLUGIN_DRAFT_BODY_LIMIT : fileEdit ? FILE_EDIT_BODY_LIMIT : REQUEST_BODY_LIMIT,
+      pluginDraft
+        ? PLUGIN_DRAFT_BODY_LIMIT
+        : fileEdit
+          ? FILE_EDIT_BODY_LIMIT
+          : browserImage
+            ? BROWSER_IMAGE_BODY_LIMIT
+            : REQUEST_BODY_LIMIT,
     )
     if (renewAfter !== 0 && renewDue()) await renew()
     let used = store.current()?.credential
@@ -1135,6 +1147,13 @@ function createShellProxy(options) {
         if (origin !== 'shell') {
           await discardRequestBody(request)
           return errorResponse(403, 'shell-managed', '文件操作由 Latch 桌面端管理')
+        }
+        return await forward(request, target, { kind: 'forward' })
+      }
+      if (route.kind === 'browser-provider') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '浏览器由 Latch 桌面端提供')
         }
         return await forward(request, target, { kind: 'forward' })
       }

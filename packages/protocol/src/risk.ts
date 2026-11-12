@@ -11,4 +11,5 @@ export const RISK_REASON_TEXT: Readonly<Record<ApprovalRiskReason, string>> = {
   'unresolved-path': '不是项目里的相对路径',
   'unlisted-tool': 'Latch 不认识的工具',
   'unparsable-arguments': '参数无法解析',
+  'sensitive-field': '密码等敏感输入框',
 }

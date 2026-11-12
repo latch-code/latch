@@ -2,6 +2,7 @@ import { createAgentLoginRoutes, type AgentLoginDeps, type AgentLoginRoutes } fr
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAppRoutes, type AppRouteDeps, type AppRoutes } from './apps.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
+import { createBrowserRoutes, type BrowserRouteDeps } from './browser.ts'
 import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
@@ -25,6 +26,7 @@ export interface RouteDeps {
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
   apps: AppRouteDeps
+  browser: BrowserRouteDeps
 }
 
 /**
@@ -60,6 +62,7 @@ export function createRoutes(
       createReviewNoteRoutes(context, deps.reviewNotes),
       createGitRoutes(context, deps.git),
       terminal,
+      createBrowserRoutes(context, deps.browser),
       createAgentRoutes(context, deps.agents),
       agentLogin,
       createAutomationRoutes(context, deps.automations),

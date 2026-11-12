@@ -245,6 +245,9 @@ function browserState(value) {
     return undefined
   if (!BROWSER_SCHEMES.has(colorScheme)) return undefined
   if (!logs || typeof logs !== 'object' || ![logs.errors, logs.warnings, logs.failed].every(browserCount)) return undefined
+  const { opener = 'person', control = null, activity = null } = value
+  if (!['agent', 'person'].includes(opener) || ![null, 'agent', 'person'].includes(control)) return undefined
+  if (activity !== null && (typeof activity !== 'string' || activity.length > 200)) return undefined
   return {
     url,
     title,
@@ -257,6 +260,9 @@ function browserState(value) {
     viewport: { preset: viewport.preset, rotated: viewport.rotated },
     colorScheme,
     logs: { errors: logs.errors, warnings: logs.warnings, failed: logs.failed },
+    opener,
+    control,
+    activity,
   }
 }
 
@@ -264,10 +270,16 @@ function browserState(value) {
 function browserEvent(value) {
   if (!value || typeof value !== 'object' || typeof value.tabId !== 'string' || !BROWSER_TAB.test(value.tabId)) return undefined
   const tabId = value.tabId
-  if (value.type === 'closed' || value.type === 'hidden') return { type: value.type, tabId }
+  if (value.type === 'closed' || value.type === 'hidden' || value.type === 'reveal') return { type: value.type, tabId }
   if (value.type === 'state') {
     const state = browserState(value.state)
     return state ? { type: 'state', tabId, state } : undefined
+  }
+  if (value.type === 'opened') {
+    const state = browserState(value.state)
+    const projectId = browserProject(value.projectId)
+    const sessionId = browserSession(value.sessionId)
+    return state && projectId && sessionId ? { type: 'opened', tabId, projectId, sessionId, state } : undefined
   }
   if (value.type !== 'notice' || !BROWSER_NOTICES.has(value.notice)) return undefined
   const detail = typeof value.detail === 'string' && /^[A-Za-z][A-Za-z-]{0,39}$/.test(value.detail) ? value.detail : undefined
@@ -654,7 +666,7 @@ if (!REMOTE)
       // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
       // could reach the shell or the Host shut.
       browser: Object.freeze({
-        protocolVersion: 2,
+        protocolVersion: 3,
         /**
          * A new tab of a session, in its project's own partition, empty or at an address as typed in the address field.
          */
@@ -729,6 +741,14 @@ if (!REMOTE)
           return browserCall('latch:browser:clear-data', project && { projectId: project })
         },
         state: tabId => browserCall('latch:browser:state', browserTab(tabId)),
+        /** 接手 and 交还给 Agent: the person takes a tab the Agent works in, and gives it back. */
+        takeOver: tabId => browserCall('latch:browser:take-over', browserTab(tabId)),
+        handBack: tabId => browserCall('latch:browser:hand-back', browserTab(tabId)),
+        /** Which session's 浏览器 panel this page shows now (null: none): the Agent works only in a tab in sight. */
+        showing: sessionId => {
+          const session = sessionId === null ? null : browserSession(sessionId)
+          return browserCall('latch:browser:showing', session === undefined ? undefined : { sessionId: session })
+        },
         subscribe: callback => {
           if (typeof callback !== 'function') return () => {}
           const listener = (_event, value) => {

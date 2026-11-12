@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { Camera, Monitor, Moon, RotateCw, Smartphone, SquareDashedMousePointer, Sun, SunMoon, Tablet } from 'lucide-react'
+import { Camera, Hand, Monitor, Moon, RotateCw, Smartphone, SquareDashedMousePointer, Sun, SunMoon, Tablet } from 'lucide-react'
 import type { TerminalSummary } from '@latch/protocol'
 import {
   Button,
@@ -26,6 +26,7 @@ import {
   RefreshGlyph,
   ShieldGlyph,
 } from '@latch/ui'
+import { AgentsGlyph } from '../../agents/AgentAvatar.tsx'
 import { api } from '../../core/api.ts'
 import type {
   BrowserColorScheme,
@@ -302,6 +303,14 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
       void shell.setBounds(tab.tabId, bounds)
     }
   })
+  // Main hears which session's panel is in sight: the Agent works only in a tab the person can see.
+  useEffect(() => {
+    if (!shell.showing) return
+    void shell.showing(shown ? sessionId : null)
+    return () => {
+      if (shown) void shell.showing?.(null)
+    }
+  }, [shell, sessionId, shown])
   // The tabs stay with main when the panel goes (another session, a reload): hidden until a panel places them again.
   useEffect(() => {
     const placedTabs = sent.current
@@ -580,15 +589,18 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     },
   ]
 
+  // The Agent's tabs, and those it acts in now, carry its mark; loading still spins.
   const panelTabs: Array<PanelTab<string>> = tabs.map(tab => ({
     value: tab.tabId,
     label: tabTitle(tab.state),
-    icon: tab.state.loading ? LoadingGlyph : GlobeGlyph,
+    icon: tab.state.loading ? LoadingGlyph : tab.state.opener === 'agent' || tab.state.control === 'agent' ? AgentsGlyph : GlobeGlyph,
     controls: id,
     closeLabel: `关闭 ${tabTitle(tab.state)}`,
   }))
   const shownAddress = address ?? (state && !isBlank(state) ? state.url : '')
   const parts = footerParts(state?.logs)
+  /** Who acts in the tab shown: the Agent, or the person who took it over. */
+  const control = state?.control ?? null
   const viewRect = placed && canvasRect ? { ...placed.rect, x: placed.rect.x - canvasRect.x, y: placed.rect.y - canvasRect.y } : null
   const frameUrl = useObjectUrl(frame)
 
@@ -784,7 +796,8 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         role="tabpanel"
         aria-label={current ? tabTitle(state) : '浏览器'}
         data-preset={preset !== 'fit' && showsView ? '' : undefined}
-        data-picking={picking ? '' : undefined}>
+        data-picking={picking ? '' : undefined}
+        data-agent={control === 'agent' ? '' : undefined}>
         {browser.listed === 'loading' && tabs.length === 0 ? (
           <Loading label="正在读取标签…" />
         ) : blank ? (
@@ -867,8 +880,27 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
           onNotice={browser.say}
         />
       )}
-      <footer className="browser-foot">
-        {picking ? (
+      <footer className="browser-foot" data-control={control ?? undefined}>
+        {control === 'agent' ? (
+          <span className="browser-foot-agent" role="status">
+            <Spinner size={12} />
+            <span className="browser-foot-activity">{state?.activity || 'Agent 正在操作'}</span>
+            {browser.takeOver && current && (
+              <Button size="xs" variant="secondary" icon={Hand} onClick={() => void browser.takeOver?.(current.tabId)}>
+                接手
+              </Button>
+            )}
+          </span>
+        ) : control === 'person' ? (
+          <span className="browser-foot-agent" role="status">
+            <span className="browser-foot-activity">你在操作</span>
+            {browser.handBack && current && (
+              <Button size="xs" variant="primary" icon={AgentsGlyph} onClick={() => void browser.handBack?.(current.tabId)}>
+                交还给 Agent
+              </Button>
+            )}
+          </span>
+        ) : picking ? (
           <span className="browser-foot-pick">选取元素 · 点按一个元素，⇧ 点按可多选，esc 结束</span>
         ) : (
           <button

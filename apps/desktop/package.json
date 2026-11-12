@@ -8,7 +8,8 @@
   "devDependencies": {
     "@latch/host": "workspace:*",
     "@latch/testkit": "workspace:*",
-    "electron": "catalog:"
+    "electron": "catalog:",
+    "happy-dom": "catalog:"
   },
   "latch": {
     "env": "electron-main"

@@ -160,7 +160,9 @@ import {
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
 import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
-import { classifyStandardCall, targetFolder, type CallFolder } from './risk.ts'
+import { BROWSER_PLUGIN, classifyStandardCall, targetFolder, type BrowserCallFacts, type CallFolder } from './risk.ts'
+import { BrowserBroker, isBrowserTool, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
+import { createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
 import {
   authFailure,
   createRateLimits,
@@ -1446,6 +1448,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
     await registry.enable('user-questions')
+    // The built-in harness's browser tools reach the desktop app's tabs on this Mac through the broker.
+    const browserBroker = new BrowserBroker({
+      async auditCall(detail) {
+        await audit.append({ action: 'browser.call', actor: { listener: 'host' }, target: detail.sessionId, detail })
+      },
+      auditProvider(event, deviceId) {
+        audit
+          .append({
+            action: event === 'registered' ? 'browser.provider.registered' : 'browser.provider.ended',
+            actor: { deviceId, listener: 'unix', via: 'http' },
+            detail: {},
+          })
+          .catch(error => logNoted('audit-write-failed', { error }, `审计记录写入失败：${errorText(error)}`))
+      },
+    })
+    startupCleanup.push(() => browserBroker.end('stopping'))
+    /** The class each session's browser call got right before it ran: main gets the class the call was approved at. */
+    const browserRisks = new Map<string, { key: string; risk: RiskLevel }>()
+    registry.register(createBrowserToolsPlugin({ call: (tool, args, context) => browserCall(tool, args, context) }), {
+      managed: 'core',
+      revision: executionBuildRevision(BROWSER_PLUGIN),
+    })
+    await registry.enable(BROWSER_PLUGIN)
     /** Names and schedules of private definitions: for a device that may read them, and on a phone only while verified. */
     function agentSummaries(
       caller: Caller,
@@ -2164,6 +2189,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         promptHeld: (id, requestId) => turnRequests.some(key => key.startsWith(`${id}:`) && key.endsWith(`:${requestId}`)),
       },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
+      browser: {
+        broker: browserBroker,
+        async readSession(caller, id) {
+          requireScope(caller, 'view')
+          checkPrivateSession(caller, id)
+          const detail = await hub!.detail(id)
+          recheck(caller, 'view')
+          privateAccess(caller, detail.summary)
+          return detail
+        },
+      },
       apps: {
         assets: () => pluginAssets,
         builtModule: (pluginId, revision, appId) => appBuilds.module(pluginId, revision, appId),
@@ -3263,18 +3299,79 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return Promise.all(scopeFolders(session, workspaceRoot).map(async folder => ({ id: folder.id, ...(await folderOf(folder.path)) })))
     }
 
-    async function classifyCall(input: { toolName: string; arguments: Record<string, unknown> } & SessionScope) {
+    async function classifyCall(input: { toolName: string; arguments: Record<string, unknown>; sessionId?: string } & SessionScope) {
+      const pluginId = toolOwner(input.toolName)
+      const browser = pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName) ? browserFacts(input) : undefined
       return classifyStandardCall({
-        pluginId: toolOwner(input.toolName),
+        pluginId,
         toolName: input.toolName,
         args: input.arguments,
         demo: options.demo,
         folders: await callFolders(input),
+        ...(browser ? { browser } : {}),
       })
     }
 
+    /** What the broker's tab table says about the tab a browser call names. */
+    function browserFacts(input: { toolName: string; arguments: Record<string, unknown>; sessionId?: string }): BrowserCallFacts {
+      const sessionId = input.sessionId ?? ''
+      const tab = browserBroker.tabFacts(sessionId, input.arguments.tabId)
+      const sensitive =
+        input.toolName === 'browser_type' ? browserBroker.refSensitive(sessionId, input.arguments.tabId, input.arguments.ref) : undefined
+      return { ...(tab ? { tab } : {}), ...(sensitive !== undefined ? { sensitive } : {}) }
+    }
+
+    function browserKey(tool: string, args: Record<string, unknown>): string {
+      try {
+        return sha256Hex(canonicalJson([tool, args]))
+      } catch {
+        return ''
+      }
+    }
+
+    /**
+     * One browser tool call of the built-in harness: only for a session of a project, with the class it was approved at
+     * (a class nobody approved, say R2 that came up only now, goes to main as R1, which then refuses a sensitive field).
+     */
+    async function browserCall(
+      tool: BrowserTool,
+      args: Record<string, unknown>,
+      context: { sessionId: string; callId: string; approvalId?: string; signal: AbortSignal; waitForUser?: () => () => void },
+    ): Promise<BrokerOutcome> {
+      const summary = (await hub!.detail(context.sessionId)).summary
+      if (summary.personal || summary.agent || summary.mode === 'chat' || summary.archived)
+        return { ok: false, error: 'no-project', dispatched: false }
+      const approved = browserRisks.get(context.sessionId)
+      browserRisks.delete(context.sessionId)
+      const now = classifyStandardCall({
+        pluginId: BROWSER_PLUGIN,
+        toolName: tool,
+        args,
+        demo: false,
+        folders: [],
+        browser: browserFacts({ toolName: tool, arguments: args, sessionId: context.sessionId }),
+      }).risk
+      const risk = approved && approved.key === browserKey(tool, args) ? approved.risk : now === 'R2' ? 'R1' : now
+      const outcome = await browserBroker.call({
+        sessionId: context.sessionId,
+        projectId: projectIdOf(summary),
+        tool,
+        args,
+        risk,
+        ...(opaqueId.safeParse(context.callId).success ? { toolCallId: context.callId } : {}),
+        ...(context.approvalId ? { approvalId: context.approvalId } : {}),
+        signal: context.signal,
+        ...(context.waitForUser ? { waitForUser: context.waitForUser } : {}),
+      })
+      // What the page says reaches the model with any key in it replaced.
+      return outcome.ok ? { ...outcome, text: redactSecrets(outcome.text) } : outcome
+    }
+
     async function classifyToolCall(input: ToolRiskInput): Promise<RiskLevel> {
-      return (await classifyCall(input)).risk
+      const { risk } = await classifyCall(input)
+      // Right before the call: the class it is approved at goes with it to main.
+      if (isBrowserTool(input.toolName)) browserRisks.set(input.sessionId, { key: browserKey(input.toolName, input.arguments), risk })
+      return risk
     }
 
     function securityEvent(event: HarnessSecurityEvent): void | Promise<void> {
@@ -4695,7 +4792,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (level !== 'L1') return { ...rest, advisory: true, risk: 'R2' }
       const args = parseArguments(approval.arguments)
       const classified = args
-        ? await classifyCall({ toolName: approval.toolName, arguments: args, ...session })
+        ? await classifyCall({ toolName: approval.toolName, arguments: args, ...session, sessionId: approval.sessionId })
         : { risk: 'R2' as const, reason: 'unparsable-arguments' as const }
       const risk = maxRisk(maxRisk(classified.risk, reported ?? 'R1'), 'R1')
       const riskReason = risk === 'R2' && classified.risk === 'R2' ? classified.reason : undefined
@@ -4782,7 +4879,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const oldText = builtinWrite ? approval.tool?.diffs?.[0]?.oldText : undefined
       const oldTextHash = typeof oldText === 'string' ? sha256Hex(oldText) : undefined
       const reason = args
-        ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).reason
+        ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session, sessionId: approval.sessionId })).reason
         : ('unparsable-arguments' as const)
       const previewHash = sha256Hex(
         canonicalJson({
@@ -4902,6 +4999,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             decision: input.decision,
             optionKind,
             ...(previewHash ? { previewHash } : {}),
+            ...(opaqueId.safeParse(approval.toolCallId).success ? { toolCallId: approval.toolCallId } : {}),
           },
         },
         input.decision === 'reject' ? res : undefined,

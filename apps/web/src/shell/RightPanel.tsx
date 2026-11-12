@@ -7,6 +7,7 @@ import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
 import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
+import { BrowserTabList } from '../panel/browser/BrowserTabList.tsx'
 import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
@@ -55,6 +56,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     browserShell,
     browserProject,
     canBrowser,
+    browserList,
     browserOpen,
     browserRequest,
     openInBrowser,
@@ -188,37 +190,43 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 sessionId={summary.id}
                 shown={terminalOpen && !fileTabs.active}
                 onCompose={canCompose ? compose : undefined}
-                {...(canBrowser ? { onOpenService: openInBrowser } : {})}
+                {...(canBrowser && browserShell ? { onOpenService: openInBrowser } : {})}
               />
             ),
           }
         : {})}
       terminalOpen={terminalOpen}
-      {...(summary && canBrowser && browserShell && browserProject
+      {...(summary && browserList
         ? {
             browser: (
-              <BrowserPanel
-                key={summary.id}
-                shell={browserShell}
-                sessionId={summary.id}
-                projectId={browserProject.id}
-                deviceId={snapshot.device.id}
-                shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)}
-                terminals={canTerminal}
-                request={browserRequest}
-                onCompose={canCompose ? compose : undefined}
-                onAttach={
-                  canCompose && catalog?.features?.attachments === true
-                    ? files => {
-                        attachmentDraft.add(files)
-                        composerRef.current?.focus()
-                      }
-                    : undefined
-                }
-              />
+              <BrowserTabList key={summary.id} sessionId={summary.id} shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)} />
             ),
           }
-        : {})}
+        : summary && canBrowser && browserShell && browserProject
+          ? {
+              browser: (
+                <BrowserPanel
+                  key={summary.id}
+                  shell={browserShell}
+                  sessionId={summary.id}
+                  projectId={browserProject.id}
+                  deviceId={snapshot.device.id}
+                  shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)}
+                  terminals={canTerminal}
+                  request={browserRequest}
+                  onCompose={canCompose ? compose : undefined}
+                  onAttach={
+                    canCompose && catalog?.features?.attachments === true
+                      ? files => {
+                          attachmentDraft.add(files)
+                          composerRef.current?.focus()
+                        }
+                      : undefined
+                  }
+                />
+              ),
+            }
+          : {})}
       browserOpen={browserOpen}
       {...(summary && (phone || noCrumb)
         ? {

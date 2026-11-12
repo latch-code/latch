@@ -1517,6 +1517,30 @@ describe('desktop shell proxy', () => {
     expect(seen.headers['content-type']).toBe('application/json')
   })
 
+  it('answers the page’s requests to the browser provider routes itself: only main is the provider', async () => {
+    const context = await shell()
+    await enroll(context)
+    const before = context.host.seen.length
+    for (const [method, path] of [
+      ['POST', '/link/api/browser-provider/nonce'],
+      ['POST', '/link/api/browser-provider/register'],
+      ['POST', '/link/api/Browser-Provider/stream'],
+      ['POST', '/link/api/browser%2Dprovider/results'],
+      ['PUT', '/link/api/browser-provider/results/00000000-0000-4000-8000-000000000000/image'],
+      ['POST', '/link//api/browser-provider/tabs'],
+    ] as const) {
+      expect(proxy.classifyRoute(method, path), path).toEqual({ kind: 'browser-provider' })
+      const response = await context.request(path, { method, headers: { 'content-type': 'application/json' }, body: '{}' })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '浏览器由 Latch 桌面端提供' })
+    }
+    expect(context.host.seen).toHaveLength(before)
+    // The phone's read-only list is an ordinary read.
+    expect(proxy.classifyRoute('GET', '/link/api/tasks/s1/browser-tabs')).toEqual({ kind: 'forward' })
+    expect(await context.handler.shellRequest('POST', '/link/api/browser-provider/nonce', {})).toMatchObject({ status: 200 })
+    expect(context.host.seen.at(-1)).toMatchObject({ method: 'POST', url: '/link/api/browser-provider/nonce' })
+  })
+
   it('keeps native file actions in main while forwarding adjudicated preview routes to the Host', async () => {
     const context = await shell()
     await enroll(context)

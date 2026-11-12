@@ -34,6 +34,8 @@ export interface HostFeatures {
   /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
   loginTerminal?: true
   previewBrowser?: true
+  /** `GET /tasks/:id/browser-tabs`: the session's tabs in this Mac's desktop app, read-only (docs/PREVIEW-BROWSER.md). */
+  browserTabs?: true
   customAgents?: true
   automations?: true
   /** `/handoffs` exists: hand chosen material to a code session and take its result back. */

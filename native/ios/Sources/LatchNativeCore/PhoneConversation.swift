@@ -419,7 +419,8 @@ public enum PhoneConversation {
         }
     }
     private static let riskWords = ["code-root": "Latch 自己的代码", "protected-path": "受保护的文件", "outside-workspace": "在项目文件夹之外",
-        "unresolved-path": "不是项目里的相对路径", "unlisted-tool": "Latch 不认识的工具", "unparsable-arguments": "参数无法解析"]
+        "unresolved-path": "不是项目里的相对路径", "unlisted-tool": "Latch 不认识的工具", "unparsable-arguments": "参数无法解析",
+        "sensitive-field": "密码等敏感输入框"]
     private static let optionWords = ["reject_once": "拒绝", "allow_once": "允许一次", "reject_always": "始终拒绝", "allow_always": "本会话始终允许"]
     /** The web's words on an option: an agent's ask shows the product's words for its kind; every other request comes in the Host's. */
     private static func optionLabel(_ option: NativeJSON, advisory: Bool) -> String {

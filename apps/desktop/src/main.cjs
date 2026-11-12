@@ -52,6 +52,7 @@ const { createEditors, readEditorChoice, writeEditorChoice } = require('./editor
 const { execFile } = require('node:child_process')
 const { createNetworkSink } = require('./network.cjs')
 const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
+const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cjs')
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
@@ -208,9 +209,15 @@ const gestures = new WeakMap()
 const remoteWindows = new Map()
 const partitionOf = hostId => `persist:latch-host-${hostId}`
 
+/** main as its Host's browser provider (browser-agent.cjs), from `start`; it runs only while the window is open. */
+let browserProvider
+
 function openWindow() {
   mainWindow = createWindow()
   previewBrowser.attach(mainWindow)
+  // Without the window there is no provider: the Host fails the Agent's browser calls at once and never opens Latch.
+  browserProvider?.start()
+  mainWindow.once('closed', () => browserProvider?.stop())
   void mainWindow.loadURL(APP_URL)
 }
 
@@ -1135,6 +1142,34 @@ async function start() {
   )
   handleFiles(proxy)
   handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
+  // The Agent's browser calls: main registers with this Mac's Host over host.sock, signed with the device key.
+  const browserAccess = previewBrowser.agentAccess()
+  browserProvider = createBrowserProvider({
+    request: (method, path, body) => proxy.shellRequest(method, path, body),
+    stream: (path, body, signal) =>
+      proxy.handle(
+        new Request(`latch://app${path}`, {
+          method: 'POST',
+          headers: { accept: 'text/event-stream', 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal,
+        }),
+        { shell: true },
+      ),
+    putImage: async (path, data) => {
+      const response = await proxy.handle(
+        new Request(`latch://app${path}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: data }),
+        { shell: true },
+      )
+      await response.body?.cancel().catch(() => {})
+      return { status: response.status }
+    },
+    sign: body => store.signFolders(body),
+    runner: createAgentRunner({ access: browserAccess, controller: previewBrowser }),
+    onTabs: listener => browserAccess.onTabs(listener),
+    log,
+  })
+  if (mainWindow && !mainWindow.isDestroyed()) browserProvider.start()
   // The Dock counts what waits on this Mac and on every other computer that answers now.
   let localWaiting = 0
   /** @type {Awaited<ReturnType<typeof startComputers>> | undefined} */

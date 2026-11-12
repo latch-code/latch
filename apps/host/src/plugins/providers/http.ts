@@ -107,6 +107,14 @@ export const MAX_TOOL_CALLS = 128
 export const MAX_SIGNATURE_CHARS = 1024 * 1024
 
 /**
+ * What precedes a tool's images where a protocol takes them only in a user message after the results: they are the
+ * tool's output, not the person's words.
+ */
+export function toolImageLabel(toolCallId: string): string {
+  return `[工具调用 ${toolCallId} 返回的图片，不是用户发送的]`
+}
+
+/**
  * Where the turn in progress starts: after the last user message. Reasoning goes back only inside it, the tool loop
  * the vendors require it for, so a system text or tool list that changed since an earlier turn never invalidates it.
  */

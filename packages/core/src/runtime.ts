@@ -32,6 +32,7 @@ import {
   type RuntimeRegistry,
   type ToolCall,
   type ToolDefinition,
+  type ToolResult,
   type ToolRiskInput,
   type Bridge,
   type CancelOptions,
@@ -98,6 +99,8 @@ function privateContext(value: AgentExecutionContext | undefined): AgentExecutio
 export interface RuntimeOptions {
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
   readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
+  /** Keeps an image a tool returned as a private attachment of the session. Without it tool images are dropped. */
+  saveAttachment?: (input: { sessionId: string; mime: string; data: string }) => Promise<AttachmentRef>
   dataDir: string
   /** Working directory of sessions created without `cwd`. */
   workspaceRoot: string
@@ -143,6 +146,32 @@ export interface RuntimeOptions {
 export const PROPOSE_MEMORY_TOOL = 'propose_memory'
 /** The tool the same runs may call to propose a schedule; it creates nothing by itself. */
 export const PROPOSE_SCHEDULE_TOOL = 'propose_schedule'
+/** How many of the newest tool images a request carries; older ones are a note in their result's text. */
+export const TOOL_IMAGES_SENT = 3
+const OLDER_TOOL_IMAGES = '（这次结果的截图较早，已不再发送；需要时请重新截图。）'
+
+/**
+ * Which tool results' images go with the next request, by history index: the newest `keep` images of tool results,
+ * counted back from the end. Other messages' attachments (the person's own) are not limited here.
+ */
+export function toolImageWindow(
+  history: ReadonlyArray<{ role: string; attachmentRefs?: AttachmentRef[] }>,
+  keep = TOOL_IMAGES_SENT,
+): Map<number, AttachmentRef[]> {
+  const window = new Map<number, AttachmentRef[]>()
+  let left = keep
+  for (let index = history.length - 1; index >= 0 && left > 0; index--) {
+    const item = history[index]!
+    if (item.role !== 'tool' || !item.attachmentRefs?.length) continue
+    const kept = item.attachmentRefs.slice(-left)
+    window.set(index, kept)
+    left -= kept.length
+  }
+  return window
+}
+/** Images one tool result keeps, and their types. */
+const TOOL_IMAGE_LIMIT = 4
+const TOOL_IMAGE_TYPES: ReadonlySet<unknown> = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const MEMORY_LIMIT = 4000
 /** Per session, as the skills server's limit. */
 export const SESSION_PROPOSAL_LIMIT = 32
@@ -178,6 +207,8 @@ interface PendingApproval {
   signal: AbortSignal
 }
 interface Run {
+  /** The approval the person gave the call about to run, for its own record (the browser's audit). */
+  approved?: { callId: string; approvalId: string }
   instructions?: string
   id: string
   sessionId: string
@@ -398,8 +429,9 @@ function recordResult(
   isError: boolean,
   cancelled = false,
   interrupted = false,
+  images: AttachmentRef[] = [],
 ): void {
-  task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError })
+  task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError, ...(images.length ? { attachmentRefs: images } : {}) })
   const previous = toolMessage(task, call)
   const message: Message = {
     id: `tool:${call.id}`,
@@ -408,6 +440,7 @@ function recordResult(
     text,
     state: cancelled ? 'cancelled' : isError ? 'failed' : 'completed',
     ...(interrupted ? { interrupted: true as const } : {}),
+    ...(images.length ? { attachments: images } : {}),
     tool: { ...(previous?.tool ?? { title: call.name, input: JSON.stringify(call.arguments, null, 2) }), output: text },
     ...(previous?.createdAt ? { createdAt: previous.createdAt } : { createdAt: at }),
     ...(previous?.startedAt ? { startedAt: previous.startedAt } : {}),
@@ -1247,6 +1280,7 @@ class HarnessRuntime implements Bridge {
         }
       })
       outcome = await decision
+      if (outcome.decision === 'allow') run.approved = { callId: call.id, approvalId: value.id }
       return outcome
     } finally {
       signal.removeEventListener('abort', abort)
@@ -1327,7 +1361,8 @@ class HarnessRuntime implements Bridge {
         task.summary.status = 'waiting-approval'
       })
     }
-    let result: { text: string }
+    let result: ToolResult
+    let waits = 0
     try {
       result = await tool.execute(structuredClone(call.arguments), {
         sessionId: run.sessionId,
@@ -1335,6 +1370,17 @@ class HarnessRuntime implements Bridge {
         workspaceRoot: run.cwd,
         workspaceFolders: toolFolders(run),
         signal,
+        ...(run.approved?.callId === call.id ? { approvalId: run.approved.approvalId } : {}),
+        waitForUser: () => {
+          const key = `${waitKey}:${waits++}`
+          run.clock.openWait(key)
+          let open = true
+          return () => {
+            if (!open) return
+            open = false
+            run.clock.closeWait(key)
+          }
+        },
       })
       if (!result || typeof result.text !== 'string') throw new Error('Tool returned an invalid result')
     } catch (error) {
@@ -1364,9 +1410,36 @@ class HarnessRuntime implements Bridge {
       }
     }
     // A completed result remains true even if cancellation raced its completion.
+    const images = await this.toolImages(run, call, result)
     this.output(run)
-    await this.change(run.sessionId, task => recordResult(task, call, this.now(), result.text, false))
+    await this.change(run.sessionId, task => recordResult(task, call, this.now(), result.text, false, false, false, images))
     await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: 'completed' })
+  }
+
+  /**
+   * A result's images as private attachments of the session, for a model that can see them; at most four, the rest and
+   * any the Host cannot keep left out with a note in the result's text. A model without vision gets none.
+   */
+  private async toolImages(run: Run, call: ToolCall, result: ToolResult): Promise<AttachmentRef[]> {
+    const images = Array.isArray(result.images) ? result.images.slice(0, TOOL_IMAGE_LIMIT) : []
+    if (!images.length || !this.sees(run) || !this.options.saveAttachment) return []
+    const refs: AttachmentRef[] = []
+    for (const image of images) {
+      if (!TOOL_IMAGE_TYPES.has(image?.mimeType) || typeof image.data !== 'string') continue
+      try {
+        refs.push(await this.options.saveAttachment({ sessionId: run.sessionId, mime: image.mimeType, data: image.data }))
+      } catch {
+        /* An image the store refuses (type, size) is left out; the text says what the tool did. */
+      }
+    }
+    if (refs.length < images.length || (result.images?.length ?? 0) > TOOL_IMAGE_LIMIT)
+      result.text = `${result.text}\n\n（${call.name} 的部分图片没有保存。）`
+    return refs
+  }
+
+  /** Whether the run's model can see images. */
+  private sees(run: Run): boolean {
+    return run.lease.provider.modelCapabilities?.[run.model]?.vision === true
   }
 
   /** The times and model of an assistant step's message. */
@@ -1405,13 +1478,15 @@ class HarnessRuntime implements Bridge {
       signal.throwIfAborted()
       // The run's own propose_memory and propose_schedule stand in for any plugin's tool of those names. They are the only
       // tools a 只对话 run has: they read and change nothing, and only hand the Host a proposal that waits for the person.
+      // A model that cannot see images is not offered a tool that answers with them.
       const own = run.proposals ?? []
-      const availableTools =
+      const availableTools = (
         run.mode === 'chat'
           ? own
           : own.length
             ? [...run.lease.tools.filter(tool => !own.some(item => item.name === tool.name)), ...own]
             : run.lease.tools
+      ).filter(tool => !tool.returnsImages || this.sees(run))
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
         signal.throwIfAborted()
@@ -1426,10 +1501,17 @@ class HarnessRuntime implements Bridge {
         this.live.set(run.sessionId, live)
         this.notify(run.sessionId)
         const task = this.task(this.state, run.sessionId)
+        const imageWindow = toolImageWindow(task.history)
         const messages: ModelMessage[] = await Promise.all(
-          task.history.map(async item => {
-            const { attachmentRefs, ...message } = structuredClone(item)
-            if (!attachmentRefs?.length) return message
+          task.history.map(async (item, index) => {
+            const { attachmentRefs: stored, ...message } = structuredClone(item)
+            if (!stored?.length) return message
+            // A tool's images stay out for a model that cannot see them; the session goes on with the text.
+            if (message.role === 'tool' && !this.sees(run))
+              return { ...message, content: `${message.content}\n\n（图片已省略：当前模型不能看图片。）` }
+            // Only the newest tools' images go again, so screenshots do not pile up in every request.
+            const attachmentRefs = message.role === 'tool' ? (imageWindow.get(index) ?? []) : stored
+            if (!attachmentRefs.length) return { ...message, content: `${message.content}\n\n${OLDER_TOOL_IMAGES}` }
             this.assertAttachments(run, attachmentRefs)
             const attachments = await Promise.all(attachmentRefs.map(ref => this.options.readAttachment!(ref, signal)))
             return { ...message, attachments }

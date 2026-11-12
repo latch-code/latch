@@ -237,6 +237,12 @@ export interface BrowserTabState {
   colorScheme: BrowserColorScheme
   /** Console errors and warnings and failed requests since the page's document started. */
   logs: { errors: number; warnings: number; failed: number }
+  /** Who opened it: the person, or the Agent through its browser tools (version 3). */
+  opener?: 'agent' | 'person'
+  /** An Agent action runs in it (`agent`), or the person took it over (`person`) (version 3). */
+  control?: 'agent' | 'person' | null
+  /** What the Agent is doing in it, in main's words: 「正在点击「保存」」. */
+  activity?: string | null
 }
 
 export interface BrowserImage {
@@ -293,6 +299,10 @@ export type BrowserEvent =
   | { type: 'state'; tabId: string; state: BrowserTabState }
   | { type: 'notice'; tabId: string; notice: 'permission' | 'download' | 'popup' | 'navigation' | 'certificate'; detail?: string }
   | { type: 'closed'; tabId: string }
+  /** A tab opened in the window, from any page or by the Agent (version 3): every page's list stays whole. */
+  | { type: 'opened'; tabId: string; projectId: string; sessionId: string; state: BrowserTabState }
+  /** The Agent needs this tab in sight (version 3): the panel showing its session selects it. */
+  | { type: 'reveal'; tabId: string }
   /** Main hid the tab (the page that placed it went away): it waits to be placed again. */
   | { type: 'hidden'; tabId: string }
 
@@ -324,6 +334,12 @@ export interface ShellBrowser {
   clearData(projectId: string): Promise<BrowserResult>
   state(tabId: string): Promise<BrowserResult<{ state: BrowserTabState }>>
   subscribe(callback: (event: BrowserEvent) => void): () => void
+  /** 接手: the person takes a tab the Agent works in (version 3). */
+  takeOver?(tabId: string): Promise<BrowserResult>
+  /** 交还给 Agent (version 3). */
+  handBack?(tabId: string): Promise<BrowserResult>
+  /** Which session's 浏览器 panel this page shows now, null for none (version 3): the Agent works only in a tab in sight. */
+  showing?(sessionId: string | null): Promise<BrowserResult>
 }
 
 /** What the Electron preload exposes; nothing else crosses into the renderer. */

@@ -11,6 +11,7 @@ import {
   parseBaseURL,
   sseData,
   toolArguments,
+  toolImageLabel,
   type ModelPage,
   type ModelWire,
   type WireRequest,
@@ -62,13 +63,45 @@ function messageOnWire(message: ModelMessage): Record<string, unknown> {
   }
 }
 
+/**
+ * Chat Completions takes text alone in a tool result: a tool's images follow the results of its step in one user message
+ * that says which call they came from.
+ */
+function messagesOnWire(messages: ModelMessage[]): Array<Record<string, unknown>> {
+  const wire: Array<Record<string, unknown>> = []
+  let images: ModelMessage[] = []
+  const flush = () => {
+    if (images.length) wire.push(toolImagesOnWire(images))
+    images = []
+  }
+  for (const message of messages) {
+    if (message.role !== 'tool') flush()
+    wire.push(messageOnWire(message))
+    if (message.role === 'tool' && message.attachments?.some(part => part.type === 'image')) images.push(message)
+  }
+  flush()
+  return wire
+}
+
+function toolImagesOnWire(results: ModelMessage[]): Record<string, unknown> {
+  return {
+    role: 'user',
+    content: results.flatMap(result => [
+      { type: 'text', text: toolImageLabel(result.toolCallId ?? '') },
+      ...(result.attachments ?? []).flatMap(part =>
+        part.type === 'image' ? [{ type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } }] : [],
+      ),
+    ]),
+  }
+}
+
 function encodeChatRequest({ model, messages, tools, effort }: WireRequest): Record<string, unknown> {
   return {
     model,
     stream: true,
     ...(effort ? { reasoning_effort: effort } : {}),
     stream_options: { include_usage: true },
-    messages: messages.map(messageOnWire),
+    messages: messagesOnWire(messages),
     ...(tools.length ? { tools: tools.map(chatTool) } : {}),
   }
 }

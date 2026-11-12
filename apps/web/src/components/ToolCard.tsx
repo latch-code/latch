@@ -1,5 +1,5 @@
 import { Fragment, memo, useContext, useId, useMemo, useRef, useState } from 'react'
-import { CircleDashed, RotateCcw, TimerOff } from 'lucide-react'
+import { Camera, CircleDashed, RotateCcw, TimerOff } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
@@ -28,11 +28,13 @@ import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
+import { MessageAttachments } from './MessageAttachments.tsx'
 import { JUDGED_COPY } from '../core/securityCopy.ts'
 import {
   Button,
   Collapse,
   Hint,
+  Icon,
   ICON_STROKE,
   StatusGlyph,
   StatusWords,
@@ -396,6 +398,15 @@ export const ToolCard = memo(
                 {running && <span className="command-caret" />}
               </pre>
             )}
+            {/* A tool's pictures (the browser's screenshots): opened as attachments are, on any device that may read the session. */}
+            {message?.attachments?.length ? (
+              <div className="tool-images">
+                <MessageAttachments attachments={message.attachments} />
+                <Hint className="tool-images-note" lead={<Icon icon={Camera} size={12} />} label="截图会发给模型服务">
+                  Agent 的截图作为工具结果交给模型服务；页面上的个人信息不会自动打码。
+                </Hint>
+              </div>
+            ) : null}
             {block && (
               <p className="tool-block-line">
                 <VisibleText text={blockedLine(block)} />
@@ -490,5 +501,6 @@ export const ToolCard = memo(
         && a.message.createdAt === b.message.createdAt
         && a.message.startedAt === b.message.startedAt
         && a.message.completedAt === b.message.completedAt
+        && a.message.attachments === b.message.attachments
         && sameTool(a.message.tool, b.message.tool))),
 )

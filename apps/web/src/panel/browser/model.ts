@@ -152,7 +152,9 @@ export function noticeText(notice: string, detail?: string): string {
         ? '页面想访问 Latch，已拦下'
         : detail === 'private'
           ? '页面想去局域网或这台 Mac 的其他地址，已拦下'
-          : '页面想去的地址不能打开，已拦下'
+          : detail === 'not-local'
+            ? 'Agent 操作后页面想离开这台 Mac，已拦下'
+            : '页面想去的地址不能打开，已拦下'
     default:
       return '已拦下页面的请求'
   }
@@ -342,10 +344,21 @@ export interface KnownTab {
 /** The window's tabs in the order they opened, after main's event. */
 export function withEvent(
   tabs: readonly KnownTab[],
-  event: { type: 'state'; tabId: string; state: BrowserTabState } | { type: 'closed'; tabId: string },
+  event:
+    | { type: 'state'; tabId: string; state: BrowserTabState }
+    | { type: 'closed'; tabId: string }
+    | { type: 'opened'; tabId: string; projectId: string; sessionId: string; state: BrowserTabState },
   now: number,
 ): KnownTab[] {
   if (event.type === 'closed') return tabs.filter(tab => tab.tabId !== event.tabId)
+  // A tab another page or the Agent opened joins the list; one this page opened is already in it.
+  if (event.type === 'opened')
+    return tabs.some(tab => tab.tabId === event.tabId)
+      ? [...tabs]
+      : [
+          ...tabs,
+          withState({ tabId: event.tabId, sessionId: event.sessionId, projectId: event.projectId, state: event.state }, event.state, now),
+        ]
   return tabs.map(tab => (tab.tabId === event.tabId ? withState(tab, event.state, now) : tab))
 }
 

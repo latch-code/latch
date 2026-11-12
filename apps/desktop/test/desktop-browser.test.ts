@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
+import { Window as HappyWindow } from 'happy-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -334,7 +335,9 @@ class FakeContents extends EventEmitter {
   }
   executeJavaScriptInIsolatedWorld(world: number, scripts: Array<{ code: string }>) {
     this.isolated.push({ world, code: scripts[0].code })
-    return Promise.resolve(this.isolatedResult)
+    return Promise.resolve(
+      typeof this.isolatedResult === 'function' ? (this.isolatedResult as (code: string) => unknown)(scripts[0].code) : this.isolatedResult,
+    )
   }
   openDevTools(options: unknown) {
     this.devToolsOptions = options
@@ -349,6 +352,15 @@ class FakeContents extends EventEmitter {
   }
   sendInputEvent(input: unknown) {
     this.inputs.push(input)
+  }
+  throttled = true
+  setBackgroundThrottling(allowed: boolean) {
+    this.throttled = allowed
+  }
+  typed: string[] = []
+  insertText(text: string) {
+    this.typed.push(text)
+    return Promise.resolve()
   }
   audioMuted = false
   setAudioMuted(muted: boolean) {
@@ -1240,6 +1252,9 @@ describe('preview browser tabs', () => {
           viewport: { preset: 'fit', rotated: false },
           colorScheme: 'system',
           logs: { errors: 0, warnings: 0, failed: 0 },
+          opener: 'person',
+          control: null,
+          activity: null,
         },
       },
     ])
@@ -1696,6 +1711,9 @@ describe('preview browser IPC', () => {
       'devTools',
       'clearData',
       'state',
+      'takeOver',
+      'handBack',
+      'showing',
       'subscribe',
     ])
     for (const channel of Object.values(browser.CHANNELS)) expect(source).toContain(`'${channel}'`)
@@ -1739,6 +1757,9 @@ describe('preview browser IPC', () => {
     await api.reload(tabId)
     await api.zoom(tabId, 'out')
     await api.occlude(tabId, false)
+    expect(await (api as unknown as { takeOver(tabId: unknown): Promise<unknown> }).takeOver('brw_short')).toEqual(invalid)
+    await (api as unknown as { takeOver(tabId: unknown): Promise<unknown> }).takeOver(tabId)
+    await (api as unknown as { handBack(tabId: unknown): Promise<unknown> }).handBack(tabId)
     expect(invoke.mock.calls).toEqual([
       ['latch:browser:open', { projectId: 'alpha', sessionId: 'ses_one', url: null }],
       ['latch:browser:open', { projectId: 'alpha', sessionId: 'ses_one', url: 'localhost:5173' }],
@@ -1753,6 +1774,8 @@ describe('preview browser IPC', () => {
       ['latch:browser:go', { tabId, action: 'reload' }],
       ['latch:browser:zoom', { tabId, direction: 'out' }],
       ['latch:browser:occlude', { tabId, occluded: false }],
+      ['latch:browser:take-over', { tabId }],
+      ['latch:browser:hand-back', { tabId }],
     ])
     const received = vi.fn()
     const unsubscribe = api.subscribe(received)
@@ -1782,11 +1805,18 @@ describe('preview browser IPC', () => {
     deliver({ tabId, type: 'notice', notice: 'permission', detail: '<img onerror>' })
     deliver({ tabId, type: 'notice', notice: 'shell' })
     deliver({ tabId, type: 'closed', extra: true })
+    deliver({ tabId, type: 'state', state: { ...state, opener: 'agent', control: 'agent', activity: '正在点击「保存」' } })
+    deliver({ tabId, type: 'state', state: { ...state, control: 'robot' } })
+    deliver({ tabId, type: 'opened', projectId: 'alpha', sessionId: 'ses_two', state })
+    deliver({ tabId, type: 'opened', projectId: '../x', sessionId: 'ses_two', state })
+    const full = { ...state, opener: 'person', control: null, activity: null }
     expect(received.mock.calls).toEqual([
-      [{ type: 'state', tabId, state }],
+      [{ type: 'state', tabId, state: full }],
       [{ type: 'notice', tabId, notice: 'permission', detail: 'geolocation' }],
       [{ type: 'notice', tabId, notice: 'permission' }],
       [{ type: 'closed', tabId }],
+      [{ type: 'state', tabId, state: { ...state, opener: 'agent', control: 'agent', activity: '正在点击「保存」' } }],
+      [{ type: 'opened', tabId, projectId: 'alpha', sessionId: 'ses_two', state: full }],
     ])
     unsubscribe()
     expect(listeners.has('latch:browser:event')).toBe(false)
@@ -1801,5 +1831,382 @@ describe('host-info for the preview tabs', () => {
     expect(parseHostInfo(info)).toMatchObject(info)
     for (const port of ['47123', 0, 70_000, 1.5, null])
       expect(parseHostInfo({ ...info, modelGatewayPort: port }), String(port)).toBeUndefined()
+  })
+})
+
+const agent = require('../src/browser-agent.cjs') as {
+  AGENT_TOOLS: readonly string[]
+  AGENT_INPUTS: Record<string, (args: unknown) => boolean>
+  callInput(raw: unknown): Record<string, unknown> | undefined
+  simpleSelector(text: unknown): boolean
+  agentWorld(scope: unknown, epoch: number, limits: Record<string, number>, task: Record<string, unknown>): any
+  createAgentRunner(options: Record<string, unknown>): {
+    run(call: unknown): Promise<Record<string, any> | undefined>
+    cancel(callId: string): void
+    turnEnded(sessionId: string): void
+    sessionEnded(sessionId: string): void
+    report(): Array<Record<string, unknown>>
+  }
+  createBrowserProvider(options: Record<string, unknown>): {
+    start(): void
+    stop(): void
+    state(): { active: boolean; registered: boolean }
+  }
+}
+const browserLocal = require('../src/browser.cjs') as { agentLocalHost(hostname: string): boolean }
+
+/** The fixture page: a button, an ordinary field, a password field, a one-time code, a hidden field and a frame. */
+const AGENT_PAGE = `<h1>本地开发页</h1>
+<button id="save">保存设置</button>
+<label>名字 <input id="name" value="Latch"></label>
+<label>密码 <input id="pw" type="password"></label>
+<label>验证码 <textarea id="otp" autocomplete="one-time-code">123456</textarea></label>
+<input type="hidden" id="csrf" value="HIDDEN-1">
+<iframe id="frame" src="about:blank"></iframe>`
+
+/**
+ * A page in happy-dom whose isolated world is the real `agentWorld`: each script main sends is run on it, the way
+ * Electron runs it in the tab's isolated world. Boxes are fixed, since happy-dom does not lay out.
+ */
+function agentPage(html = AGENT_PAGE) {
+  const window = new HappyWindow({ url: 'http://localhost:5173/' }) as unknown as any
+  window.document.body.innerHTML = html
+  let hit: unknown = 'self'
+  const boxes = new Map<unknown, { x: number; y: number; width: number; height: number }>()
+  window.Element.prototype.getBoundingClientRect = function (this: unknown) {
+    return boxes.get(this) ?? { x: 10, y: 20, width: 100, height: 40 }
+  }
+  let last: unknown
+  const original = window.Element.prototype.scrollIntoView
+  window.Element.prototype.scrollIntoView = function (this: unknown) {
+    last = this
+    return original?.call(this)
+  }
+  window.Document.prototype.elementFromPoint = function () {
+    return hit === 'self' ? last : hit
+  }
+  const run = (code: string) => {
+    const at = code.lastIndexOf(', {"kind"')
+    const task = JSON.parse(code.slice(at + 2, -1))
+    const epoch = Number(/\(globalThis, (\d+),/u.exec(code)![1])
+    return agent.agentWorld(window, epoch, { name: 100, value: 200, find: 20 }, task)
+  }
+  return {
+    window,
+    run,
+    byId: (id: string) => window.document.getElementById(id),
+    /** What `elementFromPoint` answers: the element scrolled to (`self`), or another one laid over it. */
+    cover: (element: unknown) => (hit = element),
+    boxes,
+  }
+}
+
+describe('the Agent in the preview browser', () => {
+  const CALL = '00000000-0000-4000-8000-00000000000'
+  let calls = 0
+  /** A tab of `ses_one` on localhost showing `html`, in sight, and the runner over the same controller. */
+  function agentSetup(html?: string) {
+    const base = setup()
+    const tab = base.open('localhost:5173')
+    tab.contents.url = tab.contents.loads.at(-1) ?? ''
+    const dom = agentPage(html)
+    tab.contents.isolatedResult = (code: string) => dom.run(code)
+    const controller = base.controller as unknown as Record<string, (...args: any[]) => any>
+    const runner = agent.createAgentRunner({ access: controller.agentAccess(), controller, now: () => 10_000 })
+    controller.showing({ sessionId: 'ses_one' })
+    controller.setBounds({ tabId: tab.tabId, bounds: { x: 0, y: 0, width: 800, height: 600 } })
+    const call = (tool: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      runner.run({
+        callId: `${CALL}${String(++calls % 10)}`,
+        sessionId: 'ses_one',
+        projectId: 'alpha',
+        tool,
+        args: tool === 'browser_open' || tool === 'browser_tabs' ? args : { tabId: tab.tabId, ...args },
+        origin: 'http://localhost:5173',
+        risk: 'R1',
+        deadline: 15_000,
+        ...extra,
+      })
+    /** The reference a read gave the line holding `words`. */
+    const refOf = async (words: string) => {
+      const read = await call('browser_read', {})
+      return /\[(e\d+)\]/u.exec(
+        String(read!.text)
+          .split('\n')
+          .find(line => line.includes(words)) ?? '',
+      )![1]!
+    }
+    return { ...base, ...tab, dom, controller, runner, call, refOf }
+  }
+
+  it('carries out a fixed list of actions with exactly their arguments, and nothing the page’s interface has', () => {
+    expect(agent.AGENT_TOOLS).toHaveLength(16)
+    for (const tool of ['browser_eval', 'browser_devtools', 'browser_clear_data', 'browser_focus', 'browser_annotate', 'browser_cookies'])
+      expect(
+        agent.callInput({ callId: `${CALL}1`, sessionId: 's', projectId: 'p', tool, args: {}, origin: null, risk: 'R0', deadline: 1 }),
+      ).toEqual({ callId: `${CALL}1`, invalid: true })
+    const tabId = `brw_${'x'.repeat(22)}`
+    expect(agent.AGENT_INPUTS.browser_click!({ tabId, ref: 'e1' })).toBe(true)
+    expect(agent.AGENT_INPUTS.browser_click!({ tabId, ref: 'e1', script: 'alert(1)' })).toBe(false)
+    expect(agent.AGENT_INPUTS.browser_navigate!({ tabId, url: 'localhost:5173', action: 'back' })).toBe(false)
+    expect(agent.AGENT_INPUTS.browser_key!({ tabId, key: 'Meta+Q' })).toBe(false)
+    expect(agent.AGENT_INPUTS.browser_find!({ tabId, role: 'button', name: '保存' })).toBe(true)
+    expect(agent.AGENT_INPUTS.browser_find!({ tabId, name: '保存' })).toBe(false)
+    expect(agent.AGENT_INPUTS.browser_find!({ tabId, text: 'x', selector: 'button' })).toBe(false)
+  })
+
+  it('finds by tags, ids and classes only: no selector that could test a field’s value', () => {
+    for (const selector of ['button', '#save', 'form > input.name', 'main .card button', '*'])
+      expect(agent.simpleSelector(selector), selector).toBe(true)
+    for (const selector of [
+      'input[type=password][value^="h"]',
+      'input[value]',
+      'form:has(input[value^="a"])',
+      'input:is(.a)',
+      ':where(input)',
+      'input:not(.x)',
+      'input:placeholder-shown',
+      'a\\5b',
+      '#a\\:b',
+      'a, b',
+      'a + b',
+      'a ~ b',
+      '',
+    ])
+      expect(agent.simpleSelector(selector), selector).toBe(false)
+  })
+
+  it('never reads a value of a password, one-time-code or hidden field, even after the page shows it as text', () => {
+    const dom = agentPage()
+    ;(dom.byId('pw') as { value: string }).value = 'hunter2'
+    const read = () => dom.run(`(x)(globalThis, 0, {}, ${JSON.stringify({ kind: 'read', interactive: false, maxChars: 20_000 })})`)
+    const first = read()
+    expect(first.text).toContain('textbox "密码" （密码框，值不读取）')
+    expect(first.text).toContain('textbox "验证码" （验证码，值不读取）')
+    expect(first.text).toContain('textbox "名字" value="Latch"')
+    for (const secret of ['hunter2', '123456', 'HIDDEN-1']) expect(first.text).not.toContain(secret)
+    expect(Object.values(first.refs)).toEqual([false, false, true, true])
+    // 「显示密码」: the page makes it type=text; it stays a field whose value is never read.
+    dom.byId('pw').setAttribute('type', 'text')
+    dom.byId('otp').removeAttribute('autocomplete')
+    const second = read()
+    expect(second.text).not.toContain('hunter2')
+    expect(second.text).not.toContain('123456')
+    expect(second.text).toContain('textbox "密码" （密码框，值不读取）')
+    // Finding by words does not search values either.
+    const found = dom.run(`(x)(globalThis, 0, {}, ${JSON.stringify({ kind: 'find', text: 'hunter2' })})`)
+    expect(found.text).toBe('没有找到。')
+    const byRole = dom.run(`(x)(globalThis, 0, {}, ${JSON.stringify({ kind: 'find', role: 'button', name: '保存' })})`)
+    expect(byRole.text).toMatch(/^- button "保存设置" \[e\d+\]$/u)
+  })
+
+  it('refuses a printable key into a password field, as browser_type would, but lets Enter and Tab through', async () => {
+    const { call, dom, contents } = agentSetup()
+    dom.byId('pw').focus()
+    expect(await call('browser_key', { key: 'h' })).toMatchObject({ ok: false, error: 'sensitive-field', dispatched: false })
+    expect(await call('browser_key', { key: 'Space' })).toMatchObject({ ok: false, error: 'sensitive-field' })
+    expect(contents.inputs).toEqual([])
+    expect(await call('browser_key', { key: 'Enter' })).toMatchObject({ ok: true })
+    dom.byId('name').focus()
+    expect(await call('browser_key', { key: 'h' })).toMatchObject({ ok: true })
+  })
+
+  it('types into a password field only at R2, never says what, and checks again where the keyboard went after focusing', async () => {
+    const { call, dom, contents, refOf } = agentSetup()
+    const pw = await refOf('textbox "密码"')
+    expect(await call('browser_type', { ref: pw, text: 'hunter2' })).toMatchObject({ ok: false, error: 'sensitive-field' })
+    expect(contents.typed).toEqual([])
+    const typed = await call('browser_type', { ref: pw, text: 'hunter2', submit: true }, { risk: 'R2' })
+    expect(typed).toMatchObject({ ok: true, dispatched: true })
+    expect(typed!.text).not.toContain('hunter2')
+    expect(contents.typed).toEqual(['hunter2'])
+    // An ordinary field whose page moves the keyboard to the password field as it gets focus: nothing is typed.
+    const name = await refOf('textbox "名字"')
+    dom.byId('name').addEventListener('focus', () => dom.byId('pw').focus())
+    expect(await call('browser_type', { ref: name, text: 'secret' })).toMatchObject({ ok: false, error: 'focus-moved', dispatched: false })
+    expect(contents.typed).toEqual(['hunter2'])
+  })
+
+  it('clicks only an element in sight at its centre, never a frame, and offsets nothing it cannot see', async () => {
+    const { call, dom, contents, refOf, events, advance, external } = agentSetup()
+    const save = await refOf('button "保存设置"')
+    dom.cover(dom.byId('name'))
+    expect(await call('browser_click', { ref: save })).toMatchObject({ ok: false, error: 'obscured', dispatched: false })
+    dom.cover('self')
+    const clicked = await call('browser_click', { ref: save })
+    expect(clicked).toMatchObject({ ok: true, dispatched: true, text: expect.stringContaining('已点击 「保存设置」') })
+    expect(contents.inputs).toEqual([
+      { type: 'mouseMove', x: 60, y: 40 },
+      { type: 'mouseDown', x: 60, y: 40, button: 'left', clickCount: 1 },
+      { type: 'mouseUp', x: 60, y: 40, button: 'left', clickCount: 1 },
+    ])
+    // A frame is never a target: its inside is read and acted on through its own elements.
+    const frame = await call('browser_find', { selector: '#frame' })
+    const ref = /\[(e\d+)\]/u.exec(String(frame!.text))![1]
+    expect(await call('browser_click', { ref })).toMatchObject({ ok: false, error: 'frame-target' })
+    // The Agent's click is no gesture: no popup, no system browser, and the page stays on this Mac.
+    contents.emit('before-mouse-event', {}, { type: 'mouseUp', button: 'left', x: 1, y: 1 })
+    expect(contents.openHandler!({ url: 'https://example.com/', postBody: undefined })).toEqual({ action: 'deny' })
+    expect(external).toEqual([])
+    // A page that leaves by a timer, long after the click: still refused for the rest of the turn.
+    advance(30_000)
+    const later = navigation('https://example.com/', { initiator: { origin: 'http://localhost:5173' } })
+    contents.emit('will-frame-navigate', later)
+    expect(later.preventDefault).toHaveBeenCalled()
+    expect(events('notice').at(-1)).toMatchObject({ notice: 'navigation', detail: 'not-local' })
+    const home = navigation('http://localhost:5173/next', { initiator: { origin: 'http://localhost:5173' } })
+    contents.emit('will-frame-navigate', home)
+    expect(home.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('goes back or forward only to an entry on this Mac, and a wait ends when the page leaves', async () => {
+    const { call, contents } = agentSetup()
+    const entries = ['https://example.com/', 'http://localhost:5173/', 'http://localhost:5173/next']
+    let active = 1
+    Object.assign(contents.navigationHistory, {
+      canGoBack: () => active > 0,
+      canGoForward: () => active < entries.length - 1,
+      getActiveIndex: () => active,
+      length: () => entries.length,
+      getEntryAtIndex: (index: number) => ({ url: entries[index], title: '' }),
+    })
+    expect(await call('browser_navigate', { action: 'back' })).toMatchObject({ ok: false, error: 'not-local' })
+    expect(contents.history.back).toBe(0)
+    expect(await call('browser_navigate', { action: 'forward' })).toMatchObject({ ok: true })
+    expect(contents.history.forward).toBe(1)
+    active = 2
+    const waiting = call('browser_wait', { text: '不会出现', timeoutMs: 5_000 })
+    // The page leaves by its own timer while the Agent waits.
+    setTimeout(() => (contents.url = 'https://example.com/elsewhere'), 400)
+    expect(await waiting).toMatchObject({ ok: false, error: 'not-local' })
+  })
+
+  it('stops an action when the person takes the tab, and says the result is unknown once input reached the page', async () => {
+    const { call, contents, controller, refOf, tabId } = agentSetup()
+    const name = await refOf('textbox "名字"')
+    // The text is going in when 接手 comes: the Enter after it is not sent, and nobody can say what the page did.
+    let release!: () => void
+    contents.insertText = (text: string) => {
+      contents.typed.push(text)
+      return new Promise<void>(done => (release = done))
+    }
+    const typing = call('browser_type', { ref: name, text: 'Latch', submit: true })
+    await vi.waitFor(() => expect(contents.typed).toEqual(['Latch']))
+    controller.takeOver({ tabId })
+    release()
+    expect(await typing).toMatchObject({ ok: false, error: 'result-unknown', dispatched: true })
+    expect(contents.inputs.some(input => (input as { keyCode?: string }).keyCode === 'Enter')).toBe(false)
+    // While the person has it, the next call does not start: the Host holds it until they hand it back.
+    expect(await call('browser_click', { ref: name })).toMatchObject({ ok: false, error: 'taken-over', dispatched: false })
+    expect(controller.handBack({ tabId })).toEqual({ ok: true })
+    // Handing back voids the references from before.
+    expect(await call('browser_click', { ref: name })).toMatchObject({ ok: false, error: 'stale-ref' })
+    expect((await call('browser_read', {}))!.text).toContain('人操作过这个页面')
+  })
+
+  it('treats this Mac as the Host’s broker does', () => {
+    for (const host of ['localhost', 'app.localhost', '127.0.0.1', '127.4.5.6', '[::1]', '[::ffff:7f00:1]'])
+      expect(browserLocal.agentLocalHost(host), host).toBe(true)
+    for (const host of ['0.0.0.0', '[::]', '[::ffff:a00:1]', '192.168.1.2', 'example.com', 'printer.local'])
+      expect(browserLocal.agentLocalHost(host), host).toBe(false)
+  })
+
+  it('works only in a tab in sight: opens the Agent’s tab where the panel shows the session and waits for the page to place it', async () => {
+    const { call, window, events, runner, controller, tabId } = agentSetup()
+    controller.showing({ sessionId: null })
+    expect(await call('browser_open', { url: '5173' }, {})).toMatchObject({ ok: false, error: 'panel-closed', dispatched: false })
+    expect(await call('browser_read', { tabId })).toMatchObject({ ok: false, error: 'panel-closed' })
+    expect(window.children).toHaveLength(1)
+    expect(await call('browser_console', { tabId })).toMatchObject({ ok: true })
+    controller.showing({ sessionId: 'ses_one' })
+    const opening = runner.run({
+      callId: `${CALL}9`,
+      sessionId: 'ses_one',
+      projectId: 'alpha',
+      tool: 'browser_open',
+      args: { url: '5173' },
+      origin: null,
+      risk: 'R1',
+      deadline: 15_000,
+    })
+    await vi.waitFor(() => expect(events('opened')).toHaveLength(2))
+    const opened = events('opened').at(-1)!
+    await vi.waitFor(() => expect(events('reveal').map(event => event.tabId)).toContain(opened.tabId))
+    controller.setBounds({ tabId: opened.tabId, bounds: { x: 0, y: 0, width: 800, height: 600 } })
+    expect(await opening).toMatchObject({ ok: true, dispatched: true })
+    expect(window.children.at(-1)!.webContents.loads).toEqual(['http://localhost:5173/'])
+    expect(events('opened').at(-1)).toMatchObject({ sessionId: 'ses_one', projectId: 'alpha', state: { opener: 'agent' } })
+    expect(runner.report().at(-1)).toMatchObject({ opener: 'agent', url: 'http://localhost:5173/' })
+  })
+
+  it('registers with a signed body naming its purpose, answers each call with its picture first, and stops with the window', async () => {
+    const sent: Array<[string, string, unknown]> = []
+    let push!: (text: string) => void
+    const request = async (method: string, path: string, body?: unknown) => {
+      sent.push([method, path, body])
+      if (path.endsWith('/nonce')) return { status: 200, json: { nonce: 'n1' } }
+      if (path.endsWith('/register')) return { status: 201, json: { providerId: `bpv_${'p'.repeat(22)}` } }
+      return { status: 200, json: { ok: true } }
+    }
+    let aborted = false
+    const stream = async (_path: string, _body: unknown, signal: AbortSignal) => {
+      signal.addEventListener('abort', () => (aborted = true))
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          push = text => controller.enqueue(new TextEncoder().encode(text))
+        },
+      })
+      return new Response(body, { status: 200 })
+    }
+    const images: string[] = []
+    const provider = agent.createBrowserProvider({
+      request,
+      stream,
+      putImage: async (path: string) => {
+        images.push(path)
+        sent.push(['PUT', path, undefined])
+        return { status: 200 }
+      },
+      sign: (body: Record<string, unknown>) => `signed:${JSON.stringify(body)}`,
+      runner: {
+        run: async (call: { callId: string }) => ({
+          callId: call.callId,
+          ok: true,
+          dispatched: false,
+          text: '截图',
+          image: { data: new Uint8Array([1]) },
+        }),
+        cancel() {},
+        sessionEnded() {},
+        turnEnded() {},
+        report: () => [],
+        stopAll() {},
+      },
+      onTabs: () => () => {},
+    })
+    provider.start()
+    await vi.waitFor(() => expect(provider.state().registered).toBe(true))
+    expect(sent[1]).toEqual([
+      'POST',
+      '/link/api/browser-provider/register',
+      { nonce: 'n1', purpose: 'browser-provider', signature: 'signed:{"nonce":"n1","purpose":"browser-provider"}' },
+    ])
+    await vi.waitFor(() => expect(push).toBeDefined())
+    push(`event: call\ndata: ${JSON.stringify({ callId: `${CALL}5` })}\n\n`)
+    await vi.waitFor(() => expect(sent.some(([, path]) => path === '/link/api/browser-provider/results')).toBe(true))
+    const order = sent.map(([method, path]) => `${method} ${path}`)
+    expect(order.indexOf(`PUT /link/api/browser-provider/results/${CALL}5/image`)).toBeLessThan(
+      order.indexOf('POST /link/api/browser-provider/results'),
+    )
+    expect(sent.find(([, path]) => path === '/link/api/browser-provider/results')![2]).toEqual({
+      callId: `${CALL}5`,
+      ok: true,
+      dispatched: false,
+      text: '截图',
+      image: true,
+    })
+    provider.stop()
+    expect(aborted).toBe(true)
+    expect(provider.state()).toEqual({ active: false, registered: false })
   })
 })
