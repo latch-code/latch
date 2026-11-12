@@ -76,6 +76,10 @@ do {
     case "phoneAgents": result = try phoneAgentsFixture(input)
     case "phoneAgentPages": result = try phoneAgentPagesFixture(input)
     case "phoneAgentActivity": result = try phoneAgentActivityFixture(input)
+    case "phoneAgentComputer": result = try phoneAgentComputerFixture(input)
+    case "nativeAgentComputer":
+        stage = "computer"
+        result = try await runNativeAgentComputer(input)
     case "nativeAgentActivity":
         stage = "activity"
         result = try await runNativeAgentActivity(input)

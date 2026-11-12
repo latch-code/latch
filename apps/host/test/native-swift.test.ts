@@ -1708,6 +1708,72 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 90_000)
+  it('reads 「电脑」 with a missed time, runs it now, and changes the switches from the actual Swift workspace against a real Host', async () => {
+    // The Host's clock, moved past a scheduled time while the Mac "sleeps", before the phone pairs.
+    let shift = 0
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => Date.now() + shift })
+    const report = (body: unknown) => host.raw('unix', 'api/host/state', { method: 'POST', body })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const saved = await owner.confirmed('agents', {
+        method: 'POST',
+        body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
+      })
+      expect(saved.status).toBe(201)
+      const agent = await owner.json<{ id: string }>('custom-agents', {
+        method: 'POST',
+        body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId: 'fake-agent' },
+      })
+      const at = new Date(Date.now() + 10 * 60_000)
+      const pad = (value: number) => String(value).padStart(2, '0')
+      const automation = await owner.json<{ id: string; nextRunAt: string }>('automations', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '晨报',
+          customAgentId: agent.id,
+          prompt: '写今天的晨报',
+          schedule: { kind: 'daily', time: `${pad(at.getHours())}:${pad(at.getMinutes())}` },
+          notify: false,
+        },
+      })
+      expect((await report({ state: 'sleeping' })).status).toBe(200)
+      shift = Date.parse(automation.nextRunAt) - Date.now() + 5 * 60_000
+      await expect
+        .poll(async () => (await owner.json<{ missed: unknown[] }>(`custom-agents/${agent.id}/computer`)).missed.length, {
+          timeout: 15_000,
+        })
+        .toBe(1)
+      expect((await report({ state: 'awake' })).status).toBe(200)
+      // Back to the real clock for the phone's pairing and window; the missed time and its cause are recorded.
+      shift = 0
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      // The phone's first change of 通知 never reaches the Host.
+      nativeDrop.add(`PATCH /link/api/custom-agents/${agent.id}`)
+      const result = await invoke(
+        {
+          operation: 'nativeAgentComputer',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          agentId: agent.id,
+          automationId: automation.id,
+        },
+        60_000,
+      )
+      expect(result).toEqual({ missed: true, notifications: true, changed: true, unknownThenRetry: true, ranNow: true, private: true })
+      expect(nativeDrop.size).toBe(0)
+      const stored = (
+        await owner.json<{ customAgents: Array<{ id: string; notifications?: unknown; keepAwakeForSchedules?: boolean }> }>('snapshot')
+      ).customAgents.find(item => item.id === agent.id)!
+      expect(stored.notifications).toEqual({ completed: false, failed: true, waiting: true })
+      expect(stored.keepAwakeForSchedules).toBe(true)
+    } finally {
+      nativeDrop.clear()
+      await host.close()
+    }
+  }, 90_000)
+
   it('stops a subagent, steers, retries, forks, changes a setting, clears context, searches and manages sessions from the actual Swift workspace', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
@@ -3819,6 +3885,139 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.takeDown).toEqual([true, true, true, true, true, true, true, true])
     expect(result.private).toBe(true)
   })
+  it('words 「电脑」 as the web does, writes the switches on the revision seen, and drops the computer with the window', async () => {
+    const owner = `agt_${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`
+    const other = `agt_${'2'.repeat(8)}-2222-4222-8222-${'2'.repeat(12)}`
+    const daily = `auto_${'a'.repeat(8)}-aaaa-4aaa-8aaa-${'a'.repeat(12)}`
+    const weekly = `auto_${'b'.repeat(8)}-bbbb-4bbb-8bbb-${'b'.repeat(12)}`
+    const now = '2026-11-13T12:00:00.000Z'
+    // The web's `whenWords`, by this machine's clock as the Swift fixture reads it.
+    const when = (at: string) => {
+      const date = new Date(at),
+        today = new Date(now)
+      const key = (value: Date) => `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`
+      const offset = (days: number) => key(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days))
+      const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+      if (key(date) === offset(0)) return `今天 ${clock}`
+      if (key(date) === offset(1)) return `明天 ${clock}`
+      if (key(date) === offset(-1)) return `昨天 ${clock}`
+      const year = date.getFullYear() === today.getFullYear() ? '' : `${date.getFullYear()}年`
+      return `${year}${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+    }
+    const snapshot = {
+      device: { dataScope: 'all' },
+      catalog: { features: { customAgents: true, automations: true } },
+      computer: { desktop: false, wokeAt: '2026-11-13T10:00:00.000Z' },
+      customAgents: [
+        { id: owner, revision: 3, notifications: { completed: false, failed: true, waiting: true }, keepAwakeForSchedules: true },
+        { id: other, revision: 1 },
+      ],
+      automations: [
+        { id: daily, customAgentId: owner, revision: 1, lastRun: { at: '2026-11-12T08:00:00.000Z', state: 'missed' } },
+        { id: weekly, customAgentId: owner, revision: 2 },
+      ],
+      tasks: [],
+    }
+    const result = await invoke({
+      operation: 'phoneAgentComputer',
+      owner,
+      now,
+      snapshot,
+      computer: {
+        computer: snapshot.computer,
+        missed: [
+          { automationId: daily, name: '晨报', at: '2026-11-13T08:00:00.000Z', cause: 'sleep' },
+          { automationId: weekly, name: '周\u202E报', at: '2026-11-12T20:00:00.000Z', cause: 'unknown' },
+          { automationId: daily, name: '晨报', at: '2026-11-12T08:00:00.000Z', cause: 'off' },
+          { automationId: daily, name: '晨报', at: '2026-11-11T08:00:00.000Z', cause: 'later' },
+          { automationId: 'auto_bad', name: '坏', at: '2026-11-11T08:00:00.000Z', cause: 'sleep' },
+        ],
+      },
+      awake: { computer: { desktop: true, keepAwake: 'schedule' }, missed: [] },
+    })
+    expect(result.online).toEqual({
+      status: '在线',
+      tone: 'done',
+      awakeFor: null,
+      woke: when('2026-11-13T10:00:00.000Z'),
+      missedTotal: 3,
+      missed: [
+        {
+          name: '晨报',
+          times: [`${when('2026-11-13T08:00:00.000Z')}：Mac 在睡眠`, `${when('2026-11-12T08:00:00.000Z')}：Mac 关机或 Latch 没有运行`],
+        },
+        { name: '周\\u{202E}报', times: [`${when('2026-11-12T20:00:00.000Z')}：睡眠、关机或 Latch 没有运行`] },
+      ],
+      keepAwakeNote: 'Latch 应用没有运行，现在不起作用',
+    })
+    expect(result.sleeping).toMatchObject({ status: '睡眠中', tone: 'neutral', keepAwakeNote: null, missedTotal: 3 })
+    expect(result.offline).toEqual({
+      status: '不在线',
+      tone: 'warn',
+      awakeFor: null,
+      woke: null,
+      missedTotal: 0,
+      missed: [],
+      keepAwakeNote: null,
+    })
+    expect(result.awake).toMatchObject({
+      status: '保持唤醒中',
+      tone: 'done',
+      awakeFor: '定时任务快到点了',
+      keepAwakeNote: null,
+      woke: null,
+    })
+    expect(result.unparsed).toBe(true)
+    expect(result.path).toBe(`/link/api/custom-agents/${owner}/computer`)
+    expect(result.badPath).toBe('refused')
+    expect(result.notifications).toEqual([
+      { label: '完成', on: false },
+      { label: '失败', on: true },
+      { label: '需要你处理', on: true },
+    ])
+    expect(result.keepAwake).toBe(true)
+    const writes = result.writes as Record<string, { body: Record<string, unknown> } & Record<string, unknown>>
+    expect(writes.keepAwake).toMatchObject({
+      method: 'PATCH',
+      path: `/link/api/custom-agents/${owner}`,
+      body: { keepAwakeForSchedules: true, baseRevision: 3 },
+      words: '保持唤醒的开关结果待确认',
+      kind: `agent(id: "${owner}")`,
+      handled: true,
+    })
+    // Exactly these keys: nothing else of the Agent goes with a switch.
+    const requestId = expect.stringMatching(/^[A-Za-z0-9_-]{16,80}$/u)
+    expect(writes.keepAwake!.body).toEqual({ keepAwakeForSchedules: true, baseRevision: 3, requestId })
+    expect(writes.backToDefault).toMatchObject({
+      method: 'PATCH',
+      path: `/link/api/custom-agents/${owner}`,
+      words: '通知开关的结果待确认',
+      handled: true,
+    })
+    expect(writes.backToDefault!.body).toEqual({ notifications: null, baseRevision: 3, requestId })
+    expect(writes.firstOff).toMatchObject({ path: `/link/api/custom-agents/${other}` })
+    expect(writes.firstOff!.body).toEqual({ notifications: { completed: true, failed: true, waiting: false }, baseRevision: 1, requestId })
+    // Free; then each of: a switch being written, busy, this Agent's held change, another pending write, offline, view only.
+    expect(result.locked).toEqual([false, true, true, true, true, true, true])
+    // backToDefault turns 完成 on, firstOff turns 需要你处理 off, keep-awake is no notification; one the Host has is none.
+    expect(result.heldKind).toEqual(['completed', 'waiting', null, 'none'])
+    expect(writes.general).toBe('refused')
+    expect(result.held).toEqual({ keepAwake: true, notifications: true })
+    expect(result.blocker).toEqual(['Mac 不在线，恢复后再改', '这台设备只能查看：它没有开始会话的权限。', null])
+    expect(result.shown).toEqual([true, false, false])
+    expect(result.private).toEqual([true, true, true])
+    expect(result.signature).toEqual([true, true, true])
+    expect(result.when).toEqual(
+      [
+        '2026-11-13T09:00:00.000Z',
+        '2026-11-14T09:00:00.000Z',
+        '2026-11-12T09:00:00.000Z',
+        '2026-11-01T09:00:00.000Z',
+        '2025-11-01T09:00:00.000Z',
+      ].map(when),
+    )
+  })
+
   it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
     const harness = (id: string, extra: Record<string, unknown> = {}) => ({
       id,

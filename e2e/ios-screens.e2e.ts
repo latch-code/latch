@@ -36,6 +36,7 @@ const SCENES = [
   'agent-profile',
   'agent-memory',
   'agent-schedules',
+  'agent-computer',
   'agent-results',
   'agent-activity',
   'agent-library',

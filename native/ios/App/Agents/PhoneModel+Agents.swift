@@ -25,7 +25,8 @@ extension PhoneModel {
             guard current == generation, verifiedUntil != nil else { return .closed }
             return .ready(value)
         } catch {
-            guard current == generation else { return .loading }
+            // A read superseded by a newer one (its task cancelled) says nothing about the Host: the newer one answers.
+            guard current == generation, !Task.isCancelled, !(error is CancellationError) else { return .loading }
             switch error as? NativeFailure {
             case .forbidden: return .locked
             case .resultUnknown: return .confirming
@@ -49,6 +50,11 @@ extension PhoneModel {
     func readAgent(_ id: String) async -> PhoneAgentRead {
         guard PhoneAgents.validId(id) else { return .missing }
         return await readAgentPart("/link/api/custom-agents/" + id)
+    }
+    /** 「电脑」 of an owner: what the Host recorded about its computer and the times its schedules missed. */
+    func readComputer(_ owner: String) async -> PhoneAgentRead {
+        guard let path = try? PhoneAgentComputer.path(owner: owner) else { return .missing }
+        return await readAgentPart(path)
     }
     func readAutomation(_ id: String) async -> PhoneAgentRead {
         guard PhoneAgents.validAutomation(id) else { return .missing }

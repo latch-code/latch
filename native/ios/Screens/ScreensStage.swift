@@ -13,6 +13,8 @@ import UIKit
     /** The Agent scenes: the profile sheet open (at 动态 or 记忆) or a new topic shown. */
     static var profile = false
     static var profilePart: AgentProfileSheet.Part?
+    /** The profile scrolled to 「电脑」, at full height. */
+    static var profileComputer = false
     static var newTopic = false
     static var scanning = false
     /** The list's search field, for the 内容中包含 scene. */
@@ -92,6 +94,15 @@ import UIKit
             model.sessionId = "ses_brief"
             model.detail = json(approvalText.replacingOccurrences(of: "\"id\":\"ses_wait\",\"title\":\"升级 swift-nio 到 2.104\"", with: "\"id\":\"ses_brief\",\"title\":\"汇总本周依赖更新\""))
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
+        case "agent-computer":
+            // 每日简报 with two missed times of one schedule, kept awake for a schedule, and its 完成 notification off.
+            model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity; profileComputer = true
+            model.snapshot = patched(model.snapshot) { object in
+                object["computer"] = json(#"{"desktop":true,"keepAwake":"schedule","wokeAt":"{{-10800}}"}"#)
+                object["customAgents"] = .array(object["customAgents"]!.array.map { agent in
+                    agent["id"].string == daily ? patched(agent) { $0["notifications"] = json(#"{"completed":false,"failed":true,"waiting":true}"#); $0["keepAwakeForSchedules"] = .bool(true) } : agent
+                })
+            }
         case "agent-results", "agent-activity", "agent-library":
             // 每日简报's topic with its runs' cards (one more than a place shows), a failure 立即运行 can retry, and a schedule proposal.
             model.tab = .agents; model.agentPath = [daily]
@@ -176,6 +187,7 @@ import UIKit
         if path.contains("/activity") { return .ready(json(activityText)) }
         if path.contains("/library") { return .ready(json(libraryText)) }
         if path.hasSuffix("/results") { return .ready(json(#"{"results":[]}"#)) }
+        if path.hasSuffix("/computer") { return .ready(json(path.contains(daily) ? computerText : #"{"computer":{"desktop":true},"missed":[]}"#)) }
         if path.hasSuffix("/proposals") {
             return .ready(path.contains(review) ? json(proposalsText) : path.contains(daily) ? json(scheduleProposals) : json(#"{"proposals":[]}"#))
         }
@@ -187,6 +199,11 @@ import UIKit
         return .missing
     }
 
+    private static var computerText: String { """
+    {"computer":{"desktop":true,"keepAwake":"schedule","wokeAt":"{{-10800}}"},
+     "missed":[{"automationId":"\(checks)","name":"每日依赖检查","at":"{{-14400}}","cause":"sleep"},
+      {"automationId":"\(checks)","name":"每日依赖检查","at":"{{-100800}}","cause":"unknown"}]}
+    """ }
     private static var releaseAgent: String { """
     {"id":"\(release)","name":"发布检查","avatar":{"kind":"face","bracket":"angle","eyes":"sleepy","hue":"wisteria"},"description":"发版前过一遍清单","harnessId":"standard","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1}
     """ }

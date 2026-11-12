@@ -159,7 +159,7 @@ public enum PhoneAgents {
     /** The snapshot with what only a content window may show taken out, for when a window closes. */
     public static func withoutPrivate(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
-        for key in ["customAgents", "automations", "agentProposals", "agentResults"] { value.removeValue(forKey: key) }
+        for key in ["customAgents", "automations", "agentProposals", "agentResults", "computer"] { value.removeValue(forKey: key) }
         return .object(value)
     }
     public static func validId(_ id: String) -> Bool { id == generalId || LinkBytes.matches(id, "agt_[a-f0-9-]{36}") }
@@ -366,6 +366,8 @@ public enum PhonePendingKind: Equatable, Sendable {
     case run(id: String)
     /** A schedule saved from a proposal. */
     case scheduleCreate
+    /** An Agent's own switches: 通知 or 到点前后保持唤醒. */
+    case agent(id: String)
     case session(id: String)
     case other
 }
@@ -377,6 +379,7 @@ public enum PhonePending {
             return .start
         }
         let parts = write.path.split(separator: "/").map(String.init)
+        if parts.count == 4, parts[2] == "custom-agents", write.method == "PATCH" { return .agent(id: parts[3]) }
         if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "memories" { return .memory(owner: parts[3]) }
         if parts.count >= 5, parts[2] == "custom-agents", parts[4] == "proposals" { return .proposal(owner: parts[3]) }
         if parts.count == 5, parts[2] == "automations", parts[4] == "enabled" { return .schedule(id: parts[3]) }
@@ -394,6 +397,7 @@ public enum PhonePending {
         case .schedule: return "定时任务的开关结果待确认"
         case .run: return "立即运行结果待确认"
         case .scheduleCreate: return "定时任务的保存结果待确认"
+        case .agent: return (try? NativeJSON.decode(write.body))?["keepAwakeForSchedules"] != .null ? "保持唤醒的开关结果待确认" : "通知开关的结果待确认"
         case .start: return (try? NativeJSON.decode(write.body))?["forkOf"] != .null ? "分叉结果待确认" : "提交结果待确认"
         case .session:
             return write.path.hasSuffix("/config") ? "切换结果待确认" : "提交结果待确认"

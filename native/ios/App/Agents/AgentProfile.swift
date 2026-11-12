@@ -2,8 +2,9 @@ import LatchNativeCore
 import SwiftUI
 
 /**
- * An Agent's profile, as a bottom sheet: its face, name and duty; 动态 · 资料库 · 记忆; 即将进行 with each schedule's switch; the
- * computer and where it works; Harness · 模型; then 设置. Editing the Agent or a schedule is not built here.
+ * An Agent's profile, as a bottom sheet: its face, name and duty; 动态 · 资料库 · 记忆; 即将进行 with each schedule's switch;
+ * 电脑 with its missed times and 到点前后保持唤醒; 通知; where it works; Harness · 模型; then 设置. Editing the Agent or a schedule
+ * is not built here.
  */
 struct AgentProfileSheet: View {
     @EnvironmentObject private var model: PhoneModel
@@ -17,6 +18,7 @@ struct AgentProfileSheet: View {
     /** The memory being written, held here with the sheet's navigation so a reread of the section never drops it. */
     @State private var editing: MemoryDraft?
     @StateObject private var files = SessionFilePreview()
+    @State private var detent = PresentationDetent.medium
     private var general: Bool { id == PhoneAgents.generalId }
     private var summary: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == id } ?? .null }
     private var entry: PhoneAgentEntry? { PhoneAgents.entry(model.snapshot, id: id, windowOpen: model.verifiedUntil != nil) }
@@ -32,7 +34,7 @@ struct AgentProfileSheet: View {
             .navigationDestination(item: $editing) { draft in MemoryEditor(owner: id, draft: draft, saved: reload) }
         }
         .sessionFilePreview(files)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
         // A reload keeps what is shown until the answer comes, so the memory editor pushed over it stays alive.
         .task(id: reading) {
@@ -53,12 +55,12 @@ struct AgentProfileSheet: View {
             }
         }
         #if LATCH_SCREENS
-        .onAppear { if let staged = ScreensStage.profilePart { part = staged } }
+        .onAppear { if let staged = ScreensStage.profilePart { part = staged }; if ScreensStage.profileComputer { detent = .large } }
         #endif
     }
     private func reload() { reading = UUID() }
     private func content(_ entry: PhoneAgentEntry) -> some View {
-        ScrollView {
+        ScrollViewReader { reader in ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header(entry)
                 VStack(alignment: .leading, spacing: 12) {
@@ -74,10 +76,9 @@ struct AgentProfileSheet: View {
                 if model.snapshot["catalog"]["features"]["automations"].bool {
                     section("即将进行") { UpcomingSection(id: id, agent: summary, openTopic: openTopic) }
                 }
-                section("电脑与工作位置") {
-                    fact("电脑") { Text(model.selectedHost.map(model.computerName) ?? "Mac") }
-                    fact("工作位置") { Text(entry.place ?? "不带项目") }
-                }
+                section("电脑") { ComputerSection(id: id, agent: general ? .null : summary) }.id("computer")
+                if !general && summary != .null { section("通知") { NotificationSection(agent: summary) } }
+                section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
                 section("Harness · 模型") {
                     HStack(spacing: 6) {
                         if let harness = entry.harnessId { EngineTile(mark: model.engineMark(harness), size: 14) }
@@ -99,6 +100,10 @@ struct AgentProfileSheet: View {
             }
             .padding(.horizontal, 20).padding(.bottom, 24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
         }
+        #if LATCH_SCREENS
+        .task { if ScreensStage.profileComputer { try? await Task.sleep(for: .milliseconds(600)); reader.scrollTo("computer", anchor: .top) } }
+        #endif
+        }
     }
     private func header(_ entry: PhoneAgentEntry) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -117,12 +122,6 @@ struct AgentProfileSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(PhoneTheme.muted)
             content()
-        }
-    }
-    private func fact<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
-        HStack(spacing: 12) {
-            Text(label).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(width: 64, alignment: .leading)
-            value().font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
         }
     }
     @ViewBuilder private func detailed<Content: View>(@ViewBuilder _ content: (NativeJSON) -> Content) -> some View {

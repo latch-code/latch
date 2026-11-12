@@ -63,6 +63,12 @@ const ATTACH = process.env.LATCH_IOS_LIVE_ATTACH === '1'
  * mid-run, so its card offers 立即运行.
  */
 const ACTIVITY = process.env.LATCH_IOS_LIVE_ACTIVITY === '1'
+/**
+ * `LATCH_IOS_LIVE_COMPUTER=1`: also 晨报助手 on the fake ACP Agent with a daily schedule the Mac "slept" past: the Host's
+ * clock moves past the time between a sleep and a wake report, as `agent-computer.e2e.ts` does, and back before the phone
+ * pairs, so its 「电脑」 shows 错过 1 次 with the cause.
+ */
+const COMPUTER = process.env.LATCH_IOS_LIVE_COMPUTER === '1'
 type Simulators = { devices: Record<string, Array<{ name: string; udid: string; state?: string }>> }
 const listSimulators = (): Simulators['devices'][string] =>
   Object.values(
@@ -262,7 +268,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       await simctl('privacy', udid, 'grant', 'camera', BUNDLE).catch(() => {})
 
       // The Host's native listener is on the LAN from here until `finally`.
-      host = await startTestHost({ native: { host: address, port: 0 } })
+      let shift = 0
+      host = await startTestHost({ native: { host: address, port: 0 }, now: () => Date.now() + shift })
       // A project with one commit and the fake ACP Agent, so a session can start, stream and ask for a step.
       /** A Host with one committed project and the fake ACP Agent, and its owner device. */
       const agents = new Map<TestHost, string>()
@@ -294,6 +301,10 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       if (HISTORY) await addHistory(host, owner)
       if (AGENTS) await addAgent(owner)
       const scheduled = ACTIVITY ? await addActivityAgent(host, owner) : undefined
+      if (COMPUTER)
+        await addMissedAgent(host, owner, agents.get(host)!, value => {
+          shift = value
+        })
       other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
       const otherOwner = other ? await prepare(other) : undefined
 
@@ -492,6 +503,37 @@ async function addAgent(owner: TestDevice): Promise<void> {
       notify: false,
     },
   })
+}
+
+/** 晨报助手 with a daily schedule whose time passed while the Host's clock was moved on between a sleep and a wake report. */
+async function addMissedAgent(host: TestHost, owner: TestDevice, harnessId: string, shift: (ms: number) => void): Promise<void> {
+  const report = (body: unknown) => host.raw('unix', 'api/host/state', { method: 'POST', body })
+  const agent = await owner.json<{ id: string }>('custom-agents', {
+    method: 'POST',
+    body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId, mode: 'agent' },
+  })
+  const at = new Date(Date.now() + 10 * 60_000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const automation = await owner.json<{ id: string; nextRunAt: string }>('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name: '晨报',
+      customAgentId: agent.id,
+      prompt: '写今天的晨报',
+      schedule: { kind: 'daily', time: `${pad(at.getHours())}:${pad(at.getMinutes())}` },
+      notify: false,
+    },
+  })
+  expect((await report({ state: 'sleeping' })).status).toBe(200)
+  shift(Date.parse(automation.nextRunAt) - Date.now() + 5 * 60_000)
+  const deadline = Date.now() + 15_000
+  while ((await owner.json<{ missed: unknown[] }>(`custom-agents/${agent.id}/computer`)).missed.length === 0) {
+    if (Date.now() > deadline) throw new Error('The schedule was not recorded as missed')
+    await pause(200)
+  }
+  expect((await report({ state: 'awake' })).status).toBe(200)
+  shift(0)
 }
 
 /** 资讯 on the fake ACP Agent with a project of its own, a schedule whose run edits files and one whose agent exits. */

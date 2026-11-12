@@ -230,7 +230,7 @@ public struct PhoneScheduleLocation: Equatable, Sendable, Identifiable {
 public enum PhoneAgentWrites {
     public static func handles(_ write: NativePendingWrite) -> Bool {
         switch PhonePending.kind(write) {
-        case .memory, .proposal, .schedule, .run, .scheduleCreate: true
+        case .memory, .proposal, .schedule, .run, .scheduleCreate, .agent: true
         default: false
         }
     }
