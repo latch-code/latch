@@ -39,6 +39,7 @@ import {
   CopyButton,
   ChevronRightGlyph,
   BlockedGlyph,
+  AlertGlyph,
   DiffGlyph,
   CloseGlyph,
 } from '@latch/ui'
@@ -58,6 +59,7 @@ const stateWords: Partial<Record<ShownToolState, string>> = {
   rejected: '已拒绝',
   expired: '已过期',
   blocked: JUDGED_COPY.denied,
+  unknown: '结果未知',
 }
 
 const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
@@ -266,6 +268,8 @@ export const ToolCard = memo(
     // The verb says the kind; the glyph at the row's end says only a state the words do not already make plain.
     const glyph = failed ? (
       <CloseGlyph className="process-failed" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
+    ) : shown === 'interrupted' || shown === 'unknown' ? (
+      <AlertGlyph className="process-unknown" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'cancelled' || shown === 'rejected' || shown === 'blocked' ? (
       <BlockedGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : shown === 'expired' ? (
@@ -335,7 +339,9 @@ export const ToolCard = memo(
           && (unrun || (decision.outcome === 'allowed' && (state === 'completed' || state === 'running'))) ? (
           <DecisionWords decision={decision} />
         ) : (
-          (stateWords[shown] ?? judgedWords)
+          (stateWords[shown]
+          ?? (shown === 'interrupted' ? (state === 'failed' ? '已中断 · 结果未知' : '已中断') : undefined)
+          ?? judgedWords)
         )}
       </StatusWords>
     )

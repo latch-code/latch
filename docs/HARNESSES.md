@@ -215,7 +215,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer` 加进去，pi 在手上的工具调用结束后、下一次请求模型之前读到它；其他时候交回 Host 排队。
 - **`/compact`。** pi 的 RPC 不列出它自己界面里的 `/compact`，当作文字发出去会交给模型，所以会话第一轮开始时 Latch 把它列为 pi 的命令（「把之前的对话总结成摘要，腾出上下文；可以在命令后写总结时要注意什么」）。一条消息只有 `/compact`，或 `/compact` 后跟空白和说明、不带图片时，发 pi 的 `compact` 命令（说明放在 `customInstructions`），不发 `prompt`。这条消息留在记录里，作为一轮运行：pi 的 `compaction_start`、`compaction_end` 成为已有的压缩行（「pi 已压缩上下文」加摘要，「pi 压缩上下文失败：原因」，或「pi 已取消压缩上下文」，pi 自己加在原因前的 `Compaction failed: ` 去掉），pi 回答 `compact` 时这一轮结束；pi 报告了压缩时，压缩失败或被扩展取消都不让这一轮失败，还没报告压缩就拒绝时这一轮失败并写 pi 的原因（遮住像密钥的部分）。停止照常先 `clear_queue` 再 `abort`，pi 会中止压缩，这一轮是已停止。之后的上下文占用未知，直到下一条回复，因为 pi 在压缩后不报告它。pi 压缩前会先中止手上的事，所以 `/compact` 只在两轮之间：它的命令带 `idleOnly`，运行中斜杠菜单不列它，排队、把排队的消息改成它或追加时 Host 拒绝（409 `command-queued`，「/compact 不能排队或追加，请等本轮结束后发送。」），线也不把它当作追加。pi 自己的其他命令（`get_commands` 列出的扩展、提示与技能命令）还没有列出。
 - **工具与其他事件。** `tool_execution_*` 成为工具行：`bash` 是命令，`read` 是读取，`edit`、`write` 是改文件，`grep`、`find`、`ls` 是搜索，`edit` 的 diff 以文本显示。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。模型服务的错误可能带出一段密钥：pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
-- **扩展的提问。** 扩展的 `confirm` 像审批一样交给人，选项是「允许」「拒绝」；`select`、`input`、`editor` 按「看不懂的请求」写进会话，并回答 pi「已取消」。
+- **扩展的提问。** 扩展的 `confirm` 像审批一样交给人，选项是「允许」「拒绝」；`select`、`input`、`editor` 按「不支持的请求」写进会话，并回答 pi「已取消」。
 - **分叉。** 从一个 pi 会话分叉到同一个 pi 定义、同一个文件夹时（「从这里分叉」与「从这里编辑」都是），Latch 用 pi 自己的会话文件分叉：新会话带着 pi 到那一轮为止的原样记录，第一条只发人写的话，不发背景文本（`HarnessCapabilities.fork: 'native'`，见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。做法：新会话的进程 `switch_session` 到来源的会话文件，`get_entries` 读出记录，沿 pi 所在的分支找来源下一轮开始（那条用户消息记下的时间）之后的第一条用户消息，`fork` 在它之前；分叉点就是最新一轮时 `clone` 整条分支。Latch 在上一轮结算之后才开始下一轮，所以这个时间之前写下的都属于分叉点及以前；pi 与 Host 在同一台电脑上用同一个时钟。分叉后用 `get_entries` 从预期的最后一条往后读，核对 pi 复制出的新文件正好停在那里（pi 复制时保留条目 ID；之后只能有设置、标签之类模型看不到的条目）。分叉在发送时才做，而且只在第一轮做：第一轮在 pi 打开会话之前就结束了（停止、进程没能启动）时，下一轮像其他新会话一样开始，不再分叉，也不写分叉的原因；背景文本只在第一条消息里，重试第一轮会连同它一起重发，另写一条新消息则不带。pi 的 `fork` 返回的那条消息文字不用：「从这里编辑」已经把 Latch 记下的原文放进输入框，pi 的文字里还有 Latch 附加的指令块与文件引用。做不到时退回背景文本，并在新会话里写一行「pi 没有用它自己的记录分叉：<原因>。这次以文字带上来源会话到这一轮为止的记录。」：不在来源的文件夹里、分叉点之后清空过上下文、来源会话文件已不在（pi 打开不存在的文件得到空会话，`get_entries` 没有记录）、下一轮开始之后的压缩（例如 `/compact`）会被带进来、扩展取消了 `switch_session` 或 `fork`、pi 拒绝命令或复制出的文件没有停在那一轮。退回前进程先 `new_session` 离开来源（这一步也被扩展取消时停止进程），Latch 的会话不会在来源的文件上继续，分叉也不往来源的文件里写（pi 的扩展在打开会话时自己写的除外）。已知限制：系统时钟在两轮之间往回拨时，按时间找到的位置可能错一轮，核对只能确认 pi 停在了所要求的条目上。
 
 ## 通知与压缩
@@ -354,14 +354,22 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 
 - `cursor/create_plan`：在会话里成为一条审批「计划：<名称>」，内容是它的概述与计划正文，选项是「接受计划」与「不接受」。回答按 Cursor 的形状回传（`{ outcome: { outcome: "accepted" | "rejected" | "cancelled" } }`），停止会话时是 `cancelled`；回答后这一行结束。
 - `cursor/update_todos`：成为会话的计划进度；`merge` 按条目 `id` 合并到上一份，被取消的条目不再列出。
-- `cursor/ask_question`：Latch 还不能在这里回答 Cursor 的选择题，所以回答 `skipped`，并在会话里写一行它问了什么（问题与选项），请人在下一条消息里回答。
+- `cursor/ask_question` 不再只属于 Cursor，见下节「Agent 的提问」。
 - `cursor/task`、`cursor/generate_image` 等通知不处理。
 
-其他 Harness 发来同名请求时照「看不懂的请求」处理。
+其他 Harness 发来 `cursor/create_plan`、`cursor/update_todos` 时照「不支持的请求」处理。
 
-## 看不懂的请求
+## Agent 的提问
 
-Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（包括未声明的文件系统、终端与追问）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息，说明方法名与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。`unrecognized.at` 不早于 `lastEventAt` 表示 Agent 之后再无动静，会话进「等你处理」；一有动静，Host 就让列表重读。会话尚未建立时只写入 Host 日志。
+源码：[questions.ts](../packages/harness-acp/src/questions.ts)。Host 给 Driver `askUser` 与 `questionSettled`（`HarnessHostOptions`），提问与内置 Harness 的「向你提问」是同一张卡、同一个回答接口（`POST /tasks/:id/questions/:qid/answer`，要 `run`，`requestId` 重试同一回答）。
+
+- **ACP 标准提问 `elicitation/create`。** 只在 Host 提供 `askUser` 时在 `initialize` 声明 `clientCapabilities.elicitation: { form: {} }`；不声明 URL 模式（它会把人带到 Latch 无法担保的页面）。表单的每个字段是一道题：`enum`、`oneOf`/`anyOf` 的取值是选项，`boolean` 是「是 / 否」，元素是枚举的数组可多选，没有取值的字符串、数字用「其他」填写；没有字段的表单问「同意 / 不同意」。超过 10 个字段、超出提问卡的长度（说明 2000、题目与同意问题 1000、选项 500 字符）、URL 模式或读不懂的字段答复 `-32602`，会话里写一行「这个提问的形式 Latch 还不能显示」；URL 模式的请求内容（含链接）不写进会话。回答后答复 `{ action: 'accept', content }`（数字按填写的文字解析，解析不了的字段不填）；停止或这一轮结束时答复 `{ action: 'cancel' }`。
+- **`cursor/ask_question`，任何 Harness 发来都读。** 校验与原来相同（最多 10 题、每题 20 个选项，文字 4000 字符），另读 Cursor 文档里的 `id` 与 `allowMultiple`。问题与选项都有 `id` 时放进提问卡，回答按 Cursor 的形状 `{ outcome: { outcome: 'answered', answers: [{ questionId, selectedOptionIds }] } }`；人只写了「其他」时 Cursor 无法收选项外的文字，答复 `skipped` 并把这段文字放在 `reason` 里。超出提问卡的长度时同样答复 `-32602` 并写一行说明；缺 `id` 或 Host 不提供 `askUser` 时照旧答复 `skipped`，在会话里写下它问了什么，请人在下一条消息里回答。
+- **行与状态。** 每个提问都有自己的一行 `ask_user`（`tool:<轮次>:ask-<UUID>`），从不借用 Agent 同 ID 的调用行（那一行可能还在运行，两次提问也可能同 ID）；Agent 的调用 ID 只作为这一行的链接。等待时会话为 `waiting-approval`、计时算等人；回答按选项位置（`optionIds`）而不是文字映射回 Agent 的取值。回答写进这一行的结果（`latch.question-result`）并落盘后，才由 `questionSettled` 给回答的设备回执；落盘失败时回执是「结果尚未确认」，不说已回答。没人回答（停止、这一轮结束）的提问记为已结束，Host 停止时这一行带 `interrupted`。Host 的问答记录逐条读取，读不了的一条跳过并在日志里记下条数，不会让 Host 无法启动。
+
+## 不支持的请求
+
+Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问。其他请求（包括未声明的文件系统与终端）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息「<Harness> 发来请求 <方法>：Latch 不支持这个请求」与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。`unrecognized.at` 不早于 `lastEventAt` 表示 Agent 之后再无动静，会话进「等你处理」；一有动静，Host 就让列表重读。会话尚未建立时只写入 Host 日志。
 
 ## 持久化与恢复
 

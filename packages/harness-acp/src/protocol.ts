@@ -4,16 +4,19 @@ import { z } from 'zod'
 export const PROTOCOL_VERSION = 1
 
 /**
- * What Latch tells every agent it can take. No file system, terminal or elicitation, so agents keep those to themselves;
+ * What Latch tells every agent it can take. No file system or terminal, so agents keep those to themselves; questions
+ * (`elicitation`, form mode only) where the Host can put them to the person, never URL mode, which would send them to a
+ * page Latch cannot vouch for;
  * notices and compaction are shown in the transcript, so an agent reports them as such instead of as messages or tools;
  * subagents are shown where they began, and their requests for approval come to the session that started them.
  * `terminalLogin`: the agent may list logins that run its own program in a terminal on this computer, which Latch can
  * open; false for a harness whose vendor leaves signing in to its own flow.
  */
-export function clientCapabilities(terminalLogin: boolean) {
+export function clientCapabilities(terminalLogin: boolean, questions = false) {
   return {
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
+    ...(questions ? { elicitation: { form: {} } } : {}),
     session: { notices: {}, compaction: {} },
     subagents: {},
     ...(terminalLogin ? { auth: { terminal: true } } : {}),

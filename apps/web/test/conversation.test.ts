@@ -620,11 +620,11 @@ describe('the live run', () => {
         activity: 'model',
         since: at(0),
         lastEventAt: at(1000),
-        unrecognized: { count: 1, at: at(1000), messageId: 'n1' },
+        unrecognized: { count: 1, at: at(1000), method: 'terminal/create', messageId: 'n1' },
       },
       5000,
     )
-    expect(unknown).toEqual({ tone: 'amber', text: 'Codex 发来一个看不懂的请求', actions: ['stop'], viewMessageId: 'n1' })
+    expect(unknown).toEqual({ tone: 'amber', text: 'Codex 发来不支持的请求 terminal/create', actions: ['stop'], viewMessageId: 'n1' })
     // The engine went on after the request it did not get an answer to: nothing is stuck on it.
     const wentOn = quiet(
       { runId: 'r', activity: 'model', since: at(0), lastEventAt: at(2000), unrecognized: { count: 1, at: at(1000) } },
@@ -669,6 +669,30 @@ describe('the live run', () => {
       retry: false,
     })
     expect(runEndLine(summary({ reason: 'turn-ended', at: at(0) }), 'Codex')).toBeUndefined()
+    // The Host's stop is nobody's cancel: it says so, offers 重试, and claims nothing about the calls it cut off.
+    expect(runEndLine(summary({ reason: 'host-stopped', at: at(0), unknownResults: [{ messageId: 'm', name: 'make' }] }), 'Codex')).toEqual(
+      {
+        tone: 'amber',
+        text: 'Latch 重启时中断 · 这 1 条命令结果未知，请核对',
+        unknown: ['make'],
+        retry: true,
+      },
+    )
+  })
+
+  it("reads a call the Host's stop cut off as interrupted, and one with no reported result as unknown, never as failed", () => {
+    const unknown = 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。'
+    expect(shownToolState(tool('a', { state: 'failed', text: unknown, interrupted: true }))).toBe('interrupted')
+    expect(shownToolState(tool('b', { state: 'cancelled', text: 'TOOL_NOT_STARTED: x', interrupted: true }))).toBe('interrupted')
+    expect(shownToolState(tool('c', { state: 'failed', text: unknown }))).toBe('unknown')
+    expect(shownToolState(tool('d', { state: 'failed', text: 'TOOL_ERROR: boom' }))).toBe('failed')
+    // An earlier turn the Host's stop cut off reads as interrupted, not as stopped by someone.
+    const turn = firstTurn([user('u'), reply('r', '一半', { state: 'cancelled', interrupted: true })])
+    expect(turnOutcome(turn, undefined)).toBe('interrupted')
+    expect(sideEffects(turn)).toMatchObject({ unknown: 0 })
+    const cut = firstTurn([user('u'), tool('t', { state: 'failed', text: unknown, interrupted: true, tool: { kind: 'execute' } })])
+    expect(sideEffects(cut)).toMatchObject({ unknown: 1 })
+    expect(resendWarning(sideEffects(cut))).toContain('结果未知')
   })
 
   it('follows the prompt until the agent answers', () => {

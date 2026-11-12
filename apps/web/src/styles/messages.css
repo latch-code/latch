@@ -379,6 +379,9 @@
 .turn-record.outcome-failed > .process-slot {
   color: var(--red);
 }
+.message-system.is-interrupted > .process-slot {
+  color: var(--amber-icon);
+}
 .message-system:not(.is-failed) {
   font-size: var(--fs-caption);
 }
@@ -571,6 +574,10 @@
 }
 .process-failed {
   color: var(--red);
+}
+/* Interrupted or of unknown result: it waits for the person to check, which is no failure. */
+.process-unknown {
+  color: var(--amber-icon);
 }
 /* The chevron sits right after the words, in the muted ink; opening turns it a quarter. */
 .process-chevron {

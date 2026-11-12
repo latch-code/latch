@@ -118,6 +118,8 @@ struct QuestionDrawer: View {
     let question: NativeJSON
     let sessionId: String
     let total: Int
+    /** Who asks: the session's Harness, by the name the list shows. */
+    let asker: String
     @State private var page = 0
     @State private var choices: [String: Set<String>] = [:]
     @State private var other: [String: String] = [:]
@@ -129,13 +131,14 @@ struct QuestionDrawer: View {
         DrawerCard {
             HStack(spacing: 6) {
                 Image(systemName: "questionmark.bubble").font(.system(size: 14)).foregroundStyle(PhoneTheme.amberIcon)
-                Text("等你回答").font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.amber)
+                // The agent's words are untrusted: hidden characters (bidi controls among them) are drawn, never obeyed.
+                Text(PhoneConversation.visible(asker) + " 想问你").font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.amber).lineLimit(1)
                 if items.count > 1 { Text("\(page + 1)/\(items.count)").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 Spacer()
                 if page > 0 { Button("上一个") { page -= 1 }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
             }
-            if let prompt = question["prompt"].string, !prompt.isEmpty, page == 0 { Text(prompt).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(3) }
-            Text(item["label"].string ?? "").font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink)
+            if let prompt = question["prompt"].string, !prompt.isEmpty, page == 0 { Text(PhoneConversation.visible(prompt)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(3) }
+            Text(PhoneConversation.visible(item["label"].string ?? "")).font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink)
             BoundedScroll(limit: 240) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(item["options"].array, id: \.id) { option in optionRow(option, question: item) }
@@ -167,8 +170,8 @@ struct QuestionDrawer: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: on ? "checkmark.circle.fill" : "circle").foregroundStyle(on ? PhoneTheme.accent : PhoneTheme.faint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(option["label"].string ?? "").font(.system(size: 15)).foregroundStyle(PhoneTheme.ink)
-                    if let description = option["description"].string { Text(description).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                    Text(PhoneConversation.visible(option["label"].string ?? "")).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink)
+                    if let description = option["description"].string { Text(PhoneConversation.visible(description)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 }
                 Spacer(minLength: 0)
             }.padding(.vertical, 6).contentShape(Rectangle())

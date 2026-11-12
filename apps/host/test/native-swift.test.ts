@@ -839,7 +839,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.runEnds).toEqual([
       { failed: true, text: 'Codex 已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对', unknown: ['pnpm test'] },
       { failed: false, text: '已强制停止 · 这 2 条命令结果未知，请核对', unknown: ['a', 'b'] },
-      { failed: false, text: '这一轮被中断了', unknown: [] },
+      { failed: false, text: 'Latch 重启时中断', unknown: [] },
       null,
       { failed: false, text: 'Codex 结束了这一轮 · 这 1 条命令结果未知，请核对', unknown: [] },
       null,

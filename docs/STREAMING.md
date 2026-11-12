@@ -57,7 +57,7 @@ Provider.stream             Standard Runtime             Host                   
 | SSE 事件 | 发送条件 | 客户端动作 |
 | --- | --- | --- |
 | `task-state` | 某任务变化，且此连接选中了该任务 | 校验事件和版本，替换当前 detail；同时合并该任务的摘要和审批 |
-| `tasks-invalidated` | 未选中的任务摘要或审批变化 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
+| `tasks-invalidated` | 未选中的任务摘要或审批变化。私有会话（Agent、通用、接入、定时与 `agentPrivate`）的这一帧不发给数据范围不是 `all` 的设备，连不带 ID 的提示也不发（否则能看出私有会话何时有动静）；原生回放同样按读者略过，原生游标只看先后，序号留下空缺没有关系 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
 | `refresh` | 设备、配置等整体变化（含 Harness 的版本检测结果变化），流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
 | `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
 | `app.data` | 插件页面的一个文档变了：`{ type, instanceId, pluginId, scope, key, version }`（删除时 `version` 为 0）；只发给能读那个作用域的连接，私有会话的文档只给数据范围 `all` 的设备 | 打开着该插件页面的客户端只把本插件、页面声明过的作用域的变化经桥转给页面（`storage.onChange`），页面自己决定是否重读；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#存储)） |
@@ -245,8 +245,12 @@ Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThres
 | --- | --- | --- |
 | `process-exited` | Harness 进程自己退出，或超出协议限制被结束 | `failed`（停止途中退出时为 `interrupted`） |
 | `forced-stop` | 停止在 30 秒内没有结算，Latch 结束了进程 | `interrupted` |
-| `host-stopped` | Host 在运行期间停止或重启 | `interrupted` |
+| `host-stopped` | Host 在运行期间停止或重启（正常停止与崩溃后重启都算，不当作谁的取消） | `interrupted`，`runOutcome` 也是 `interrupted` |
 | `turn-ended` | Harness 结束了这一轮，但有调用没有报告结果 | 按这一轮的结果 |
+
+`host-stopped` 的这一轮另外留下一条系统消息「Latch 重启时中断。…」（`state: 'cancelled'`、`Message.interrupted`），不是失败；当时没有报告结果的工具行带 `interrupted`：开始过的是 `failed` 且输出含 `TOOL_OUTCOME_UNKNOWN`（做了什么没人知道），没开始的是 `cancelled`；中断前已报告完成的调用照旧是完成。客户端把这些行写成「已中断 · 结果未知」或「已中断」（琥珀色），没有 `interrupted` 而结果未知的写「结果未知」，都不写成失败；最新一轮的结束行写「Latch 重启时中断」并给「重试」（ACP 会话重试时照常先 `session/resume`、`session/load`，都不支持则 `harness-session-lost` 与「在新会话中继续」），重试前的确认会说明有几个操作结果未知。
+
+**失败在原地说明。** 一轮失败时的系统消息就是原因：Host 或模型服务的 `AppError` 文字、Harness 的错误，都先经 `redactSecrets`。它带 `Message.errorCode`（AppError 的 code；模型服务的 HTTP 状态记为 `http-401` 这样的码），客户端据此给出一个下一步（`apps/web/src/conversation/failureAction.ts`）：Harness 的命令、版本或定义问题「打开设置 › Harness」，模型不能回答「换个模型」（打开输入框的模型菜单），模型服务拒绝密钥或地址不允许「打开设置 › 模型服务」，会话不能继续「在新会话中继续」，项目目录失效不给按钮（由项目恢复面板说明），其他都是「重试」。设置只对所有者设备出现。输入框里被 Host 确定拒绝的发送按同一个 code 在原因旁给出同样的下一步。
 
 `unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是名称），最多 32 条，更多时带 `unknownResultsTruncated`。`name` 是命令文本，所以 `unknownResults` **只在会话详情里**；列表与取消回执只带条数 `unknownResultCount`。进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，定时任务不能把它当作可以重试的失败。
 
@@ -348,7 +352,7 @@ Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Messag
 
 ## Agent 提问与回答
 
-`catalog.features.questions` 表示 Host 支持内置问答接口，不代表 ACP Agent 支持。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。
+`catalog.features.questions` 表示 Host 支持内置问答接口。ACP Agent 的提问（标准的 `elicitation/create` 表单模式，以及任何 Agent 发来的 `cursor/ask_question`）经 `HarnessHostOptions.askUser` 进入同一张提问卡，见 [HARNESSES.md](./HARNESSES.md#agent-的提问)。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。
 
 问答沿用审批等待的传输状态，详情里的 questions 决定界面显示「等你回答」。工作计时与审批等待使用同一暂停区间。Host 重启结束未答题；回答接收与工具结果之间崩溃时，只有实际会话的 completed 输出完全匹配才恢复已回答回执，不据客户端声称的成功继续执行。
 

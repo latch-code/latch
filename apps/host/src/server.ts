@@ -90,6 +90,8 @@ import {
 } from '@latch/protocol'
 import {
   AppError,
+  type AskUserInput,
+  type HarnessHostOptions,
   type FileTrackingInput,
   type HarnessDriver,
   type HarnessSecurityEvent,
@@ -1402,7 +1404,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     purgeTimer.unref()
     startupCleanup.push(() => clearInterval(purgeTimer))
     startupCleanup.push(() => customAgents.close())
-    const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
+    const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id), log })
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
     await registry.enable('user-questions')
@@ -1860,6 +1862,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const traffic = new TrafficMeter(now)
     // A task-state frame goes to every stream that selected its session; its text is the same for all of them.
     const frames = new WeakMap<ChangeEvent | TaskStateEvent, string>()
+    // List hints about a private session: only a device that may read it hears them.
+    const privateHints = new WeakSet<ChangeEvent | TaskStateEvent>()
     let pendingGlobal = false
     let eventTimer: ReturnType<typeof setTimeout> | undefined
     let flushing = false
@@ -3269,6 +3273,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             },
             // Only where Latch decides each call, which the hub has settled by the time it creates the Bridge.
             ...(hub!.levelOf(driver.id) === 'L1' ? { classifyToolCall } : {}),
+            // The built-in harness asks through its ask_user tool; other harnesses' questions go to the same card.
+            ...(driver.id === STANDARD
+              ? {}
+              : {
+                  askUser: ({ sessionId, callId, prompt, questions: asked, signal }: AskUserInput) =>
+                    questions.ask({ prompt, questions: asked }, { sessionId, callId, signal }),
+                  questionSettled: ({ state, ...context }: Parameters<NonNullable<HarnessHostOptions['questionSettled']>>[0]) =>
+                    state === 'unknown' ? questions.resultUnknown(context) : questions.resultCommitted({ ...context, state }),
+                }),
           }),
       })
     }
@@ -4901,7 +4914,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         streams.delete(res)
         return
       }
-      if (event.type === 'task-state' && privateSession(event.detail.summary) && devices.get(stream.deviceId)?.dataScope !== 'all') return
+      const narrow = devices.get(stream.deviceId)?.dataScope !== 'all'
+      if (event.type === 'task-state' && privateSession(event.detail.summary) && narrow) return
+      // Its list did not change, and even a hint without the ID would say when a private session moved: nothing goes.
+      // The native cursor only orders frames, so the gap in sequence is fine.
+      if (
+        narrow
+        && event.type === 'tasks-invalidated'
+        && event.sessionId !== undefined
+        && (privateHints.has(event) || hub!.agentPrivate(event.sessionId))
+      )
+        return
       // A connection can join while an older batch awaits an external Bridge.
       // Equal revisions are valid for different events in the same batch.
       if (event.revision < stream.lastSentRevision) return
@@ -5049,6 +5072,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const invalidated = summaryChanged
             ? nativeReplay.publish({ type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
             : undefined
+          // Recorded with the event, so a replay after the session is gone still hides it.
+          if (invalidated && (privateSession(detail.summary) || hub!.agentPrivate(sessionId))) privateHints.add(invalidated)
           for (const [res, stream] of streams) {
             if (stream.sessionId === sessionId) send(res, event)
             else if (invalidated) send(res, invalidated)

@@ -16,22 +16,6 @@ const plan = z.object({
   plan: z.string().max(64 * 1024),
   todos: todos.optional(),
 })
-const question = z.object({
-  toolCallId: z.string().min(1).max(256),
-  title: text.optional(),
-  questions: z
-    .array(
-      z.object({
-        prompt: text,
-        options: z
-          .array(z.object({ label: text }))
-          .max(20)
-          .optional(),
-      }),
-    )
-    .min(1)
-    .max(10),
-})
 const todoUpdate = z.object({ todos, merge: z.boolean().optional() })
 
 const STATUS = new Set(['pending', 'in_progress', 'completed'])
@@ -85,6 +69,7 @@ export const cursorProfile: HarnessProfile = {
   extensions: {
     requests: {
       // A plan Cursor wants approved before it builds: the person accepts or not, like any other ask in the session.
+      // `cursor/ask_question` is read for every harness that sends it (questions.ts).
       'cursor/create_plan': {
         ask(params) {
           const parsed = plan.safeParse(params)
@@ -110,27 +95,6 @@ export const cursorProfile: HarnessProfile = {
             : optionId === 'reject'
               ? { outcome: { outcome: 'rejected' } }
               : { outcome: { outcome: 'cancelled' } },
-      },
-      // Latch has no way yet to put Cursor's multiple-choice questions to the person, so it says so instead of answering.
-      'cursor/ask_question': {
-        decline(params, agentName) {
-          const parsed = question.safeParse(params)
-          if (!parsed.success) return undefined
-          const lines = parsed.data.questions.map(item => {
-            const choices = item.options?.map(option => option.label).join(' / ')
-            return `- ${item.prompt}${choices ? `（${choices}）` : ''}`
-          })
-          return {
-            note: [
-              `${agentName} 问${parsed.data.title ? `：${parsed.data.title}` : ''}`,
-              ...lines,
-              'Latch 还不能在这里回答它的提问，已让它跳过；可以在下一条消息里直接回答。',
-            ].join('\n'),
-            reply: {
-              outcome: { outcome: 'skipped', reason: 'The client cannot show questions; the user may answer in the next message.' },
-            },
-          }
-        },
       },
     },
     notifications: {

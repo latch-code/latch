@@ -33,5 +33,6 @@ export interface QuestionReceipt {
 export interface QuestionResult {
   kind: 'latch.question-result'
   requestId: string
-  answers: Array<{ questionId: string; label: string; choices: string[]; other?: string }>
+  /** `optionIds`: what was chosen, by ID (Hosts before it gave only the labels). */
+  answers: Array<{ questionId: string; label: string; optionIds?: string[]; choices: string[]; other?: string }>
 }

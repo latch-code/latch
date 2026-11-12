@@ -153,11 +153,12 @@ export function waitKind(task: TaskSummary): WaitKind | undefined {
   if (live?.activity === 'cancelling') return undefined
   if (task.status !== 'running' && task.status !== 'waiting-approval') return undefined
   const asks = [
-    ...(task.status === 'waiting-approval' ? ['审批'] : []),
+    // A question also holds the session at waiting-approval: that alone is no approval.
+    ...(task.status === 'waiting-approval' && !task.pendingQuestions ? ['审批'] : []),
     ...(task.pendingQuestions ? [`${task.pendingQuestions} 个问题`] : []),
   ]
   if (asks.length > 0) return { kind: 'asks', words: asks.join(' · ') }
-  if (stuckOnRequest(live)) return { kind: 'asks', words: '看不懂的请求' }
+  if (stuckOnRequest(live)) return { kind: 'asks', words: '不支持的请求' }
   return live?.silent ? { kind: 'silent' } : undefined
 }
 

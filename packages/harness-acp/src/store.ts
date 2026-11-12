@@ -16,7 +16,7 @@ import type {
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import { runEndSchema } from '@latch/core/run-end'
+import { ERROR_CODE, runEndSchema } from '@latch/core/run-end'
 import type { ConfigSource } from './mapping.ts'
 import { MAX_STEPS } from './subagents.ts'
 
@@ -238,6 +238,8 @@ const message = z.object({
   imported: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  interrupted: z.literal(true).optional(),
+  errorCode: z.string().regex(ERROR_CODE).optional(),
   reasoning: z.string().optional(),
   tool: toolDetail.optional(),
   usage: usage.optional(),

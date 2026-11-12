@@ -100,6 +100,8 @@ export function turnOutcome(turn: Turn, latestStatus: TaskStatus | undefined): T
     if (latestStatus === 'interrupted') return 'interrupted'
     return 'completed'
   }
+  // The Host's stop is nobody's: a turn it cut off reads as interrupted, never as stopped.
+  if (turn.replies.some(message => message.interrupted)) return 'interrupted'
   if (turn.replies.some(message => message.role === 'assistant' && message.state === 'cancelled')) return 'stopped'
   if (turn.replies.some(message => (message.role === 'assistant' || message.role === 'system') && message.state === 'failed'))
     return 'failed'
@@ -452,14 +454,21 @@ export function appliedDiffs(message: Pick<Message, 'state' | 'tool' | 'text' | 
  * A tool row's state as shown: a call its approval kept from running reads by how the approval ended, and one the harness
  * refused itself reads 拦下.
  */
-export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expired' | 'blocked'
+export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expired' | 'blocked' | 'interrupted' | 'unknown'
 
-export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>): ShownToolState {
+/** A call that started and reported no result: nobody can say what it did, which is not a failure. */
+export function outcomeUnknown(message: Pick<Message, 'state' | 'tool' | 'text'>): boolean {
+  return message.state === 'failed' && (message.tool?.output ?? message.text).includes('TOOL_OUTCOME_UNKNOWN')
+}
+
+export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt' | 'interrupted'>): ShownToolState {
   const state = message.state ?? 'completed'
   // A review that came to 拦下 or to no verdict reports itself failed; it is a verdict, not a failure.
   if (isReview(message.tool) && state === 'failed') return 'completed'
   if (isBlocked(message)) return 'blocked'
-  return unrunOutcome(message) ?? state
+  // The Host stopped before the call reported: it reads as interrupted whatever its approval record says.
+  if (message.interrupted && (state === 'failed' || state === 'cancelled')) return 'interrupted'
+  return unrunOutcome(message) ?? (outcomeUnknown(message) ? 'unknown' : state)
 }
 
 /**
@@ -825,7 +834,8 @@ export function runStatus(
   if (stuck) {
     return {
       tone: 'amber',
-      text: `${opts.harness} 发来一个看不懂的请求`,
+      // The method, when the detail names it: what was asked is what the person looks up.
+      text: unknown.method ? `${opts.harness} 发来不支持的请求 ${unknown.method}` : `${opts.harness} 发来不支持的请求`,
       actions: ['stop'],
       ...(unknown.messageId ? { viewMessageId: unknown.messageId } : {}),
     }
@@ -875,7 +885,7 @@ export function runEndLine(summary: TaskDetail['summary'], harness: string): Run
     case 'forced-stop':
       return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false }
     case 'host-stopped':
-      return { tone: 'amber', text: `这一轮被中断了${uncertain}`, unknown, retry: true }
+      return { tone: 'amber', text: `Latch 重启时中断${uncertain}`, unknown, retry: true }
     case 'login-required':
       return { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true }
     case 'turn-ended':

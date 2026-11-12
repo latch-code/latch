@@ -149,7 +149,7 @@ struct ConversationView: View {
             }
             if hasContent {
                 if let question = model.detail["questions"].array.first {
-                    QuestionDrawer(question: question, sessionId: id, total: model.detail["questions"].array.count)
+                    QuestionDrawer(question: question, sessionId: id, total: model.detail["questions"].array.count, asker: engine)
                 } else if let approval = model.detail["approvals"].array.first {
                     ApprovalDrawer(approval: approval, total: model.detail["approvals"].array.count)
                 }

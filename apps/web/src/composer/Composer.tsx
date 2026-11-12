@@ -62,6 +62,7 @@ export function Composer({
   onOpenPending,
   sending,
   error,
+  errorAction,
   pendingReason,
   onRetry,
   onAbandon,
@@ -114,6 +115,8 @@ export function Composer({
   onOpenPending?: () => void
   sending: boolean
   error: string
+  /** The refusal's own next step (换个模型, 打开设置 › Harness…), beside the reason. */
+  errorAction?: { label: string; run: () => void }
   /** Why the pending submission is still unconfirmed after the last try, in the short wording of an inline error. */
   pendingReason?: string
   onRetry: () => void
@@ -358,7 +361,21 @@ export function Composer({
 
   return (
     <div className={`composer-stack composer-${variant}`} ref={box}>
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {error && (
+        <InlineNotice
+          tone="error"
+          {...(errorAction
+            ? {
+                action: (
+                  <Button size="xs" variant="secondary" onClick={errorAction.run}>
+                    {errorAction.label}
+                  </Button>
+                ),
+              }
+            : {})}>
+          {error}
+        </InlineNotice>
+      )}
       {confirmation}
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">

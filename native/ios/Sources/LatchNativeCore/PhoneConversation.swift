@@ -384,7 +384,7 @@ public enum PhoneConversation {
         if !detail["approvals"].array.isEmpty || detail["summary"]["status"].string == "waiting-approval" || activity == "approval" {
             return PhoneRunStatus(tone: .quiet, text: "需要你允许", clock: nil, actions: [])
         }
-        if PhoneSessions.stuckOnRequest(live) { return PhoneRunStatus(tone: .amber, text: engine + " 发来一个看不懂的请求", clock: nil, actions: [.stop]) }
+        if PhoneSessions.stuckOnRequest(live) { return PhoneRunStatus(tone: .amber, text: engine + " 发来不支持的请求", clock: nil, actions: [.stop]) }
         if live["silent"].bool {
             let quiet = hostNow.timeIntervalSince(PhoneTime.parse(live["lastEventAt"]) ?? hostNow)
             let commandLike = ["command", "tool"].contains(live["activity"].string ?? "")
@@ -413,7 +413,7 @@ public enum PhoneConversation {
         case "process-exited": return PhoneRunEnd(failed: true, text: engine + " 已退出 · 这一轮没有完成" + uncertain, unknown: unknown)
         case "login-required": return PhoneRunEnd(failed: true, text: engine + " 还没登录 · 在 Mac 的终端里登录后重试", unknown: unknown)
         case "forced-stop": return PhoneRunEnd(failed: false, text: "已强制停止" + uncertain, unknown: unknown)
-        case "host-stopped": return PhoneRunEnd(failed: false, text: "这一轮被中断了" + uncertain, unknown: unknown)
+        case "host-stopped": return PhoneRunEnd(failed: false, text: "Latch 重启时中断" + uncertain, unknown: unknown)
         case "turn-ended": return count > 0 ? PhoneRunEnd(failed: false, text: engine + " 结束了这一轮" + uncertain, unknown: unknown) : nil
         default: return nil
         }

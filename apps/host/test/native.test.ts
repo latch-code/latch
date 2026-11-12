@@ -786,6 +786,132 @@ describe('native Host entry with existing authorization', () => {
     const expired = workspace.events(detail.summary.id)
     await expect(expired.next()).rejects.toThrow('event stream ended')
   })
+  it('never names a private session to a phone without the full data scope, live or in a replay after reconnecting', async () => {
+    let notify: (id?: string) => void = () => {}
+    const open: TaskDetail = {
+      summary: { harnessId: 'standard', id: 'open-fixture', title: 'Open', status: 'idle', updatedAt: '2026-10-25' },
+      messages: [],
+      approvals: [],
+      liveText: '',
+      cursor: 0,
+    }
+    const hidden: TaskDetail = {
+      summary: {
+        harnessId: 'standard',
+        id: 'private-fixture-id',
+        title: 'Private',
+        status: 'idle',
+        updatedAt: '2026-10-25',
+        agentPrivate: true,
+      },
+      messages: [],
+      approvals: [],
+      liveText: '',
+      cursor: 0,
+    }
+    const details = [open, hidden]
+    const bridge: Bridge = {
+      async start() {},
+      async close() {},
+      async listTasks() {
+        return details.map(detail => detail.summary)
+      },
+      async detail(id) {
+        return structuredClone(details.find(detail => detail.summary.id === id)!)
+      },
+      async createTask() {
+        throw new Error('Unused')
+      },
+      async prompt() {},
+      async cancel() {},
+      approvals() {
+        return []
+      },
+      async decide() {
+        return false
+      },
+      subscribe(listener) {
+        notify = listener
+        return () => {
+          notify = () => {}
+        }
+      },
+    }
+    const published = vi.spyOn(NativeReplay.prototype, 'publish')
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      harnessId: 'replay',
+      plugins: [
+        {
+          id: 'private-replay-fixture',
+          name: 'Private replay fixture',
+          version: '1',
+          description: 'Local deterministic fixture',
+          activate(ctx) {
+            ctx.registerHarness({ id: 'replay', name: 'Replay', version: '1', create: () => bridge })
+          },
+        },
+      ],
+    })
+    cleanup.push(() => host.close())
+    const owner = await desktopOf(host)
+    const registered = await pair(host, owner)
+    expect((await owner.request(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+    const workspace = new NativeWorkspace({ ...registered.clientOptions, hostId: host.host.hostId, deviceId: registered.deviceId })
+    cleanup.push(() => workspace.close())
+    const paths = [{ id: 'private-lan', kind: 'direct' as const, address: '127.0.0.1', port: host.host.nativePort! }]
+    await workspace.migrate(paths)
+    await workspace.verify(async statement =>
+      sign('sha256', Buffer.from(statement), { key: registered.verification.privateKey, dsaEncoding: 'ieee-p1363' }),
+    )
+    const heard: string[] = []
+    const until = async (
+      events: AsyncGenerator<{ type: string; value: Record<string, unknown> }>,
+      done: (value: Record<string, unknown>) => boolean,
+    ) => {
+      for (let count = 0; count < 8; count++) {
+        const next = await events.next()
+        expect(next.done).toBe(false)
+        heard.push(JSON.stringify(next.value))
+        if (done(next.value!.value)) return
+      }
+      throw new Error('the awaited event never came')
+    }
+    // Live: the private session's change sends nothing; the next thing heard is the open session's own change.
+    const live = workspace.events(open.summary.id)
+    await until(live, () => true)
+    const first = heard.length
+    hidden.summary = { ...hidden.summary, title: 'Private, changed', status: 'running' }
+    notify(hidden.summary.id)
+    await vi.waitFor(() => expect(published.mock.calls.filter(([event]) => event.type === 'tasks-invalidated').length).toBe(1))
+    open.liveText = 'after the private change'
+    open.cursor++
+    notify(open.summary.id)
+    await until(live, value => value.type === 'task-state')
+    expect(heard.slice(first).some(event => event.includes('"type":"tasks-invalidated"'))).toBe(false)
+    await live.return(undefined)
+    // Replay: changes made while no stream was open come back from the log after reconnecting.
+    hidden.summary = { ...hidden.summary, status: 'idle' }
+    notify(hidden.summary.id)
+    await vi.waitFor(() => expect(published.mock.calls.filter(([event]) => event.type === 'tasks-invalidated').length).toBe(2))
+    open.liveText = 'after the second private change'
+    open.cursor++
+    notify(open.summary.id)
+    await vi.waitFor(() =>
+      expect(published.mock.calls.some(([event]) => event.type === 'task-state' && event.detail.liveText === open.liveText)).toBe(true),
+    )
+    await workspace.refresh()
+    const resumed = workspace.events(open.summary.id)
+    const before = heard.length
+    await until(resumed, value => value.type === 'task-state')
+    await resumed.return(undefined)
+    expect(heard.slice(before).some(event => event.includes('"type":"tasks-invalidated"'))).toBe(false)
+    expect(heard.some(event => event.includes('resumeRequired'))).toBe(true)
+    expect(heard.slice(before).some(event => event.includes('resumeRequired'))).toBe(false)
+    expect(heard.join('\n')).not.toContain(hidden.summary.id)
+    // The phone's snapshot never lists it either.
+    expect(JSON.stringify(body(await registered.client.request('GET', '/link/api/snapshot')))).not.toContain(hidden.summary.id)
+  })
   it('delivers only a Root-authenticated revocation and supports idempotent acknowledgement within its retention', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())

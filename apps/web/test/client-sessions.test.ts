@@ -293,9 +293,10 @@ describe('等你处理', () => {
   it('says what a row waits on from the summary alone: the kind and how many, never what or where', () => {
     expect(waitKind(task('a', at(21), { status: 'waiting-approval' }))).toEqual({ kind: 'asks', words: '审批' })
     expect(waitKind(task('a', at(21), { status: 'running', pendingQuestions: 2 }))).toEqual({ kind: 'asks', words: '2 个问题' })
+    // A question holds the session at waiting-approval too; it is no approval, built-in or an agent's.
     expect(waitKind(task('a', at(21), { status: 'waiting-approval', pendingQuestions: 1 }))).toEqual({
       kind: 'asks',
-      words: '审批 · 1 个问题',
+      words: '1 个问题',
     })
     expect(waitKind(task('a', at(21), { status: 'running', live: quiet }))).toEqual({ kind: 'silent' })
     const stuck: RunLive = {
@@ -305,7 +306,7 @@ describe('等你处理', () => {
       lastEventAt: at(20).toISOString(),
       unrecognized: { count: 1, at: at(20).toISOString() },
     }
-    expect(waitKind(task('a', at(21), { status: 'running', live: stuck }))).toEqual({ kind: 'asks', words: '看不懂的请求' })
+    expect(waitKind(task('a', at(21), { status: 'running', live: stuck }))).toEqual({ kind: 'asks', words: '不支持的请求' })
     expect(waitKind(task('a', at(21), { status: 'running' }))).toBeUndefined()
     expect(waitKind(task('a', at(21), { status: 'idle', pendingQuestions: 1 }))).toBeUndefined()
     // A stop already asked for answers it.

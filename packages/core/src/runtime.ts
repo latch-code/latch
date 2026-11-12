@@ -43,8 +43,9 @@ import {
   type SessionFolder,
   type MemoryProposalInput,
 } from '@latch/sdk'
-import { runEndRecord } from './run-end.ts'
+import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
+import { redactSecrets } from './node-kit/redact.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 
@@ -205,6 +206,8 @@ interface Run {
    * session), or without a classifier, any call that asks. What it proposes after that is marked external.
    */
   outside?: boolean
+  /** Calls that answered the Host's own stop: they stopped, but what they did before is unknown. */
+  interrupted?: UnknownResult[]
 }
 /** Streamed, not yet committed output of the current step. */
 interface LiveStep {
@@ -379,7 +382,15 @@ function toolMessage(task: StoredTask, call: ToolCall): Message | undefined {
   return task.messages.find(message => message.id === `tool:${call.id}`)
 }
 
-function recordResult(task: StoredTask, call: ToolCall, at: string, text: string, isError: boolean, cancelled = false): void {
+function recordResult(
+  task: StoredTask,
+  call: ToolCall,
+  at: string,
+  text: string,
+  isError: boolean,
+  cancelled = false,
+  interrupted = false,
+): void {
   task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError })
   const previous = toolMessage(task, call)
   const message: Message = {
@@ -388,6 +399,7 @@ function recordResult(task: StoredTask, call: ToolCall, at: string, text: string
     toolName: call.name,
     text,
     state: cancelled ? 'cancelled' : isError ? 'failed' : 'completed',
+    ...(interrupted ? { interrupted: true as const } : {}),
     tool: { ...(previous?.tool ?? { title: call.name, input: JSON.stringify(call.arguments, null, 2) }), output: text },
     ...(previous?.createdAt ? { createdAt: previous.createdAt } : { createdAt: at }),
     ...(previous?.startedAt ? { startedAt: previous.startedAt } : {}),
@@ -400,7 +412,7 @@ function recordResult(task: StoredTask, call: ToolCall, at: string, text: string
 
 /** Balance unanswered calls without retrying an operation whose side effects are unknown. */
 /** Settles the calls a run left open, and names those that started: nobody can say whether they took effect. */
-function closeBatch(task: StoredTask, cancelled: boolean, at: string): UnknownResult[] {
+function closeBatch(task: StoredTask, cancelled: boolean, at: string, interrupted = false): UnknownResult[] {
   const batch = task.batch
   if (!batch) return []
   const unknownResults: UnknownResult[] = []
@@ -413,14 +425,20 @@ function closeBatch(task: StoredTask, cancelled: boolean, at: string): UnknownRe
       call,
       at,
       unknown
-        ? 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。'
-        : 'TOOL_NOT_STARTED: 本次运行已结束，工具没有开始执行。',
+        ? `TOOL_OUTCOME_UNKNOWN: ${interrupted ? `${HOST_STOPPED}，` : ''}结果未知，请先核对它做了什么。Latch 不会自动重做。`
+        : `TOOL_NOT_STARTED: ${interrupted ? HOST_STOPPED : '本次运行已结束'}，工具没有开始执行。`,
       true,
-      cancelled && !unknown,
+      (cancelled || interrupted) && !unknown,
+      interrupted,
     )
   }
   delete task.batch
   return unknownResults
+}
+
+/** A failure's reason as the note keeps it: as long as the other drivers' reasons, at most. */
+function capped(text: string, limit = 1000): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
 }
 
 function workspaceChanged(): AppError {
@@ -541,20 +559,15 @@ class HarnessRuntime implements Bridge {
           ? task.messages.find(message => message.id === `tool:${task.approval!.toolCallId}`)
           : undefined
         if (asked) asked.tool = { ...asked.tool, decision: { outcome: 'cancelled', at } }
-        const unknown = closeBatch(task, false, at)
+        const unknown = closeBatch(task, false, at, true)
         delete task.approval
         task.summary.status = 'interrupted'
+        task.summary.runOutcome = 'interrupted'
         task.summary.runEnd = runEndRecord('host-stopped', at, unknown)
         task.summary.updatedAt = at
         task.revision++
         // The turn did not settle, so its user message gets no times: its duration is unknown.
-        task.messages.push({
-          id: randomUUID(),
-          role: 'system',
-          text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
-          state: 'failed',
-          createdAt: at,
-        })
+        task.messages.push(interruptedNote(at))
         changed = true
       }
       if (changed) {
@@ -1310,12 +1323,20 @@ class HarnessRuntime implements Bridge {
       })
       if (!result || typeof result.text !== 'string') throw new Error('Tool returned an invalid result')
     } catch (error) {
-      const text = signal.aborted
-        ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
-        : // A schema failure's own message is a JSON list of issues: on one line, each with the field it is about.
-          `TOOL_ERROR: ${error instanceof z.ZodError ? schemaIssues(error) : error instanceof Error ? error.message : String(error)}`
+      // The Host's own stop is no cancel by anyone: the call stopped, and what it did before is unknown.
+      const stopped = signal.aborted && this.closed
+      const text = stopped
+        ? `TOOL_OUTCOME_UNKNOWN: ${HOST_STOPPED}。工具已停止，但它停下前做了什么无法确认，请核对。Latch 不会自动重做。`
+        : signal.aborted
+          ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
+          : // A schema failure's own message is a JSON list of issues: on one line, each with the field it is about.
+            `TOOL_ERROR: ${redactSecrets(error instanceof z.ZodError ? schemaIssues(error) : error instanceof Error ? error.message : String(error))}`
       this.output(run)
-      await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, signal.aborted))
+      await this.change(run.sessionId, task => {
+        if (stopped)
+          (run.interrupted ??= []).push({ messageId: `tool:${call.id}`, name: toolMessage(task, call)?.tool?.toolTitle ?? call.name })
+        recordResult(task, call, this.now(), text, true, signal.aborted && !stopped, stopped)
+      })
       await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: signal.aborted ? 'cancelled' : 'failed' })
       signal.throwIfAborted()
       return
@@ -1363,6 +1384,7 @@ class HarnessRuntime implements Bridge {
     const signal = run.controller.signal
     let status: TaskStatus = 'idle'
     let failure: string | undefined
+    let failureCode: string | undefined
     try {
       if (run.mode === 'agent') await this.fileTracking.start(run.sessionId, run.id, run.folders)
       signal.throwIfAborted()
@@ -1480,7 +1502,9 @@ class HarnessRuntime implements Bridge {
       throw new AppError(409, 'step-limit', `已达到 ${this.maxSteps} 步运行上限，请检查结果后发起新的输入`)
     } catch (error) {
       status = signal.aborted ? 'cancelled' : 'failed'
-      failure = signal.aborted ? undefined : error instanceof Error ? error.message : String(error)
+      // The reason as the Host or the model service said it, with any key in it replaced, and its code for the next step.
+      failure = signal.aborted ? undefined : capped(redactSecrets(error instanceof Error ? error.message : String(error)))
+      failureCode = signal.aborted ? undefined : errorCodeOf(error)
     } finally {
       // Present only while the step's output is uncommitted; the step commit removes it.
       const partial = this.live.get(run.sessionId)
@@ -1488,9 +1512,11 @@ class HarnessRuntime implements Bridge {
       try {
         const at = this.now()
         const reasoningMs = partial?.reasoningTimer.end()
+        // The Host's own stop ended this run: nobody cancelled it, so it reads as interrupted, never as stopped or done.
+        const stopped = signal.aborted && this.closed
         await this.change(run.sessionId, task => {
-          const unknown = closeBatch(task, signal.aborted, at)
-          if (unknown.length) task.summary.runEnd = runEndRecord(this.closed ? 'host-stopped' : 'turn-ended', at, unknown)
+          const unknown = [...(stopped ? (run.interrupted ?? []) : []), ...closeBatch(task, signal.aborted && !stopped, at, stopped)]
+          if (unknown.length || stopped) task.summary.runEnd = runEndRecord(this.closed ? 'host-stopped' : 'turn-ended', at, unknown)
           delete task.approval
           if (partial && (partial.text || partial.reasoning) && !task.messages.some(message => message.id === partial.id)) {
             if (partial.text) task.history.push({ role: 'assistant', content: partial.text })
@@ -1499,16 +1525,30 @@ class HarnessRuntime implements Bridge {
               role: 'assistant',
               text: partial.text,
               state: signal.aborted ? 'cancelled' : 'failed',
+              ...(stopped ? { interrupted: true as const } : {}),
               ...(partial.reasoning ? { reasoning: partial.reasoning } : {}),
               ...(partial.usage ? { usage: partial.usage } : {}),
               ...this.stepTimes(run, partial, at, reasoningMs),
             })
           }
           if (partial?.usage) task.summary.usage = addUsage(task.summary.usage, partial.usage)
-          task.summary.status = signal.aborted ? 'cancelled' : status
+          task.summary.status = stopped ? 'interrupted' : signal.aborted ? 'cancelled' : status
           task.summary.runOutcome =
-            task.summary.status === 'idle' ? 'completed' : task.summary.status === 'cancelled' ? 'cancelled' : 'failed'
-          if (failure) task.messages.push({ id: randomUUID(), role: 'system', text: failure, state: 'failed', createdAt: at })
+            task.summary.status === 'idle'
+              ? 'completed'
+              : task.summary.status === 'cancelled' || task.summary.status === 'interrupted'
+                ? task.summary.status
+                : 'failed'
+          if (stopped) task.messages.push(interruptedNote(at))
+          if (failure)
+            task.messages.push({
+              id: randomUUID(),
+              role: 'system',
+              text: failure,
+              state: 'failed',
+              ...(failureCode ? { errorCode: failureCode } : {}),
+              createdAt: at,
+            })
           const prompt = task.messages.find(message => message.id === run.userMessageId)
           if (prompt) prompt.turn = run.clock.turn()
           const result = this.fileTracking.capture(run.id)

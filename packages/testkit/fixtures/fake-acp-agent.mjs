@@ -1231,7 +1231,66 @@ const scenarios = {
         },
       ],
     })
-    say(`ask=${result?.outcome?.outcome ?? `error ${error?.code}`}`)
+    say(
+      `ask=${result?.outcome?.outcome ?? `error ${error?.code}`}${result?.outcome?.answers ? ` ${JSON.stringify(result.outcome.answers)}` : ''}`,
+    )
+    return END
+  },
+  // ACP's own question (`elicitation/create`, form mode): a choice, a yes or no, and words of the person's own. `url`
+  // asks in URL mode, which Latch does not offer.
+  elicit: async ({ sessionId, argument, say }) => {
+    const { result, error } = await request(
+      'elicitation/create',
+      argument === 'url'
+        ? { sessionId, mode: 'url', elicitationId: 'e1', url: 'https://example.invalid/connect', message: 'Sign in' }
+        : argument === 'long'
+          ? { sessionId, mode: 'form', message: 'q'.repeat(2001), requestedSchema: { type: 'object', properties: {} } }
+          : {
+              sessionId,
+              mode: 'form',
+              message: 'How should I approach this?',
+              requestedSchema: {
+                type: 'object',
+                properties: {
+                  strategy: { type: 'string', title: 'Strategy', enum: ['careful', 'fast'] },
+                  tests: { type: 'boolean', title: 'Run the tests?' },
+                  note: { type: 'string', title: 'Anything else?' },
+                },
+                required: ['strategy'],
+              },
+            },
+    )
+    say(`elicit=${result ? JSON.stringify(result) : `error ${error?.code}`}`)
+    return END
+  },
+  // Asks about its own call while that call still runs (`long`: with a 256-character call ID), then keeps working.
+  'ask-on': async ({ sessionId, argument, say, tool }) => {
+    const toolCallId = argument === 'long' ? 'c'.repeat(256) : 'call_1'
+    tool({ toolCallId, title: 'Build', kind: 'execute', status: 'in_progress', rawInput: { command: 'make' } })
+    const { result } = await request('elicitation/create', {
+      sessionId,
+      toolCallId,
+      mode: 'form',
+      message: 'Go on?',
+      requestedSchema: { type: 'object', properties: {} },
+    })
+    say(`asked=${result?.action}`)
+    await waitCancel(sessionId)
+    return END
+  },
+  // Two questions that name the same call, one after the other.
+  'ask-twice': async ({ sessionId, say }) => {
+    const ask = () =>
+      request('elicitation/create', {
+        sessionId,
+        toolCallId: 'same',
+        mode: 'form',
+        message: 'Pick',
+        requestedSchema: { type: 'object', properties: { pick: { type: 'string', enum: ['a', 'b'] } } },
+      })
+    const first = await ask()
+    const second = await ask()
+    say(`twice=${JSON.stringify([first.result, second.result])}`)
     return END
   },
   'cursor-todos': ({ say }) => {

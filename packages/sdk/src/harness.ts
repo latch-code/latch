@@ -137,6 +137,15 @@ export interface HarnessHostOptions {
    * records of `sessionId`. Rejects with the reason when it is refused (a secret, too long, too many).
    */
   proposeMemory?(input: MemoryProposalInput): Promise<void>
+  /**
+   * Puts an agent's question to the person, as the built-in `ask_user` tool does: shown on the session's tool row
+   * `tool:<callId>`, answered from any device that may run. Resolves with the committed answer (a `QuestionResult` as
+   * JSON); rejects when the question closed unanswered or `signal` aborted. The driver then records the row's result and
+   * calls `questionSettled`, which is what confirms the answer to the device that gave it.
+   */
+  askUser?(input: AskUserInput): Promise<{ text: string }>
+  /** `unknown`: the row's result could not be written; the device that answered is told so, not that it is done. */
+  questionSettled?(context: { sessionId: string; callId: string; state: 'completed' | 'failed' | 'cancelled' | 'unknown' }): Promise<void>
 }
 
 /** A memory an agent proposed through `propose_memory`. Only `content` and `reason` come from the agent. */
@@ -150,6 +159,14 @@ export interface MemoryProposalInput {
   external: boolean
   /** Unique within the session's own channel, so a proposal read twice is kept once. */
   key: string
+}
+
+export interface AskUserInput {
+  sessionId: string
+  callId: string
+  prompt: string
+  questions: Array<{ id: string; label: string; multiple: boolean; options: Array<{ id: string; label: string; description?: string }> }>
+  signal: AbortSignal
 }
 
 /** A driver's own account of `HarnessCapabilities`, with the modes and attachments it takes. */

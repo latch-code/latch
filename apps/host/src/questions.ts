@@ -13,7 +13,8 @@ const questionSchema = z.strictObject({
   id: key,
   label: z.string().trim().min(1).max(1000),
   multiple: z.boolean().default(false),
-  options: z.array(optionSchema).min(1).max(20),
+  // None: a question answered only in the person's own words (an agent's free-text field).
+  options: z.array(optionSchema).max(20),
 })
 const inputSchema = z.strictObject({ prompt: z.string().trim().min(1).max(2000), questions: z.array(questionSchema).min(1).max(10) })
 export const questionSubmissionSchema = z.strictObject({
@@ -37,7 +38,8 @@ const recordSchema = z.strictObject({
     .optional(),
   result: z.string().max(100_000).optional(),
 })
-const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(recordSchema).max(100_000) })
+// Each record is read on its own: one that cannot be read is skipped, never a reason the Host cannot start.
+const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(z.unknown()).max(100_000) })
 type Record = z.infer<typeof recordSchema>
 interface Flight {
   signal: AbortSignal
@@ -54,6 +56,8 @@ export interface QuestionsOptions {
   dataDir: string
   changed(sessionId: string): void
   detail(sessionId: string): Promise<TaskDetail>
+  /** The Host log: only counts and fixed words, never a record's content. */
+  log?: (text: string) => void
 }
 
 /** A durable answer is acknowledged only after the runtime commits the corresponding tool result. */
@@ -75,8 +79,18 @@ export class Questions {
     const path = join(options.dataDir, 'questions.json')
     try {
       if ((await stat(path)).size > 128 * 1024 * 1024) throw new Error('question file too large')
-      items = fileSchema.parse(JSON.parse(await readFile(path, 'utf8'))).items
-      if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('duplicate question')
+      const seen = new Set<string>()
+      let skipped = 0
+      for (const raw of fileSchema.parse(JSON.parse(await readFile(path, 'utf8'))).items) {
+        const read = recordSchema.safeParse(raw)
+        if (!read.success || seen.has(read.data.id)) {
+          skipped++
+          continue
+        }
+        seen.add(read.data.id)
+        items.push(read.data)
+      }
+      if (skipped) options.log?.(`问答记录中有 ${skipped} 条无法读取，已跳过`)
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
         throw new AppError(500, 'questions-corrupt', '问答记录无法读取，原文件已保留；修复后再启动 Host')
@@ -115,6 +129,9 @@ export class Questions {
 
   async ask(args: unknown, context: { sessionId: string; callId: string; signal: AbortSignal }): Promise<{ text: string }> {
     const input = inputSchema.parse(args)
+    // What the record keeps must read back: a call ID it could not store would make the file unreadable.
+    if (!id.safeParse(context.callId).success || !id.safeParse(context.sessionId).success)
+      throw new AppError(400, 'question-invalid', '提问的调用标识过长')
     if (
       JSON.stringify(input).length > 32_000
       || new Set(input.questions.map(question => question.id)).size !== input.questions.length
@@ -211,6 +228,7 @@ export class Questions {
           return {
             questionId: question.id,
             label: question.label,
+            optionIds: [...answer.optionIds],
             choices: answer.optionIds.map(id => question.options.find(option => option.id === id)!.label),
             ...(answer.other ? { other: answer.other } : {}),
           }
@@ -276,6 +294,23 @@ export class Questions {
       this.flights.delete(item.id)
       this.receipts.delete(item.id)
       this.options.changed(context.sessionId)
+    })
+  }
+
+  /**
+   * The driver could not make the answered row durable: the answer stays in flight and the device that gave it is told
+   * the result is unknown, so its retry, or the next start's reconciliation, decides.
+   */
+  async resultUnknown(context: { sessionId: string; callId: string }): Promise<void> {
+    await this.lock(async () => {
+      const item = [...this.items.values()].find(
+        item => item.sessionId === context.sessionId && item.toolCallId === context.callId && item.state === 'answering',
+      )
+      if (!item) return
+      this.receipts.get(item.id)?.reject(new AppError(503, 'question-result-unknown', '回答结果尚未确认，请重试这次提交'))
+      this.receipts.delete(item.id)
+      this.flights.get(item.id)?.cleanup()
+      this.flights.delete(item.id)
     })
   }
 

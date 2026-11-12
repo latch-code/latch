@@ -378,6 +378,43 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     expect(badge).toHaveBeenLastCalledWith(4)
   })
+  it('tells of a new question from the agent under the approval preference, once, and opens its session', async () => {
+    const snapshot = {
+      tasks: [{ id: 'q', title: 'private', status: 'running', pendingQuestions: 0 }],
+      approvals: [] as Array<{ id: string; sessionId: string }>,
+    }
+    const show = vi.fn(),
+      open = vi.fn()
+    let time = 50_000
+    const controller = createNotifications({
+      snapshot: async () => snapshot,
+      focused: () => false,
+      supported: () => true,
+      show,
+      open,
+      now: () => time,
+    })
+    controller.configure({ completion: false, approval: true, title: false })
+    await controller.poll()
+    snapshot.tasks[0]!.pendingQuestions = 1
+    await controller.poll()
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ title: 'Latch', body: '有一个问题等你回答。' }))
+    show.mock.calls[0]![0].onClick()
+    expect(open).toHaveBeenCalledWith('q')
+    // The same question on the next read is not news; answered, nothing is either.
+    time += 20_000
+    await controller.poll()
+    snapshot.tasks[0]!.pendingQuestions = 0
+    await controller.poll()
+    expect(show).toHaveBeenCalledTimes(1)
+    // Off with the approval preference.
+    controller.configure({ completion: true, approval: false, title: false })
+    time += 20_000
+    snapshot.tasks[0]!.pendingQuestions = 1
+    await controller.poll()
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
   it('fails closed on preferences and turns notifications on at the first real ending in the background', async () => {
     let snapshot = { tasks: [{ id: 'a', status: 'running' }], approvals: [] }
     const show = vi.fn(),
@@ -433,6 +470,11 @@ describe('what waits, from Host snapshots', () => {
     expect(JSON.stringify(result)).not.toContain('/secret')
     expect(attentionOf(snapshot, { limit: 2 }).items.map((item: { taskId: string }) => item.taskId)).toEqual(['elsewhere', 'odd'])
     expect(attentionOf(snapshot, { limit: 2 }).count).toBe(5)
+    // A question holds the session at waiting-approval: it is listed as a question, not a request.
+    const held = { tasks: [{ id: 'held', title: 't', status: 'waiting-approval', pendingQuestions: 1 }], approvals: [] }
+    expect(attentionOf(held, { now: Date.UTC(2026, 10, 12, 9) }).items).toEqual([
+      expect.objectContaining({ taskId: 'held', kind: 'question' }),
+    ])
   })
 
   it('leaves out entries a Host should not have sent, and caps the running count', () => {

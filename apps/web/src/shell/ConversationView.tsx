@@ -19,7 +19,15 @@ import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { Button, Hint, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
-import { NewSessionTitle, SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
+import {
+  DEVICE_FAILURE_STEPS,
+  NewSessionTitle,
+  OWNER_FAILURE_STEPS,
+  SendingBubble,
+  SessionComposer,
+  SetupNotices,
+  takeFailureStep,
+} from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { SourceHandoffDock, type HandoffRequest } from '../handoffs/SourceHandoff.tsx'
 import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
@@ -76,6 +84,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     connection,
     handoffs,
     rebuiltInto,
+    owner,
+    openSettings,
   } = shell
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   const placeProposals = useTopicProposals(shell, current)
@@ -279,6 +289,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     <Transcript
                       detail={current}
                       onSource={choose}
+                      failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                      onFailureStep={step => takeFailureStep(step, openSettings)}
                       onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
                       onFork={
                         catalog?.features?.fork && access.scopes.has('run')

@@ -648,7 +648,7 @@ describe('streaming render', () => {
     await show(
       withSummary({ live: { ...live, unrecognized: { count: 1, at: ago(0), method: 'terminal/create', messageId: 'user-0' } } }, true),
     )
-    await line.filter({ hasText: '发来一个看不懂的请求' }).waitFor()
+    await line.filter({ hasText: '发来不支持的请求 terminal/create' }).waitFor()
     await line.getByRole('button', { name: '查看', exact: true }).waitFor()
     expect(await line.getByRole('button', { name: '继续等', exact: true }).count()).toBe(0)
 

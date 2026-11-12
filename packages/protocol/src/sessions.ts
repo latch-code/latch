@@ -413,6 +413,17 @@ export interface Message {
   importContext?: { from: string; prefixLength: number; truncated?: true }
   toolName?: string
   state?: 'queued' | 'awaiting-approval' | 'running' | 'completed' | 'failed' | 'cancelled'
+  /**
+   * The Host stopped or restarted while this turn ran. Tool: it had not reported a result; with `failed` it had started and
+   * nobody can say what it did, with `cancelled` it never started. Assistant: the reply stopped there. System: the note
+   * that says so.
+   */
+  interrupted?: true
+  /**
+   * System, on the note that says why a turn failed: the Host's or the harness's error code (`model-unavailable`,
+   * `agent-start-failed`, `http-401`…), so a client can offer the one next step that fits. The note's text is the reason.
+   */
+  errorCode?: string
   /** Assistant reasoning that the model or agent actually reported; never synthesized. */
   reasoning?: string
   tool?: ToolDetail

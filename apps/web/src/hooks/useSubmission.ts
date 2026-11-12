@@ -135,6 +135,12 @@ export function useSubmission({
     }
   }, [])
   const [error, setError] = useState('')
+  // The code of the refusal the error says, while it still says that one: the composer offers the next step that fits.
+  const failed = useRef<{ text: string; code: string } | undefined>(undefined)
+  const refuse = (cause: unknown, text = inlineError(cause)) => {
+    failed.current = cause instanceof ApiError && text ? { text, code: cause.code } : undefined
+    setError(text)
+  }
   const [stored, setStored] = useState<Partial<ComposerChoice> | null>(() => readChoice(deviceId))
   const [draftPick, setDraftPick] = useState<DraftPick | null>(null)
   const { legacy, local } = access
@@ -290,7 +296,7 @@ export function useSubmission({
       return true
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'agent-exists') return true
-      setError(inlineError(cause))
+      refuse(cause)
       return false
     } finally {
       sendingRef.current = false
@@ -456,7 +462,7 @@ export function useSubmission({
         && submission.sessionId !== undefined
         && onRefused?.(submission.sessionId, cause, origin.consumedDraft ? undefined : submission.prompt) === true
       // The pending card owns unknown delivery and says why; it is not a confirmed failure.
-      setError(uncertain || handled ? '' : inlineError(cause))
+      refuse(cause, uncertain || handled ? '' : inlineError(cause))
       return false
     } finally {
       endFlight(pendingKey, submission.requestId)
@@ -517,6 +523,8 @@ export function useSubmission({
     sending,
     sendingMessage,
     error,
+    /** The Host's code for the refusal `error` says, while it says it. */
+    errorCode: failed.current?.text === error ? failed.current.code : undefined,
     setError,
     choice,
     /** The draft starts in a worktree of its project, from this start point. */

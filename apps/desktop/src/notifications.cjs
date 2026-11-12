@@ -132,8 +132,10 @@ function attentionOf(snapshot, { limit = ATTENTION_LIMIT, now = Date.now() } = {
     const asked = stamp(task.live?.unrecognized?.at)
     const stuck = asked !== undefined && asked >= (stamp(task.live?.lastEventAt) ?? Infinity)
     const quiet = task.live?.silent === true || stuck
-    if (task.status === 'waiting-approval') waiting.set(task.id, { kind: 'approval', since: stamp(task.live?.lastEventAt) })
-    else if (task.status === 'running' && task.pendingQuestions > 0)
+    // A question also holds a session at waiting-approval; a real request is in the approvals above.
+    if (task.status === 'waiting-approval' && !(task.pendingQuestions > 0))
+      waiting.set(task.id, { kind: 'approval', since: stamp(task.live?.lastEventAt) })
+    else if ((task.status === 'running' || task.status === 'waiting-approval') && task.pendingQuestions > 0)
       waiting.set(task.id, { kind: 'question', since: stamp(task.live?.lastEventAt) })
     else if (task.status === 'running' && quiet)
       waiting.set(task.id, { kind: 'stuck', since: stuck ? asked : stamp(task.live?.lastEventAt) })
@@ -198,12 +200,19 @@ function createNotifications(options) {
     return pending
   }
   const notify = (source, task, kind) => {
-    const setting = kind === 'failure' ? 'completion' : kind
+    const setting = kind === 'failure' ? 'completion' : kind === 'question' ? 'approval' : kind
     const key = `${source.key}\u0000${task.id}`
     if (closed || options.focused() || !options.supported() || !state.preferences[setting] || now() - (last.get(key) ?? -Infinity) < 10_000)
       return
     last.set(key, now())
-    const body = kind === 'approval' ? '有一个请求等你处理。' : kind === 'failure' ? '一个会话失败了。' : '一个会话已完成。'
+    const body =
+      kind === 'approval'
+        ? '有一个请求等你处理。'
+        : kind === 'question'
+          ? '有一个问题等你回答。'
+          : kind === 'failure'
+            ? '一个会话失败了。'
+            : '一个会话已完成。'
     // Nothing invisible survives (a bidi override could make one computer's line read as another's).
     const named = state.preferences.title ? attentionTitle(task.title, 120) || '未命名会话' : 'Latch'
     // Another computer's name leads the title; this Mac's notifications have none.
@@ -239,6 +248,12 @@ function createNotifications(options) {
           const task = current.get(approval.sessionId)
           if (task) notify(source, task, 'approval')
         }
+      // A new question from the agent waits for the person as a request does; the list says only how many there are.
+      for (const task of snapshot.tasks) {
+        const asked = Number.isSafeInteger(task.pendingQuestions) ? task.pendingQuestions : 0
+        const earlier = before.tasks.get(task.id)?.pendingQuestions
+        if (asked > (Number.isSafeInteger(earlier) ? earlier : 0)) notify(source, task, 'question')
+      }
     }
     previous.set(source.key, { tasks: current, approvals: new Set(snapshot.approvals.map(item => item.id)) })
     const prefix = `${source.key}\u0000`

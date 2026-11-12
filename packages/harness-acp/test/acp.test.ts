@@ -3281,10 +3281,28 @@ describe('ACP sessions across processes', () => {
 
     const reopened = await fixture.open()
     const detail = await reopened.detail(sessionId)
-    expect(detail.summary.status).toBe('interrupted')
-    expect(systemText(detail)).toContain('随 Latch 关闭')
-    expect(tool(detail, 'tool:1:call_1')?.state).toBe('failed')
-    expect(detail.summary.runEnd?.reason).toBe('host-stopped')
+    expect(detail.summary).toMatchObject({ status: 'interrupted', runOutcome: 'interrupted' })
+    expect(systemText(detail)).toContain('Latch 重启时中断')
+    expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'cancelled', interrupted: true })
+    expect(tool(detail, 'tool:1:call_1')).toMatchObject({ state: 'failed', interrupted: true })
+    expect(detail.summary.runEnd).toMatchObject({ reason: 'host-stopped', unknownResults: [{ messageId: 'tool:1:call_1' }] })
+  })
+
+  it("marks a turn the agent ended on the Host's stop as interrupted, not cancelled, and keeps what its tools reported", async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'endturn', requestId: rid() })
+    await until(bridge, sessionId, detail => tool(detail, 'tool:1:call_1')?.state === 'running')
+    await bridge.close()
+    const detail = await (await fixture.open()).detail(sessionId)
+    expect(detail.summary).toMatchObject({ status: 'interrupted', runOutcome: 'interrupted', runEnd: { reason: 'host-stopped' } })
+    // The agent reported this one finished as it stopped: that stays true.
+    expect(tool(detail, 'tool:1:call_1')).toMatchObject({ state: 'completed' })
+    expect(tool(detail, 'tool:1:call_1')).not.toHaveProperty('interrupted')
+    // This one never started.
+    expect(tool(detail, 'tool:1:call_2')).toMatchObject({ state: 'cancelled', interrupted: true })
+    expect(systemText(detail)).toContain('Latch 重启时中断')
+    expect(systemText(detail)).not.toContain('已按取消处理')
   })
 
   it('recovers tasks that were running when the Host stopped abruptly', async () => {
@@ -3318,8 +3336,10 @@ describe('ACP sessions across processes', () => {
       state: 'failed',
       tool: { title: 'A', output: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') },
     })
-    expect(tool(detail, 'tool:1:b')?.state).toBe('cancelled')
-    expect(systemText(detail)).toContain('上次运行被中断')
+    expect(tool(detail, 'tool:1:a')?.interrupted).toBe(true)
+    expect(tool(detail, 'tool:1:b')).toMatchObject({ state: 'cancelled', interrupted: true })
+    expect(detail.summary.runOutcome).toBe('interrupted')
+    expect(systemText(detail)).toContain('Latch 重启时中断')
     expect(detail.summary.runEnd).toMatchObject({ reason: 'host-stopped', unknownResults: [{ messageId: 'tool:1:a', name: 'A' }] })
     const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8'))
     expect(stored.tasks.stale.summary.status).toBe('interrupted')
@@ -5201,7 +5221,7 @@ describe('Claude Agent and Cursor presets', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'cursor-ask', requestId: rid() })
     let detail = await settled(bridge, sessionId)
     expect(assistants(detail).at(-1)?.text).toBe('ask=skipped')
-    expect(systemText(detail)).toContain('Fake 问：Which one?\n- Pick a colour（Red / Blue）\nLatch 还不能在这里回答它的提问')
+    expect(systemText(detail)).toContain('Fake 问：Which one?\n- Pick a colour（Red / Blue）\nLatch 不能在这里回答这个提问')
     expect(systemText(detail)).not.toContain('看不懂')
 
     await bridge.prompt(sessionId, 'cursor-todos', rid())
@@ -5213,13 +5233,24 @@ describe('Claude Agent and Cursor presets', () => {
     ])
   })
 
-  it('answers Cursor’s own requests as unknown for any other harness', async () => {
+  it('reads a Cursor question from any harness, and without a Host to ask it says what it asked', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'cursor-ask', requestId: rid() })
     const detail = await settled(bridge, sessionId)
-    expect(assistants(detail).at(-1)?.text).toBe('ask=error -32601')
-    expect(systemText(detail)).toContain('cursor/ask_question')
+    expect(assistants(detail).at(-1)?.text).toBe('ask=skipped')
+    expect(systemText(detail)).toContain('Fake 问：Which one?')
+  })
+
+  it('names an unknown request and says it is not supported, and offers no question form it cannot show', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'elicit', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    // Without a Host to put it to the person, elicitation is neither offered nor understood.
+    expect(assistants(detail).at(-1)?.text).toBe('elicit=error -32601')
+    expect(systemText(detail)).toContain('Fake 发来请求 elicitation/create：Latch 不支持这个请求')
+    expect(systemText(detail)).not.toContain('看不懂')
   })
 
   it('never finds the vendors’ programs on the Host’s PATH without the start script’s search', async () => {

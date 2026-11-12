@@ -39,6 +39,7 @@ import {
 } from '../conversation.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
+import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { PlanRow } from '../conversation/PlanRow.tsx'
 import { TurnSummaryOptions, type TurnSummaryOptionsValue } from '../conversation/summaryOptions.ts'
 import { announceChangesWrite, useChangesRevision, useTurnChanges } from '../conversation/useTurnChanges.ts'
@@ -175,6 +176,8 @@ interface TurnViewProps {
   /** 交给代码任务… with the chosen messages. */
   onHandoff?: (messageIds: string[]) => void
   onContinue?: () => void
+  /** The failure steps this device can take, and how. */
+  onFailureStep?: FailureSteps
   changes?: TurnChanges
   /** A turn of this session runs, so no turn's undo can. */
   sessionActive: boolean
@@ -218,6 +221,28 @@ function TimelineDivider({ icon: Glyph, text }: { icon?: typeof Eraser; text: st
       </span>
     </div>
   )
+}
+
+/**
+ * A failed note's own next step, when its code names one this device can take: 设置 › Harness or 模型服务, or a new session
+ * from this one's record. `none`: no button at all (the project recovery panel already offers the way on).
+ */
+interface FailureSteps {
+  has(step: FailureStep): boolean
+  take(step: FailureStep): void
+}
+
+function failureStep(
+  message: Message,
+  onStep: FailureSteps | undefined,
+  onContinue: (() => void) | undefined,
+): { kind: string; label: string; run: () => void } | undefined {
+  if (message.role !== 'system' || message.state !== 'failed') return undefined
+  const kind = failureAction(message.errorCode)
+  if (kind === 'none') return { kind, label: '', run: () => {} }
+  if (kind === 'continue') return onContinue ? { kind, label: FAILURE_ACTION_LABEL.continue, run: onContinue } : undefined
+  if (kind === 'retry' || !onStep?.has(kind)) return undefined
+  return { kind, label: FAILURE_ACTION_LABEL[kind], run: () => onStep.take(kind) }
 }
 
 /** Why a turn did not simply finish, on a line that stays: a failed one in red with 重试, a stopped one quietly. */
@@ -268,6 +293,7 @@ const TurnView = memo(function TurnView({
   onEdit,
   onHandoff,
   onContinue,
+  onFailureStep,
   changes,
   sessionActive,
   changesRevision,
@@ -363,9 +389,16 @@ const TurnView = memo(function TurnView({
             if (block.kind === 'note') {
               if (block.message.role === 'tool') return <QuestionRow key={block.message.id} message={block.message} context={rowContext} />
               // The run's end line says the same and offers the same 重试; the note is the record once a later turn replaces it.
-              if (runEnd && block.message.state === 'failed') return null
+              if (runEnd && (block.message.state === 'failed' || block.message.interrupted)) return null
+              const action = failureStep(block.message, onFailureStep, onContinue)
               return (
-                <MessageRow key={block.message.id} message={block.message} coarse={rowContext.coarse} {...(onRetry ? { onRetry } : {})} />
+                <MessageRow
+                  key={block.message.id}
+                  message={block.message}
+                  coarse={rowContext.coarse}
+                  {...(onRetry && action?.kind !== 'none' ? { onRetry } : {})}
+                  {...(action && action.kind !== 'none' ? { action } : {})}
+                />
               )
             }
             return (
@@ -514,6 +547,8 @@ export function Transcript({
   changes,
   onHandoff,
   placed,
+  failureSteps,
+  onFailureStep,
 }: {
   detail: TaskDetail
   approvals: Approval[]
@@ -540,6 +575,9 @@ export function Transcript({
   retry?: RetryAccess
   /** Forks up to a message, with a draft in the composer. */
   onFork?: (upToMessageId: string, draft?: string) => void
+  /** Takes a failure's next step: 设置 › Harness or 模型服务 (only where this device can change them), or the model menu. */
+  failureSteps?: readonly FailureStep[]
+  onFailureStep?: (step: FailureStep) => void
   /** Opens the session a fork came from. */
   onSource?: (sessionId: string) => void
   onCopyError?: (error: unknown) => void
@@ -584,6 +622,13 @@ export function Transcript({
     if (last) onFork?.(last.id, '请接着这个会话继续。')
   })
   const changesError = useStableCallback((error: unknown) => onCopyError?.(error))
+  // Stable, so a settled turn does not draw again when the shell hands down a new function.
+  const failureStepTaken = useStableCallback((step: FailureStep) => onFailureStep?.(step))
+  const steps = useMemo(
+    (): FailureSteps | undefined =>
+      failureSteps?.length ? { has: step => failureSteps.includes(step), take: failureStepTaken } : undefined,
+    [failureSteps, failureStepTaken],
+  )
   const handoff = useStableCallback((messageIds: string[]) => onHandoff?.(messageIds))
   const inserts = placed?.(turns.map(turn => ({ key: turn.key, at: turnTimes(turn).startedAt })))
   // Stable, so the subagent rows under it do not draw again with every render of the page.
@@ -716,6 +761,7 @@ export function Transcript({
                     onCopyUpTo={!trailingLive ? copyUpTo : undefined}
                     {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
                     {...(onFork ? { onContinue: continueRun } : {})}
+                    {...(steps ? { onFailureStep: steps } : {})}
                     {...(record ? { changes: record } : {})}
                     sessionActive={active}
                     changesRevision={cardsRevision}

@@ -23,6 +23,8 @@ const toolStates: Record<ShownToolState, string> = {
   rejected: '已拒绝',
   expired: '已过期',
   blocked: '拦下',
+  interrupted: 'Latch 重启时中断',
+  unknown: '结果未知',
 }
 
 /** A fence longer than any backtick run inside, so content can never close it early. */

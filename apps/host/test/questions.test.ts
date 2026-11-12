@@ -276,3 +276,25 @@ test('refuses corrupt storage, duplicate question IDs and oversized question pac
   ).rejects.toMatchObject({ code: 'questions-corrupt' })
   expect(await readFile(join(dataDir, 'questions.json'), 'utf8')).toBe('{broken')
 })
+
+test('never stores a call ID it could not read back, and skips one unreadable record instead of refusing to start', async () => {
+  const { service, dataDir } = await fixture()
+  await expect(
+    service.ask(args, { sessionId: 'session', callId: `1:${'c'.repeat(256)}`, signal: new AbortController().signal }),
+  ).rejects.toMatchObject({ code: 'question-invalid' })
+  const good = { id: 'question-a', sessionId: 'session', toolCallId: 'call', state: 'closed' }
+  const bad = { id: 'question-b', sessionId: 'session', toolCallId: 'c'.repeat(258), state: 'closed' }
+  await writeFile(join(dataDir, 'questions.json'), JSON.stringify({ version: 1, items: [good, bad, good] }))
+  const lines: string[] = []
+  const reopened = await Questions.open({
+    dataDir,
+    changed: () => undefined,
+    detail: async () => {
+      throw new Error('not used')
+    },
+    log: text => lines.push(text),
+  })
+  services.push(reopened)
+  expect(lines).toEqual(['问答记录中有 2 条无法读取，已跳过'])
+  expect(lines.join('')).not.toContain('ccc')
+})

@@ -9,7 +9,16 @@ import {
   skillsServer,
   writeSessionSkills,
 } from './skills-server.ts'
-import type { AttachmentRef } from '@latch/protocol'
+import type { AttachmentRef, QuestionResult } from '@latch/protocol'
+import {
+  CURSOR_DECLINE_REPLY,
+  CURSOR_QUESTION_METHOD,
+  ELICITATION_METHOD,
+  cursorAsk,
+  cursorDeclineNote,
+  elicitationAsk,
+  type AgentAsk,
+} from './questions.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
@@ -57,7 +66,7 @@ import {
   type SteerOutcome,
 } from '@latch/sdk'
 import { isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
-import { runEndRecord } from '@latch/core/run-end'
+import { errorCodeOf, interruptedNote, runEndRecord } from '@latch/core/run-end'
 import {
   catalogueReadOf,
   MAX_START_CHOICES,
@@ -267,6 +276,10 @@ interface Run {
   runningTool?: ToolState
   /** Why the turn ended, when its process did. */
   end?: RunEnd['reason']
+  /** Questions this turn has put to the person and still waits on: a stop or the turn's end withdraws them. */
+  asking?: Set<AbortController>
+  /** The note that says why the turn failed, and the error's code, so a client offers the next step that fits. */
+  failure?: { note: string; code: string }
   unrecognized?: UnrecognizedRequests
   /** Methods already recorded in the transcript for this turn. */
   unrecognizedMethods?: Set<string>
@@ -773,18 +786,13 @@ export class AgentRuntime implements Bridge {
         )
         for (const item of task.messages) {
           if (item.subagent) settleSubagent(item, at, true)
-          else settleToolMessage(item, at)
+          else if (settleToolMessage(item, at)) item.interrupted = true
         }
         task.summary.status = 'interrupted'
+        task.summary.runOutcome = 'interrupted'
         task.summary.runEnd = runEndRecord('host-stopped', at, unknown)
         // The turn did not settle, so its user message gets no times: its duration is unknown.
-        task.messages.push({
-          id: randomUUID(),
-          role: 'system',
-          text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
-          state: 'failed',
-          createdAt: this.now(),
-        })
+        task.messages.push(interruptedNote(this.now()))
         this.touch(task)
         changed = true
       }
@@ -3028,6 +3036,11 @@ export class AgentRuntime implements Bridge {
       task.summary.usage = { inputTokens: parsed.data.usage.inputTokens, outputTokens: parsed.data.usage.outputTokens }
     }
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
+    // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
+    if (run.cancelRequested && this.closed && run.sent) {
+      run.end = 'host-stopped'
+      return 'interrupted'
+    }
     if (run.cancelRequested) {
       if (stopReason !== 'cancelled')
         notes.push(`已请求取消；${this.agent.name} 以 ${clip(this.redact(stopReason ?? '无效响应'), 64)} 结束本轮，已按取消处理。`)
@@ -3065,6 +3078,10 @@ export class AgentRuntime implements Bridge {
       return status
     }
     if (run.cancelRequested) {
+      if (this.closed && run.sent) {
+        run.end = 'host-stopped'
+        return 'interrupted'
+      }
       // Before session/prompt nothing ran, so how the abandoned setup ended is not worth reporting.
       if (!run.sent) {
         if (this.closed) notes.push(`Latch 关闭时本轮尚未发送给 ${this.agent.name}，已取消。`)
@@ -3100,7 +3117,11 @@ export class AgentRuntime implements Bridge {
     }
     // The same refusal as above, already turned into words on its way out of `session`.
     if (error instanceof AppError && error.code === 'agent-auth-required') run.end = 'login-required'
-    notes.push(error instanceof AppError ? error.message : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`)
+    const note =
+      error instanceof AppError ? this.redact(error.message) : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`
+    const code = errorCodeOf(error)
+    if (code) run.failure = { note, code }
+    notes.push(note)
     return 'failed'
   }
 
@@ -3119,13 +3140,14 @@ export class AgentRuntime implements Bridge {
         return `取消未在 ${Math.ceil(this.limits.cancelGraceMs / 1000)} 秒内完成，已强制结束 ${name} 进程；${turn}。请核对工具副作用。`
       return `${name} 进程已被强制结束；${turn}。请核对工具副作用。`
     }
-    if (info.reason === 'stop') return `${name} 进程已随 Latch 关闭而结束；${turn}。请核对工具副作用。`
+    if (info.reason === 'stop') return status === 'interrupted' ? '' : `${name} 进程已随 Latch 关闭而结束；${turn}。请核对工具副作用。`
     if (info.reason === 'overflow') return `${name} 输出了超过限制的单行消息，进程已被结束；${turn}。请核对工具副作用。`
     return `${name} 进程意外退出（${describeExit(info)}）；${turn}。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入日志。' : ''}`
   }
 
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
     clearTimeout(run.graceTimer)
+    for (const asking of run.asking ?? []) asking.abort()
     // A subagent that outlives a turn that ended by itself still waits on its answer; any other end answers everything.
     const kept: Permission[] = []
     for (const permission of [...this.permissions.values()]) {
@@ -3144,11 +3166,13 @@ export class AgentRuntime implements Bridge {
       if (status === 'idle' && run.live) this.checkRoute(run, run.live, notes)
       const tools = this.tools.get(run.taskId)
       const unknown: UnknownResult[] = []
+      // A call the Host's stop cut off says so, on its own row and in every client.
+      const stopped = status === 'interrupted' && run.end === 'host-stopped'
       if (tools?.seq === run.seq) {
         for (const state of tools.calls.values()) {
           if (state.status === 'in_progress' && !state.final)
             unknown.push({ messageId: state.id, name: clip(this.redact(commandName(state)), COMMAND_NAME_LIMIT) })
-          if (settleTool(state, at)) this.upsert(task, toolMessage(state))
+          if (settleTool(state, at)) this.upsert(task, stopped ? { ...toolMessage(state), interrupted: true } : toolMessage(state))
         }
       }
       for (const child of run.live?.children.values() ?? []) {
@@ -3184,12 +3208,15 @@ export class AgentRuntime implements Bridge {
               ? 'interrupted'
               : 'failed'
       if (run.end || unknown.length) task.summary.runEnd = runEndRecord(run.end ?? 'turn-ended', at, unknown)
+      if (stopped) task.messages.push(interruptedNote(at))
       for (const note of notes) {
+        if (!note) continue
         task.messages.push({
           id: randomUUID(),
           role: 'system',
           text: note,
           ...(status === 'failed' || status === 'interrupted' ? { state: 'failed' as const } : {}),
+          ...(status === 'failed' && run.failure?.note === note ? { errorCode: run.failure.code } : {}),
           createdAt: at,
         })
       }
@@ -3246,6 +3273,7 @@ export class AgentRuntime implements Bridge {
       for (const permission of [...this.permissions.values()]) {
         if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
       }
+      for (const asking of run.asking ?? []) asking.abort()
       this.notify(run.taskId)
     }
     // Only a sent turn can keep the process busy; a turn cancelled earlier never sends its prompt.
@@ -3412,7 +3440,7 @@ export class AgentRuntime implements Bridge {
           'initialize',
           {
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: clientCapabilities(this.selection.preset?.signIn === undefined),
+            clientCapabilities: clientCapabilities(this.selection.preset?.signIn === undefined, this.options.askUser !== undefined),
             clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
           },
           Math.min(this.limits.handshakeTimeoutMs, this.limits.requestTimeoutMs),
@@ -4012,11 +4040,30 @@ export class AgentRuntime implements Bridge {
 
   private onRequest(live: Live, method: string, params: unknown, id: RpcId): Promise<unknown> {
     if (method === 'session/request_permission') return this.onPermission(live, params, id)
+    if (method === ELICITATION_METHOD && this.options.askUser) {
+      const ask = elicitationAsk(params)
+      if (ask) return this.askPerson(live, ask)
+      // URL mode, or a field or length Latch cannot ask: invalid params, as ACP answers a mode the client did not offer.
+      // A URL-mode request's link is never written into the session.
+      const url = isObject(params) && ((params as { mode?: unknown }).mode !== 'form' || 'url' in (params as object))
+      this.noteUnrecognized(live, method, url ? undefined : params, '这个提问的形式 Latch 还不能显示')
+      return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
+    }
+    // Cursor's own question, from whichever agent sends it.
+    if (method === CURSOR_QUESTION_METHOD) {
+      const read = cursorAsk(params)
+      if (read?.tooLong) {
+        this.noteUnrecognized(live, method, params, '这个提问超出 Latch 能显示的长度')
+        return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
+      }
+      if (read?.ask && this.options.askUser) return this.askPerson(live, read.ask)
+      if (read) return Promise.resolve(this.declineQuestion(live, cursorDeclineNote(read.parsed, this.agent.name)))
+    }
     const requests = this.selection.profile?.extensions?.requests
     const extension = requests && Object.hasOwn(requests, method) ? requests[method] : undefined
     const answered = extension && this.onExtension(live, extension, params, id)
     if (answered) return answered
-    // File system, terminal and elicitation are not advertised, so agents must not call them.
+    // File system and terminal are not advertised, so agents must not call them.
     this.noteUnrecognized(live, method, params)
     return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
   }
@@ -4063,12 +4110,124 @@ export class AgentRuntime implements Bridge {
     )
   }
 
+  /** A question Latch cannot put to the person: written in the session, so they can answer in their next message. */
+  private declineQuestion(live: Live, note: string): unknown {
+    const task = this.state.tasks[live.key]
+    if (task) {
+      const run = this.runs.get(live.key)
+      if (run?.segment && run.live === live) this.settleSegment(run, task, 'completed')
+      task.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
+      this.touch(task)
+      this.mark()
+      this.notify(live.key)
+    }
+    return CURSOR_DECLINE_REPLY
+  }
+
+  /**
+   * Puts an agent's question to the person on a row of its own, as the built-in harness's 向你提问 does, and answers the
+   * agent once the answer is in the session's record. Outside a turn that is still going, or once it stops, the agent
+   * is answered that nobody did.
+   */
+  private async askPerson(live: Live, ask: AgentAsk): Promise<unknown> {
+    const taskId = live.key
+    const task = this.state.tasks[taskId]
+    const run = this.runs.get(taskId)
+    const askUser = this.options.askUser
+    if (!task || !run || !askUser || run.live !== live || !run.sent || run.cancelRequested || this.closed) return ask.reply(undefined)
+    if (run.segment) this.settleSegment(run, task, 'completed')
+    // A row of its own, never the agent's call of the same ID: that call may still be running, and two asks may share it.
+    const callId = `ask-${randomUUID()}`
+    const state = this.toolState(task, callId)
+    const prompt = clip(this.redact(ask.prompt), 2000) || `${this.agent.name} 的提问`
+    const questions = ask.questions.map(item => ({
+      ...item,
+      label: clip(this.redact(item.label), 1000),
+      options: item.options.map(option => ({ ...option, label: clip(this.redact(option.label), 500) })),
+    }))
+    mergeTool(
+      state,
+      {
+        toolCallId: callId,
+        title: prompt,
+        name: 'ask_user',
+        kind: 'other',
+        status: 'in_progress',
+        // The agent's own call, only as a link.
+        ...(ask.toolCallId ? { rawInput: { forCall: clip(this.redact(ask.toolCallId), 256) } } : {}),
+      },
+      this.now(),
+    )
+    this.upsert(task, toolMessage(state))
+    const controller = new AbortController()
+    ;(run.asking ??= new Set()).add(controller)
+    task.summary.status = 'waiting-approval'
+    run.clock.openWait(state.id)
+    this.phase(run, 'approval', 'ask_user', run.clock.live().runWaitingSince)
+    this.touch(task)
+    this.mark()
+    this.notify(taskId)
+    const sessionId = taskId
+    const questionId = state.id.slice('tool:'.length)
+    let answer: string | undefined
+    try {
+      answer = (await askUser({ sessionId, callId: questionId, prompt, questions, signal: controller.signal })).text
+    } catch {
+      answer = undefined
+    } finally {
+      run.asking.delete(controller)
+    }
+    const current = this.state.tasks[taskId]
+    let result: QuestionResult | undefined
+    try {
+      const parsed = answer === undefined ? undefined : (JSON.parse(answer) as QuestionResult)
+      result = parsed?.kind === 'latch.question-result' ? parsed : undefined
+    } catch {
+      result = undefined
+    }
+    // The turn's end or the Host's stop already settled the row (unknown, interrupted): that record stands.
+    if (state.final) result = undefined
+    let durable = false
+    if (current && !state.final) {
+      if (result)
+        mergeTool(
+          state,
+          { toolCallId: callId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: answer } }] },
+          this.now(),
+        )
+      else {
+        // Nobody answered: the question is withdrawn, which is no failure. The Host's stop says so on the row.
+        state.awaiting = 0
+        state.final = { state: 'cancelled', note: `QUESTION_CLOSED: ${this.closed ? 'Latch 重启时中断，' : '提问已结束，'}没有回答。` }
+        state.completedAt ??= this.now()
+      }
+      this.upsert(current, this.closed && !result ? { ...toolMessage(state), interrupted: true } : toolMessage(state))
+      if (this.runs.get(taskId) === run) {
+        run.clock.closeWait(state.id)
+        if (current.summary.status === 'waiting-approval' && !this.openApprovals(taskId).length) current.summary.status = 'running'
+        this.working(run)
+      }
+      this.touch(current)
+      this.mark()
+      durable = await this.flush().then(
+        () => true,
+        () => false,
+      )
+    }
+    // Only a row on disk confirms the answer to the device that gave it; a failed write is reported as unknown.
+    await this.options
+      .questionSettled?.({ sessionId, callId: questionId, state: !result ? 'cancelled' : durable ? 'completed' : 'unknown' })
+      .catch(() => {})
+    this.notify(taskId)
+    return ask.reply(result)
+  }
+
   /**
    * A request Latch cannot act on gets an answer at once, so the agent is not left waiting for one, and stays visible: on
    * the live turn, and as a system message that says what it asked. Agents repeat themselves, so each method is
    * written once per turn and the number of methods is bounded.
    */
-  private noteUnrecognized(live: Live, method: string, params: unknown): void {
+  private noteUnrecognized(live: Live, method: string, params: unknown, why = 'Latch 不支持这个请求'): void {
     const shown = clip(this.redact(method), UNRECOGNIZED_METHOD_LIMIT)
     const asked = isObject(params) ? (params as { sessionId?: unknown }).sessionId : undefined
     const named = typeof asked === 'string' ? live.sessions.get(asked) : undefined
@@ -4097,7 +4256,7 @@ export class AgentRuntime implements Bridge {
       task.messages.push({
         id: messageId,
         role: 'system',
-        text: `${this.agent.name} 发来一个 Latch 看不懂的请求：${shown}。已回复不支持；它可能因此停住，也可能换一种做法。${content}`,
+        text: `${this.agent.name} 发来请求 ${shown}：${why}，已回复不支持；它可能因此停住，也可能换一种做法。${content}`,
         createdAt: at,
       })
     }

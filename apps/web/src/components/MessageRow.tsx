@@ -22,6 +22,7 @@ import {
   EnterGlyph,
   HistoryGlyph,
   InfoGlyph,
+  AlertGlyph,
   UndoGlyph,
   CloseGlyph,
 } from '@latch/ui'
@@ -313,19 +314,39 @@ function UserMessage({
  * A note: a quiet record line (「已停止」, a model switch). One that reports a failure (a model-service error, an interrupted
  * run) is a failed row: a red ✕, its reason, and 重试 when this device may resend the turn.
  */
-function SystemNote({ message, onRetry }: { message: Message; onRetry?: () => void }) {
+function SystemNote({
+  message,
+  onRetry,
+  action,
+}: {
+  message: Message
+  onRetry?: () => void
+  /** The failure's own next step, when it is not 重试. */
+  action?: { label: string; run: () => void }
+}) {
   const failed = message.state === 'failed'
-  const Icon = failed ? CloseGlyph : InfoGlyph
+  // The Host's stop cut the turn off: no failure, but the person has to check what its tools did.
+  const interrupted = message.interrupted === true
+  const Icon = failed ? CloseGlyph : interrupted ? AlertGlyph : InfoGlyph
   return (
-    <article className={`message message-system${failed ? ' is-failed' : ''}`} data-message-id={message.id}>
+    <article
+      className={`message message-system${failed ? ' is-failed' : interrupted ? ' is-interrupted' : ''}`}
+      data-message-id={message.id}>
       <span className="process-slot" aria-hidden="true">
         <Icon size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
       </span>
       <p>{message.text}</p>
-      {failed && onRetry && (
-        <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
-          重试
+      {failed && action ? (
+        <Button size="xs" variant="ghost" onClick={action.run}>
+          {action.label}
         </Button>
+      ) : (
+        failed
+        && onRetry && (
+          <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
+            重试
+          </Button>
+        )
       )}
     </article>
   )
@@ -346,6 +367,7 @@ export const MessageRow = memo(
     harness,
     onEdit,
     onRetry,
+    action,
     onHandoff,
   }: {
     message: Message
@@ -364,6 +386,8 @@ export const MessageRow = memo(
     onEdit?: (message: Message) => void
     /** Resends the turn, from a failed note. */
     onRetry?: () => void
+    /** A failed note's own next step, in place of 重试. */
+    action?: { label: string; run: () => void }
     /** 交给代码任务… with this message chosen. */
     onHandoff?: (messageIds: string[]) => void
   }) {
@@ -379,7 +403,7 @@ export const MessageRow = memo(
           {...(onHandoff ? { onHandoff } : {})}
         />
       )
-    if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} />
+    if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} {...(action ? { action } : {})} />
     return (
       <article
         className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
@@ -403,8 +427,12 @@ export const MessageRow = memo(
     && a.harness === b.harness
     && a.onEdit === b.onEdit
     && a.onRetry === b.onRetry
+    && a.action?.label === b.action?.label
+    && a.action?.run === b.action?.run
     && a.onHandoff === b.onHandoff
     && a.message.id === b.message.id
+    && a.message.interrupted === b.message.interrupted
+    && a.message.errorCode === b.message.errorCode
     && a.message.text === b.message.text
     && a.message.forkContext === b.message.forkContext
     && a.message.importContext === b.message.importContext

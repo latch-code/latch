@@ -172,6 +172,34 @@ describe('independent harness runtime', () => {
     expect(users[0]?.requestId).toBe('same-request')
   })
 
+  it('says why a turn failed in its note, with any key replaced, and keeps the error code for the next step', async () => {
+    const dataDir = await directory()
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream() {
+        throw Object.assign(new Error(`模型服务 HTTP 401：bad key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 ${'x'.repeat(3000)}`), {
+          code: 'http-error',
+          status: 401,
+        })
+      },
+    }
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'refused' })
+    await waitStatus(bridge, sessionId, 'failed')
+    const note = (await bridge.detail(sessionId)).messages.at(-1)!
+    expect(note).toMatchObject({ role: 'system', state: 'failed', errorCode: 'http-401' })
+    expect(note.text).toContain('模型服务 HTTP 401')
+    expect(note.text).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789')
+    // As long as the other reasons, at most.
+    expect(note.text.length).toBeLessThanOrEqual(1001)
+    // Kept across a restart: the code is in the session's record.
+    await bridge.close()
+    const reopened = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    expect((await reopened.detail(sessionId)).messages.at(-1)).toMatchObject({ errorCode: 'http-401' })
+  })
+
   it("keeps a call's service signature in the history it sends back, across a restart, and never shows it", async () => {
     const dataDir = await directory()
     const seen: ModelMessage[][] = []
@@ -2069,7 +2097,7 @@ describe('times and usage the runtime records', () => {
     const detail = await bridge.detail('task-1')
     expect(detail.summary.status).toBe('interrupted')
     expect(detail.messages[0]).not.toHaveProperty('turn')
-    expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'failed', createdAt: at(60_000) })
+    expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'cancelled', interrupted: true, createdAt: at(60_000) })
   })
 })
 

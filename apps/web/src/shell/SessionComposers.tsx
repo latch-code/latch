@@ -1,3 +1,4 @@
+import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import type { ReactNode } from 'react'
 import { Eraser, GitFork } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
@@ -82,14 +83,38 @@ const FORK_PROMPT = '请接着这个会话继续。'
  * Opens one of the four controls once the page that holds it is drawn, as its key would: the new-session page mounts
  * its own composer after the session's goes, so the trigger is looked for over the next frames.
  */
-function openControlWhenShown(name: 'harness' | 'model' | 'thinking' | 'permission', frames = 10) {
+function openControlWhenShown(name: 'harness' | 'model' | 'thinking' | 'permission', frames = 10, newOnly = true) {
   requestAnimationFrame(() => {
     const trigger = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${name}"]`)]
-      .find(control => control.getClientRects().length > 0 && !control.closest('[inert]') && control.closest('.workspace.is-new'))
+      .find(
+        control => control.getClientRects().length > 0 && !control.closest('[inert]') && (!newOnly || control.closest('.workspace.is-new')),
+      )
       ?.querySelector<HTMLButtonElement>('button')
     if (trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') trigger.click()
-    else if (frames > 1) openControlWhenShown(name, frames - 1)
+    else if (frames > 1) openControlWhenShown(name, frames - 1, newOnly)
   })
+}
+
+/** A refused send's own next step beside its reason, when its code names one this device can take; 重试 is sending again. */
+function composerFailure(
+  code: string | undefined,
+  owner: boolean,
+  openSettings: (section: 'engines' | 'providers') => void,
+): { errorAction?: { label: string; run: () => void } } {
+  const step = failureAction(code)
+  if (step !== 'model' && step !== 'harness' && step !== 'providers') return {}
+  if (!(owner ? OWNER_FAILURE_STEPS : DEVICE_FAILURE_STEPS).includes(step)) return {}
+  return { errorAction: { label: FAILURE_ACTION_LABEL[step], run: () => takeFailureStep(step, openSettings) } }
+}
+
+/** The failure steps a device takes: anyone may pick another model; only the owner changes 设置. */
+export const OWNER_FAILURE_STEPS: readonly FailureStep[] = ['harness', 'model', 'providers']
+export const DEVICE_FAILURE_STEPS: readonly FailureStep[] = ['model']
+
+/** Takes a failure's next step: the composer's model menu, or the section of 设置 its fix is in. */
+export function takeFailureStep(step: FailureStep, openSettings: (section: 'engines' | 'providers') => void): void {
+  if (step === 'model') openControlWhenShown('model', 10, false)
+  else openSettings(step === 'harness' ? 'engines' : 'providers')
 }
 
 /**
@@ -449,6 +474,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           })}
       sending={submission.sending}
       error={noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '')}
+      {...(!noteComposer?.error && submission.error ? composerFailure(submission.errorCode, owner, openSettings) : {})}
       pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()
@@ -651,6 +677,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
 export function SheetComposer({ shell }: { shell: ShellState }) {
   const {
     catalog,
+    owner,
+    openSettings,
     submission,
     choice,
     attachmentDraft,
@@ -683,6 +711,7 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       pending={submission.pending}
       sending={submission.sending}
       error={submission.error}
+      {...composerFailure(submission.errorCode, owner, openSettings)}
       pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()

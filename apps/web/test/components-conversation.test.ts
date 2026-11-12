@@ -197,7 +197,7 @@ describe('a run that has gone quiet', () => {
     expect(silent).toContain('继续等')
     expect(silent).toContain('停止')
     const unknown = quiet({ ...base, unrecognized: { count: 1, at: localIso(0), messageId: 'n' } })
-    expect(unknown).toContain('Codex 发来一个看不懂的请求')
+    expect(unknown).toContain('Codex 发来不支持的请求')
     expect(unknown).toContain('查看')
     expect(unknown).not.toContain('继续等')
   })

@@ -67,6 +67,21 @@ function modelFixture() {
             await Promise.race([gate.released, abort.promise])
             if (signal.aborted) return
             if (prompt.endsWith('failure')) throw new Error('Notification fixture model failure')
+            if (prompt.endsWith('question')) {
+              yield {
+                type: 'tool-call',
+                call: {
+                  id: 'notification-question-' + randomUUID(),
+                  name: 'ask_user',
+                  arguments: {
+                    prompt: 'Private question',
+                    questions: [{ id: 'pick', label: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+                  },
+                },
+              }
+              yield { type: 'finish', reason: 'tool-calls' }
+              return
+            }
             if (prompt.endsWith('approval')) {
               yield {
                 type: 'tool-call',
@@ -95,7 +110,7 @@ function modelFixture() {
       const task = await host.bridge.createTask({
         prompt,
         requestId: randomUUID(),
-        mode: name === 'approval' ? 'agent' : 'chat',
+        mode: name === 'approval' || name === 'question' ? 'agent' : 'chat',
         model: { providerId: 'notification-fixture', model: 'fixture' },
       })
       await gate.entered
@@ -306,13 +321,31 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       await settled(host, approval.sessionId, 'cancelled')
       await poll(app)
 
+      // The agent's question waits for the person as a request does: told, and the click opens the session at its card.
+      await focus(app, false)
+      const question = await fixture.begin(host, 'question')
+      await poll(app)
+      question.release()
+      await settled(host, question.sessionId, 'waiting-approval')
+      await vi.waitFor(async () => {
+        await poll(app)
+        expect(await rows(app)).toHaveLength(4)
+      })
+      expect((await rows(app))[3]).toEqual({ title: 'Latch', body: '有一个问题等你回答。' })
+      await app.evaluate(() => (Reflect.get(globalThis, 'notificationFixture') as MainFixture).items[3]!.emit('click'))
+      await page.locator(`[data-task-id="${question.sessionId}"][aria-current="page"]`).waitFor()
+      await page.locator('.question-label', { hasText: 'Pick one' }).waitFor()
+      await host.bridge.cancel(question.sessionId)
+      await settled(host, question.sessionId, 'cancelled')
+      await poll(app)
+
       await focus(app, false)
       const cancelled = await fixture.begin(host, 'cancelled')
       await poll(app)
       await host.bridge.cancel(cancelled.sessionId)
       await settled(host, cancelled.sessionId, 'cancelled')
       await poll(app)
-      expect(await rows(app)).toHaveLength(3)
+      expect(await rows(app)).toHaveLength(4)
       expect((await rows(app)).filter(row => row.body === '一个会话已完成。')).toHaveLength(1)
       expect(JSON.stringify(await rows(app))).not.toContain('Private')
     } finally {

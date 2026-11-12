@@ -15,7 +15,7 @@ import {
 } from '@latch/protocol'
 import { AppError, type ModelMessage, type ToolCall } from '@latch/sdk'
 import { writeFileAtomic } from './node-kit/atomic.ts'
-import { runEndSchema } from './run-end.ts'
+import { ERROR_CODE, runEndSchema } from './run-end.ts'
 
 export interface StoredHistory extends Omit<ModelMessage, 'attachments'> {
   attachmentRefs?: AttachmentRef[]
@@ -116,6 +116,8 @@ const messageSchema = z.object({
   freshContext: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  interrupted: z.literal(true).optional(),
+  errorCode: z.string().regex(ERROR_CODE).optional(),
   reasoning: z.string().optional(),
   tool: toolDetailSchema.optional(),
   usage: usageSchema.optional(),
