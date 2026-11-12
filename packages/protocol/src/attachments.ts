@@ -23,6 +23,21 @@ export interface AttachmentUpload {
   sessionId?: string
   secretAcknowledged?: boolean
 }
+/**
+ * One chunked upload (`POST /attachments/uploads`): parts of `partBytes` each, the last one shorter, sent in order from
+ * `next`. `attachment` once it is complete; `next` is null when every part is in.
+ */
+export interface AttachmentUploadView {
+  id: string
+  requestId: string
+  size: number
+  partBytes: number
+  parts: number
+  received: number
+  next: number | null
+  expiresAt: number
+  attachment?: AttachmentRef
+}
 export interface AttachmentCapabilities {
   images: boolean
   text: boolean

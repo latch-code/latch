@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
@@ -1749,8 +1749,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
   }, 60_000)
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })
-    // One stream bounds every file this phone sends, under the Host's own limits.
-    expect(result.limits).toEqual(['图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个', '文字文件 1 MB 内 · 每条 8 个', ''])
+    // The Host's own limits per kind: a file over one stream goes in parts.
+    expect(result.limits).toEqual(['图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个', '文字文件 10 MB 内 · 每条 8 个', ''])
     expect(result.unavailable).toEqual([
       '',
       '这个 Harness 不接收图片和文件。',
@@ -1763,11 +1763,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.kinds).toEqual(['image', 'image', 'text', 'text', 'text', '-', '-', '-'])
     expect(result.admit).toEqual([
       'ok',
-      '「big.log」超过 256 KB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
-      '「huge.log」超过 1 MB，没有添加。可以添加：文字文件 1 MB 内 · 每条 8 个。',
-      // An original larger than one stream is re-encoded first; only one past what the phone reads is refused.
+      '「big.log」超过 256 KB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      '「huge.log」超过 10 MB，没有添加。可以添加：文字文件 10 MB 内 · 每条 8 个。',
+      // An original larger than the image limit is re-encoded first; only one past what the phone reads is refused.
       'ok',
-      '「IMG_2.heic」超过 50 MB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      '「IMG_2.heic」超过 50 MB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
       '这个 Harness 不接收图片。',
       '「deck.pdf」不能添加：只收图片和文字文件。',
       '空文件不能添加。',
@@ -1778,7 +1778,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       '「nul.txt」不是 UTF-8 文字文件，没有添加。',
       '「latin.txt」不是 UTF-8 文字文件，没有添加。',
       'ok',
-      '「big.jpg」超过 1 MB，没有添加。可以添加：图片 1 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      '「big.jpg」超过 5 MB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
     ])
     expect(result.classes).toEqual(['refused', 'refused', 'refused', 'retry', 'released', 'confirm', 'retry'])
     expect(result.heldBack).toEqual(['排队的消息不能带附件，本轮结束后再发送。', '追加的消息不能带附件，本轮结束后再发送。', '', ''])
@@ -1835,6 +1835,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       mode: 'agent',
     })
     expect(result.pendingCount).toBe(2)
+    expect(result.memory).toEqual({
+      unfinishedBefore: 2,
+      dropped: true,
+      smaller: true,
+      unfinishedAfter: 1,
+      removedUpload: true,
+      staged: ['等待上传的附件已占用 48 MB，请先发送或移除一些附件。', 'ok'],
+    })
     // A GIF is listed but not previewed: Quick Look stays with text and PNG/JPEG; a malformed reference is left out.
     expect(result.chips).toEqual(['shot.png|true|200 KB|true', 'anim.gif|true|1 KB|false'])
     expect(result.image).toEqual({
@@ -1849,7 +1857,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       tooBig: true,
     })
   })
-  it('uploads in bounded chunks, retries by requestId, cancels, sends with a message and reads back from the actual Swift workspace', async () => {
+  it('uploads in bounded chunks and in parts, resumes and aborts by requestId, sends with a message and reads back from the actual Swift workspace', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
       const owner = await host.enroll({ listener: 'unix' })
@@ -1868,10 +1876,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         window: true,
         freshReason: '这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。',
         reported: 'ready:it',
-        caps: '图片 1 MB 内 · 文字文件 1 MB 内 · 每条 8 个',
+        caps: '图片 5 MB 内 · 文字文件 10 MB 内 · 每条 8 个',
         sameRequest: true,
         cancel: true,
         oversize: true,
+        chunked: { kept: true, again: true },
+        largeImage: true,
+        resume: { unknown: true, fromPart: true, kept: true },
+        cancelParts: { stopped: true, fromStart: true, kept: true },
+        leftovers: { secret: 'attachment-secret', secretNamed: true, earlyStopped: true },
         sent: ['IMG_0001.jpg', 'notes.md'],
         readBack: true,
         plainReason: '这个 Harness 不接收图片和文件。',
@@ -1880,6 +1893,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         cancelMid: { stopped: true, afterCancel: 0, partial: true },
         queue: 'queue-attachments-unsupported',
       })
+      // Nothing the phone began is left unfinished on the Host: every cancel and removed row aborted its upload.
+      const folder = join(host.dataDir, 'attachments', '_uploads')
+      const records = await Promise.all(
+        (await readdir(folder)).map(
+          async name => JSON.parse(await readFile(join(folder, name, 'meta.json'), 'utf8')) as Record<string, unknown>,
+        ),
+      )
+      expect(records.filter(record => !record.done && !record.failed)).toEqual([])
     } finally {
       await host.close()
     }

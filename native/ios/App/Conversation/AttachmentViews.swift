@@ -100,7 +100,7 @@ struct AttachmentRows: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor(item)))
     }
     @ViewBuilder private func thumbnail(_ item: PhoneAttachDraft) -> some View {
-        if item.kind == .image, let image = UIImage(data: item.data) {
+        if item.kind == .image, let image = UIImage(data: item.preview) {
             Image(uiImage: image).resizable().scaledToFill().frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
         } else {
             Image(systemName: "doc.text").font(.system(size: 16)).foregroundStyle(PhoneTheme.muted).frame(width: 40, height: 40)

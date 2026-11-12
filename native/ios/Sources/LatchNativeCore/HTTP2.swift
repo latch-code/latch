@@ -185,13 +185,17 @@ public actor NativeHTTPConnection {
         }
     }
     /**
-     * One attachment as one stream of at most 1 MiB, written in 64 KiB chunks; before each chunk the body window and this
-     * connection are checked again. Cancel closes the stream and waits for it; a lost or late answer is result unknown.
+     * One attachment, or one part of a chunked one (`part`: the PUT path of `/link/api/attachments/uploads/<id>/parts/<n>`),
+     * as one stream of at most 1 MiB, written in 64 KiB chunks; before each chunk the body window and this connection are
+     * checked again. Cancel closes the stream and waits for it; a lost or late answer is result unknown.
      */
-    func upload(metadata: String, body: Data, lease: BodyLease, timeoutSeconds: Int64,
+    func upload(metadata: String?, part: String? = nil, body: Data, lease: BodyLease, timeoutSeconds: Int64,
         progress: (@Sendable (Int, Int) -> Void)?) async throws -> NativeHTTPResponse {
         guard !closed, channel.isActive, requests < 16, (1...1_048_576).contains(body.count), (1...600).contains(timeoutSeconds),
-              metadata.utf8.count <= 4096, LinkBytes.matches(metadata, "[A-Za-z0-9_-]{1,4096}") else { throw NativeFailure.invalidRecord }
+              (metadata == nil) != (part == nil),
+              metadata.map({ $0.utf8.count <= 4096 && LinkBytes.matches($0, "[A-Za-z0-9_-]{1,4096}") }) ?? true,
+              part.map({ LinkBytes.matches($0, "/link/api/attachments/uploads/[A-Za-z0-9_-]{22}/parts/[0-9]{1,3}") }) ?? true
+        else { throw NativeFailure.invalidRecord }
         // Before a stream exists there is nothing of this upload to close; the connection is shared and stays open.
         let permit = NativeFileReadPermit(lease: lease) {}
         try permit.requireValid(); requests += 1
@@ -213,9 +217,11 @@ public actor NativeHTTPConnection {
             return try await withTaskCancellationHandler {
                 func current() throws { try Task.checkCancellation(); try permit.requireValid(); guard parent.isActive, stream.isActive else { throw NativeFailure.unavailable } }
                 try current()
-                let fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "application/json"), ("content-type", "application/octet-stream"),
-                    ("content-length", String(body.count)), ("x-latch-attachment", metadata)])
-                try await stream.writeAndFlush(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: .POST, uri: "/link/api/attachments", headers: fields))).get()
+                var fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "application/json"), ("content-type", "application/octet-stream"),
+                    ("content-length", String(body.count))])
+                if let metadata { fields.add(name: "x-latch-attachment", value: metadata) }
+                let head = HTTPRequestHead(version: .http2, method: part == nil ? .POST : .PUT, uri: part ?? "/link/api/attachments", headers: fields)
+                try await stream.writeAndFlush(HTTPClientRequestPart.head(head)).get()
                 var offset = 0
                 while offset < body.count {
                     try current()

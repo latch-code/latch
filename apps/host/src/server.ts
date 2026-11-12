@@ -28,6 +28,7 @@ import { createFileTrackingService } from './files/output-tracker.ts'
 import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
 import { AttachmentStore, ATTACHMENT_FILE_LIMIT, ATTACHMENT_IMAGE_LIMIT, ATTACHMENT_REMOTE_LIMIT } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
+import { AttachmentUploads } from './attachment-uploads.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -1622,6 +1623,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
+    const attachmentUploads = await AttachmentUploads.open(dataDir, attachmentStore, { now })
     const fileReferences = await FileReferenceStore.open(dataDir)
     const fileTracking = createFileTrackingService({
       protectedPaths: guardedPaths,
@@ -1799,6 +1801,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     const attachmentRoutes = createAttachmentRoutes<Caller>({
       store: attachmentStore,
+      uploads: attachmentUploads,
       now,
       audit,
       actorOf,

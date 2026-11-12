@@ -77,6 +77,9 @@ extension PhoneModel {
             if let failure = item.failure { tray.note = failure; continue }
             guard let data = item.data, let kind = item.kind, let caps else { continue }
             if let refusal = PhoneAttachments.admitBytes(kind: kind, name: item.name, data: data, caps: caps) { tray.note = refusal; continue }
+            // Every composer's waiting bytes together, this tray's as it is now.
+            let staged = attachTrays.filter { $0.key != key }.values.reduce(tray.stagedBytes) { $0 + $1.stagedBytes }
+            if let refusal = PhoneAttachments.admitStaged(staged: staged, adding: data.count) { tray.note = refusal; continue }
             let draft = PhoneAttachDraft(name: item.name, kind: kind, data: data)
             if tray.add(draft) { added.append(draft.id) }
         }
@@ -100,12 +103,19 @@ extension PhoneModel {
             guard generation == current, let draft = attachTrays[key]?.items.first(where: { $0.id == id }) else { return }
             if Task.isCancelled { attachTrays[key]?.failed(id, refusal: nil, cancelled: true); return }
             do {
-                let ref = try await workspace.uploadAttachment(draft, selection: selection, sessionId: sessionId) { [weak self] done, total in
+                let ref = try await workspace.uploadAttachment(draft, selection: selection, sessionId: sessionId, progress: { [weak self] done, total in
                     Task { @MainActor [weak self] in
                         guard let self, self.generation == current, case .uploading = self.attachTrays[key]?.items.first(where: { $0.id == id })?.status else { return }
                         self.attachTrays[key]?.set(id, .uploading(Double(done) / Double(max(1, total))))
                     }
-                }
+                }, started: { [weak self] upload in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.generation == current else { return }
+                        // The row went meanwhile: what the Host began for it goes too.
+                        if self.attachTrays[key]?.items.contains(where: { $0.id == id }) == true { self.attachTrays[key]?.started(id, upload: upload) }
+                        else { await workspace.abortAttachmentUpload(upload) }
+                    }
+                })
                 guard generation == current else { return }
                 // Removed meanwhile: the Host's copy goes too.
                 if attachTrays[key]?.ready(id, ref: ref) != true, let gone = ref["id"].string { Task { try? await workspace.removeAttachment(gone) } }
@@ -130,8 +140,12 @@ extension PhoneModel {
     func removeAttachment(_ key: String, id: UUID) {
         guard !attachLocked(key) else { attachTrays[key]?.note = PhoneAttachments.lockedWords; return }
         uploadJobs[id]?.cancel(); uploadJobs[id] = nil
-        guard let attachmentId = attachTrays[key]?.remove(id), let workspace else { return }
-        Task { try? await workspace.removeAttachment(attachmentId) }
+        // After 结果未知, a secret to confirm or a failure the Host may still hold parts: they are aborted there.
+        guard let removed = attachTrays[key]?.removeRow(id), let workspace else { return }
+        Task {
+            if let attachment = removed.attachment { try? await workspace.removeAttachment(attachment) }
+            if let upload = removed.upload { await workspace.abortAttachmentUpload(upload) }
+        }
     }
     /**
      * Begins a send with attachments: the target and the rows are fixed now, the place is locked, and its uploads are
@@ -152,9 +166,15 @@ extension PhoneModel {
     func dropAttachments(_ key: String) {
         guard let tray = attachTrays[key] else { return }
         for item in tray.items { uploadJobs[item.id]?.cancel(); uploadJobs[item.id] = nil }
+        let uploads = tray.unfinishedUploads
         let ids = attachTrays[key]?.clear() ?? []
         attachTrays[key] = nil
-        if let workspace { Task { for id in ids { try? await workspace.removeAttachment(id) } } }
+        if let workspace {
+            Task {
+                for id in ids { try? await workspace.removeAttachment(id) }
+                for upload in uploads { await workspace.abortAttachmentUpload(upload) }
+            }
+        }
     }
     /** The message went: its attachments now belong to the session. */
     func attachmentsSent(_ key: String) { attachTrays[key] = nil }

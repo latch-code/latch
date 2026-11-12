@@ -14,6 +14,15 @@ export const ATTACHMENT_CLAIM_TTL = 7 * 24 * 60 * 60_000
 export const ATTACHMENT_FILE_LIMIT = 25 * 1024 * 1024
 export const ATTACHMENT_REMOTE_LIMIT = 10 * 1024 * 1024
 export const ATTACHMENT_IMAGE_LIMIT = 5 * 1024 * 1024
+/** Per device: drafts, uploads under way and unfinished chunked uploads together. */
+const ATTACHMENT_DEVICE_FILES = 32
+export const ATTACHMENT_DEVICE_BYTES = 256 * 1024 * 1024
+/** For the Host: drafts and every upload's bytes, received or held. */
+const ATTACHMENT_HOST_BYTES = 1024 * 1024 * 1024
+/** What a request named, so that its replay is told apart from another file under the same request ID. */
+export function attachmentInputHash(name: string, size: number, sha256: string): string {
+  return createHash('sha256').update(canonicalJson({ name, size, sha256 })).digest('hex')
+}
 const ID = /^[A-Za-z0-9_-]{22}$/u
 const taskId = z
   .string()
@@ -51,6 +60,9 @@ export class AttachmentStore {
   private serial: Promise<unknown> = Promise.resolve()
   private uploads = new Map<string, { count: number; bytes: number }>()
   private reservedBytes = 0
+  /** Unfinished chunked uploads (`hold`), by owner: they count against the same quota as drafts. */
+  private held = new Map<string, { count: number; bytes: number }>()
+  private heldBytes = 0
   private leases = new Map<string, number>()
   private failure = false
   private readonly now: () => number
@@ -95,6 +107,62 @@ export class AttachmentStore {
     this.serial = next.catch(() => {})
     return next
   }
+  /** The name, request and size an upload names, by the limits of its entry: `remote` is every entry but this Mac's. */
+  checkInput(input: { name: string; requestId: string; size: number; remote: boolean }): string {
+    if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
+    const name = input.name.trim()
+    if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/u.test(name) || !z.string().uuid().safeParse(input.requestId).success)
+      throw new AppError(400, 'attachment-invalid', '附件名称或请求标识无效。')
+    const limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
+    if (!Number.isSafeInteger(input.size) || input.size <= 0 || input.size > limit)
+      throw new AppError(413, 'attachment-too-large', input.remote ? '每个文件最多 10 MB。' : '每个文件最多 25 MB。')
+    return name
+  }
+  /**
+   * Room for `size` more bytes from `owner`: its drafts, uploads being received and unfinished chunked uploads count
+   * against 32 files and 256 MiB per device and 1 GiB for the Host. `streaming`: a single-body upload, which also takes
+   * one of the streams received at once (two per device, eight for the Host); a chunked upload's start holds bytes only.
+   */
+  private assertRoom(owner: string, size: number, streaming: boolean): void {
+    const draft = Object.values(this.state.entries).filter(entry => !entry.taskId),
+      own = draft.filter(entry => entry.owner === owner),
+      active = this.uploads.get(owner) ?? { count: 0, bytes: 0 },
+      held = this.held.get(owner) ?? { count: 0, bytes: 0 }
+    if (
+      (streaming && ([...this.uploads.values()].reduce((sum, item) => sum + item.count, 0) >= 8 || active.count >= 2))
+      || this.reservedBytes + this.heldBytes + size + draft.reduce((sum, e) => sum + e.ref.size, 0) > ATTACHMENT_HOST_BYTES
+      || own.length + active.count + held.count >= ATTACHMENT_DEVICE_FILES
+      || own.reduce((sum, e) => sum + e.ref.size, 0) + active.bytes + held.bytes + size > ATTACHMENT_DEVICE_BYTES
+    )
+      throw new AppError(429, 'attachment-quota', '草稿附件过多，请移除一些附件或稍后重试。')
+  }
+  /**
+   * Holds room for an unfinished chunked upload of `size` bytes until `unhold`: it counts as one of the device's drafts
+   * from its start, so parts on disk can never pass the device's or the Host's quota. `restore`: at startup, without the
+   * check, as the bytes are already on disk.
+   */
+  hold(owner: string, size: number, restore = false): void {
+    if (!restore) this.assertRoom(owner, size, false)
+    const held = this.held.get(owner) ?? { count: 0, bytes: 0 }
+    this.held.set(owner, { count: held.count + 1, bytes: held.bytes + size })
+    this.heldBytes += size
+  }
+  /** What unfinished chunked uploads of this owner hold. */
+  holding(owner: string): { count: number; bytes: number } {
+    return { ...(this.held.get(owner) ?? { count: 0, bytes: 0 }) }
+  }
+  unhold(owner: string, size: number): void {
+    const held = this.held.get(owner)
+    if (!held) return
+    if (held.count <= 1) this.held.delete(owner)
+    else this.held.set(owner, { count: held.count - 1, bytes: held.bytes - size })
+    this.heldBytes -= size
+  }
+  /** The attachment this device's request already made, with the hash of what it named; for a replay of the request. */
+  made(owner: string, requestId: string): { ref: AttachmentRef; inputHash: string } | undefined {
+    const entry = Object.values(this.state.entries).find(item => item.owner === owner && item.requestId === requestId)
+    return entry && !this.expired(entry) ? structuredClone({ ref: entry.ref, inputHash: entry.inputHash }) : undefined
+  }
   /** Rechecks authorization before and after every received chunk and before publication. */
   async add(input: {
     owner: string
@@ -108,26 +176,12 @@ export class AttachmentStore {
     accept: (ref: AttachmentRef) => void | Promise<void>
     audit?: (ref: AttachmentRef) => Promise<void>
   }): Promise<AttachmentRef> {
-    if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
-    const name = input.name.trim()
-    if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/u.test(name) || !z.string().uuid().safeParse(input.requestId).success)
-      throw new AppError(400, 'attachment-invalid', '附件名称或请求标识无效。')
-    const limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
-    if (!Number.isSafeInteger(input.size) || input.size <= 0 || input.size > limit)
-      throw new AppError(413, 'attachment-too-large', input.remote ? '每个文件最多 10 MB。' : '每个文件最多 25 MB。')
+    const name = this.checkInput(input),
+      limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
     await this.prune()
     await input.recheck()
-    const draft = Object.values(this.state.entries).filter(entry => !entry.taskId),
-      own = draft.filter(entry => entry.owner === input.owner),
-      active = this.uploads.get(input.owner) ?? { count: 0, bytes: 0 }
-    if (
-      [...this.uploads.values()].reduce((sum, item) => sum + item.count, 0) >= 8
-      || active.count >= 2
-      || this.reservedBytes + input.size + draft.reduce((sum, e) => sum + e.ref.size, 0) > 1024 * 1024 * 1024
-      || own.length + active.count >= 32
-      || own.reduce((sum, e) => sum + e.ref.size, 0) + active.bytes + input.size > 256 * 1024 * 1024
-    )
-      throw new AppError(429, 'attachment-quota', '草稿附件过多，请移除一些附件或稍后重试。')
+    this.assertRoom(input.owner, input.size, true)
+    const active = this.uploads.get(input.owner) ?? { count: 0, bytes: 0 }
     this.uploads.set(input.owner, { count: active.count + 1, bytes: active.bytes + input.size })
     this.reservedBytes += input.size
     const temporary = join(this.directory, '_drafts', `.upload-${randomUUID()}`),
@@ -154,58 +208,7 @@ export class AttachmentStore {
       if (size !== input.size) throw new AppError(400, 'attachment-incomplete', '附件上传中断，草稿仍保留，请重试。')
       await fd.sync()
       await fd.close()
-      await input.recheck()
-      const first = Buffer.concat(head),
-        ext = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '',
-        format = fileFormat({ head: first, ext })
-      if (format.kind !== 'image' && !['text', 'code', 'markdown', 'csv'].includes(format.kind))
-        throw new AppError(
-          415,
-          'attachment-type-unsupported',
-          format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Harness 不接受这种附件。',
-        )
-      const image = format.kind === 'image'
-      if (image && (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(format.mime) || size > ATTACHMENT_IMAGE_LIMIT))
-        throw new AppError(415, 'attachment-image-unsupported', '图片仅支持 PNG、JPEG、GIF、WebP，每张最多 5 MB。')
-      const dims = image ? imageDimensions(first, format.mime) : undefined
-      if (image && (!dims || dims.width * dims.height > 40_000_000))
-        throw new AppError(415, 'attachment-image-invalid', '图片尺寸无法验证，或超过 4,000 万像素。')
-      const decoded = image ? undefined : this.decodeText(await readFile(temporary))
-      const secret = isSecretPath(name, first) || hasSecretContent(image ? first : new TextEncoder().encode(decoded!))
-      if (secret && !input.secretAcknowledged) throw new AppError(409, 'attachment-secret', '附件可能包含密钥，请确认后再添加。')
-      const ref: AttachmentRef = {
-        id: randomBytes(16).toString('base64url'),
-        name: redactSecrets(name),
-        mime: image ? (format.mime as AttachmentRef['mime']) : 'text/plain',
-        kind: image ? 'image' : 'text',
-        size,
-        sha256: hash.digest('hex'),
-        ...(dims ?? {}),
-      }
-      await input.accept(ref)
-      await input.recheck()
-      const inputHash = createHash('sha256')
-        .update(canonicalJson({ name, size, sha256: ref.sha256 }))
-        .digest('hex')
-      return await this.mutate(async () => {
-        const replay = Object.values(this.state.entries).find(entry => entry.owner === input.owner && entry.requestId === input.requestId)
-        if (replay) {
-          if (replay.inputHash !== inputHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同附件。')
-          return structuredClone(replay.ref)
-        }
-        if (Object.keys(this.state.entries).length >= 50_000)
-          throw new AppError(429, 'attachment-quota', '附件数量已达上限，请清理旧会话。')
-        await input.recheck()
-        await input.audit?.(ref)
-        await input.recheck()
-        const entry: Entry = { ref, owner: input.owner, requestId: input.requestId, inputHash, createdAt: this.now(), secret }
-        await rename(temporary, this.path(entry))
-        await syncDirectory(join(this.directory, '_drafts'))
-        const next = structuredClone(this.state)
-        next.entries[ref.id] = entry
-        await this.commit(next)
-        return structuredClone(ref)
-      })
+      return await this.publish({ ...input, name, size, sha256: hash.digest('hex'), head: Buffer.concat(head), temporary })
     } finally {
       await fd?.close().catch(() => {})
       await rm(temporary, { force: true }).catch(() => {})
@@ -214,6 +217,114 @@ export class AttachmentStore {
       else this.uploads.set(input.owner, { count: current.count - 1, bytes: current.bytes - input.size })
       this.reservedBytes -= input.size
     }
+  }
+  /**
+   * A chunked upload's assembled file (`AttachmentUploads`): the same content checks and publication as `add`, after its
+   * size and the SHA-256 named at its start are confirmed. The file is moved into the drafts when it is kept; otherwise
+   * it stays where it is, for the caller to keep (a secret to confirm) or drop.
+   */
+  async adopt(input: {
+    owner: string
+    requestId: string
+    name: string
+    size: number
+    sha256: string
+    remote: boolean
+    file: string
+    secretAcknowledged?: boolean
+    recheck: () => void | Promise<void>
+    accept: (ref: AttachmentRef) => void | Promise<void>
+    audit?: (ref: AttachmentRef) => Promise<void>
+  }): Promise<AttachmentRef> {
+    const name = this.checkInput(input)
+    await input.recheck()
+    const fd = await open(input.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    const hash = createHash('sha256'),
+      head = Buffer.alloc(Math.min(65536, input.size)),
+      buffer = Buffer.alloc(1024 * 1024)
+    let size = 0
+    try {
+      const info = await fd.stat()
+      if (!info.isFile() || info.size !== input.size) throw new AppError(400, 'attachment-incomplete', '附件还有分段没有上传。')
+      for (;;) {
+        const { bytesRead } = await fd.read(buffer, 0, buffer.length, size)
+        if (!bytesRead) break
+        if (size < head.length) buffer.copy(head, size, 0, Math.min(bytesRead, head.length - size))
+        hash.update(buffer.subarray(0, bytesRead))
+        size += bytesRead
+        if (size > input.size) break
+      }
+    } finally {
+      await fd.close()
+    }
+    if (size !== input.size) throw new AppError(400, 'attachment-incomplete', '附件还有分段没有上传。')
+    const sha256 = hash.digest('hex')
+    if (sha256 !== input.sha256) throw new AppError(400, 'attachment-invalid', '附件内容与开始上传时的摘要不一致。')
+    return this.publish({ ...input, name, size, sha256, head, temporary: input.file })
+  }
+  /** Sniffs, checks and keeps a received file as this owner's draft; `temporary` is moved into the drafts on success. */
+  private async publish(input: {
+    owner: string
+    requestId: string
+    name: string
+    size: number
+    sha256: string
+    head: Buffer
+    temporary: string
+    secretAcknowledged?: boolean
+    recheck: () => void | Promise<void>
+    accept: (ref: AttachmentRef) => void | Promise<void>
+    audit?: (ref: AttachmentRef) => Promise<void>
+  }): Promise<AttachmentRef> {
+    const { name, size, head: first, temporary } = input
+    await input.recheck()
+    const ext = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '',
+      format = fileFormat({ head: first, ext })
+    if (format.kind !== 'image' && !['text', 'code', 'markdown', 'csv'].includes(format.kind))
+      throw new AppError(
+        415,
+        'attachment-type-unsupported',
+        format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Harness 不接受这种附件。',
+      )
+    const image = format.kind === 'image'
+    if (image && (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(format.mime) || size > ATTACHMENT_IMAGE_LIMIT))
+      throw new AppError(415, 'attachment-image-unsupported', '图片仅支持 PNG、JPEG、GIF、WebP，每张最多 5 MB。')
+    const dims = image ? imageDimensions(first, format.mime) : undefined
+    if (image && (!dims || dims.width * dims.height > 40_000_000))
+      throw new AppError(415, 'attachment-image-invalid', '图片尺寸无法验证，或超过 4,000 万像素。')
+    const decoded = image ? undefined : this.decodeText(await readFile(temporary))
+    const secret = isSecretPath(name, first) || hasSecretContent(image ? first : new TextEncoder().encode(decoded!))
+    if (secret && !input.secretAcknowledged) throw new AppError(409, 'attachment-secret', '附件可能包含密钥，请确认后再添加。')
+    const ref: AttachmentRef = {
+      id: randomBytes(16).toString('base64url'),
+      name: redactSecrets(name),
+      mime: image ? (format.mime as AttachmentRef['mime']) : 'text/plain',
+      kind: image ? 'image' : 'text',
+      size,
+      sha256: input.sha256,
+      ...(dims ?? {}),
+    }
+    await input.accept(ref)
+    await input.recheck()
+    const inputHash = attachmentInputHash(name, size, ref.sha256)
+    return await this.mutate(async () => {
+      const replay = Object.values(this.state.entries).find(entry => entry.owner === input.owner && entry.requestId === input.requestId)
+      if (replay) {
+        if (replay.inputHash !== inputHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同附件。')
+        return structuredClone(replay.ref)
+      }
+      if (Object.keys(this.state.entries).length >= 50_000) throw new AppError(429, 'attachment-quota', '附件数量已达上限，请清理旧会话。')
+      await input.recheck()
+      await input.audit?.(ref)
+      await input.recheck()
+      const entry: Entry = { ref, owner: input.owner, requestId: input.requestId, inputHash, createdAt: this.now(), secret }
+      await rename(temporary, this.path(entry))
+      await syncDirectory(join(this.directory, '_drafts'))
+      const next = structuredClone(this.state)
+      next.entries[ref.id] = entry
+      await this.commit(next)
+      return structuredClone(ref)
+    })
   }
   private expired(entry: Entry): boolean {
     // A dispatched request with an unknown outcome is no longer an unsubmitted draft.

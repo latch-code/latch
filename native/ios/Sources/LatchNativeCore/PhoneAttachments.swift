@@ -46,14 +46,23 @@ public struct PhoneAttachDraft: Equatable, Sendable, Identifiable {
     public let requestId: String
     public let name: String
     public let kind: PhoneAttachKind
-    public let data: Data
+    /** The bytes, in memory until the Host keeps the file; empty from then on (`PhoneAttachTray.ready`). */
+    public internal(set) var data: Data
+    public let size: Int
+    /** A small redrawn picture for the row, kept once the bytes are let go. */
+    public internal(set) var thumbnail: Data?
     public var status: PhoneAttachStatus
     public var ref: NativeJSON?
     public var secretAcknowledged = false
+    /** The Host's chunked upload for these bytes while it is unfinished: removing the row aborts it there. */
+    public var uploadId: String?
     public init(name: String, kind: PhoneAttachKind, data: Data) {
-        id = UUID(); requestId = UUID().uuidString.lowercased(); self.name = name; self.kind = kind; self.data = data; status = .preparing
+        id = UUID(); requestId = UUID().uuidString.lowercased(); self.name = name; self.kind = kind; self.data = data; size = data.count; status = .preparing
     }
-    public var size: Int { data.count }
+    /** What the row shows: the thumbnail once the bytes are gone. */
+    public var preview: Data { thumbnail ?? data }
+    /** Bytes this row keeps in memory. */
+    public var stagedBytes: Int { data.count + (thumbnail?.count ?? 0) }
     /** The Host's attachment ID, once it kept the file. */
     public var attachmentId: String? { ref?["id"].string }
 }
@@ -88,9 +97,28 @@ public struct PhoneAttachTray: Equatable, Sendable {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].status = status
     }
+    /** The Host kept it: the bytes go from memory (an image keeps a small thumbnail), and nothing is left to abort. */
     public mutating func ready(_ id: UUID, ref: NativeJSON) -> Bool {
         guard let index = items.firstIndex(where: { $0.id == id }), PhoneAttachments.validRef(ref) else { return false }
-        items[index].ref = ref; items[index].status = .ready; return true
+        items[index].ref = ref; items[index].status = .ready; items[index].uploadId = nil
+        if items[index].kind == .image { items[index].thumbnail = PhoneImagePrep.thumbnail(items[index].data) }
+        items[index].data = Data()
+        return true
+    }
+    /** The Host began a chunked upload for this row. */
+    public mutating func started(_ id: UUID, upload: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].ref == nil, LinkBytes.matches(upload, "[A-Za-z0-9_-]{22}") else { return }
+        items[index].uploadId = upload
+    }
+    /** Bytes the rows of this tray keep in memory. */
+    public var stagedBytes: Int { items.reduce(0) { $0 + $1.stagedBytes } }
+    /** Unfinished chunked uploads of these rows on the Host, to abort when the rows go. */
+    public var unfinishedUploads: [String] { items.compactMap { $0.ref == nil ? $0.uploadId : nil } }
+    /** The row goes; what the Host holds for it comes back: its attachment ID, or its unfinished upload. */
+    public mutating func removeRow(_ id: UUID) -> (attachment: String?, upload: String?) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return (nil, nil) }
+        let row = items.remove(at: index)
+        return (row.attachmentId, row.ref == nil ? row.uploadId : nil)
     }
     public mutating func acknowledge(_ id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
@@ -170,8 +198,15 @@ public enum PhoneAttachments {
         return .object(value)
     }
     public static let perMessage = 8
-    /** One upload is one stream, and a native stream carries at most 1 MiB. */
+    /** Bytes waiting in memory across every composer before the Host keeps them. */
+    public static let stagedLimit = 48 * 1_048_576
+    public static let stagedWords = "等待上传的附件已占用 48 MB，请先发送或移除一些附件。"
+    /** Refused when adding `adding` bytes would pass what all composers may keep in memory at once. */
+    public static func admitStaged(staged: Int, adding: Int) -> String? { staged + adding > stagedLimit ? stagedWords : nil }
+    /** A native stream carries at most 1 MiB: a file up to that goes in one stream, a larger one in parts of this size. */
     public static let streamBytes = 1_048_576
+    /** The most this phone sends of one file, whatever a Host says: the Host's own largest file. */
+    public static let largestFile = 25 * 1_048_576
     public static let tooMany = "每条消息最多添加 8 个附件。"
     public static let releasedWords = "已在 设置 › 设备 里释放，请移除后重新添加"
     /** The Host takes a queued or steered message as text only (`queue-attachments-unsupported`). */
@@ -190,9 +225,9 @@ public enum PhoneAttachments {
         if code == "attachment-secret" { return .confirm }
         return refused.contains(code) ? .refused : .retry
     }
-    /** The largest file of this kind this phone sends: the Host's limits and one stream. */
+    /** The largest file of this kind this phone sends: the Host's limits for this connection, Harness and kind. */
     public static func limit(_ kind: PhoneAttachKind, _ caps: PhoneAttachCaps) -> Int {
-        min(streamBytes, caps.fileBytes, kind == .image ? caps.imageBytes : caps.textBytes)
+        min(largestFile, caps.fileBytes, kind == .image ? caps.imageBytes : caps.textBytes)
     }
     public static func sizeText(_ bytes: Int) -> String {
         bytes >= 1_048_576 ? "\(Int((Double(bytes) / 1_048_576).rounded())) MB" : "\(max(1, Int((Double(bytes) / 1024).rounded()))) KB"
@@ -278,6 +313,13 @@ public enum PhoneAttachments {
         guard value.utf8.count <= 4096 else { throw NativeFailure.invalidRecord }
         return value
     }
+    /** The start of a chunked upload (`POST /attachments/uploads`): what the file is, and its SHA-256 for the Host to check. */
+    public static func uploadStart(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?) throws -> Data {
+        var fields = context(selection: selection, sessionId: sessionId)
+        fields["requestId"] = .string(draft.requestId); fields["name"] = .string(draft.name); fields["kind"] = .string(draft.kind.rawValue)
+        fields["size"] = .number(Double(draft.size)); fields["sha256"] = .string(LinkBytes.hex(LinkBytes.hash(draft.data)))
+        return try NativeJSON.object(fields).encoded()
+    }
     /** A Host `AttachmentRef`: only these keys, a fixed ID and hash. */
     public static func validRef(_ ref: NativeJSON) -> Bool {
         guard case let .object(fields) = ref, Set(fields.keys).isSubset(of: ["id", "name", "mime", "kind", "size", "sha256", "width", "height"]),
@@ -298,6 +340,34 @@ public enum PhoneAttachments {
     }
     /** The attachments a pending write carries. */
     public static func count(_ write: NativePendingWrite) -> Int { ((try? NativeJSON.decode(write.body))?["attachmentIds"].array.count) ?? 0 }
+}
+
+/**
+ * A chunked upload as the Host has it: parts of `partBytes` in order from `next` (nil when every part is in), or the
+ * attachment it already made.
+ */
+public struct PhoneAttachUpload: Equatable, Sendable {
+    public let id: String
+    public let parts: Int
+    public var next: Int?
+    public let attachment: NativeJSON?
+    /** From `{ upload }` or `{ attachment }`, for a file of `size` bytes; nil when the answer is not one. */
+    public static func parse(_ value: NativeJSON, size: Int) -> PhoneAttachUpload? {
+        let attachment = value["attachment"] == .null ? value["upload"]["attachment"] : value["attachment"]
+        if attachment != .null { return PhoneAttachments.validRef(attachment) ? PhoneAttachUpload(id: "", parts: 0, next: nil, attachment: attachment) : nil }
+        let upload = value["upload"]
+        let parts = (size + PhoneAttachments.streamBytes - 1) / PhoneAttachments.streamBytes
+        guard let id = upload["id"].string, LinkBytes.matches(id, "[A-Za-z0-9_-]{22}"), upload["size"].integer == UInt64(size),
+              upload["partBytes"].integer == UInt64(PhoneAttachments.streamBytes), upload["parts"].integer == UInt64(parts) else { return nil }
+        let next: Int?
+        switch upload["next"] {
+        case .null: next = nil
+        default:
+            guard let value = upload["next"].integer, (0..<UInt64(parts)).contains(value) else { return nil }
+            next = Int(value)
+        }
+        return PhoneAttachUpload(id: id, parts: parts, next: next, attachment: nil)
+    }
 }
 
 public struct PhoneAttachChip: Equatable, Sendable, Identifiable {
@@ -329,6 +399,16 @@ public enum PhoneImagePrep {
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue else { return nil }
         return width * height <= Double(maxPixels)
+    }
+    /** A JPEG of at most 160 pixels on its long side, for a row whose bytes went to the Host. */
+    public static func thumbnail(_ data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 160, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+        return CGImageDestinationFinalize(destination) ? output as Data : nil
     }
     public static func prepare(data: Data, limit: Int) throws -> PhoneImagePrepared {
         guard data.count <= sourceBytes, let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { throw NativeFailure.unsupported }

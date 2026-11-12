@@ -492,13 +492,17 @@ public actor NativeWorkspace {
     /**
      * One attachment's bytes, one at a time. The Host keeps an upload by device and requestId, so a retry of the same
      * bytes after an unknown answer gets the same attachment; nothing here retries by itself. A refusal comes back as the
-     * Host's own code and words.
+     * Host's own code and words. A file larger than one stream goes in parts (`uploadInParts`).
      */
     public func uploadAttachment(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
-        progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> NativeJSON {
+        progress: (@Sendable (Int, Int) -> Void)? = nil, started: (@Sendable (String) -> Void)? = nil) async throws -> NativeJSON {
         guard LinkBytes.matches(draft.requestId, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
-              (1...PhoneAttachments.streamBytes).contains(draft.size) else { throw NativeFailure.invalidRecord }
+              (1...PhoneAttachments.largestFile).contains(draft.size) else { throw NativeFailure.invalidRecord }
         if let sessionId { guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
+        guard draft.data.count == draft.size else { throw NativeFailure.invalidRecord }
+        if draft.size > PhoneAttachments.streamBytes {
+            return try await uploadInParts(draft, selection: selection, sessionId: sessionId, progress: progress, started: started)
+        }
         let header = try PhoneAttachments.header(draft, selection: selection, sessionId: sessionId)
         let (connection, current) = try transport()
         guard !uploading else { throw NativeFailure.busy }
@@ -515,6 +519,101 @@ public actor NativeWorkspace {
         let failure = await responseFailure(response, lease: lease)
         if failure != .expired, let refusal = NativeHostRefusal.parse(status: response.status, body: response.body) { throw refusal }
         throw failure
+    }
+    /**
+     * A file larger than one stream, in parts of 1 MiB, each its own stream with the same per-chunk checks. The start
+     * names the request, so starting again after an unknown answer finds the same upload on the Host and sends only the
+     * parts it lacks, from the next one it asks for; a part it has is not sent again. Cancel closes the part's stream,
+     * waits for it, then aborts the upload on the Host. The start itself is not cut off by a cancel: its answer names
+     * the upload, which is then aborted. `started` hears the upload's ID, so a row removed later can abort it too.
+     */
+    private func uploadInParts(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
+        progress: (@Sendable (Int, Int) -> Void)?, started report: (@Sendable (String) -> Void)?) async throws -> NativeJSON {
+        let start = try PhoneAttachments.uploadStart(draft, selection: selection, sessionId: sessionId)
+        let (connection, current) = try transport()
+        guard !uploading else { throw NativeFailure.busy }
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        uploading = true; defer { uploading = false }
+        var started: String?
+        do {
+            for _ in 0..<2 {
+                // Outside this task, so a cancel meanwhile still hears which upload the Host began.
+                let begun = try await Task { try await connection.request(.post, path: "/link/api/attachments/uploads", body: start, maximum: 65_536) }.value
+                guard epoch == current else { throw NativeFailure.resultUnknown }
+                guard begun.status == 201 else { throw await uploadFailure(begun, lease: lease) }
+                guard var upload = PhoneAttachUpload.parse(try NativeJSON.decode(begun.body), size: draft.size) else { throw NativeFailure.resultUnknown }
+                if let ref = upload.attachment { return ref }
+                started = upload.id
+                report?(upload.id)
+                try Task.checkCancellation()
+                let base = "/link/api/attachments/uploads/" + upload.id
+                var steps = 0
+                parts: while true {
+                    steps += 1
+                    guard steps <= upload.parts * 2 + 4 else { throw NativeFailure.resultUnknown }
+                    guard let next = upload.next else {
+                        var fields: [String: NativeJSON] = [:]
+                        if draft.secretAcknowledged { fields["secretAcknowledged"] = .bool(true) }
+                        let done = try await connection.request(.post, path: base + "/complete", body: try NativeJSON.object(fields).encoded(),
+                            maximum: 65_536, timeoutSeconds: 60)
+                        guard epoch == current else { throw NativeFailure.resultUnknown }
+                        if done.status == 201 {
+                            guard let ref = try? NativeJSON.decode(done.body)["attachment"], PhoneAttachments.validRef(ref) else { throw NativeFailure.resultUnknown }
+                            return ref
+                        }
+                        // The Host lacks a part after all: it says which one to send next.
+                        let refusal = NativeHostRefusal.parse(status: done.status, body: done.body)
+                        if refusal?.code == "attachment-incomplete", let missing = refusal?.details["next"].integer, missing < UInt64(upload.parts) {
+                            upload.next = Int(missing); continue parts
+                        }
+                        if refusal?.code == "upload-missing" { started = nil; break parts }
+                        throw await uploadFailure(done, lease: lease)
+                    }
+                    let offset = next * PhoneAttachments.streamBytes, end = min(offset + PhoneAttachments.streamBytes, draft.size)
+                    let body = Data(draft.data[draft.data.startIndex + offset..<draft.data.startIndex + end])
+                    let total = draft.size
+                    let response = try await connection.upload(metadata: nil, part: base + "/parts/\(next)", body: body, lease: lease, timeoutSeconds: 60) { done, _ in
+                        progress?(offset + done, total)
+                    }
+                    guard epoch == current else { throw NativeFailure.resultUnknown }
+                    if response.status == 200 {
+                        guard let parsed = PhoneAttachUpload.parse(try NativeJSON.decode(response.body), size: draft.size) else { throw NativeFailure.resultUnknown }
+                        if let ref = parsed.attachment { return ref }
+                        guard parsed.id == upload.id else { throw NativeFailure.resultUnknown }
+                        upload = parsed; continue
+                    }
+                    let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
+                    if refusal?.code == "upload-part-order", let missing = refusal?.details["next"].integer, missing < UInt64(upload.parts) {
+                        upload.next = Int(missing); continue
+                    }
+                    // Expired on the Host meanwhile: start once more, from the first part.
+                    if refusal?.code == "upload-missing" { started = nil; break parts }
+                    throw await uploadFailure(response, lease: lease)
+                }
+            }
+            throw NativeFailure.resultUnknown
+        } catch {
+            if Task.isCancelled {
+                if let started { await abortUpload(connection, started) }
+                throw CancellationError()
+            }
+            throw error
+        }
+    }
+    /** Aborts this device's unfinished chunked upload on the Host (a row removed before it finished); best effort. */
+    public func abortAttachmentUpload(_ id: String) async {
+        guard LinkBytes.matches(id, "[A-Za-z0-9_-]{22}"), let (connection, _) = try? transport() else { return }
+        await abortUpload(connection, id)
+    }
+    /** Not under the cancelled task, so the abort itself still goes; briefly, as the parts expire on the Host anyway. */
+    private func abortUpload(_ connection: NativeHTTPConnection, _ id: String) async {
+        await Task { _ = try? await connection.request(.delete, path: "/link/api/attachments/uploads/" + id, maximum: 65_536, timeoutSeconds: 5) }.value
+    }
+    private func uploadFailure(_ response: NativeHTTPResponse, lease: BodyLease) async -> any Error {
+        if response.status == 408 || response.status >= 500 { return NativeFailure.resultUnknown }
+        let failure = await responseFailure(response, lease: lease)
+        if failure != .expired, let refusal = NativeHostRefusal.parse(status: response.status, body: response.body) { return refusal }
+        return failure
     }
     /** Drops this device's unsent upload on the Host; a draft it cannot drop expires there within the hour. */
     public func removeAttachment(_ id: String) async throws {

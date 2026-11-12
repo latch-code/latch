@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
-import { modelEffort } from './config.ts'
 import {
   isLocalListener,
   type AttachmentCapabilities,
@@ -19,17 +18,9 @@ import type { AuditActor, AuditLog } from './audit.ts'
 import { json, jsonBody } from './http-util.ts'
 import { byteRange } from './files/read.ts'
 import { FileReadQuota } from './files/quota.ts'
-import { AttachmentStore } from './attachments.ts'
+import { AttachmentStore, ATTACHMENT_FILE_LIMIT } from './attachments.ts'
+import { attachmentContext as context, type AttachmentUploads } from './attachment-uploads.ts'
 const ID = /^[A-Za-z0-9_-]{22}$/u
-const selection = z.strictObject({
-  harnessId: z.string().min(1).max(128),
-  workspaceId: z.string().min(1).max(64).optional(),
-  mode: z.enum(['chat', 'agent']).optional(),
-  model: z
-    .strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200), effort: modelEffort.optional() })
-    .optional(),
-})
-const context = z.strictObject({ selection, sessionId: z.string().min(1).max(256).optional() })
 const metadata = context.extend({
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
@@ -40,12 +31,20 @@ const metadata = context.extend({
     .max(25 * 1024 * 1024),
   secretAcknowledged: z.boolean().optional(),
 })
+const uploadStart = context.extend({
+  requestId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  kind: z.enum(['image', 'text']),
+  size: z.number().int().positive().max(ATTACHMENT_FILE_LIMIT),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+})
 interface AttachmentCaller {
   device?: Device
   connection: { listener: ListenerClass }
 }
 export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   store: AttachmentStore
+  uploads: AttachmentUploads
   now: () => number
   audit: Pick<AuditLog, 'append'>
   actorOf(caller: Caller): AuditActor
@@ -58,7 +57,7 @@ export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   /** A request carrying this ID is on its way or was accepted in this run; asked again at the moment of removal. */
   busy(caller: Caller, requestId: string): boolean
 }
-export function assertAttachmentCapability(ref: AttachmentRef, caps: AttachmentCapabilities): void {
+export function assertAttachmentCapability(ref: Pick<AttachmentRef, 'kind' | 'size'>, caps: AttachmentCapabilities): void {
   if (ref.kind === 'image' && !caps.images) throw new AppError(415, 'attachment-image-unsupported', caps.reason ?? '当前模型不能看图片。')
   if (ref.kind === 'text' && !caps.text)
     throw new AppError(415, 'attachment-text-unsupported', caps.reason ?? '当前 Harness 不接受文本附件。')
@@ -159,6 +158,90 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         json(res, { released })
         return true
       }
+      const upload = /^\/link\/api\/attachments\/uploads(?:\/([A-Za-z0-9_-]{22})(?:\/(complete|parts\/(\d{1,3})))?)?$/u.exec(path)
+      if (upload) {
+        options.authorize(caller, 'run')
+        const [, uploadId, step, part] = upload
+        const remote = !isLocalListener(caller.connection.listener)
+        if (!uploadId && method === 'POST') {
+          const input = uploadStart.parse(await jsonBody(req))
+          const caps = await options.capabilities(caller, input.selection, input.sessionId)
+          if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
+          assertAttachmentCapability(input, caps)
+          options.recheck(caller, 'run')
+          const begun = await options.uploads.begin({
+            owner: device.id,
+            requestId: input.requestId,
+            name: input.name,
+            kind: input.kind,
+            size: input.size,
+            sha256: input.sha256,
+            remote,
+            context: { selection: input.selection, ...(input.sessionId ? { sessionId: input.sessionId } : {}) },
+          })
+          options.recheck(caller, 'run')
+          json(res, begun, 201)
+          return true
+        }
+        if (uploadId && !step && method === 'GET') {
+          json(res, { upload: options.uploads.status(device.id, uploadId) })
+          return true
+        }
+        if (uploadId && !step && method === 'DELETE') {
+          await options.uploads.abort(device.id, uploadId)
+          json(res, { aborted: true })
+          return true
+        }
+        if (uploadId && part !== undefined && method === 'PUT') {
+          if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/octet-stream' || req.headers['content-encoding'])
+            throw new AppError(415, 'attachment-invalid', '附件上传需要原始文件内容。')
+          const length = req.headers['content-length'] === undefined ? undefined : Number(req.headers['content-length'])
+          const timer = setTimeout(() => req.destroy(), 60_000)
+          try {
+            const view = await options.uploads.part({
+              owner: device.id,
+              id: uploadId,
+              index: Number(part),
+              ...(length !== undefined && Number.isSafeInteger(length) ? { declared: length } : {}),
+              stream: req,
+              recheck: () => {
+                if (req.aborted) throw new AppError(400, 'attachment-incomplete', '附件上传已中断。')
+                options.recheck(caller, 'run')
+              },
+            })
+            json(res, { upload: view })
+          } finally {
+            clearTimeout(timer)
+          }
+          return true
+        }
+        if (uploadId && step === 'complete' && method === 'POST') {
+          const input = z.strictObject({ secretAcknowledged: z.boolean().optional() }).parse(await jsonBody(req))
+          const ref = await options.uploads.complete({
+            owner: device.id,
+            id: uploadId,
+            remote,
+            ...(input.secretAcknowledged ? { secretAcknowledged: true } : {}),
+            recheck: () => options.recheck(caller, 'run'),
+            accept: async (ref, chosen) => {
+              const current = await options.capabilities(caller, chosen.selection, chosen.sessionId)
+              assertAttachmentCapability(ref, current)
+            },
+            // The record is written once, for the attachment the parts make: not per part.
+            audit: async ref => {
+              await options.audit.append({
+                action: 'attachment.add',
+                actor: options.actorOf(caller),
+                target: ref.id,
+                detail: { attachmentId: ref.id, contentHash: ref.sha256, bytes: ref.size, type: ref.kind },
+              })
+            },
+          })
+          json(res, { attachment: ref }, 201)
+          return true
+        }
+        return false
+      }
       if (path === '/link/api/attachments' && method === 'POST') {
         options.authorize(caller, 'run')
         if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/octet-stream' || req.headers['content-encoding'])
@@ -174,6 +257,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         }
         const input = metadata.parse(parsed),
           caps = await options.capabilities(caller, input.selection, input.sessionId)
+        // Expired chunked uploads give back the room they held before this one is counted.
+        await options.uploads.prune()
         if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
         const timer = setTimeout(() => req.destroy(), 60_000)
         try {

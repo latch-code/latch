@@ -563,7 +563,7 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 
 ### 附件内容
 
-[ATTACHMENTS.md](ATTACHMENTS.md) 定义独立的私有 blob 存储、设备草稿租约和内容句柄。原始上传仅在 `/attachments` 路由接收；会话持久化只保存 metadata refs。图片/文字在执行前按已验证引用物化，保持既有模型出站策略。附件私有目录从不加入项目根或普通文件 resolve。
+[ATTACHMENTS.md](ATTACHMENTS.md) 定义独立的私有 blob 存储、设备草稿租约和内容句柄。原始上传仅在 `/attachments` 路由（单请求）与 `/attachments/uploads`（分段：开始、`PUT …/parts/:n`、`complete`、`DELETE` 中止，每段至多 1 MiB）接收；会话持久化只保存 metadata refs。图片/文字在执行前按已验证引用物化，保持既有模型出站策略。附件私有目录从不加入项目根或普通文件 resolve。
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
 
 ## Agent 领域

@@ -63,7 +63,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     result["admit"] = [
         PhoneAttachments.admit(kind: .text, name: "notes.md", size: 2_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .text, name: "big.log", size: 300_000, count: 0, caps: both) ?? "ok",
-        PhoneAttachments.admit(kind: .text, name: "huge.log", size: 2_000_000, count: 0, caps: textOnly) ?? "ok",
+        PhoneAttachments.admit(kind: .text, name: "huge.log", size: 12_000_000, count: 0, caps: textOnly) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_1.heic", size: 8_000_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_2.heic", size: 60_000_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_3.jpg", size: 100, count: 0, caps: textOnly) ?? "ok",
@@ -76,7 +76,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         PhoneAttachments.admitBytes(kind: .text, name: "nul.txt", data: Data([0x61, 0x00, 0x62]), caps: both) ?? "ok",
         PhoneAttachments.admitBytes(kind: .text, name: "latin.txt", data: Data([0xff, 0xfe, 0x41]), caps: both) ?? "ok",
         PhoneAttachments.admitBytes(kind: .text, name: "ok.txt", data: Data("你好".utf8), caps: both) ?? "ok",
-        PhoneAttachments.admitBytes(kind: .image, name: "big.jpg", data: Data(count: 1_048_577), caps: both) ?? "ok",
+        PhoneAttachments.admitBytes(kind: .image, name: "big.jpg", data: Data(count: 5_242_881), caps: both) ?? "ok",
     ]
     result["classes"] = ["attachment-too-large", "attachments-unsupported", "attachment-image-unsupported", "attachment-incomplete", "attachment-released",
         "attachment-secret", "request-conflict"].map { code -> String in
@@ -148,6 +148,28 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     ]
     let write = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("看图"), "attachmentIds": .array([.string("a"), .string("b")])])
     result["pendingCount"] = PhoneAttachments.count(write)
+    // Bytes leave memory once the Host keeps the file; an image keeps a small thumbnail. Unfinished uploads are named for abort.
+    let photoBytes = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 800, height: 600), limit: PhoneAttachments.streamBytes).data
+    var memory = PhoneAttachTray()
+    let photoRow = PhoneAttachDraft(name: "p.jpg", kind: .image, data: photoBytes), pendingRow = PhoneAttachDraft(name: "q.txt", kind: .text, data: Data("q".utf8))
+    _ = memory.add(photoRow); _ = memory.add(pendingRow)
+    memory.started(photoRow.id, upload: String(repeating: "u", count: 22)); memory.started(pendingRow.id, upload: String(repeating: "v", count: 22))
+    memory.started(pendingRow.id, upload: "not an id")
+    let unfinishedBefore = memory.unfinishedUploads
+    let before = memory.stagedBytes
+    _ = memory.ready(photoRow.id, ref: .object(["id": .string(String(repeating: "a", count: 22)), "name": .string("p.jpg"), "kind": .string("image"),
+        "mime": .string("image/jpeg"), "size": .number(Double(photoBytes.count)), "sha256": .string(String(repeating: "0", count: 64))]))
+    let kept = memory.items[0], afterReady = memory.unfinishedUploads.count
+    let removed = memory.removeRow(pendingRow.id)
+    result["memory"] = [
+        "unfinishedBefore": unfinishedBefore.count,
+        "dropped": kept.data.isEmpty && kept.size == photoBytes.count && (kept.thumbnail?.count ?? 0) > 0 && kept.preview == kept.thumbnail,
+        "smaller": memory.stagedBytes < before / 4,
+        "unfinishedAfter": afterReady,
+        "removedUpload": removed.upload == String(repeating: "v", count: 22) && removed.attachment == nil,
+        "staged": [PhoneAttachments.admitStaged(staged: PhoneAttachments.stagedLimit - 10, adding: 11) ?? "ok",
+                   PhoneAttachments.admitStaged(staged: 0, adding: 5 * 1_048_576) ?? "ok"],
+    ]
     result["chips"] = PhoneAttachments.chips(.object(["attachments": .array([
         .object(["id": .string("img000000000000000000a"), "name": .string("shot.png"), "mime": .string("image/png"), "kind": .string("image"), "size": .number(204_800), "sha256": .string(String(repeating: "b", count: 64))]),
         .object(["id": .string("img000000000000000000b"), "name": .string("anim.gif"), "mime": .string("image/gif"), "kind": .string("image"), "size": .number(100), "sha256": .string(String(repeating: "c", count: 64))]),
@@ -295,7 +317,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
 
         // A photo re-encoded, uploaded in chunks; the same request again is the same attachment, as a retry after an unknown answer.
         stage = "upload"
-        let prepared = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 2400, height: 1600), limit: PhoneAttachments.limit(.image, caps))
+        let prepared = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 2400, height: 1600), limit: PhoneAttachments.streamBytes)
         let photo = PhoneAttachDraft(name: PhoneAttachments.fileName("IMG_0001.HEIC", ext: prepared.ext), kind: .image, data: prepared.data)
         let progress = FixtureTransfer()
         let ref = try await workspace.uploadAttachment(photo, selection: selection, sessionId: first) { done, total in progress.progress(done, total) }
@@ -326,11 +348,86 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         result["cancel"] = stopped && PhoneAttachments.validRef(after)
         try await workspace.removeAttachment(after["id"].string ?? "")
 
-        // More than one stream holds is refused here, before anything is sent.
+        // More than any Host takes is refused here, before anything is sent.
         var oversize = false
-        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "over.txt", kind: .text, data: Data(count: PhoneAttachments.streamBytes + 1)), selection: selection, sessionId: first) }
+        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "over.txt", kind: .text, data: Data(count: PhoneAttachments.largestFile + 1)), selection: selection, sessionId: first) }
         catch { oversize = (error as? NativeFailure) == .invalidRecord }
         result["oversize"] = oversize
+
+        // Over one stream: parts of 1 MiB, one stream each; the Host assembles the file and checks its hash.
+        stage = "chunked"
+        func letters(_ count: Int, shift: Int) -> Data { Data((0..<count).map { $0 % 64 == 63 ? 0x0a : UInt8(97 + ($0 + shift) % 26) }) }
+        let long = PhoneAttachDraft(name: "long.log", kind: .text, data: letters(3 * PhoneAttachments.streamBytes, shift: 0))
+        let longProgress = FixtureTransfer()
+        let longRef = try await workspace.uploadAttachment(long, selection: selection, sessionId: first) { done, total in longProgress.progress(done, total) }
+        _ = try longProgress.result()
+        // The same request again is answered by the Host without a part being sent.
+        let resent = FixtureCross(threshold: 0)
+        let longAgain = try await workspace.uploadAttachment(long, selection: selection, sessionId: first) { done, _ in resent.saw(done) }
+        result["chunked"] = [
+            "kept": longRef["kind"].string == "text" && longRef["size"].integer == UInt64(long.size)
+                && longRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(long.data)),
+            "again": longAgain["id"] == longRef["id"] && resent.first == nil,
+        ]
+        // A large image, re-encoded under the Host's image limit rather than one stream's.
+        stage = "large-image"
+        let large = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 2400, height: 1600, alpha: true), limit: PhoneAttachments.limit(.image, caps))
+        let largeRef = try await workspace.uploadAttachment(PhoneAttachDraft(name: "large.png", kind: .image, data: large.data), selection: selection, sessionId: first)
+        result["largeImage"] = large.data.count > PhoneAttachments.streamBytes && largeRef["mime"].string == "image/png"
+            && largeRef["size"].integer == UInt64(large.data.count) && largeRef["width"].integer == UInt64(large.width)
+
+        // The connection drops in the second part: the answer is unknown; the retry on a new path sends only what is missing.
+        stage = "resume"
+        let opened = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())
+        _ = try await workspace.install { opened }
+        let resumable = PhoneAttachDraft(name: "resume.log", kind: .text, data: letters(3 * PhoneAttachments.streamBytes, shift: 7))
+        let drop = FixtureCross(threshold: PhoneAttachments.streamBytes + 65_536)
+        drop.onCross = { Task { await opened.close() } }
+        var dropped = false
+        do { _ = try await workspace.uploadAttachment(resumable, selection: selection, sessionId: first) { done, _ in drop.saw(done) } }
+        catch { dropped = (error as? NativeFailure) == .resultUnknown }
+        _ = try await workspace.install {
+            try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())
+        }
+        let resumed = FixtureCross(threshold: 0)
+        let resumedRef = try await workspace.uploadAttachment(resumable, selection: selection, sessionId: first) { done, _ in resumed.saw(done) }
+        result["resume"] = [
+            "unknown": dropped,
+            // The first part is not sent again.
+            "fromPart": (resumed.first ?? 0) > PhoneAttachments.streamBytes,
+            "kept": resumedRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(resumable.data)),
+        ]
+
+        // Cancel in the second part closes its stream, waits, and aborts the upload on the Host: the same request starts over.
+        stage = "cancel-parts"
+        let stopping = PhoneAttachDraft(name: "stop.log", kind: .text, data: letters(2 * PhoneAttachments.streamBytes + 10, shift: 13))
+        let stop = FixtureCross(threshold: PhoneAttachments.streamBytes + 65_536)
+        let stopTask = Task { try await workspace.uploadAttachment(stopping, selection: selection, sessionId: first) { done, _ in stop.saw(done) } }
+        stop.onCross = { stopTask.cancel() }
+        var partsStopped = false
+        do { _ = try await stopTask.value } catch { partsStopped = error is CancellationError }
+        let restart = FixtureCross(threshold: 0)
+        let restarted = try await workspace.uploadAttachment(stopping, selection: selection, sessionId: first) { done, _ in restart.saw(done) }
+        result["cancelParts"] = ["stopped": partsStopped, "fromStart": (restart.first ?? .max) <= 65_536, "kept": PhoneAttachments.validRef(restarted)]
+        for ref in [longRef, largeRef, resumedRef, restarted] { try await workspace.removeAttachment(ref["id"].string ?? "") }
+
+        // A secret to confirm leaves the parts on the Host: removing that row aborts its upload there.
+        stage = "secret-remove"
+        let secret = PhoneAttachDraft(name: ".env", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 3))
+        let named = FixtureNamed()
+        var secretCode = ""
+        do { _ = try await workspace.uploadAttachment(secret, selection: selection, sessionId: first, started: { named.set($0) }) }
+        catch let error as NativeHostRefusal { secretCode = error.code }
+        if let upload = named.value { await workspace.abortAttachmentUpload(upload) }
+        // Cancelled before its start is answered: the start still lands, and the upload it began is aborted.
+        stage = "cancel-begin"
+        let beforeBegin = PhoneAttachDraft(name: "early.log", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 5))
+        let earlyNamed = FixtureNamed()
+        let earlyTask = Task { try await workspace.uploadAttachment(beforeBegin, selection: selection, sessionId: first, started: { earlyNamed.set($0) }) }
+        earlyTask.cancel()
+        var earlyStopped = false
+        do { _ = try await earlyTask.value } catch { earlyStopped = error is CancellationError }
+        result["leftovers"] = ["secret": secretCode, "secretNamed": named.value != nil, "earlyStopped": earlyStopped]
 
         // The message carries the attachments; the Host's transcript lists them, and the photo reads back byte for byte.
         stage = "send"
@@ -376,6 +473,33 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     }
     await workspace.closeOpening()
     return result
+}
+
+/** The upload ID a `started` callback heard. */
+final class FixtureNamed: @unchecked Sendable {
+    private let lock = NSLock()
+    private var named: String?
+    func set(_ value: String) { lock.lock(); named = value; lock.unlock() }
+    var value: String? { lock.lock(); defer { lock.unlock() }; return named }
+}
+
+/** Progress of one upload: the first offset seen, and one action when it first passes `threshold`. */
+final class FixtureCross: @unchecked Sendable {
+    private let lock = NSLock()
+    private let threshold: Int
+    private var seen: Int?
+    private var fired = false
+    var onCross: (@Sendable () -> Void)?
+    init(threshold: Int) { self.threshold = threshold }
+    var first: Int? { lock.lock(); defer { lock.unlock() }; return seen }
+    func saw(_ done: Int) {
+        lock.lock()
+        if seen == nil { seen = done }
+        let fire = !fired && done > threshold ? onCross : nil
+        if fire != nil { fired = true }
+        lock.unlock()
+        fire?()
+    }
 }
 
 /** Progress of one upload: the first chunk triggers a cancel, and any chunk reported after it is counted. */
