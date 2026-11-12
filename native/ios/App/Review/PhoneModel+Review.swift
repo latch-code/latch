@@ -30,7 +30,7 @@ enum PhoneWriteOutcome {
 
 extension PhoneModel {
     func resetReview() {
-        reviewTarget = nil; reviewShortcuts = [:]; turnRecords = [:]; turnReads = []; seenState = nil; hostNotice = nil
+        reviewTarget = nil; reviewShortcuts = [:]; turnRecords = [:]; turnReads = []; seenState = nil; hostNotice = nil; lostSessions = []; historyCloser = PhoneHistoryCloser()
         sessionHandoffs = nil; handoffSignature = ""; handoffDraft = nil; editPaths = [:]
     }
 
@@ -75,6 +75,23 @@ extension PhoneModel {
     }
     /** 重试这次提交: the same request; a Git, file or handoff write waits as long as the Host gives it and reads its receipt. */
     func retryPending(_ request: NativePendingWrite) async {
+        if PhoneHistory.isImport(request) {
+            let (outcome, retry) = await importHistory(request)
+            switch outcome {
+            case let .done(value): if let taskId = PhoneHistory.importedTask(value) { flushHistoryCloses(); await openImported(taskId) }
+            case let .refused(refusal):
+                releaseImportPreview(request)
+                switch PhoneHistory.outcome(refusal, retry: retry) {
+                case let .open(taskId): await openImported(taskId)
+                case .notDone: error = PhoneHistory.notDoneWords
+                case .deletedSince: error = PhoneHistory.deletedSinceWords
+                default: error = refusal.message.isEmpty ? "没有接入" : refusal.message
+                }
+            case let .failed(failure): releaseImportPreview(request); report(failure)
+            case let .unknown(refusal): if let refusal, !refusal.message.isEmpty { error = "结果未确认 · " + refusal.message }
+            }
+            return
+        }
         let special = PhoneDelivery.pendingWords(request) ?? PhoneFileEdit.pendingWords(request) ?? PhoneHandoffs.pendingWords(request) ?? PhoneReview.pendingWords(request)
         guard special != nil else { await submit(request); return }
         switch await write(request, timeout: PhoneDelivery.timeout(request), retryAnswered: PhoneDelivery.retryAnswered(request)) {

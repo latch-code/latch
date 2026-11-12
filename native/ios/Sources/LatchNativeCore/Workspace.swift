@@ -655,6 +655,56 @@ public actor NativeWorkspace {
         try lease.requireValid()
         return try NativeJSON.decode(response.body)
     }
+    /**
+     * 接入已有会话's listing and preview: POSTs that put nothing on record (the Host audits them) and carry no requestId,
+     * read inside the window like content and never stored. A refusal comes back as the Host's own code and words.
+     */
+    public func historyRead(_ request: PhoneHistoryRead) async throws -> NativeJSON {
+        guard request.path == "/link/api/history/list" || request.path == "/link/api/history/previews", (1...120).contains(request.timeoutSeconds),
+              request.fields["requestId"] == nil else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let response = try await connection.request(.post, path: request.path, body: NativeJSON.object(request.fields).encoded(), timeoutSeconds: request.timeoutSeconds)
+        // Too late to show: a preview the Host opened still holds the session, so the caller lets go of it.
+        guard epoch == current, lease.valid else {
+            if (200..<300).contains(response.status), let id = (try? NativeJSON.decode(response.body))?["previewId"].string,
+               LinkBytes.matches(id, "hp_[a-f0-9]{32}") { throw NativeDroppedPreview(previewId: id) }
+            throw epoch == current ? NativeFailure.expired : NativeFailure.unavailable
+        }
+        guard (200..<300).contains(response.status) else {
+            let failure = await responseFailure(response, lease: lease)
+            if failure != .expired, let refusal = NativeHostRefusal.parse(status: response.status, body: response.body) { throw refusal }
+            throw failure
+        }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)
+    }
+    /** The Host's receipt of an unanswered import, for 核对并放下: done, still under way, or never started. Inside the window. */
+    public func historyReceipt(_ write: NativePendingWrite) async throws -> PhoneImportReceipt {
+        guard let path = PhoneHistory.receiptPath(write) else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let response = try await connection.request(.get, path: path)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        if response.status == 404, NativeHostRefusal.parse(status: 404, body: response.body)?.code == "history-import-not-found" { return .none }
+        if response.status == 202 { return .pending }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        let value = try NativeJSON.decode(response.body)
+        guard value["requestId"].string == write.requestId, let taskId = PhoneHistory.importedTask(value) else { throw NativeFailure.invalidRecord }
+        return .done(taskId: taskId)
+    }
+    /** Lets go of a preview the Host holds open. Best effort: the Host closes it by itself after ten minutes. */
+    public func closeHistoryPreview(_ previewId: String) async throws {
+        let path = try PhoneHistory.closePath(previewId)
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let response = try await connection.request(.delete, path: path)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard (200..<300).contains(response.status) else { throw await responseFailure(response, lease: lease) }
+    }
     /** Only ever lengthens how long the Host stays quiet about silence; it needs view scope, not a write identity. */
     public func keepWaiting(sessionId: String, runId: String, thresholdMs: UInt64) async throws -> NativeJSON {
         guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), LinkBytes.matches(runId, "[A-Za-z0-9_-]{1,160}"), thresholdMs > 0, thresholdMs <= LinkBytes.maximumInteger else { throw NativeFailure.invalidRecord }
@@ -810,6 +860,7 @@ public actor NativeWorkspace {
         if code == "terminal-running" { return .terminalOpen }
         if response.status == 429 { return .busy }
         if code == "subagent-not-stoppable" { return .notStoppable }
+        if code == "harness-session-lost" { return .sessionLost }
         if response.status == 401 || response.status == 403 { return .forbidden }
         if response.status == 408 || response.status >= 500 { return .resultUnknown }
         return .unsupported

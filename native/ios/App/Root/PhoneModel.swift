@@ -47,6 +47,12 @@ import UIKit
     /** A screenshot scene: canned Host data, no network, no keys. Only the LatchScreens target compiles this. */
     @Published var staged = false
     #endif
+    /** Sessions whose Harness lost its own session (`harness-session-lost` on a prompt): input stops, 按文字重建 offered. In memory only. */
+    @Published var lostSessions: Set<String> = []
+    /** Previews to let go of on the Host, kept for the next window when none is open. In memory only. */
+    var historyCloser = PhoneHistoryCloser()
+    /** A session brought in from a sheet or cover, opened once they are gone: opening it under them leaves it loading. */
+    var openAfterDismiss: String?
     /** Sessions whose next message starts a new context, chosen on this phone and not yet sent. In memory only. */
     @Published var clearing: Set<String> = []
     /** Subagents this phone asked to stop that the Host has not shown stopping yet, by row ID. */
@@ -100,7 +106,7 @@ import UIKit
     func hostNow() -> Date { Date().addingTimeInterval(hostClockOffset) }
     @Published var busy = false
     @Published var verifying = false
-    @Published var verifiedUntil: Date?
+    @Published var verifiedUntil: Date? { didSet { if verifiedUntil != nil, oldValue == nil { flushHistoryCloses() } } }
     @Published var contentGeneration = UUID()
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") }

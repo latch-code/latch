@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
@@ -37,7 +37,7 @@ import {
   parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
-import { FAKE_ACP_AGENT, swiftFixturePath, testHarness } from '@latch/testkit'
+import { FAKE_ACP_AGENT, fakeConversation, swiftFixturePath, testHarness, writeFakeHistory } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -2777,6 +2777,214 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['提交结果待确认', 'session(id: "ses_1")'],
     ])
   })
+  it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
+    const harness = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      status: 'ready',
+      capabilities: { display: { label: id === 'codex' ? 'Codex' : id === 'pi' ? 'Pi' : 'Latch', mark: id } },
+      ...extra,
+    })
+    const catalog = (features: Record<string, unknown> = { historyImport: 1 }) => ({
+      features,
+      workspaces: [
+        { id: 'default', name: '默认文件夹' },
+        { id: 'app', name: 'App', path: '/work/app', folders: [{ id: 'f1', path: '/work/app' }] },
+      ],
+      harnesses: [
+        harness('standard'),
+        harness('codex', { history: { list: true, rebuild: true } }),
+        harness('pi', { history: { rebuild: true } }),
+        harness('gone', { status: 'missing', history: { list: true, rebuild: true } }),
+      ],
+    })
+    const device = (scopes: string[], dataScope: string) => ({ scopes, dataScope })
+    const handle = (n: string) => `hh_${n.repeat(32)}`
+    const prefix = '用户：登录坏了\n助手：看 auth.ts 😀\n'
+    const result = await invoke({
+      operation: 'phoneHistory',
+      snapshots: [
+        { catalog: catalog(), device: device(['view', 'run'], 'all'), choose: 'app' },
+        { catalog: catalog(), device: device(['view', 'run'], 'work'), choose: 'app' },
+        { catalog: catalog({}), device: device(['view', 'run'], 'all'), choose: 'app' },
+        { catalog: catalog(), device: device(['view'], 'all'), choose: 'app' },
+        { catalog: catalog(), device: device(['view', 'run'], 'all'), choose: 'default' },
+        { catalog: catalog(), device: device(['view', 'run'], 'all') },
+        { catalog: { ...catalog(), harnesses: [harness('standard')] }, device: device(['view', 'run'], 'all'), choose: 'app' },
+      ],
+      tasks: [
+        { id: 'ses_lost', harnessId: 'pi', imported: { from: 'codex', mode: 'native' } },
+        { id: 'ses_text', harnessId: 'pi', imported: { from: 'other', mode: 'text', prefixLength: 10, fromTaskId: 'ses_lost' } },
+        { id: 'ses_plain', harnessId: 'standard' },
+      ],
+      project: { id: 'app', name: 'App', path: '/work/app', folders: [{ id: 'f1', path: '/work/app' }] },
+      list: {
+        rows: [
+          { handle: handle('a'), title: 'Web build', updatedAt: '2026-11-11T08:00:00.000Z', subdir: 'web/' },
+          { handle: handle('b'), title: 'Login', subdir: '', importedTaskId: 'task-1' },
+          { handle: 'hh_bad', title: 'Not a handle', subdir: '' },
+        ],
+        otherFolders: 2,
+        scanned: 5,
+        truncated: true,
+      },
+      preview: {
+        previewId: `hp_${'c'.repeat(32)}`,
+        title: 'Web build',
+        model: 'gpt-5.5',
+        turns: 2,
+        truncated: false,
+        messages: [
+          { role: 'user', text: 'Fix it' },
+          { role: 'tool', text: 'Run printenv', outputHidden: true, status: 'completed' },
+          { role: 'tool', text: 'Run tests', outputHidden: true, status: 'failed' },
+          { role: 'assistant', text: 'Done', clipped: true },
+          { role: 'system', text: 'never shown' },
+        ],
+      },
+      message: { role: 'user', text: `${prefix}接着改`, importContext: { from: 'Codex', prefixLength: prefix.length } },
+    })
+    expect(result.entries).toEqual([['codex:Codex'], 'locked', 'locked', 'hidden', 'hidden', 'hidden', 'hidden'])
+    // The source as it was, then every other ready Harness that takes a text rebuild; the lost session's own first.
+    expect(result.targets).toEqual(['codex:native', 'pi:text'])
+    expect(result.rebuildTargets).toEqual(['pi:text', 'codex:text'])
+    expect(result.rebuilt).toBe('ses_text')
+    expect(result.offers).toEqual([true, false, false, false])
+    expect(result.views).toEqual([
+      'loading',
+      `rows ${handle('a')},${handle('b')} 2 true`,
+      'empty 3',
+      'not-supported',
+      'login',
+      'failed Codex 当前不可用',
+      'failed 暂时无法连接这台电脑。',
+      'invalid',
+    ])
+    expect(result.folders).toEqual(['web/', 'app'])
+    expect(result.imported).toEqual(['', 'task-1'])
+    expect(result.others).toEqual(['', '另有 2 个在项目的其他文件夹里 · 尚未支持'])
+    expect(result.preview).toEqual(['gpt-5.5 · 2 轮', ['Fix it', '完成 · 输出已隐藏', '失败 · 输出已隐藏', 'Done …'], false, true])
+    expect(result.previewFailures).toEqual(['busy', 'expired', 'failed 不行'])
+    expect(result.reads).toEqual([
+      ['/link/api/history/list', 45],
+      'refused',
+      ['/link/api/history/previews', 90],
+      'refused',
+      `/link/api/history/previews/hp_${'e5'.repeat(16)}`,
+      'refused',
+    ])
+    const writes = result.writes as Array<Record<string, unknown> | string>
+    expect(writes[0]).toEqual({
+      method: 'POST',
+      path: '/link/api/history/imports',
+      body: { previewId: `hp_${'e5'.repeat(16)}`, harnessId: 'codex' },
+      sameId: true,
+      words: '接入结果未确认',
+      import: true,
+    })
+    expect(writes[1]).toMatchObject({ body: { fromTaskId: 'task-1', harnessId: 'pi' }, sameId: true, import: true })
+    expect(writes.slice(2)).toEqual(['refused', 'refused', 'refused'])
+    expect(result.attempt).toEqual([true, true, true])
+    // A retry refused for a closed preview (nothing came in) or a deleted session (it came in, then went) is settled.
+    expect(result.answered).toEqual([true, false, false, true, true, false, true])
+    expect(result.outcomes).toEqual(['open task-9', 'busy', 'expired', 'failed Pi 当前不可用', 'not done', 'deleted since'])
+    expect(result.receiptPath).toEqual([true, true])
+    const other = `hp_${'f6'.repeat(16)}`
+    expect(result.closer).toEqual([[], [other], [], [other], [`hp_${'e5'.repeat(16)}`], ['16']])
+    expect(result.marks).toEqual([
+      ['已接入', '从 Codex 接入 · 原样加载', false],
+      ['已接入 · 按文字重建', '从 other 接入 · 按文字重建，不是原样恢复', true],
+      null,
+    ])
+    expect(result.seed).toEqual([true, false, false])
+    expect(result.seedWords).toBe('按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 DeepSeek')
+    // The Host counts in UTF-16 units: the emoji's two count, and the person's words start right after.
+    expect(result.fold).toEqual(['按 Codex 会话的文字重建', prefix, '接着改'])
+    expect(result.resend).toBe('接着改')
+    expect(result.promptSession).toEqual(['task-1', '', ''])
+    expect(result.lost).toBe('这个 Harness 已找不到原来的会话，换个新会话继续')
+  })
+  it('lists, previews, brings in and rebuilds a session from the actual Swift workspace through the fake agent’s own adapter', async () => {
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'latch-swift-history-')))
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const main = join(scratch, 'app')
+      const other = join(scratch, 'docs')
+      for (const folder of [main, join(main, 'web'), other]) await mkdir(folder, { recursive: true })
+      const history = await writeFakeHistory(scratch, [
+        {
+          sessionId: 'ext-web',
+          cwd: join(main, 'web'),
+          title: 'Web build',
+          updatedAt: '2026-11-11T08:00:00.000Z',
+          updates: fakeConversation(),
+        },
+        { sessionId: 'ext-rebuild', cwd: main, title: 'Rebuild me', updatedAt: '2026-11-10T08:00:00.000Z', updates: fakeConversation() },
+        { sessionId: 'ext-phone', cwd: main, title: 'Phone notes', updatedAt: '2026-11-09T08:00:00.000Z', updates: fakeConversation() },
+        { sessionId: 'ext-busy', cwd: main, title: 'Open in a terminal', updatedAt: '2026-11-08T08:00:00.000Z', busy: true, updates: [] },
+        { sessionId: 'ext-other', cwd: other, title: 'Docs session', updates: [] },
+      ])
+      const owner = await host.enroll({ listener: 'unix' })
+      const env = {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_MODES: 'read-only,workspace-write,agent,agent-full-access',
+        FAKE_ACP_INITIAL_MODE: 'agent-full-access',
+        FAKE_ACP_CAPS: 'list,load,resume,close,delete,dirs',
+        FAKE_ACP_STATE: join(scratch, 'codex-state.json'),
+        FAKE_ACP_HISTORY_FILE: history,
+      }
+      const codex = await owner.confirmed('agents', {
+        method: 'POST',
+        body: { id: 'codex', name: 'Codex', presetId: 'codex', command: process.execPath, args: [FAKE_ACP_AGENT], env },
+      })
+      expect(codex.status).toBe(201)
+      const fake = await owner.confirmed('agents', {
+        method: 'POST',
+        body: {
+          id: 'fake',
+          name: 'Fake',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_STATE: join(scratch, 'fake-state.json') },
+        },
+      })
+      expect(fake.status).toBe(201)
+      const added = await owner.addFolders({ paths: [main, other] })
+      expect(added.status).toBe(201)
+      const projectId = ((await added.json()) as { workspace: { id: string } }).workspace.id
+      const response = await owner.request('native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      const result = await invoke(
+        { operation: 'nativeHistory', payload: invitation.payload, port: host.host.nativePort, projectId },
+        90_000,
+      )
+      expect(result).toEqual({
+        window: true,
+        sources: ['codex'],
+        sourcesRoute: ['codex'],
+        titles: ['Web build', 'Rebuild me', 'Phone notes', 'Open in a terminal'],
+        otherFolders: 1,
+        busy: 'busy',
+        // Words and tool titles only; nothing of a tool's output or the thinking.
+        preview: [expect.arrayContaining(['user', 'assistant', 'tool']), false],
+        sameSession: true,
+        receipt: [true, true],
+        mark: '已接入',
+        importedMode: 'native',
+        ticked: true,
+        expired: 'expired',
+        already: true,
+        targets: ['codex:native', 'fake:text'],
+        rebuilt: ['已接入 · 按文字重建', true],
+        closed: 'expired',
+        pendingAfter: 0,
+      })
+      const tasks = (await owner.json<{ tasks: Array<{ imported?: { mode: string } }> }>('snapshot')).tasks
+      expect(tasks.map(task => task.imported?.mode).toSorted()).toEqual(['native', 'text'])
+    } finally {
+      await host.close()
+      await rm(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
   it('rejects noncanonical base64url, trailing bytes and unsafe integers without trapping', async () => {
     expect(await invoke({ base64url: 'Zm9v' })).toEqual({ base64url: 'Zm9v', base32: 'mzxw6' })
     for (const base64url of ['A', 'Zh', 'Zg==', 'Z g', 'Zg\n']) await expect(invoke({ base64url })).rejects.toThrow('rejected')

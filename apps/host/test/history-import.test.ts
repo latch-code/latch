@@ -392,6 +392,39 @@ describe('接入已有会话 on the Host', () => {
     expect(await again.json()).toMatchObject({ error: 'history-already-imported', taskId: result.taskId })
   }, 60_000)
 
+  it('answers the receipt of an import still in flight as running, and a rebuild sent twice makes one session', async () => {
+    const f = await fixture()
+    const rows = (await list(f)).rows
+    // Held at its audit record: accepted, not on record yet.
+    let release!: () => void
+    const held = new Promise<void>(resolve => (release = resolve))
+    const append = AuditLog.prototype.append
+    vi.spyOn(AuditLog.prototype, 'append').mockImplementation(async function (this: AuditLog, event) {
+      if (event.action === 'history.import') await held
+      return append.call(this, event)
+    })
+    const requestId = randomUUID()
+    const first = importOf(f.owner, { requestId, handle: handleOf(rows, 'Web build') })
+    let receipt = await f.owner.request(`history/imports/${requestId}`)
+    for (let tries = 0; receipt.status === 404 && tries < 50; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      receipt = await f.owner.request(`history/imports/${requestId}`)
+    }
+    expect(receipt.status).toBe(202)
+    expect(await receipt.json()).toEqual({ requestId, state: 'pending' })
+    release()
+    const result = (await (await first).json()) as HistoryImportResult
+    vi.restoreAllMocks()
+    expect(await f.owner.json<HistoryImportResult>(`history/imports/${requestId}`)).toEqual(result)
+    // 按文字重建 from that session: the same request twice at once, then again, is one new session.
+    const before = (await f.owner.json<{ tasks: unknown[] }>('snapshot')).tasks.length
+    const rebuild = { requestId: randomUUID(), fromTaskId: result.taskId, harnessId: 'fake' }
+    const [a, b] = await Promise.all([importOf(f.owner, rebuild), importOf(f.owner, rebuild)])
+    const answers = [(await a.json()) as HistoryImportResult, (await b.json()) as HistoryImportResult]
+    const again = (await (await importOf(f.owner, rebuild)).json()) as HistoryImportResult
+    expect(new Set([answers[0]!.taskId, answers[1]!.taskId, again.taskId]).size).toBe(1)
+    expect((await f.owner.json<{ tasks: unknown[] }>('snapshot')).tasks.length).toBe(before + 1)
+  }, 60_000)
   it('refuses an import whose audit record cannot be written, and leaves nothing behind', async () => {
     const f = await fixture()
     const rows = (await list(f)).rows

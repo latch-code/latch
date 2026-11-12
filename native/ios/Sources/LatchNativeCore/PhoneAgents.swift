@@ -342,6 +342,7 @@ public enum PhonePending {
         return .other
     }
     public static func words(_ write: NativePendingWrite) -> String {
+        if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {
         case .delegation: return "委托结果待确认"
         case .memory: return "记忆的修改结果待确认"

@@ -74,13 +74,14 @@ struct InboxView: View {
             else if let id = model.sessionId { ConversationView(id: id) }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
-        .sheet(isPresented: $creating) { NewSessionSheet().presentationCornerRadius(28) }
+        .sheet(isPresented: $creating, onDismiss: { model.openPendingImport() }) { NewSessionSheet().presentationCornerRadius(28) }
         .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
         // Back to the list from the review leaves it.
         .onChange(of: column) { _, now in if now == .sidebar, model.reviewTarget != nil { model.reviewTarget = nil } }
         .modifier(SessionDialogs())
         #if LATCH_SCREENS
         .onAppear { if model.staged, !ScreensStage.query.isEmpty { query = ScreensStage.query } }
+        .task(id: model.staged) { if model.staged, ScreensStage.creating { creating = true } }
         #endif
         // The Host searches once the typing settles; a later query or a closed window drops what an earlier one finds.
         .task(id: [query, model.verifiedUntil == nil ? "closed" : "open"]) {
@@ -276,7 +277,9 @@ private struct PendingWritesBar: View {
             HStack {
                 Label(PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
-                if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
+                if PhoneHistory.isImport(pending) {
+                    Button("核对并放下") { Task { checked = await model.checkImportFromList(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                } else if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
                 Button("重试这次提交") { Task { await model.retryPending(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)

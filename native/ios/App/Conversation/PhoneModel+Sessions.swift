@@ -140,6 +140,10 @@ extension PhoneModel {
         } catch {
             guard generation == current, contentGeneration == reading else { return false }
             if (error as? NativeFailure) != .resultUnknown { pending.removeAll { $0.requestId == request.requestId } }
+            // The Harness lost its own session: the stop row above the input says so and offers 按文字重建, as the web does.
+            // Only a session brought in as it was gets that row; any other keeps the ordinary failure (HARNESSES.md).
+            if (error as? NativeFailure) == .sessionLost, let id = PhoneHistory.promptSession(request.path),
+               PhoneHistory.stopsAsLost(detail["summary"]["id"].string == id ? detail["summary"] : summary(of: id)) { lostSessions.insert(id); return false }
             report(error)
             return (error as? NativeFailure) == .resultUnknown
         }

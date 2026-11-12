@@ -88,9 +88,24 @@ extension NativeJSON { var path: String { self["path"].string ?? "" } }
 private struct UserBubble: View {
     let message: NativeJSON
     let delivery: String?
+    /** A text rebuild's first message: the rebuilt conversation shown only when asked for. */
+    @State private var unfolded = false
     var body: some View {
+        let fold = PhoneHistory.fold(message)
         VStack(alignment: .trailing, spacing: 4) {
-            ConversationText(text: message["text"].string ?? "").padding(.horizontal, 14).padding(.vertical, 9)
+            VStack(alignment: .leading, spacing: 8) {
+                if let fold {
+                    Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock.arrow.circlepath").font(.system(size: 12))
+                            Text(PhoneConversation.visible(fold.summary))
+                            Image(systemName: unfolded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                        }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                    }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
+                    if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
+                }
+                ConversationText(text: fold?.rest ?? message["text"].string ?? "")
+            }.padding(.horizontal, 14).padding(.vertical, 9)
                 .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 18))
                 .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.86 }
             let time = PhoneTime.parse(message["createdAt"]).map { PhoneTime.message($0) }

@@ -13,6 +13,8 @@ struct NewSessionSheet: View {
     @State private var starting = false
     /** A model the person chose in a fork's sheet; it wins over the source's. */
     @State private var picked: PhoneModelChoice?
+    /** 接入已有会话, over the sheet: the project and Harnesses as they were when it opened, so it never goes blank. */
+    @State private var importing: HistoryScope?
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     /** The source's detail when it is the open session, else its list row: what a fork can carry. */
     private var source: NativeJSON {
@@ -53,11 +55,12 @@ struct NewSessionSheet: View {
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
                     .padding(14).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
+                if fork == nil { HistoryEntryRow(entry: PhoneHistory.entry(model.snapshot, workspaceId: choice.workspaceId)) { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) } }
                 ForEach(model.pending, id: \.requestId) { pending in
                     HStack {
                         Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                         Spacer()
-                        Button("重试这次提交") { Task { if await model.submit(pending), model.pending.isEmpty { dismiss() } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending); if model.pending.isEmpty { dismiss() } } else if await model.submit(pending), model.pending.isEmpty { dismiss() } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                     }
                 }
             }
@@ -74,6 +77,12 @@ struct NewSessionSheet: View {
         }
         // Another Harness starts on its own default model: Latch's for one that uses its services, none otherwise.
         .onChange(of: choice.harnessId) { old, new in if old != nil, old != new { choice.model = PhoneStart.defaultModel(catalog, harnessId: new); picked = nil } }
+        // The sheet goes once the cover has; the session opens once both have (InboxView's onDismiss).
+        .fullScreenCover(item: $importing, onDismiss: { if model.openAfterDismiss != nil { dismiss() } }) { scope in
+            HistoryImportView(project: scope.project, sources: scope.sources) { taskId in
+                model.openAfterDismiss = taskId; importing = nil
+            }
+        }
         .presentationDetents([.height(height), .large])
         .presentationDragIndicator(.visible)
         .onAppear {
@@ -81,6 +90,9 @@ struct NewSessionSheet: View {
                 let source = model.detail["summary"]["id"].string == fork.taskId ? model.detail["summary"] : model.summary(of: fork.taskId)
                 choice = fork.choice(catalog, source: source); if prompt.isEmpty { prompt = PhoneForkDraft.prompt }
             } else { choice = PhoneStart.defaults(catalog) }
+            #if LATCH_SCREENS
+            if model.staged, ScreensStage.importing, fork == nil { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) }
+            #endif
         }
     }
     private func start() {
@@ -173,5 +185,17 @@ private struct ModelList: View {
                 }
             }
         }.navigationTitle("模型").navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/** What 接入已有会话 lists from, taken when it opens. */
+struct HistoryScope: Identifiable {
+    let project: NativeJSON
+    let sources: [PhoneHistorySource]
+    var id: String { project["id"].string ?? "" }
+    init?(_ snapshot: NativeJSON, workspaceId: String?) {
+        guard case let .open(sources) = PhoneHistory.entry(snapshot, workspaceId: workspaceId),
+              let project = snapshot["catalog"]["workspaces"].array.first(where: { $0["id"].string == workspaceId }) else { return nil }
+        self.project = project; self.sources = sources
     }
 }

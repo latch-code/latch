@@ -489,7 +489,7 @@ function PreviewLevel({
     } catch (error) {
       const outcome = importOutcome(error)
       if (outcome.kind === 'open') {
-        imported.current = true
+        // Brought in by another request: the Host left this preview open, so leaving closes it.
         onOpen(outcome.taskId)
         return
       }

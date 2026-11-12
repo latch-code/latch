@@ -1,10 +1,10 @@
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { expect, it } from 'vitest'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -35,6 +35,8 @@ const STEPS = { build: 300_000, simctl: 120_000, boot: 600_000 }
 const HANDS_ON = 'latch-hands-on'
 const DEVICE = process.env.LATCH_IOS_LIVE_DEVICE
 const KEEP = process.env.LATCH_IOS_LIVE_KEEP === '1'
+/** `LATCH_IOS_LIVE_HISTORY=1`: also a project of two folders and the fake agent as Codex with sessions of its own, for 接入已有会话. */
+const HISTORY = process.env.LATCH_IOS_LIVE_HISTORY === '1'
 type Simulators = { devices: Record<string, Array<{ name: string; udid: string; state?: string }>> }
 const listSimulators = (): Simulators['devices'][string] =>
   Object.values(
@@ -248,6 +250,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
       })
       expect(saved.status).toBe(201)
+      if (HISTORY) await addHistory(host, owner)
 
       await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
       /** The usage count when the code now on the clipboard was written; undefined when none is. */
@@ -319,3 +322,33 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
   },
   BUDGET,
 )
+
+/** The fake agent as Codex listing and loading sessions of its own (through its adapter), and a project to list them in. */
+async function addHistory(host: TestHost, owner: TestDevice): Promise<void> {
+  const root = join(await realpath(host.root), 'history')
+  const main = join(root, 'app')
+  const other = join(root, 'docs')
+  for (const folder of [main, join(main, 'web'), other]) await mkdir(folder, { recursive: true })
+  const at = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
+  const file = await writeFakeHistory(root, [
+    { sessionId: 'ext-web', cwd: join(main, 'web'), title: 'Web 构建变慢', updatedAt: at(1), updates: fakeConversation() },
+    { sessionId: 'ext-login', cwd: main, title: '登录页的 token 刷新', updatedAt: at(20), updates: fakeConversation() },
+    { sessionId: 'ext-rebuild', cwd: main, title: '拆分 relay 的握手', updatedAt: at(50), updates: fakeConversation() },
+    { sessionId: 'ext-busy', cwd: main, title: '终端里还开着', updatedAt: at(70), busy: true, updates: [] },
+    { sessionId: 'ext-docs', cwd: other, title: 'Docs', updates: [] },
+  ])
+  const env = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'read-only,workspace-write,agent,agent-full-access',
+    FAKE_ACP_INITIAL_MODE: 'agent-full-access',
+    FAKE_ACP_CAPS: 'list,load,resume,close,delete,dirs',
+    FAKE_ACP_STATE: join(root, 'codex-state.json'),
+    FAKE_ACP_HISTORY_FILE: file,
+  }
+  const codex = await owner.confirmed('agents', {
+    method: 'POST',
+    body: { id: 'codex', name: 'Codex', presetId: 'codex', command: process.execPath, args: [FAKE_ACP_AGENT], env },
+  })
+  expect(codex.status).toBe(201)
+  expect((await owner.addFolders({ paths: [main, other] })).status).toBe(201)
+}

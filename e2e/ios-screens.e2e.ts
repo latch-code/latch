@@ -48,6 +48,16 @@ const SCENES = [
   'commit-unknown',
   'handoff',
   'returned',
+  'history-entry',
+  'history-locked',
+  'history-list',
+  'history-preview',
+  'history-rebuild',
+  'history-unknown',
+  'history-busy',
+  'history-imported',
+  'history-seed',
+  'history-lost',
   'brands',
   'about',
   'licenses',
@@ -63,7 +73,8 @@ const DEVICES = [
  * Opt-in (`LATCH_IOS_SCREENS=1`, macOS with an iOS Simulator runtime): builds the separate LatchScreens target, whose
  * canned scenes never enter the Latch product (`ios-app.e2e.ts` checks the product), then screenshots each scene light
  * and dark on simulators this test creates and deletes. No Host, key or secret is involved. Screenshots go to
- * `LATCH_IOS_SCREENS_DIR`, or `test-results/ios-screens/`.
+ * `LATCH_IOS_SCREENS_DIR`, or `test-results/ios-screens/`; `LATCH_IOS_SCENES` (comma-separated prefixes) keeps only the
+ * scenes a change touches.
  */
 it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1')(
   'screenshots the App’s scenes from the LatchScreens target on simulators of its own',
@@ -87,6 +98,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
       return
     }
     const supported = new Set((runtime.supportedDeviceTypes ?? []).map(type => type.identifier))
+    const prefixes = (process.env.LATCH_IOS_SCENES ?? '').split(',').filter(Boolean)
+    const chosen = prefixes.length ? SCENES.filter(scene => prefixes.some(prefix => scene.startsWith(prefix))) : SCENES
     const types = JSON.parse((await simctl('list', 'devicetypes', '-j')).stdout) as { devicetypes: Array<{ identifier: string }> }
     const known = new Set(types.devicetypes.map(item => item.identifier))
     const output = resolve(process.env.LATCH_IOS_SCREENS_DIR ?? 'test-results/ios-screens')
@@ -140,7 +153,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         await simctl('privacy', udid, 'grant', 'camera', 'dev.latch.ios.screens').catch(() => {})
         for (const theme of ['light', 'dark']) {
           await simctl('ui', udid, 'appearance', theme)
-          for (const scene of SCENES) {
+          for (const scene of chosen) {
             await simctl('launch', '--terminate-running-process', udid, 'dev.latch.ios.screens', '-LatchScene', scene)
             await pause(2500)
             await simctl('io', udid, 'screenshot', join(output, `${scene}--${theme}--${device.name}.png`))

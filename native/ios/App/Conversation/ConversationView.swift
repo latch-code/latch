@@ -11,6 +11,8 @@ struct ConversationView: View {
     @State private var previewRequest: UUID?
     /** What the 文件 sheet lists, counted when it is asked for: the counts take a diff of every edit in the session. */
     @State private var fileList: [PhoneChangedFile]?
+    /** 按文字重建 from the stop row of a session its Harness lost. */
+    @State private var rebuilding = false
     @Environment(\.horizontalSizeClass) private var width
     @AppStorage(PhoneFaceID.key) private var faceID = false
     private var summary: NativeJSON { model.currentSummary }
@@ -37,6 +39,7 @@ struct ConversationView: View {
         }
         .sheet(item: $model.forkDraft) { draft in NewSessionSheet(fork: draft).presentationCornerRadius(28) }
         .sheet(item: $model.handoffDraft) { draft in HandoffSheet(draft: draft).presentationCornerRadius(28) }
+        .sheet(isPresented: $rebuilding, onDismiss: { model.openPendingImport() }) { RebuildLostSheet(summary: hasContent ? model.detail["summary"] : summary).presentationCornerRadius(28) }
         // The handoffs this session is part of, read again when the snapshot says they changed.
         .task(id: [id, PhoneHandoffs.involved(model.snapshot, sessionId: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadHandoffs(id) }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
@@ -64,8 +67,12 @@ struct ConversationView: View {
     private var title: some View {
         let line: (parts: [String], neverAsks: Bool) = hasContent ? PhoneConversation.subtitle(model.detail, engine: engine) : ([engine], false)
         let delegated = PhoneAgents.delegated(model.snapshot, task: hasContent ? model.detail["summary"] : summary, windowOpen: model.verifiedUntil != nil)
+        let current = hasContent ? model.detail["summary"] : summary
+        let imported = PhoneHistory.mark(current, sourceLabel: current["imported"]["from"].string.flatMap { from in
+            model.engineInfo(from) != .null ? model.engineName(from) : nil
+        })
         return HeaderTitle(title: model.detail["summary"]["title"].string ?? summary["title"].string ?? "会话",
-            subtitle: (([delegated].compactMap { $0 }) + line.parts, line.neverAsks))
+            subtitle: (([delegated, imported?.label].compactMap { $0 }) + line.parts, line.neverAsks), detail: imported?.detail)
     }
     /** After a declined Face ID or a closed window: the session's name stays, and one plain way back in. There is no unlock screen before the first try. */
     private var locked: some View {
@@ -150,8 +157,39 @@ struct ConversationView: View {
                 ClearingDrawer(sessionId: id, engine: engine)
                 if let handoff = PhoneHandoffs.returnable(model.openHandoffs, sessionId: id, status: summary["status"].string) { HandBackDrawer(handoff: handoff) }
             }
-            // A stop needs no window, so it stays in reach while the content is closed.
-            PromptComposer(draftId: id, gate: hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
+            let rebuiltInto = PhoneHistory.rebuiltFrom(model.snapshot["tasks"].array, taskId: id)
+            let running = ["running", "waiting-approval"].contains(summary["status"].string ?? "")
+            if let rebuiltInto, let target = rebuiltInto["id"].string {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted)
+                    Text("已按文字重建为新会话").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+                    Spacer(minLength: 4)
+                    Button("打开「\(rebuiltInto["title"].string ?? "未命名会话")」") { Task { await model.openSession(target) } }
+                        .font(PhoneTheme.caption).lineLimit(1).buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink)
+                }.padding(.horizontal, 16)
+            } else if hasContent, PhoneHistory.seedWaiting(model.detail["summary"], messages: model.detail["messages"].array) {
+                Label(PhoneHistory.seedWords(service: model.seedService(model.detail["summary"])), systemImage: "clock.arrow.circlepath")
+                    .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+            }
+            if rebuiltInto == nil, model.lostSessions.contains(id), !running {
+                // The Harness lost its own session: input stops here, as the web's stop row says.
+                HStack(spacing: 8) {
+                    Image(systemName: "shield").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted)
+                    Text(PhoneHistory.lostWords).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+                    Spacer(minLength: 4)
+                    if PhoneHistory.offersRebuild(hasContent ? model.detail["summary"] : summary, lost: true, snapshot: model.snapshot) {
+                        Button("按文字重建", systemImage: "clock.arrow.circlepath") { rebuilding = true }
+                            .font(PhoneTheme.caption).buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink).disabled(!model.connected)
+                    }
+                }
+                .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 52)
+                .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.lineStrong))
+                .padding(.horizontal, 12).padding(.bottom, 8)
+            } else {
+                // A stop needs no window, so it stays in reach while the content is closed.
+                PromptComposer(draftId: id, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
+                    : hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
+            }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
     private var sessionFiles: [PhoneChangedFile] {
@@ -185,6 +223,8 @@ struct ConversationView: View {
 private struct HeaderTitle: View {
     let title: String
     let subtitle: (parts: [String], neverAsks: Bool)
+    /** What a part of the line stands for in full (from where and how a session was brought in), for VoiceOver. */
+    var detail: String? = nil
     @Environment(\.horizontalSizeClass) private var width
     private var line: Text {
         subtitle.parts.enumerated().reduce(Text("")) { text, entry in
@@ -197,6 +237,7 @@ private struct HeaderTitle: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
             line.font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                .accessibilityHint(detail ?? "")
         }.frame(width: width == .compact ? 236 : 420, alignment: .leading)
     }
 }

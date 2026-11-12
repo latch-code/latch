@@ -473,7 +473,10 @@ export class HistoryImports {
 
   async receipt(caller: DeviceCaller, requestId: string): Promise<HistoryImportResult | { requestId: string; state: 'pending' }> {
     this.allData(caller)
-    const receipt = this.receipts.get(requestIdText.parse(requestId))
+    const key = requestIdText.parse(requestId)
+    const receipt = this.receipts.get(key)
+    // Accepted but not on record yet (still queued behind another import of the source, or writing its audit): running.
+    if (!receipt && this.inflight.has(key)) return { requestId: key, state: 'pending' }
     if (!receipt) throw new AppError(404, 'history-import-not-found', '没有这次接入的记录。')
     if (receipt.state === 'pending' || !receipt.taskId) return { requestId: receipt.requestId, state: 'pending' }
     return { requestId: receipt.requestId, taskId: receipt.taskId, mode: receipt.mode }

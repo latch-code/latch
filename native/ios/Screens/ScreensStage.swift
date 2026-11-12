@@ -85,6 +85,7 @@ import UIKit
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
         case _ where stageReview(model, name, snapshot: value): break
+        case _ where stageHistory(model, name, snapshot: value): break
         default: model.tab = .code
         }
     }
@@ -337,4 +338,68 @@ extension ScreensStage {
         }
         #endif
     }
+}
+
+/** 接入已有会话: the entry, the list, a preview, 继续用 and what an import leaves on a session. */
+extension ScreensStage {
+    static var creating = false
+    static var importing = false
+    static var previewing = false
+    static var rebuildTarget: String?
+    static var importUnknown = false
+    private static var busyPreview = false
+    private static let handles = ["hh_" + String(repeating: "a1", count: 16), "hh_" + String(repeating: "b2", count: 16), "hh_" + String(repeating: "c3", count: 16)]
+    private static func historyCatalog(_ value: NativeJSON, dataScope: String = "all") -> NativeJSON {
+        patched(value) { object in
+            var catalog = object["catalog"]!.object
+            var features = catalog["features"]!.object; features["historyImport"] = .number(1); catalog["features"] = .object(features)
+            var harnesses = catalog["harnesses"]!.array.map { harness in
+                harness["id"].string == "codex" ? patched(harness) { $0["history"] = json(#"{"list":true,"rebuild":true}"#) } : harness
+            }
+            harnesses.append(json(#"{"id":"opencode","status":"ready","modes":["agent"],"agentContext":"first-turn","history":{"rebuild":true},"capabilities":{"display":{"label":"OpenCode","mark":"opencode"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}}"#))
+            catalog["harnesses"] = .array(harnesses)
+            catalog["workspaces"] = json(#"[{"id":"default","name":"默认文件夹","path":"/work"},{"id":"latch","name":"latch","path":"/work/latch","folders":[{"id":"f1","path":"/work/latch"},{"id":"f2","path":"/work/latch-docs"}]},{"id":"site","name":"官网","path":"/work/site"}]"#)
+            object["catalog"] = .object(catalog)
+            var device = object["device"]!.object; device["dataScope"] = .string(dataScope); object["device"] = .object(device)
+            object["tasks"] = .array(object["tasks"]!.array + [json(#"{"id":"ses_imported","title":"登录页的 token 刷新","status":"idle","updatedAt":"{{-5000}}","harnessId":"opencode","workspaceId":"latch","mode":"agent","imported":{"from":"codex","mode":"text","prefixLength":64}}"#),
+                json(#"{"id":"ses_lost","title":"拆分 relay 的握手","status":"idle","updatedAt":"{{-7000}}","harnessId":"codex","workspaceId":"latch","mode":"agent","imported":{"from":"codex","mode":"native"}}"#)])
+        }
+    }
+    fileprivate static func stageHistory(_ model: PhoneModel, _ name: String, snapshot value: NativeJSON) -> Bool {
+        guard name.hasPrefix("history-") else { return false }
+        model.tab = .code
+        model.snapshot = historyCatalog(value, dataScope: name == "history-locked" ? "work" : "all")
+        switch name {
+        case "history-entry", "history-locked": creating = true
+        case "history-list": creating = true; importing = true
+        case "history-preview": creating = true; importing = true; previewing = true
+        case "history-rebuild": creating = true; importing = true; previewing = true; rebuildTarget = "opencode"
+        case "history-unknown":
+            creating = true; importing = true; previewing = true; importUnknown = true
+            if let write = try? PhoneHistory.importWrite(previewId: "hp_" + String(repeating: "d4", count: 16), harnessId: "codex") { model.pending = [write] }
+        case "history-busy": creating = true; importing = true; previewing = true; busyPreview = true
+        case "history-imported":
+            model.sessionId = "ses_imported"
+            let context = "用户：登录后 token 过一会儿就失效\n助手：刷新逻辑在 auth.ts，过期前五分钟换新。\n"
+            let prefix = context.utf16.count
+            model.detail = json(#"{"summary":{"id":"ses_imported","title":"登录页的 token 刷新","status":"idle","harnessId":"opencode","workspaceId":"latch","mode":"agent","imported":{"from":"codex","mode":"text","prefixLength":\#(prefix)}},"sync":{"instanceId":"screens","revision":42},"approvals":[],"questions":[],"queue":[],"messages":[{"id":"i1","role":"user","text":"\#(context.replacingOccurrences(of: "\n", with: "\\n"))接着把刷新失败时的重试加上。","importContext":{"from":"Codex","prefixLength":\#(prefix)},"createdAt":"{{-600}}"},{"id":"i2","role":"assistant","text":"加好了：刷新失败时按 1、2、4 秒重试三次，之后回到登录页。","createdAt":"{{-540}}"}]}"#)
+        case "history-seed":
+            model.sessionId = "ses_imported"
+            model.detail = json(#"{"summary":{"id":"ses_imported","title":"登录页的 token 刷新","status":"idle","harnessId":"opencode","workspaceId":"latch","mode":"agent","imported":{"from":"codex","mode":"text","prefixLength":120}},"sync":{"instanceId":"screens","revision":42},"approvals":[],"questions":[],"queue":[],"messages":[]}"#)
+        case "history-lost":
+            model.sessionId = "ses_lost"; model.lostSessions = ["ses_lost"]
+            model.detail = json(#"{"summary":{"id":"ses_lost","title":"拆分 relay 的握手","status":"idle","harnessId":"codex","workspaceId":"latch","mode":"agent","imported":{"from":"codex","mode":"native"}},"sync":{"instanceId":"screens","revision":42},"approvals":[],"questions":[],"queue":[],"messages":[{"id":"l1","role":"user","text":"把握手拆成两步。","imported":true,"createdAt":"{{-90000}}"},{"id":"l2","role":"assistant","text":"拆好了：先验 HMAC，再发证书。","imported":true,"createdAt":"{{-89900}}"}]}"#)
+        default: return false
+        }
+        return true
+    }
+    /** The canned answers of a listing and a preview. */
+    static func history(_ request: PhoneHistoryRead) throws -> NativeJSON {
+        if request.path.hasSuffix("/list") {
+            return json(#"{"rows":[{"handle":"\#(handles[0])","title":"Web 构建变慢","updatedAt":"{{-3600}}","subdir":"web"},{"handle":"\#(handles[1])","title":"登录页的 token 刷新","updatedAt":"{{-90000}}","subdir":"","importedTaskId":"ses_imported"},{"handle":"\#(handles[2])","title":"拆分 relay 的握手","updatedAt":"{{-260000}}","subdir":"native/ios"}],"otherFolders":2,"scanned":6,"truncated":false}"#)
+        }
+        if busyPreview { throw PhoneHistoryReadFailure.refused(NativeHostRefusal(status: 409, code: "history-session-busy", message: "这个会话正在别处使用", details: .null)) }
+        return json(#"{"previewId":"hp_\#(String(repeating: "d4", count: 16))","title":"Web 构建变慢","model":"gpt-5.5","turns":4,"truncated":true,"messages":[{"role":"user","text":"web 的构建最近慢了一倍，看看为什么。"},{"role":"tool","text":"rg --files web/src","outputHidden":true,"status":"completed"},{"role":"tool","text":"pnpm build --profile","outputHidden":true,"status":"failed"},{"role":"assistant","text":"慢在类型检查：tsconfig 把 dist 也包含进来了。去掉之后构建回到 40 秒左右。"},{"role":"user","text":"那就去掉，再跑一次。"}]}"#)
+    }
+    static var stagedRows: [PhoneHistoryRow] { PhoneHistory.list(try! history(PhoneHistory.listRead(projectId: "latch", harnessId: "codex")))?.rows ?? [] }
 }

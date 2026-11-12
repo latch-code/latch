@@ -41,7 +41,7 @@ struct PromptComposer: View {
                 HStack {
                     Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
-                    Button("重试这次提交") { Task { await model.submit(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }.padding(.horizontal, 16)
             }
             if noteTooLong {
