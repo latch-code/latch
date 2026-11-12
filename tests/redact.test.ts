@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { containsSecret, redactSecrets } from '@latch/core/node-kit'
+import { containsSecret, CREDENTIALS, PATTERNS, redactSecrets } from '@latch/core/node-kit'
+import { containsSecret as pageContainsSecret, CREDENTIAL_CARRIERS, CREDENTIAL_KEYS, LATCH_CREDENTIALS, looksSecret } from '@latch/protocol'
 
 const credential = `ldc1.dev_${'A'.repeat(22)}.${'b'.repeat(43)}`
 // Assembled at run time, so the source never holds a key-shaped line.
@@ -135,5 +136,18 @@ describe('redactSecrets', () => {
 
   it('redacts every occurrence', () => {
     expect(redactSecrets(`${credential} and ${credential}`)).toBe('[redacted] and [redacted]')
+  })
+})
+
+describe('the page’s copy of the credential shapes', () => {
+  it('matches the Host’s, shape for shape, so a draft the Host would call secret stays out of browser storage', () => {
+    const shapes = (patterns: readonly RegExp[]) => patterns.map(pattern => `${pattern.source}/${pattern.flags}`)
+    expect(shapes([...LATCH_CREDENTIALS, ...CREDENTIAL_KEYS])).toEqual(shapes(CREDENTIALS))
+    // Drafts are kept out of storage for everything a log line would lose, carriers included.
+    expect(shapes([...LATCH_CREDENTIALS, ...CREDENTIAL_CARRIERS, ...CREDENTIAL_KEYS])).toEqual(shapes(PATTERNS))
+    for (const text of ['Cookie: latch_abcdefgh=xyz', 'Latch-Device abc', 'https://x.test/?token=abc', 'https://user:pw@x.test/'])
+      expect(looksSecret(text)).toBe(redactSecrets(text) !== text)
+    for (const text of ['-----BEGIN OPENSSH ' + 'PRIVATE KEY-----', 'sk-ant-' + 'a'.repeat(30), 'plain text'])
+      expect(pageContainsSecret(text)).toBe(containsSecret(text))
   })
 })

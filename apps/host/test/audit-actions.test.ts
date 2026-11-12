@@ -122,6 +122,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.prompt.removed': { sessionId, itemId: 'item-1' },
   'attachment.add': { attachmentId: 'F'.repeat(22), contentHash: hex, bytes: 512, type: 'image' },
   'attachment.view': { attachmentId: 'F'.repeat(22), contentHash: hex, bytes: 512, type: 'text' },
+  'attachment.released': { requestId: '6f1c2b1e-0a51-4f7e-9d0c-2b9b8f8f6b11', count: 2, bytes: 1024 },
   'approval.decided': {
     approvalId: 'approval-1',
     sessionId,

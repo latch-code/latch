@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AttachmentRef, TaskDetail } from '@latch/protocol'
+import type { AttachmentCapabilities, AttachmentRef, HarnessInfo, ReservedAttachments, TaskDetail } from '@latch/protocol'
 import type { Bridge, ModelMessage, HarnessPlugin } from '@latch/sdk'
 import { AttachmentStore, ATTACHMENT_CLAIM_TTL } from '../src/attachments.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -423,5 +423,452 @@ describe('authenticated attachment routes', () => {
     } finally {
       await rm(dataDir, { recursive: true, force: true })
     }
+  })
+  it("learns an agent's attachment capabilities from its first session, without 测试启动, and says why when it takes none", async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' })
+    const define = (id: string, caps: string) =>
+      desktop.json('agents', {
+        body: { id, name: id, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } },
+      })
+    await define('seeing-agent', 'images,embedded')
+    await define('plain-agent', 'delete')
+    const caps = async (harnessId: string) =>
+      (await desktop.json<{ capabilities: AttachmentCapabilities }>('attachments/capabilities', { body: { selection: { harnessId } } }))
+        .capabilities
+    const reported = async (id: string) =>
+      (await desktop.json<{ catalog: { harnesses: HarnessInfo[] } }>('snapshot')).catalog.harnesses.find(item => item.id === id)
+        ?.attachmentsReported
+    const before = await caps('seeing-agent')
+    expect(before).toMatchObject({ images: false, text: false, fileBytes: 25 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
+    expect(before.reason).toContain('还没启动过')
+    expect(await reported('seeing-agent')).toBeUndefined()
+    for (const harnessId of ['seeing-agent', 'plain-agent']) {
+      const created = await desktop.confirmed('tasks', { body: { prompt: 'hello', requestId: randomUUID(), harnessId } })
+      expect(created.status).toBe(201)
+      const { sessionId } = (await created.json()) as { sessionId: string }
+      await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'), {
+        timeout: 10000,
+      })
+    }
+    expect(await caps('seeing-agent')).toMatchObject({ images: true, text: true })
+    expect((await caps('seeing-agent')).reason).toBeUndefined()
+    expect(await reported('seeing-agent')).toEqual({ images: true, text: true })
+    expect(await caps('plain-agent')).toMatchObject({ images: false, text: false, reason: '这个 Harness 不接收图片和文件。' })
+    expect(await reported('plain-agent')).toEqual({ images: false, text: false })
+  })
+  it('lets a device release only its own reserved uploads that no saved message or request needs, and audits it', async () => {
+    const failures = { create: false, createAfter: false, prompt: false }
+    const plugin: HarnessPlugin = {
+      id: 'reserving',
+      name: 'reserving',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'reserving-model',
+          name: 'reserving',
+          model: 'fixture',
+          async *stream() {
+            yield { type: 'text', text: 'done' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+        ctx.registerHarness({
+          id: 'reserving-harness',
+          name: 'reserving',
+          version: '1',
+          capabilities: { models: { owner: 'latch' }, modes: ['agent'], attachments: { text: true, textBytes: 256 * 1024 } },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'createTask')
+                  return async (input: CreateTaskInput) => {
+                    // Before anything is created: the request is given up with nothing saved.
+                    if (failures.create) throw new AppError(503, 'fixture-unavailable', '测试暂时不可用')
+                    const result = await target.createTask(input)
+                    // After the session and its message exist: the message names the upload.
+                    if (failures.createAfter) throw new AppError(503, 'fixture-create-unknown', '测试创建结果未知')
+                    return result
+                  }
+                if (key === 'prompt')
+                  return async (...args: Parameters<Bridge['prompt']>) => {
+                    if (failures.prompt) throw new AppError(503, 'fixture-unavailable', '测试暂时不可用')
+                    return target.prompt(...args)
+                  }
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' }),
+      other = await host.enroll({ listener: 'unix' }),
+      model = { providerId: 'reserving-model', model: 'fixture' }
+    const upload = async (device: typeof desktop, text: string) =>
+      (
+        await device.json<{ attachment: AttachmentRef }>('attachments', {
+          rawBody: Buffer.from(text),
+          headers: {
+            'content-type': 'application/octet-stream',
+            'x-latch-attachment': Buffer.from(
+              JSON.stringify({
+                requestId: randomUUID(),
+                name: 'note.txt',
+                size: Buffer.byteLength(text),
+                selection: { harnessId: 'reserving-harness', model },
+              }),
+            ).toString('base64url'),
+          },
+          method: 'POST',
+        })
+      ).attachment
+    const start = (device: typeof desktop, ids: string[]) =>
+      device.confirmed('tasks', {
+        body: { prompt: 'start', requestId: randomUUID(), harnessId: 'reserving-harness', model, attachmentIds: ids },
+      })
+    const existing = (await (await start(desktop, [])).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${existing.sessionId}`)).summary.status).toBe('idle'))
+    // Given up before the Host created anything: to a new session, and to the existing one.
+    failures.create = true
+    const newSession = await upload(desktop, 'for a new session')
+    expect((await start(desktop, [newSession.id])).status).toBe(503)
+    failures.create = false
+    failures.prompt = true
+    const toExisting = await upload(desktop, 'for the existing session')
+    const promptBody = { prompt: 'more', requestId: randomUUID(), attachmentIds: [toExisting.id] }
+    const prompted = await desktop.request(`tasks/${existing.sessionId}/prompt`, { body: promptBody })
+    expect(prompted.status).toBe(503)
+    failures.prompt = false
+    // Created with its message, but the answer was lost: a retry still needs it.
+    failures.createAfter = true
+    const needed = await upload(desktop, 'a saved message names this')
+    expect((await start(desktop, [needed.id])).status).toBe(503)
+    failures.createAfter = false
+    // Another device's reservation is never this device's to release.
+    failures.create = true
+    const others = await upload(other, 'another device')
+    expect((await start(other, [others.id])).status).toBe(503)
+    failures.create = false
+    await vi.waitFor(async () => {
+      const tasks = (await desktop.json<{ tasks: Array<{ status: string }> }>('snapshot')).tasks
+      expect(tasks.every(task => task.status !== 'running')).toBe(true)
+    })
+    const reserved = await desktop.json<{ reserved: ReservedAttachments }>('attachments/reserved')
+    expect(reserved.reserved).toMatchObject({ count: 3, releasable: 2 })
+    expect((await desktop.request('attachments/reserved/release', { body: {} })).status).toBe(400)
+    // Only what the person was shown: an ID of another device's, or one never shown, is not released.
+    const shownIds = reserved.reserved.items.filter(item => item.releasable).map(item => item.id)
+    expect(reserved.reserved.items.find(item => item.id === needed.id)?.releasable).toBe(false)
+    const releaseId = randomUUID(),
+      body = { requestId: releaseId, ids: [...shownIds, others.id] }
+    const released = await desktop.json<{ released: { count: number; bytes: number } }>('attachments/reserved/release', { body })
+    // A retry of the same request gets the first answer and releases nothing more; another list under it is refused.
+    expect(await desktop.json('attachments/reserved/release', { body })).toEqual(released)
+    expect((await desktop.request('attachments/reserved/release', { body: { requestId: releaseId, ids: [needed.id] } })).status).toBe(409)
+    expect(released.released).toEqual({
+      count: 2,
+      bytes: Buffer.byteLength('for a new session') + Buffer.byteLength('for the existing session'),
+    })
+    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8')) as {
+      entries: Record<string, unknown>
+    }
+    // A retry of the given-up request now hears, for certain, that its upload was released.
+    const late = await desktop.request(`tasks/${existing.sessionId}/prompt`, { body: promptBody })
+    expect(late.status).toBe(409)
+    expect(await late.json()).toMatchObject({ error: 'attachment-released', message: expect.stringContaining('note.txt') })
+    expect(index.entries[newSession.id]).toBeUndefined()
+    expect(index.entries[toExisting.id]).toBeUndefined()
+    expect(index.entries[needed.id]).toBeDefined()
+    expect(index.entries[others.id]).toBeDefined()
+    expect((await desktop.json<{ reserved: ReservedAttachments }>('attachments/reserved')).reserved).toMatchObject({
+      count: 1,
+      releasable: 0,
+    })
+    const audit = (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { action: string; detail?: unknown })
+      .filter(record => record.action === 'attachment.released')
+    expect(audit).toEqual([expect.objectContaining({ detail: { requestId: releaseId, count: 2, bytes: released.released.bytes } })])
+  })
+})
+describe('releasing reserved uploads while a retry is on its way', () => {
+  it('keeps the upload a retried request is using, even when the retry arrives while the release reads the sessions', async () => {
+    let failCreate = false,
+      detailHeld: Promise<void> | undefined,
+      createHeld: Promise<void> | undefined,
+      detailEntered = 0,
+      createEntered = 0,
+      held = ''
+    let openDetail!: () => void, openCreate!: () => void
+    const plugin: HarnessPlugin = {
+      id: 'race',
+      name: 'race',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'race-model',
+          name: 'race',
+          model: 'fixture',
+          async *stream() {
+            yield { type: 'text', text: 'done' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+        ctx.registerHarness({
+          id: 'race-harness',
+          name: 'race',
+          version: '1',
+          capabilities: { models: { owner: 'latch' }, modes: ['agent'], attachments: { text: true, textBytes: 256 * 1024 } },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'createTask')
+                  return async (input: CreateTaskInput) => {
+                    if (failCreate) throw new AppError(503, 'fixture-unavailable', '测试暂时不可用')
+                    createEntered++
+                    await createHeld
+                    return target.createTask(input)
+                  }
+                if (key === 'detail')
+                  return async (id: string) => {
+                    if (id === held) {
+                      detailEntered++
+                      await detailHeld
+                    }
+                    return target.detail(id)
+                  }
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' }),
+      model = { providerId: 'race-model', model: 'fixture' }
+    const existing = (await (
+      await desktop.confirmed('tasks', { body: { prompt: 'start', requestId: randomUUID(), harnessId: 'race-harness', model } })
+    ).json()) as { sessionId: string }
+    await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${existing.sessionId}`)).summary.status).toBe('idle'))
+    const text = 'kept by the retry'
+    const upload = (
+      await desktop.json<{ attachment: AttachmentRef }>('attachments', {
+        rawBody: Buffer.from(text),
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-latch-attachment': Buffer.from(
+            JSON.stringify({
+              requestId: randomUUID(),
+              name: 'note.txt',
+              size: Buffer.byteLength(text),
+              selection: { harnessId: 'race-harness', model },
+            }),
+          ).toString('base64url'),
+        },
+        method: 'POST',
+      })
+    ).attachment
+    const start = { prompt: 'with a file', requestId: randomUUID(), harnessId: 'race-harness', model, attachmentIds: [upload.id] }
+    failCreate = true
+    expect((await desktop.confirmed('tasks', { body: start })).status).toBe(503)
+    failCreate = false
+    const reserved = await desktop.json<{ reserved: ReservedAttachments }>('attachments/reserved')
+    expect(reserved.reserved.items).toEqual([expect.objectContaining({ id: upload.id, releasable: true })])
+    // The release stops while it reads the existing session; the retry of the original start arrives meanwhile.
+    held = existing.sessionId
+    detailHeld = new Promise(resolve => {
+      openDetail = resolve
+    })
+    createHeld = new Promise(resolve => {
+      openCreate = resolve
+    })
+    const releaseBody = { requestId: randomUUID(), ids: [upload.id] }
+    const release = desktop.json<{ released: { count: number } }>('attachments/reserved/release', { body: releaseBody })
+    await vi.waitFor(() => expect(detailEntered).toBeGreaterThan(0))
+    // The same request again while the first is on its way waits for its answer; another list under it is refused.
+    const copy = desktop.json<{ released: { count: number } }>('attachments/reserved/release', { body: releaseBody })
+    const conflicting = await desktop.request('attachments/reserved/release', {
+      body: { requestId: releaseBody.requestId, ids: [upload.id, 'Z'.repeat(22)] },
+    })
+    expect(conflicting.status).toBe(409)
+    const retry = desktop.confirmed('tasks', { body: start })
+    await vi.waitFor(() => expect(createEntered).toBeGreaterThan(1))
+    openDetail()
+    expect((await release).released.count).toBe(0)
+    expect(await copy).toEqual(await release)
+    openCreate()
+    const retried = await retry
+    expect(retried.status).toBe(201)
+    const { sessionId } = (await retried.json()) as { sessionId: string }
+    held = ''
+    await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'))
+    const detail = await desktop.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.messages[0]?.attachments?.[0]?.id).toBe(upload.id)
+    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8')) as {
+      entries: Record<string, { taskId?: string }>
+    }
+    expect(index.entries[upload.id]?.taskId).toBe(sessionId)
+  })
+  it('holds a plugin Harness to what it reported when it started, over what it declared', async () => {
+    let reported: { images: boolean; text: boolean } | undefined
+    const plugin: HarnessPlugin = {
+      id: 'reporting',
+      name: 'reporting',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerHarness({
+          id: 'reporting-harness',
+          name: 'reporting',
+          version: '1',
+          capabilities: { models: { owner: 'harness' }, modes: ['agent'], attachments: { images: true, text: true } },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'promptCapabilities') return () => reported
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' })
+    const caps = async () =>
+      (
+        await desktop.json<{ capabilities: AttachmentCapabilities }>('attachments/capabilities', {
+          body: { selection: { harnessId: 'reporting-harness' } },
+        })
+      ).capabilities
+    expect(await caps()).toMatchObject({ images: true, text: true })
+    reported = { images: false, text: true }
+    expect(await caps()).toMatchObject({ images: false, text: true })
+  })
+  it('holds a plugin Harness on Latch model services to what it reported too', async () => {
+    let reported: { images: boolean; text: boolean } | undefined
+    const plugin: HarnessPlugin = {
+      id: 'reporting-latch',
+      name: 'reporting',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'seeing',
+          name: 'seeing',
+          model: 'fixture',
+          modelCapabilities: { fixture: { vision: true } },
+          async *stream() {
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+        ctx.registerHarness({
+          id: 'reporting-latch',
+          name: 'reporting',
+          version: '1',
+          capabilities: { models: { owner: 'latch' }, modes: ['agent'], attachments: { images: true, text: true } },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'promptCapabilities') return () => reported
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' })
+    const caps = async () =>
+      (
+        await desktop.json<{ capabilities: AttachmentCapabilities }>('attachments/capabilities', {
+          body: { selection: { harnessId: 'reporting-latch', model: { providerId: 'seeing', model: 'fixture' } } },
+        })
+      ).capabilities
+    expect(await caps()).toMatchObject({ images: true, text: true })
+    reported = { images: false, text: true }
+    expect(await caps()).toMatchObject({ images: false, text: true, reason: '这个 Harness 不接收图片。' })
+  })
+})
+describe('whether the snapshot lists every session', () => {
+  it('says so only when every Harness listed, so a page never drops a draft on a partial list', async () => {
+    const whole = await startTestHost()
+    hosts.push(whole)
+    const device = await whole.enroll({ listener: 'unix' })
+    expect((await device.json<{ tasksComplete?: true }>('snapshot')).tasksComplete).toBe(true)
+    const broken: HarnessPlugin = {
+      id: 'unlisting',
+      name: 'Unlisting',
+      version: '1',
+      description: 'test',
+      activate: ctx =>
+        ctx.registerHarness({
+          id: 'unlisting',
+          name: 'Unlisting',
+          version: '1',
+          create: options => {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'listTasks')
+                  return async () => {
+                    throw new Error('cannot list')
+                  }
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        }),
+    }
+    // A saved Agent turned off lists nothing: its sessions may exist.
+    await device.json('agents', {
+      body: { id: 'resting', name: 'Resting', command: process.execPath, args: [FAKE_ACP_AGENT], enabled: false },
+    })
+    expect((await device.json<{ tasksComplete?: true }>('snapshot')).tasksComplete).toBeUndefined()
+    // A Harness that never mounted (its start failed) is configured but not listed.
+    const unmountable: HarnessPlugin = {
+      id: 'unmountable',
+      name: 'Unmountable',
+      version: '1',
+      description: 'test',
+      activate: ctx =>
+        ctx.registerHarness({
+          id: 'unmountable',
+          name: 'Unmountable',
+          version: '1',
+          create: () => {
+            throw new Error('cannot start')
+          },
+        }),
+    }
+    const failed = await startTestHost({ plugins: [unmountable] })
+    hosts.push(failed)
+    const third = await failed.enroll({ listener: 'unix' })
+    expect((await third.json<{ tasksComplete?: true }>('snapshot')).tasksComplete).toBeUndefined()
+    const partial = await startTestHost({ plugins: [broken] })
+    hosts.push(partial)
+    const other = await partial.enroll({ listener: 'unix' })
+    expect((await other.json<{ tasksComplete?: true }>('snapshot')).tasksComplete).toBeUndefined()
   })
 })

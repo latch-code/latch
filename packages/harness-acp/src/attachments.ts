@@ -17,9 +17,9 @@ export async function promptBlocks(
   let bytes = Buffer.byteLength(prompt)
   for (const ref of refs) {
     if (!read) throw new AppError(415, 'attachments-unsupported', '当前 Harness 尚未接入附件读取。')
-    if (ref.kind === 'image' && !capabilities.images) throw new AppError(415, 'agent-image-unsupported', '当前 Agent 不接受图片附件。')
+    if (ref.kind === 'image' && !capabilities.images) throw new AppError(415, 'agent-image-unsupported', '当前 Harness 不接受图片附件。')
     if (ref.kind === 'text' && !capabilities.embeddedContext)
-      throw new AppError(415, 'agent-text-unsupported', '当前 Agent 不接受嵌入文本附件。')
+      throw new AppError(415, 'agent-text-unsupported', '当前 Harness 不接受嵌入文本附件。')
     const content = await read(ref)
     if (content.type === 'image') {
       bytes += content.data.length

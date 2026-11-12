@@ -12,6 +12,7 @@ import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 import { deviceIcon } from './deviceIcon.ts'
 import { deviceSwitches, filesChange, grantedText, manageChange, seenText, type ScopeChange } from './deviceRows.ts'
+import { ReservedAttachments } from './ReservedAttachments.tsx'
 
 export function SeenLine({ device, self }: { device: Device; self: boolean }) {
   return (
@@ -243,6 +244,27 @@ export function DevicePage({
           )}
         </SettingsGroup>
       )}
+      {!switches.files && device.listener !== 'unix' && (
+        // Where it cannot be switched here, the device still sees what it may do: @ 文件 depends on it.
+        <SettingsGroup>
+          <SettingsRow
+            title={COPY.files}
+            description={
+              files ? (
+                <Hint lead={<Icon icon={EyeGlyph} size={12} />} label={COPY.filesNote.label}>
+                  {COPY.filesNote.detail}
+                </Hint>
+              ) : (
+                <Hint label={COPY.raiseOnMac(computer)}>
+                  在 {computer} 的 设置 › 设备 里为这台设备开启「{COPY.files}」。
+                </Hint>
+              )
+            }
+            trailing={<span className="settings-row-value">{files ? '已开启' : '未开启'}</span>}
+          />
+        </SettingsGroup>
+      )}
+      {self && <ReservedAttachments deviceId={device.id} />}
       <InlineConfirm active={scope.pending} list />
       {scope.error && <InlineNotice tone="error">{scope.error}</InlineNotice>}
       {(self || access.admin) && (

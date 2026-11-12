@@ -30,7 +30,14 @@ const entrySchema = z.strictObject({
   claim: z.strictObject({ requestId: z.string().uuid(), sessionId: taskId.optional() }).optional(),
   secret: z.boolean(),
 })
-const indexSchema = z.strictObject({ version: z.literal(1), entries: z.record(z.string().regex(ID), entrySchema) })
+/** What a device released (`releaseReserved`): a later request naming it hears so, rather than that it never existed. */
+const releasedSchema = z.strictObject({ owner: z.string().min(1).max(256), name: z.string().min(1).max(200), at: z.number().finite() })
+const RELEASED_KEPT = 512
+const indexSchema = z.strictObject({
+  version: z.literal(1),
+  entries: z.record(z.string().regex(ID), entrySchema),
+  released: z.record(z.string().regex(ID), releasedSchema).optional(),
+})
 type Entry = z.infer<typeof entrySchema>
 export type AttachmentData = { ref: AttachmentRef; data: Uint8Array; text?: string }
 export interface AttachmentStoreOptions {
@@ -155,7 +162,7 @@ export class AttachmentStore {
         throw new AppError(
           415,
           'attachment-type-unsupported',
-          format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Agent 不接受这种附件。',
+          format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Harness 不接受这种附件。',
         )
       const image = format.kind === 'image'
       if (image && (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(format.mime) || size > ATTACHMENT_IMAGE_LIMIT))
@@ -233,6 +240,9 @@ export class AttachmentStore {
     if (ids.length > 8 || new Set(ids).size !== ids.length) throw new AppError(400, 'attachment-count', '每条消息最多 8 个不同附件。')
     const refs = ids.map(id => {
       const entry = this.get(id)
+      const gone = entry ? undefined : this.state.released?.[id]
+      if (gone && gone.owner === owner)
+        throw new AppError(409, 'attachment-released', `附件「${gone.name}」已在 设置 › 设备 里释放，请重新添加。`)
       if (
         !entry
         || (entry.taskId
@@ -437,6 +447,48 @@ export class AttachmentStore {
         this.leases.delete(entry.ref.id)
         await rm(this.path(entry), { force: true })
       }
+    })
+  }
+  /** This owner's uploads held for a submission (`claim`) and not in a session: what 放弃 can leave behind. */
+  reserved(owner: string): Array<{ id: string; size: number; requestId: string; sessionId?: string }> {
+    const held: Array<{ id: string; size: number; requestId: string; sessionId?: string }> = []
+    for (const [id, entry] of Object.entries(this.state.entries)) {
+      const claim = entry.claim ?? (entry.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
+      if (entry.taskId || entry.owner !== owner || !claim) continue
+      held.push({ id, size: entry.ref.size, requestId: claim.requestId, ...(claim.sessionId ? { sessionId: claim.sessionId } : {}) })
+    }
+    return held
+  }
+  /**
+   * Removes the owner's reserved uploads among `ids` that are still reserved for the same request: the caller proved no
+   * saved message needs them. `busy` is asked again here, in the store's turn, for each request: a retry that arrived
+   * while the proof read the sessions keeps its upload. Returns what was removed.
+   */
+  async releaseReserved(
+    owner: string,
+    proven: ReadonlyMap<string, string>,
+    busy: (requestId: string) => boolean,
+  ): Promise<{ count: number; bytes: number }> {
+    return this.mutate(async () => {
+      const next = structuredClone(this.state),
+        removed: Entry[] = []
+      for (const [id, requestId] of proven) {
+        const entry = next.entries[id]
+        const claim = entry?.claim ?? (entry?.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
+        if (!entry || entry.taskId || entry.owner !== owner || claim?.requestId !== requestId || busy(requestId)) continue
+        removed.push(entry)
+        delete next.entries[id]
+        next.released = { ...next.released, [id]: { owner, name: entry.ref.name, at: this.now() } }
+      }
+      if (!removed.length) return { count: 0, bytes: 0 }
+      const kept = Object.entries(next.released ?? {}).sort((a, b) => b[1].at - a[1].at)
+      if (kept.length > RELEASED_KEPT) next.released = Object.fromEntries(kept.slice(0, RELEASED_KEPT))
+      await this.commit(next)
+      for (const entry of removed) {
+        this.leases.delete(entry.ref.id)
+        await rm(this.path(entry), { force: true })
+      }
+      return { count: removed.length, bytes: removed.reduce((sum, entry) => sum + entry.ref.size, 0) }
     })
   }
   async prune(): Promise<void> {

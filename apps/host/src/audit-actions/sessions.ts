@@ -39,6 +39,8 @@ export const SESSION_ACTIONS = {
   'task.prompt.removed': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'attachment.add': attachmentEvent,
   'attachment.view': attachmentEvent,
+  /** A device let go of its own uploads reserved for submissions it gave up; only those no saved message needs. */
+  'attachment.released': z.strictObject({ requestId: opaqueId, count, bytes: count }),
   'approval.decided': z.strictObject({
     approvalId: opaqueId,
     sessionId: opaqueId,

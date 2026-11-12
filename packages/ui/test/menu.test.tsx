@@ -631,6 +631,21 @@ describe('on phones', () => {
     }
   })
 
+  it('closes the sheet when the value already chosen is pressed, without changing it', async () => {
+    await page.viewport(390, 844)
+    try {
+      let changes = 0
+      const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={() => void changes++} />)
+      await userEvent.click(screen.getByRole('button', { name: /^模型：/u }))
+      await expect.element(screen.getByRole('dialog', { name: '模型' })).toBeVisible()
+      await userEvent.click(screen.getByRole('radio', { checked: true }))
+      await expect.element(screen.getByRole('dialog', { name: '模型' })).not.toBeInTheDocument()
+      expect(changes).toBe(0)
+    } finally {
+      await page.viewport(1280, 800)
+    }
+  })
+
   it('opens the sheet on the current value even when it is not the first, and keeps Tab inside the sheet', async () => {
     await page.viewport(390, 844)
     try {

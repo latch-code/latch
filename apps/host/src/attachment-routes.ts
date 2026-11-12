@@ -11,6 +11,7 @@ import {
   type DeviceScope,
   type FileMetadata,
   type ListenerClass,
+  type ReservedAttachments,
   type TaskDetail,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -52,15 +53,20 @@ export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   recheck(caller: Caller, scope: DeviceScope): void
   sessionAccess(caller: Caller, id: string): Promise<TaskDetail>
   capabilities(caller: Caller, selection: AttachmentSelection, sessionId?: string): Promise<AttachmentCapabilities>
+  /** Of this device's reserved uploads, the IDs the Host proves now that no saved message or request needs. */
+  unused(caller: Caller, reserved: ReturnType<AttachmentStore['reserved']>): Promise<ReadonlySet<string>>
+  /** A request carrying this ID is on its way or was accepted in this run; asked again at the moment of removal. */
+  busy(caller: Caller, requestId: string): boolean
 }
 export function assertAttachmentCapability(ref: AttachmentRef, caps: AttachmentCapabilities): void {
   if (ref.kind === 'image' && !caps.images) throw new AppError(415, 'attachment-image-unsupported', caps.reason ?? '当前模型不能看图片。')
   if (ref.kind === 'text' && !caps.text)
-    throw new AppError(415, 'attachment-text-unsupported', caps.reason ?? '当前 Agent 不接受文本附件。')
+    throw new AppError(415, 'attachment-text-unsupported', caps.reason ?? '当前 Harness 不接受文本附件。')
   if (ref.kind === 'text' && ref.size > caps.textBytes)
-    throw new AppError(415, 'attachment-text-too-large', `当前 Agent 只接受 ${Math.floor(caps.textBytes / 1024)} KB 以内的文本附件。`)
+    throw new AppError(415, 'attachment-text-too-large', `当前 Harness 只接受 ${Math.floor(caps.textBytes / 1024)} KB 以内的文本附件。`)
 }
 export function createAttachmentRoutes<Caller extends AttachmentCaller>(options: AttachmentRoutesOptions<Caller>) {
+  const releases = new Map<string, { asked: string; released: Promise<{ count: number; bytes: number }> }>()
   const handles = new Map<string, { device: string; id: string; until: number }>(),
     quota = new FileReadQuota(options.now)
   const get = async (caller: Caller, id: string) => {
@@ -90,6 +96,69 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         json(res, { capabilities: caps })
         return true
       }
+      if (path === '/link/api/attachments/reserved' && method === 'GET') {
+        options.authorize(caller, 'run')
+        const reserved = options.store.reserved(device.id),
+          unused = await options.unused(caller, reserved)
+        options.recheck(caller, 'run')
+        const releasable = reserved.filter(item => unused.has(item.id))
+        const view: ReservedAttachments = {
+          count: reserved.length,
+          bytes: reserved.reduce((sum, item) => sum + item.size, 0),
+          releasable: releasable.length,
+          releasableBytes: releasable.reduce((sum, item) => sum + item.size, 0),
+          items: reserved.map(item => ({ id: item.id, bytes: item.size, requestId: item.requestId, releasable: unused.has(item.id) })),
+        }
+        json(res, { reserved: view })
+        return true
+      }
+      if (path === '/link/api/attachments/reserved/release' && method === 'POST') {
+        options.authorize(caller, 'run')
+        const input = z
+          .strictObject({ requestId: z.string().uuid(), ids: z.array(z.string().regex(ID)).min(1).max(64) })
+          .parse(await jsonBody(req))
+        // The same request gets its first answer: a retry after a lost response releases nothing more.
+        const key = `${device.id}:${input.requestId}`,
+          asked = [...new Set(input.ids)].sort().join(',')
+        // One release per request at a time: a copy sent meanwhile waits for the first and gets its answer.
+        const earlier = releases.get(key)
+        if (earlier) {
+          if (earlier.asked !== asked) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的附件。')
+          json(res, { released: await earlier.released })
+          return true
+        }
+        const releasing = (async () => {
+          // Only what the person was shown and confirmed, of this device's own.
+          const shown = new Set(input.ids)
+          const reserved = options.store.reserved(device.id).filter(item => shown.has(item.id)),
+            unused = await options.unused(caller, reserved)
+          options.recheck(caller, 'run')
+          const proven = new Map(reserved.filter(item => unused.has(item.id)).map(item => [item.id, item.requestId]))
+          return options.store.releaseReserved(device.id, proven, requestId => options.busy(caller, requestId))
+        })()
+        releases.set(key, { asked, released: releasing })
+        let released: { count: number; bytes: number }
+        try {
+          released = await releasing
+        } catch (error) {
+          // Nothing was released, or it is not known: the same request may try again.
+          if (releases.get(key)?.released === releasing) releases.delete(key)
+          throw error
+        }
+        if (releases.size > 256) releases.delete(releases.keys().next().value!)
+        // A removal is never held back by the audit: a record that cannot be written is said in the response.
+        if (released.count)
+          await options.audit
+            .append({
+              action: 'attachment.released',
+              actor: options.actorOf(caller),
+              target: device.id,
+              detail: { requestId: input.requestId, count: released.count, bytes: released.bytes },
+            })
+            .catch(() => res.setHeader('x-latch-audit', 'failed'))
+        json(res, { released })
+        return true
+      }
       if (path === '/link/api/attachments' && method === 'POST') {
         options.authorize(caller, 'run')
         if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/octet-stream' || req.headers['content-encoding'])
@@ -105,7 +174,7 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         }
         const input = metadata.parse(parsed),
           caps = await options.capabilities(caller, input.selection, input.sessionId)
-        if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Agent 尚不支持附件。')
+        if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
         const timer = setTimeout(() => req.destroy(), 60_000)
         try {
           const ref = await options.store.add({

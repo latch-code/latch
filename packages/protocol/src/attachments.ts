@@ -27,6 +27,9 @@ export interface AttachmentCapabilities {
   images: boolean
   text: boolean
   textBytes: number
+  /** Per file over this connection and per image; absent on older Hosts. */
+  fileBytes?: number
+  imageBytes?: number
   reason?: string
 }
 export function isAttachmentRef(value: unknown): value is AttachmentRef {
@@ -50,4 +53,17 @@ export function isAttachmentRef(value: unknown): value is AttachmentRef {
       key => item[key] === undefined || (Number.isSafeInteger(item[key]) && Number(item[key]) > 0 && Number(item[key]) <= 40_000),
     )
   )
+}
+
+/**
+ * This device's uploads held for a submission it may have given up (放弃这次提交). They count against its draft quota
+ * until the Host proves no saved message needs them; `releasable` are the ones it can prove that for now.
+ */
+export interface ReservedAttachments {
+  count: number
+  bytes: number
+  releasable: number
+  releasableBytes: number
+  /** Each one, with the request it is held for; a page leaves out its own unconfirmed submission's. */
+  items: Array<{ id: string; bytes: number; requestId: string; releasable: boolean }>
 }

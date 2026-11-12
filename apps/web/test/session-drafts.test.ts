@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { SessionDrafts } from '../src/core/sessionDrafts.ts'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  browserDraftStorage,
+  DRAFT_EXPIRY_MS,
+  draftsKey,
+  forgetStoredDrafts,
+  holdsExcerpt,
+  listedSessions,
+  SessionDrafts,
+} from '../src/core/sessionDrafts.ts'
 
 describe('session text drafts', () => {
   it('restores only the requested conversation and removes text that was sent or explicitly cleared', () => {
@@ -39,5 +47,238 @@ describe('session text drafts', () => {
     expect(drafts.read('larger', true)).toHaveLength(100_000)
     expect(drafts.save('larger', 'z'.repeat(256_001), false)).toBe(false)
     expect(drafts.read('larger', true)).toHaveLength(100_000)
+  })
+})
+
+describe('session text drafts kept in browser storage', () => {
+  const memory = () => {
+    let value: string | null = null
+    return {
+      read: () => value,
+      write: (next: string | null) => {
+        value = next
+      },
+      get value() {
+        return value
+      },
+    }
+  }
+  it('survives a reload per session and per new-session draft, with the open composer written a moment later', () => {
+    vi.useFakeTimers()
+    try {
+      const storage = memory()
+      const page = new SessionDrafts(storage)
+      page.save('session-a', '草稿 A：还没发', false)
+      page.keep('', '新会话的草稿', false)
+      expect(JSON.parse(storage.value!).drafts.map(([id]: [string]) => id)).toEqual(['session-a'])
+      vi.advanceTimersByTime(300)
+      const reloaded = new SessionDrafts(storage)
+      expect(reloaded.read('session-a', true)).toBe('草稿 A：还没发')
+      expect(reloaded.read('', true)).toBe('新会话的草稿')
+      expect(reloaded.read('session-b', true)).toBe('')
+      // Emptied in the composer: gone after the next load too.
+      reloaded.keep('', '', false)
+      reloaded.flush()
+      expect(new SessionDrafts(storage).read('', true)).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('removes a deleted session at once, keeps only listed sessions, and forgets everything on clear', () => {
+    const storage = memory()
+    const page = new SessionDrafts(storage)
+    page.save('deleted', 'gone', false)
+    page.save('listed', 'kept', false)
+    page.save('', 'new', false)
+    page.remove('deleted')
+    expect(new SessionDrafts(storage).read('deleted', true)).toBe('')
+    page.save('elsewhere', 'deleted on another device', false)
+    page.retain(new Set(['listed']))
+    const reloaded = new SessionDrafts(storage)
+    expect(reloaded.read('elsewhere', true)).toBe('')
+    expect(reloaded.read('listed', true)).toBe('kept')
+    expect(reloaded.read('', true)).toBe('new')
+    page.clear()
+    expect(storage.value).toBeNull()
+  })
+  it('keeps private text out of a later load that may not see it', () => {
+    const storage = memory()
+    new SessionDrafts(storage).save('private', 'secret plan', true)
+    const narrowed = new SessionDrafts(storage)
+    expect(narrowed.read('private', false)).toBe('')
+    expect(new SessionDrafts(storage).read('private', true)).toBe('')
+  })
+  it('falls back to memory when storage throws, and never leaves a stale copy it could not update', () => {
+    let stored: string | null = JSON.stringify({ version: 1, drafts: [['a', { text: 'old', private: false, at: 1 }]] })
+    let fail = false
+    const storage = {
+      read: () => {
+        if (fail) throw new Error('blocked')
+        return stored
+      },
+      write: (next: string | null) => {
+        if (fail && next !== null) throw new Error('quota')
+        stored = next
+      },
+    }
+    const page = new SessionDrafts(storage)
+    fail = true
+    page.save('a', 'new text', false)
+    expect(page.read('a', true)).toBe('new text')
+    expect(stored).toBeNull()
+    const unreadable = new SessionDrafts({
+      read: () => {
+        throw new Error('private mode')
+      },
+      write: () => {
+        throw new Error('private mode')
+      },
+    })
+    unreadable.save('b', 'memory only', false)
+    expect(unreadable.read('b', true)).toBe('memory only')
+  })
+  it('lets two windows of one device keep each other’s drafts', () => {
+    const storage = memory()
+    const first = new SessionDrafts(storage),
+      second = new SessionDrafts(storage)
+    first.save('a', 'from the first window', false)
+    second.save('b', 'from the second window', false)
+    const reloaded = new SessionDrafts(storage)
+    expect(reloaded.read('a', true)).toBe('from the first window')
+    expect(reloaded.read('b', true)).toBe('from the second window')
+  })
+  it('keeps one device per origin, and after sign-out nothing written later brings a draft back', () => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return values.size
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    })
+    try {
+      const origin = 'https://mac.local'
+      new SessionDrafts(browserDraftStorage(origin, 'dev_old')).save('a', 'old device', false)
+      const current = new SessionDrafts(browserDraftStorage(origin, 'dev_new'))
+      current.save('a', 'this device', false)
+      values.set('latch.pending.other', 'kept')
+      forgetStoredDrafts(origin, 'dev_new')
+      expect([...values.keys()].sort()).toEqual([draftsKey(origin, 'dev_new'), 'latch.pending.other'])
+      current.keep('b', 'typed just before', false)
+      forgetStoredDrafts(origin)
+      vi.advanceTimersByTime(1000)
+      current.save('c', 'after sign-out', false)
+      expect([...values.keys()].sort()).toEqual(['latch.drafts-forgotten.' + origin, 'latch.pending.other'])
+      // Another window signs out: this one, still open, writes nothing on its way out either.
+      const other = new SessionDrafts(browserDraftStorage(origin, 'dev_new'))
+      other.keep('d', 'typed in the other window', false)
+      values.set('latch.drafts-forgotten.' + origin, 'signed out elsewhere')
+      other.flush()
+      expect(values.has(draftsKey(origin, 'dev_new'))).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('which listing may drop a draft', () => {
+  const drafts = () => {
+    const page = new SessionDrafts()
+    for (const id of ['kept', 'archived', 'deleted', '']) page.save(id, `text of ${id || 'new'}`, false)
+    return page
+  }
+  const prune = (page: SessionDrafts, snapshot: Parameters<typeof listedSessions>[0], seesAll = true) => {
+    const listed = listedSessions(snapshot, seesAll)
+    if (listed) page.retain(listed)
+  }
+  it('keeps every draft when the Host could not list every Harness', () => {
+    const page = drafts()
+    prune(page, { tasks: [{ id: 'kept' }] })
+    expect(page.read('deleted', true)).toBe('text of deleted')
+    expect(page.read('archived', true)).toBe('text of archived')
+  })
+  it('keeps an archived session, which a whole listing still has', () => {
+    const page = drafts()
+    prune(page, { tasks: [{ id: 'kept' }, { id: 'archived', archived: true } as { id: string }], tasksComplete: true })
+    expect(page.read('archived', true)).toBe('text of archived')
+  })
+  it('keeps a session hidden from this device by scope or privacy', () => {
+    const page = drafts()
+    prune(page, { tasks: [{ id: 'kept' }], tasksComplete: true }, false)
+    expect(page.read('deleted', true)).toBe('text of deleted')
+  })
+  it('drops a really deleted session, and only it, from a whole listing this device sees in full', () => {
+    const page = drafts()
+    prune(page, { tasks: [{ id: 'kept' }, { id: 'archived' }], tasksComplete: true })
+    expect(page.read('deleted', true)).toBe('')
+    expect(page.read('kept', true)).toBe('text of kept')
+    expect(page.read('', true)).toBe('text of new')
+  })
+})
+
+describe('what a stored draft may hold', () => {
+  const memory = () => {
+    let value: string | null = null
+    return {
+      read: () => value,
+      write: (next: string | null) => {
+        value = next
+      },
+      get value() {
+        return value
+      },
+    }
+  }
+  it('drops a draft not edited for 14 days at the next load', () => {
+    vi.useFakeTimers()
+    try {
+      const storage = memory()
+      new SessionDrafts(storage).save('old', 'written long ago', false)
+      vi.advanceTimersByTime(DRAFT_EXPIRY_MS + 60_000)
+      new SessionDrafts(storage).save('new', 'written today', false)
+      const later = new SessionDrafts(storage)
+      expect(later.read('old', true)).toBe('')
+      expect(later.read('new', true)).toBe('written today')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('keeps a project file excerpt only for a device that may see every kind of data', () => {
+    const storage = memory()
+    const excerpt = '[引用 app.ts · 选中内容]\n> const x = 1\n（引用时文件：12 bytes，更新于 2026-11-12T00:00:00.000Z）\n'
+    expect(holdsExcerpt(excerpt)).toBe(true)
+    expect(holdsExcerpt('普通的文字 [引用 不算]')).toBe(false)
+    new SessionDrafts(storage).save('session', excerpt, false)
+    expect(new SessionDrafts(storage).read('session', false)).toBe('')
+    new SessionDrafts(storage).save('session', excerpt, false)
+    expect(new SessionDrafts(storage).read('session', true)).toBe(excerpt)
+  })
+  it('never stores an excerpt written after the scope narrowed, though the text stays on screen', () => {
+    const storage = memory()
+    const page = new SessionDrafts(storage)
+    const excerpt = '[引用 app.ts · 选中内容]\n> const x = 1\n（引用时文件：12 bytes，更新于 2026-11-12T00:00:00.000Z）\n'
+    page.allowPrivate(false)
+    page.save('session', excerpt, false)
+    page.keep('other', excerpt + ' more', false)
+    page.flush()
+    expect(storage.value).toBeNull()
+    expect(page.read('session', false)).toBe('')
+  })
+  it('keeps text holding a credential in memory only, without a word', () => {
+    const storage = memory()
+    const page = new SessionDrafts(storage)
+    const secret = 'use sk-' + 'proj-' + 'a'.repeat(28) + ' for this'
+    page.save('session', secret, false)
+    page.save('plain', 'nothing secret', false)
+    expect(page.read('session', true)).toBe(secret)
+    expect(storage.value).not.toContain('sk-proj')
+    expect(new SessionDrafts(storage).read('session', true)).toBe('')
+    expect(new SessionDrafts(storage).read('plain', true)).toBe('nothing secret')
+    page.save('carrier', 'open https://me:pw@example.test/ then', false)
+    expect(new SessionDrafts(storage).read('carrier', true)).toBe('')
   })
 })

@@ -920,6 +920,7 @@ export function PickerSheetBody<T extends string>({
               label={[title, meta].filter(Boolean).join(' · ') || label}
               // The sheet opens on the current value, its list's one tab stop (with nothing chosen, the first list's).
               autoFocus={chosen ? group.options.some(option => option.value === value) : index === 0}
+              reselect
               value={value}
               options={group.options.map(option => ({
                 value: option.value,

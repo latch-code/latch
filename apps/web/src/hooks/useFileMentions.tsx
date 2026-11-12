@@ -1,11 +1,13 @@
 import { mentionMarker } from '../fileMentions.ts'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
-import { Button, InlineNotice, Loading } from '@latch/ui'
+import { Button, Hint, InlineNotice, Loading } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 export interface FileMentionChoice {
   enabled: boolean
+  /** @ would find files, but this device's data scope does not let it list them: the menu says so. */
+  hidden?: true
   sessionId?: string
   workspaceId?: string
   harnessId: string
@@ -36,6 +38,7 @@ export function useFileMentions(
     [dismissed, setDismissed] = useState<string>()
   const token = activeFileMention(draft, Math.min(caret, draft.length)),
     scope = choice?.sessionId ?? choice?.workspaceId
+  const hiddenOpen = Boolean(choice?.hidden && token && dismissed !== draft)
   const open = Boolean(choice?.enabled && token && dismissed !== draft)
   const query = token?.query ?? ''
   const list = useRef<HTMLElement>(null)
@@ -110,12 +113,13 @@ export function useFileMentions(
     })
   }
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!open || event.nativeEvent.isComposing) return false
+    if ((!open && !hiddenOpen) || event.nativeEvent.isComposing) return false
     if (event.key === 'Escape') {
       event.preventDefault()
       setDismissed(draft)
       return true
     }
+    if (!open) return false
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       setSelected(previous => (files.length ? (previous + files.length + (event.key === 'ArrowDown' ? 1 : -1)) % files.length : 0))
@@ -129,7 +133,11 @@ export function useFileMentions(
     return false
   }
   const severalRoots = new Set(files.map(file => file.root)).size > 1
-  const menu = open ? (
+  const menu = hiddenOpen ? (
+    <section className="file-mentions" aria-label="引用项目文件">
+      <Hint label="这台设备看不到项目文件">在 Mac 的 设置 › 设备 里为这台设备开启「可以看项目文件」。</Hint>
+    </section>
+  ) : open ? (
     <section ref={list} className="file-mentions" aria-label="引用项目文件" aria-busy={loading}>
       {!scope ? (
         <InlineNotice>先选择一个项目，再引用其中的文件。</InlineNotice>

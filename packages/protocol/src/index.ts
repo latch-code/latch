@@ -34,3 +34,4 @@ export * from './attachments.ts'
 
 export { isFileMention, fileMentionContext, type FileMention } from './file-refs.ts'
 export { isFileChange } from './file-changes.ts'
+export * from './secrets.ts'

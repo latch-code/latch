@@ -129,6 +129,12 @@ export class PromptQueues {
   }
 
   /** Whether this device's request is already on record for the session (queued, sent or otherwise answered). */
+  /** Any queue holds or answered a request of this device with this ID, in whichever session. */
+  knowsRequest(deviceId: string, requestId: string): boolean {
+    for (const item of this.entries.values()) if (item.deviceId === deviceId && item.requestId === requestId) return true
+    return false
+  }
+
   knows(sessionId: string, deviceId: string, requestId: string): boolean {
     for (const item of this.entries.values())
       if (item.sessionId === sessionId && item.deviceId === deviceId && item.requestId === requestId) return true

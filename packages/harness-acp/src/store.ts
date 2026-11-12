@@ -119,6 +119,14 @@ export interface AcpReceipt {
   steer?: 'sending' | 'injected' | 'prompt-required'
 }
 
+/** What `initialize` said the agent takes in a prompt, for the definition it started with. */
+export interface AcpPromptCapabilities {
+  definitionHash: string
+  images: boolean
+  embeddedContext: boolean
+  at: string
+}
+
 /** The last read of a definition's catalogue without a turn; a harness read once by selection is not read so again. */
 export interface AcpCatalogueRead {
   definitionHash: string
@@ -133,6 +141,7 @@ export interface AcpState {
   receipts: Record<string, AcpReceipt>
   catalogue?: AcpCatalogue
   catalogueRead?: AcpCatalogueRead
+  promptCapabilities?: AcpPromptCapabilities
   /** Model IDs a person typed, for every definition of this harness. */
   customModels?: string[]
 }
@@ -259,6 +268,7 @@ const catalogue = z.object({
   source: z.enum(['session', 'check']),
 })
 const catalogueRead = z.object({ definitionHash: hash, at: z.string(), ok: z.boolean(), message: z.string().optional() })
+const promptCapabilities = z.object({ definitionHash: hash, images: z.boolean(), embeddedContext: z.boolean(), at: z.string() })
 const startChoice = z.object({
   configId: z.string(),
   value: z.string(),
@@ -384,6 +394,7 @@ const stateSchema = z.object({
   // Only a cache: one that does not read back is dropped rather than keeping the sessions from opening.
   catalogue: catalogue.optional().catch(undefined),
   catalogueRead: catalogueRead.optional().catch(undefined),
+  promptCapabilities: promptCapabilities.optional().catch(undefined),
   customModels: z.array(z.string()).optional(),
 })
 

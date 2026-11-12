@@ -52,6 +52,11 @@ export interface AppSnapshot {
   device: CurrentDevice
   host: HostView
   tasks: TaskSummary[]
+  /**
+   * Every Harness was mounted, listed its sessions and none is turned off, so a session missing from `tasks` (before the
+   * scope and privacy filter) no longer exists. Absent: the list may be partial.
+   */
+  tasksComplete?: true
   approvals: Approval[]
   demo: boolean
   hostName: string

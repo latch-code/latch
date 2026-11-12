@@ -150,7 +150,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 `POST /link/api/agents/:id/probe { requestId }` 接受同时持有 `admin` 与 `run` 的设备，不弹确认。
 
-低于版本门槛的命令不运行探测（见「版本门槛」）。探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
+低于版本门槛的命令不运行探测（见「版本门槛」）。探测只发送 ACP `initialize`（宣告了登录状态推送的 Agent 等它最多 5 秒；没收到时，有登录状态命令的预设之后再问一次，见「登录」），不发送 `authenticate`、`session/new` 或提示词；握手最多等待 15 秒，随后停止进程组并等待真实退出。登录检查与下面的版本读取在剩下的时间里同时进行，每项最多 10 秒；整次测试启动最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒，超时才显示结果未确认。Host 关闭也会取消和等待探测。能力包含图片、恢复、加载和附加文件夹。附件能力不只来自测试启动：会话启动与选中时读取可选项的握手也记下 `initialize` 报告的图片与 embeddedContext（驱动状态的 `promptCapabilities`，按定义哈希），见 [ATTACHMENTS.md](ATTACHMENTS.md)。`authMethods` 只说明程序提供哪些登录方法，不证明尚未登录；因此握手成功只表示 `ready`，模型访问仍未验证。只有明确的 `auth_required` RPC 错误表示 `authentication-required`，其他失败为 `failed`。
 
 适配器驱动这个人自己装的程序时（Codex 预设经 `CODEX_PATH` 驱动 `codex`，profile 的 `programVersion`），探测之后再用登录检查的规则读一次那个程序的版本（`codex --version`）。运行的是会话里适配器会用的那个程序：定义设了 `CODEX_PATH` 时用它的值，绝对路径直接运行，名字按 Host 找命令的规则找；否则是 Host 按 `agentCommand` 找到的程序。限时，不经过 shell，只留下版本号。定义里的相对路径要在项目文件夹里才能解析，测试启动不在那里运行，写「版本未知」；空值让适配器用自带的那份。结果的 `program` 写出程序名与版本，页面把它和握手报告的适配器版本写在一起；读不出版本时写「版本未知」，没有装这个程序、定义也没指定（适配器用自带的那份）时不写。两个版本都知道、又不在 profile 的 `checked` 里时，`program.unchecked` 为真，页面显示琥珀色提示「这个组合 Latch 没有核对过」，不阻止启动。`checked` 是写预设时从每个适配器版本的 `package.json` 抄来的依赖范围（codex-acp 2.3.0 配 Codex 0.164.x，2.4.0 与 2.5.0 配 0.165.x），运行时不下载任何东西；适配器的预览版不在其中。
 

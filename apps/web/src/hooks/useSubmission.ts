@@ -71,6 +71,10 @@ const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null):
  * device. A submission is stored before it is sent and cleared only once the
  * Host answers definitively, so a retry repeats the identical request.
  */
+/** This page's unconfirmed submission, also when browser storage cannot hold it (for 设置 › 设备). */
+let heldHere: PendingSubmission | null = null
+export const heldSubmission = (): PendingSubmission | null => heldHere
+
 export function useSubmission({
   snapshot,
   access,
@@ -79,6 +83,7 @@ export function useSubmission({
   refresh,
   onSent,
   onRefused,
+  onReleased,
 }: {
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'legacy' | 'local'>
@@ -88,6 +93,11 @@ export function useSubmission({
   onSent: (sessionId: string, submission: PendingSubmission, result: { foreground: boolean; consumedDraft: boolean }) => void
   /** A definitive refusal; `resent`, a prompt that never sat in the input. Return true when a dedicated recovery UI owns its explanation. */
   onRefused?: (sessionId: string, error: unknown, resent?: string) => boolean | void
+  /**
+   * The Host says, for certain, that this submission was not delivered: the person released its attachments
+   * (`attachment-released`). `restored`: its text is back in the input on screen; otherwise the caller keeps it.
+   */
+  onReleased?: (submission: PendingSubmission, restored: boolean) => void
 }) {
   const deviceId = snapshot.device.id
   const catalog = snapshot.catalog
@@ -95,6 +105,12 @@ export function useSubmission({
   const [draft, setDraft] = useState('')
   const [fork, setFork] = useState<ForkDraft | null>(null)
   const [pending, setPending] = useState<PendingSubmission | null>(null)
+  useEffect(() => {
+    heldHere = pending
+    return () => {
+      heldHere = null
+    }
+  }, [pending])
   const [sending, setSending] = useState(false)
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
   /** Why the pending submission is still unconfirmed after this page's last try; '' before one. */
@@ -179,6 +195,7 @@ export function useSubmission({
 
   useEffect(() => {
     const stored = readPending(pendingKey)
+    // A prompt sent again was never the input's text, so it does not take the input over on a reload.
     const owner = stored && storedOwnsInput(stored, selectedId)
     setPending(stored)
     setSendingMessage(
@@ -341,6 +358,7 @@ export function useSubmission({
     // Unless the retry was pressed from where it was sent, which is the only place that offers it.
     const origin = {
       epoch: destination.current.epoch,
+      // After a reload only the stored submission says where it came from.
       consumedDraft: earlier?.consumedDraft ?? resend === undefined,
     }
     if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
@@ -417,6 +435,11 @@ export function useSubmission({
         setPending(null)
       }
       setPendingReason(reason ?? '')
+      if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released') {
+        const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
+        if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))
+        onReleased?.(submission, restored)
+      }
       const handled =
         !uncertain
         && submission.sessionId !== undefined

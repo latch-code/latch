@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import { chromium } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { CustomAgent, TaskDetail } from '@latch/protocol'
@@ -194,9 +195,10 @@ it.each([
         await page.reload()
         await connected(page)
         await page.getByRole('button', { name: '打开', exact: true }).waitFor()
-        expect(await input.inputValue()).toBe('')
+        // Kept in this device's browser storage across the reload.
+        expect(await input.inputValue()).toBe('Draft B stays with B')
       }
-      const expectedB = reload ? '' : 'Draft B stays with B'
+      const expectedB = 'Draft B stays with B'
       if (unknown) {
         // The row in B points home; the retry happens there, and B's draft stays with B.
         accepted = false
@@ -213,7 +215,7 @@ it.each([
       expect(await input.inputValue()).toBe(expectedB)
       expect(await page.getByRole('button', { name: '发送', exact: true }).isEnabled()).toBe(expectedB.length > 0)
       await choose(a.summary.title)
-      expect(await input.inputValue()).toBe(resend && !reload ? draftA : '')
+      expect(await input.inputValue()).toBe(resend ? draftA : '')
       await choose(b.summary.title)
       expect(await input.inputValue()).toBe(expectedB)
       expect((calls.get('会话 A') ?? 0) + (calls.get(draftA) ?? 0)).toBe(2)
@@ -225,6 +227,102 @@ it.each([
     }
   } finally {
     release()
+    await browser.close()
+    await host.close()
+  }
+})
+
+it('keeps text drafts across a reload, per session and for a new session, and clears them on delete and on removal', async () => {
+  const plugin: HarnessPlugin = {
+    id: 'reload-draft-fixture',
+    name: 'Reload draft fixture',
+    version: '1',
+    description: '',
+    activate(context) {
+      context.registerProvider({
+        id: 'reload-draft-fixture',
+        name: 'Reload draft fixture',
+        model: 'fixture',
+        async *stream() {
+          yield { type: 'text', text: 'A local fixture reply.' }
+          yield { type: 'finish', reason: 'stop' }
+        },
+      })
+    },
+  }
+  const host = await startTestHost({ plugins: [plugin] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const create = async (prompt: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { requestId: randomUUID(), prompt, mode: 'chat', model: { providerId: 'reload-draft-fixture', model: 'fixture' } },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status, { timeout: 10_000 }).toBe('idle')
+      return owner.json<TaskDetail>('tasks/' + sessionId)
+    }
+    const a = await create('重载草稿 A'),
+      b = await create('重载草稿 B')
+    await mkdir('test-results/session-drafts', { recursive: true })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    await enrollBrowser(page, host, { name: 'Reload drafts', scopes: ['view', 'run'] })
+    const deviceId = host.host.security.devices.list().find(device => device.name === 'Reload drafts')!.id
+    // Only a device that sees every session may take a session missing from the list as deleted.
+    expect((await owner.confirmed('devices/' + deviceId, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+    await page.reload()
+    await connected(page)
+    const stored = () =>
+      page.evaluate(() =>
+        Object.keys(localStorage)
+          .filter(key => key.startsWith('latch.drafts.'))
+          .map(key => localStorage.getItem(key))
+          .join('\n'),
+      )
+    const choose = async (title: string) => {
+      await page.keyboard.press('Meta+k')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.getByRole('searchbox').fill(title)
+      await palette.getByRole('option', { name: title, exact: true }).click()
+    }
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await choose(a.summary.title)
+    await input.fill('草稿 A：还没发')
+    await choose(b.summary.title)
+    await input.fill('草稿 B：还没发')
+    await page.reload()
+    await connected(page)
+    await expect.poll(() => input.inputValue()).toBe('草稿 B：还没发')
+    await page.screenshot({ path: 'test-results/session-drafts/after-reload-1440-light.png', animations: 'disabled' })
+    await choose(a.summary.title)
+    expect(await input.inputValue()).toBe('草稿 A：还没发')
+    await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+    const fresh = page.getByRole('textbox', { name: '新会话消息', exact: true })
+    await fresh.fill('新会话的草稿')
+    await page.reload()
+    await connected(page)
+    await expect.poll(() => fresh.inputValue()).toBe('新会话的草稿')
+    // Deleted on another device while this page shows something else: its text goes from storage.
+    expect((await owner.request('tasks/' + a.summary.id, { method: 'DELETE' })).status).toBe(200)
+    await expect.poll(stored, { timeout: 10_000 }).not.toContain('草稿 A')
+    expect(await stored()).toContain('草稿 B')
+    // Deleted here: gone at once.
+    await choose(b.summary.title)
+    await page.locator('.topbar .topbar-title-button').click()
+    await page
+      .getByRole('menu', { name: '会话：' + b.summary.title, exact: true })
+      .locator('[data-label="删除"]')
+      .click()
+    await page.getByRole('dialog').getByRole('button', { name: '删除', exact: true }).click()
+    await expect.poll(stored, { timeout: 10_000 }).not.toContain('草稿 B')
+    expect(await stored()).toContain('新会话的草稿')
+    // Removed: the next answer the page gets is a refusal, and every draft of this origin goes.
+    expect((await owner.confirmed('devices/' + deviceId, { method: 'DELETE' })).status).toBe(200)
+    await page.reload()
+    await expect.poll(stored, { timeout: 10_000 }).toBe('')
+    await context.close()
+  } finally {
     await browser.close()
     await host.close()
   }

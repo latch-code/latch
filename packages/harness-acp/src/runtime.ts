@@ -949,6 +949,12 @@ export class AgentRuntime implements Bridge {
     return shownCatalogue(stored)
   }
 
+  promptCapabilities(): { images: boolean; text: boolean } | undefined {
+    const known = this.state.promptCapabilities
+    if (!this.loaded || !known || known.definitionHash !== this.definitionNow()) return undefined
+    return { images: known.images, text: known.embeddedContext }
+  }
+
   catalogueRead(): CatalogueRead | undefined {
     if (!this.loaded) return undefined
     const last = this.state.catalogueRead
@@ -2760,6 +2766,27 @@ export class AgentRuntime implements Bridge {
     throw new AppError(400, 'approval-option-required', '请选择具体的审批选项')
   }
 
+  /** Kept for the attach button: a session's start answers what only 测试启动 answered before. */
+  private learnPromptCapabilities(capabilities: { images: boolean; embeddedContext: boolean }): void {
+    const definitionHash = this.definitionNow(true)
+    if (!definitionHash) return
+    const known = this.state.promptCapabilities
+    if (
+      known?.definitionHash === definitionHash
+      && known.images === capabilities.images
+      && known.embeddedContext === capabilities.embeddedContext
+    )
+      return
+    this.state.promptCapabilities = {
+      definitionHash,
+      images: capabilities.images,
+      embeddedContext: capabilities.embeddedContext,
+      at: this.now(),
+    }
+    this.mark()
+    this.notify()
+  }
+
   // ---- persistence: memory is authoritative, snapshots are written in order and coalesced -------------------
 
   private mark(): void {
@@ -3343,6 +3370,7 @@ export class AgentRuntime implements Bridge {
         steer: result.data._meta?.steering?.supported === true,
         logout: capabilities?.auth?.logout != null,
       }
+      this.learnPromptCapabilities(live.capabilities)
       this.auth.learn(command, terminalLogins(result.data.authMethods), live.capabilities.logout)
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
         name: clip(this.redact(method.name), 200),

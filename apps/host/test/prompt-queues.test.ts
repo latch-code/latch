@@ -43,6 +43,14 @@ const completed = (detail: TaskDetail) => {
 }
 
 describe('persistent Host prompt queues', () => {
+  it('knows a device’s queued request in any session, so a release of reserved uploads leaves it alone', async () => {
+    const { queue } = await fixture()
+    const queued = input('Later')
+    await queue.submit(actor, 'task', queued)
+    expect(queue.knowsRequest('device', queued.requestId)).toBe(true)
+    expect(queue.knowsRequest('other-device', queued.requestId)).toBe(false)
+    expect(queue.knowsRequest('device', randomUUID())).toBe(false)
+  })
   it('refuses an item it could not read back, before anything is written, so the Host still starts', async () => {
     const { queue, dataDir, detail, options } = await fixture()
     await queue.submit(actor, 'task', input('Kept'))

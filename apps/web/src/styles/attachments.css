@@ -28,8 +28,12 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.attachment-draft[data-state='failed'] .attachment-state {
+.attachment-draft:is([data-state='failed'], [data-state='refused']) .attachment-state {
   color: var(--red);
+}
+/* Pressable, to say why it adds nothing; looks as a disabled button does. */
+.attachment-button[data-unavailable] {
+  opacity: 0.45;
 }
 .attachment-draft > .attachment-state {
   flex: 1;

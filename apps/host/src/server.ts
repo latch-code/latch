@@ -25,7 +25,7 @@ import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
 import { forkSeed } from './forks.ts'
 import { createFileTrackingService } from './files/output-tracker.ts'
 import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
-import { AttachmentStore } from './attachments.ts'
+import { AttachmentStore, ATTACHMENT_FILE_LIMIT, ATTACHMENT_IMAGE_LIMIT, ATTACHMENT_REMOTE_LIMIT } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
@@ -1541,7 +1541,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       async workspaceRoots(workspaceId, harnessId) {
         const harness = draftHarness(harnessId)
-        if (!harness || harness.status !== 'ready') throw new AppError(409, 'file-harness-unavailable', '当前 Agent 不可用，请重新选择')
+        if (!harness || harness.status !== 'ready') throw new AppError(409, 'file-harness-unavailable', '当前 Harness 不可用，请重新选择')
         if (workspaceId === 'default') {
           if ((await canonicalPath(workspaceRoot).catch(() => undefined)) !== canonicalWorkspace) return 'removed'
           return [{ id: 'default', path: workspaceRoot }]
@@ -1603,36 +1603,70 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       }
       const harness = draftHarness(selected.harnessId)
-      if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Agent 不可用。')
+      if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Harness 不可用。')
       const declared = harness.attachments
+      const limits = {
+        fileBytes: isLocalListener(caller.connection.listener) ? ATTACHMENT_FILE_LIMIT : ATTACHMENT_REMOTE_LIMIT,
+        imageBytes: ATTACHMENT_IMAGE_LIMIT,
+      }
       if (harness.capabilities.models.owner === 'latch') {
         const choice = selected.model ?? defaultModelRef()
         if (choice) assertModel(choice)
         const provider = choice ? usableProviders().find(item => item.id === choice.providerId) : undefined
-        const images = declared?.images === true && Boolean(choice && provider?.modelCapabilities?.[choice.model]?.vision === true)
+        // What the Harness reported when it started outranks its declaration here too (`Bridge.promptCapabilities`).
+        const taken = harness.attachmentsReported ?? { images: declared?.images === true, text: declared?.text === true }
+        const vision = Boolean(choice && provider?.modelCapabilities?.[choice.model]?.vision === true)
+        const images = taken.images && vision
         return {
           images,
-          text: declared?.text === true,
+          text: taken.text,
           textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 256 * 1024),
-          ...(!images ? { reason: '当前模型不能看图片。' } : {}),
+          ...limits,
+          ...(!images ? { reason: taken.images ? '当前模型不能看图片。' : '这个 Harness 不接收图片。' } : {}),
         }
       }
       const agent = config.settings().agents.find(item => item.id === selected.harnessId)
       if (agent || harness.offer) {
-        const probe = agent?.lastProbe
+        const reported = reportedAttachments(harness)
+        const images = reported?.images === true,
+          text = reported?.text === true
         return {
-          images: probe?.status === 'ready' && probe.capabilities.images === true,
-          text: probe?.status === 'ready' && probe.capabilities.embeddedContext === true,
+          images,
+          text,
           textBytes: 25 * 1024 * 1024,
-          ...(!probe || probe.status !== 'ready' ? { reason: '请先在 Harness 设置中测试连接，再添加附件。' } : {}),
+          ...limits,
+          ...(!reported
+            ? { reason: '这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。' }
+            : !images && !text
+              ? { reason: '这个 Harness 不接收图片和文件。' }
+              : !images
+                ? { reason: '这个 Harness 不接收图片。' }
+                : !text
+                  ? { reason: '这个 Harness 只接收图片。' }
+                  : {}),
         }
       }
+      // A plugin Harness that reports what it took when it started (`Bridge.promptCapabilities`) is held to that.
+      const taken =
+        harness.attachmentsReported ?? (declared ? { images: declared.images === true, text: declared.text === true } : undefined)
       return {
-        images: declared?.images === true,
-        text: declared?.text === true,
+        images: taken?.images === true,
+        text: taken?.text === true,
         textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 25 * 1024 * 1024),
-        ...(!declared ? { reason: '当前 Harness 尚未声明附件能力。' } : {}),
+        ...limits,
+        ...(!taken?.images && !taken?.text ? { reason: '这个 Harness 不接收图片和文件。' } : {}),
       }
+    }
+    /**
+     * What an agent said it takes when it last started for its current definition: a session or a read before one, else
+     * 测试启动 of that same definition. Undefined until one of them ran.
+     */
+    function reportedAttachments(harness: HarnessInfo): { images: boolean; text: boolean } | undefined {
+      if (harness.attachmentsReported) return harness.attachmentsReported
+      const agent = config.settings().agents.find(item => item.id === harness.id)
+      const probe = agent && agent.probedDefinitionHash === definitionHash(agent) ? agent.lastProbe : undefined
+      if (!probe || probe.status === 'failed') return undefined
+      return { images: probe.capabilities.images === true, text: probe.capabilities.embeddedContext === true }
     }
     const attachmentRoutes = createAttachmentRoutes<Caller>({
       store: attachmentStore,
@@ -1642,12 +1676,90 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       authorize: requireScope,
       recheck,
       capabilities: attachmentCapabilities,
+      unused: (caller, reserved) => unusedReservations(caller.device!.id, reserved),
+      busy: (caller, requestId) => reservationBusy(caller.device!.id, requestId),
       sessionAccess: async (caller, id) => {
         requireScope(caller, 'view')
         await assertSessionAccess(caller, id)
         return hub!.detail(id)
       },
     })
+    /**
+     * Of a device's reserved uploads, those the Host proves now that nothing needs, by the rules of the startup cleanup
+     * (`pruneAbandonedClaims`): no request carrying them is on its way or was accepted in this run, and the session it was
+     * for is listed, not running, and has no message naming the upload or sent by that request. A new session's request
+     * names no session, so every session must be listed and read: any Harness that failed to list, is starting or turned
+     * off keeps them all, since its sessions might hold that message.
+     */
+    /**
+     * Whether a listing holds every session there is: compared with what is configured, not only with what mounted. Every
+     * saved Agent (an Agent turned off lists nothing), every Harness of an enabled plugin, and every applied plugin asset
+     * must be mounted and listed; an asset turned off, held after an update or that failed to load, and any built-in
+     * plugin turned off, might own sessions nobody listed.
+     */
+    function wholeListing(listing: { complete: boolean; listed: ReadonlySet<string> }): boolean {
+      if (!listing.complete) return false
+      const settings = config.settings()
+      if (settings.plugins.disabled.length) return false
+      if (settings.agents.some(agent => !listing.listed.has(agent.id))) return false
+      if (registry.harnesses().some(driver => !listing.listed.has(driver.id))) return false
+      return pluginAssets
+        .list()
+        .every(
+          record =>
+            !record.appliedBundle
+            || (record.enabled
+              && !heldPlugins.isHeld(record.id)
+              && assetPluginIds.has(record.id)
+              && pluginInfo(record.id)?.enabled === true),
+        )
+    }
+    /** A create, prompt or queued prompt with this request ID is on its way, was accepted in this run, or waits in a queue. */
+    function reservationBusy(deviceId: string, requestId: string): boolean {
+      return (
+        startRequests.has(`${deviceId}:${requestId}`)
+        || turnRequests.some(key => key.endsWith(`:${deviceId}:${requestId}`))
+        // A queue's receipt of the same request: it may be sent from the queue later.
+        || promptQueues.knowsRequest(deviceId, requestId)
+      )
+    }
+    async function unusedReservations(deviceId: string, reserved: ReturnType<AttachmentStore['reserved']>): Promise<ReadonlySet<string>> {
+      const unused = new Set<string>()
+      const quiet = reserved.filter(item => !reservationBusy(deviceId, item.requestId))
+      if (!quiet.length) return unused
+      const listing = await hub!.listTasksProven()
+      const { tasks } = listing
+      const everyHarness = wholeListing(listing)
+      const details = new Map<string, TaskDetail | null>()
+      const read = async (id: string) => {
+        if (!details.has(id)) details.set(id, await hub!.detail(id).catch(() => null))
+        return details.get(id)!
+      }
+      const needs = (detail: TaskDetail, item: (typeof reserved)[number]) =>
+        detail.messages.some(
+          message => message.requestId === item.requestId || message.attachments?.some(ref => ref.id === item.id) === true,
+        )
+      for (const item of quiet) {
+        if (item.sessionId !== undefined) {
+          const task = tasks.find(task => task.id === item.sessionId)
+          if (!task || task.status === 'running' || task.status === 'waiting-approval') continue
+          const detail = await read(task.id)
+          if (detail && !needs(detail, item)) unused.add(item.id)
+          continue
+        }
+        if (!everyHarness || tasks.some(task => task.status === 'running' || task.status === 'waiting-approval')) continue
+        let named = false
+        for (const task of tasks) {
+          const detail = await read(task.id)
+          if (!detail || needs(detail, item)) {
+            named = true
+            break
+          }
+        }
+        if (!named) unused.add(item.id)
+      }
+      return unused
+    }
     async function promptAttachments(
       caller: Caller,
       ids: string[] | undefined,
@@ -4311,7 +4423,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           worktreeLifecycle: true,
           ...routes.features(caller),
         },
-        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])],
+        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])].map(harness => {
+          const reported = harness.attachmentsReported ?? reportedAttachments(harness)
+          return reported ? { ...harness, attachmentsReported: reported } : harness
+        }),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),
@@ -6829,13 +6944,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 modelConfigurationRequired: providerId === LEGACY_PROVIDER_ID && !effectiveProvider(LEGACY_PROVIDER_ID),
               }
             : { ready: true }
-        const tasks = (await hub!.listTasks()).filter(task => privateVisible(caller, task)).map(questionSummary)
+        const listing = await hub!.listTasksProven()
+        const tasks = listing.tasks.filter(task => privateVisible(caller, task)).map(questionSummary)
+        const whole = wholeListing(listing)
         const snapshot: AppSnapshot = {
           instanceId,
           revision: snapshotRevision,
           device: currentDevice(caller),
           host: await hostView(),
           tasks,
+          ...(whole ? { tasksComplete: true as const } : {}),
           approvals: nativeOpening
             ? []
             : await decorateAll(

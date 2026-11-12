@@ -12,6 +12,7 @@ import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTick
 import type { EnrollmentReason } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
 import { readStorage } from './storageKeys.ts'
+import { forgetStoredDrafts } from './sessionDrafts.ts'
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 type SyncMode = 'list' | 'all'
@@ -23,6 +24,8 @@ export interface AuthState {
 }
 
 /** The Host no longer has this session, e.g. another device deleted it; this is not a connection failure. */
+/** A session the Host answers 404 for is gone only when the same answer's listing was whole (`tasksComplete`). */
+export const missingMeansDeleted = (snapshot: Pick<AppSnapshot, 'tasksComplete'>): boolean => snapshot.tasksComplete === true
 export const isMissingTask = (cause: unknown) => cause instanceof ApiError && cause.status === 404 && cause.code === 'task-not-found'
 
 const ENROLLMENT_CODES = new Set<string>(['unauthorized', 'device-revoked', 'credential-expired', 'listener-mismatch', 'legacy-reconfirm'])
@@ -117,6 +120,8 @@ export function useHarness() {
     (state: AuthState) => {
       // A retry left over from before must not replace the reason shown on the enrollment page.
       signedOut.current = true
+      // Signed out, removed or no longer accepted: what this origin's devices were writing goes now.
+      forgetStoredDrafts(location.origin)
       renewal.stop()
       setAuth(state)
       publishSnapshot(null, true)
@@ -194,12 +199,16 @@ export function useHarness() {
                   throw cause
                 })
                 if (!alive.current || !guard.current.current(detailTicket)) continue
+                // Missing while a Harness is off, starting or failed to list is not a deletion: only a whole listing
+                // proves the session is gone. Until then it stays selected with what was last read.
                 if (nextDetail === null) {
-                  guard.current.select(null)
-                  publishDetail(null)
-                  setSelectedId(null)
-                  storeSelection(null)
-                  setRemoved({ sessionId: detailTicket.sessionId })
+                  if (missingMeansDeleted(next)) {
+                    guard.current.select(null)
+                    publishDetail(null)
+                    setSelectedId(null)
+                    storeSelection(null)
+                    setRemoved({ sessionId: detailTicket.sessionId })
+                  }
                 } else if (guard.current.accept(detailTicket, nextDetail)) {
                   publishDetail(nextDetail)
                   if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, nextDetail), currentResync)

@@ -166,7 +166,7 @@ Host 声明 `catalog.features.appPages: 1`。
 
 **预览。** 同一个页面框、同一份产物，产物经 `GET /plugin-packages/:id/builds/:bundleHash.js`（同样的管理设备规则；`application/octet-stream`、`nosniff`，`sec-fetch-dest` 不是 `empty` 时 403）。父页面接的是预览桥（`previewBridge.ts`），它从不调用 Host：`tasks.list/subscribe` 给清单的 `preview.tasks` 或三条固定样例，`tasks.start/continue` 与 `nav.openSession` 回答 `preview`（壳层写「预览里不会开会话」），`tasks.lookup` 为 `not-found`，存储在这个桥的内存里，关掉预览就没了，`diag.report` 什么都不发，`host.info()` 带 `preview: true`、`canRun` 为假、没有 Harness；能力照常按清单核对。框外是虚线边框与「预览」标记；运行时错误不上报。
 
-**开发中。** 新应用卡片的「开发中」开关（`POST /plugin-packages/:id/dev` `{ requestId, dev }`，记下开启它的设备）：来源会话每轮结束（`runSettled`）后 Host 再读 `latch-app/`，修订变了就导入并构建，身份是开启它的设备：那台设备被移除时开发中立即关掉；它过期或不再是这台 Mac 拥有完整数据范围的管理设备时，下一轮不导入，并关掉开发中（审计 `plugin.package.changed`，`operation: dev`，执行者为 Host）。构建失败时卡片显示诊断，预览仍是上一个成功的构建；「交回 Agent」把诊断放进那个会话的草稿（只在这个标签页的内存里，打开会话时追加），不发送。导入被拒绝也记成页面的 `build` 诊断。
+**开发中。** 新应用卡片的「开发中」开关（`POST /plugin-packages/:id/dev` `{ requestId, dev }`，记下开启它的设备）：来源会话每轮结束（`runSettled`）后 Host 再读 `latch-app/`，修订变了就导入并构建，身份是开启它的设备：那台设备被移除时开发中立即关掉；它过期或不再是这台 Mac 拥有完整数据范围的管理设备时，下一轮不导入，并关掉开发中（审计 `plugin.package.changed`，`operation: dev`，执行者为 Host）。构建失败时卡片显示诊断，预览仍是上一个成功的构建；「交回 Agent」把诊断放进那个会话的草稿（打开会话前只在这个标签页的内存里，打开时追加，之后随草稿保存），不发送。导入被拒绝也记成页面的 `build` 诊断。
 
 **卡片。** 设置 › 插件「新应用」：每个从会话导入的插件一张卡，四段进度 草稿 › 构建 › 预览 › 应用（构建没通过为红，等这台 Mac 确认为琥珀），来自哪个会话与「从会话更新」，构建失败的诊断（「全部 N 条」），预览，「应用」或「应用新版本」，已应用后「打开」。写请求都带 `requestId`，结果未知时用同一个请求重试。插件详情里另有「回退到 x.y.z」与每个页面的「诊断」。
 

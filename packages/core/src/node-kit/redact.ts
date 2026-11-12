@@ -40,9 +40,11 @@ const KEYS: readonly RegExp[] = [
  * What must never reach a log line; every Host log line passes through `redactSecrets`. Order matters: whole Latch
  * credentials first, then the cookie, header and parameter forms that may carry them, then keys by their shape.
  */
-const PATTERNS: readonly RegExp[] = [...LATCH_CREDENTIALS, ...CARRIERS, ...KEYS]
-/** Credential-shaped text alone: a file that only names a header or a parameter (documentation) holds no secret. */
-const CREDENTIALS: readonly RegExp[] = [...LATCH_CREDENTIALS, ...KEYS]
+export const PATTERNS: readonly RegExp[] = [...LATCH_CREDENTIALS, ...CARRIERS, ...KEYS]
+/**
+ * Credential-shaped text alone (the page keeps its own copy in `@latch/protocol`'s `secrets.ts`, held equal by
+ * `tests/redact.test.ts`): a file that only names a header or a parameter (documentation) holds no secret. */
+export const CREDENTIALS: readonly RegExp[] = [...LATCH_CREDENTIALS, ...KEYS]
 
 export function redactSecrets(text: string): string {
   let output = String(text)

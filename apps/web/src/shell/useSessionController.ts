@@ -11,7 +11,7 @@ import { api, ApiError, errorMessage, inlineError, isUncertain } from '../core/a
 import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { ConfigRequests } from '../core/configRequest.ts'
-import { SessionDrafts } from '../core/sessionDrafts.ts'
+import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts } from '../core/sessionDrafts.ts'
 import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
 import {
@@ -70,6 +70,7 @@ import { rebuiltFrom } from '../history/model.ts'
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
+const NO_PROJECT_FILES = '这台设备看不到项目文件'
 /** Text only a device that may read every kind of data sees: an agent's session, or one an assistant ran. */
 const privateSession = (task: TaskSummary | undefined): boolean =>
   task !== undefined && (task.personal !== undefined || task.agent !== undefined || task.agentPrivate === true)
@@ -104,7 +105,12 @@ export function useSessionController({
 }) {
   const { selectedId, detail, select, refresh } = harness
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
-  const sessionDrafts = useRef(new SessionDrafts())
+  const [initialDrafts] = useState(() => {
+    // Only this device's drafts stay on this origin: another device's could otherwise open here.
+    forgetStoredDrafts(location.origin, snapshot.device.id)
+    return new SessionDrafts(browserDraftStorage(location.origin, snapshot.device.id))
+  })
+  const sessionDrafts = useRef(initialDrafts)
   const draftSessionId = useRef(selectedId)
   const draftDevice = useRef(snapshot.device.id)
   const privateDraftId = useRef<string | null>(null)
@@ -207,6 +213,18 @@ export function useSessionController({
       reading.show(sessionId)
     },
     onRefused: (sessionId, cause, resent) => stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent } : {}) }),
+    // Not delivered, for certain: the text goes back where it was written, and the released rows say so.
+    onReleased: (sent, restored) => {
+      released.current?.('已在 设置 › 设备 里释放，请移除后重新添加')
+      if (restored || !sent.prompt) return
+      const home = sent.sessionId ?? NEW_SESSION_DRAFT
+      if (!sessionDrafts.current.read(home, privateVisible))
+        sessionDrafts.current.save(
+          home,
+          sent.prompt,
+          sent.sessionId !== undefined && privateSession(snapshot.tasks.find(task => task.id === sent.sessionId)),
+        )
+    },
   })
   /**
    * The open session can start its next prompt on a new context: the harness takes it and this device may send. Not
@@ -230,17 +248,50 @@ export function useSessionController({
     setClearing(selectedId, on)
     if (on) composerRef.current?.focus()
   })
+  // Before anything else writes: below the data scope `all`, private text and excerpts never reach storage.
+  sessionDrafts.current.allowPrivate(privateVisible)
+  // What was being written before the page loaded: the composer's own text (an unconfirmed submission's) comes first.
+  useLayoutEffect(() => {
+    const text = sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible)
+    if (text) submission.setDraft(previous => (previous.trim() ? previous : text))
+  }, [])
+  // The open composer's text is kept for the next load, as it changes; a private session's only where it may be seen.
+  useEffect(() => {
+    if (draftSessionId.current !== selectedId) return
+    const hidden = selectedId !== null && (summary === undefined || privateSession(summary) || privateDraftId.current === selectedId)
+    if (hidden && !privateVisible) return
+    sessionDrafts.current.keep(selectedId ?? NEW_SESSION_DRAFT, submission.draft, hidden)
+  }, [submission.draft, selectedId])
+  useEffect(() => {
+    const drafts = sessionDrafts.current
+    const leave = () => drafts.flush()
+    addEventListener('pagehide', leave)
+    return () => {
+      removeEventListener('pagehide', leave)
+      // Unmounted without leaving the page: signed out or replaced, so nothing more is written.
+      drafts.detach()
+    }
+  }, [])
+  // A session a whole listing no longer has was deleted, here or elsewhere: its text goes with it. A partial listing,
+  // or one this device sees only part of, drops nothing.
+  useEffect(() => {
+    const listed = listedSessions(snapshot, privateVisible)
+    if (listed) sessionDrafts.current.retain(listed)
+  }, [snapshot.tasks, snapshot.tasksComplete, privateVisible])
   // A remote deletion clears selection without going through choose; never transfer that session's text to a new task.
   useLayoutEffect(() => {
     if (draftSessionId.current === selectedId) return
     if (draftSessionId.current !== null) sessionDrafts.current.remove(draftSessionId.current)
     draftSessionId.current = selectedId
-    submission.setDraft(selectedId === null ? '' : sessionDrafts.current.read(selectedId, privateVisible))
+    // The new session's own text comes back, never the removed session's.
+    submission.setDraft(sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible))
   }, [selectedId])
   useLayoutEffect(() => {
     if (draftDevice.current !== snapshot.device.id) {
       sessionDrafts.current.clear()
       draftDevice.current = snapshot.device.id
+      forgetStoredDrafts(location.origin, snapshot.device.id)
+      sessionDrafts.current.bind(browserDraftStorage(location.origin, snapshot.device.id))
       submission.setDraft('')
     } else if (!access.scopes.has('view')) {
       sessionDrafts.current.clear()
@@ -251,7 +302,12 @@ export function useSessionController({
     }
   }, [snapshot.device.id, privateVisible, access.scopes.has('view')])
   const choice = submission.choice
+  const [fileMentions, setFileMentions] = useState<FileMention[]>([])
+  const released = useRef<((text: string) => void) | null>(null)
+  const attachHarness = selectedId === null ? findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId) : harnessInfo
   const attachmentDraft = useAttachments({
+    // A Harness that just started, or was just tested, may take files now: read again without a reload.
+    revision: JSON.stringify([attachHarness?.status, attachHarness?.attachmentsReported ?? null]),
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {
       // Attachments are off until the catalog arrives, and then one of these is there.
@@ -263,8 +319,15 @@ export function useSessionController({
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
     locked: submission.sending || submission.pending !== null,
+    // The Host takes a queued or steered message as text only (`queue-attachments-unsupported`): said before sending.
+    ...(active
+      ? {
+          heldBack: `${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`,
+          heldRefs: fileMentions.some(ref => hasFileMention(submission.draft, ref)),
+        }
+      : {}),
   })
-  const [fileMentions, setFileMentions] = useState<FileMention[]>([])
+  released.current = attachmentDraft.markReleased
   const quoteSnapshots = useRef(new Map<string, { etag: string; marker: string }>())
   const mentionScope = selectedId ?? `${choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
   useLayoutEffect(() => {
@@ -275,12 +338,15 @@ export function useSessionController({
     setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
   }
   const mentionHarness = selectedId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
+  const mentionable =
+    catalog?.features?.fileMentions === true
+    && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
+    && mentionHarness?.capabilities.tools.fileMentions === true
+  // @ would find files, but this device may not list them: the input and the @ menu say so instead of staying silent.
+  const mentionsHidden = mentionable && snapshot.device.dataScope !== 'all'
   const mentionChoice = {
-    enabled:
-      catalog?.features?.fileMentions === true
-      && snapshot.device.dataScope === 'all'
-      && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
-      && mentionHarness?.capabilities.tools.fileMentions === true,
+    enabled: mentionable && !mentionsHidden,
+    ...(mentionsHidden ? { hidden: true as const } : {}),
     ...(selectedId ? { sessionId: selectedId } : {}),
     ...(choice.workspaceId && choice.workspaceId !== 'default' ? { workspaceId: choice.workspaceId } : {}),
     harnessId: mentionHarness?.id ?? '',
@@ -304,7 +370,7 @@ export function useSessionController({
       return
     }
     if (active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
-      submission.setError(`${steer ? '追加' : '排队'}暂不支持附件或文件引用，请等本轮结束再发送。`)
+      submission.setError(`${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`)
       return
     }
     await settingsLanded()
@@ -318,9 +384,10 @@ export function useSessionController({
   }
   const [abandoning, setAbandoning] = useState(false)
   const retryDraft = async () => {
-    if (!submission.pending || abandoning) return
+    const held = submission.pending
+    if (!held || abandoning) return
     await settingsLanded()
-    if (await submission.submit(submission.pending)) {
+    if (await submission.submit(held)) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -1039,7 +1106,7 @@ export function useSessionController({
         }
       : undefined
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
-  const startWords = mode === 'chat' ? '写下问题或想法…' : '@ 文件，/ 命令'
+  const startWords = mode === 'chat' ? '写下问题或想法…' : mentionsHidden ? `${NO_PROJECT_FILES}，/ 命令` : '@ 文件，/ 命令'
   // A topic of a conversation in 我的 Agent says whom the message goes to.
   const topicName = selectedId !== null && summary ? sessionAgent(snapshot, summary)?.name : undefined
   const placeholder =

@@ -3,10 +3,12 @@ import { chromium, type Browser, type Route } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
+import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile } from './helpers/layout.ts'
+import { closeActiveFile, openSettings } from './helpers/layout.ts'
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 describe('private attachments through the composer', () => {
   let host: TestHost,
@@ -287,4 +289,194 @@ describe('private attachments through the composer', () => {
       await context.close()
     }
   })
+})
+
+describe('the attach button and @ on every Harness', () => {
+  let host: TestHost, browser: Browser, owner: TestDevice
+  const shots = 'test-results/attachments-base'
+  beforeAll(async () => {
+    host = await startTestHost({ demo: false })
+    owner = await host.enroll({ listener: 'unix' })
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(shots, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+  })
+  const define = (id: string, name: string, caps: string) =>
+    owner.json('agents', { body: { id, name, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } } })
+  const start = async (harnessId: string, title: string) => {
+    const created = await owner.confirmed('tasks', { body: { prompt: 'echo ' + title, requestId: randomUUID(), harnessId } })
+    const { sessionId } = (await created.json()) as { sessionId: string }
+    await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status, { timeout: 15_000 }).toBe('idle')
+    await owner.json('tasks/' + sessionId, { method: 'PATCH', body: { title } })
+    return sessionId
+  }
+  for (const [width, theme] of [
+    [390, 'light'],
+    [390, 'dark'],
+    [1440, 'light'],
+    [1440, 'dark'],
+  ] as const)
+    it(`says why at a press, learns from the first session without a reload, and never offers to retry a refusal at ${width}/${theme}`, async () => {
+      const phone = width < 600
+      const late = `late-${width}-${theme}`,
+        plain = `plain-${width}-${theme}`
+      await define(late, `Late ${width} ${theme}`, 'images,embedded')
+      await define(plain, `Plain ${width} ${theme}`, 'delete')
+      const context = await browser.newContext({
+        viewport: { width, height: phone ? 844 : 900 },
+        colorScheme: theme,
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+        ...(phone ? { isMobile: true, hasTouch: true } : {}),
+      })
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      try {
+        await enrollBrowser(page, host, { name: `附件按钮 ${width} ${theme}`, scopes: ['admin'] })
+        // Choosing it would read its lists, which starts it and answers too; held back here to see it unstarted.
+        await page.route('**/link/api/agents/*/catalogue', route => route.fulfill({ json: { ran: false, harness: late } }))
+        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await page
+          .getByRole('button', { name: /^Harness：/u })
+          .first()
+          .click()
+        const lateName = new RegExp(`^Late ${width} ${theme}`, 'u')
+        if (phone) {
+          const sheet = page.getByRole('dialog', { name: 'Harness', exact: true })
+          await sheet.getByText(`Late ${width} ${theme}`, { exact: true }).click()
+          // Any choice closes the picker, the Harness already chosen too.
+          await sheet.waitFor({ state: 'hidden' })
+          await page.locator('.new-session-sheet .ui-value-picker-text').getByText(`Late ${width} ${theme}`, { exact: true }).waitFor()
+        } else await page.getByRole('menuitemradio', { name: lateName }).first().click()
+        const add = page.getByRole('button', { name: '添加文件…', exact: true })
+        // No hover on a touch screen: pressing says why, in place.
+        await add.click()
+        const notice = page.locator('.ui-notice-text')
+        await notice
+          .getByText('这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。', { exact: true })
+          .waitFor()
+        await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
+        // Started from another device: this page learns it without a reload.
+        await start(late, `已启动 ${width} ${theme}`)
+        await expect.poll(() => add.getAttribute('data-unavailable'), { timeout: 15_000 }).toBeNull()
+        await page.getByLabel('选择附件', { exact: true }).setInputFiles({
+          name: 'tool.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([0, 1, 2, 3, 0, 255]),
+        })
+        const drafts = page.getByLabel('消息附件', { exact: true })
+        await drafts.locator('.attachment-draft[data-state="refused"]').waitFor()
+        expect(await drafts.getByRole('button', { name: '重试上传', exact: true }).count()).toBe(0)
+        await page.screenshot({ path: `${shots}/${width}-${theme}-refused.png`, animations: 'disabled' })
+        await drafts.getByRole('button', { name: '移除附件 tool.bin', exact: true }).click()
+        // A Harness that takes none says so at once, never 正在检查 for good.
+        const plainSession = await start(plain, `不收附件 ${width} ${theme}`)
+        if (phone) {
+          await page.locator('.new-session-sheet').getByRole('button', { name: '取消', exact: true }).first().click()
+          await page.locator(`.phone-row[data-task-id="${plainSession}"]`).click()
+        } else {
+          await page.keyboard.press('Meta+k')
+          const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+          await palette.getByRole('searchbox').fill(`不收附件 ${width} ${theme}`)
+          await palette.getByRole('option', { name: `不收附件 ${width} ${theme}`, exact: true }).click()
+        }
+        await add.click()
+        await notice.getByText('这个 Harness 不接收图片和文件。', { exact: true }).waitFor()
+        await page.screenshot({ path: `${shots}/${width}-${theme}-takes-none.png`, animations: 'disabled' })
+        if (phone) {
+          // The permission sheet closes when the mode already chosen is pressed, as any picker does.
+          await page
+            .getByRole('button', { name: /^权限：/u })
+            .first()
+            .click()
+          const permission = page.getByRole('dialog', { name: '权限', exact: true })
+          await permission.getByRole('radio', { checked: true }).first().click()
+          await permission.waitFor({ state: 'hidden' })
+        }
+        // A browser sees work data only: @ says so instead of staying silent.
+        const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+        expect(await input.getAttribute('placeholder')).toContain('这台设备看不到项目文件')
+        await input.fill('看看 @app')
+        await page.locator('.file-mentions').getByText('这台设备看不到项目文件', { exact: true }).waitFor()
+        await page.screenshot({ path: `${shots}/${width}-${theme}-at-hidden.png`, animations: 'disabled' })
+        await input.fill('')
+        if (!phone) {
+          // The Host says an upload was released: not delivered, for certain. The text comes back, the row says so.
+          await page.keyboard.press('Meta+k')
+          const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+          await palette.getByRole('searchbox').fill(`已启动 ${width} ${theme}`)
+          await palette.getByRole('option', { name: `已启动 ${width} ${theme}`, exact: true }).click()
+          await page
+            .getByLabel('选择附件', { exact: true })
+            .setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('notes') })
+          const drafts = page.getByLabel('消息附件', { exact: true })
+          await drafts.locator('.attachment-draft[data-state="ready"]').waitFor()
+          await page.route('**/link/api/tasks/*/prompt', route =>
+            route.fulfill({
+              status: 409,
+              json: { error: 'attachment-released', message: '附件「notes.txt」已在 设置 › 设备 里释放，请重新添加。' },
+            }),
+          )
+          await input.fill('带着附件的消息')
+          await page.getByRole('button', { name: '发送', exact: true }).last().click()
+          await drafts.locator('.attachment-draft[data-state="refused"]').getByText('已在 设置 › 设备 里释放，请移除后重新添加').waitFor()
+          expect(await input.inputValue()).toBe('带着附件的消息')
+          expect(await drafts.getByRole('button', { name: '重试上传', exact: true }).count()).toBe(0)
+          await page.screenshot({ path: `${shots}/${width}-${theme}-released.png`, animations: 'disabled' })
+          await page.unroute('**/link/api/tasks/*/prompt')
+          await drafts.getByRole('button', { name: '移除附件 notes.txt', exact: true }).click()
+          await input.fill('')
+        }
+        // The device page shows the data scope; only the Mac changes it. Reserved uploads go only after a confirmation.
+        let released = 0
+        let releasedIds: string[] = []
+        const item = (letter: string, releasable: boolean) => ({
+          id: letter.repeat(22),
+          bytes: 2048,
+          requestId: `${letter.repeat(8)}-0000-4000-8000-000000000000`,
+          releasable,
+        })
+        await page.route('**/link/api/attachments/reserved', route =>
+          route.fulfill({
+            json: {
+              reserved: released
+                ? { count: 1, bytes: 2048, releasable: 0, releasableBytes: 0, items: [item('c', false)] }
+                : {
+                    count: 3,
+                    bytes: 3 * 2048,
+                    releasable: 2,
+                    releasableBytes: 4096,
+                    items: [item('a', true), item('b', true), item('c', false)],
+                  },
+            },
+          }),
+        )
+        await page.route('**/link/api/attachments/reserved/release', route => {
+          released++
+          releasedIds = (route.request().postDataJSON() as { ids: string[] }).ids
+          return route.fulfill({ json: { released: { count: 2, bytes: 4096 } } })
+        })
+        const settings = await openSettings(page, '设备')
+        const self = host.host.security.devices.list().find(device => device.name === `附件按钮 ${width} ${theme}`)!.id
+        await settings.locator(`[data-device-id="${self}"] .settings-row-main`).first().click()
+        await settings.locator('.settings-row').filter({ hasText: '可以看项目文件' }).getByText('未开启', { exact: true }).waitFor()
+        const reserved = settings.locator('.settings-row').filter({ hasText: '保留的附件' })
+        await reserved.getByText('3 个 · 6 KB', { exact: true }).waitFor()
+        await page.screenshot({ path: `${shots}/${width}-${theme}-device.png`, animations: 'disabled' })
+        await reserved.getByRole('button', { name: '释放…', exact: true }).click()
+        const confirm = page.getByRole('dialog', { name: '释放保留的附件', exact: true })
+        await confirm.getByText('删除 2 个没有消息用到的附件（4 KB）？此操作无法撤销。', { exact: true }).waitFor()
+        expect(released).toBe(0)
+        await page.screenshot({ path: `${shots}/${width}-${theme}-release-confirm.png`, animations: 'disabled' })
+        await confirm.getByRole('button', { name: '释放', exact: true }).click()
+        await reserved.getByText('已释放 2 个', { exact: true }).waitFor()
+        expect(released).toBe(1)
+        expect(releasedIds).toEqual(['a'.repeat(22), 'b'.repeat(22)])
+      } finally {
+        await context.close()
+      }
+    })
 })

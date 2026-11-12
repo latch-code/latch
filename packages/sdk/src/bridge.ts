@@ -250,6 +250,11 @@ export interface Bridge {
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
   catalogue?(): HarnessCatalogue | undefined
+  /**
+   * Optional. What the harness said it takes in a prompt when it last started for its current definition (images; text
+   * as embedded context). Undefined until it has started once since that definition was saved.
+   */
+  promptCapabilities?(): { images: boolean; text: boolean } | undefined
   /** Optional, with `readCatalogue`. How the catalogue is read before a session, and how the last read went. */
   catalogueRead?(): CatalogueRead | undefined
   /**

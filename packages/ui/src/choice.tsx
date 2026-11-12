@@ -74,12 +74,15 @@ export function ChoiceList<T extends string>({
   options,
   onValueChange,
   autoFocus = false,
+  reselect = false,
   className,
 }: {
   label: string
   value: T | undefined
   options: ReadonlyArray<ChoiceOption<T>>
   onValueChange: (value: T) => void
+  /** Pressing the chosen option reports it too: a picker's sheet closes on it, as it does on any other choice. */
+  reselect?: boolean
   /** A dialog or sheet that opens on this list puts focus on its tab stop (data-autofocus). */
   autoFocus?: boolean
   className?: string
@@ -120,7 +123,7 @@ export function ChoiceList<T extends string>({
             tabIndex={index === stop ? 0 : -1}
             data-autofocus={autoFocus && index === stop ? '' : undefined}
             onClick={() => {
-              if (!disabled && !checked) onValueChange(option.value)
+              if (!disabled && (!checked || reselect)) onValueChange(option.value)
             }}>
             <span className="ui-choice-radio" aria-hidden="true" />
             {option.media && <span className="ui-choice-media">{option.media}</span>}

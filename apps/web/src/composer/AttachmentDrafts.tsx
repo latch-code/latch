@@ -14,7 +14,7 @@ import {
   PlusGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
+import { attachmentLimits, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
 const uploadBytes = (value: number) =>
@@ -48,9 +48,17 @@ export function dropAttachments(event: DragEvent, controller: AttachmentDraftCon
   }
   controller.add([...event.dataTransfer.files])
 }
+/** Why the button adds nothing now, or undefined when it can. */
+export function attachmentBlock(controller: AttachmentDraftController): string | undefined {
+  if (controller.caps?.images || controller.caps?.text) return undefined
+  if (controller.caps?.reason) return controller.caps.reason
+  return controller.checking ? '正在确认这个 Harness 能否接收文件…' : '暂时不能添加文件。'
+}
+
 export function AttachmentButton({ controller, disabled = false }: { controller: AttachmentDraftController; disabled?: boolean }) {
   const input = useRef<HTMLInputElement>(null)
-  const available = controller.caps?.images || controller.caps?.text
+  const blocked = attachmentBlock(controller)
+  const limits = attachmentLimits(controller.caps)
   return (
     <>
       <input
@@ -64,12 +72,18 @@ export function AttachmentButton({ controller, disabled = false }: { controller:
           event.target.value = ''
         }}
       />
+      {/* Not disabled when it cannot add: pressing it says why, where a touch screen has no hover to tell. */}
       <IconButton
         icon={PlusGlyph}
         label="添加文件…"
-        disabled={disabled || !available}
-        tooltip={disabled ? '等待这次提交完成' : available ? '添加文件…' : (controller.caps?.reason ?? '正在检查附件能力…')}
-        onClick={() => input.current?.click()}
+        className="attachment-button"
+        data-unavailable={blocked !== undefined && !disabled ? '' : undefined}
+        disabled={disabled}
+        tooltip={disabled ? '等待这次提交完成' : (blocked ?? (limits ? `添加文件… · ${limits}` : '添加文件…'))}
+        onClick={() => {
+          if (blocked !== undefined) controller.explain(blocked)
+          else input.current?.click()
+        }}
       />
     </>
   )
@@ -139,6 +153,8 @@ export function AttachmentDrafts({
   return (
     <>
       {controller.error && <InlineNotice tone="error">{controller.error}</InlineNotice>}
+      {controller.note && !controller.error && <InlineNotice>{controller.note}</InlineNotice>}
+      {controller.heldBack && <InlineNotice tone="warn">{controller.heldBack}</InlineNotice>}
       {controller.items.length > 0 && (
         <div className="attachment-drafts" aria-label="消息附件">
           {controller.items.map(item => (
@@ -167,6 +183,7 @@ export function AttachmentDrafts({
                   item.error
                 )}
               </span>
+              {/* A refusal stays a refusal: only removing the file helps. */}
               {(item.status === 'failed' || item.status === 'confirm') && (
                 <Button
                   size="xs"

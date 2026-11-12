@@ -152,6 +152,11 @@ export interface HarnessInfo {
   /** How an agent's skills reach it: loaded natively, or fetched from a read-only server. Absent: they do not. */
   skills?: 'native' | 'server'
   attachments?: { images?: boolean; text?: boolean; textBytes?: number }
+  /**
+   * What an agent said it takes in a prompt when it last started for its current definition: a session, a read before
+   * one, or 测试启动. Absent: it has not started since, so whether it takes attachments is not known.
+   */
+  attachmentsReported?: { images: boolean; text: boolean }
   id: string
   description?: string
   /** `ready` can start sessions; `unavailable` explains why in `statusMessage`. */

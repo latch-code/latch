@@ -84,6 +84,8 @@ export function Overlays({ shell }: { shell: ShellState }) {
     setRenaming,
     deleting,
     setDeleting,
+    sessionDrafts,
+    draftSessionId,
     removingWorktree,
     setRemovingWorktree,
     setToast,
@@ -169,7 +171,11 @@ export function Overlays({ shell }: { shell: ShellState }) {
               next.delete(deleting.id)
               return next
             })
-            if (deleting.id === selectedId) choose(null)
+            // Still open here: the Host's own report of the deletion may have closed it already, and pressing 新会话
+            // on 新会话 would start that draft over.
+            if (deleting.id === draftSessionId.current) choose(null)
+            // Leaving it saved its text; the session is gone, so the text goes too.
+            sessionDrafts.current.remove(deleting.id)
             await refresh()
           }}
         />

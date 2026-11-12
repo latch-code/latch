@@ -80,9 +80,11 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
             ...(row.disabledReason ? { disabledReason: row.disabledReason } : {}),
           }
         })}
+        // Pressing the mode already chosen closes the list too, as any picker does.
+        reselect
         onValueChange={value => {
           close()
-          onChoose(value)
+          if (value !== current) onChoose(value)
         }}
       />
       {hidden.length > 0 && (

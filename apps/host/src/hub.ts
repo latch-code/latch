@@ -473,6 +473,20 @@ export class HarnessHub implements Bridge {
     return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  /**
+   * Every session, and whether the list is whole: every mounted harness listed, and none failed to mount or is still
+   * starting. Only a whole list can prove that no session holds something.
+   */
+  async listTasksProven(): Promise<{ tasks: TaskSummary[]; complete: boolean; listed: ReadonlySet<string> }> {
+    const members = this.members()
+    const discovered = await this.discover()
+    const tasks: TaskSummary[] = []
+    for (const [member, list] of discovered)
+      for (const task of list) if (this.routes.get(task.id) === member.driver.id) tasks.push(listed(this.present(member.driver.id, task)))
+    const complete = discovered.length === members.length && [...this.entries.values()].every(entry => !entry.failure && !entry.starting)
+    return { tasks, complete, listed: new Set(discovered.map(([member]) => member.driver.id)) }
+  }
+
   /** A session's summary as its own driver lists it: no other driver is waited for, and the session is routed from here on. */
   async runSummary(harnessId: string, sessionId: string): Promise<TaskSummary | undefined> {
     const found = (await this.member(harnessId)?.bridge.listTasks())?.find(task => task.id === sessionId)
@@ -1256,7 +1270,9 @@ export class HarnessHub implements Bridge {
     let catalogue: HarnessInfo['catalogue']
     let catalogueRead: HarnessInfo['catalogueRead']
     let customModels: string[] | undefined
+    let reported: HarnessInfo['attachmentsReported']
     try {
+      reported = entry.bridge?.promptCapabilities?.()
       catalogue = entry.bridge?.catalogue?.()
       catalogueRead = entry.bridge?.readCatalogue ? entry.bridge.catalogueRead?.() : undefined
       customModels = entry.bridge?.customModels?.()
@@ -1274,6 +1290,7 @@ export class HarnessHub implements Bridge {
       ...(driver.agentContext ? { agentContext: driver.agentContext } : {}),
       ...(driver.skills ? { skills: driver.skills } : {}),
       ...(declared?.attachments ? { attachments: structuredClone(declared.attachments) } : {}),
+      ...(reported ? { attachmentsReported: { images: reported.images === true, text: reported.text === true } } : {}),
       level: entry.trust.level,
       ...folderInfo(driver),
       ...(driver.permission ? { permission: { ...driver.permission } } : {}),
