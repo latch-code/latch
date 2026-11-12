@@ -31,7 +31,7 @@ export function SendingMessage({ view }: { view: SendingView }) {
       )}
       {(view.state === 'unknown' || (view.state === 'sending' && slow)) && (
         <div className="sending-message-status" data-state={view.state} role="status">
-          {view.state === 'unknown' ? '未确认送达 · 在输入框重试这次提交' : '发送中…'}
+          {view.state === 'unknown' ? '未确认送达 · 在输入框重试或放弃这次提交' : '发送中…'}
         </div>
       )}
     </div>

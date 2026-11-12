@@ -283,6 +283,18 @@ private struct PendingWritesBar: View {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
                 Button("重试这次提交") { Task { await model.retryPending(pending) } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                if PhonePending.prompt(pending) != nil, case let .session(id) = PhonePending.kind(pending) {
+                    Button("放弃这次提交") {
+                        Task {
+                            switch await model.abandonPrompt(pending) {
+                            case .delivered: checked = "已送达"
+                            case let .text(back): model.addToDraft(back, session: id)
+                            case nil: break
+                            }
+                        }
+                    }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
+                    InfoHint(text: PromptComposer.abandonHint)
+                }
             }.padding(.horizontal, 16).padding(.vertical, 6)
         }
     }

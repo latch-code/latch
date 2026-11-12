@@ -145,6 +145,145 @@ test('an unconfirmed message says so in another session, opens from there and is
   }
 }, 60_000)
 
+const SHOTS = '/tmp/latch-acceptance/2026-11-12-pending-escape'
+
+test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of it here or from another session', async () => {
+  const host = await startTestHost({ uiDir: resolve('dist/web') }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const start = async (title: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: title, requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      return sessionId
+    }
+    for (const width of [1440, 390]) {
+      const home = await start(`卡住的会话 ${width}`)
+      await start(`旁边的会话 ${width}`)
+      const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }),
+        page = await context.newPage()
+      await enrollBrowser(page, host, { name: `放弃 ${width}` })
+      const requests: Array<{ requestId: string; prompt: string }> = []
+      // The Host keeps answering with its own 5xx, as a Harness that times out every time does.
+      let failing = true
+      await page.route(`**/link/api/tasks/${home}/prompt`, async route => {
+        requests.push(route.request().postDataJSON() as { requestId: string; prompt: string })
+        if (!failing) return route.continue()
+        return route.fulfill({
+          status: 502,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'harness-timeout', message: 'Harness 没有在时限内答复。' }),
+        })
+      })
+      const open = async (title: string) => {
+        await page.keyboard.press('Meta+k')
+        const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+        await palette.getByRole('searchbox').fill(title)
+        await palette.getByRole('option', { name: title, exact: true }).click()
+        await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
+        await page.locator('.user-bubble').getByText(title, { exact: true }).waitFor()
+      }
+      await open(`卡住的会话 ${width}`)
+      const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+      const text = `卡住的消息 ${width}`
+      await input.fill(text)
+      await input.press('Enter')
+      const card = page.locator('.pending-submission')
+      await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
+      await card.getByRole('button', { name: '重试这次提交', exact: true }).click()
+      await expect.poll(() => requests.length).toBe(2)
+      expect(requests[1]).toEqual(requests[0])
+      await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
+      expect(await card.getByRole('button', { name: '放弃这次提交', exact: true }).isEnabled()).toBe(true)
+      await card.getByRole('button', { name: '说明', exact: true }).click()
+      await card.getByText('再发送就是第二条消息', { exact: false }).waitFor()
+      for (const scheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: scheme })
+        await page.screenshot({ path: `${SHOTS}/unconfirmed-reason--${scheme}--${width}.png` })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+
+      if (width >= 768) {
+        // In the session: the text goes back into the input and is sent as a new message with a new requestId.
+        await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
+        await expect.poll(() => card.count()).toBe(0)
+        expect(await input.inputValue()).toBe(text)
+      } else {
+        // From another session: the card offers it there too, and the text waits as the home session's draft.
+        await open(`旁边的会话 ${width}`)
+        await card.getByText('另一个会话有消息未确认送达', { exact: true }).waitFor()
+        for (const scheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: scheme })
+          await page.screenshot({ path: `${SHOTS}/elsewhere--${scheme}--${width}.png` })
+        }
+        await page.emulateMedia({ colorScheme: 'light' })
+        await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
+        await expect.poll(() => card.count()).toBe(0)
+        expect(await input.inputValue()).toBe('')
+        await open(`卡住的会话 ${width}`)
+        await expect.poll(() => input.inputValue()).toBe(text)
+      }
+      failing = false
+      await input.press('Enter')
+      await expect
+        .poll(async () => (await owner.json<TaskDetail>(`tasks/${home}`)).messages.filter(message => message.text === text).length)
+        .toBe(1)
+      expect(requests).toHaveLength(3)
+      expect(requests[2]!.requestId).not.toBe(requests[0]!.requestId)
+      await expect.poll(() => card.count()).toBe(0)
+      await context.close()
+    }
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+}, 90_000)
+
+test('a message the Host already lists by its requestId is settled as 已送达 although the answer was lost', async () => {
+  const host = await startTestHost({ uiDir: resolve('dist/web') }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '送达核对', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' }),
+      page = await context.newPage()
+    await enrollBrowser(page, host, { name: '已送达' })
+    let held!: () => void
+    const answered = new Promise<void>(resolve => {
+      held = resolve
+    })
+    // The Host takes the message, but its answer never reaches this page.
+    await page.route(`**/link/api/tasks/${sessionId}/prompt`, async route => {
+      await route.fetch()
+      await answered
+      await route.fulfill({ status: 504, contentType: 'application/json', body: JSON.stringify({ error: 'gateway', message: '没有答复' }) })
+    })
+    await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await input.fill('丢了答复的消息')
+    await input.press('Enter')
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.some(message => message.text === '丢了答复的消息'))
+      .toBe(true)
+    held()
+    await page.getByText('已送达', { exact: true }).waitFor()
+    await expect.poll(() => page.locator('.pending-submission').count()).toBe(0)
+    expect(await input.inputValue()).toBe('')
+    expect(await page.locator('.user-bubble').getByText('丢了答复的消息', { exact: true }).count()).toBe(1)
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+}, 60_000)
+
 test('a new full-access session shows what was sent at once, as any other start does', async () => {
   // Only this empty directory is searched, and nothing is detected: no agent installed here can be found or started.
   const bin = await mkdtemp(join(tmpdir(), 'latch-e2e-sending-'))

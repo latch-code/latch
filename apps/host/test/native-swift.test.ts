@@ -2771,11 +2771,20 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       expect(body.requestId).toBe(requestId)
     }
     expect(writes.slice(3)).toEqual(['refused', 'refused', 'refused', 'refused'])
-    expect((result.pendingKinds as Array<{ words: string; kind: string }>).map(item => [item.words, item.kind])).toEqual([
-      ['提交结果待确认', 'start'],
-      ['委托结果待确认', `delegation(agentId: "${review}")`],
-      ['提交结果待确认', 'session(id: "ses_1")'],
+    expect(
+      (result.pendingKinds as Array<{ words: string; kind: string; prompt: string | null }>).map(item => [
+        item.words,
+        item.kind,
+        item.prompt,
+      ]),
+    ).toEqual([
+      ['提交结果待确认', 'start', 'x'],
+      ['委托结果待确认', `delegation(agentId: "${review}")`, null],
+      ['提交结果待确认', 'session(id: "ses_1")', 'x'],
+      ['切换结果待确认', 'session(id: "ses_1")', null],
     ])
+    // 放弃这次提交 settles a message its session already lists by requestId as delivered; nothing else counts.
+    expect(result.delivered).toEqual([true, false, false, false, false])
   })
   it('derives 接入已有会话 the phone shows: the entry, 继续用, the list and preview, the writes and the marks', async () => {
     const harness = (id: string, extra: Record<string, unknown> = {}) => ({

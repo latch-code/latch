@@ -63,7 +63,7 @@ import { type RunState } from '../composer/Composer.tsx'
 import { type MenuSection } from '../components/overlays.tsx'
 import { type ApprovalStatus } from '../composer/ApprovalDrawer.tsx'
 import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
-import { sendingMessageFor } from '../core/sendingMessage.ts'
+import { deliveredSubmission, sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
 import { rebuiltFrom } from '../history/model.ts'
 
@@ -315,12 +315,59 @@ export function useSessionController({
       setFileMentions([])
     }
   }
+  const [abandoning, setAbandoning] = useState(false)
   const retryDraft = async () => {
-    if (!submission.pending) return
+    if (!submission.pending || abandoning) return
     await settingsLanded()
     if (await submission.submit(submission.pending)) {
       attachmentDraft.clear()
       setFileMentions([])
+    }
+  }
+  /** The Host lists the pending submission in its session: it was delivered, so it stops holding the input. */
+  const settleDelivered = useStableCallback((held: NonNullable<typeof submission.pending>) => {
+    if (!submission.delivered(held)) return
+    if (held.sessionId === selectedId) {
+      attachmentDraft.clear()
+      setFileMentions([])
+    }
+    setToast({ text: '已送达', tone: 'ok' })
+  })
+  const held = submission.pending
+  useEffect(() => {
+    if (held && !submission.sending && deliveredSubmission(held, current)) settleDelivered(held)
+  }, [held, submission.sending, current, settleDelivered])
+  /**
+   * 放弃这次提交. The session is read once first, where it can be: a submission it already lists was delivered and is
+   * settled as such. Otherwise this device lets go of it and keeps its text as a draft of where it was written.
+   */
+  const abandonPending = async () => {
+    const pending = submission.pending
+    if (!pending || submission.sending || abandoning) return
+    setAbandoning(true)
+    try {
+      if (pending.sessionId !== undefined) {
+        const id = pending.sessionId
+        const detail =
+          current?.summary.id === id
+            ? current
+            : await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`, { timeoutMs: 5_000 }).catch(() => null)
+        if (deliveredSubmission(pending, detail)) {
+          settleDelivered(pending)
+          return
+        }
+      }
+      const dropped = submission.abandon()
+      if (!dropped || dropped.restored || !dropped.text) return
+      const home = dropped.sessionId ?? NEW_SESSION_DRAFT
+      if (!sessionDrafts.current.read(home, privateVisible))
+        sessionDrafts.current.save(
+          home,
+          dropped.text,
+          dropped.sessionId !== null && privateSession(snapshot.tasks.find(task => task.id === dropped.sessionId)),
+        )
+    } finally {
+      setAbandoning(false)
     }
   }
   // A Host that records no run times: the time since this page saw the run start, or nothing.
@@ -1048,6 +1095,8 @@ export function useSessionController({
     mentionChoice,
     sendDraft,
     retryDraft,
+    abandonPending,
+    abandoning,
     askProject,
     projectAsk: {
       request: projectRequest,

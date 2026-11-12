@@ -12,6 +12,8 @@ struct PromptComposer: View {
     @State private var text = ""
     @State private var focused = false
     @State private var nextModel: PhoneModelChoice?
+    /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
+    @State private var settled: String?
     @AppStorage(PhoneFaceID.key) private var faceID = false
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
     /** The drawer above already holds the answers, stop among them where it cannot be allowed. */
@@ -42,7 +44,15 @@ struct PromptComposer: View {
                     Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
                     Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    if PhonePending.prompt(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
+                        Button("放弃这次提交") { Task { await abandon(pending) } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
+                        InfoHint(text: PromptComposer.abandonHint)
+                    }
                 }.padding(.horizontal, 16)
+            }
+            if let settled {
+                Label(settled, systemImage: "checkmark").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                    .task { try? await Task.sleep(for: .seconds(4)); self.settled = nil }
             }
             if noteTooLong {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
@@ -160,5 +170,17 @@ struct PromptComposer: View {
     private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content().font(.system(size: 13)).foregroundStyle(PhoneTheme.ink2).lineLimit(1).padding(.horizontal, 12).frame(height: 32)
             .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.line))
+    }
+}
+
+extension PromptComposer {
+    static let abandonHint = "重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。"
+    /** The text goes back here only when nothing new was written meanwhile. */
+    fileprivate func abandon(_ pending: NativePendingWrite) async {
+        switch await model.abandonPrompt(pending) {
+        case .delivered: settled = "已送达"
+        case let .text(back): if trimmed.isEmpty { text = back }
+        case nil: break
+        }
     }
 }

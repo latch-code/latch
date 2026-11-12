@@ -1,6 +1,13 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
-import { sendingMessageFor, type SendingMessage } from '../src/core/sendingMessage.ts'
+import { ApiError, ApiTimeoutError, readPending, writePending, type PendingSubmission } from '../src/core/api.ts'
+import {
+  abandonSubmission,
+  deliveredSubmission,
+  sendingMessageFor,
+  unconfirmedReason,
+  type SendingMessage,
+} from '../src/core/sendingMessage.ts'
 
 const snapshot = {
   catalog: {
@@ -87,4 +94,51 @@ test('preserves attachment and explicit file identities, including a fork prefix
   }
   expect(sendingMessageFor(snapshot, pending, 'session', { ...detail, messages: [message] })).toBeNull()
   expect(sendingMessageFor(snapshot, pending, 'session', { ...detail, messages: [{ ...message, attachments: [] }] })).toBe(pending)
+})
+
+test('an uncertain retry keeps the submission and says why; a definitive answer settles it', () => {
+  expect(unconfirmedReason(new ApiTimeoutError())).toBe(new ApiTimeoutError().message)
+  expect(unconfirmedReason(new ApiError(502, 'harness-unavailable', 'Harness 没有答复。'))).toBe('Harness 没有答复。')
+  expect(unconfirmedReason(new ApiError(408, 'timeout', '请求超时。'))).toBe('请求超时。')
+  expect(unconfirmedReason(new TypeError('Failed to fetch'))).toBe('连接暂时不可用，请检查网络后重试。')
+  expect(unconfirmedReason(new ApiError(503, 'agent-busy', '忙'))).toBeNull()
+  expect(unconfirmedReason(new ApiError(409, 'request-conflict', '冲突'))).toBeNull()
+})
+
+test('放弃这次提交 lets go of the stored submission and hands its text back, never another window’s newer one', () => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+    removeItem: (key: string) => {
+      store.delete(key)
+    },
+  })
+  try {
+    const held: PendingSubmission = { requestId: 'held-request', prompt: '你好', sessionId: 'session' }
+    writePending('k', held)
+    expect(abandonSubmission('k', held)).toEqual({ sessionId: 'session', text: '你好' })
+    expect(readPending('k')).toBeNull()
+    const fresh: PendingSubmission = { requestId: 'fresh-request', prompt: '新的' }
+    writePending('k', fresh)
+    expect(abandonSubmission('k', held)).toEqual({ sessionId: 'session', text: '你好' })
+    expect(readPending('k')).toEqual(fresh)
+    expect(abandonSubmission('k', fresh)).toEqual({ sessionId: null, text: '新的' })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a submission the Host lists in its session by requestId counts as delivered', () => {
+  const held: PendingSubmission = { requestId: 'request', prompt: '你好', sessionId: 'session' }
+  const listed: TaskDetail = { ...detail, messages: [{ id: 'm', requestId: 'request', role: 'user', text: '你好' }] }
+  expect(deliveredSubmission(held, listed)).toBe(true)
+  expect(deliveredSubmission(held, detail)).toBe(false)
+  expect(deliveredSubmission(held, { ...listed, summary: { ...listed.summary, id: 'other' } })).toBe(false)
+  expect(deliveredSubmission(held, { ...listed, messages: [{ id: 'm', requestId: 'request', role: 'assistant', text: '' }] })).toBe(false)
+  // A new session's ID comes only with the answer, so nothing can be checked.
+  expect(deliveredSubmission({ requestId: 'request', prompt: '你好' }, listed)).toBe(false)
+  expect(deliveredSubmission(null, listed)).toBe(false)
 })

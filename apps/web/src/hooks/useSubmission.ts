@@ -4,7 +4,6 @@ import {
   api,
   ApiError,
   inlineError,
-  isUncertain,
   newRequestId,
   readPending,
   submissionRequest,
@@ -27,7 +26,7 @@ import {
 } from '../composerChoice.ts'
 import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import type { SendingMessage } from '../core/sendingMessage.ts'
+import { abandonSubmission, unconfirmedReason, type SendingMessage } from '../core/sendingMessage.ts'
 
 /**
  * A new session forked from another. `choice`: what it borrows from its source and what the person picks in the draft,
@@ -89,6 +88,8 @@ export function useSubmission({
   const [pending, setPending] = useState<PendingSubmission | null>(null)
   const [sending, setSending] = useState(false)
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
+  /** Why the pending submission is still unconfirmed after this page's last try; '' before one. */
+  const [pendingReason, setPendingReason] = useState('')
   const sendingRef = useRef(false)
   const mounted = useRef(true)
   const destination = useRef({ selectedId, epoch: 0 })
@@ -203,6 +204,7 @@ export function useSubmission({
       if (event.key !== pendingKey || sendingRef.current || readPending(pendingKey) !== null) return
       setPending(null)
       setSendingMessage(null)
+      setPendingReason('')
     }
     window.addEventListener('storage', onStorage)
     return () => {
@@ -342,6 +344,7 @@ export function useSubmission({
       requestOrigins.current.delete(submission.requestId)
       writePending(pendingKey, null)
       setPending(null)
+      setPendingReason('')
       // A resent prompt never came from the composer, so whatever is being drafted stays.
       if (origin.consumedDraft && foreground) setDraft('')
       if (submission.sessionId === undefined && foreground) setFork(null)
@@ -358,7 +361,8 @@ export function useSubmission({
       await refresh()
       return true
     } catch (cause) {
-      const uncertain = isUncertain(cause)
+      const reason = unconfirmedReason(cause)
+      const uncertain = reason !== null
       setSendingMessage(previous =>
         previous?.submission.requestId !== submission.requestId ? previous : uncertain ? { ...previous, state: 'unknown' } : null,
       )
@@ -367,11 +371,12 @@ export function useSubmission({
         writePending(pendingKey, null)
         setPending(null)
       }
+      setPendingReason(reason ?? '')
       const handled =
         !uncertain
         && submission.sessionId !== undefined
         && onRefused?.(submission.sessionId, cause, origin.consumedDraft ? undefined : submission.prompt) === true
-      // The persistent pending card owns unknown delivery; it is not a confirmed failure.
+      // The pending card owns unknown delivery and says why; it is not a confirmed failure.
       setError(uncertain || handled ? '' : inlineError(cause))
       return false
     } finally {
@@ -380,12 +385,54 @@ export function useSubmission({
     }
   }
 
+  /** Lets go of the unconfirmed submission on this device, outside a send; a retry never changes its requestId. */
+  const release = (submission: PendingSubmission) => {
+    requestOrigins.current.delete(submission.requestId)
+    setPending(current => (current?.requestId === submission.requestId ? null : current))
+    setSendingMessage(previous => (previous?.submission.requestId === submission.requestId ? null : previous))
+    setPendingReason('')
+  }
+
+  /**
+   * 放弃这次提交: this device stops waiting for the Host's answer. The text goes back into the input when that input is on
+   * screen (`restored`); otherwise the caller keeps it as that session's draft. Sending it again is a new message.
+   */
+  const abandon = (): { sessionId: string | null; text: string; restored: boolean } | null => {
+    if (sendingRef.current || pending === null) return null
+    const home = abandonSubmission(pendingKey, pending)
+    release(pending)
+    const restored = storedOwnsInput(pending, destination.current.selectedId)
+    if (restored) setDraft(previous => (previous.trim() ? previous : home.text))
+    return { ...home, restored }
+  }
+
+  /** The Host lists this submission in its session: settled as sent, as if the retry had been answered. */
+  const delivered = (submission: PendingSubmission): boolean => {
+    if (sendingRef.current || pending?.requestId !== submission.requestId || submission.sessionId === undefined) return false
+    abandonSubmission(pendingKey, submission)
+    release(submission)
+    const sessionId = submission.sessionId
+    if (storedOwnsInput(submission, destination.current.selectedId))
+      setDraft(previous => (previous.trim() === submission.prompt.trim() ? '' : previous))
+    if (submission.model)
+      setOverrides(previous => {
+        const next = { ...previous }
+        delete next[sessionId]
+        return next
+      })
+    if (submission.freshContext) setClearing(previous => without(previous, sessionId))
+    return true
+  }
+
   return {
     draft,
     setDraft,
     fork,
     setFork,
     pending,
+    pendingReason,
+    abandon,
+    delivered,
     sending,
     sendingMessage,
     error,

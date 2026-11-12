@@ -127,6 +127,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     mentionChoice,
     sendDraft,
     retryDraft,
+    abandonPending,
+    abandoning,
     setConfig,
     refreshConfig,
     block,
@@ -446,9 +448,14 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           })}
       sending={submission.sending}
       error={noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '')}
+      pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()
       }}
+      onAbandon={() => {
+        void abandonPending()
+      }}
+      abandoning={abandoning}
       canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined)}
       blockReason={block?.message ?? sessionBlock}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
@@ -646,6 +653,8 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
     mentionChoice,
     sendDraft,
     retryDraft,
+    abandonPending,
+    abandoning,
     block,
     gate,
     codeRootChoice,
@@ -669,9 +678,14 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       pending={submission.pending}
       sending={submission.sending}
       error={submission.error}
+      pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()
       }}
+      onAbandon={() => {
+        void abandonPending()
+      }}
+      abandoning={abandoning}
       canSend={gate.kind === 'open' && block === null}
       blockReason={block?.message}
       readOnly={gate.kind === 'read-only' ? gate.text : undefined}

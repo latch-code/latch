@@ -352,4 +352,21 @@ public enum PhonePending {
         case .other: return "提交结果待确认"
         }
     }
+    /**
+     * The text of a message whose answer never came, a new session's first or a session's next; nil for every other
+     * write. 放弃这次提交 gives it back to the input, to send again as a new message with a new requestId.
+     */
+    public static func prompt(_ write: NativePendingWrite) -> String? {
+        guard write.method == "POST" else { return nil }
+        switch kind(write) {
+        case .start: return (try? NativeJSON.decode(write.body))?["prompt"].string
+        case let .session(id): return write.path == "/link/api/tasks/" + id + "/prompt" ? (try? NativeJSON.decode(write.body))?["prompt"].string : nil
+        default: return nil
+        }
+    }
+    /** The Host lists this message in its session by its requestId: it was delivered, whatever the last retry heard. */
+    public static func delivered(_ write: NativePendingWrite, detail: NativeJSON) -> Bool {
+        guard case let .session(id) = kind(write), prompt(write) != nil, detail["summary"]["id"].string == id else { return false }
+        return detail["messages"].array.contains { $0["role"].string == "user" && $0["requestId"].string == write.requestId }
+    }
 }

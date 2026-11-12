@@ -16,7 +16,8 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     func write(_ make: () throws -> NativePendingWrite) -> Any {
         guard let write = try? make() else { return "refused" }
         return ["method": write.method, "path": write.path, "body": (try? JSONSerialization.jsonObject(with: write.body)) ?? NSNull(),
-            "requestId": write.requestId, "words": PhonePending.words(write), "kind": "\(PhonePending.kind(write))"]
+            "requestId": write.requestId, "words": PhonePending.words(write), "kind": "\(PhonePending.kind(write))",
+            "prompt": PhonePending.prompt(write) ?? NSNull()]
     }
     let memory = value["memory"]
     return [
@@ -60,7 +61,29 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x")]) },
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x"), "customAgentId": .string(memoryOwner)]) },
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("x")]) },
+            write { try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/config", fields: ["configId": .string("model")]) },
         ],
+        "delivered": try deliveredCases(),
+    ]
+}
+
+/** 放弃这次提交 checks first: a session that lists the message by its requestId had it delivered. */
+private func deliveredCases() throws -> [Bool] {
+    let requestId = "pending-escape-0001"
+    let sent = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("你好")], requestId: requestId)
+    let started = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("你好")], requestId: requestId)
+    func detail(_ id: String, role: String, request: String) throws -> NativeJSON {
+        try NativeJSON.decode(JSONSerialization.data(withJSONObject: [
+            "summary": ["id": id], "messages": [["id": "m1", "role": role, "requestId": request, "text": "你好"]],
+        ]))
+    }
+    return [
+        PhonePending.delivered(sent, detail: try detail("ses_1", role: "user", request: requestId)),
+        PhonePending.delivered(sent, detail: try detail("ses_2", role: "user", request: requestId)),
+        PhonePending.delivered(sent, detail: try detail("ses_1", role: "assistant", request: requestId)),
+        PhonePending.delivered(sent, detail: try detail("ses_1", role: "user", request: "another-request-01")),
+        // A new session's ID comes only with the answer, so there is nothing to check.
+        PhonePending.delivered(started, detail: try detail("ses_1", role: "user", request: requestId)),
     ]
 }
 

@@ -10,8 +10,9 @@
 
 .pending-submission {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-12);
+  gap: var(--sp-8) var(--sp-12);
   padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--line);
   border-radius: var(--r-8);
@@ -19,15 +20,24 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.pending-submission > div {
-  flex: 1;
+.pending-submission-text {
+  flex: 1 1 16rem;
   min-width: 0;
 }
-.pending-submission strong {
+.pending-submission-text > strong {
   color: var(--amber);
   font-weight: 500;
 }
-.pending-submission p {
+/* The reason is the Host's own words or the page's short ones; it wraps rather than cuts. */
+.pending-submission-reason .ui-hint-label {
+  white-space: normal;
+}
+.pending-submission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.pending-submission-text > p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

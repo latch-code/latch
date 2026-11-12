@@ -13,6 +13,7 @@ import {
   Collapse,
   EASING,
   ICON_STROKE,
+  Hint,
   InlineNotice,
   MOTION,
   Spinner,
@@ -61,7 +62,10 @@ export function Composer({
   onOpenPending,
   sending,
   error,
+  pendingReason,
   onRetry,
+  onAbandon,
+  abandoning = false,
   canSend,
   blockReason,
   onSubmit,
@@ -108,7 +112,13 @@ export function Composer({
   onOpenPending?: () => void
   sending: boolean
   error: string
+  /** Why the pending submission is still unconfirmed after the last try, in the short wording of an inline error. */
+  pendingReason?: string
   onRetry: () => void
+  /** 放弃这次提交: this device stops waiting for it; its text becomes a draft again. */
+  onAbandon?: () => void
+  /** The session is read before the submission is let go. */
+  abandoning?: boolean
   canSend: boolean
   blockReason?: string
   onSubmit: () => void
@@ -346,11 +356,27 @@ export function Composer({
       {confirmation}
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
-          <div>
+          <div className="pending-submission-text">
             <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
             <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
+            <Hint className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
+              重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。
+            </Hint>
           </div>
-          {onOpenPending ? <Button onClick={onOpenPending}>打开</Button> : <Button onClick={onRetry}>重试这次提交</Button>}
+          <div className="pending-submission-actions">
+            {onOpenPending ? (
+              <Button onClick={onOpenPending}>打开</Button>
+            ) : (
+              <Button disabled={abandoning} onClick={onRetry}>
+                重试这次提交
+              </Button>
+            )}
+            {onAbandon && (
+              <Button variant="ghost" loading={abandoning} loadingLabel="核对中…" disabled={sending} onClick={onAbandon}>
+                放弃这次提交
+              </Button>
+            )}
+          </div>
         </div>
       )}
       {drawers && <div className="composer-drawers">{drawers}</div>}

@@ -148,6 +148,21 @@ extension PhoneModel {
             return (error as? NativeFailure) == .resultUnknown
         }
     }
+    /**
+     * 放弃这次提交: this phone stops waiting for a message's answer. When the open session already lists it by its
+     * requestId it was delivered (`.delivered`); otherwise its text comes back (`.text`), to send again as a new message.
+     * Nil while another write runs, so a retry in flight is never dropped.
+     */
+    func abandonPrompt(_ request: NativePendingWrite) async -> PhoneAbandoned? {
+        guard let workspace, !busy, let text = PhonePending.prompt(request), pending.contains(where: { $0.requestId == request.requestId }) else { return nil }
+        let current = generation
+        busy = true; defer { if generation == current { busy = false } }
+        let delivered = PhonePending.delivered(request, detail: detail)
+        do { try await workspace.settlePending(request.requestId) } catch { report(error); return nil }
+        guard generation == current else { return nil }
+        pending.removeAll { $0.requestId == request.requestId }
+        return delivered ? .delivered : .text(text)
+    }
     @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
         let current = generation, reading = contentGeneration
         do {
@@ -190,4 +205,10 @@ extension PhoneModel {
             await refresh()
         } catch { if !wentAway(error) { report(error) } }
     }
+}
+
+/** What 放弃这次提交 left: the message was already in its session, or its text to put back into the input. */
+enum PhoneAbandoned: Equatable {
+    case delivered
+    case text(String)
 }
