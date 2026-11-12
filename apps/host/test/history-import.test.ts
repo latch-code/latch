@@ -139,6 +139,12 @@ const received = (log: LogEntry[], method: string) => log.filter(entry => entry.
 describe('接入已有会话 on the Host', () => {
   it('lists the project’s sessions only: main folder and below, a count for its other folders, none from outside or from Latch', async () => {
     const f = await fixture()
+    // The catalog says which harness lists its sessions and which takes a text rebuild.
+    const harnesses = (await f.owner.json<{ catalog: { harnesses: Array<{ id: string; history?: unknown }> } }>('snapshot')).catalog
+      .harnesses
+    expect(harnesses.find(harness => harness.id === 'codex')?.history).toEqual({ list: true, rebuild: true })
+    expect(harnesses.find(harness => harness.id === 'fake')?.history).toEqual({ rebuild: true })
+    expect(harnesses.find(harness => harness.id === 'standard')?.history).toBeUndefined()
     const sources = await f.owner.json<HistorySources>(`history/sources?projectId=${f.projectId}`)
     expect(sources.sources).toEqual([{ harnessId: 'codex', label: 'Codex', available: true }])
     // A session Latch started itself in the project is Latch's to continue.
@@ -332,6 +338,11 @@ describe('接入已有会话 on the Host', () => {
     expect(first).not.toContain(FAKE_HISTORY_SECRETS.openai)
     expect(first.slice(0, detail.summary.imported!.prefixLength!)).not.toContain('echo go on')
     expect(first.slice(detail.summary.imported!.prefixLength!)).toBe('echo go on')
+    // The page folds the rebuilt conversation away by the first message's own provenance.
+    expect(detail.messages.find(message => message.role === 'user')!.importContext).toEqual({
+      from: 'Codex',
+      prefixLength: detail.summary.imported!.prefixLength!,
+    })
     // The same source cannot be brought in a second time, natively or not.
     const again = await importOf(f.owner, { requestId: randomUUID(), handle: handleOf((await list(f)).rows, 'Login bug [redacted]') })
     expect(await again.json()).toMatchObject({ error: 'history-already-imported', taskId: result.taskId })
@@ -354,6 +365,7 @@ describe('接入已有会话 on the Host', () => {
     const detail = await f.owner.json<TaskDetail>(`tasks/${result.taskId}`)
     expect(detail.summary.imported).toEqual({ from: 'codex', mode: 'text' })
     expect(detail.messages.find(message => message.role === 'user')!.text).toBe('echo fresh start')
+    expect(detail.messages.find(message => message.role === 'user')!.importContext).toBeUndefined()
   }, 60_000)
 
   it('brings in an external session once across definitions that run the same adapter, and keeps only ids in a finished receipt', async () => {

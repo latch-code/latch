@@ -700,9 +700,15 @@ export function resendWarning(effects: SideEffects): string | undefined {
  * What resending a turn sends again: the person's words, without the Host's note about an undo. A fork's text record of
  * its source stays unless the Harness forked its own record, since the record may never have reached it otherwise.
  */
-export function resendText(message: Pick<Message, 'text' | 'forkContext' | 'nativeFork'>): string {
-  const own = message.forkContext && message.nativeFork ? message.forkContext.prefixLength : 0
+export function resendText(message: Pick<Message, 'text' | 'forkContext' | 'nativeFork' | 'importContext'>): string {
+  // A text rebuild's conversation went with the first send; the session holds it from then on.
+  const own = message.forkContext && message.nativeFork ? message.forkContext.prefixLength : (message.importContext?.prefixLength ?? 0)
   return splitChangeNote(message.text.slice(own)).text
+}
+
+/** Where the person's own words start in a user message: after a fork's or a text rebuild's carried conversation. */
+export function ownTextStart(message: Pick<Message, 'forkContext' | 'importContext'>): number {
+  return message.forkContext?.prefixLength ?? message.importContext?.prefixLength ?? 0
 }
 
 // ---- The live run -----------------------------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import {
   turnOutcome,
   turnsOf,
   turnTimes,
+  ownTextStart,
   workFolds,
   type Turn,
   type TurnOutcome,
@@ -576,7 +577,7 @@ export function Transcript({
   const editFrom = useStableCallback((message: Message) => {
     const index = detail.messages.findIndex(item => item.id === message.id)
     const before = detail.messages[index - 1]
-    if (before) onFork?.(before.id, splitChangeNote(message.text.slice(message.forkContext?.prefixLength ?? 0)).text)
+    if (before) onFork?.(before.id, splitChangeNote(message.text.slice(ownTextStart(message))).text)
   })
   const continueRun = useStableCallback(() => {
     const last = detail.messages.at(-1)

@@ -167,7 +167,14 @@ export interface DriverTaskSummary {
    * `native`: bound to that session and continued by the same harness with its own record. `text`: rebuilt from the
    * message text only (按文字重建，不是原样恢复); `prefixLength` characters of its first prompt are that text. Always private.
    */
-  imported?: { from: string; mode: 'native' | 'text'; prefixLength?: number; truncated?: true }
+  imported?: {
+    from: string
+    mode: 'native' | 'text'
+    prefixLength?: number
+    truncated?: true
+    /** A text rebuild of this Latch session, brought in as it was, after its harness lost it. */
+    fromTaskId?: string
+  }
   /** Skills snapshotted for the current or latest Standard run. */
   skills?: string[]
   /** While a run is live: what it is really doing. Never stored; absent on older Hosts and from drivers that do not report it. */
@@ -394,6 +401,11 @@ export interface Message {
   forkContext?: NonNullable<TaskSummary['forkOf']>
   /** Replayed from the harness's own record when the session was brought in (`TaskSummary.imported`), not run in Latch. */
   imported?: true
+  /**
+   * Host-only, on the first user message of a session rebuilt as text (`TaskSummary.imported.mode` `text`): its first
+   * `prefixLength` characters are the rebuilt conversation of the harness `from`, not the person's words.
+   */
+  importContext?: { from: string; prefixLength: number; truncated?: true }
   toolName?: string
   state?: 'queued' | 'awaiting-approval' | 'running' | 'completed' | 'failed' | 'cancelled'
   /** Assistant reasoning that the model or agent actually reported; never synthesized. */

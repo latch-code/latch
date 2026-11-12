@@ -63,6 +63,7 @@ export function NewSessionSheet({
   onStart,
   composer,
   setup,
+  history,
   demo,
   onManageProviders,
   onProvidersChanged,
@@ -86,6 +87,8 @@ export function NewSessionSheet({
   onStart: () => void
   composer: ReactNode
   setup?: ReactNode
+  /** 接入已有会话, under the input. */
+  history?: ReactNode
   demo: boolean
   onManageProviders?: (() => void) | undefined
   onProvidersChanged?: (() => void) | undefined
@@ -434,6 +437,7 @@ export function NewSessionSheet({
       )}
       {present && setup}
       {present && composer}
+      {present && history}
     </Sheet>
   )
 }

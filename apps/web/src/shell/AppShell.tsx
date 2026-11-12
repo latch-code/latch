@@ -5,6 +5,7 @@ import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
 import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
+import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { worktreeProject } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
@@ -463,6 +464,19 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   </>
                 }
                 setup={<SetupNotices shell={shell} />}
+                history={
+                  submission.fork ? undefined : (
+                    <HistoryImportEntry
+                      snapshot={snapshot}
+                      workspaceId={choice.workspaceId}
+                      phone
+                      onOpen={id => {
+                        choose(id)
+                        void refresh()
+                      }}
+                    />
+                  )
+                }
                 demo={demo}
               />
             )}

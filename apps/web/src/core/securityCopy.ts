@@ -720,6 +720,7 @@ export const SESSION_STOP_TEXT = {
   'project-config-changed': '项目里的 Harness 配置变了，为了安全换个新会话继续',
   'l3-confirmation-missing': '这个会话缺少启动记录，不能继续。换个新会话继续',
   'permission-unverified': '确认不了 Harness 的权限，这一轮没有发送',
+  'harness-session-lost': '这个 Harness 已找不到原来的会话，换个新会话继续',
 } as const
 export const DOCUMENT_PREVIEW_ERRORS = {
   'document-too-complex': '这份演示文稿的内容过于复杂，暂时无法预览。可以下载或在电脑上打开。',
@@ -734,6 +735,7 @@ export const SESSION_STOP_LABEL: Record<SessionStopCode, string> = {
   'project-config-changed': '项目的 Harness 配置变了',
   'l3-confirmation-missing': '会话缺少启动记录',
   'permission-unverified': '没能确认权限，这一轮没发送',
+  'harness-session-lost': 'Harness 找不到原来的会话了',
 }
 /** The same stop after a mode change, where no message was on its way. */
 export const CONFIG_UNVERIFIED_TEXT = '没能确认权限已经切换'
@@ -861,7 +863,20 @@ export const RECOVERY_COPY = {
   continueInNew: '在新会话中继续',
 } as const
 
+/**
+ * 接入已有会话: the session brought in is private from the start, so only a device that may see private sessions lists,
+ * previews or imports. A device without that sees the entry locked, with where it is opened.
+ */
+export const HISTORY_COPY = {
+  entry: '接入已有会话',
+  locked: (computer = 'Mac') =>
+    `接入的会话只对能看项目文件的设备可见。在 ${computer} 上的 Latch 里，为这台设备开启「可以看项目文件」后可用。`,
+  busy: '这个会话正在别处使用',
+  busyDetail: (from: string) => `先在那里退出（例如终端里的 ${from}），再回来接入。Latch 不会接管正在使用的会话。`,
+} as const
+
 const FIXED: Record<string, string> = {
+  'history-session-busy': HISTORY_COPY.busy,
   'file-image-dimensions': fileNote('file-image-dimensions').text,
   'file-too-large': '文件或图片超过这台设备的预览上限，请在 Mac 上查看。',
   'file-edit-elevated': '这个文件需要能批准高风险操作的设备',

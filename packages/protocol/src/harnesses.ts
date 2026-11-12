@@ -184,6 +184,11 @@ export interface HarnessInfo {
   /** Absent: Latch knows no login command for it. */
   login?: HarnessLogin
   /**
+   * 接入已有会话 (docs/HARNESSES.md#接入已有会话). `list`: it lists and brings in its own earlier sessions. `rebuild`: a
+   * session brought in from another harness can be rebuilt as text on it. Absent: neither.
+   */
+  history?: { list?: true; rebuild?: true }
+  /**
    * A preset whose commands are on this computer and that has no saved definition yet: it can be chosen like any other,
    * and the first session saves the definition. Only a device that may save one receives these.
    */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { History, ShieldAlert } from 'lucide-react'
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
@@ -7,6 +7,9 @@ import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
 import { FoundHarnessesCard, NewSession, RecentSessions } from '../newSession/NewSession.tsx'
+import { HistoryImportEntry } from '../history/HistoryImport.tsx'
+import { RebuildLostDialog } from '../history/RebuildLost.tsx'
+import { harnessName as harnessLabel } from '../composerChoice.ts'
 import { recentProjectSessions } from '../sessions.ts'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
@@ -71,9 +74,18 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     refresh,
     connection,
     handoffs,
+    rebuiltInto,
   } = shell
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
+  const [rebuilding, setRebuilding] = useState(false)
+  // A session brought in as it was whose Harness lost it: rebuilt as text, through the same choice as an import.
+  const lostImport =
+    stopCode === 'harness-session-lost'
+    && current?.summary.imported?.mode === 'native'
+    && catalog?.features?.historyImport === 1
+    && access.scopes.has('run')
+  const importedFrom = current?.summary.imported && catalog?.harnesses.find(item => item.id === current.summary.imported!.from)
   const handoffNonce = useRef(0)
   // The text last selected in the conversation and the messages it lies in: a message action takes it along.
   const selected = useRef<{ text: string; ids: string[]; at: number } | null>(null)
@@ -203,6 +215,19 @@ export function ConversationView({ shell }: { shell: ShellState }) {
           }
           setup={<SetupNotices shell={shell} />}
           found={listsFoundHarnesses(catalog, snapshot.tasks.length, access) ? <FoundHarnessesCard onRecheck={refresh} /> : undefined}
+          history={
+            submission.fork ? undefined : (
+              <HistoryImportEntry
+                snapshot={snapshot}
+                workspaceId={choice.workspaceId}
+                phone={phone}
+                onOpen={id => {
+                  choose(id)
+                  void refresh()
+                }}
+              />
+            )
+          }
           recent={
             catalog && choice.workspaceId && choice.workspaceId !== 'default' && !submission.fork ? (
               <RecentSessions
@@ -327,7 +352,16 @@ export function ConversationView({ shell }: { shell: ShellState }) {
             />
           </div>
           <div className="composer-dock">
-            {stopCode && (
+            {rebuiltInto && (
+              <p className="composer-stop history-rebuilt" role="status">
+                <History size={14} aria-hidden="true" />
+                <span>已按文字重建为新会话</span>
+                <Button size="xs" onClick={() => choose(rebuiltInto.id)}>
+                  打开「{rebuiltInto.title || '未命名会话'}」
+                </Button>
+              </p>
+            )}
+            {stopCode && !rebuiltInto && (
               <p
                 className="composer-stop"
                 data-secure=""
@@ -340,10 +374,29 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     {APPROVAL_COPY.retry}
                   </Button>
                 )}
+                {lostImport && (
+                  <Button size="xs" icon={History} onClick={() => setRebuilding(true)}>
+                    按文字重建
+                  </Button>
+                )}
                 <Button size="xs" onClick={continueInNew}>
                   {RECOVERY_COPY.continueInNew}
                 </Button>
               </p>
+            )}
+            {rebuilding && lostImport && current && catalog && (
+              <RebuildLostDialog
+                phone={phone}
+                catalog={catalog}
+                summary={current.summary}
+                sourceLabel={importedFrom ? harnessLabel(importedFrom) : current.summary.imported!.from}
+                onClose={() => setRebuilding(false)}
+                onOpen={taskId => {
+                  setRebuilding(false)
+                  choose(taskId)
+                  void refresh()
+                }}
+              />
             )}
             {handing && (
               <>

@@ -272,4 +272,6 @@ export interface ApiFailure {
   blockingTasks?: BlockingTask[]
   /** `file-changed` from a file edit: SHA-256 of the file as it is now. */
   currentHash?: string
+  /** `history-already-imported`: the Latch session that session was brought in as. */
+  taskId?: string
 }

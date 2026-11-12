@@ -9,6 +9,7 @@ import {
   Folder,
   FolderGit2,
   GitCompare,
+  History,
   SquareTerminal,
   PanelRight,
   Pencil,
@@ -20,7 +21,8 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
-import { Button, ICON_STROKE, IconButton, Popover, StatusPill, StatusWord } from '@latch/ui'
+import { Button, ICON_STROKE, IconButton, Popover, StatusPill, StatusWord, Tooltip } from '@latch/ui'
+import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { rowStatus, runningWords, silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -267,6 +269,23 @@ function SourceLink({ source }: { source: HeaderSource }) {
   )
 }
 
+/** A session brought in from a harness's own earlier session: 「已接入」, and 「按文字重建」 when it was rebuilt as text. */
+export interface HeaderImported {
+  label: string
+  detail: string
+  rebuilt: boolean
+}
+function ImportedMark({ mark }: { mark: HeaderImported }) {
+  return (
+    <Tooltip content={mark.detail}>
+      <span className="topbar-agent topbar-imported" tabIndex={0} aria-label={mark.detail} data-rebuilt={mark.rebuilt ? '' : undefined}>
+        <History size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        <span>{mark.label}</span>
+      </span>
+    </Tooltip>
+  )
+}
+
 /**
  * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
  * opens the session's menu, 同步最新状态 included) over where it runs, its branch and its states that are not the default,
@@ -288,10 +307,12 @@ function PhoneTopBar({
   changes,
   agent,
   from,
+  imported,
 }: {
   changes?: HeaderToggle | undefined
   agent?: HeaderAgent | undefined
   from?: HeaderSource | undefined
+  imported?: HeaderImported | undefined
   summary?: TaskSummary
   source?: string
   cancelling: boolean
@@ -315,10 +336,11 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || agent || from || connectionProblem(connection)) && (
+        {(where || state || branch || demo || agent || from || imported || connectionProblem(connection)) && (
           <div className="topbar-subline">
             {agent && <AgentLink agent={agent} />}
             {from && <SourceLink source={from} />}
+            {imported && <ImportedMark mark={imported} />}
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
             {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
@@ -387,7 +409,10 @@ export function SessionHeader({
   changesTotals,
   agent,
   from,
+  imported,
 }: {
+  /** The session was brought in from a harness's own earlier session. */
+  imported?: HeaderImported | undefined
   /** The session belongs to one of 我的 Agent. */
   agent?: HeaderAgent | undefined
   /** The session received a handoff. */
@@ -441,6 +466,7 @@ export function SessionHeader({
         changes={slots.changes}
         agent={agent}
         from={from}
+        imported={imported}
       />
     )
   const desktop = currentShell() !== null
@@ -463,6 +489,14 @@ export function SessionHeader({
         {summary && from && (
           <span className="topbar-crumb">
             <SourceLink source={from} />
+            <span className="topbar-crumb-separator" aria-hidden="true">
+              /
+            </span>
+          </span>
+        )}
+        {summary && imported && (
+          <span className="topbar-crumb">
+            <ImportedMark mark={imported} />
             <span className="topbar-crumb-separator" aria-hidden="true">
               /
             </span>
@@ -551,6 +585,8 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   } = shell
   const desktop = currentShell() !== null
   const delegated = sessionAgent(snapshot, summary)
+  const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
+  const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
   const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
   // A session a plugin page started: 「来自 <页面名>」, the way back to the page while it is listed.
   const originApp = summary?.origin?.app
@@ -627,6 +663,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         : pageOrigin
           ? { from: pageOrigin }
           : {})}
+      imported={imported}
       onPanel={togglePanel}
       sessionMenu={titleMenu}
       menu={topMenu}

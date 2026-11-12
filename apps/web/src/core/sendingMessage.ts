@@ -21,7 +21,7 @@ export function sendingMessageFor(
     detail?.summary.id === selectedId
     && detail.messages.some(message => {
       if (message.role !== 'user' || message.requestId !== submission.requestId) return false
-      const text = message.forkContext ? message.text.slice(message.forkContext.prefixLength) : message.text
+      const text = message.text.slice(message.forkContext?.prefixLength ?? message.importContext?.prefixLength ?? 0)
       return (
         // The Host puts the note about an undo in front of what the person wrote.
         (text === submission.prompt || splitChangeNote(text).text === submission.prompt)

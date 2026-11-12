@@ -382,12 +382,15 @@ export function NewSession({
   composer,
   setup,
   found,
+  history,
   recent,
 }: {
   title: ReactNode
   composer: ReactNode
   setup?: ReactNode
   found?: ReactNode
+  /** 接入已有会话, right under the input. */
+  history?: ReactNode
   recent?: ReactNode
 }) {
   return (
@@ -397,6 +400,7 @@ export function NewSession({
         {found}
         {setup}
         <div>{composer}</div>
+        {history}
         {recent}
       </div>
     </div>

@@ -1,9 +1,10 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, CornerDownLeft, GitFork, Info, RotateCcw, Undo2, X } from 'lucide-react'
+import { ChevronRight, CornerDownLeft, GitFork, History, Info, RotateCcw, Undo2, X } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
+import { ownTextStart } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { MarkTile } from './BrandTile.tsx'
@@ -177,7 +178,7 @@ function UserMessage({
     if (element) setTall(element.scrollHeight > BUBBLE_CLAMP + 1)
   }, [message.text])
   // What an undo told the engine sits in front of the words the person wrote; it is a record, not part of the bubble.
-  const { note, text } = splitChangeNote(message.text.slice(message.forkContext?.prefixLength ?? 0))
+  const { note, text } = splitChangeNote(message.text.slice(ownTextStart(message)))
   return (
     <article
       className="message message-user"
@@ -228,6 +229,17 @@ function UserMessage({
                 </summary>
                 <pre>
                   <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />
+                </pre>
+              </details>
+            )}
+            {message.importContext && (
+              // A text rebuild: what went to the model with these words, folded, and named for what it is.
+              <details className="fork-context">
+                <summary>
+                  <History size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />按 {message.importContext.from} 会话的文字重建
+                </summary>
+                <pre>
+                  <VisibleText text={message.text.slice(0, message.importContext.prefixLength)} />
                 </pre>
               </details>
             )}
@@ -379,6 +391,7 @@ export const MessageRow = memo(
     && a.message.id === b.message.id
     && a.message.text === b.message.text
     && a.message.forkContext === b.message.forkContext
+    && a.message.importContext === b.message.importContext
     && a.message.nativeFork === b.message.nativeFork
     && a.message.state === b.message.state
     && a.message.role === b.message.role

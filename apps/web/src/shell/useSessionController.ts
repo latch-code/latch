@@ -65,6 +65,7 @@ import { type ApprovalStatus } from '../composer/ApprovalDrawer.tsx'
 import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
+import { rebuiltFrom } from '../history/model.ts'
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
@@ -848,17 +849,21 @@ export function useSessionController({
     if (stopRetry?.kind === 'draft') void sendDraft()
     else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt)
   }
+  // Rebuilt as text into another session: this one stays to read, and links there.
+  const rebuiltInto = summary ? rebuiltFrom(snapshot.tasks, summary.id) : undefined
   const gate =
-    selectedId === null
-      ? access.legacy || access.scopes.has('run')
-        ? { kind: 'open' as const }
-        : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
-      : composerGate({
-          summary,
-          permission: current?.permission,
-          access,
-          stopped: stopCode !== undefined && stopLocksInput(stopCode),
-        })
+    rebuiltInto !== undefined
+      ? { kind: 'read-only' as const, text: '已按文字重建为新会话 · 这个会话只能查看' }
+      : selectedId === null
+        ? access.legacy || access.scopes.has('run')
+          ? { kind: 'open' as const }
+          : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
+        : composerGate({
+            summary,
+            permission: current?.permission,
+            access,
+            stopped: stopCode !== undefined && stopLocksInput(stopCode),
+          })
   const sessionBlock =
     selectedId === null
       ? undefined
@@ -1097,6 +1102,7 @@ export function useSessionController({
     stopCode,
     stopText,
     stopRetry,
+    rebuiltInto,
     retryStopped,
     refusedInput,
     gate,

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Eraser, Folder, GitFork, ShieldAlert } from 'lucide-react'
+import { Eraser, Folder, GitFork, History, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Hint, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -7,6 +7,7 @@ import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, serv
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
+import { seedWaiting } from '../history/model.ts'
 import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
@@ -166,6 +167,12 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     sheetComposerRef,
   } = shell
   const manageEngines = owner ? () => openSettings('engines') : undefined
+  // A text rebuild sends its rebuilt conversation with the first message, to the service that answers it.
+  const seedService =
+    current && current.summary.id === selectedId && seedWaiting(current.summary, current.messages)
+      ? (current.summary.providerId && shell.providerName(current.summary.providerId))
+        || `${harnessInfo ? harnessName(harnessInfo) : 'Harness'} 用的模型服务`
+      : undefined
   // Latch's own sentences name the computer on any page but the Latch app on it.
   const computer = access.local ? undefined : computerName(shell.snapshot.hostName)
   const lastMessage = current?.summary.id === selectedId ? current?.messages.at(-1) : undefined
@@ -469,6 +476,13 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               </div>
             </Collapse>
           </>
+        ) : seedService ? (
+          <p className="composer-notice composer-seed" data-tint="warn" role="note">
+            <Icon icon={History} size={14} />
+            <span>
+              按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
+            </span>
+          </p>
         ) : undefined
       }
       confirmation={

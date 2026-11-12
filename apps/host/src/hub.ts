@@ -492,11 +492,24 @@ export class HarnessHub implements Bridge {
     const member = await this.route(sessionId)
     const detail = await member.bridge.detail(sessionId)
     for (const approval of detail.approvals) this.rememberApproval(approval.id, member.driver.id)
-    const fork = this.meta.get(sessionId)?.forkOf
+    const meta = this.meta.get(sessionId)
+    const fork = meta?.forkOf
     const firstUser = detail.messages.findIndex(message => message.role === 'user')
-    const messages = fork
-      ? detail.messages.map((message, index) => (index === firstUser ? { ...message, forkContext: fork } : message))
-      : detail.messages
+    // A text rebuild's first message carries the rebuilt conversation before the person's words, unless it began a new context.
+    const rebuilt =
+      !fork && meta?.imported?.mode === 'text' && meta.imported.prefixLength && !detail.messages[firstUser]?.freshContext
+        ? {
+            from: this.entries.get(meta.imported.from)?.capabilities.display.label ?? meta.imported.from,
+            prefixLength: meta.imported.prefixLength,
+            ...(meta.imported.truncated ? { truncated: true as const } : {}),
+          }
+        : undefined
+    const messages =
+      fork || rebuilt
+        ? detail.messages.map((message, index) =>
+            index === firstUser ? { ...message, ...(fork ? { forkContext: fork } : { importContext: rebuilt! }) } : message,
+          )
+        : detail.messages
     return {
       ...detail,
       messages,
@@ -1152,6 +1165,7 @@ export class HarnessHub implements Bridge {
               mode: meta.imported.mode,
               ...(meta.imported.prefixLength ? { prefixLength: meta.imported.prefixLength } : {}),
               ...(meta.imported.truncated ? { truncated: true as const } : {}),
+              ...(meta.imported.fromTaskId ? { fromTaskId: meta.imported.fromTaskId } : {}),
             },
           }
         : {}),
@@ -1235,6 +1249,14 @@ export class HarnessHub implements Bridge {
       ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
+      ...(driver.historyImport || driver.seededStart
+        ? {
+            history: {
+              ...(driver.historyImport ? { list: true as const } : {}),
+              ...(driver.seededStart ? { rebuild: true as const } : {}),
+            },
+          }
+        : {}),
     }
   }
 
