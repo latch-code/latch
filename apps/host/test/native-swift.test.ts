@@ -45,6 +45,22 @@ import { base32 } from '../src/crypto.ts'
 import { shapeContent, textShape } from '../src/files/edit.ts'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
+/** Every request the Hosts' native listeners received, by the device that sent it, as the Host saw it. */
+const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: string; path: string }>)
+vi.mock('../src/native.ts', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/native.ts')>()
+  return {
+    ...actual,
+    startNativeHost: (options: Parameters<typeof actual.startNativeHost>[0]) =>
+      actual.startNativeHost({
+        ...options,
+        handler(req, res, opening) {
+          nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
+          return options.handler(req, res, opening)
+        },
+      }),
+  }
+})
 let binary = ''
 async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -1323,6 +1339,241 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('judges other computers\u2019 等你处理, names and menu words as the phone list and the desktop do', async () => {
+    const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
+    const long = `${'长'.repeat(79)}\u202e尾巴还有`
+    const tasks = [
+      {
+        id: 'a',
+        title: '等批准',
+        status: 'waiting-approval',
+        updatedAt: at(1),
+        cwd: '/secret',
+        live: { lastEventAt: at(5), activity: 'tool', detail: 'x' },
+      },
+      { id: 'b', title: '问一句', status: 'running', pendingQuestions: 1, updatedAt: at(2), live: { lastEventAt: at(6) } },
+      { id: 'c', title: '安静', status: 'running', updatedAt: at(3), live: { silent: true, lastEventAt: at(3) } },
+      {
+        id: 'd',
+        title: '卡住',
+        status: 'running',
+        updatedAt: at(4),
+        live: { unrecognized: { at: at(9), method: 'x' }, lastEventAt: at(8) },
+      },
+      { id: 'e', title: '正在停', status: 'waiting-approval', updatedAt: at(7), live: { activity: 'cancelling' } },
+      { id: 'f', title: '在跑', status: 'running', updatedAt: at(8), live: { lastEventAt: at(8) } },
+      { id: 'g', title: '归档了', status: 'waiting-approval', updatedAt: at(9), archived: true },
+      { id: 'bad id!', title: '格式不对', status: 'waiting-approval', updatedAt: at(9) },
+      { id: 'h', title: long, status: 'waiting-approval', updatedAt: at(10) },
+      ...Array.from({ length: 60 }, (_, index) => ({
+        id: `w${index}`,
+        title: `第 ${index} 个`,
+        status: 'waiting-approval',
+        updatedAt: at(0),
+      })),
+    ]
+    const result = (await invoke({
+      operation: 'phoneComputers',
+      snapshot: {
+        instanceId: 'i',
+        revision: 3,
+        device: { id: 'dev', status: 'active', scopes: ['view'] },
+        tasks,
+        approvals: [{ id: 'x' }],
+      },
+      computers: [
+        { id: 'a', hostId: 'aaaa1111', name: 'build-mini' },
+        { id: 'b', hostId: 'bbbb2222', name: 'Build-Mini' },
+        { id: 'c', hostId: 'cccc3333', name: 'build-m\u0456ni' },
+        { id: 'd', hostId: 'dddd4444', name: '王的 MacBook' },
+        { id: 'e', hostId: 'eeee5555', name: 'studio' },
+      ],
+      readings: [
+        { id: 'on', name: 'studio', state: 'online', list: { tasks } },
+        { id: 'off', name: 'mini', state: 'offline', list: { tasks: tasks.slice(0, 2) } },
+        { id: 'gone', name: 'old', state: 'revoked', list: { tasks } },
+        { id: 'wrong', name: 'other', state: 'wrong-host', list: { tasks } },
+        { id: 'quiet', name: 'quiet', state: 'online', list: { tasks: tasks.slice(5, 6) } },
+      ],
+    })) as Record<string, unknown> & { items: Array<{ id: string; kind: string; words: string }>; titleLengths: number[] }
+    // The same rule as the phone's own 等你处理, newest first, at most 50, the ones it cannot open left out.
+    expect(result.items).toHaveLength(50)
+    expect(new Set(result.items.map(item => item.id))).toEqual(
+      new Set((result.sessionsWaiting as string[]).filter(id => id !== 'bad id!').slice(0, 50)),
+    )
+    expect(result.items.slice(0, 5).map(item => [item.id, item.kind, item.words])).toEqual([
+      ['h', 'approval', '审批'],
+      ['d', 'stuck', '没有动静'],
+      ['b', 'question', '问题'],
+      ['a', 'approval', '审批'],
+      ['c', 'stuck', '没有动静'],
+    ])
+    expect(result.items.map(item => item.id)).not.toContain('e')
+    expect(Math.max(...result.titleLengths)).toBe(80)
+    expect((result.items[0] as unknown as { title: string }).title).toBe(`${'长'.repeat(79)}尾`)
+    expect(result.names).toEqual({
+      a: 'build-mini aaaa',
+      b: 'Build-Mini bbbb',
+      c: 'build-m\u0456ni cccc',
+      d: '王的 MacBook',
+      e: 'studio',
+    })
+    const clock = result.clock as string
+    expect(result.states).toEqual(['正在连接', '在线', `不在线 · 上次在线 ${clock}`, '已被移除', '不是这台电脑', '正在连接'])
+    expect(result.lines).toEqual(['在线 · 等你处理 2', `不在线 · 上次在线 ${clock} · 离线前 3 项`, '已被移除', '在线'])
+    expect(result.groups).toEqual([
+      { id: 'on', name: 'studio', live: true, count: 50 },
+      { id: 'off', name: 'mini', live: false, count: 2 },
+    ])
+    expect([result.freshFirst, result.freshSame, result.freshNew]).toEqual([false, false, true])
+    expect(result.body).toBe('Build-Mini bbbb · 有新的等你处理')
+    // The list keeps the rows 等你处理 is judged from: no path, detail or approval.
+    const rows = result.rows as { tasks: Array<Record<string, unknown>>; approvals?: unknown }
+    expect(rows.approvals).toBeUndefined()
+    expect(rows.tasks[0]).toEqual({
+      id: 'a',
+      title: '等批准',
+      status: 'waiting-approval',
+      updatedAt: at(1),
+      live: { lastEventAt: at(5), activity: 'tool' },
+    })
+    expect(rows.tasks[3]).toEqual({
+      id: 'd',
+      title: '卡住',
+      status: 'running',
+      updatedAt: at(4),
+      live: { unrecognized: { at: at(9) }, lastEventAt: at(8) },
+    })
+    // The App's guards: another watch's token, the selected computer and an unwatched one are dropped; the first reading
+    // is a baseline; a switch drops late readings and forgets the selected computer's, so coming back does not notify.
+    expect(result.desk).toEqual([
+      'dropped',
+      'dropped',
+      'dropped',
+      'kept',
+      'kept',
+      'notify:y',
+      'kept',
+      'dropped',
+      'dropped',
+      'pruned',
+      'kept',
+      'kept',
+      'offline',
+    ])
+    // A notification leads once, to its own computer and session; a removed computer's lead nowhere; at most 32 kept.
+    expect(result.notices).toEqual(['b/s1', 'none', 'none', 'none', 'none'])
+  })
+  it('watches two real Hosts read-only, one at a time, drops late snapshots, tells unreachable from not that computer, and opens B’s item on B', async () => {
+    const first = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    const second = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const hosts = []
+      const owners = []
+      for (const [host, title] of [
+        [first, 'Alpha waits'],
+        [second, 'Beta waits'],
+      ] as const) {
+        const owner = await host.enroll({ listener: 'unix' })
+        await owner.json('tasks', { method: 'POST', body: { mode: 'chat', prompt: title, requestId: randomUUID() } })
+        hosts.push({ port: host.host.nativePort })
+        owners.push(owner)
+      }
+      let before: Array<{ tasks: Array<{ id: string; status: string }> }> = []
+      let result: Record<string, unknown> = {}
+      nativeSeen.length = 0
+      // A Host keeps one pairing sheet at a time: each code is written once the previous one has made its device.
+      const codeDir = await mkdtemp(join(tmpdir(), 'latch-watch-codes-'))
+      const running = invoke({ operation: 'nativeListWatcher', hosts, codeDir }, 90_000)
+      try {
+        for (const [index, host] of [first, second].entries())
+          for (const name of [`watcher-${index}`, `opener-${index}`]) {
+            const before = host.host.security.devices.nativeCandidates().length
+            const { invitation } = await owners[index]!.json<{ invitation: { payload: string } }>('native/pairings', {
+              method: 'POST',
+              body: {},
+            })
+            await writeFile(join(codeDir, name), invitation.payload, { mode: 0o600 })
+            await vi.waitFor(() => expect(host.host.security.devices.nativeCandidates().length).toBe(before + 1), { timeout: 20_000 })
+            // The device exists a moment before its sheet is marked done; a code made sooner would join that sheet.
+            await new Promise(done => setTimeout(done, 500))
+          }
+        // B has a session waiting for a decision, from the fake ACP Agent; only now, since one holds back pairing.
+        const ownerB = owners[1]!
+        await ownerB.json('agents', {
+          method: 'POST',
+          body: { id: 'fake', name: 'Fake agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
+        })
+        const started = await ownerB.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { harnessId: 'fake', mode: 'agent', prompt: 'permission', requestId: randomUUID() },
+        })
+        await vi.waitFor(
+          async () => {
+            const { tasks } = await ownerB.json<{ tasks: Array<{ id: string; status: string }> }>('snapshot')
+            expect(tasks.find(task => task.id === started.sessionId)?.status).toBe('waiting-approval')
+          },
+          { timeout: 15_000 },
+        )
+        before = await Promise.all(owners.map(owner => owner.json<{ tasks: Array<{ id: string; status: string }> }>('snapshot')))
+        await writeFile(join(codeDir, 'waiting'), started.sessionId)
+        result = await running
+      } finally {
+        await running.catch(() => {})
+        await rm(codeDir, { recursive: true, force: true })
+      }
+      expect(result).toMatchObject({
+        alternated: true,
+        oneConnection: true,
+        ownLists: true,
+        lateDropped: true,
+        silentAfterClose: true,
+        secondOnline: false,
+        networkClosed: true,
+        down: 'offline',
+        wrongRoot: 'offline',
+        notThat: 'wrong-host',
+        notThatEmpty: true,
+        backedOff: true,
+        seenOnB: true,
+        openedOnB: true,
+        notOnA: true,
+        readOnly: true,
+      })
+      // What the Hosts received from the watching devices: these two reads only, no write, no event stream, no window.
+      const watchers = new Set(result.watcherDevices as string[])
+      const sent = nativeSeen.filter(entry => watchers.has(entry.deviceId))
+      expect(sent.length).toBeGreaterThan(4)
+      expect(new Set(sent.map(entry => `${entry.method} ${entry.path}`))).toEqual(
+        new Set(['GET /link/api/native/revocation', 'GET /link/api/snapshot']),
+      )
+      for (const [index, owner] of owners.entries()) {
+        const after = await owner.json<{ tasks: Array<{ id: string; status: string }> }>('snapshot')
+        expect(after.tasks.map(task => [task.id, task.status])).toEqual(before[index]!.tasks.map(task => [task.id, task.status]))
+        const { devices } = await owner.json<{ devices: Array<{ id: string; native?: { bodyVerifiedUntil?: string } }> }>('devices')
+        const phone = devices.find(device => watchers.has(device.id))
+        expect(phone).toBeDefined()
+        expect(phone?.native?.bodyVerifiedUntil).toBeUndefined()
+      }
+    } finally {
+      await first.close()
+      await second.close()
+    }
+  }, 120_000)
+  it('hands a removal over with its verified proof, never dials that computer again, and retires the profile with it', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const result = await invoke(
+        { operation: 'nativeListWatcherRevoked', payload: invitation.payload, port: host.host.nativePort },
+        30_000,
+      )
+      expect(result).toEqual({ proof: true, dialledOnce: true, reportedOnce: true, retired: true, readOnly: true })
+    } finally {
+      await host.close()
+    }
+  }, 60_000)
   it('delegates to an Agent and writes its memories from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {

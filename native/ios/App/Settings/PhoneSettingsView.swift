@@ -11,15 +11,18 @@ struct PhoneSettingsView: View {
     @AppStorage(PhoneFaceID.key) private var faceID = false
     @State private var faceIDAvailable = true
     @State private var changingFaceID = false
+    @AppStorage(PhoneComputerNotices.key) private var notifyOthers = false
+    @State private var changingNotices = false
+    @State private var noticesRefused = false
     var body: some View {
         NavigationStack {
             Form {
                 Section("电脑") {
-                    ForEach(model.hosts) { host in
+                    ForEach(model.computerRows) { row in
                         NavigationLink {
-                            PhoneHostDetail(host: host)
+                            PhoneHostDetail(host: row.host)
                         } label: {
-                            LabeledContent(host.name, value: model.selectedHost?.id == host.id ? model.status : "")
+                            LabeledContent(row.name, value: PhoneComputers.stateWords(row.state, lastSeen: row.lastSeen))
                         }
                     }
                     Button("添加电脑", action: addComputer)
@@ -36,8 +39,17 @@ struct PhoneSettingsView: View {
                     else { Text("关闭时，拿着这台已解锁手机的人可以查看和操作 Mac 上的会话，直到这台手机被移除。") }
                 }
                 .onAppear { faceIDAvailable = PhoneFaceID.available }
-                Section("通知") {
-                    LabeledContent("状态通知", value: "这台电脑尚未开通")
+                Section {
+                    Toggle("其他电脑等你处理时通知", isOn: Binding(get: { notifyOthers }, set: { next in
+                        changingNotices = true; noticesRefused = false
+                        Task {
+                            let granted = await PhoneComputerNotices.change(to: next)
+                            notifyOthers = PhoneComputerNotices.isOn; noticesRefused = next && !granted; changingNotices = false
+                        }
+                    })).disabled(changingNotices)
+                    LabeledContent("后台推送", value: "尚未开通")
+                } header: { Text("通知") } footer: {
+                    if noticesRefused { Text("系统设置里没有允许 Latch 发通知。") }
                 }
                 Section("关于") {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")

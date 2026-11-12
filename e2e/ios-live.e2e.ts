@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { FAKE_ACP_AGENT, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { expect, it } from 'vitest'
@@ -22,6 +23,16 @@ const P256_PRIVATE_KEY = 'CryptoKit4P256O7SigningO10PrivateKeyV'
  * pass; `<file>.pair` puts a fresh code on the clipboard; `<file>.info` names the simulator once the App is ready.
  */
 const HOLD = process.env.LATCH_IOS_LIVE_HOLD
+/**
+ * `LATCH_IOS_LIVE_HOSTS=2`: a second test Host on the same private address, with its own data, the fake ACP Agent and a
+ * project, for several computers; with hold, `<file>.pair2` puts a fresh code for it on the clipboard.
+ */
+const HOSTS = process.env.LATCH_IOS_LIVE_HOSTS === '2' ? 2 : 1
+/**
+ * With two Hosts and hold, `<file>.wait<n>` starts a session of the fake ACP Agent on Host n that waits for a decision,
+ * `<file>.revoke<n>` removes every phone from Host n, as its owner would, and `<file>.stop<n>` stops Host n; n is 1 or 2.
+ */
+const HOST_ACTIONS = ['wait', 'revoke', 'stop'] as const
 const HOLD_MS = HOLD ? Number(process.env.LATCH_IOS_LIVE_HOLD_MINUTES ?? 120) * 60_000 : 0
 /** `LATCH_IOS_LIVE_PAIR_SECONDS`: without hold, wait this long for someone to pair through 「粘贴」, and fail if nobody does. */
 const PAIR_MS = Number(process.env.LATCH_IOS_LIVE_PAIR_SECONDS ?? 0) * 1000
@@ -174,6 +185,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     /** Whether this run made the simulator and so shuts it down and deletes it. */
     let owned = false
     let host: TestHost | undefined
+    let other: TestHost | undefined
     try {
       derived = await mkdtemp(join(tmpdir(), 'latch-ios-live-'))
       await run(
@@ -237,35 +249,46 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       // The Host's native listener is on the LAN from here until `finally`.
       host = await startTestHost({ native: { host: address, port: 0 } })
       // A project with one commit and the fake ACP Agent, so a session can start, stream and ask for a step.
-      const git = (...args: string[]) =>
-        execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
-          cwd: host!.workspaceRoot,
-          stdio: 'pipe',
+      /** A Host with one committed project and the fake ACP Agent, and its owner device. */
+      const agents = new Map<TestHost, string>()
+      const prepare = async (target: TestHost): Promise<TestDevice> => {
+        const git = (...args: string[]) =>
+          execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
+            cwd: target.workspaceRoot,
+            stdio: 'pipe',
+          })
+        git('init', '-q', '-b', 'main')
+        git('commit', '-q', '--allow-empty', '-m', 'first')
+        const enrolled = await target.enroll({ listener: 'unix' })
+        const saved = await enrolled.request('agents', {
+          method: 'POST',
+          body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })
-      git('init', '-q', '-b', 'main')
-      git('commit', '-q', '--allow-empty', '-m', 'first')
-      const owner = await host.enroll({ listener: 'unix' })
-      const saved = await owner.request('agents', {
-        method: 'POST',
-        body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
-      })
-      expect(saved.status).toBe(201)
+        expect(saved.status).toBe(201)
+        agents.set(target, ((await saved.json()) as { agent: { id: string } }).agent.id)
+        return enrolled
+      }
+      const owner = await prepare(host)
       if (HISTORY) await addHistory(host, owner)
+      other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
+      const otherOwner = other ? await prepare(other) : undefined
 
       await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
-      /** The usage count when the code now on the clipboard was written; undefined when none is. */
+      /** The Host whose code is on the clipboard and its usage count when it was written; undefined when none is. */
       let written: number | undefined
+      let writtenFor: TestHost = host
       /** Puts a fresh code on the clipboard, unless Simulator.app is open; returns why not. */
-      const place = async (): Promise<string | undefined> => {
+      const place = async (target: TestHost = host!, by: TestDevice = owner): Promise<string | undefined> => {
         if (await simulatorAppOpen()) return SIMULATOR_APP
-        const before = usage(host!)
-        await toClipboard(udid!, await pairingCode(owner))
+        const before = usage(target)
+        await toClipboard(udid!, await pairingCode(by))
         written = before
+        writtenFor = target
         return undefined
       }
       /** Clears the clipboard once a phone has used the code written last. */
       const watch = async () => {
-        if (written !== undefined && usage(host!) > written) {
+        if (written !== undefined && usage(writtenFor) > written) {
           await toClipboard(udid!, '')
           written = undefined
         }
@@ -278,7 +301,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
 
       if (HOLD) {
         // Names and paths only, in `<file>.info` since the runner may hold console output back.
-        const info = [`simulator ${udid}`, `stop: touch ${HOLD}`, `fresh code: touch ${HOLD}.pair`]
+        const info = [
+          `simulator ${udid}`,
+          `stop: touch ${HOLD}`,
+          `fresh code: touch ${HOLD}.pair`,
+          ...(other ? [`fresh code for the second computer: touch ${HOLD}.pair2`] : []),
+        ]
         await writeFile(`${HOLD}.info`, [...info, ...(refused ? [refused] : [])].join('\n') + '\n')
         const deadline = Date.now() + HOLD_MS
         while (!existsSync(HOLD) && Date.now() < deadline) {
@@ -290,10 +318,44 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
             const why = await place()
             await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
           }
+          if (other && otherOwner && existsSync(`${HOLD}.pair2`) && Date.now() < deadline) {
+            for (const name of ['pair2', 'wait1', 'wait2', 'revoke1', 'revoke2', 'stop1', 'stop2'])
+              await rm(`${HOLD}.${name}`, { force: true })
+            await toClipboard(udid, '')
+            written = undefined
+            // A Host with a session waiting on the person makes no new code; that is said, and the hold goes on.
+            const why = await place(other, otherOwner).catch((error: unknown) => `no code: ${String(error).slice(0, 200)}`)
+            await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
+          }
+          for (const [index, [target, by]] of (other && otherOwner
+            ? ([
+                [host, owner],
+                [other, otherOwner],
+              ] as const)
+            : []
+          ).entries())
+            for (const action of HOST_ACTIONS) {
+              const flag = `${HOLD}.${action}${index + 1}`
+              if (!existsSync(flag)) continue
+              await rm(flag, { force: true })
+              if (action === 'wait') {
+                await by.json('tasks', {
+                  method: 'POST',
+                  body: { harnessId: agents.get(target), mode: 'agent', prompt: 'permission', requestId: randomUUID() },
+                })
+              } else if (action === 'stop') {
+                await target.close().catch(() => {})
+              } else {
+                const { devices } = await by.json<{ devices: Array<{ id: string; native?: unknown; status?: string }> }>('devices')
+                for (const device of devices.filter(item => item.native && item.status !== 'revoked'))
+                  await by.request(`devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' })
+              }
+            }
           await pause(Math.min(1000, Math.max(0, deadline - Date.now())))
         }
         await rm(HOLD, { force: true })
         await rm(`${HOLD}.info`, { force: true })
+        await rm(`${HOLD}.pair2`, { force: true })
       } else if (PAIR_MS) {
         const deadline = Date.now() + PAIR_MS
         while (host.host.security.devices.nativeCandidates().length === 0 && Date.now() < deadline) {
@@ -316,7 +378,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           await simctl('delete', udid).catch(() => {})
         }
       }
-      await host?.close()
+      await other?.close().catch(() => {})
+      await host?.close().catch(() => {})
       if (derived) await rm(derived, { recursive: true, force: true })
     }
   },

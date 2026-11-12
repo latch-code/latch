@@ -89,6 +89,15 @@ import UIKit
     @Published var draftInserts: [String: String] = [:]
     /** Where a pending file save's text was meant to go, for 核对并放下. In memory only. */
     var editPaths: [String: (reference: String, root: String?)] = [:]
+    /** Other computers' list readings by saved computer, each from that computer's own read-only connection (`NativeListWatcher`), and their guards. */
+    @Published var computerDesk = PhoneComputerDesk()
+    var watcher: NativeListWatcher?
+    var watchTail: Task<Void, Never>?
+    var watchDiscoveries: [String: NativeDiscovery] = [:]
+    /** An item of 其他电脑 being opened: a later tap or switch replaces it, and a late connection opens nothing. */
+    var otherOpening: UUID?
+    /** A notification tapped before the store was open again: opened once it is. */
+    var pendingOther: (computer: String, session: String)?
     private var shelfCache: (query: String, shelves: [PhoneShelf])?
     private var hostClockOffset: TimeInterval = 0
     /** Where to come back to after the App returns from the background: within this process only. */
@@ -148,7 +157,9 @@ import UIKit
             hosts = saved; draft = pending; storeReady = true
             observeNetwork()
             if pending != nil { resumePairing() }
-            else { await connectLast() }
+            else if let other = pendingOther, hosts.contains(where: { $0.id == other.computer }) {
+                pendingOther = nil; await openOther(computer: other.computer, session: other.session)
+            } else { pendingOther = nil; await connectLast() }
         } catch { storeReady = true; report(error) }
     }
     /** The Mac this phone last used, or the first saved one. */
@@ -161,7 +172,7 @@ import UIKit
         generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); pairingTask?.cancel()
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
-        resetBookRefresh()
+        resetBookRefresh(); stopWatching(forget: true)
         discovery.stop(); freshPairings.removeAll()
         let previous = workspace, link = pairingConnection, previousStore = store
         store = nil; workspace = nil; pairingConnection = nil
@@ -182,6 +193,7 @@ import UIKit
         clearPrivateContent(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
+        watchOthers()
         await paths.close(); await previous?.closeOpening()
         guard generation == current else { return }
         do {
@@ -419,6 +431,7 @@ import UIKit
             self.networkGeneration = UUID(); self.freshPairings.removeAll(); self.discovery.stop()
             if let host = self.selectedHost { try? self.startDiscovery(host) }
             await self.paths.networkChanged()
+            self.othersNetworkChanged()
             self.reconnectTask?.cancel(); self.reconnectTask = nil
             if self.selectedHost != nil { self.startReconnect() }
         } }
@@ -521,7 +534,7 @@ import UIKit
             try await currentStore?.retire(host, proof: proof)
             if let store, store === currentStore {
                 let saved = await store.list()
-                if self.store === store { hosts = saved }
+                if self.store === store { hosts = saved; forgetNotices(host); if !isCurrent { watchOthers() } }
             }
         }
         catch { report(error) }

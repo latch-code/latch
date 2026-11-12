@@ -81,6 +81,13 @@ do {
     case "nativeHistory":
         stage = "history"
         result = try await runNativeHistory(input)
+    case "phoneComputers": result = try phoneComputersFixture(input)
+    case "nativeListWatcher":
+        stage = "watcher"
+        result = try await runNativeListWatcher(input)
+    case "nativeListWatcherRevoked":
+        stage = "watcher"
+        result = try await runNativeListWatcherRevoked(input)
     case "fileShape": result = fileShapeFixture(input)
     case "nativeReview":
         stage = "review"

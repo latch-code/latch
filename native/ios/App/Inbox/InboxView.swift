@@ -22,11 +22,13 @@ struct InboxView: View {
             let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
             List(selection: selection) {
                 if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
-                if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost?.name ?? "Mac")).plainRow() }
-                else if model.offline, let host = model.selectedHost { OfflineBanner(host: host.name).plainRow() }
+                if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost.map(model.computerName) ?? "Mac")).plainRow() }
+                else if model.offline, let host = model.selectedHost { OfflineBanner(host: model.computerName(host)).plainRow() }
                 if model.showArchived {
                     Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
                 }
+                let others = model.showArchived || !query.isEmpty ? [] : model.otherComputerGroups
+                if !others.isEmpty, shelves.first?.id != "waiting" { OtherComputersSection(groups: others) }
                 ForEach(shelves, id: \.id) { shelf in
                     Section {
                         ForEach(shelf.tasks, id: \.id) { task in
@@ -35,6 +37,7 @@ struct InboxView: View {
                                 .sessionActions(task, model: model)
                         }
                     } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
+                    if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
                 }
                 if shelves.isEmpty && !searching { emptyState.plainRow() }
                 if searching { ContentSearchSection(query: query) }
@@ -52,14 +55,7 @@ struct InboxView: View {
             .toolbar {
                 if model.hosts.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
-                        Menu {
-                            ForEach(model.hosts) { host in
-                                Button { Task { await model.connect(host) } } label: {
-                                    if model.selectedHost?.id == host.id { Label(host.name, systemImage: "checkmark") } else { Text(host.name) }
-                                }
-                            }
-                        } label: { HStack(spacing: 4) { Text(model.selectedHost?.name ?? "选择 Mac").lineLimit(1); Image(systemName: "chevron.down").font(.caption2.weight(.semibold)) } }
-                            .disabled(model.busy || model.verifying)
+                        ComputerMenu().disabled(model.busy || model.verifying)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -298,4 +294,95 @@ private struct PendingWritesBar: View {
             }.padding(.horizontal, 16).padding(.vertical, 6)
         }
     }
+}
+
+/** The computer menu: each computer's name, state and what waits there; choosing one switches to it. */
+private struct ComputerMenu: View {
+    @EnvironmentObject private var model: PhoneModel
+    var body: some View {
+        let rows = model.computerRows
+        Menu {
+            ForEach(rows) { row in
+                Button { Task { await model.switchComputer(row.host) } } label: {
+                    if row.selected { Image(systemName: "checkmark") }
+                    Text(row.name)
+                    Text(row.line)
+                }.accessibilityLabel("\(row.name)，\(row.line)")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(model.selectedHost.map(model.computerName) ?? "选择 Mac").lineLimit(1)
+                // Something waits on another computer that answers now: an amber dot, no number, as the tab bar's.
+                if rows.contains(where: { !$0.selected && $0.state == .online && $0.waiting > 0 }) {
+                    Circle().fill(PhoneTheme.amberIcon).frame(width: 6, height: 6).accessibilityLabel("其他电脑有等你处理")
+                }
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+        }
+    }
+}
+
+/** 其他电脑 under 等你处理: live rows while a computer answers, one grey 「离线前 N 项」 row while it does not. */
+private struct OtherComputersSection: View {
+    @EnvironmentObject private var model: PhoneModel
+    let groups: [PhoneComputerGroup]
+    var body: some View {
+        Section {
+            ForEach(groups, id: \.id) { group in
+                if group.live {
+                    ForEach(group.items, id: \.taskId) { item in
+                        Button { Task { await model.openOther(computer: group.id, session: item.taskId) } } label: { OtherRow(item: item, computer: group.name) }
+                            .buttonStyle(.plain).otherRow()
+                    }
+                } else {
+                    Button { Task { await model.openOther(computer: group.id, session: nil) } } label: { StaleRow(group: group) }
+                        .buttonStyle(.plain).otherRow()
+                }
+            }
+        } header: { ShelfHeader(label: "其他电脑", count: nil) }
+    }
+}
+
+private struct OtherRow: View {
+    let item: PhoneComputerItem
+    let computer: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(item.title.isEmpty ? "未命名会话" : PhoneConversation.visible(item.title)).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(item.since.map { PhoneTime.relative($0) } ?? "").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+            }
+            HStack(spacing: 5) {
+                Image(systemName: "laptopcomputer").font(.system(size: 11)).foregroundStyle(PhoneTheme.muted)
+                Text(computer).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                Text("· " + item.kind.words).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(1)
+            }
+        }.frame(minHeight: 48).contentShape(Rectangle())
+            .accessibilityElement(children: .combine).accessibilityLabel("\(item.title)，\(computer)，\(item.kind.words)").accessibilityHint("切换到这台电脑并打开")
+    }
+}
+
+private struct StaleRow: View {
+    @EnvironmentObject private var model: PhoneModel
+    let group: PhoneComputerGroup
+    var body: some View {
+        let reading = model.computerReadings[group.id]
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(group.name).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
+                Spacer(minLength: 4)
+                Text("离线前 \(group.items.count) 项").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+            }
+            HStack(spacing: 5) {
+                Image(systemName: "laptopcomputer").font(.system(size: 11))
+                Text(PhoneComputers.stateWords(reading?.state, lastSeen: reading?.lastSeen)).font(PhoneTheme.caption).lineLimit(1)
+            }.foregroundStyle(PhoneTheme.muted)
+        }.frame(minHeight: 48).contentShape(Rectangle())
+            .accessibilityElement(children: .combine).accessibilityLabel("\(group.name)，离线前 \(group.items.count) 项，不是实时")
+    }
+}
+
+private extension View {
+    func otherRow() -> some View { listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)).listRowBackground(Color.clear) }
 }

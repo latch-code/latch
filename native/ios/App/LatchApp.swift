@@ -1,6 +1,7 @@
 import LatchNativeCore
 import SwiftUI
 import UIKit
+import UserNotifications
 
 // LatchScreens has its own entry with canned scenes; this one is the product's.
 #if !LATCH_SCREENS
@@ -27,6 +28,11 @@ import UIKit
 #endif
 final class PhoneAppDelegate: NSObject, UIApplicationDelegate {
     private var privacy: [UIWindow] = []
+    private let notices = PhoneNoticeDelegate()
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = notices
+        return true
+    }
     func applicationWillResignActive(_ application: UIApplication) {
         privacy = application.connectedScenes.compactMap { scene in
             guard let scene = scene as? UIWindowScene, scene.activationState != .background else { return nil }

@@ -61,6 +61,8 @@ const SCENES = [
   'brands',
   'about',
   'licenses',
+  'computers',
+  'computers-settings',
 ]
 /** A narrow and a wide iPhone, and an iPad; the first device type of each list that this Xcode has. */
 const DEVICES = [

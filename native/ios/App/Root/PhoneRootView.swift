@@ -36,6 +36,10 @@ struct PhoneRootView: View {
             Button("知道了") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: .latchStatusHint)) { _ in Task { await model.refresh() } }
+        .onReceive(NotificationCenter.default.publisher(for: .latchOpenOther)) { note in
+            guard let computer = note.userInfo?["computer"] as? String, let session = note.userInfo?["session"] as? String else { return }
+            Task { await model.requestOther(computer: computer, session: session) }
+        }
         #if LATCH_SCREENS
         .onChange(of: model.staged) { _, _ in if ScreensStage.scanning { scan = true } }
         #endif

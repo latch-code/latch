@@ -84,6 +84,7 @@ import UIKit
         case "apps": model.tab = .apps
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
+        case _ where stageComputers(model, name): break
         case _ where stageReview(model, name, snapshot: value): break
         case _ where stageHistory(model, name, snapshot: value): break
         default: model.tab = .code
@@ -233,6 +234,8 @@ import UIKit
 
 @main struct ScreensApp: App {
     @StateObject private var model = PhoneModel()
+    /** Live mode's notifications reach the App the way the product's do. */
+    @UIApplicationDelegateAdaptor(PhoneAppDelegate.self) private var delegate
     @Environment(\.scenePhase) private var phase
     /** `-LatchTheme dark` or `light`; absent: the device's own. */
     private var theme: ColorScheme? {
@@ -402,4 +405,29 @@ extension ScreensStage {
         return json(#"{"previewId":"hp_\#(String(repeating: "d4", count: 16))","title":"Web 构建变慢","model":"gpt-5.5","turns":4,"truncated":true,"messages":[{"role":"user","text":"web 的构建最近慢了一倍，看看为什么。"},{"role":"tool","text":"rg --files web/src","outputHidden":true,"status":"completed"},{"role":"tool","text":"pnpm build --profile","outputHidden":true,"status":"failed"},{"role":"assistant","text":"慢在类型检查：tsconfig 把 dist 也包含进来了。去掉之后构建回到 40 秒左右。"},{"role":"user","text":"那就去掉，再跑一次。"}]}"#)
     }
     static var stagedRows: [PhoneHistoryRow] { PhoneHistory.list(try! history(PhoneHistory.listRead(projectId: "latch", harnessId: "codex")))?.rows ?? [] }
+}
+
+/** Several computers: the menu's states, 其他电脑 under 等你处理 and the notification setting. */
+extension ScreensStage {
+    fileprivate static func stageComputers(_ model: PhoneModel, _ name: String) -> Bool {
+        guard name == "computers" || name == "computers-settings" else { return false }
+        func host(_ hostId: String, _ device: String, _ name: String) -> RegisteredHost? {
+            let device = #"{"hostId":"\#(hostId)","deviceId":"dev_\#(device)","rootSpki":"AA==","knockKey":"AA==","signedAddressBook":"","bookGeneration":0,"bookHash":"AA=="}"#
+            guard let prepared = try? JSONDecoder().decode(PreparedNativeDevice.self, from: Data(device.utf8)) else { return nil }
+            return RegisteredHost(name: name, device: prepared, keys: DeviceKeyReference(connectionTag: Data(), verificationTag: Data(), connectionSpki: Data(), verificationSpki: Data()), prepared: false)
+        }
+        let hosts = [host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "studio"), host("buildminibbbb", "bbbbbbbbbbbbbbbbbbbbbb", "build-mini"),
+                     host("macminicccc", "cccccccccccccccccccccc", "Mac mini"), host("d7k2spoofdddd", "dddddddddddddddddddddd", "build-m\u{0456}ni")].compactMap { $0 }
+        model.hosts = hosts; model.selectedHost = hosts.first; model.lastConfirmed = Date()
+        let token = model.computerDesk.watch(selected: hosts[0].id, others: hosts.dropFirst().map(\.id))
+        let readings = [
+            NativeWatchReading(token: token, id: hosts[1].id, state: .online, list: json(#"{"tasks":[{"id":"ses_b1","title":"升级 Node 到 24.22 并跑一遍测试","status":"waiting-approval","updatedAt":"{{-120}}","live":{"lastEventAt":"{{-120}}"}},{"id":"ses_b2","title":"夜间构建要不要清缓存","status":"running","pendingQuestions":1,"updatedAt":"{{-900}}","live":{"lastEventAt":"{{-900}}"}}]}"#), lastSeen: Date()),
+            NativeWatchReading(token: token, id: hosts[2].id, state: .offline, list: json(#"{"tasks":[{"id":"ses_c1","title":"a","status":"waiting-approval","updatedAt":"{{-4000}}"},{"id":"ses_c2","title":"b","status":"waiting-approval","updatedAt":"{{-4100}}"},{"id":"ses_c3","title":"c","status":"running","pendingQuestions":2,"updatedAt":"{{-4200}}"}]}"#), lastSeen: Date().addingTimeInterval(-3600)),
+            NativeWatchReading(token: token, id: hosts[3].id, state: .wrongHost, list: .null, lastSeen: nil),
+        ]
+        for reading in readings { _ = model.computerDesk.receive(reading, notifying: false) }
+        model.tab = name == "computers" ? .code : .settings
+        if name == "computers-settings" { UserDefaults.standard.set(true, forKey: PhoneComputerNotices.key) }
+        return true
+    }
 }
