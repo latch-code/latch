@@ -513,8 +513,9 @@ describe('Codex over its app-server', () => {
     const id = await start(bridge, t.main, 'echo one')
     await settled(bridge, id)
     await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'exit')).toBe(true), { timeout: 5_000 })
+    // Refused before the turn was recorded: a code that says nothing was accepted, with Codex's own words.
     await expect(bridge.prompt(id, 'echo two', rid())).rejects.toMatchObject({
-      code: 'agent-error',
+      code: 'agent-refused',
       message: 'Codex 返回错误：thread is in use by another client',
     })
   })

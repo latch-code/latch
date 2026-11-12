@@ -15,11 +15,31 @@ public struct NativeHostRefusal: Error, Equatable, Sendable {
     public init(status: Int, code: String, message: String, details: NativeJSON) {
         self.status = status; self.code = code; self.message = message; self.details = details
     }
-    /** From a 4xx body `{ error, message, ...details }`; nil when it is not one. */
+    /**
+     * 5xx answers that say, for certain, that the Host accepted nothing: it refused before recording the request. The same
+     * list as `NOT_ACCEPTED_5XX` in @latch/protocol (docs/STREAMING.md「确定的拒绝」); any other 5xx is result unknown.
+     */
+    public static let notAccepted5xx: Set<String> = [
+        "audit-unavailable", "presence-unavailable", "agent-busy", "agent-start-failed", "agent-refused", "agent-paused",
+        "agent-handshake-timeout", "model-gateway-unavailable",
+    ]
+    /** A definite refusal: any 4xx but 408, or a 5xx whose code is in `notAccepted5xx`. */
+    public static func refusedBeforeAccepting(status: Int, code: String?) -> Bool {
+        if (400..<500).contains(status) { return status != 408 }
+        guard status >= 500, let code else { return false }
+        return notAccepted5xx.contains(code)
+    }
+    /** From a definite refusal's body `{ error, message, ...details }`: a 4xx, or a 5xx that accepted nothing; nil otherwise. */
     public static func parse(status: Int, body: Data) -> NativeHostRefusal? {
-        guard (400..<500).contains(status), let value = try? NativeJSON.decode(body), let code = value["error"].string,
-              LinkBytes.matches(code, "[a-z0-9-]{1,64}") else { return nil }
+        guard let value = try? NativeJSON.decode(body), let code = value["error"].string, LinkBytes.matches(code, "[a-z0-9-]{1,64}"),
+              (400..<500).contains(status) || refusedBeforeAccepting(status: status, code: code) else { return nil }
         return NativeHostRefusal(status: status, code: code, message: String((value["message"].string ?? "").prefix(400)), details: value)
+    }
+    /** Whether an answer leaves a write's result unknown: timeouts and any 5xx but those that accepted nothing. */
+    public static func leavesUnknown(status: Int, body: Data) -> Bool {
+        if status == 408 { return true }
+        guard status >= 500 else { return false }
+        return parse(status: status, body: body) == nil
     }
 }
 

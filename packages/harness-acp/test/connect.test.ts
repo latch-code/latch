@@ -191,9 +191,9 @@ describe('a command older than its preset supports', () => {
       need: '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）',
       upgrade: 'npm i -g @deepseek-ai/dsh@latest',
     })
-    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}` })
+    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}`, statusReason: 'outdated' })
     const offer = presetOffer(AGENT_PRESETS.find(preset => preset.id === 'dsh')!)
-    expect(offer).toMatchObject({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}` })
+    expect(offer).toMatchObject({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}`, statusReason: 'outdated' })
 
     const bridge = await open(driver, where)
     const detail = await ended(bridge, await start(bridge, where.workspace))
@@ -211,7 +211,7 @@ describe('a command older than its preset supports', () => {
     })
     await expect(readFile(log, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     // Refused for its version, it is not the harness's last error: an upgrade ends it.
-    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}` })
+    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}`, statusReason: 'outdated' })
   })
 
   it('starts once upgraded, after 重新检测 reads the version again', async () => {

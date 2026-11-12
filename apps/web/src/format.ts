@@ -237,7 +237,12 @@ export function argumentView(text: string | undefined): ArgumentView {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const entries = Object.entries(value).map(([key, item]): [string, string] => [
         key,
-        typeof item === 'string' ? item : JSON.stringify(item, null, 2),
+        typeof item === 'string'
+          ? item
+          : // A list of sentences (Codex's `grants`) reads as lines, not as JSON.
+            Array.isArray(item) && item.length > 0 && item.every(line => typeof line === 'string')
+            ? item.join('\n')
+            : JSON.stringify(item, null, 2),
       ])
       return entries.length === 0 ? { kind: 'empty' } : { kind: 'entries', entries }
     }

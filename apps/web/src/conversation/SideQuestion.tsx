@@ -91,9 +91,14 @@ export interface SideQuestion {
 /** One side question per session, in memory: it is a panel of this window, not a record. */
 const questions = new Map<string, SideQuestion>()
 const listeners = new Set<() => void>()
+const NO_FORKS: ReadonlySet<string> = new Set()
+/** The forks of the open panels: kept as one value, so a list re-renders only when they change. */
+let forks: ReadonlySet<string> = NO_FORKS
 const put = (question: SideQuestion | undefined, sourceId: string) => {
   if (question) questions.set(sourceId, question)
   else questions.delete(sourceId)
+  const ids = [...questions.values()].flatMap(item => (item.forkId ? [item.forkId] : []))
+  if (ids.length !== forks.size || ids.some(id => !forks.has(id))) forks = ids.length ? new Set(ids) : NO_FORKS
   for (const listener of listeners) listener()
 }
 const subscribe = (listener: () => void) => {
@@ -109,6 +114,28 @@ export function useSideQuestion(sourceId: string | null): SideQuestion | undefin
     () => (sourceId ? questions.get(sourceId) : undefined),
     () => undefined,
   )
+}
+
+/**
+ * The sessions behind the open /btw panels. They are the panel's, not the session list's, until 打开为会话 makes one an
+ * ordinary session (or closing archives it).
+ */
+export function useSideQuestionForks(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    subscribe,
+    () => forks,
+    () => NO_FORKS,
+  )
+}
+
+/** The session list without the forks of open /btw panels; the open session always stays. */
+export function withoutSideForks<T extends { tasks: readonly TaskSummary[] }>(
+  snapshot: T,
+  hidden: ReadonlySet<string>,
+  selectedId: string | null,
+): T {
+  if (!hidden.size || !snapshot.tasks.some(task => hidden.has(task.id) && task.id !== selectedId)) return snapshot
+  return { ...snapshot, tasks: snapshot.tasks.filter(task => !hidden.has(task.id) || task.id === selectedId) }
 }
 
 /** How the panel reaches the Host; tests replace it. */

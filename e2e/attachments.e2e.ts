@@ -355,9 +355,7 @@ describe('the attach button and @ on every Harness', () => {
         // No hover on a touch screen: pressing says why, in place.
         await add.click()
         const notice = page.locator('.ui-notice-text')
-        await notice
-          .getByText('这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。', { exact: true })
-          .waitFor()
+        await notice.getByText('发出第一条消息后可添加文件', { exact: true }).waitFor()
         await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
         // Started from another device: this page learns it without a reload.
         await start(late, `已启动 ${width} ${theme}`)
@@ -473,6 +471,8 @@ describe('the attach button and @ on every Harness', () => {
         await page.screenshot({ path: `${shots}/${width}-${theme}-release-confirm.png`, animations: 'disabled' })
         await confirm.getByRole('button', { name: '释放', exact: true }).click()
         await reserved.getByText('已释放 2 个', { exact: true }).waitFor()
+        // The count and the size follow what is still held: the one still needed.
+        await reserved.getByText('1 个 · 2 KB', { exact: true }).waitFor()
         expect(released).toBe(1)
         expect(releasedIds).toEqual(['a'.repeat(22), 'b'.repeat(22)])
       } finally {

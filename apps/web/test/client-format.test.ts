@@ -120,6 +120,14 @@ describe('client formatting', () => {
   it('renders tool arguments as entries and empty objects as no arguments', () => {
     expect(argumentView('{}')).toEqual({ kind: 'empty' })
     expect(argumentView(undefined)).toEqual({ kind: 'empty' })
+    // Codex's grants: sentences, one per line, never a JSON array.
+    expect(argumentView(JSON.stringify({ grants: ['允许后，Codex 可以访问 example.com', '允许后运行这条命令'], n: [1, 2] }))).toEqual({
+      kind: 'entries',
+      entries: [
+        ['grants', '允许后，Codex 可以访问 example.com\n允许后运行这条命令'],
+        ['n', '[\n  1,\n  2\n]'],
+      ],
+    })
     expect(argumentView('{"path":"a.ts","lines":[1,2]}')).toEqual({
       kind: 'entries',
       entries: [

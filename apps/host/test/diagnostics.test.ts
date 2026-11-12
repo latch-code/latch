@@ -97,6 +97,77 @@ describe('诊断导出', () => {
     expect(Object.keys(bundle.plugins[0]!).sort()).toEqual(['activeRuns', 'enabled', 'id', 'version'])
   })
 
+  it('names a Harness the person defined by its place and preset, never by the ID or name they gave it', () => {
+    const log = new DiagnosticLog(() => 0)
+    log.note('agent-load-failed', { id: 'acme-payroll' })
+    const defined = (id: string, label: string, mark?: string) =>
+      ({
+        id,
+        editable: true,
+        status: 'unavailable',
+        statusMessage: `${label} 启动失败：进程退出（退出码 1）`,
+        level: 'L3',
+        modes: ['agent'],
+        capabilities: { display: { label, ...(mark ? { mark } : {}) } },
+      }) as unknown as HarnessInfo
+    const bundle = diagnosticsBundle({
+      version: '0.1.0',
+      startedAt: '2026-11-13T00:00:00.000Z',
+      now: () => 0,
+      home: HOME,
+      harnesses: [
+        { ...harness('standard'), status: 'ready', statusMessage: undefined } as unknown as HarnessInfo,
+        defined('acme-payroll', 'Acme 工资系统', 'codex'),
+        defined('dsh', 'DeepSeek Harness', 'dsh'),
+      ],
+      plugins: [{ id: 'agent-acme-payroll', version: '1', enabled: true, activeRuns: 0 } as unknown as PluginInfo],
+      policy: defaultPolicy('darwin'),
+      devices: { active: 1, revoked: 0 },
+      streams: {},
+      log,
+    })
+    const text = JSON.stringify(bundle)
+    expect(text).not.toContain('acme')
+    expect(text).not.toContain('Acme')
+    expect(bundle.harnesses.map(item => [item.id, item.preset])).toEqual([
+      ['standard', undefined],
+      ['harness-1', 'codex'],
+      ['harness-2', 'dsh'],
+    ])
+    // A preset's own name is no secret and stays readable.
+    expect(bundle.harnesses[2]!.message).toBe('DeepSeek Harness 启动失败：进程退出（退出码 1）')
+    expect(bundle.plugins[0]!.id).toBe('agent-harness-1')
+    expect(bundle.events[0]).toMatchObject({ category: 'agent-load-failed', id: 'harness-1' })
+  })
+
+  it('labels every saved definition, a turned-off or unloaded one too, in its events', () => {
+    const log = new DiagnosticLog(() => 0)
+    log.note('agent-load-failed', { id: 'payroll-off' })
+    log.note('plugin-cleanup-failed', { id: 'acme-payroll' })
+    const bundle = diagnosticsBundle({
+      version: '0.1.0',
+      startedAt: '2026-11-13T00:00:00.000Z',
+      now: () => 0,
+      home: HOME,
+      // Only the built-in one is mounted; neither definition is.
+      harnesses: [{ ...harness('standard'), status: 'ready', statusMessage: undefined } as unknown as HarnessInfo],
+      definitions: [
+        { id: 'acme-payroll', name: 'Acme 工资系统', presetId: 'codex' },
+        { id: 'payroll-off', name: '关掉的', presetId: 'dsh' },
+      ],
+      plugins: [],
+      policy: defaultPolicy('darwin'),
+      devices: { active: 1, revoked: 0 },
+      streams: {},
+      log,
+    })
+    expect(JSON.stringify(bundle)).not.toMatch(/acme|payroll|Acme|关掉的/u)
+    expect(bundle.events.map(event => [event.category, event.id])).toEqual([
+      ['agent-load-failed', 'harness-2'],
+      ['plugin-cleanup-failed', 'harness-1'],
+    ])
+  })
+
   it("writes the home folder as ~, another user's as ~other and any other absolute path as a placeholder", () => {
     expect(diagnosticText(`${HOME}/a ${HOME} ${HOME}2/b /tmp/x.sock https://example.com/a/b`, HOME)).toBe(
       '~/a ~ ~other/b ‹路径› https://example.com/a/b',

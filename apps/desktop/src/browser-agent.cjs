@@ -846,15 +846,17 @@ function createAgentRunner({ access, controller, now = Date.now }) {
 
   /**
    * A tab out of sight does not lay out, paint or take input, so the call needs it shown: in the session's panel, which
-   * the page is asked to switch to it. Without the panel open on the session, or with an overlay over it, the call is
-   * refused with `panel-closed` before anything happens.
+   * the page is asked to switch to it. Without the panel open on the session the call is refused with `panel-closed`,
+   * with a layer of the page over the shown tab with `panel-covered`, before anything happens.
    */
   async function inSight(target, sessionId) {
     if (access.showing() !== sessionId) throw new AgentFailure('panel-closed')
     if (inSightNow(target)) return
     access.reveal(target)
     for (let attempt = 0; attempt < REVEAL_TRIES && !inSightNow(target); attempt++) await sleep(REVEAL_STEP_MS)
-    if (!inSightNow(target) || access.showing() !== sessionId) throw new AgentFailure('panel-closed')
+    if (access.showing() !== sessionId) throw new AgentFailure('panel-closed')
+    // The panel is open on the session and placed the tab, but a layer of the page (a menu, a dialog, 选取元素) covers it.
+    if (!inSightNow(target)) throw new AgentFailure(target.bounds !== null && target.occluded ? 'panel-covered' : 'panel-closed')
     // Its first frame after it was placed.
     await sleep(150)
   }

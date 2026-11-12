@@ -162,6 +162,11 @@ export interface HarnessInfo {
   /** `ready` can start sessions; `unavailable` explains why in `statusMessage`. */
   status: 'ready' | 'unavailable'
   statusMessage?: string
+  /**
+   * Why it is `unavailable`, when a client says it differently: `outdated`, its command is known to be older than Latch
+   * supports (from a read of its version), so it is listed greyed with 需要升级 and `statusMessage` names the upgrade.
+   */
+  statusReason?: 'outdated'
   /** Session modes the harness accepts. */
   modes: TaskMode[]
   /** L1: Latch decides each risky call. L3: unsandboxed. Always the Host's derivation, never a driver's word. */
@@ -237,6 +242,8 @@ export interface CommandDetection {
   agent?: { command: string; found: boolean }
   /** The command is here but older than Latch supports: what it needs, and the command that upgrades it. Older Hosts omit it. */
   outdated?: { need: string; upgrade: string }
+  /** It has a version it must reach and nothing has read that yet (a preset is read once it is confirmed). */
+  versionUnread?: true
 }
 
 /** A preset as the agent settings list it: with what the Host found of its commands. Older Hosts send no `detected`. */

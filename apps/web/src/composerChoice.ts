@@ -190,9 +190,13 @@ export interface EngineEntry {
   label: string
   /** What it can do, in the Harness menu. */
   line: string
-  /** Why this project cannot use it, though it can start here. */
+  /** Why it cannot be picked: this project has more folders than it uses, or its command needs an upgrade. */
   disabledReason?: string
 }
+
+/** Its command is known to be too old: listed greyed with 需要升级, never picked anew. */
+export const needsUpgrade = (harness: Pick<HarnessInfo, 'status' | 'statusReason'>): boolean =>
+  harness.status === 'unavailable' && harness.statusReason === 'outdated'
 
 /** Presets in their fixed order, then anything else; what cannot run commands last. */
 function harnessRank(harness: HarnessInfo): number {
@@ -201,14 +205,18 @@ function harnessRank(harness: HarnessInfo): number {
   return preset < 0 ? AGENT_PRESETS.length : preset
 }
 
-/** The engines a new session can run on, in a fixed order with the built-in one last. What is not installed is not offered. */
+/**
+ * The engines a new session can run on, in a fixed order with the built-in one last. What is not installed is not
+ * offered; one whose command is too old is listed greyed with 需要升级, so a draft that chose it keeps it.
+ */
 export function engineEntries(catalog: HostCatalog, workspaceId?: string): EngineEntry[] {
   const project = catalog.workspaces.find(item => item.id === workspaceId)
   const count = project?.folders?.length ?? 1
   return catalog.harnesses
-    .filter(harness => harness.status === 'ready')
+    .filter(harness => harness.status === 'ready' || needsUpgrade(harness))
     .toSorted((a, b) => harnessRank(a) - harnessRank(b))
     .map(harness => {
+      if (needsUpgrade(harness)) return { harness, label: harnessName(harness), line: '', disabledReason: '需要升级' }
       const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
       return {
         harness,
@@ -330,9 +338,11 @@ export function noProjectLine(harness: Pick<HarnessInfo, 'modes' | 'capabilities
  */
 export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<ComposerChoice> | null): ComposerChoice {
   if (!catalog) return { mode: stored?.mode ?? 'agent' }
-  const usable = engineEntries(catalog).map(entry => entry.harness)
-  // This device's last engine, otherwise the first it can start. Nothing is asked: the first send says what will run.
-  const harness = usable.find(item => item.id === stored?.harnessId) ?? usable[0]
+  const entries = engineEntries(catalog)
+  const usable = entries.filter(entry => entry.harness.status === 'ready').map(entry => entry.harness)
+  // This device's last engine, otherwise the first it can start. Nothing is asked: the first send says what will run. One
+  // found too old after it was chosen stays chosen: the person picked it, and the input says what to upgrade.
+  const harness = entries.find(entry => entry.harness.id === stored?.harnessId)?.harness ?? usable[0]
   const workspaces = startableWorkspaces(catalog)
   const named =
     workspaces.find(item => item.id === stored?.workspaceId)
@@ -396,7 +406,7 @@ export function nothingInstalled(
 ): boolean {
   if (block?.kind !== 'model-required' || block.action !== undefined || !catalog || access.legacy || !access.local || !access.admin)
     return false
-  return !engineEntries(catalog).some(entry => entry.harness.capabilities.tools.shell)
+  return !engineEntries(catalog).some(entry => entry.harness.status === 'ready' && entry.harness.capabilities.tools.shell)
 }
 
 /**
@@ -410,7 +420,7 @@ export function listsFoundHarnesses(
   access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>,
 ): boolean {
   if (!catalog || sessions > 0 || access.legacy || !access.local || !access.admin) return false
-  return engineEntries(catalog).some(entry => entry.harness.capabilities.tools.shell)
+  return engineEntries(catalog).some(entry => entry.harness.status === 'ready' && entry.harness.capabilities.tools.shell)
 }
 
 /**

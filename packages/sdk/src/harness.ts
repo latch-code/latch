@@ -341,7 +341,7 @@ export interface HarnessDriver {
   /** How a person logs in to it, looked up with each catalog: which program is installed can change. */
   login?(): HarnessInfo['login']
   /** Optional readiness probe, e.g. whether an agent binary is installed. */
-  status?(): { status: HarnessInfo['status']; statusMessage?: string }
+  status?(): { status: HarnessInfo['status']; statusMessage?: string; statusReason?: HarnessInfo['statusReason'] }
   /**
    * The Host may offer to bring in sessions this harness had before Latch, through the Bridge's `listExternalSessions`,
    * `loadExternalSession` and `adoptExternalSession`. Whether the running harness can list and load is learned at runtime.

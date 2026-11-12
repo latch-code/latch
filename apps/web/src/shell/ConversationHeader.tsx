@@ -24,7 +24,6 @@ import {
   TerminalGlyph,
   PanelRightGlyph,
   EditGlyph,
-  RefreshGlyph,
 } from '@latch/ui'
 import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -122,22 +121,10 @@ function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: Chan
   )
 }
 
-/** The connection only when it is not healthy: its name and the retry glyph, which syncs the latest state. */
-function ConnectionPill({ connection, onRefresh }: { connection: ConnectionStatus; onRefresh: () => void }) {
+/** The connection only when it is not healthy: its name. 重试 is the connection banner's, one per screen. */
+function ConnectionPill({ connection }: { connection: ConnectionStatus }) {
   if (!connectionProblem(connection)) return null
-  return (
-    <button
-      type="button"
-      className={`connection-pill connection-${connection}`}
-      title={`${connectionLabels[connection]} · 同步最新状态`}
-      onClick={onRefresh}>
-      {connectionLabels[connection]}
-      <span className="connection-pill-retry">
-        · 重试
-        <RefreshGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-      </span>
-    </button>
-  )
+  return <span className={`connection-pill connection-${connection}`}>{connectionLabels[connection]}</span>
 }
 
 /** The title: a button with chevron-down that opens the session's menu, or plain words where there is none. */
@@ -292,7 +279,6 @@ function PhoneTopBar({
   panelRef,
   menu,
   connection,
-  onRefresh,
   changes,
   frame,
   from,
@@ -312,7 +298,6 @@ function PhoneTopBar({
   panelRef?: RefObject<HTMLButtonElement | null>
   menu: MenuSection[]
   connection: ConnectionStatus
-  onRefresh: () => void
 }) {
   const title = summary ? summary.title || '未命名会话' : '新会话'
   const state = summary && sessionPill(summary, cancelling)
@@ -345,7 +330,7 @@ function PhoneTopBar({
                 演示
               </StatusPill>
             )}
-            <ConnectionPill connection={connection} onRefresh={onRefresh} />
+            <ConnectionPill connection={connection} />
           </div>
         )}
       </div>
@@ -397,7 +382,6 @@ export function SessionHeader({
   sessionMenu,
   menu,
   connection,
-  onRefresh,
   onFiles,
   filesOpen,
   slots = {},
@@ -439,7 +423,6 @@ export function SessionHeader({
   /** ⋯: the session's actions and 同步最新状态 (on phones, the title button's menu). */
   menu: MenuSection[]
   connection: ConnectionStatus
-  onRefresh: () => void
   onFiles?: () => void
   filesOpen?: boolean
   slots?: ConversationHeaderSlots
@@ -458,7 +441,6 @@ export function SessionHeader({
         panelRef={panelRef}
         menu={menu}
         connection={connection}
-        onRefresh={onRefresh}
         changes={slots.changes}
         frame={frame}
         from={from}
@@ -502,7 +484,7 @@ export function SessionHeader({
         {summary && !frame && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>
       <div className="topbar-actions">
-        <ConnectionPill connection={connection} onRefresh={onRefresh} />
+        <ConnectionPill connection={connection} />
         {demo && (
           <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
             演示模型
@@ -560,7 +542,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     titleMenu,
     topMenu,
     connection,
-    resync,
     canViewChanges,
     changesOpen,
     toggleChanges,
@@ -684,9 +665,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       sessionMenu={titleMenu}
       menu={topMenu}
       connection={connection}
-      onRefresh={() => {
-        void resync()
-      }}
       {...(summary
         ? {
             crumb: {

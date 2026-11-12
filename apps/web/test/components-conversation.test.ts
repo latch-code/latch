@@ -174,8 +174,8 @@ describe('with the connection down', () => {
         frozenAt: new Date(2026, 9, 24, 10, 42).getTime(),
       }),
     )
-    expect(line).toContain('上次确认 10:42')
-    expect(line).not.toContain('运行中')
+    // Offline the banner and the sidebar row say it; the run's line says nothing it cannot confirm.
+    expect(line).toBe('')
   })
 })
 

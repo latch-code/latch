@@ -203,7 +203,7 @@ type Decision = {
   via?: ToolDecision['via']
   note?: string
 }
-type Preview = Pick<ToolDetail, 'title' | 'diffs'>
+type Preview = Pick<ToolDetail, 'title' | 'diffs'> & { summary?: string }
 
 interface PendingApproval {
   value: Approval
@@ -366,12 +366,17 @@ function addUsage(total: TokenUsage | undefined, delta: UsageDelta): TokenUsage 
   return sum
 }
 const PREVIOUS: ReadonlySet<unknown> = new Set(['none', 'text', 'unavailable'])
+/** What a row keeps of a preview: the approval card's label (`summary`) is the approval's alone. */
+function shownPreview(preview: Preview | undefined): Pick<ToolDetail, 'title' | 'diffs'> {
+  return { ...(preview?.title ? { title: preview.title } : {}), ...(preview?.diffs ? { diffs: preview.diffs } : {}) }
+}
 /** Plugin previews are trusted code but still bounded before they are persisted and shown. */
 function previewOf(value: unknown): Preview | undefined {
   if (typeof value !== 'object' || value === null) return undefined
-  const { title, diffs } = value as { title?: unknown; diffs?: unknown }
+  const { title, diffs, summary } = value as { title?: unknown; diffs?: unknown; summary?: unknown }
   const preview: Preview = {}
   if (typeof title === 'string' && title.trim()) preview.title = title.trim().slice(0, 200)
+  if (typeof summary === 'string' && summary.trim()) preview.summary = summary.trim().slice(0, 200)
   if (Array.isArray(diffs)) {
     const valid = diffs
       .filter(
@@ -394,7 +399,7 @@ function previewOf(value: unknown): Preview | undefined {
       }))
     }
   }
-  return preview.title || preview.diffs ? preview : undefined
+  return preview.title || preview.diffs || preview.summary ? preview : undefined
 }
 /** A tool's declared title as rows show it: trimmed, at most 40 characters, hidden characters made visible. */
 function toolTitleOf(tool: ToolDefinition | undefined): string | undefined {
@@ -1257,7 +1262,7 @@ class HarnessRuntime implements Bridge {
       reason:
         risk === 'R2'
           ? '这是高风险操作，每次执行前都需要你确认，不能设为始终允许。'
-          : '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。',
+          : (preview?.summary ?? '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。'),
       arguments: JSON.stringify(call.arguments, null, 2),
       requestedAt: this.now(),
       options: structuredClone([...(risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS)]),
@@ -1292,7 +1297,7 @@ class HarnessRuntime implements Bridge {
         const message = toolMessage(task, call)
         if (message) {
           message.state = 'awaiting-approval'
-          message.tool = { ...message.tool, ...preview }
+          message.tool = { ...message.tool, ...shownPreview(preview) }
         }
       })
       outcome = await decision
@@ -1359,7 +1364,7 @@ class HarnessRuntime implements Bridge {
       if (message) {
         message.state = 'running'
         message.startedAt = this.now()
-        if (preview) message.tool = { ...message.tool, ...preview }
+        if (preview) message.tool = { ...message.tool, ...shownPreview(preview) }
       }
     })
     if (signal.aborted) {

@@ -87,6 +87,7 @@ do {
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)
     case "phoneAttachments": result = try phoneAttachmentsFixture(input)
+    case "phoneRefusals": result = phoneRefusalsFixture()
     case "nativeAttachments":
         stage = "attachments"
         result = try await runNativeAttachments(input)

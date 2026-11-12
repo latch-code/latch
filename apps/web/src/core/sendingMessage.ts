@@ -1,4 +1,4 @@
-import { splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
+import { looksSecret, splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import { errorMessage, inlineError, isUncertain, readPending, writePending, type PendingSubmission } from './api.ts'
 
 /** Client presentation only. The Host's messages and receipt remain the authority. */
@@ -61,6 +61,34 @@ export function abandonSubmission(key: string, submission: PendingSubmission): {
 /** Removes the stored submission only while it is still this one: another window of this device may have stored a newer one. */
 export function releaseStored(key: string, requestId: string): void {
   if (readPending(key)?.requestId === requestId) writePending(key, null)
+  if (readPendingReason(key, requestId) !== '') writePendingReason(key, requestId, '')
+}
+
+const reasonKey = (key: string) => `${key}.reason`
+
+/**
+ * Why the stored submission is still unconfirmed, as its last try heard it, so a reload says the same and not the
+ * fallback 没有收到电脑的答复. '' when none was kept, or it was kept for another request.
+ */
+export function readPendingReason(key: string, requestId: string): string {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(reasonKey(key)) ?? 'null')
+    if (typeof value !== 'object' || value === null) return ''
+    const item = value as Record<string, unknown>
+    return item.requestId === requestId && typeof item.reason === 'string' ? item.reason.slice(0, 500) : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Keeps, or with '' drops, the reason; one that looks like a secret stays in memory only, as a draft would. */
+export function writePendingReason(key: string, requestId: string, reason: string): void {
+  try {
+    if (!reason || looksSecret(reason)) localStorage.removeItem(reasonKey(key))
+    else localStorage.setItem(reasonKey(key), JSON.stringify({ requestId, reason: reason.slice(0, 500) }))
+  } catch {
+    /* Storage unavailable: the reason lives in memory only. */
+  }
 }
 
 /**

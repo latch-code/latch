@@ -1,7 +1,7 @@
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import type { ReactNode } from 'react'
 import { Eraser, GitFork } from 'lucide-react'
-import type { ModelRef, SessionConfigOption } from '@latch/protocol'
+import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
 import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
@@ -77,6 +77,15 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
   )
 }
 
+/**
+ * Where a session outside a saved project works, as 设置 names it: the Host's 默认文件夹 (不选项目 there, for a session or
+ * one of 我的 Agent), never that folder's own name; a folder of its own goes by its name.
+ */
+export function placeName(summary: Pick<TaskSummary, 'cwd' | 'workspaceId' | 'sessionFolder'>): string | undefined {
+  if (!summary.cwd) return undefined
+  return summary.workspaceId === 'default' && !summary.sessionFolder ? '默认文件夹' : basename(summary.cwd)
+}
+
 /** The sentence a fork's input starts with, as a fork from a turn's footer does. */
 const FORK_PROMPT = '请接着这个会话继续。'
 
@@ -96,16 +105,26 @@ function openControlWhenShown(name: 'harness' | 'model' | 'thinking' | 'permissi
   })
 }
 
-/** A refused send's own next step beside its reason, when its code names one this device can take; 重试 is sending again. */
-function composerFailure(
+/**
+ * A refused send's own next steps beside its reason, when its code names one this device can take. The text stayed in
+ * the input, so 重试 sends it again; it is offered for a Harness that could not start, which may start the next time.
+ */
+export function composerFailure(
   code: string | undefined,
   owner: boolean,
   openSettings: (section: 'engines' | 'providers') => void,
-): { errorAction?: { label: string; run: () => void } } {
+  retry: () => void,
+): { errorActions?: Array<{ label: string; run: () => void }> } {
   const step = failureAction(code)
+  // The Harness answered with an error of its own (a session in use elsewhere): nothing was taken, and it may pass.
+  if (step === 'retry' && code !== undefined && NOT_ACCEPTED_5XX.has(code))
+    return { errorActions: [{ label: FAILURE_ACTION_LABEL.retry, run: retry }] }
   if (step !== 'model' && step !== 'harness' && step !== 'providers') return {}
-  if (!(owner ? OWNER_FAILURE_STEPS : DEVICE_FAILURE_STEPS).includes(step)) return {}
-  return { errorAction: { label: FAILURE_ACTION_LABEL[step], run: () => takeFailureStep(step, openSettings) } }
+  const actions: Array<{ label: string; run: () => void }> = []
+  if ((owner ? OWNER_FAILURE_STEPS : DEVICE_FAILURE_STEPS).includes(step))
+    actions.push({ label: FAILURE_ACTION_LABEL[step], run: () => takeFailureStep(step, openSettings) })
+  if (step === 'harness') actions.push({ label: FAILURE_ACTION_LABEL.retry, run: retry })
+  return actions.length ? { errorActions: actions } : {}
 }
 
 /** The failure steps a device takes: anyone may pick another model; only the owner changes 设置. */
@@ -196,6 +215,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     sheetComposerRef,
   } = shell
   const manageEngines = owner ? () => openSettings('engines') : undefined
+  // A refusal the new session's own block already says (a Harness found too old once sent) is said there once.
+  const refusal = selectedId === null && block !== null && submission.error === block.message ? '' : submission.error
   // A text rebuild sends its rebuilt conversation with the first message, to the service that answers it.
   const seedService =
     current && current.summary.id === selectedId && seedWaiting(current.summary, current.messages)
@@ -304,7 +325,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     }
     if (!summary || summary.personal) return null
     const project = catalog && summary.mode !== 'chat' ? projectOf(summary, catalog.workspaces) : undefined
-    const folder = summary.mode === 'chat' ? undefined : project?.name || (summary.cwd ? basename(summary.cwd) : undefined)
+    const folder = summary.mode === 'chat' ? undefined : project?.name || (summary.cwd ? placeName(summary) : undefined)
     const worktree = summary.worktree ? (summary.branch ?? summary.worktree.branch) : undefined
     const place = (
       <>
@@ -493,10 +514,12 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
             },
           })}
       sending={submission.sending}
-      error={
-        noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '') || (sideBlocked ?? '')
-      }
-      {...(!noteComposer?.error && submission.error ? composerFailure(submission.errorCode, owner, openSettings) : {})}
+      error={noteComposer?.error || refusal || (actionError?.sessionId === selectedId ? actionError.text : '') || (sideBlocked ?? '')}
+      {...(!noteComposer?.error && refusal
+        ? composerFailure(submission.errorCode, owner, openSettings, () => {
+            void sendDraft()
+          })
+        : {})}
       pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()
@@ -512,6 +535,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined) && !sideBlocked}
       blockReason={block?.message ?? sessionBlock ?? sideBlocked}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
+      {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
       {...(answer ? { answer } : {})}
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
@@ -733,7 +757,9 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       pending={submission.pending}
       sending={submission.sending}
       error={submission.error}
-      {...composerFailure(submission.errorCode, owner, openSettings)}
+      {...composerFailure(submission.errorCode, owner, openSettings, () => {
+        void sendDraft()
+      })}
       pendingReason={submission.pendingReason}
       onRetry={() => {
         void retryDraft()

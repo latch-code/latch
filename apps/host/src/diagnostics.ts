@@ -2,12 +2,14 @@
 // `pnpm latch diagnostics`). It holds versions, the Harnesses' and plugins' states, the shape of the policy, connection
 // counts and the Host's recent events. The events are not log lines: the Host notes them at a fixed list of its own log
 // sites as a category, an ID and an error code, so agent stderr, agent text, prompts and policy hosts never reach them.
-// Every free string left (IDs, the first line of a Harness's status) passes through `redactKnownSecrets` again, with the home
-// folder written as `~` and any other absolute path as a placeholder. Never prompts, transcripts, file contents,
+// A Harness the person defined goes by its place in the list and its preset (`harness-2`, preset `dsh`), never the ID or
+// name they gave it, which could name a project; its plugin and events follow the same label. Every free string left
+// (IDs, the first line of a Harness's status) passes through `redactKnownSecrets` again, with the home folder written as `~`
+// and any other absolute path as a placeholder. Never prompts, transcripts, file contents,
 // memories, device names or anything from auth/ or providers.json: the bundle is built from an explicit list of fields.
 import { arch, platform, release } from 'node:os'
 import { redactKnownSecrets } from '@latch/core/node-kit'
-import type { HarnessInfo, ListenerClass, PluginInfo } from '@latch/protocol'
+import { AGENT_PRESETS, type HarnessInfo, type ListenerClass, type PluginInfo } from '@latch/protocol'
 import type { Policy } from './policy.ts'
 
 /** Events kept for the bundle, and failures kept apart so a busy run does not push them out. */
@@ -95,6 +97,11 @@ export interface DiagnosticsInput {
   now: () => number
   home: string
   harnesses: readonly HarnessInfo[]
+  /**
+   * Every Harness definition the person saved (`settings.json`), mounted or not: each is labelled by its place here, so a
+   * turned-off one or one that failed to load is never named by its ID. Absent: the mounted editable Harnesses.
+   */
+  definitions?: ReadonlyArray<{ id: string; name: string; presetId?: string }>
   plugins: readonly PluginInfo[]
   policy: Policy
   /** Paired devices and how many are revoked; names never leave. */
@@ -114,7 +121,8 @@ export interface DiagnosticsBundle {
   version: 1
   createdAt: string
   host: { version: string; node: string; os: string; arch: string; startedAt: string }
-  harnesses: Array<{ id: string; status: string; level: string; modes: string[]; version?: string; message?: string }>
+  /** `id`: a built-in or plugin Harness's own; one the person defined is `harness-<n>`, with the preset it came from. */
+  harnesses: Array<{ id: string; preset?: string; status: string; level: string; modes: string[]; version?: string; message?: string }>
   plugins: Array<{ id: string; version: string; enabled: boolean; activeRuns: number }>
   policy: {
     presenceBackend: string
@@ -154,8 +162,32 @@ const firstLine = (text: string) => [...(text.split(/\r?\n/u)[0] ?? '')].slice(0
 export function diagnosticsBundle(input: DiagnosticsInput): DiagnosticsBundle {
   const versions = new Map(input.plugins.map(plugin => [plugin.id, plugin.version]))
   const { events, errors } = input.log.recent()
-  const clean = (text: string) => diagnosticText(text, input.home, input.private)
-  const ids = (event: DiagnosticEvent): DiagnosticEvent => ({ ...event, ...(event.id ? { id: clean(event.id) } : {}) })
+  // The person's own Harness definitions, mounted or not (turned off, or failed to load): an ordinal label each, and their
+  // IDs and names hidden in any text.
+  const defined =
+    input.definitions
+    ?? input.harnesses
+      .filter(harness => harness.editable)
+      .map(harness => ({
+        id: harness.id,
+        name: harness.capabilities.display.label,
+        ...(harness.capabilities.display.mark ? { presetId: harness.capabilities.display.mark } : {}),
+      }))
+  const presets = new Map(defined.map(definition => [definition.id, definition.presetId]))
+  const labels = new Map(
+    defined.flatMap((definition, index) => [
+      [definition.id, `harness-${index + 1}`],
+      [`agent-${definition.id}`, `agent-harness-${index + 1}`],
+    ]),
+  )
+  const presetNames = new Set(AGENT_PRESETS.map(preset => preset.name))
+  const hidden = [
+    ...(input.private ?? []),
+    ...defined.flatMap(definition => [definition.id, ...(presetNames.has(definition.name) ? [] : [definition.name])]),
+  ]
+  const clean = (text: string) => diagnosticText(text, input.home, hidden)
+  const label = (id: string) => labels.get(id) ?? clean(id)
+  const ids = (event: DiagnosticEvent): DiagnosticEvent => ({ ...event, ...(event.id ? { id: label(event.id) } : {}) })
   const policy = input.policy
   return {
     format: 'latch-diagnostics',
@@ -163,7 +195,8 @@ export function diagnosticsBundle(input: DiagnosticsInput): DiagnosticsBundle {
     createdAt: new Date(input.now()).toISOString(),
     host: { version: input.version, node: process.version, os: `${platform()} ${release()}`, arch: arch(), startedAt: input.startedAt },
     harnesses: input.harnesses.map(harness => ({
-      id: clean(harness.id),
+      id: label(harness.id),
+      ...(labels.has(harness.id) && presets.get(harness.id) ? { preset: presets.get(harness.id)! } : {}),
       status: harness.status,
       level: harness.level,
       modes: [...harness.modes],
@@ -171,7 +204,7 @@ export function diagnosticsBundle(input: DiagnosticsInput): DiagnosticsBundle {
       ...(harness.statusMessage ? { message: clean(firstLine(harness.statusMessage)) } : {}),
     })),
     plugins: input.plugins.map(plugin => ({
-      id: clean(plugin.id),
+      id: label(plugin.id),
       version: clean(plugin.version),
       enabled: plugin.enabled,
       activeRuns: plugin.activeRuns,

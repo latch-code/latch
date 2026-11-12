@@ -1277,6 +1277,7 @@ export class HarnessHub implements Bridge {
     const { capabilities } = entry
     let status: HarnessInfo['status'] = 'ready'
     let statusMessage: string | undefined
+    let statusReason: HarnessInfo['statusReason']
     if (entry.failure) {
       status = 'unavailable'
       statusMessage = entry.failure
@@ -1289,6 +1290,7 @@ export class HarnessHub implements Bridge {
         if (reported) {
           status = reported.status
           statusMessage = reported.statusMessage
+          if (reported.status === 'unavailable' && reported.statusReason === 'outdated') statusReason = 'outdated'
         }
       } catch (error) {
         status = 'unavailable'
@@ -1315,6 +1317,7 @@ export class HarnessHub implements Bridge {
       ...(entry.trust.kind === 'acp' ? { editable: true as const } : {}),
       status,
       ...(statusMessage ? { statusMessage } : {}),
+      ...(statusReason ? { statusReason } : {}),
       modes: [...(declared?.modes ?? ['chat', 'agent'])],
       ...(driver.agentContext ? { agentContext: driver.agentContext } : {}),
       ...(driver.skills ? { skills: driver.skills } : {}),

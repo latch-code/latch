@@ -658,6 +658,21 @@ function chosenOption(result: unknown): string | undefined {
  * Latch task ↔ ACP session is 1:1. Every session is full access (L3): the agent's own permission mode and questions
  * are advisory, and Latch only refuses to continue when it cannot confirm that mode.
  */
+/** The process went away or stopped answering while the session was being reattached, before a turn existed. */
+const START_ERRORS = new Set(['agent-exited', 'agent-timeout'])
+/** The agent answered with an error then (a thread in use elsewhere, a malformed answer). */
+const REFUSED_ERRORS = new Set(['agent-error', 'agent-protocol'])
+
+/**
+ * A prompt refused while its session was being reattached: nothing was recorded, so the answer says so with a code of
+ * `NOT_ACCEPTED_5XX` (`agent-start-failed`, `agent-refused`) instead of a 5xx a client must treat as result unknown.
+ */
+function notAccepted(error: unknown): unknown {
+  if (!(error instanceof AppError)) return error
+  if (START_ERRORS.has(error.code)) return new AppError(503, 'agent-start-failed', error.message)
+  return REFUSED_ERRORS.has(error.code) ? new AppError(502, 'agent-refused', error.message) : error
+}
+
 export class AgentRuntime implements Bridge {
   private state: AcpState = emptyAcpState()
   private readonly fileTracking: RunFileTracking
@@ -1894,7 +1909,7 @@ export class AgentRuntime implements Bridge {
       } catch (error) {
         this.release(run)
         this.notify(sessionId)
-        throw error
+        throw run.userMessageId === undefined ? notAccepted(error) : error
       }
       this.begin(run)
     })().finally(() => this.inflight.delete(key))

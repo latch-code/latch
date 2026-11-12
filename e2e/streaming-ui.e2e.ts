@@ -509,10 +509,7 @@ describe('streamed messages in the real workspace', () => {
       const originalRow = await row.elementHandle()
 
       await context.setOffline(true)
-      await page
-        .getByRole('main')
-        .getByRole('button', { name: /^离线/ })
-        .waitFor()
+      await page.getByRole('main').locator('.connection-pill').getByText('离线', { exact: true }).waitFor()
       reply.append(suffix)
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')
@@ -540,7 +537,7 @@ describe('streamed messages in the real workspace', () => {
       await page.route('**/link/api/events**', route => route.abort())
       await context.setOffline(true)
       await context.setOffline(false)
-      const retry = page.locator('.topbar[data-phone] .connection-pill')
+      const retry = page.locator('.banner-region').getByRole('button', { name: '重试', exact: true })
       await retry.waitFor()
       const refreshed = page.waitForResponse(
         response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/link/api/tasks/${id}`,

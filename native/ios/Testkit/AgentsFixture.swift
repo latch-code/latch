@@ -263,14 +263,15 @@ private func deliveredCases() throws -> [Bool] {
         _ = try await workspace.submit(PhoneMemoryWrite.change(owner: agentId, memory: kept, text: "发版前跑 pnpm check 与 e2e"))
         detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
         guard let changed = detail["memories"].array.first(where: { $0["id"] == kept["id"] }), PhoneMemories.edited(detail, memoryId: kept["id"].string ?? ""),
-              PhoneMemories.source(changed) == nil, let changedRevision = changed["revision"].integer else { throw NativeFailure.invalidRecord }
+              // An edit keeps where it came from, marked as changed.
+              PhoneMemories.source(changed) != nil, changed["edited"].bool, let changedRevision = changed["revision"].integer else { throw NativeFailure.invalidRecord }
         var staleUndo = false
         do { _ = try await workspace.submit(PhoneMemories.undo(owner: agentId, memoryId: kept["id"].string ?? "", baseRevision: Int(changedRevision) - 1)) }
         catch { staleUndo = (error as? NativeFailure) == .changedElsewhere }
         _ = try await workspace.submit(PhoneMemories.undo(owner: agentId, memoryId: kept["id"].string ?? "", baseRevision: Int(changedRevision)))
         detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)
         guard staleUndo, let undone = detail["memories"].array.first(where: { $0["id"] == kept["id"] }), undone["content"].string == "发版前先跑 pnpm check",
-              PhoneMemories.source(undone) != nil, !PhoneMemories.edited(detail, memoryId: kept["id"].string ?? "") else { throw NativeFailure.invalidRecord }
+              PhoneMemories.source(undone) != nil, !undone["edited"].bool, !PhoneMemories.edited(detail, memoryId: kept["id"].string ?? "") else { throw NativeFailure.invalidRecord }
         // A delete leaves 撤销 and 清除; 清除 takes the text now.
         _ = try await workspace.submit(PhoneMemoryWrite.remove(owner: agentId, memoryId: kept["id"].string ?? ""))
         detail = try await workspace.read("/link/api/custom-agents/" + agentId, body: true)

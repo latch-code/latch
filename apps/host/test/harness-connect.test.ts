@@ -138,7 +138,12 @@ describe('a DeepSeek Harness older than its preset supports', () => {
 
     // Before a definition exists nothing runs it, not even for its version: the draft's offer is all there is.
     const listed = await owner.json<{ presets: AgentPresetSettings[] }>('agents')
-    expect(listed.presets.find(preset => preset.id === 'dsh')?.detected).toEqual({ found: true, path: join(bin, 'dsh') })
+    // Settings says it was found, and that its version is not read yet.
+    expect(listed.presets.find(preset => preset.id === 'dsh')?.detected).toEqual({
+      found: true,
+      path: join(bin, 'dsh'),
+      versionUnread: true,
+    })
     expect(existsSync(versionsRead)).toBe(false)
 
     // Chosen from a draft: saving its definition reads the version once and refuses, so no session and no definition.
@@ -149,9 +154,14 @@ describe('a DeepSeek Harness older than its preset supports', () => {
     expect((await readFile(versionsRead, 'utf8')).length).toBe(1)
     const unsaved = await owner.json<{ agents: AgentSettings[]; presets: AgentPresetSettings[] }>('agents')
     expect(unsaved.agents).toEqual([])
-    // Kept: the preset now says it needs an upgrade, and a draft is no longer offered it.
+    // Kept: the preset now says it needs an upgrade, and a draft lists it greyed, never as a choice.
     expect(unsaved.presets.find(preset => preset.id === 'dsh')?.detected).toMatchObject({ found: true, outdated })
-    expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'dsh')).toBeUndefined()
+    expect(unsaved.presets.find(preset => preset.id === 'dsh')?.detected?.versionUnread).toBeUndefined()
+    expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'dsh')).toMatchObject({
+      status: 'unavailable',
+      statusReason: 'outdated',
+      statusMessage: `DeepSeek Harness ${text}`,
+    })
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toEqual([])
     expect(existsSync(started)).toBe(false)
 

@@ -62,7 +62,7 @@ export function Composer({
   onOpenPending,
   sending,
   error,
-  errorAction,
+  errorActions,
   pendingReason,
   onRetry,
   onAbandon,
@@ -78,6 +78,7 @@ export function Composer({
   trailing,
   run,
   readOnly,
+  readOnlyReason,
   answer,
   meta,
   drawers,
@@ -115,8 +116,8 @@ export function Composer({
   onOpenPending?: () => void
   sending: boolean
   error: string
-  /** The refusal's own next step (换个模型, 打开设置 › Harness…), beside the reason. */
-  errorAction?: { label: string; run: () => void }
+  /** The refusal's own next steps (换个模型, 打开设置 › Harness, 重试…), beside the reason. */
+  errorActions?: ReadonlyArray<{ label: string; run: () => void }>
   /** Why the pending submission is still unconfirmed after the last try, in the short wording of an inline error. */
   pendingReason?: string
   onRetry: () => void
@@ -140,6 +141,8 @@ export function Composer({
   run?: RunState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
   readOnly?: string
+  /** Why it only reads, behind the label's Hint. */
+  readOnlyReason?: string
   /**
    * The input answers what a drawer waits on, so what is written goes there and not to the queue. `reject`: an approval;
    * the slot stays the stop circle, and Enter sends only with text. `question`: with text the slot is send; with none it
@@ -286,10 +289,18 @@ export function Composer({
   // The prompt glyph says where to tell it what to do; the phone's sheet is a page of its own and has none.
   const input =
     readOnly !== undefined ? (
-      <p className="composer-readonly" role="note">
-        <LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        <span>{readOnly}</span>
-      </p>
+      readOnlyReason ? (
+        <div className="composer-readonly" role="note">
+          <Hint lead={<LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={readOnly}>
+            {readOnlyReason}
+          </Hint>
+        </div>
+      ) : (
+        <p className="composer-readonly" role="note">
+          <LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <span>{readOnly}</span>
+        </p>
+      )
     ) : variant === 'sheet' ? (
       textarea
     ) : (
@@ -364,12 +375,16 @@ export function Composer({
       {error && (
         <InlineNotice
           tone="error"
-          {...(errorAction
+          {...(errorActions?.length
             ? {
                 action: (
-                  <Button size="xs" variant="secondary" onClick={errorAction.run}>
-                    {errorAction.label}
-                  </Button>
+                  <>
+                    {errorActions.map(item => (
+                      <Button key={item.label} size="xs" variant="secondary" onClick={item.run}>
+                        {item.label}
+                      </Button>
+                    ))}
+                  </>
                 ),
               }
             : {})}>

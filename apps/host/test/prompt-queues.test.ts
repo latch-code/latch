@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -63,6 +63,49 @@ describe('persistent Host prompt queues', () => {
     expect(options.beforeEnqueue).toHaveBeenCalledTimes(1)
     expect(await readFile(join(dataDir, 'queues.json'), 'utf8')).toBe(before)
     expect((await PromptQueues.open(options)).view('task').map(item => item.text)).toEqual(['Kept'])
+  })
+  it('drops the receipt of a message sent at once that the session refused before taking it, so only one way to send it remains', async () => {
+    for (const refusal of [
+      new AppError(503, 'agent-start-failed', 'Flaky 启动失败'),
+      new AppError(503, 'audit-unavailable', '审计记录暂时无法保存'),
+      new AppError(409, 'queue-context-changed', '设置已改变'),
+    ]) {
+      const { queue, detail, options, dataDir } = await fixture()
+      detail.summary.status = 'idle'
+      vi.mocked(options.send).mockRejectedValueOnce(refusal)
+      const body = input('Now')
+      await expect(queue.submit(actor, 'task', body)).rejects.toBe(refusal)
+      // Nothing visible to retry, nothing on disk: the client's own 重试 is the only way left.
+      expect(queue.view('task')).toEqual([])
+      expect(queue.knows('task', actor.deviceId, body.requestId)).toBe(false)
+      expect(JSON.parse(await readFile(join(dataDir, 'queues.json'), 'utf8')).items).toEqual([])
+    }
+  })
+  it('answers an unlisted 503 and keeps the item when the refused message’s receipt cannot be deleted', async () => {
+    const { queue, detail, options, dataDir } = await fixture()
+    detail.summary.status = 'idle'
+    vi.mocked(options.send).mockImplementationOnce(async () => {
+      // The receipt is on disk; the folder turns read-only before it can be deleted.
+      await chmod(dataDir, 0o500)
+      throw new AppError(503, 'agent-start-failed', 'Flaky 启动失败')
+    })
+    try {
+      await expect(queue.submit(actor, 'task', input('Kept'))).rejects.toMatchObject({ status: 503, code: 'queue-send-unknown' })
+    } finally {
+      await chmod(dataDir, 0o700)
+    }
+    // Still there to retry in the queue: the client keeps its requestId rather than sending the text a second way.
+    expect(queue.view('task').map(item => item.text)).toEqual(['Kept'])
+    expect(JSON.parse(await readFile(join(dataDir, 'queues.json'), 'utf8')).items.map((item: { text?: string }) => item.text)).toEqual([
+      'Kept',
+    ])
+  })
+  it('keeps a message sent at once as unconfirmed, with no definite code, when the session may have taken it', async () => {
+    const { queue, detail, options } = await fixture()
+    detail.summary.status = 'idle'
+    vi.mocked(options.send).mockRejectedValueOnce(new AppError(503, 'storage-unavailable', '持久化失败'))
+    await expect(queue.submit(actor, 'task', input('Maybe'))).rejects.toMatchObject({ code: 'storage-unavailable' })
+    expect(queue.view('task')).toMatchObject([{ text: 'Maybe', state: 'parked', reason: '发送结果未确认，请重试这一项' }])
   })
   it('admits at most five, deduplicates exact submissions, refuses changed retries and keeps authority private', async () => {
     const { queue, dataDir } = await fixture()

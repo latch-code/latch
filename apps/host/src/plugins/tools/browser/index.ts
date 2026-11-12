@@ -1,4 +1,5 @@
 import type { HarnessPlugin, ToolDefinition, ToolResult } from '@latch/sdk'
+import { BrowserLabels } from './labels.ts'
 
 /** The tools' names, as the Host's broker and classifier know them. */
 export type BrowserTool =
@@ -49,6 +50,7 @@ const FAILURES: Record<string, string> = {
   'not-found': '这个会话没有这个标签或元素，请先列出标签或重新读取页面。',
   'no-project': '这个会话没有项目，浏览器不可用。',
   'panel-closed': '请人打开 Latch 的「浏览器」页签后再试：画面不显示时这台 Mac 截不到图。',
+  'panel-covered': '「浏览器」页签上有菜单、对话框或「选取元素」挡着画面，这次调用没有执行；请人关掉它后再试。',
   'result-unknown': '结果未知：桌面端在调用中断开或没有及时结算，动作可能已经执行，请重新读取页面核对。',
   'audit-failed': '审计记录写入失败，这次调用没有执行。',
   'not-full-access': '这个会话不是完全访问的外部 Harness 会话，Latch 的浏览器工具不经这里给它。',
@@ -299,9 +301,15 @@ export function browserFailure(outcome: Extract<BrokerOutcome, { ok: false }>): 
  * browser classes: another plugin's tool of the same name is an unlisted tool.
  */
 export function createBrowserToolsPlugin(backend: BrowserBackend): HarnessPlugin {
+  // What earlier results said of each tab, for an approval card that names the element and the page.
+  const labels = new BrowserLabels()
   const tools: ToolDefinition[] = BROWSER_TOOL_DEFINITIONS.map(definition => ({
     ...definition,
     requiresApproval: false,
+    preview: async args => {
+      const summary = labels.summary(definition.name as BrowserTool, args)
+      return summary ? { summary } : {}
+    },
     async execute(args, context): Promise<ToolResult> {
       const outcome = await backend.call(definition.name as BrowserTool, args, {
         sessionId: context.sessionId,
@@ -312,6 +320,7 @@ export function createBrowserToolsPlugin(backend: BrowserBackend): HarnessPlugin
       })
       if (!outcome.ok) throw new Error(browserFailure(outcome))
       const { text } = outcome
+      labels.learn(definition.name as BrowserTool, args, text)
       return {
         text: browserResultText(definition.name as BrowserTool, text),
         ...(outcome.image ? { images: [{ mimeType: 'image/png' as const, data: outcome.image.toString('base64') }] } : {}),

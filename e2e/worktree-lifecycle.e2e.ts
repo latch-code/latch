@@ -135,6 +135,11 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await expect.poll(() => page.locator('.topbar-crumb-worktree').innerText()).toContain('工作树已移除')
     await expect.poll(() => row.innerText()).toContain('工作树已移除')
     expect((await owner.json<TaskDetail>(`tasks/${first.id}`)).summary.worktree?.removed).toBe(true)
+    // It only reads now: no input, no attachments, no 撤销本轮; the reason is behind the label's Hint.
+    await page.locator('.composer-readonly').getByText('只能查看', { exact: true }).waitFor()
+    expect(await page.getByRole('textbox', { name: '继续对话', exact: true }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '添加文件…' }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '撤销本轮' }).count()).toBe(0)
     await page.screenshot({ path: `${OUT}/removed-session--1440.png` })
 
     // A clean one, at 390: the dialog fits the phone.

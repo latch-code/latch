@@ -232,7 +232,7 @@ export default {
 
 ### 预览
 
-可选的 `preview(args, { workspaceRoot, workspaceFolders, signal })` 必须无副作用，返回 `{ title?, diffs? }`。Standard 在需要审批的调用（风险不是 R0，或工具声明了 `requiresApproval`）执行前调用它，结果显示在审批与工具卡片上；抛错或返回无效值时忽略，不阻止调用。
+可选的 `preview(args, { workspaceRoot, workspaceFolders, signal })` 必须无副作用，返回 `{ title?, diffs?, summary? }`；`summary` 是这一次调用做什么的短标签（「在 localhost:5173 点击 "保存"」），R1 审批卡用它代替通用的说明，只用于显示，不改变风险分级。Standard 在需要审批的调用（风险不是 R0，或工具声明了 `requiresApproval`）执行前调用它，结果显示在审批与工具卡片上；抛错或返回无效值时忽略，不阻止调用。
 
 每个 diff 是 `{ path, oldText?, newText, previous? }`，`previous` 说明目标文件原来的状态：
 
@@ -317,7 +317,7 @@ export default {
 - 所有已启用的 Harness 都会被挂载并出现在新会话的选择器中；`--harness my-harness` 让它成为默认值。
 - `capabilities` 写这个 Harness 实际做什么，客户端只读这些事实，不判断它是哪种 Driver；不知道的项不写，Host 按最弱处理。`modes` 列出接受的模式。`models.owner: 'latch'` 表示使用 Host 的模型服务（客户端会显示模型选择器并传入 `model`），`'harness'`（默认）表示自行管理模型；不支持的模式或模型请求由 Host 以 400 拒绝。`models.catalogue` 说明开始前能否知道可选项（`none` 为默认），`models.wires` 列出 Latch 能把它的请求转发过去的模型协议（空表示不能经 Latch 转发），`models.experimental` 表示这种转发还没有经过真实使用，`models.knownOnly` 表示经 Latch 时它只用服务里它自己认识的模型（草稿只提供它自己列表里有的）；声明了协议的 Driver 收到 `CreateTaskInput.modelRoute` 与 `options.modelGateway`，按进程 `open` 一个网关凭据交给 Harness，进程结束时 `close`，`active()` 为假后换进程；一轮发出时调用一次 `takeTurn()` 清掉两轮之间的计数，结束时再调用一次，把网关自己数的请求、模型与令牌记进 `TurnStats.routed`。`permission.enforcement` 写谁决定工具调用能否运行（`harness` 或 `none`，默认 `none`），`permission.rejectionNote` 表示拒绝说明能送到模型（默认 `false`）。`tools.fileMentions` 表示消息里提到的项目文件能送到它（默认 `false`，这时 Host 拒绝带文件引用的输入）。`display.label` 是显示的名字（默认 `name`），`display.mark` 是客户端固定图标集的键（预设 ID 或 `plugin`），不是地址或图片。`fork: 'native'` 表示它能分叉自己会话的记录：分叉到它自己的会话时 `CreateTaskInput.fork` 给出来源会话、分叉的那一轮的最后一条消息与 prompt 开头种子的长度，Driver 让 Harness 分叉并在首条用户消息记 `nativeFork`、不发种子，做不到时照常发送种子并写明原因（默认不声明，只用种子；见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。
 - 这些事实是对用户的陈述，描述的一方说了不算，由 Host 钳制：只有内置 Harness 能得到 `enforcement: 'latch'`（其他写了也算 `harness`，会话仍是 L3，也收不到分级器）；只有内置 Harness 能说 `tools.shell: false`；其他 Harness 的名字与内置的相同或只差大小写、宽度、空白与不可见字符时显示为「…（非内置）」，也不能用内置的图标。
-- `status()` 可选，返回 `ready` 或 `unavailable` 与说明，例如依赖的程序未安装。
+- `status()` 可选，返回 `ready` 或 `unavailable` 与说明，例如依赖的程序未安装；命令已知太旧时另带 `statusReason: 'outdated'`，新会话的 Harness 菜单把它列成灰色的「需要升级」。
 - `create(options)` 同步返回尚未启动的 Bridge，异步初始化放进 `start()`。`options`（`HarnessHostOptions`）包括私有 `dataDir`（`<数据目录>/harnesses/<driver-id>`，不要写入用户工作区）、默认 `workspaceRoot`、允许的 `workspaces()`（各项目的主文件夹）、`registry`、`providerId`、`defaultModel()` 与可选 `maxSteps`。Standard 以外的 Driver 还收到 `askUser({ sessionId, callId, prompt, questions, signal })`：把 Harness 的提问放进会话行 `tool:<callId>` 的提问卡，回答落进会话后得到 `latch.question-result` 的 JSON，提问结束或 `signal` 中止时拒绝；Driver 把结果写进那一行并落盘后调用 `questionSettled({ sessionId, callId, state })`，回答的设备才拿到回执。失败的系统消息可以带 `Message.errorCode`（AppError 的 code），客户端据此给出下一步；Host 停止时中断的一轮记 `runEnd: host-stopped` 与 `Message.interrupted`，见 [STREAMING.md](STREAMING.md#运行的真实状态)。
 - `projectFolders: 'all'`（可选）：Driver 能使用项目的全部文件夹。Host 因此在新建会话时传入 `workspaceId` 与 `folders`（`{ id, path }` 的有序列表，`[0]` 就是 `cwd`），并在 `options.projects()` 中列出当前可用的项目及其文件夹（`default` 是启动目录）；Driver 应据此核对 `folders`，在会话中保存它们，并在每次输入前确认它们仍属于该项目（否则 409 `workspace-changed`）。会话应把它们记在 `TaskSummary.workspaceId` 与 `folders` 中。没有声明的 Driver 只收到主文件夹作为 `cwd`，`HarnessInfo.projectFolders` 也不声称它能使用其他文件夹。L3 Driver 同样收到这些字段，`launchPreview` 也收到 `workspaceId` 与 `folders`，并在返回的 `folders` 中列出 Agent 除 `cwd` 之外还会收到的文件夹，启动审计记下文件夹的数量。使用 Registry 时在运行开始时取得 `acquire(providerId, { tools })` 租约，并持有到运行真正结束。
 - `folderAccess`（可选）：告诉客户端 Harness 怎样对待项目的其他文件夹，成为 `HarnessInfo.projectFolders`。声明了 `projectFolders: 'all'` 时写 `{ access: 'all', max? }`，`max` 是能在其中新建会话的项目最多有几个文件夹（Host 超出时返回 409 `harness-folder-limit`）；没有声明时可写 `{ access: 'primary' }`（只用主文件夹，默认）、`'primary-asks'`（使用其他文件夹前会询问）或 `'primary-unbounded'`（只收到主文件夹，但不限制能访问的目录）。没有声明 `projectFolders: 'all'` 的 Driver 写 `all` 会被忽略。
@@ -336,7 +336,9 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 
 ### Bridge 契约
 
-签名以 [bridge.ts](../packages/sdk/src/bridge.ts) 为准：
+签名以 [bridge.ts](../packages/sdk/src/bridge.ts) 为准。
+
+**拒绝与「结果未知」。** 客户端把 5xx 当作结果未知、保留原 `requestId` 重试，只有错误码在 `NOT_ACCEPTED_5XX`（`@latch/protocol`：`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`、`agent-busy`、`audit-unavailable`、`presence-unavailable`）里的 5xx 例外：它们的意思是「什么都没有记下」，客户端丢弃 `requestId`、让人重新发送，Host 同时放下为这个请求保留的附件。Driver 的 `createTask`、`prompt` 只能在这一轮还没有记录（没有用户消息、没有回执、没有可能之后再发出的排队项）时抛这些码；已经记下任何东西之后失败，就用不在清单里的 5xx（例如 `storage-unavailable`），让客户端用同一个 `requestId` 重试。4xx（408 除外）同样表示没有接收。
 
 | 方法 | Host 期待的行为 |
 | --- | --- |

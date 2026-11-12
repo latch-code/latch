@@ -55,6 +55,7 @@ function MemorySource({
           </span>
         ))}
       <time dateTime={source.proposedAt}>{relativeTime(source.proposedAt)}</time>
+      {memory.edited && <span>已修改</span>}
     </span>
   )
 }
@@ -93,6 +94,7 @@ export function MemoryTab({
   const [text, setText] = useState('')
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
   const [deleting, setDeleting] = useState<AgentMemory | null>(null)
+  const [clearing, setClearing] = useState<{ memoryId: string; baseRevision: number } | null>(null)
   const base = `custom-agents/${encodeURIComponent(owner)}/memories`
   const locked = disabled || writes.saving || writes.held
   const added = writeFor(writes.state, 'memory:new')
@@ -101,12 +103,9 @@ export function MemoryTab({
     proposal => proposal.state === 'pending' || writes.state?.write.key.startsWith(`proposal:${proposal.id}:`) === true,
   )
   const deleted = changes.filter(change => change.operation === 'delete' && !memories.some(memory => memory.id === change.memoryId))
-  // Both carry the revision shown, so a change made elsewhere since is not undone or cleared unseen.
+  // 撤销 and 清除 carry the revision shown, so a change made elsewhere since is not undone or cleared unseen.
   const undo = (memoryId: string, baseRevision: number) => {
     void writes.run(`memory:${memoryId}:undo`, `${base}/${memoryId}/undo`, 'POST', { baseRevision })
-  }
-  const forget = (memoryId: string, baseRevision: number) => {
-    void writes.run(`memory:${memoryId}:undo`, `${base}/${memoryId}/undo`, 'DELETE', { baseRevision })
   }
   const add = async () => {
     if (!text.trim() || locked) return
@@ -333,7 +332,7 @@ export function MemoryTab({
                   disabled={locked}
                   loading={state !== null && 'phase' in state && state.phase === 'saving' && state.write.method === 'DELETE'}
                   onClick={() => {
-                    forget(change.memoryId, change.previous.revision)
+                    setClearing({ memoryId: change.memoryId, baseRevision: change.previous.revision })
                   }}>
                   清除
                 </Button>
@@ -341,6 +340,22 @@ export function MemoryTab({
             )
           })}
         </ul>
+      )}
+      {clearing && (
+        <ConfirmDialog
+          title="清除这条记忆？"
+          danger
+          confirmLabel="清除"
+          message="清除后不能再撤销。"
+          onClose={() => {
+            setClearing(null)
+          }}
+          onConfirm={async () => {
+            const { memoryId, baseRevision } = clearing
+            const done = await writes.run(`memory:${memoryId}:undo`, `${base}/${memoryId}/undo`, 'DELETE', { baseRevision })
+            if (done === undefined) throw new MessageError('没有清除，原因见页面上的说明。')
+          }}
+        />
       )}
       {deleting && (
         <ConfirmDialog

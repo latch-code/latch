@@ -1514,8 +1514,8 @@ describe('agent settings', () => {
     expect((await harness()).statusMessage).toBe(
       '已安装 codex，还差让 Latch 连接它的适配器 codex-acp。安装：npm i -g @agentclientprotocol/codex-acp',
     )
-    // Codex alone is enough for the preset: it is reached directly.
-    expect(await preset('codex')).toEqual({ found: true, path: join(bin, 'codex') })
+    // Codex alone is enough for the preset: it is reached directly. Not confirmed, it is not run for its version yet.
+    expect(await preset('codex')).toEqual({ found: true, path: join(bin, 'codex'), versionUnread: true })
     await install('codex-acp')
     // Reading the settings is the re-check: the catalog that follows does not show the earlier lookup.
     expect(await detected()).toEqual({ found: true, path: join(bin, 'codex-acp'), agent: { command: 'codex', found: true } })

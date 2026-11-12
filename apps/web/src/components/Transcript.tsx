@@ -437,7 +437,14 @@ const TurnView = memo(function TurnView({
           )}
           {status && <StatusLine {...status} />}
           {runEnd && summary && (
-            <RunEndNote summary={summary} harness={engine ?? harnessName} onRetry={onRetry} onContinue={onContinue} login={login} />
+            <RunEndNote
+              summary={summary}
+              harness={engine ?? harnessName}
+              onRetry={onRetry}
+              onContinue={onContinue}
+              login={login}
+              shown={new Set(turn.replies.map(message => message.id))}
+            />
           )}
           {showOutcome && <OutcomeRecord turn={turn} outcome={outcome} onRetry={onRetry} />}
           {retry?.warning && (

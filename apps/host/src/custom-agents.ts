@@ -154,6 +154,7 @@ const memorySchema = z.strictObject({
   createdAt: stamp,
   updatedAt: stamp,
   source: memoryOrigin.optional(),
+  edited: z.literal(true).optional(),
 })
 const automationId = z.string().regex(/^auto_[a-f0-9-]{36}$/u)
 /** A schedule proposal's name and when; its `content` is each run's input. */
@@ -414,9 +415,9 @@ export class CustomAgents {
       if (!found) throw new AppError(404, 'agent-memory-not-found', '找不到这条记忆。')
       if (found.revision !== parsed.baseRevision) throw changed()
       this.keepChange(state, owner, { memoryId: id, operation: 'update', at: this.at(), previous: structuredClone(found) })
+      // Where it came from stays, marked as changed since: the person's words now, from that proposal.
+      if (found.content !== parsed.content && found.source) found.edited = true
       found.content = parsed.content
-      // An edit makes it the person's own words; where the old text came from no longer describes it.
-      delete found.source
       found.revision++
       found.updatedAt = this.at()
       return { target: id, ...ownerDetail(owner) }
@@ -711,6 +712,7 @@ export class CustomAgents {
         if (!current) throw new AppError(410, 'agent-memory-deleted', '这条记忆已删除。')
         current.content = step.previous.content
         assign(current, 'source', step.previous.source ?? null)
+        assign(current, 'edited', step.previous.edited ?? null)
         current.revision++
         current.updatedAt = at
       } else {

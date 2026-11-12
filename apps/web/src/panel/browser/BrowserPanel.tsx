@@ -102,7 +102,14 @@ type Picked = { rect: BrowserRect; tag: string }
  * Whether something of the page's lies over the canvas, where the tab's view would hide it: a menu, a dialog or a
  * popover over any part of it, or anything else (a page, a scrim) found above it at its middle or corners.
  */
-function overlayCovers(canvas: HTMLElement): boolean {
+/**
+ * A tooltip is a hover's few words beside a control, not a layer the person works in: the view stays live under it (the
+ * part over the canvas is drawn under the view), so a pointer resting on 加入对话 never freezes the tab, nor keeps the
+ * Agent out of it.
+ */
+const TOOLTIP = '[role="tooltip"]'
+
+export function overlayCovers(canvas: HTMLElement, doc: Pick<Document, 'elementFromPoint' | 'querySelectorAll'> = document): boolean {
   const area = canvas.getBoundingClientRect()
   if (area.width === 0 || area.height === 0) return false
   const inset = 12
@@ -114,11 +121,11 @@ function overlayCovers(canvas: HTMLElement): boolean {
     [area.right - inset, area.bottom - inset],
   ] as const
   for (const [x, y] of points) {
-    const top = document.elementFromPoint(x, y)
-    if (top && !canvas.contains(top)) return true
+    const top = doc.elementFromPoint(x, y)
+    if (top && !canvas.contains(top) && !top.closest(TOOLTIP)) return true
   }
-  for (const element of document.querySelectorAll<HTMLElement>(':popover-open, dialog[open]')) {
-    if (canvas.contains(element)) continue
+  for (const element of doc.querySelectorAll<HTMLElement>(':popover-open, dialog[open]')) {
+    if (canvas.contains(element) || element.matches(TOOLTIP)) continue
     const box = element.getBoundingClientRect()
     if (box.width === 0 || box.height === 0) continue
     if (box.right > area.left && box.left < area.right && box.bottom > area.top && box.top < area.bottom) return true

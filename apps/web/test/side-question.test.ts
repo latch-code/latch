@@ -10,6 +10,7 @@ import {
   sideQuestionPoint,
   sideQuestionRefusal,
   sideQuestionTransport,
+  withoutSideForks,
 } from '../src/conversation/SideQuestion.tsx'
 import { slashOptions } from '../src/composer/SlashCommands.tsx'
 
@@ -17,6 +18,14 @@ const message = (id: string, role: Message['role'], extra: Partial<Message> = {}
   ({ id, role, text: id, createdAt: '2026-11-13T00:00:00.000Z', ...extra }) as Message
 
 describe('/btw', () => {
+  it('keeps the fork of an open panel out of the session list, unless it is the open session', () => {
+    const tasks = [{ id: 'a' }, { id: 'fork' }] as unknown as TaskDetail['summary'][]
+    const snapshot = { tasks }
+    expect(withoutSideForks(snapshot, new Set(), null)).toBe(snapshot)
+    expect(withoutSideForks(snapshot, new Set(['fork']), null).tasks.map(task => task.id)).toEqual(['a'])
+    expect(withoutSideForks(snapshot, new Set(['fork']), 'fork')).toBe(snapshot)
+  })
+
   it('reads the question after /btw, and nothing else as one', () => {
     expect(sideQuestionOf('/btw 这个函数为什么慢？')).toBe('这个函数为什么慢？')
     expect(sideQuestionOf('  /btw  多行\n问题 ')).toBe('多行\n问题')

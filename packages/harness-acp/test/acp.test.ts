@@ -2985,6 +2985,35 @@ describe('ACP process failures', () => {
     expect(fixture.diagnostics.join('\n')).not.toContain(secret)
   })
 
+  it('refuses the next prompt of a session whose agent cannot start, with a code that says nothing was accepted', async () => {
+    const fixture = await setup({ FAKE_ACP_INIT_ERROR: '1' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
+    const before = await settled(bridge, sessionId)
+    const requestId = rid()
+    await expect(bridge.prompt(sessionId, 'echo again', requestId)).rejects.toMatchObject({ status: 503, code: 'agent-start-failed' })
+    const after = await bridge.detail(sessionId)
+    // Refused before the turn was recorded: no user message carries the request.
+    expect(after.messages.some(message => message.requestId === requestId)).toBe(false)
+    expect(after.messages).toHaveLength(before.messages.length)
+  })
+
+  it('says a session whose agent exits while it is being loaded accepted nothing (agent-start-failed, not agent-exited)', async () => {
+    const exitFile = join(await mkdtemp(join(tmpdir(), 'latch-load-exit-')), 'exit')
+    const fixture = await setup({ FAKE_ACP_CAPS: 'load', FAKE_ACP_LOAD_EXIT_FILE: exitFile })
+    const first = await fixture.open()
+    const { sessionId } = await first.createTask({ prompt: 'echo one', requestId: rid() })
+    const before = await settled(first, sessionId)
+    await first.close()
+    await writeFile(exitFile, '1')
+    const bridge = await fixture.open()
+    const requestId = rid()
+    await expect(bridge.prompt(sessionId, 'echo two', requestId)).rejects.toMatchObject({ status: 503, code: 'agent-start-failed' })
+    const after = await bridge.detail(sessionId)
+    expect(after.messages.some(message => message.requestId === requestId)).toBe(false)
+    expect(after.messages).toHaveLength(before.messages.length)
+  })
+
   it('pauses restarts for a full minute after the third crash', () => {
     const health = new AgentHealth()
     health.crashed(0)

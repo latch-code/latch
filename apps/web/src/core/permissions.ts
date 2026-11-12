@@ -132,17 +132,32 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
   }
 }
 
-export type ComposerGate = { kind: 'open' } | { kind: 'read-only'; text: string } | { kind: 'stopped' }
+/** `reason`: why it only reads, behind the label's Hint. */
+export type ComposerGate = { kind: 'open' } | { kind: 'read-only'; text: string; reason?: string } | { kind: 'stopped' }
+
+/**
+ * Why a session itself can only be read, whatever the device may do: its Agent was removed, or its worktree was. Nothing
+ * runs, is undone or is added in it; undefined while it can go on.
+ */
+export function sessionReadOnly(
+  summary: Pick<TaskSummary, 'personal' | 'worktree'> | undefined,
+): { text: string; reason?: string } | undefined {
+  // Latch no longer runs an assistant's private context, so nothing can continue its session.
+  if (summary?.personal) return { text: '这个会话来自已移除的 Agent，只能查看' }
+  if (summary?.worktree?.removed)
+    return { text: '只能查看', reason: '工作树已移除：会话不能再运行、撤销本轮或添加文件。分支还在，可以在新会话里接着用它。' }
+  return undefined
+}
 
 /** Whether this device may type into a session; a stopped session shows its own banner. */
 export function composerGate(input: {
-  summary?: Pick<TaskSummary, 'permissionDrift' | 'personal'>
+  summary?: Pick<TaskSummary, 'permissionDrift' | 'personal' | 'worktree'>
   permission?: SessionPermission
   access: Pick<DeviceAccess, 'legacy' | 'scopes'>
   stopped?: boolean
 }): ComposerGate {
-  // Latch no longer runs an assistant's private context, so nothing can continue its session.
-  if (input.summary?.personal) return { kind: 'read-only', text: '这个会话来自已移除的 Agent，只能查看' }
+  const readOnly = sessionReadOnly(input.summary)
+  if (readOnly) return { kind: 'read-only', ...readOnly }
   if (input.access.legacy) return { kind: 'open' }
   if (input.stopped || input.summary?.permissionDrift || input.permission?.drift) return { kind: 'stopped' }
   if (!input.access.scopes.has('run')) return { kind: 'read-only', text: '这台设备不能发送消息' }

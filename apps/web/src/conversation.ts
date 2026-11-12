@@ -868,16 +868,18 @@ export function runStatus(
 export interface RunEndLine {
   tone: 'red' | 'amber'
   text: string
-  /** What was running when it ended: nobody can vouch for these. */
+  /** What was running when it ended, and has no row of its own in the turn: nobody can vouch for these. */
   unknown: string[]
   retry: boolean
 }
 
-export function runEndLine(summary: TaskDetail['summary'], harness: string): RunEndLine | undefined {
+/** `shown`: the IDs of the turn's rows; a call with its own row already says 结果未知 there and is not listed twice. */
+export function runEndLine(summary: TaskDetail['summary'], harness: string, shown?: ReadonlySet<string>): RunEndLine | undefined {
   const end = summary.runEnd
   if (!end) return undefined
-  const unknown = (end.unknownResults ?? []).map(result => result.name)
-  const count = end.unknownResultCount ?? unknown.length
+  const results = end.unknownResults ?? []
+  const unknown = results.filter(result => !shown?.has(result.messageId)).map(result => result.name)
+  const count = end.unknownResultCount ?? results.length
   const uncertain = count > 0 ? ` · 这 ${count} 条命令结果未知，请核对` : ''
   switch (end.reason) {
     case 'process-exited':

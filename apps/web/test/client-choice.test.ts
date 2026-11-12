@@ -158,6 +158,27 @@ describe('composer choice', () => {
     expect(engineEntries(listed).map(entry => entry.harness.id)).toEqual(['codex', 'opencode', 'custom', 'standard'])
   })
 
+  it('lists a Harness too old to run greyed with 需要升级, and keeps it chosen when it was found too old after the pick', () => {
+    const [builtin, codex] = catalog().harnesses
+    const pi = {
+      ...testHarness('pi', { label: 'pi', offer: { presetId: 'pi' } }),
+      status: 'unavailable' as const,
+      statusMessage: 'pi 需要 0.84.4 或更高版本（当前 0.84.3）。升级：npm i -g pi',
+      statusReason: 'outdated' as const,
+    }
+    const broken = { ...testHarness('broken', { label: '坏了' }), status: 'unavailable' as const, statusMessage: '未找到命令 broken' }
+    const listed = catalog({ harnesses: [builtin!, codex!, pi, broken] })
+    const entry = engineEntries(listed).find(item => item.harness.id === 'pi')
+    expect(entry).toMatchObject({ disabledReason: '需要升级', line: '' })
+    // Unavailable for any other reason, it is not listed at all.
+    expect(engineEntries(listed).some(item => item.harness.id === 'broken')).toBe(false)
+    // Never the first choice of a device that picked nothing; kept when the person had picked it.
+    expect(resolveChoice(listed, null).harnessId).toBe('codex')
+    const kept = resolveChoice(listed, { harnessId: 'pi' })
+    expect(kept.harnessId).toBe('pi')
+    expect(startBlock(snapshot({ catalog: listed }), kept)).toEqual({ kind: 'harness-unavailable', message: pi.statusMessage })
+  })
+
   it('asks for a folder only when a Harness has none and the Host would make one up', () => {
     const local = { legacy: false, local: true }
     const hostChosen = catalog({ sessionFolders: true, workspaces: catalog().workspaces.filter(item => item.id === 'default') })

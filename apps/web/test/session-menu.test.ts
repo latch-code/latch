@@ -93,7 +93,6 @@ describe('the one session menu', () => {
           sessionMenu: sections,
           menu: sections,
           connection: 'connected' as const,
-          onRefresh: noop,
         }),
       )
     const desktop = header(false)

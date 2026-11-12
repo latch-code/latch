@@ -38,6 +38,7 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { FAKE_ACP_AGENT, fakeConversation, swiftFixturePath, testHarness, writeFakeHistory } from '@latch/testkit'
+import { NOT_ACCEPTED_5XX } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -1813,6 +1814,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 60_000)
+  it('holds a write as unknown on the phone only when the Host may have taken it: the same 5xx rule as the page', async () => {
+    const result = await invoke({ operation: 'phoneRefusals' })
+    expect(result.notAccepted).toEqual([...NOT_ACCEPTED_5XX].sort())
+    // agent-start-failed, agent-refused and a handshake timeout accepted nothing; other 5xx and 408 are unknown; 4xx is definite.
+    expect(result.unknown).toEqual([false, false, false, true, true, true, false, true])
+    expect(result.refusal).toBe('Flaky Agent 启动失败：进程退出（退出码 1）')
+    expect(result.bare).toEqual([true, true])
+  })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })
     // The Host's own limits per kind: a file over one stream goes in parts.
@@ -1940,7 +1949,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       const result = await invoke({ operation: 'nativeAttachments', payload: invitation.payload, port: host.host.nativePort }, 60_000)
       expect(result).toEqual({
         window: true,
-        freshReason: '这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。',
+        freshReason: '发出第一条消息后可添加文件',
         reported: 'ready:it',
         caps: '图片 5 MB 内 · 文字文件 10 MB 内 · 每条 8 个',
         sameRequest: true,

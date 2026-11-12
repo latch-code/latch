@@ -83,6 +83,7 @@ export function useAttachments({
   const [checking, setChecking] = useState(false)
   /** Why the button does nothing, shown when it is pressed (there is no hover on a touch screen). */
   const [note, setNote] = useState('')
+  const [noteDetail, setNoteDetail] = useState('')
   const [error, setError] = useState('')
   const [preparing, setPreparing] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -288,8 +289,13 @@ export function useAttachments({
     caps,
     checking,
     note,
-    /** Pressing the button when nothing can be attached: says why, in place. */
-    explain: (reason: string) => setNote(reason),
+    /** What `note` leaves out, behind its Hint. */
+    noteDetail: note ? noteDetail : '',
+    /** Pressing the button when nothing can be attached: says why, in place, with any detail behind a Hint. */
+    explain: (reason: string, detail = '') => {
+      setNote(reason)
+      setNoteDetail(detail)
+    },
     heldBack: heldBack && (items.length > 0 || heldRefs) ? heldBack : undefined,
     error,
     preparing,

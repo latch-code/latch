@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
+import { sessionReadOnly } from '../core/permissions.ts'
 import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
@@ -325,7 +326,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       changes={{
                         // The Host shows a session's files only to a device whose data scope covers them.
                         enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
-                        undo: current.summary.personal || !access.scopes.has('run') ? 'read-only' : 'open',
+                        undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
                         // As the 改动 tab reads it: nothing can be written until the connection is back.
                         offline: connection === 'reconnecting' || connection === 'offline',
                       }}
@@ -350,9 +351,11 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       {...(returned.length || placeProposals || placeResults
                         ? {
                             placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                              // After a turn, what it proposed comes first (想定时), then the results of what was
+                              // set up since, which can only come later.
                               joinPlaced(
-                                joinPlaced(returned.length ? placeReturned(turns) : undefined, placeResults?.(turns)),
-                                placeProposals?.(turns),
+                                joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                placeResults?.(turns),
                               ),
                           }
                         : {})}

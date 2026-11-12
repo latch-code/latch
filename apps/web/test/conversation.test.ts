@@ -678,6 +678,12 @@ describe('the live run', () => {
         retry: true,
       },
     )
+    // A call whose own row is in the turn already says 结果未知 there: the note counts it and does not list it again.
+    const stopped = summary({ reason: 'host-stopped', at: at(0), unknownResults: [{ messageId: 'm', name: '运行长任务' }] })
+    expect(runEndLine(stopped, 'Codex', new Set(['m']))).toMatchObject({
+      text: 'Latch 重启时中断 · 这 1 条命令结果未知，请核对',
+      unknown: [],
+    })
   })
 
   it("reads a call the Host's stop cut off as interrupted, and one with no reported result as unknown, never as failed", () => {

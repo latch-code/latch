@@ -17,7 +17,7 @@ import { AgentPlans, canPropose } from './agent-plans.ts'
 import { currentTopic, resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import { GENERAL_AGENT_ID, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
+import { GENERAL_AGENT_ID, refusedBeforeAccepting, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
 import { readUiBuild } from './ui-build.ts'
@@ -117,6 +117,7 @@ import {
   forgetCommandLookups,
   onVersionChange,
   outdatedCommand,
+  versionUnread,
   outdatedRefusal,
   recheckVersions,
   presetOffer,
@@ -1002,8 +1003,10 @@ export const detectPresetCommands = (preset: AgentPreset): CommandDetection => {
 /** A preset's detection with what its command's version says, whichever way it was found. */
 function withVersion(preset: AgentPreset, detected: CommandDetection): CommandDetection {
   const record = presetRoute(preset.id)
-  const outdated = detected.found && record ? outdatedCommand(record, detected.path ?? resolveCommand(record.command)) : undefined
-  return outdated ? { ...detected, outdated } : detected
+  const path = detected.found && record ? (detected.path ?? resolveCommand(record.command)) : undefined
+  const outdated = record && path ? outdatedCommand(record, path) : undefined
+  if (outdated) return { ...detected, outdated }
+  return record && versionUnread(record, path) ? { ...detected, versionUnread: true } : detected
 }
 
 /** PATH lookups touch the file system and the catalog is read often; as long as a driver's own status keeps one. */
@@ -1818,7 +1821,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           textBytes: 25 * 1024 * 1024,
           ...limits,
           ...(!reported
-            ? { reason: '这个 Harness 还没启动过。发出第一条消息后就能添加文件，也可以先在 设置 › Harness 里测试启动。' }
+            ? {
+                reason: '发出第一条消息后可添加文件',
+                reasonDetail: '这个 Harness 还没启动过，还不知道它接收哪些文件。也可以先在 设置 › Harness 里测试启动。',
+              }
             : !images && !text
               ? { reason: '这个 Harness 不接收图片和文件。' }
               : !images
@@ -2041,6 +2047,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const agentProbes = new AgentProbes({ root: runtime.tmpRoot, dataDir, now })
     startupCleanup.push(() => agentProbes.close())
     let closing = false
+    /** The audit records of a queue item sent at once, until it is sent or refused (then marked `action.failed`). */
+    const queueAudits = new Map<string, number[]>()
     const promptQueues = await PromptQueues.open({
       dataDir,
       now,
@@ -2052,20 +2060,36 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return turn?.binding && turn.model ? { binding: turn.binding, model: turn.model } : undefined
       },
       beforeEnqueue: async (actor, sessionId, itemId) => {
-        await audited({
+        const seq = await audited({
           action: 'task.prompt.queued',
           actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
           detail: { sessionId, itemId },
         })
+        if (seq !== undefined) queueAudits.set(itemId, [seq])
+        if (queueAudits.size > 1024) queueAudits.delete(queueAudits.keys().next().value!)
+      },
+      dropped: (actor, _sessionId, itemId) => {
+        const seqs = queueAudits.get(itemId) ?? []
+        queueAudits.delete(itemId)
+        for (const refSeq of seqs)
+          void audit
+            .append({
+              action: 'action.failed',
+              actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
+              detail: { refSeq },
+            })
+            .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
       },
       send: async (actor, sessionId, input) => {
         await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
-        if (input.itemId)
-          await audited({
+        if (input.itemId) {
+          const seq = await audited({
             action: 'task.prompt.sent',
             actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
             detail: { sessionId, itemId: input.itemId },
           })
+          if (seq !== undefined) queueAudits.set(input.itemId, [...(queueAudits.get(input.itemId) ?? []), seq])
+        }
         await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
         await input.authorize?.()
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
@@ -2076,6 +2100,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.model ? { model: input.model } : {}),
           ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
         })
+        if (input.itemId) queueAudits.delete(input.itemId)
         // Only now is it the person's message in the session; a withdrawn one never gets here.
         await rememberFromPerson(
           { deviceId: actor.deviceId, actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' } },
@@ -5414,14 +5439,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           found: AGENT_PRESETS.filter(preset => detect(preset).found),
         }
       const saved = new Set(config.settings().agents.map(agent => agent.presetId))
-      // One found too old is not offered: the list of Harnesses to add says what it needs instead.
-      return presetLookup.found
-        .filter(preset => !saved.has(preset.id) && !hub!.info(preset.id))
-        .filter(preset => {
-          const route = presetRoute(preset.id)!
-          return !outdatedCommand(route, resolveCommand(route.command))
-        })
-        .map(presetOffer)
+      // One known to be too old is listed too, unavailable with `statusReason: 'outdated'`: a draft shows it greyed with
+      // 需要升级 instead of as a choice, and a draft that had chosen it keeps it, with the upgrade command.
+      return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)
     }
 
     /** A saved Harness definition this Host runs and that can start now. */
@@ -6531,7 +6551,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             checkStart()
             return await operation()
           } catch (cause) {
-            if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
+            if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
               await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId)
             throw cause
           }
@@ -6878,7 +6898,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.freshContext ? { freshContext: true as const } : {}),
         })
       } catch (cause) {
-        if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
+        if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
           await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)
         throw cause
       }
@@ -8209,6 +8229,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           now,
           home,
           harnesses: hub!.drivers(),
+          definitions: config.settings().agents.map(agent => ({
+            id: agent.id,
+            name: agent.name,
+            ...(agent.presetId ? { presetId: agent.presetId } : {}),
+          })),
           plugins: registry.list(),
           policy: policy.get(),
           devices: {

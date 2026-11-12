@@ -47,6 +47,15 @@ export function outdatedCommand(record: AgentRecord, path: string | undefined): 
   return path ? tooOld(record, knownVersion(record, path) ?? lastVersion(record, path)) : undefined
 }
 
+/**
+ * Whether this command has a version it must reach and nothing has read it yet: a preset nobody confirmed is never run
+ * for its version, so settings can say only that it was found.
+ */
+export function versionUnread(record: AgentRecord, path: string | undefined): boolean {
+  if (!path || !selectProfile(record).profile?.minimumVersion) return false
+  return (knownVersion(record, path) ?? lastVersion(record, path)) === undefined
+}
+
 /** The refusal a saved definition gets while its command is known to be too old. */
 export function outdatedRefusal(record: AgentRecord) {
   const path = resolveCommand(record.command)
@@ -64,7 +73,7 @@ export async function assertCommandVersion(record: AgentRecord): Promise<void> {
 
 /** The same as one line, with the upgrade command. */
 const outdatedLine = (record: AgentRecord, path: string | undefined): string | undefined =>
-  path ? tooOldText(record, knownVersion(record, path)) : undefined
+  path ? tooOldText(record, knownVersion(record, path) ?? lastVersion(record, path)) : undefined
 
 /**
  * A preset as a draft would save it now: its own command, or its `fallback` adapter when only the adapter is installed.
@@ -181,7 +190,9 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
   return {
     id: preset.id,
     description: record.command !== preset.command && preset.fallback ? preset.fallback.description : preset.description,
-    ...(outdated ? { status: 'unavailable' as const, statusMessage: `${preset.name} ${outdated}` } : { status: 'ready' as const }),
+    ...(outdated
+      ? { status: 'unavailable' as const, statusMessage: `${preset.name} ${outdated}`, statusReason: 'outdated' as const }
+      : { status: 'ready' as const }),
     capabilities: agentFacts(preset.name, preset.id, profile),
     modes: [...ACP_CAPABILITIES.modes],
     attachments: { ...ACP_CAPABILITIES.attachments },
@@ -243,7 +254,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           const install = !found && route.install ? `。安装：${route.install}` : ''
           if (missing) return { status: 'unavailable', statusMessage: `${missing}${install}` }
           const outdated = outdatedLine(record, located())
-          if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}` }
+          if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}`, statusReason: 'outdated' }
           const path = located()
           if (record.confirmedCommand !== undefined && path !== undefined && path !== record.confirmedCommand)
             return { status: 'unavailable', statusMessage: commandMoved(record.name).message }

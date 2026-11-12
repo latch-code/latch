@@ -258,6 +258,28 @@ export const LISTENER_LABELS: Record<ListenerClass, string> = {
   'native-relay': '原生中继',
 }
 
+/**
+ * 5xx answers that say, for certain, that the Host accepted nothing: it refused before recording the request (an audit
+ * or confirmation it could not write, a Harness it could not start or reach). A client treats them as definite failures,
+ * never as "result unknown", and the Host lets go of what it reserved for the request.
+ */
+export const NOT_ACCEPTED_5XX: ReadonlySet<string> = new Set([
+  'audit-unavailable',
+  'presence-unavailable',
+  'agent-busy',
+  'agent-start-failed',
+  'agent-refused',
+  'agent-paused',
+  'agent-handshake-timeout',
+  'model-gateway-unavailable',
+])
+
+/** A definite refusal: any 4xx but 408, or a 5xx whose code says nothing was accepted (`NOT_ACCEPTED_5XX`). */
+export function refusedBeforeAccepting(status: number, code: string | undefined): boolean {
+  if (status >= 400 && status < 500) return status !== 408
+  return status >= 500 && code !== undefined && NOT_ACCEPTED_5XX.has(code)
+}
+
 export interface ApiFailure {
   error: string
   message: string

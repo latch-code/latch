@@ -99,6 +99,8 @@ describe('/btw', () => {
       const listed = (await owner.json<AppSnapshot>('snapshot')).tasks
       const fork = listed.find(task => task.forkOf?.taskId === sessionId)!
       expect(fork).toMatchObject({ mode: 'chat', harnessId: source.summary.harnessId })
+      // While the panel is open the fork is the panel's, not a row of the session list.
+      expect(await page.locator(`#session-navigation [data-task-id="${fork.id}"]`).count()).toBe(0)
       await page.screenshot({ path: `${OUT}/answer-1440-light.png`, animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'dark' })
       await page.screenshot({ path: `${OUT}/answer-1440-dark.png`, animations: 'disabled' })

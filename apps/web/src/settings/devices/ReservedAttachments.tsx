@@ -6,6 +6,10 @@ import { sizeText } from '../../hooks/useAttachments.ts'
 import { heldSubmission } from '../../hooks/useSubmission.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 
+/** What is still held: nothing held has no size (a released row never says 「0 个 · 1 KB」). */
+export const reservedLabel = (reserved: { count: number; bytes: number }) =>
+  reserved.count === 0 ? '0 个' : `${reserved.count} 个 · ${sizeText(reserved.bytes)}`
+
 /**
  * This device's uploads still held for submissions it gave up (放弃这次提交): they count against its 32-file, 256 MB draft
  * quota until released. The Host releases only those it proves no saved message or request needs; an unconfirmed
@@ -43,7 +47,7 @@ export function ReservedAttachments({ deviceId }: { deviceId: string }) {
       <SettingsRow
         title="保留的附件"
         description={
-          <Hint label={`${reserved.count} 个 · ${sizeText(reserved.bytes)}`}>
+          <Hint label={reservedLabel(reserved)}>
             放弃的提交还留着这些文件，它们占用这台设备的附件额度（32 个、256 MB）。只能释放没有消息用到的。
             {kept > 0 ? ` 有 ${kept} 个还可能被用到，先保留。` : ''}
           </Hint>

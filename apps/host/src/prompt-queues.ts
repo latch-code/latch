@@ -3,7 +3,14 @@ import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { modelEffort } from './config.ts'
-import { LISTENER_CLASSES, type ListenerClass, type ModelRef, type PromptQueueItem, type TaskDetail } from '@latch/protocol'
+import {
+  LISTENER_CLASSES,
+  refusedBeforeAccepting,
+  type ListenerClass,
+  type ModelRef,
+  type PromptQueueItem,
+  type TaskDetail,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 
@@ -74,6 +81,11 @@ export interface QueueOptions {
   prepare?(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<{ binding: string; model: ModelRef } | undefined>
   check(actor: QueueActor, sessionId: string, model?: ModelRef, binding?: string): Promise<void>
   beforeEnqueue(actor: QueueActor, sessionId: string, itemId: string): Promise<void>
+  /**
+   * An item sent at once was refused before the session took it and deleted with its receipt: what was audited for it
+   * (queued, sent) is marked as never committed.
+   */
+  dropped?(actor: QueueActor, sessionId: string, itemId: string): void
   send(
     actor: QueueActor,
     sessionId: string,
@@ -230,6 +242,26 @@ export class PromptQueues {
           })
           await this.patch(immediate, { state: 'sent', text: undefined })
         } catch (error) {
+          // Refused before the session took it: the receipt goes too, so nothing on record can still send it and the
+          // refusal stays definite (NOT_ACCEPTED_5XX). The client sends again as a new request, or not at all.
+          if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) {
+            const next = new Map(this.entries)
+            next.delete(immediate.id)
+            let dropped = false
+            try {
+              await this.commit(next)
+              dropped = true
+            } catch {
+              /* Kept on disk: it stays a visible item to retry, so the answer cannot be definite. */
+            }
+            if (dropped) {
+              this.options.dropped?.(actor, sessionId, immediate.id)
+              this.options.changed(sessionId)
+              throw error
+            }
+            await this.patch(immediate, { state: 'uncertain', reason: '发送结果未确认，请重试这一项' }).catch(() => {})
+            throw new AppError(503, 'queue-send-unknown', '这条消息的发送结果未确认，请在队列里重试这一项。')
+          }
           await this.patch(immediate, { state: 'uncertain', reason: '发送结果未确认，请重试这一项' })
           throw error
         }

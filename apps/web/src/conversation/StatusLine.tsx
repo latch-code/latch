@@ -7,7 +7,6 @@ import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { messageTime } from '../format.ts'
 
 /** The words change at most once a second; waiting on a person and stopping do not wait for that. */
 function useHeldStatus(status: RunStatus): RunStatus {
@@ -71,7 +70,8 @@ export function StatusLine({
     }),
   )
   const [waiting, setWaiting] = useState(false)
-  if (frozenAt !== undefined) return <p className="status-line is-frozen">上次确认 {messageTime(frozenAt, frozenAt)}</p>
+  // Offline, the banner says so and the sidebar row has 上次确认: nothing about the run is claimed here meanwhile.
+  if (frozenAt !== undefined) return null
   if (status.tone === 'quiet') {
     return (
       <p role="status" aria-live="polite" className="sr-only">
@@ -142,15 +142,18 @@ export function RunEndNote({
   onRetry,
   onContinue,
   login,
+  shown,
 }: {
   summary: TaskDetail['summary']
   harness: string
+  /** The IDs of the turn's rows: a call shown there is not listed again. */
+  shown?: ReadonlySet<string>
   onRetry?: () => void
   onContinue?: () => void
   /** How to log in, when this run ended for want of it. */
   login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
 }) {
-  const line = runEndLine(summary, harness)
+  const line = runEndLine(summary, harness, shown)
   if (!line) return null
   return (
     <div className={`run-end is-${line.tone}`}>

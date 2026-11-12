@@ -56,7 +56,15 @@ import {
   infoFailureStep,
   requestedScopes,
 } from '../src/core/enrollment.ts'
-import { approvalActions, composerGate, deviceAccess, LEGACY_HOST_TEXT, LEVEL_LABELS, modeRows } from '../src/core/permissions.ts'
+import {
+  approvalActions,
+  composerGate,
+  deviceAccess,
+  LEGACY_HOST_TEXT,
+  LEVEL_LABELS,
+  modeRows,
+  sessionReadOnly,
+} from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
   computerName,
@@ -308,6 +316,16 @@ describe('session and harness gating', () => {
     const summary = { personal: { assistantId: 'asst_1' } }
     for (const access of [deviceAccess(snapshotOf(device()), null), deviceAccess(snapshotOf(device({ scopes: ['view'] })), null)])
       expect(composerGate({ summary, access })).toEqual({ kind: 'read-only', text: '这个会话来自已移除的 Agent，只能查看' })
+  })
+
+  it('reads a session whose worktree was removed on every device, with the reason behind its Hint', () => {
+    const summary = { worktree: { branch: 'latch/x', removed: true as const } }
+    for (const access of [deviceAccess(snapshotOf(device()), null), deviceAccess(snapshotOf(device({ scopes: ['view'] })), null)]) {
+      const gate = composerGate({ summary, access })
+      expect(gate).toMatchObject({ kind: 'read-only', text: '只能查看', reason: expect.stringContaining('工作树已移除') })
+    }
+    expect(sessionReadOnly({ worktree: { branch: 'latch/x' } })).toBeUndefined()
+    expect(sessionReadOnly(summary)?.reason).toContain('撤销本轮')
   })
 })
 

@@ -566,7 +566,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .topbar-actions > .connection-pill {
   margin-right: var(--sp-4);
 }
-/* The connection shows only when it is not healthy: its name and the retry glyph in amber, filled only on hover. */
+/* The connection shows only when it is not healthy: its name in amber; the banner below has 重试. */
 .connection-pill {
   display: inline-flex;
   align-items: center;
@@ -582,14 +582,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   line-height: var(--lh-caption);
   font-weight: 500;
   white-space: nowrap;
-}
-.connection-pill:hover {
-  background: var(--amber-soft);
-}
-.connection-pill-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
 }
 
 .banner-region {

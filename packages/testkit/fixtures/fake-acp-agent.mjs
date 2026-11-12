@@ -560,6 +560,8 @@ async function handle(method, params) {
     }
     case 'session/load': {
       if (!caps.has('load')) throw rpcError(-32601, 'Method not found')
+      // Exits while a session is being loaded, once this file exists: a process that dies before a turn is recorded.
+      if (env.FAKE_ACP_LOAD_EXIT_FILE && existsSync(env.FAKE_ACP_LOAD_EXIT_FILE)) process.exit(1)
       if (slowSetup) await delay(slowSetup)
       const earlier = historySession(params.sessionId)
       if (earlier && (earlier.busy || env.FAKE_ACP_LOAD_BUSY === '1'))

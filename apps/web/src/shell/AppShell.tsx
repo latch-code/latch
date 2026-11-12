@@ -29,6 +29,7 @@ import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
 import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
+import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
 import { ParticleField } from './ParticleField.tsx'
 import type { AppSnapshot } from '@latch/protocol'
@@ -141,6 +142,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     goEntry,
     hostProblem,
   } = shell
+  // The fork behind an open /btw panel is the panel's: it joins the list once opened as a session.
+  const sideForks = useSideQuestionForks()
+  const listed = withoutSideForks(snapshot, sideForks, selectedId)
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <LayerHistory value={phone ? openLayer : null}>
@@ -182,7 +186,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 }>
                 <PhoneSessionList
                   space={entries.includes('agents') ? 'code' : undefined}
-                  snapshot={snapshot}
+                  snapshot={listed}
                   searchResults={searchResults}
                   archiveBatch={archiveBatch}
                   archiveUndo={archiveUndo}
@@ -223,7 +227,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 aria-modal={drawerMode && drawer.open ? true : undefined}
                 tabIndex={-1}>
                 <Sidebar
-                  snapshot={snapshot}
+                  snapshot={listed}
                   archiveBatch={archiveBatch}
                   archiveUndo={archiveUndo}
                   selectedId={selectedId}

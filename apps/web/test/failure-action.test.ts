@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 import type { Message } from '@latch/protocol'
 import { FAILURE_ACTION_LABEL, failureAction } from '../src/conversation/failureAction.ts'
 import { MessageRow } from '../src/components/MessageRow.tsx'
+import { composerFailure } from '../src/shell/SessionComposers.tsx'
 
 it('offers the one next step a failure code names, and 重试 for any other', () => {
   expect(failureAction(undefined)).toBe('retry')
@@ -33,4 +34,17 @@ it('shows a failed note with its reason and its own step, and an interrupted not
   const cut = renderToStaticMarkup(createElement(MessageRow, { message: interrupted }))
   expect(cut).toContain('is-interrupted')
   expect(cut).not.toContain('is-failed')
+})
+
+it('a Harness that could not start offers 打开设置 › Harness where this device can change it, and 重试 everywhere', () => {
+  const noop = () => {}
+  expect(composerFailure('agent-start-failed', true, noop, noop).errorActions?.map(item => item.label)).toEqual([
+    '打开设置 › Harness',
+    '重试',
+  ])
+  expect(composerFailure('agent-start-failed', false, noop, noop).errorActions?.map(item => item.label)).toEqual(['重试'])
+  expect(composerFailure('model-unavailable', false, noop, noop).errorActions?.map(item => item.label)).toEqual(['换个模型'])
+  expect(composerFailure('request-conflict', true, noop, noop)).toEqual({})
+  // The Harness's own refusal while the session was reattached: nothing was taken, so 重试 everywhere.
+  expect(composerFailure('agent-refused', false, noop, noop).errorActions?.map(item => item.label)).toEqual(['重试'])
 })

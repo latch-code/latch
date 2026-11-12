@@ -136,8 +136,10 @@ export interface AgentMemory {
   revision: number
   createdAt: string
   updatedAt: string
-  /** Present when it was saved from a proposal. */
+  /** Present when it was saved from a proposal; an edit keeps it. */
   source?: AgentMemoryOrigin
+  /** The person changed its text since it was saved from that proposal. */
+  edited?: true
 }
 
 /**

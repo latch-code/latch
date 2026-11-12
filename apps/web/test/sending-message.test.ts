@@ -9,9 +9,11 @@ import {
   markFlight,
   queuedTwin,
   readFlight,
+  readPendingReason,
   releaseStored,
   sendingMessageFor,
   unconfirmedReason,
+  writePendingReason,
   type SendingMessage,
 } from '../src/core/sendingMessage.ts'
 
@@ -109,6 +111,39 @@ test('an uncertain retry keeps the submission and says why; a definitive answer 
   expect(unconfirmedReason(new NoAnswerError())).toBe('连不上 Mac 上的 Latch')
   expect(unconfirmedReason(new ApiError(503, 'agent-busy', '忙'))).toBeNull()
   expect(unconfirmedReason(new ApiError(409, 'request-conflict', '冲突'))).toBeNull()
+  // A Harness that could not start accepted nothing: a definite failure, whatever its 5xx status.
+  expect(unconfirmedReason(new ApiError(503, 'agent-start-failed', 'Flaky Agent 启动失败：进程退出（退出码 1）'))).toBeNull()
+  expect(unconfirmedReason(new ApiError(503, 'agent-paused', '已暂停'))).toBeNull()
+  expect(unconfirmedReason(new ApiError(504, 'agent-handshake-timeout', '没有完成初始化'))).toBeNull()
+  expect(unconfirmedReason(new ApiError(503, 'storage-unavailable', '持久化失败'))).toBe('持久化失败')
+})
+
+test('the reason a submission is still unconfirmed survives a reload, for that request only', () => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+    removeItem: (key: string) => {
+      store.delete(key)
+    },
+  })
+  try {
+    const key = 'latch.pending.origin.device'
+    writePending(key, { requestId: 'one', prompt: 'hi', sessionId: 'session' })
+    writePendingReason(key, 'one', 'Host 自己的说明：存储暂时不可用')
+    expect(readPendingReason(key, 'one')).toBe('Host 自己的说明：存储暂时不可用')
+    expect(readPendingReason(key, 'two')).toBe('')
+    // A reason that looks like a credential is never written to storage.
+    writePendingReason(key, 'one', '连接 https://me:hunter2@example.com 失败')
+    expect(readPendingReason(key, 'one')).toBe('')
+    writePendingReason(key, 'one', '没有答复')
+    releaseStored(key, 'one')
+    expect(readPendingReason(key, 'one')).toBe('')
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 test('放弃这次提交 lets go of the stored submission and hands its text back, never another window’s newer one', () => {

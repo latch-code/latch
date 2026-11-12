@@ -100,12 +100,14 @@ describe('a Harness that cannot connect yet', () => {
         await shot(page, `new-session-${width}-${theme}`)
         await page.getByRole('button', { name: '取消', exact: true }).click()
       } else {
-        // The new session's Harness menu offers no preset to a browser, since saving one is confirmed on the Mac, and
-        // not the too-old DeepSeek Harness.
+        // The new session's Harness menu offers no preset to a browser, since saving one is confirmed on the Mac; the
+        // too-old DeepSeek Harness is listed greyed with 需要升级, never as a choice.
         await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
         await page.getByRole('menuitem', { name: '添加 Harness…', exact: true }).waitFor()
         expect(await page.getByRole('menuitemradio', { name: /^Codex/u }).count()).toBe(0)
-        expect(await page.getByRole('menuitemradio', { name: /DeepSeek Harness/u }).count()).toBe(0)
+        const old = page.getByRole('menuitemradio', { name: /DeepSeek Harness/u })
+        expect(await old.getAttribute('aria-disabled')).toBe('true')
+        await old.getByText('需要升级', { exact: true }).waitFor()
         await noHorizontalOverflow(page)
         await shot(page, `new-session-harnesses-${width}-${theme}`)
         await page.keyboard.press('Escape')

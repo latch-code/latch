@@ -3,6 +3,7 @@ import { Image } from 'lucide-react'
 import {
   Button,
   ConfirmDialog,
+  Hint,
   Icon,
   IconButton,
   InlineNotice,
@@ -81,7 +82,8 @@ export function AttachmentButton({ controller, disabled = false }: { controller:
         disabled={disabled}
         tooltip={disabled ? '等待这次提交完成' : (blocked ?? (limits ? `添加文件… · ${limits}` : '添加文件…'))}
         onClick={() => {
-          if (blocked !== undefined) controller.explain(blocked)
+          if (blocked !== undefined)
+            controller.explain(blocked, controller.caps?.reason === blocked ? controller.caps.reasonDetail : undefined)
           else input.current?.click()
         }}
       />
@@ -153,7 +155,18 @@ export function AttachmentDrafts({
   return (
     <>
       {controller.error && <InlineNotice tone="error">{controller.error}</InlineNotice>}
-      {controller.note && !controller.error && <InlineNotice>{controller.note}</InlineNotice>}
+      {controller.note && !controller.error && (
+        <InlineNotice>
+          {/* The notice draws its own glyph: the Hint adds only its label and ⓘ. */}
+          {controller.noteDetail ? (
+            <Hint lead={<></>} label={controller.note}>
+              {controller.noteDetail}
+            </Hint>
+          ) : (
+            controller.note
+          )}
+        </InlineNotice>
+      )}
       {controller.heldBack && <InlineNotice tone="warn">{controller.heldBack}</InlineNotice>}
       {controller.items.length > 0 && (
         <div className="attachment-drafts" aria-label="消息附件">

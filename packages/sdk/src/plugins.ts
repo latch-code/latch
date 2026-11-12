@@ -50,6 +50,11 @@ export type ModelDelta =
 export interface ToolPreview {
   /** Short human summary shown on the tool row and approval card. */
   title?: string
+  /**
+   * What this one call will do, as a short label for its approval card in place of the general sentence: 「在
+   * localhost:5173 点击 "保存"」. Display only; it never changes the Host's risk class.
+   */
+  summary?: string
   /** `previous` says whether the file existed: `none` is a new file, `unavailable` existed but is not shown. */
   diffs?: Array<{ path: string; oldText?: string; newText: string; previous?: 'none' | 'text' | 'unavailable' }>
 }

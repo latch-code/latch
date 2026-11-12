@@ -34,8 +34,10 @@ import {
   isFlightKey,
   markFlight,
   readFlight,
+  readPendingReason,
   releaseStored,
   unconfirmedReason,
+  writePendingReason,
   type SendingMessage,
 } from '../core/sendingMessage.ts'
 
@@ -210,6 +212,7 @@ export function useSubmission({
     // A prompt sent again was never the input's text, so it does not take the input over on a reload.
     const owner = stored && fromInput(stored) && storedOwnsInput(stored, selectedId)
     setPending(stored)
+    setPendingReason(stored ? readPendingReason(pendingKey, stored.requestId) : '')
     setSendingMessage(
       stored && !stored.queue && !stored.steer
         ? { submission: stored, sessionId: stored.sessionId ?? null, state: 'unknown', startedAt: Date.now() }
@@ -461,6 +464,7 @@ export function useSubmission({
         setPending(null)
       }
       setPendingReason(reason ?? '')
+      if (uncertain) writePendingReason(pendingKey, submission.requestId, reason)
       if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released' && fromInput(submission)) {
         const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
         if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))

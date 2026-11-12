@@ -35,7 +35,7 @@ sources:
 
 可能含密钥的文件名或文本需要明确确认。
 
-模型能力由 Provider 的 `modelCapabilities[model].vision` 显式声明，未声明就不能发送图片；不按模型名称猜测。Host 托管服务把声明保存在配置，插件也可声明它。Harness 必须显式声明接收附件，第三方 Harness 没有声明时保持不可用；插件 Harness 实现了 `Bridge.promptCapabilities` 时，以它报告的为准。ACP Agent 以它最近一次为当前定义启动时 `initialize` 报告的能力为准：会话启动、新会话选中时读取可选项、「测试启动」都算（`Bridge.promptCapabilities`，随驱动状态持久化，定义改了就作废）；`HarnessInfo.attachmentsReported` 把它带给页面，页面在它或 Harness 状态变化时重读能力，不必刷新。没启动过时 `reason` 说明发出第一条消息或测试启动之后才能添加；都不接收、或只收一种时也说明。能力同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`）。内置的四种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`、Gemini 的 `inlineData`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
+模型能力由 Provider 的 `modelCapabilities[model].vision` 显式声明，未声明就不能发送图片；不按模型名称猜测。Host 托管服务把声明保存在配置，插件也可声明它。Harness 必须显式声明接收附件，第三方 Harness 没有声明时保持不可用；插件 Harness 实现了 `Bridge.promptCapabilities` 时，以它报告的为准。ACP Agent 以它最近一次为当前定义启动时 `initialize` 报告的能力为准：会话启动、新会话选中时读取可选项、「测试启动」都算（`Bridge.promptCapabilities`，随驱动状态持久化，定义改了就作废）；`HarnessInfo.attachmentsReported` 把它带给页面，页面在它或 Harness 状态变化时重读能力，不必刷新。没启动过时 `reason` 是一个短标签「发出第一条消息后可添加文件」，`reasonDetail` 是放在 ⓘ 后的说明（还不知道它接收哪些文件，也可以先测试启动）；都不接收、或只收一种时也说明。能力同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`）。内置的四种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`、Gemini 的 `inlineData`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
 
 夹具、测试 Provider 与假 ACP Agent 用于协议和权限回归，不代表真实模型、真实 CLI 或真机验收。
 
@@ -78,4 +78,4 @@ sources:
 
 文件引用的标记必须保持完整词项；将 `report.txt` 改成 `report.txt.backup` 会清除原选择，不能隐藏地继续附上旧文件。已发送引用按有限 metadata 渲染为文件标记，次要文件夹也保留原 root。会话引用索引扫描这些明确选择，`work` 设备可按消息中的标记打开它们，同时仍没有搜索入口。
 
-未绑定草稿的消费由私有 strict `claim {requestId,sessionId?}` 固定，新建会话和现有会话提示共用同一原子门禁；不同提交不能覆盖身份，已绑定同一会话的引用可以再次使用。新建的 claim 只在检查全部通过、真正派发前写入，因此取消或拒绝确认不占住草稿。Driver 明确返回 4xx（408 除外）且尚未返回已接受结果时，按原请求与目标释放 claim；5xx、超时与绑定结果未知保留原身份供重试；已经派发且结果未知的 claim 不按未提交草稿的一小时 TTL 清除，避免 Driver 暂时未加载时丢掉已接受消息的字节。冲突会要求重试原提交，或移除后重新添加，不能静默换成新的创建请求。
+未绑定草稿的消费由私有 strict `claim {requestId,sessionId?}` 固定，新建会话和现有会话提示共用同一原子门禁；不同提交不能覆盖身份，已绑定同一会话的引用可以再次使用。新建的 claim 只在检查全部通过、真正派发前写入，因此取消或拒绝确认不占住草稿。Driver 明确拒绝且尚未返回已接受结果时（4xx 但 408 除外，或错误码在 `NOT_ACCEPTED_5XX` 里的 5xx，例如 503 `agent-start-failed`，见 [STREAMING.md](STREAMING.md) 的「确定的拒绝」），按原请求与目标释放 claim；其他 5xx、超时与绑定结果未知保留原身份供重试；已经派发且结果未知的 claim 不按未提交草稿的一小时 TTL 清除，避免 Driver 暂时未加载时丢掉已接受消息的字节。冲突会要求重试原提交，或移除后重新添加，不能静默换成新的创建请求。

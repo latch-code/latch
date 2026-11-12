@@ -187,7 +187,8 @@ describe('memory proposals', () => {
     const memory = (await store.saveProposal(agent.id, made.id, randomUUID(), actor)).value.memory!
     const edited = (await store.patchMemory(agent.id, memory.id, { requestId: randomUUID(), baseRevision: 1, content: '改过的' }, actor))
       .value
-    expect(edited.source).toBeUndefined()
+    // Where it came from stays, marked as changed since.
+    expect(edited).toMatchObject({ content: '改过的', source: memory.source, edited: true })
     expect(store.memoryChanges(agent.id)).toEqual([expect.objectContaining({ memoryId: memory.id, operation: 'update' })])
     await expect(store.undoMemory(agent.id, memory.id, { requestId: randomUUID(), baseRevision: 1 }, actor)).rejects.toMatchObject({
       code: 'agent-changed',
@@ -195,6 +196,7 @@ describe('memory proposals', () => {
     const undo = { requestId: randomUUID(), baseRevision: 2 }
     const back = (await store.undoMemory(agent.id, memory.id, undo, actor)).value
     expect(back).toMatchObject({ content: '喜欢简短的回答', revision: 3, source: memory.source })
+    expect(back.edited).toBeUndefined()
     expect((await store.undoMemory(agent.id, memory.id, undo, actor)).value.revision).toBe(3)
     await expect(store.undoMemory(agent.id, memory.id, { requestId: randomUUID(), baseRevision: 3 }, actor)).rejects.toMatchObject({
       code: 'agent-memory-no-undo',

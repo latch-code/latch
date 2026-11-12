@@ -673,7 +673,8 @@ public actor NativeWorkspace {
             try? await removePending(pending.requestId)
             return value
         }
-        if response.status == 408 || response.status >= 500 { throw NativeFailure.resultUnknown }
+        // A 5xx whose code says the Host accepted nothing (a Harness that could not start) is a refusal, not unknown.
+        if NativeHostRefusal.leavesUnknown(status: response.status, body: response.body) { throw NativeFailure.resultUnknown }
         let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
         // A retry's denial says nothing about whether the first submission ran before permissions changed, unless the
         // Host answered it from the first one's receipt.
@@ -683,6 +684,8 @@ public actor NativeWorkspace {
             throw NativeFailure.resultUnknown
         }
         try? await removePending(pending.requestId)
+        // Its own words: the generic failure of a 5xx would say nothing of the Harness that could not start.
+        if response.status >= 500, let refusal { throw refusal }
         let failure = await responseFailure(response, lease: lease)
         if explain, let refusal, failure != .expired { throw refusal }
         throw failure

@@ -45,7 +45,10 @@ export interface AttachmentCapabilities {
   /** Per file over this connection and per image; absent on older Hosts. */
   fileBytes?: number
   imageBytes?: number
+  /** Why nothing, or not everything, can be attached: a short label. */
   reason?: string
+  /** What `reason` leaves out, behind its Hint. */
+  reasonDetail?: string
 }
 export function isAttachmentRef(value: unknown): value is AttachmentRef {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false

@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { scrollMovesAnchor } from '../src/components/overlays.tsx'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
+import { placeName } from '../src/shell/SessionComposers.tsx'
+import { reservedLabel } from '../src/settings/devices/ReservedAttachments.tsx'
 import { Sidebar } from '../src/components/Sidebar.tsx'
 import { PhoneSessionList } from '../src/components/PhoneSessionList.tsx'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
@@ -36,13 +38,14 @@ describe('top bar', () => {
     sessionMenu: [],
     menu: [],
     connection: 'connected' as const,
-    onRefresh: noop,
   }
 
   it('names an unhealthy connection in a status pill without a dot, on phones too', () => {
     for (const phone of [true, false]) {
       const html = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, connection: 'offline' as const, phone }))
-      expect(html).toMatch(/<button[^>]*class="connection-pill connection-offline"[^>]*>离线<span class="connection-pill-retry">· 重试<svg/)
+      // Its name only: 重试 is the connection banner's, so a screen never shows two.
+      expect(html).toMatch(/<span class="connection-pill connection-offline">离线<\/span>/)
+      expect(html).not.toContain('重试')
       expect(html).not.toContain('<i aria-hidden="true"></i>')
     }
     expect(renderToStaticMarkup(createElement(SessionHeader, topBar))).not.toContain('connection-pill')
@@ -318,5 +321,21 @@ describe('the sidebar foot and the computer name', () => {
     vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })
     const local = foot(sidebar(snapshotOf('unix'), noop))
     expect(local.indexOf('添加项目')).toBeLessThan(local.indexOf('设置'))
+  })
+})
+
+describe('the composer footer names where a session works', () => {
+  it('says 默认文件夹 for the Host default folder, never its own name, and a folder of its own by its name', () => {
+    expect(placeName({ cwd: '/tmp/latch-e2e/workspace', workspaceId: 'default' })).toBe('默认文件夹')
+    expect(placeName({ cwd: '/tmp/latch-e2e/workspace/20261113-ab12', workspaceId: 'default', sessionFolder: true })).toBe('20261113-ab12')
+    expect(placeName({ cwd: '/Users/me/app', workspaceId: 'app' })).toBe('app')
+    expect(placeName({ workspaceId: 'default' })).toBeUndefined()
+  })
+})
+
+describe('保留的附件', () => {
+  it('says the size only of what is still held', () => {
+    expect(reservedLabel({ count: 0, bytes: 0 })).toBe('0 个')
+    expect(reservedLabel({ count: 1, bytes: 2048 })).toBe('1 个 · 2 KB')
   })
 })

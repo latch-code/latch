@@ -307,6 +307,7 @@ private struct MemorySection: View {
                             }.buttonStyle(.plain).foregroundStyle(PhoneTheme.ink2).accessibilityHint("打开话题")
                         }
                         if let at = source.at { Text(PhoneTime.relative(at)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                        if memory["edited"].bool { Text("已修改").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                     }
                 } else {
                     Text(PhoneTime.parse(memory["updatedAt"]).map { PhoneTime.relative($0) } ?? "").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)

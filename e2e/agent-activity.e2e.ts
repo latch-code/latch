@@ -134,6 +134,13 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
     await card.getByText('已完成').waitFor()
     await card.getByRole('button', { name: 'agent-edit.txt' }).waitFor()
     await card.getByText('edited', { exact: true }).waitFor()
+    // After the turn, the 想定时 row it proposed comes first, then the results of what ran since.
+    const order = await page.evaluate(() => {
+      const proposal = document.querySelector('.memory-proposals')
+      const result = [...document.querySelectorAll('[role="group"]')].find(item => item.getAttribute('aria-label')?.startsWith('定时结果'))
+      return proposal && result ? proposal.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING : -1
+    })
+    expect(order).toBeGreaterThan(0)
     const detail = await owner.json<TaskDetail>(`tasks/${topic.id}`)
     expect(detail.results).toHaveLength(1)
     // The card is no message: the topic's own history is the two turns of the conversation.

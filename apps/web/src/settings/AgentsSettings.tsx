@@ -28,6 +28,7 @@ import {
   TextField,
   CopyButton,
   AlertGlyph,
+  InfoGlyph,
   CircleCheckGlyph,
   ExternalGlyph,
   PlusGlyph,
@@ -836,8 +837,12 @@ export function AgentRow({
  * A preset found on this computer with no definition yet: 「已找到」 says only that an executable with that name is there,
  * so it is not drawn as ready. The row opens its start form, for a person who wants to change how it starts.
  */
+/** Behind 已找到's ⓘ: a preset is run for its version only once it is confirmed on this Mac. */
+const VERSION_UNREAD = '版本未读：添加并在这台 Mac 上确认后读取'
+
 function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () => void }) {
   const outdated = preset.detected?.outdated
+  const unread = preset.detected?.versionUnread === true
   return (
     <NavRow
       className="agent-row"
@@ -854,8 +859,20 @@ function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () 
           <MiddleEllipsis text={preset.detected?.path ?? preset.command} className="settings-mono" />
         )
       }
-      value={outdated ? '需要升级' : '已找到'}
-      label={`${preset.name}，${outdated ? '需要升级' : '已找到'}，${CUSTOM_START}`}
+      value={
+        outdated ? (
+          '需要升级'
+        ) : unread ? (
+          // Not run for its version until it is confirmed: 已找到 says only that the program is there.
+          <span className="agent-found-unread" title={VERSION_UNREAD}>
+            已找到
+            <Icon icon={InfoGlyph} size={12} />
+          </span>
+        ) : (
+          '已找到'
+        )
+      }
+      label={`${preset.name}，${outdated ? '需要升级' : unread ? `已找到，${VERSION_UNREAD}` : '已找到'}，${CUSTOM_START}`}
       onClick={onOpen}
     />
   )

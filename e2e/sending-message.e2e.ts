@@ -198,6 +198,12 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
       await expect.poll(() => requests.length).toBe(2)
       expect(requests[1]).toEqual(requests[0])
       await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
+      if (width >= 768) {
+        // A reload keeps the reason the last try heard, not a general 没有收到电脑的答复.
+        await page.reload()
+        await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
+        expect(await card.getByText('没有收到电脑的答复').count()).toBe(0)
+      }
       expect(await card.getByRole('button', { name: '放弃这次提交', exact: true }).isEnabled()).toBe(true)
       await card.getByRole('button', { name: '说明', exact: true }).click()
       await card.getByText('再发送就是第二条消息', { exact: false }).waitFor()
@@ -242,6 +248,67 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
     await host.close()
   }
 }, 90_000)
+
+test('a Harness that cannot start is a refusal, not an unconfirmed message: the text stays, with its reason and next steps', async () => {
+  const host = await startTestHost({ uiDir: resolve('dist/web') }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '起不来的会话', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    for (const [width, scheme] of [
+      [1440, 'light'],
+      [1440, 'dark'],
+      [390, 'light'],
+      [390, 'dark'],
+    ] as const) {
+      const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, reducedMotion: 'reduce' }),
+        page = await context.newPage()
+      await enrollBrowser(page, host, { name: `起不来 ${width} ${scheme}`, scopes: ['admin'] })
+      let tries = 0
+      // The Host's answer when the agent's process exits before the turn is recorded.
+      await page.route(`**/link/api/tasks/${sessionId}/prompt`, route => {
+        tries++
+        return route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'agent-start-failed', message: 'Flaky Agent 启动失败：进程退出（退出码 1）' }),
+        })
+      })
+      const row = page.locator(`[data-task-id="${sessionId}"]`).first()
+      if (!(await row.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
+      await row.click()
+      const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+      const text = `发给起不来的 Agent ${width}`
+      await input.fill(text)
+      await input.press('Enter')
+      const notice = page.locator('.composer-stack .ui-notice').filter({ hasText: 'Flaky Agent 启动失败' })
+      await notice.waitFor()
+      await notice.getByRole('button', { name: '打开设置 › Harness', exact: true }).waitFor()
+      await notice.getByRole('button', { name: '重试', exact: true }).waitFor()
+      expect(await page.locator('.pending-submission').count()).toBe(0)
+      expect(await input.inputValue()).toBe(text)
+      await page.screenshot({ path: `${SHOTS}/start-failed--${scheme}--${width}.png` })
+      const answered = page.waitForResponse(response => response.url().endsWith(`/tasks/${sessionId}/prompt`))
+      await notice.getByRole('button', { name: '重试', exact: true }).click()
+      await answered
+      expect(tries).toBe(2)
+      await notice.waitFor()
+      await expect.poll(() => page.locator('.pending-submission').count()).toBe(0)
+      // Nothing is held for later: a reload has no unconfirmed message, here or for the next session.
+      await page.reload()
+      await page.locator('.app-shell').waitFor()
+      expect(await page.locator('.pending-submission').count()).toBe(0)
+      await context.close()
+    }
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+}, 120_000)
 
 test('only a message the Host lists by this requestId counts as delivered, from here, from another session and with attachments', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),

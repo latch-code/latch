@@ -273,6 +273,75 @@ describe('authenticated attachment routes', () => {
       ).status,
     ).toBe(200)
   })
+  it('releases a prompt claim when the Harness could not start: a 503 that says nothing was accepted', async () => {
+    let failing = false
+    const plugin: HarnessPlugin = {
+      id: 'flaky-start',
+      name: 'flaky',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'flaky-model',
+          name: 'flaky',
+          model: 'fixture',
+          async *stream() {
+            yield { type: 'text', text: 'done' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+        ctx.registerHarness({
+          id: 'flaky-harness',
+          name: 'flaky',
+          version: '1',
+          capabilities: { models: { owner: 'latch' }, modes: ['chat'], attachments: { images: true, text: true } },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'prompt' && failing)
+                  return () => Promise.reject(new AppError(503, 'agent-start-failed', 'flaky 启动失败：进程退出（退出码 1）'))
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const desktop = await host.enroll({ listener: 'unix' }),
+      model = { providerId: 'flaky-model', model: 'fixture' }
+    const existing = await desktop.json<{ sessionId: string }>('tasks', {
+      body: { prompt: 'initial', mode: 'chat', harnessId: 'flaky-harness', model, requestId: randomUUID() },
+    })
+    await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${existing.sessionId}`)).summary.status).toBe('idle'))
+    const bytes = Buffer.from('later'),
+      uploaded = await desktop.json<{ attachment: AttachmentRef }>('attachments', {
+        rawBody: bytes,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-latch-attachment': Buffer.from(
+            JSON.stringify({
+              requestId: randomUUID(),
+              name: 'later.txt',
+              size: bytes.length,
+              selection: { harnessId: 'flaky-harness', model },
+            }),
+          ).toString('base64url'),
+        },
+        method: 'POST',
+      })
+    failing = true
+    const refused = await desktop.request(`tasks/${existing.sessionId}/prompt`, {
+      body: { prompt: 'not now', requestId: randomUUID(), attachmentIds: [uploaded.attachment.id] },
+    })
+    expect(refused.status).toBe(503)
+    expect(((await refused.json()) as { error: string }).error).toBe('agent-start-failed')
+    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8'))
+    expect(index.entries[uploaded.attachment.id].claim).toBeUndefined()
+  })
   it('keeps the original claim after an accepted-but-unacknowledged creation and does not create a duplicate on retry', async () => {
     let loseResponse = true,
       starts = 0
@@ -442,7 +511,9 @@ describe('authenticated attachment routes', () => {
         ?.attachmentsReported
     const before = await caps('seeing-agent')
     expect(before).toMatchObject({ images: false, text: false, fileBytes: 25 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
-    expect(before.reason).toContain('还没启动过')
+    // A short label; the detail goes behind its Hint.
+    expect(before.reason).toBe('发出第一条消息后可添加文件')
+    expect(before.reasonDetail).toContain('还没启动过')
     expect(await reported('seeing-agent')).toBeUndefined()
     for (const harnessId of ['seeing-agent', 'plain-agent']) {
       const created = await desktop.confirmed('tasks', { body: { prompt: 'hello', requestId: randomUUID(), harnessId } })

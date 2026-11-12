@@ -519,3 +519,19 @@ final class FixtureChunks: @unchecked Sendable {
         fire?()
     }
 }
+
+/** Which answers to a write leave its result unknown, and which are the Host's definite refusal with its own words. */
+func phoneRefusalsFixture() -> [String: Any] {
+    func body(_ code: String, _ message: String) -> Data { Data(#"{"error":"\#(code)","message":"\#(message)"}"#.utf8) }
+    let cases: [(Int, String)] = [
+        (503, "agent-start-failed"), (502, "agent-refused"), (504, "agent-handshake-timeout"), (503, "storage-unavailable"),
+        (502, "harness-timeout"), (408, "timeout"), (409, "harness-version-unsupported"), (500, "internal-error"),
+    ]
+    return [
+        "notAccepted": NativeHostRefusal.notAccepted5xx.sorted(),
+        "unknown": cases.map { NativeHostRefusal.leavesUnknown(status: $0.0, body: body($0.1, "x")) },
+        "refusal": NativeHostRefusal.parse(status: 503, body: body("agent-start-failed", "Flaky Agent 启动失败：进程退出（退出码 1）"))?.message ?? "",
+        // A 5xx with no code, or not JSON at all, stays unknown.
+        "bare": [NativeHostRefusal.leavesUnknown(status: 503, body: Data()), NativeHostRefusal.leavesUnknown(status: 503, body: Data("{}".utf8))],
+    ]
+}

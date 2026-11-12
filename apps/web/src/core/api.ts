@@ -1,4 +1,4 @@
-import { MODEL_EFFORT, isFileMention, type FileMention } from '@latch/protocol'
+import { MODEL_EFFORT, NOT_ACCEPTED_5XX, isFileMention, type FileMention } from '@latch/protocol'
 import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode, WorktreeStart } from '@latch/protocol'
 import { describeFailure } from './securityCopy.ts'
@@ -336,14 +336,14 @@ export function inlineError(error: unknown): string {
   return error instanceof ClientError && error.handled ? '' : errorMessage(error)
 }
 
-/** Host refusals that arrive as 5xx but state that nothing was executed. */
-const REFUSED_5XX = new Set(['audit-unavailable', 'presence-unavailable', 'agent-busy'])
-
-/** A write whose outcome is unknown: retry it with the same requestId instead of assuming failure. */
+/**
+ * A write whose outcome is unknown: retry it with the same requestId instead of assuming failure. A 5xx whose code says
+ * the Host accepted nothing (`NOT_ACCEPTED_5XX`, such as a Harness that could not start) is a definite failure.
+ */
 export function isUncertain(error: unknown): boolean {
   if (error instanceof ClientError) return !error.definitive
-  if (error instanceof ApiError && REFUSED_5XX.has(error.code)) return false
-  return !(error instanceof ApiError) || error.status >= 500 || error.status === 408
+  if (!(error instanceof ApiError)) return true
+  return error.status === 408 || (error.status >= 500 && !NOT_ACCEPTED_5XX.has(error.code))
 }
 
 /** The exact request a device sent, kept until the Host confirms it so a retry repeats it verbatim. */

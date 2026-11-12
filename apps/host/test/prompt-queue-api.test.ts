@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
-import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
+import { createRuntime } from '@latch/core'
+import { AppError, type HarnessPlugin, type ModelProvider } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -291,5 +294,74 @@ describe('steering a running turn over HTTP', () => {
     expect(response.status).toBe(202)
     expect((await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual(['later'])
     await owner.json(`${path}/cancel`, { method: 'POST', body: { requestId: randomUUID() } })
+  })
+})
+
+describe('a queued message refused before the session took it', () => {
+  it('answers the definite refusal and leaves no queue item to send it a second way', async () => {
+    let failing = false
+    const plugin: HarnessPlugin = {
+      id: 'flaky-queue',
+      name: 'flaky',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'flaky-queue-model',
+          name: 'flaky',
+          model: 'fixture',
+          async *stream() {
+            yield { type: 'text', text: 'ok' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+        ctx.registerHarness({
+          id: 'flaky-queue-harness',
+          name: 'flaky',
+          version: '1',
+          capabilities: { models: { owner: 'latch' }, modes: ['chat'] },
+          create(options) {
+            const bridge = createRuntime(options)
+            return new Proxy(bridge, {
+              get(target, key, receiver) {
+                if (key === 'prompt' && failing)
+                  return () => Promise.reject(new AppError(503, 'agent-start-failed', 'flaky 启动失败：进程退出（退出码 1）'))
+                const value: unknown = Reflect.get(target, key, receiver)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            })
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const model = { providerId: 'flaky-queue-model', model: 'fixture' }
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'First', mode: 'chat', harnessId: 'flaky-queue-harness', model, requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    failing = true
+    const response = await owner.request(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { queue: true, prompt: 'Second', requestId: randomUUID() },
+    })
+    expect(response.status).toBe(503)
+    expect(((await response.json()) as { error: string }).error).toBe('agent-start-failed')
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).queue ?? []).toEqual([])
+    // What was audited for it is marked as never committed.
+    await vi.waitFor(async () => {
+      const records = (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { seq: number; action: string; detail?: { refSeq?: number } })
+      const audited = records.filter(record => record.action === 'task.prompt.queued' || record.action === 'task.prompt.sent')
+      expect(audited.map(record => record.action)).toEqual(['task.prompt.queued', 'task.prompt.sent'])
+      expect(records.filter(record => record.action === 'action.failed').map(record => record.detail?.refSeq)).toEqual(
+        audited.map(record => record.seq),
+      )
+    })
   })
 })

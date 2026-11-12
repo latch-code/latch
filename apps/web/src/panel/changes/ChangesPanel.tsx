@@ -27,6 +27,7 @@ import {
 } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage, MessageError } from '../../core/api.ts'
+import { sessionReadOnly } from '../../core/permissions.ts'
 import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import { setPreference, usePreferences } from '../../preferences.ts'
 import { ChangesFile } from './ChangesFile.tsx'
@@ -661,7 +662,7 @@ function ReadableChanges({
   const shownTurnId = list?.turnId
   const turn: TurnChanges | undefined =
     choice.kind === 'latest' ? turns.at(-1) : choice.kind === 'turn' ? turns.find(item => item.turnId === choice.turnId) : undefined
-  const rights = { canRun, local, active: running, offline, readOnly: summary.personal !== undefined }
+  const rights = { canRun, local, active: running, offline, readOnly: sessionReadOnly(summary) !== undefined }
   const action = scopeAction(list, turn, rights)
   const label = scopeLabel(choice, numbers, base)
   const rootNames = useMemo(() => {

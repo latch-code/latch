@@ -2139,6 +2139,15 @@ describe('the Agent in the preview browser', () => {
     expect(runner.report().at(-1)).toMatchObject({ opener: 'agent', url: 'http://localhost:5173/' })
   })
 
+  it('says a layer of the page covers the shown tab, not that the panel is closed', async () => {
+    const { call, controller, refOf, tabId } = agentSetup()
+    const name = await refOf('textbox "名字"')
+    await controller.occlude({ tabId, occluded: true })
+    expect(await call('browser_click', { ref: name })).toMatchObject({ ok: false, error: 'panel-covered', dispatched: false })
+    await controller.occlude({ tabId, occluded: false })
+    expect(await call('browser_click', { ref: name })).toMatchObject({ ok: true })
+  }, 10_000)
+
   it('registers with a signed body naming its purpose, answers each call with its picture first, and stops with the window', async () => {
     const sent: Array<[string, string, unknown]> = []
     let push!: (text: string) => void

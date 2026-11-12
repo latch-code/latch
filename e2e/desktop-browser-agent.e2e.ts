@@ -57,10 +57,14 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>代理�
 <input type="hidden" name="csrf" value="${HIDDEN}">
 </body></html>`
 
+/** The person's own tab, open in the panel before the Agent's first turn. */
+const PERSON = `<!doctype html><html><head><meta charset="utf-8"><title>人的标签</title></head>
+<body><p>人自己打开的页面</p><script>console.error('人的页面报错')</script></body></html>`
+
 function fixtureSite() {
-  return createServer((_request, response) => {
+  return createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(FIXTURE)
+    response.end(request.url === '/person' ? PERSON : FIXTURE)
   })
 }
 
@@ -194,6 +198,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
     sitePort = site.port
     const phoneBrowser = await chromium.launch(browserLaunchOptions())
     const approvals: Array<{ toolName: string; risk?: string }> = []
+    const reasons: string[] = []
     let answering = true
     try {
       await writeHostState(testHost.dataDir, {
@@ -237,13 +242,17 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
             .filter(contents => contents.session !== session.defaultSession && !contents.getURL().startsWith('devtools:'))
             .map(contents => ({ id: contents.id, url: contents.getURL() })),
         )
+      // The Agent's tab: the person's own is at /person.
       const inGuest = <T = unknown>(code: string) =>
-        app.evaluate(async ({ webContents, session }, source) => {
-          const guest = webContents
-            .getAllWebContents()
-            .find(contents => contents.session !== session.defaultSession && contents.getURL().startsWith('http'))
-          return guest?.executeJavaScript(source)
-        }, code) as Promise<T>
+        app.evaluate(
+          async ({ webContents, session }, [source, url]) => {
+            const guest = webContents
+              .getAllWebContents()
+              .find(contents => contents.session !== session.defaultSession && contents.getURL() === url)
+            return guest?.executeJavaScript(source)
+          },
+          [code, `http://localhost:${sitePort}/`] as const,
+        ) as Promise<T>
       // The person's own typing, before the Agent reads the page.
       hooks.beforeRead = async () => {
         await inGuest(`document.getElementById('pw').value = ${JSON.stringify(SECRET)}`)
@@ -257,6 +266,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
             const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`).catch(() => undefined)
             for (const approval of detail?.approvals ?? []) {
               approvals.push({ toolName: approval.toolName, ...(approval.risk ? { risk: approval.risk } : {}) })
+              reasons.push(approval.reason)
               await owner
                 .request(`approvals/${approval.id}`, { body: { decision: approval.risk === 'R2' ? 'reject' : 'allow' } })
                 .catch(() => undefined)
@@ -293,12 +303,29 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await page.keyboard.press('Meta+Shift+b')
       const panel = page.getByRole('region', { name: '浏览器', exact: true })
       await panel.waitFor()
+      // The person's own tab is open, with its console drawer, and the pointer rests on 加入对话: its tooltip reaches
+      // over the tab's picture. A tooltip never takes the tab out of sight, so the Agent's first turn still works in it.
+      await page.evaluate(
+        ([projectId, session, url]) =>
+          (
+            window as unknown as { latchShell: { browser: { open(p: string, s: string, u: string): Promise<unknown> } } }
+          ).latchShell.browser.open(projectId, session, url),
+        [project.id, sessionId, `http://localhost:${sitePort}/person`] as const,
+      )
+      await panel.getByRole('tab', { name: '人的标签', exact: true }).waitFor()
+      await panel.locator('.browser-foot-logs').click()
+      await panel.getByText('人的页面报错').waitFor()
+      await panel.getByRole('button', { name: '加入对话', exact: true }).hover()
+      await page.getByRole('tooltip').waitFor()
       await prompt('第一轮：看看本地页面')
       await waitFor(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status !== 'idle', 10_000).catch(() => {})
       const first = await settled()
       const rows = (name: string) => first.messages.filter(message => message.toolName === name)
       // The tab the Agent opened stayed on this Mac, shown in the panel with the Agent's mark.
-      expect((await guests()).map(guest => guest.url)).toEqual([`http://localhost:${sitePort}/`])
+      expect((await guests()).map(guest => guest.url).sort()).toEqual([
+        `http://localhost:${sitePort}/`,
+        `http://localhost:${sitePort}/person`,
+      ])
       expect(rows('browser_open')[0]).toMatchObject({ state: 'completed' })
       const read = rows('browser_read')[0]!
       expect(read.state).toBe('completed')
@@ -322,8 +349,13 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(rows('browser_navigate')[0]!.text).toContain('不在这台 Mac 的本机地址上')
       expect(rows('browser_type')[1]).toMatchObject({ state: 'failed' })
       expect(approvals).toContainEqual({ toolName: 'browser_type', risk: 'R2' })
+      // An R1 card says what this one call does, on which page, to which element.
+      expect(reasons).toContain(`在 localhost:${sitePort} 点击 "保存设置"`)
       expect(approvals.filter(item => item.toolName === 'browser_read' || item.toolName === 'browser_screenshot')).toEqual([])
-      expect((await guests()).map(guest => guest.url)).toEqual([`http://localhost:${sitePort}/`])
+      expect((await guests()).map(guest => guest.url).sort()).toEqual([
+        `http://localhost:${sitePort}/`,
+        `http://localhost:${sitePort}/person`,
+      ])
 
       // The tool row shows the picture, once the turn's steps are unfolded.
       await page
@@ -345,7 +377,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
           const answer = await (
             window as unknown as { latchShell: { browser: { list(): Promise<{ tabs: Array<{ tabId: string }> }> } } }
           ).latchShell.browser.list()
-          return answer.tabs[0]!.tabId
+          return answer.tabs.at(-1)!.tabId
         }))
       await page.evaluate(
         id =>

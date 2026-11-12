@@ -620,6 +620,12 @@
 .settings-row-value.settings-mono {
   color: var(--ink);
 }
+/* 已找到 with its ⓘ: the version is not read until the preset is confirmed. */
+.agent-found-unread {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
 /* One line that keeps its end: the head gives way with an ellipsis, the tail (the last path parts) always shows. */
 .middle-ellipsis {
   display: flex;
