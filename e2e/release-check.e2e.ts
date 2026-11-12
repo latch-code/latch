@@ -96,7 +96,12 @@ async function pageFrame(scope: Locator): Promise<Frame> {
 
 /** Opens 发布检查 from the sidebar unless it is already open. */
 async function openPage(page: Page): Promise<Frame> {
-  if (!(await page.locator('iframe.app-frame').count())) await page.locator('.sidebar-apps').getByRole('button', { name: TITLE }).click()
+  if (!(await page.locator('iframe.app-frame').count())) {
+    // 应用 sits at the sidebar's foot; its pages stand where the sidebar stands.
+    if (!(await page.locator('.sidebar-apps').count()))
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
+    await page.locator('.sidebar-apps').getByRole('button', { name: TITLE }).click()
+  }
   return pageFrame(page.locator('iframe.app-frame:not([hidden])'))
 }
 
@@ -182,7 +187,7 @@ describe('发布检查, the example page, from an Agent session to the phone', (
     contexts.push(context)
     page = await context.newPage()
     await enrollBrowser(page, host)
-    await page.locator('.sidebar-apps').getByRole('button', { name: TITLE }).waitFor()
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).waitFor()
   })
 
   it('starts empty, then keeps the checklist with ifVersion and says so when another device changed it first', async () => {

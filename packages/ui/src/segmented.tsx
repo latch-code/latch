@@ -1,11 +1,18 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cx, nextIndex } from './internal.ts'
 import { Tooltip } from './tooltip.tsx'
 
 export interface SegmentOption<T extends string> {
   value: T
-  /** Four Chinese characters or twelve Latin ones at most; text only, no icons. */
+  /** Four Chinese characters or twelve Latin ones at most. */
   label: string
+  /**
+   * A 16px glyph before the words, only where the segments are places a person goes (Code / 我的 Agent), never for modes;
+   * every segment of such a control has one.
+   */
+  icon?: ReactNode
+  /** A mark after the words, such as the amber dot that says something waits there; `title` says what it means. */
+  badge?: ReactNode
   disabled?: boolean
   /** The segment's tooltip, also read as its description: what it does, or why it cannot be chosen. */
   title?: string
@@ -28,7 +35,8 @@ export function SegmentedControl<T extends string>({
   className,
 }: {
   label: string
-  value: T
+  /** Null where none of the views is the one shown (a page both share); choosing any one goes to it. */
+  value: T | null
   options: ReadonlyArray<SegmentOption<T>>
   onValueChange: (value: T) => void
   /**
@@ -40,7 +48,7 @@ export function SegmentedControl<T extends string>({
   className?: string
 }) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
-  const selected = options.findIndex(option => option.value === value)
+  const selected = value === null ? -1 : options.findIndex(option => option.value === value)
   const usable = (index: number) => !disabled && options[index]?.disabled !== true
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const focused = buttons.current.findIndex(item => item === event.target)
@@ -76,7 +84,9 @@ export function SegmentedControl<T extends string>({
             onClick={() => {
               if (usable(index) && option.value !== value) onValueChange(option.value)
             }}>
-            {option.label}
+            {option.icon}
+            <span className="ui-segmented-label">{option.label}</span>
+            {option.badge}
           </button>
         </Tooltip>
       ))}

@@ -1,12 +1,15 @@
 'use strict'
-// The macOS menu bar: the app menu with 「检查更新…」, then Edit, View and Window.
+// The macOS menu bar: the app menu with 「检查更新…」, then Edit, View (with Code and 我的 Agent) and Window.
 
 /**
  * The menu bar template for `Menu.buildFromTemplate`. The developer tools item exists only in a development run, as
- * the window's own `devTools` does.
+ * the window's own `devTools` does. Code and 我的 Agent go to that place in the focused window, with the keys the page
+ * itself answers to (⇧⌘1, ⇧⌘2). They start disabled: main enables them while the focused window's page has said it has
+ * the two places (`SPACE_ITEMS`).
+ * @param {{ packaged: boolean, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
-function menuTemplate({ packaged, onCheckForUpdates }) {
+function menuTemplate({ packaged, onCheckForUpdates, onSpace = () => {} }) {
   return [
     {
       label: 'Latch',
@@ -38,6 +41,9 @@ function menuTemplate({ packaged, onCheckForUpdates }) {
     {
       label: '显示',
       submenu: [
+        { label: 'Code', id: 'space-code', accelerator: 'Shift+CmdOrCtrl+1', enabled: false, click: () => onSpace('code') },
+        { label: '我的 Agent', id: 'space-agents', accelerator: 'Shift+CmdOrCtrl+2', enabled: false, click: () => onSpace('agents') },
+        { type: 'separator' },
         { role: 'reload', label: '重新载入' },
         ...(packaged ? [] : [/** @type {const} */ ({ role: 'toggleDevTools', label: '开发者工具' })]),
         { type: 'separator' },
@@ -62,4 +68,41 @@ function menuTemplate({ packaged, onCheckForUpdates }) {
   ]
 }
 
-module.exports = { menuTemplate }
+/** The menu items main enables only for a page that has Code and 我的 Agent. */
+const SPACE_ITEMS = ['space-code', 'space-agents']
+
+/**
+ * Which pages have said they have the two places, and the items' state for the focused one. A page's word holds until
+ * its window loads another document: `did-navigate` fires for a top-level, cross-document navigation only, so a frame
+ * (an 应用 page, a preview) or a same-document history entry (a phone layer's pushState) leaves it standing; the page
+ * says it again once the new document subscribes.
+ * @param {{ focused: () => import('electron').WebContents | null | undefined, item: (id: string) => { enabled: boolean } | null | undefined }} input
+ */
+function spaceMenu({ focused, item }) {
+  const pages = new WeakSet()
+  const watched = new WeakSet()
+  const sync = () => {
+    const contents = focused()
+    const enabled = Boolean(contents && pages.has(contents))
+    for (const id of SPACE_ITEMS) {
+      const entry = item(id)
+      if (entry) entry.enabled = enabled
+    }
+  }
+  /** @param {import('electron').WebContents} contents @param {boolean} ready */
+  const ready = (contents, ready) => {
+    if (!watched.has(contents)) {
+      watched.add(contents)
+      contents.on('did-navigate', () => {
+        pages.delete(contents)
+        sync()
+      })
+    }
+    if (ready) pages.add(contents)
+    else pages.delete(contents)
+    sync()
+  }
+  return { ready, sync }
+}
+
+module.exports = { menuTemplate, SPACE_ITEMS, spaceMenu }

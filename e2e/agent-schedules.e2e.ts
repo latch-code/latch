@@ -30,9 +30,14 @@ const choice = (page: Page, name: RegExp) => page.getByRole('menuitemradio', { n
 const pad = (value: number) => String(value).padStart(2, '0')
 
 async function openAgent(page: Page, tab: '委托' | '定时') {
-  await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
-  await page
-    .getByRole('navigation', { name: 'Agent 列表' })
+  const place = page.getByRole('radio', { name: '我的 Agent', exact: true }).first()
+  await place.click()
+  await expect.poll(() => place.getAttribute('aria-checked')).toBe('true')
+  // The list stands where the sidebar stands: on 我的 Agent's page, or beside one of its sessions.
+  const where = (await page.locator('.agents-page').count()) > 0 ? page.locator('.agents-page') : page.locator('#session-navigation')
+  await where
+    .getByRole('navigation', { name: '我的 Agent', exact: true })
+    .getByRole('region', { name: 'Agent', exact: true })
     .getByRole('button', { name: /资料助手/u })
     .click()
   await page.getByRole('tab', { name: tab, exact: true }).click()
@@ -217,8 +222,8 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await agentBrowser(narrow, host, owner, '定时 390')
     await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
     await narrow
+      .getByRole('list', { name: '我的 Agent', exact: true })
       .getByRole('button', { name: /资料助手/u })
-      .first()
       .click()
     await narrow.getByRole('tab', { name: '定时', exact: true }).click()
     await narrow.getByRole('listitem', { name: '汇率周报' }).getByText('错过 1 次').waitFor()
@@ -253,8 +258,8 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
       if (width < 768) {
         await view.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
         await view
+          .getByRole('list', { name: '我的 Agent', exact: true })
           .getByRole('button', { name: /资料助手/u })
-          .first()
           .click()
         await view.getByRole('tab', { name: '定时', exact: true }).click()
       } else {

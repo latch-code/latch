@@ -160,6 +160,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .titlebar[data-shut][data-waiting] .titlebar-lead {
   width: calc(var(--lead-inset) + 100px);
 }
+/* With two places: Code and 我的 Agent come before the place's primary. */
+.titlebar[data-shut][data-spaces] .titlebar-lead {
+  width: calc(var(--lead-inset) + 128px);
+}
+.titlebar[data-shut][data-spaces][data-waiting] .titlebar-lead {
+  width: calc(var(--lead-inset) + 160px);
+}
 .titlebar-page {
   flex: 1;
   min-width: 0;

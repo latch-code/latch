@@ -255,8 +255,7 @@ describe('the sidebar foot and the computer name', () => {
         onRefresh: noop,
         sessionMenu: () => [],
         now: 0,
-        entries: ['sessions', 'settings'],
-        onEntry: noop,
+        onSettings: noop,
         hostProblem: null,
         ...(onCreateProject ? { onCreateProject } : {}),
       }),
@@ -302,7 +301,7 @@ describe('the sidebar foot and the computer name', () => {
   it('puts 设置 with its word at the foot, 添加项目 only where the app offers it, and no 手机', () => {
     const foot = (html: string) => html.slice(html.indexOf('<nav class="sidebar-foot"'))
     const remote = foot(sidebar(snapshotOf('loopback-tcp')))
-    expect(remote).toMatch(/<button[^>]*class="ui-button sidebar-settings"[^>]*>.*设置<\/button>/)
+    expect(remote).toMatch(/<button[^>]*class="ui-button sidebar-nav-row sidebar-settings"[^>]*>.*设置<\/button>/)
     expect(remote).not.toContain('添加项目')
     expect(remote).not.toContain('手机')
     vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })

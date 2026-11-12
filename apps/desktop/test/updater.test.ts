@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -93,7 +94,16 @@ interface UpdaterModule {
   }): string | undefined
 }
 interface MenuModule {
-  menuTemplate(input: { packaged: boolean; onCheckForUpdates(): void }): Array<{ label: string; submenu: Array<Record<string, unknown>> }>
+  menuTemplate(input: {
+    packaged: boolean
+    onCheckForUpdates(): void
+    onSpace?(space: 'code' | 'agents'): void
+  }): Array<{ label: string; submenu: Array<Record<string, unknown>> }>
+  SPACE_ITEMS: string[]
+  spaceMenu(input: { focused(): unknown; item(id: string): { enabled: boolean } | undefined }): {
+    ready(contents: unknown, ready: boolean): void
+    sync(): void
+  }
 }
 
 const updates = require('../src/updater.cjs') as UpdaterModule
@@ -770,6 +780,60 @@ describe('preferences and the menu', () => {
     expect(checked).toBe(1)
     expect(JSON.stringify(packaged)).not.toContain('toggleDevTools')
     expect(JSON.stringify(menus.menuTemplate({ packaged: false, onCheckForUpdates: () => {} }))).toContain('toggleDevTools')
+  })
+
+  it('puts Code and 我的 Agent in 显示, with the keys the page answers to, off until a page says it has them', () => {
+    const chosen: string[] = []
+    const view = menus.menuTemplate({ packaged: true, onCheckForUpdates: () => {}, onSpace: space => chosen.push(space) })[2]!
+    expect(view.label).toBe('显示')
+    const items = view.submenu.filter(entry => entry.id === 'space-code' || entry.id === 'space-agents') as Array<{
+      label: string
+      accelerator: string
+      enabled: boolean
+      click(): void
+    }>
+    expect(items.every(item => !item.enabled)).toBe(true)
+    expect(menus.SPACE_ITEMS).toEqual(['space-code', 'space-agents'])
+    expect(items.map(item => [item.label, item.accelerator])).toEqual([
+      ['Code', 'Shift+CmdOrCtrl+1'],
+      ['我的 Agent', 'Shift+CmdOrCtrl+2'],
+    ])
+    for (const item of items) item.click()
+    expect(chosen).toEqual(['code', 'agents'])
+  })
+
+  it('keeps Code and 我的 Agent on through frames and same-document entries, and off after the page loads anew', () => {
+    const contents = new EventEmitter()
+    const other = new EventEmitter()
+    let focused: EventEmitter = contents
+    const entries = { 'space-code': { enabled: false }, 'space-agents': { enabled: false } }
+    const state = () => Object.values(entries).map(entry => entry.enabled)
+    const spaces = menus.spaceMenu({ focused: () => focused, item: id => entries[id as keyof typeof entries] })
+    spaces.ready(contents, true)
+    expect(state()).toEqual([true, true])
+    // An 应用 page or a preview in a frame, and a phone layer's pushState, are not a new page.
+    contents.emit('did-frame-navigate')
+    contents.emit('did-navigate-in-page')
+    contents.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
+    expect(state()).toEqual([true, true])
+    // A new document: off until it says so again, and again after the next one (the watch is not used up).
+    contents.emit('did-navigate')
+    expect(state()).toEqual([false, false])
+    spaces.ready(contents, true)
+    expect(state()).toEqual([true, true])
+    contents.emit('did-navigate')
+    expect(state()).toEqual([false, false])
+    spaces.ready(contents, true)
+    // Another window's page that has not said so leaves them off while it is focused.
+    focused = other
+    spaces.sync()
+    expect(state()).toEqual([false, false])
+    focused = contents
+    spaces.sync()
+    expect(state()).toEqual([true, true])
+    spaces.ready(contents, false)
+    expect(state()).toEqual([false, false])
+    expect(contents.listenerCount('did-navigate')).toBe(1)
   })
 })
 

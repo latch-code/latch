@@ -4,24 +4,6 @@
  * design system: a 40px face, the name, one line of duty and one line of how and where it runs.
  */
 
-/* Code and 我的 Agent under 新会话 and 搜索: the place you are in is in ink; on 我的 Agent's own list it is selected. */
-.sidebar-entries {
-  display: grid;
-  gap: 1px;
-  margin-top: var(--sp-8);
-}
-.sidebar-entry[aria-current='page'] {
-  color: var(--ink);
-  font-weight: 500;
-}
-.sidebar-entry[aria-current='page'] > svg {
-  color: var(--ink);
-}
-.agents-nav-top .sidebar-entry[aria-current='page'] {
-  background: var(--selected);
-  box-shadow: var(--selected-ring);
-}
-
 .agents-nav-body {
   width: var(--entry-nav-width);
 }
@@ -30,76 +12,6 @@
     width: var(--sidebar-open-width);
   }
 }
-.agents-nav {
-  display: grid;
-  align-content: start;
-  gap: 1px;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--sp-12) 0 var(--sp-8);
-}
-.agents-nav-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  padding: 0 10px var(--sp-4);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-}
-.agents-nav-head > button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-.agents-nav-head > button:hover {
-  color: var(--ink);
-}
-.agents-nav-head .ui-count {
-  margin-inline-start: auto;
-}
-.agents-nav ul {
-  display: grid;
-  gap: 1px;
-}
-.agents-nav-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  width: 100%;
-  min-width: 0;
-  padding: var(--sp-6) 10px;
-  border: 0;
-  border-radius: var(--r-6);
-  background: transparent;
-  color: var(--ink-2);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.agents-nav-text {
-  display: grid;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-.agents-nav-row:hover {
-  background: var(--hover);
-}
-.agents-nav-row[aria-current='page'] {
-  background: var(--selected);
-  box-shadow: var(--selected-ring);
-  color: var(--ink);
-}
-.agents-nav-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
-.agents-nav-meta,
 .agents-list-meta {
   display: flex;
   align-items: center;
@@ -111,16 +23,189 @@
   line-height: var(--lh-caption);
   white-space: nowrap;
 }
-.agents-nav-meta > span:last-child,
 .agents-list-meta > span:last-child {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.agents-nav-meta > :not(:last-child),
 .agents-list-meta > :not(:last-child) {
   flex-shrink: 0;
+}
+
+/*
+ * 我的 Agent's list in the sidebar, under the same top as Code's: a quiet heading (it opens the list page), 通用 and your
+ * Agents as 32px rows of a 24px face, the name and the state word at the end, 新建 Agent, then 最近委托: one line each of
+ * the title, its Agent in muted and the time or what it is doing. The selection is the list's neutral card.
+ */
+.space-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 calc(-1 * var(--sp-8));
+  padding: var(--sp-4) var(--sp-8) var(--sp-12);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.space-group {
+  margin-top: var(--sp-16);
+}
+.space-group ul {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.space-head {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  margin-bottom: var(--sp-2);
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.space-head > button {
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  transition: color var(--m-micro) var(--e-micro);
+}
+.space-head > button:hover,
+.space-head > button[aria-current='page'] {
+  color: var(--ink);
+}
+.space-agent,
+.space-delegation {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--sp-8) 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.space-delegation {
+  padding-left: 10px;
+}
+.space-agent:hover,
+.space-delegation:hover {
+  background: var(--hover);
+}
+.space-agent:active,
+.space-delegation:active {
+  background: var(--press);
+}
+.space-agent[aria-current='page'],
+.space-delegation[aria-current='page'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+  color: var(--ink);
+  transition-duration: var(--m-micro);
+}
+.space-agent > .agent-avatar {
+  flex-shrink: 0;
+}
+.space-agent-name,
+.space-delegation-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-agent > :is(.agent-activity, .agent-builtin) {
+  flex-shrink: 0;
+}
+.space-agent > .agent-activity {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+/* 新建 Agent: a quiet row whose + stands where a face would. */
+.space-new {
+  color: var(--muted);
+}
+.space-new:hover {
+  color: var(--ink-2);
+}
+.space-new[aria-disabled='true'] {
+  opacity: 0.45;
+}
+.space-new-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+.space-delegation.is-strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.space-delegation-agent {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-delegation-status {
+  flex-shrink: 0;
+}
+.space-quiet {
+  padding: var(--sp-6) 10px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.space-more {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  margin-top: var(--sp-2);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.space-more:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+.space-list .agents-locked {
+  padding: var(--sp-6) 10px;
+}
+@media (hover: none), (pointer: coarse) {
+  .space-agent,
+  .space-delegation {
+    height: 44px;
+  }
 }
 
 /* The title row's crumb: 我的 Agent / the Agent, and whether the Mac is reachable. */
@@ -743,4 +828,12 @@ button.agents-list-row:focus-visible {
 .agent-run-tag {
   margin-right: var(--sp-6);
   vertical-align: 1px;
+}
+
+/* A phone's 我的 Agent tab: 最近委托 and 已归档 under the Agents, in the page's own flow. */
+.phone-delegations {
+  flex: none;
+  margin: var(--sp-16) 0 0;
+  padding: 0;
+  overflow: visible;
 }

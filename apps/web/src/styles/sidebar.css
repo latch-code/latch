@@ -1,6 +1,7 @@
 /*
- * The sidebar: the computer's name (elsewhere than its own Latch app), 新会话 and 搜索 (32, ghost) over a line, the
- * shelves, and the foot: 添加项目 and 设置. From
+ * The sidebar: the computer's name (elsewhere than its own Latch app), the switch between Code and 我的 Agent, the
+ * place's primary (新会话 or 委托…) and 搜索 (32, ghost) over a line, the place's list, and the foot: 添加项目, 应用 and
+ * 设置. From
  * 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of reflowing it.
  */
 .sidebar-body {
@@ -536,7 +537,6 @@
 @media (hover: none), (pointer: coarse) {
   .archived-row,
   .archived-back,
-  .sidebar-add-project,
   .sidebar-nav-row {
     height: 44px;
   }
@@ -618,53 +618,77 @@
   padding: 0 var(--sp-4) 0 10px;
 }
 /*
- * 添加项目 on the left (only in the Latch app on this Mac), 设置 with its word on the right, the trouble dot beside it;
- * always in reach, however long the list is.
+ * The foot, under a line and always in reach however long the list is: 添加项目 (only in the Latch app on this Mac, in
+ * Code), 应用 and 设置 as quiet rows, the trouble dot after 设置.
  */
 .sidebar-foot {
   /* Counts on its buttons are cut out of the ground. */
   --surface: var(--sidebar);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
+  display: grid;
+  gap: 1px;
   flex-shrink: 0;
   margin-inline: calc(-1 * var(--sp-8));
   padding: var(--sp-6) var(--sp-8) calc(var(--sp-6) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
 }
 .sidebar-foot-spacer {
   flex: 1;
 }
-.sidebar-add-project {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  height: 28px;
-  padding: 0 var(--sp-8) 0 10px;
-  border: 0;
-  border-radius: var(--r-6);
-  background: transparent;
+.sidebar-foot .sidebar-nav-row {
   color: var(--muted);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  white-space: nowrap;
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
 }
-.sidebar-add-project:hover {
-  background: var(--hover);
+.sidebar-foot .sidebar-nav-row:hover {
   color: var(--ink-2);
 }
-.sidebar-add-project:active {
-  background: var(--press);
+.sidebar-foot .sidebar-nav-row[aria-current='page'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+  color: var(--ink);
 }
-/* The ghost button in the quiet ink of 添加项目 beside it. */
+.sidebar-foot .sidebar-nav-row[aria-current='page'] > svg {
+  color: var(--ink);
+}
+/* 设置 is a Button for its tooltip; laid out as the row above it. */
 .sidebar-foot .sidebar-settings.ui-button {
-  color: var(--muted);
+  padding: 0 10px;
 }
-.sidebar-foot .sidebar-settings.ui-button:hover {
-  color: var(--ink-2);
+
+/*
+ * Code | 我的 Agent: the segmented control across the sidebar, its two places equal; the other place's amber dot sits
+ * after its name while something waits there.
+ */
+.sidebar-top .space-switch {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.space-switch .ui-segmented-option {
+  min-width: 0;
+  padding-inline: var(--sp-8);
+}
+/* The glyph carries the dot on its top-right corner, clear of the glyph and of the place's name. */
+.space-glyph {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.space-glyph > .space-dot {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  box-shadow: 0 0 0 2px var(--sunken);
+}
+.space-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--amber);
+}
+/* Shut, the title row keeps the two places as icon buttons; the dot rides the glyph's corner. */
+.space-buttons {
+  display: inline-flex;
+  gap: var(--sp-2);
 }
 /* Beside 设置, only while the Mac cannot be reached as it should; the sentence is in its title. */
 .sidebar-trouble {

@@ -1,21 +1,20 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronLeft, Ellipsis, FolderGit2, FolderPlus, Laptop, Pin, Plus, Search, Settings, SquarePen, X } from 'lucide-react'
+import { Archive, ChevronLeft, Ellipsis, FolderGit2, Pin, Plus } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
-import { deviceAccess, hostView } from '../core/permissions.ts'
-import { computerName } from '../core/securityCopy.ts'
-import { currentShell } from '../core/shell.ts'
+import { hostView } from '../core/permissions.ts'
 import { otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
-import { ComputerMenu, OtherComputersWaiting } from './Computers.tsx'
+import { OtherComputersWaiting } from './Computers.tsx'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
 import { projectName } from '../projects.tsx'
 import {
   filterSessions,
   groupSessions,
+  inSpace,
   projectOf,
   readFolded,
   shelvesKey,
@@ -27,16 +26,15 @@ import {
   writeFolded,
   type SessionFilter,
   type SessionGroup,
+  type Space,
 } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
-import { Button, Collapse, ICON_STROKE, IconButton } from '@latch/ui'
-import type { ShellEntry } from '../shell/routes.ts'
-import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
-import { EntryRows } from '../agents/parts.tsx'
+import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
+import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -66,17 +64,6 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
   return known
     ? { id: known.id, label: known.capabilities.display.label, mark: known.capabilities.display.mark }
     : { id: task.harnessId, label: task.harnessId, mark: presetOf(task.harnessId, HARNESS_MARKS) }
-}
-
-/** Something wrong with reaching the Mac: the sentence for the dot beside 设置, and how bad it is. A healthy state has none. */
-function connectionTrouble(
-  connection: ConnectionStatus,
-  hostProblem: { text: string } | null,
-): { tone: 'warn' | 'error'; text: string } | null {
-  if (connection === 'offline') return { tone: 'warn', text: '这台设备已离线' }
-  if (hostProblem) return { tone: 'error', text: hostProblem.text }
-  if (connection === 'reconnecting') return { tone: 'warn', text: '正在重新连接' }
-  return null
 }
 
 /**
@@ -342,9 +329,11 @@ function useFoldedShelves(key: string) {
 }
 
 /**
- * The whole navigation of a wide window: the computer's name where the page is not the Latch app on that computer, 新会话
- * and 搜索 (the palette searches); the shelves 等你处理, each project, 无项目 and a quiet 已归档 row; at the foot 添加项目
- * (on this Mac) and 设置, with 设备 inside it. A shelf folds with its chevron; what ended up there stays one click away.
+ * The whole navigation of a wide window. At the top: the computer's name where the page is not the Latch app on that
+ * computer, the switch between Code and 我的 Agent (where the Host has it), the place's primary and 搜索 (the palette
+ * searches). Code lists its shelves: 等你处理, each project, 无项目 and a quiet 已归档 row, without the sessions delegated to
+ * an Agent; 我的 Agent lists your Agents and their recent delegations. At the foot, shared: 添加项目 (on this Mac, in Code),
+ * 应用 and 设置. A shelf folds with its chevron; what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
@@ -363,8 +352,7 @@ export function Sidebar({
   onCreateProject,
   onEditProject,
   onProjectsChanged,
-  entries,
-  onEntry,
+  onSettings,
   hostProblem,
   newActive = false,
   drawer,
@@ -376,11 +364,17 @@ export function Sidebar({
   keepAwake,
   apps,
   onManageComputers,
+  spaces,
+  agents,
 }: ProjectNavigationActions & {
   /** Opens 设置 › 电脑 (the computer menu's 管理电脑…). */
   onManageComputers?: () => void
-  /** The 「应用」 group: the plugin pages applied on the Host. */
-  apps?: import('react').ReactNode
+  /** 应用 at the foot, where plugin pages are applied. */
+  apps?: { current: boolean; onOpen: () => void } | undefined
+  /** The two places, where the Host has 我的 Agent; without it there is only Code and no switch. */
+  spaces?: SpacesProps | undefined
+  /** 我的 Agent's primary (委托…) and list, drawn in its place. */
+  agents?: { primary: import('react').ReactNode; list: import('react').ReactNode } | undefined
   snapshot: AppSnapshot
   archiveBatch?: import('react').ReactNode
   /** The line that offers to take back an archive, while it can. */
@@ -407,139 +401,47 @@ export function Sidebar({
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
   onCreateProject?: () => void
-  entries: readonly ShellEntry[]
-  onEntry: (entry: ShellEntry) => void
+  /** 设置, where this device can open it. */
+  onSettings?: (() => void) | undefined
   hostProblem: { text: string } | null
 }) {
-  const list = useRef<HTMLElement>(null)
-  const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
-  const frozen = useLastConfirmed(connection, snapshot)
-  const archived = filter === 'archived'
-  const visible = useMemo(() => filterSessions(snapshot.tasks, filter, ''), [snapshot.tasks, filter])
-  const projectSections = snapshot.catalog?.projectFolders !== undefined && !archived
-  const computers = useComputers()
-  const several = computers !== undefined && computers.computers.length > 1
-  // Only this Mac's page holds what waits on other computers (main gives it to no other page).
-  const others = archived ? [] : otherWaiting(computers, hostView(snapshot)?.hostId)
-  const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
-    includeEmpty: projectSections,
-    ...(archived ? {} : { waitingFrom: snapshot.tasks }),
-  })
-  const groups: SessionGroup[] =
-    others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: '等你处理', tasks: [] }, ...grouped] : grouped
-  const archivedCount = snapshot.tasks.filter(task => task.archived).length
-  const trouble = connectionTrouble(connection, hostProblem)
-  const shell = currentShell()
-  const desktop = shell !== null
-  // The keys that press 新会话 and 搜索, as caps on them; a drawer is for touch and narrow windows, so it has none.
-  const capsOf = (id: 'new' | 'palette') => {
-    const keys = drawer ? null : shortcutButtonKeys(id, desktop)
-    return keys ? { keys } : {}
-  }
-  // 「这台电脑」 is only the Latch app on the Host's own socket; a loopback browser is told which computer it is reading.
-  const remote = !deviceAccess(snapshot, shell).local
-  const context = filter
-  const signature =
-    groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
-    + others
-      .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
-      .join('')
-  const remeasure = useListMotion(list, context, signature)
+  const inAgents = spaces?.space === 'agents' && agents !== undefined
   return (
-    <div className="sidebar-body">
-      <div className="sidebar-top">
-        {several ? (
-          <ComputerMenu snapshot={snapshot} view={computers} onManage={onManageComputers} />
-        ) : (
-          remote && (
-            <p className="sidebar-host" title={computerName(snapshot.hostName)}>
-              <Laptop size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-              <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
-            </p>
-          )
-        )}
-        <div className="sidebar-nav-line">
-          <Button
-            variant="ghost"
-            className="sidebar-nav-row"
-            aria-label="新建会话"
-            aria-pressed={drawer ? undefined : newActive}
-            {...capsOf('new')}
-            onClick={onNew}>
-            <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>新会话</span>
-          </Button>
-          {drawer && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
-        </div>
-        <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette')} onClick={onSearch}>
-          <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>搜索</span>
-        </Button>
-        {entries.includes('agents') && <EntryRows current="sessions" onEntry={onEntry} />}
-        {apps}
-      </div>
-      {archiveBatch}
-      <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
-        {archived && (
-          <button
-            type="button"
-            className="archived-back"
-            onClick={() => {
-              onFilter('all')
-            }}>
-            <ChevronLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span>已归档</span>
-            <span className="archived-count">{archivedCount}</span>
-          </button>
-        )}
-        {groups.length === 0 ? (
-          <div className="list-empty">
-            <p>{snapshot.tasks.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
-          </div>
-        ) : (
-          groups.map(group => (
-            <SessionGroupView
-              key={group.id}
-              group={group}
-              snapshot={snapshot}
-              context={context}
-              settled={remeasure}
-              selectedId={selectedId}
-              isUnread={isUnread}
-              cancelling={cancelling}
-              frozen={frozen}
-              folded={folded.has(group.id)}
-              onFold={() => {
-                toggleShelf(group.id)
-              }}
-              now={now}
-              onSelect={onSelect}
-              onNewIn={onNewIn}
-              onNewWithoutProject={onNewWithoutProject}
-              menu={sessionMenu}
-              {...(group.id === 'waiting' ? { others } : {})}
-              onEditProject={onEditProject}
-              onProjectsChanged={onProjectsChanged}
-            />
-          ))
-        )}
-        {archivedCount > 0 && !archived && (
-          <button
-            type="button"
-            className="archived-row"
-            aria-label={`已归档的会话（${archivedCount}）`}
-            onClick={() => {
-              onFilter('archived')
-            }}>
-            <span className="sidebar-row-icon">
-              <Archive size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            </span>
-            <span>已归档</span>
-            <span className="archived-count">{archivedCount}</span>
-          </button>
-        )}
-      </nav>
-      {archiveUndo}
+    <div className="sidebar-body" data-space={spaces?.space ?? 'code'}>
+      <NavTop
+        snapshot={snapshot}
+        spaces={spaces}
+        primary={inAgents ? agents.primary : <NewSessionRow onNew={onNew} active={newActive} drawer={drawer} />}
+        onSearch={onSearch}
+        drawer={drawer}
+        onClose={onClose}
+        onManageComputers={onManageComputers}
+      />
+      {inAgents ? (
+        agents.list
+      ) : (
+        <>
+          {archiveBatch}
+          <CodeList
+            snapshot={snapshot}
+            selectedId={selectedId}
+            isUnread={isUnread}
+            cancelling={cancelling}
+            filter={filter}
+            onFilter={onFilter}
+            onSelect={onSelect}
+            onNewIn={onNewIn}
+            onNewWithoutProject={onNewWithoutProject}
+            onEditProject={onEditProject}
+            onProjectsChanged={onProjectsChanged}
+            connection={connection}
+            sessionMenu={sessionMenu}
+            now={now}
+            space={spaces ? 'code' : undefined}
+          />
+          {archiveUndo}
+        </>
+      )}
       {/* While the desktop app keeps this Mac awake, a few quiet words say so. */}
       {keepAwake && connection === 'connected' && (
         <div className="sidebar-footer">
@@ -548,32 +450,132 @@ export function Sidebar({
           </button>
         </div>
       )}
-      <nav className="sidebar-foot" aria-label="主导航">
-        {onCreateProject && (
-          <button type="button" className="sidebar-add-project" onClick={onCreateProject}>
-            <FolderPlus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>添加项目</span>
-          </button>
-        )}
-        <span className="sidebar-foot-spacer" />
-        {trouble && (
-          <span className="sidebar-trouble" data-tone={trouble.tone} role="status" title={trouble.text}>
-            <span className="sr-only">{trouble.text}</span>
-          </span>
-        )}
-        {entries.includes('settings') && (
-          <Button
-            variant="ghost"
-            className="sidebar-settings"
-            icon={Settings}
-            shortcut={desktop ? '⌘,' : 'Alt ,'}
-            onClick={() => {
-              onEntry('settings')
-            }}>
-            设置
-          </Button>
-        )}
-      </nav>
+      <NavFoot
+        apps={apps}
+        settings={onSettings}
+        trouble={connectionTrouble(connection, hostProblem)}
+        onCreateProject={inAgents ? undefined : onCreateProject}
+      />
     </div>
+  )
+}
+
+/** Code's list: its shelves, without the sessions delegated to an Agent where the Host has 我的 Agent. */
+function CodeList({
+  snapshot,
+  selectedId,
+  isUnread,
+  cancelling,
+  filter,
+  onFilter,
+  onSelect,
+  onNewIn,
+  onNewWithoutProject,
+  onEditProject,
+  onProjectsChanged,
+  connection,
+  sessionMenu,
+  now,
+  space,
+}: ProjectNavigationActions & {
+  snapshot: AppSnapshot
+  selectedId: string | null
+  isUnread: (task: TaskSummary) => boolean
+  cancelling: ReadonlySet<string>
+  filter: SessionFilter
+  onFilter: (filter: SessionFilter) => void
+  onSelect: (id: string) => void
+  onNewIn?: ((workspaceId: string) => void) | undefined
+  onNewWithoutProject?: (() => void) | undefined
+  connection: ConnectionStatus
+  sessionMenu: (task: TaskSummary) => MenuSection[]
+  now: number
+  space: Space | undefined
+}) {
+  const list = useRef<HTMLElement>(null)
+  const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
+  const frozen = useLastConfirmed(connection, snapshot)
+  const archived = filter === 'archived'
+  const own = useMemo(() => inSpace(snapshot.tasks, space), [snapshot.tasks, space])
+  const visible = useMemo(() => filterSessions(snapshot.tasks, filter, '', space), [snapshot.tasks, filter, space])
+  const projectSections = snapshot.catalog?.projectFolders !== undefined && !archived
+  const computers = useComputers()
+  // Only this Mac's page holds what waits on other computers (main gives it to no other page).
+  const others = archived ? [] : otherWaiting(computers, hostView(snapshot)?.hostId)
+  const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
+    includeEmpty: projectSections,
+    ...(archived ? {} : { waitingFrom: own }),
+  })
+  const groups: SessionGroup[] =
+    others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: '等你处理', tasks: [] }, ...grouped] : grouped
+  const archivedCount = own.filter(task => task.archived).length
+  const context = filter
+  const signature =
+    groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
+    + others
+      .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
+      .join('')
+  const remeasure = useListMotion(list, context, signature)
+  return (
+    <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
+      {archived && (
+        <button
+          type="button"
+          className="archived-back"
+          onClick={() => {
+            onFilter('all')
+          }}>
+          <ChevronLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <span>已归档</span>
+          <span className="archived-count">{archivedCount}</span>
+        </button>
+      )}
+      {groups.length === 0 ? (
+        <div className="list-empty">
+          <p>{own.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
+        </div>
+      ) : (
+        groups.map(group => (
+          <SessionGroupView
+            key={group.id}
+            group={group}
+            snapshot={snapshot}
+            context={context}
+            settled={remeasure}
+            selectedId={selectedId}
+            isUnread={isUnread}
+            cancelling={cancelling}
+            frozen={frozen}
+            folded={folded.has(group.id)}
+            onFold={() => {
+              toggleShelf(group.id)
+            }}
+            now={now}
+            onSelect={onSelect}
+            onNewIn={onNewIn}
+            onNewWithoutProject={onNewWithoutProject}
+            menu={sessionMenu}
+            {...(group.id === 'waiting' ? { others } : {})}
+            onEditProject={onEditProject}
+            onProjectsChanged={onProjectsChanged}
+          />
+        ))
+      )}
+      {archivedCount > 0 && !archived && (
+        <button
+          type="button"
+          className="archived-row"
+          aria-label={`已归档的会话（${archivedCount}）`}
+          onClick={() => {
+            onFilter('archived')
+          }}>
+          <span className="sidebar-row-icon">
+            <Archive size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          </span>
+          <span>已归档</span>
+          <span className="archived-count">{archivedCount}</span>
+        </button>
+      )}
+    </nav>
   )
 }

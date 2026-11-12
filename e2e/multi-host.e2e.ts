@@ -269,13 +269,13 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         expect(await openWithoutGesture(bPage, a.host.hostId)).toMatchObject({ error: 'gesture-required' })
         expect(app.windows()).toHaveLength(2)
 
-        // A remote page's shell: the computers list and nothing that acts on this Mac.
+        // A remote page's shell: the computers list, the menu's way between Code and 我的 Agent, and nothing that acts on this Mac.
         const remoteShell = await bPage.evaluate(() => {
           const shell = Reflect.get(globalThis, 'latchShell') as Record<string, unknown> & { computers: Record<string, unknown> }
           return { keys: Object.keys(shell).sort(), computers: Object.keys(shell.computers).sort(), remote: shell.remote }
         })
         expect(remoteShell).toEqual({
-          keys: ['computers', 'devMode', 'kind', 'platform', 'remote'],
+          keys: ['computers', 'devMode', 'kind', 'platform', 'remote', 'spaces'],
           computers: ['list', 'open', 'subscribe', 'subscribeSession'],
           remote: true,
         })

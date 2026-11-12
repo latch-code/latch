@@ -236,6 +236,8 @@ export interface HeaderAgent {
   /** Absent once the Agent is deleted: the face is grey. */
   avatar?: AgentAvatarValue | undefined
   onOpen: () => void
+  /** 我的 Agent's list, the crumb's first step on wide windows. */
+  onHome?: (() => void) | undefined
 }
 function AgentLink({ agent }: { agent: HeaderAgent }) {
   return (
@@ -482,18 +484,30 @@ export function SessionHeader({
   return (
     <header className="topbar">
       <div className="topbar-title">
-        {summary && (project || (summary.mode !== 'chat' && summary.cwd)) && (
-          <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
-            {crumb?.folders}
-          </ProjectCrumb>
-        )}
+        {/* A delegation lives in 我的 Agent: its crumb is 我的 Agent / the Agent, where Code's sessions name their project. */}
         {summary && agent && (
           <span className="topbar-crumb">
-            <AgentLink agent={agent} />
+            <button type="button" className="topbar-agent topbar-agents-home" onClick={agent.onHome}>
+              我的 Agent
+            </button>
+            <span className="topbar-crumb-separator" aria-hidden="true">
+              /
+            </span>
+            <button type="button" className="topbar-agent" title={`回到 ${agent.name}`} onClick={agent.onOpen}>
+              <AgentAvatar avatar={agent.avatar ?? 'general'} size={16} />
+              <span>
+                <VisibleText text={agent.name} />
+              </span>
+            </button>
             <span className="topbar-crumb-separator" aria-hidden="true">
               /
             </span>
           </span>
+        )}
+        {summary && !agent && (project || (summary.mode !== 'chat' && summary.cwd)) && (
+          <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
+            {crumb?.folders}
+          </ProjectCrumb>
         )}
         {summary && from && (
           <span className="topbar-crumb">
@@ -655,6 +669,9 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
               avatar: delegated.avatar,
               onOpen: () => {
                 openMyAgent({ id: delegated.id, tab: 'delegate' })
+              },
+              onHome: () => {
+                openMyAgent()
               },
             },
           }

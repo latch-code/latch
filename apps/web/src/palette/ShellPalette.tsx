@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react'
 import {
   Bot,
   ClipboardCopy,
+  Code2,
   Download,
   FileDiff,
   FileSearch,
@@ -27,7 +28,7 @@ import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
-import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
 
@@ -116,26 +117,35 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       shell.openMyAgent({ id: agent.id })
     },
   }))
+  const spaces = shell.entries.includes('agents')
   const sessionEntry = useMemo(() => {
     const workspaces = catalog?.workspaces ?? []
     return (task: (typeof snapshot.tasks)[number]): PaletteEntry => {
       const project = projectOf(task, workspaces)
       const harness = catalog?.harnesses.find(item => item.id === task.harnessId)
-      // A delegated session is found by its Agent's name as well.
-      const agent = task.agent ? customAgents?.find(item => item.id === task.agent?.customAgentId)?.name : undefined
-      const sub = [agent && `为 ${agent} 委托`, project?.name, task.archived ? '已归档' : ''].filter(Boolean).join(' · ')
+      // Where it lives: Code, or the Agent it was delegated to (found by the Agent's name as well).
+      const owner = task.agent ? customAgents?.find(item => item.id === task.agent?.customAgentId) : undefined
+      const agent = task.agent ? (owner?.name ?? 'Agent') : undefined
+      const place = agent ?? (spaces ? 'Code' : undefined)
+      const sub = [place, project?.name, task.archived ? '已归档' : ''].filter(Boolean).join(' · ')
       return {
         id: `session:${task.id}`,
         label: task.title || '未命名会话',
         ...(sub ? { sub } : {}),
         ...(agent ? { keywords: agent } : {}),
-        icon: harness ? <HarnessTile harness={harness} size={16} /> : <MarkTile mark={presetOf(task.harnessId, HARNESS_MARKS)} size={16} />,
+        icon: task.agent ? (
+          <AgentAvatar avatar={owner?.avatar ?? 'general'} size={16} />
+        ) : harness ? (
+          <HarnessTile harness={harness} size={16} />
+        ) : (
+          <MarkTile mark={presetOf(task.harnessId, HARNESS_MARKS)} size={16} />
+        ),
         run: () => {
           choose(task.id)
         },
       }
     }
-  }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose])
+  }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose, spaces])
   const recent = useMemo(() => recentSessions(snapshot.tasks).map(sessionEntry), [snapshot.tasks, sessionEntry])
   const sessions = useMemo(
     () => snapshot.tasks.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(sessionEntry),
@@ -177,6 +187,30 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             root: true,
             ...keys('next-approval'),
             run: nextApproval,
+          },
+        ]
+      : []),
+    ...(spaces
+      ? [
+          {
+            id: 'space:code',
+            label: 'Code',
+            icon: glyph(Code2),
+            root: true,
+            ...keys('space-code'),
+            run: () => {
+              shell.goSpace('code')
+            },
+          },
+          {
+            id: 'space:agents',
+            label: '我的 Agent',
+            icon: glyph(AgentsGlyph),
+            root: true,
+            ...keys('space-agents'),
+            run: () => {
+              shell.goSpace('agents')
+            },
           },
         ]
       : []),

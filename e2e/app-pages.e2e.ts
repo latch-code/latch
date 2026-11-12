@@ -196,6 +196,8 @@ describe('plugin pages in their opaque frame', () => {
     const popups: string[] = []
     page.context().on('page', popup => popups.push(popup.url()))
     const shell = page.url()
+    // 应用 sits at the sidebar's foot; its pages stand where the sidebar stands.
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
     const row = page.locator('.sidebar-apps').getByRole('button', { name: TITLE })
     await row.click()
     const head = page.locator('.app-page-head')
@@ -261,7 +263,7 @@ describe('plugin pages in their opaque frame', () => {
     expect(await page.evaluate(() => document.fullscreenElement)).toBeNull()
 
     // Back to Code: the session the page started says where it came from, and the shell kept its place.
-    await page.locator('.apps-nav-top').getByRole('button', { name: 'Code', exact: true }).click()
+    await page.locator('.apps-nav-top').getByRole('radio', { name: 'Code', exact: true }).click()
     const started = page.locator(`[data-task-id="${sessionId}"]`)
     await expect.poll(() => started.locator('.session-from').textContent()).toBe(`· 来自 ${TITLE}`)
     await started.click()
@@ -270,6 +272,7 @@ describe('plugin pages in their opaque frame', () => {
 
   it('keeps the real approval outside the frame, and the frame inert while it shows', async () => {
     const page = await connectedPage()
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
     await page.locator('.sidebar-apps').getByRole('button', { name: TITLE }).click()
     const frame = await pageFrame(page)
     expect(await frame.locator('#fake-approval').isVisible()).toBe(true)
@@ -288,6 +291,7 @@ describe('plugin pages in their opaque frame', () => {
     await allow.waitFor({ timeout: 15_000 })
     // Back on the page with the approval's card mounted under it: Esc and Cmd/Ctrl keys pressed in the frame reach the
     // shell's shortcuts only, never the approval (whose own Esc refuses).
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
     await page.locator('.sidebar-apps').first().getByRole('button', { name: TITLE }).click()
     const again = await pageFrame(page)
     await again.locator('#count').click()
@@ -313,7 +317,7 @@ describe('plugin pages in their opaque frame', () => {
       }
       requestAnimationFrame(tick)
     })
-    await page.locator('.apps-nav-top').getByRole('button', { name: 'Code', exact: true }).click()
+    await page.locator('.apps-nav-top').getByRole('radio', { name: 'Code', exact: true }).click()
     await expect.poll(() => page.evaluate(() => (Reflect.get(globalThis, 'arming') as { armed: number }).armed)).toBeGreaterThan(0)
     const arming = (await page.evaluate(() => Reflect.get(globalThis, 'arming'))) as { shown: number; armed: number }
     expect(arming.armed - arming.shown).toBeGreaterThanOrEqual(250)
@@ -390,6 +394,7 @@ export default defineApp({ page: Page, migrate: (from, docs) => docs.map(doc => 
     ).toBe(200)
     expect((await owner.json<AppSnapshot>('snapshot')).apps?.find(item => item.pluginId === 'migrator')?.status).toBe('needs-migration')
     const page = await connectedPage()
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
     await page.locator('.sidebar-apps').first().getByRole('button', { name: '迁移' }).click()
     const frame = await pageFrame(page)
     await expect.poll(() => frame.locator('#count').textContent(), { timeout: 20_000 }).toBe(JSON.stringify({ from: 1, text: '旧' }))
@@ -401,6 +406,7 @@ export default defineApp({ page: Page, migrate: (from, docs) => docs.map(doc => 
 
   it('takes the page away everywhere when the plugin is disabled', async () => {
     const page = await connectedPage()
+    await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
     await page.locator('.sidebar-apps').getByRole('button', { name: TITLE }).click()
     await pageFrame(page)
     const response = await owner.request(`plugin-packages/${PLUGIN}/enabled`, { body: { requestId: randomUUID(), enabled: false } })
@@ -408,6 +414,9 @@ export default defineApp({ page: Page, migrate: (from, docs) => docs.map(doc => 
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).apps?.[0]?.status).toBe('disabled')
     // The entry, the frame, its port and its subscriptions go at once; the shell is back on Code.
     await expect.poll(() => page.locator('.sidebar-apps').count(), { timeout: 15_000 }).toBe(0)
+    expect(
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).count(),
+    ).toBe(0)
     expect(await page.locator('iframe.app-frame').count()).toBe(0)
     expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
   })

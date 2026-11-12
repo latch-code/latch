@@ -32,6 +32,7 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
+import { backRoute, initialRoute, useSpaces } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
@@ -169,7 +170,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const appShell = useRef<HTMLDivElement>(null)
   const titlebar = useRef<HTMLDivElement>(null)
   /** The current entry, its section, and where a page puts its title. */
-  const [route, setRoute] = useState<ShellRoute>({ entry: 'sessions' })
+  // A wide window opens where this device was last; a session the page restores keeps its own place.
+  const [route, setRoute] = useState<ShellRoute>(() =>
+    initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
+  )
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
   const sidebarShut = sidebarColumn && (sidebarDrag !== null ? sidebarDrag.collapsed : preferences.sidebar.collapsed)
@@ -213,6 +217,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const contentSearch = useSessionSearch(search, snapshot.catalog?.features?.search === true)
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null)
   const [filter, setFilter] = useState<SessionFilter>('all')
+  /** 我的 Agent's list: 已归档 or not, and whether 最近委托 shows 全部; the keys step through what it shows. */
+  const [agentsFilter, setAgentsFilter] = useState<SessionFilter>('all')
+  const [agentsExpanded, setAgentsExpanded] = useState(false)
   const entries = visibleEntries(
     settingsSections(snapshot, access),
     phone,
@@ -417,13 +424,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    */
   const back = (instant = false) => {
     const id = selectedId
+    // A delegation goes back to its Agent's page under 我的 Agent, not to Code's list it is not on.
+    const away = backRoute(summary, snapshot.customAgents, entries.includes('agents'))
     const arrive = () => {
       choose(null)
+      if (away) {
+        setRoute(away)
+        return
+      }
       requestAnimationFrame(() => {
         if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
       })
     }
-    if (instant || !matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+    if (instant || away || !matchMedia('(prefers-reduced-motion: no-preference)').matches) {
       arrive()
       return
     }
@@ -450,6 +463,57 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry })
+  }
+  /** Code and 我的 Agent: which one the shell is in, and the way to the other. */
+  const { space, goSpace, waits } = useSpaces({
+    snapshot,
+    agents: entries.includes('agents'),
+    route,
+    setRoute,
+    selectedId,
+    selected: summary,
+    choose,
+    leave: () => {
+      setNewSheet(false)
+      drawer.setOpen(false)
+    },
+  })
+  /**
+   * A place chosen by its key or the menu bar: once it is drawn, focus lands on its primary (新会话 or 委托…) where that is
+   * in sight, else on the place's own button, so it never drops to the page.
+   */
+  const keyToSpace = (target: 'code' | 'agents') => {
+    if (target === 'agents' && !entries.includes('agents')) return
+    goSpace(target)
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const shown = (selector: string) =>
+          [...document.querySelectorAll<HTMLElement>(selector)].find(element => element.checkVisibility() && !element.closest('[inert]'))
+        const primary = shown('[data-space-primary]') ?? shown('.space-switch [aria-checked="true"], .space-buttons [aria-pressed="true"]')
+        primary?.focus({ preventScroll: true })
+      }),
+    )
+  }
+  // The desktop app's menu bar goes to a place as the keys do; the page says it can only where the Host has 我的 Agent.
+  const showSpace = useStableCallback(keyToSpace)
+  const spacesHere = entries.includes('agents')
+  useEffect(() => (spacesHere ? currentShell()?.spaces?.onShow(showSpace) : undefined), [showSpace, spacesHere])
+  /** The sessions the keys step through: the place's own, as its list draws them; all of them where there is one place. */
+  const listSpace = entries.includes('agents')
+    ? space === 'agents'
+      ? { space, filter: agentsFilter, expanded: agentsExpanded }
+      : { space }
+    : {}
+  /**
+   * 委托…, 我的 Agent's primary: the sidebar's row opens its choice of Agent; with the sidebar out of sight, the list page
+   * offers the same choice.
+   */
+  const delegate = () => {
+    const trigger = [...document.querySelectorAll<HTMLButtonElement>('[data-delegate-trigger]')].find(
+      button => button.checkVisibility() && !button.closest('[inert]'),
+    )
+    if (trigger) trigger.click()
+    else openMyAgent()
   }
   /** 我的 Agent, at an Agent's page (and tab) or at the list. */
   const openMyAgent = (target?: MyAgentTarget) => {
@@ -720,9 +784,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
+      if (action.kind === 'space') {
+        keyToSpace(action.space)
+        return
+      }
       if (action.kind === 'session') {
         const folded = readFolded(shelvesKey(snapshot.device.id))
-        const target = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded })[action.index - 1]
+        const target = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded, ...listSpace })[action.index - 1]
         if (target && target.id !== selectedId) choose(target.id)
         return
       }
@@ -774,7 +842,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     event.preventDefault()
     if (action === 'new') {
-      startNew()
+      if (space === 'agents') delegate()
+      else startNew()
       return
     }
     if (action === 'sidebar') {
@@ -802,7 +871,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     const folded = readFolded(shelvesKey(snapshot.device.id))
-    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded })
+    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded, ...listSpace })
     const target = steppedSession(ordered, selectedId, action === 'next' ? 1 : -1)
     if (target) choose(target.id)
   })
@@ -1115,6 +1184,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setRoute,
     entries,
     goEntry,
+    space,
+    goSpace,
+    waits,
+    delegate,
     titleSlot,
     setTitleSlot,
     appShell,
@@ -1180,6 +1253,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setSearchTarget,
     filter,
     setFilter,
+    agentsFilter,
+    setAgentsFilter,
+    agentsExpanded,
+    setAgentsExpanded,
     panelToggle,
     infoPageRef,
     infoBack,

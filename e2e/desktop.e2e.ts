@@ -346,6 +346,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             copyComputerLink: typeof shell.copyComputerLink,
             updates: Object.keys(shell.updates as object),
             computers: Object.keys(shell.computers as object),
+            spaces: Object.keys(shell.spaces as object),
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
           }
         }),
@@ -362,6 +363,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
         computers: ['list', 'subscribe', 'open', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
+        spaces: ['onShow'],
         browser: [
           'protocolVersion',
           'open',
@@ -660,6 +662,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await keepAwake.click()
       await background.getByText('保持唤醒中：有会话在运行', { exact: true }).waitFor()
       await closeSettings(general)
+      // 显示 › 我的 Agent and Code move the window between the two places, as ⇧⌘2 and ⇧⌘1 do.
+      const place = (name: string) => page.getByRole('radio', { name, exact: true }).first()
+      const shell = application!
+      // The page has said it has the two places, so the items are on.
+      await expect.poll(() => shell.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('space-agents')?.enabled)).toBe(true)
+      await shell.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('space-agents')?.click())
+      await expect.poll(() => place('我的 Agent').getAttribute('aria-checked')).toBe('true')
+      await page.locator('.agents-page').waitFor()
+      await shell.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('space-code')?.click())
+      await expect.poll(() => place('Code').getAttribute('aria-checked')).toBe('true')
+      await page.locator('.agents-page').waitFor({ state: 'detached' })
       // The footer says so in a few quiet words, whole at the window's default width (a 248px sidebar with 开发版), with
       // the reason in the title and the target still reaching past the 16px line.
       const awake = page.locator('.sidebar-footer').getByRole('button', { name: '保持唤醒中', exact: true })

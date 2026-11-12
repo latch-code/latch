@@ -2,3 +2,11 @@
 @import '../../src/tokens.css';
 @import '../../src/ui.css';
 @import './layout.css' layer(app);
+
+/* The amber dot an app puts on a segment where something waits. */
+.gallery-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--amber);
+}

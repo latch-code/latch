@@ -245,6 +245,8 @@ export interface LatchShell {
   files?: ShellFiles
   /** Shells from before updates do not have it. */
   updates?: ShellUpdates
+  /** Code or 我的 Agent chosen in the menu bar. Shells from before the two places do not have it. */
+  spaces?: { onShow(callback: (space: 'code' | 'agents') => void): () => void }
 }
 
 declare global {

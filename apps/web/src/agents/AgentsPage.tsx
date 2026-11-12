@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft, Plus, Search, SquarePen, WifiOff } from 'lucide-react'
+import { ChevronLeft, Plus, WifiOff } from 'lucide-react'
 import { GENERAL_AGENT_ID, type CustomAgentList, type CustomAgentSummary } from '@latch/protocol'
-import { Button, Count, Hint, ICON_STROKE, IconButton, InlineNotice, Skeleton, EmptyState } from '@latch/ui'
+import { Button, Hint, ICON_STROKE, IconButton, InlineNotice, Skeleton, EmptyState } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
-import { currentShell } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { MyAgentTab } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
+import { NavTop, shellSpaces, ShellDelegate, ShellNavFoot } from '../shell/SpaceNav.tsx'
+import { AgentsSpaceList, Delegations } from './AgentsSpaceList.tsx'
+import { useLastConfirmed } from '../components/SessionStatus.tsx'
+import { askDelegateFocus, takeDelegateFocus } from './delegateFocus.ts'
 import { AgentForm } from './AgentForm.tsx'
 import { AgentPage } from './AgentPage.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { agentActivity, agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
-import { ActivityWord, Availability, EntryRows, LockedAgents } from './parts.tsx'
-import { AppsGroup } from '../plugin-pages/AppsPage.tsx'
+import { ActivityWord, Availability, LockedAgents } from './parts.tsx'
 import { useAgentDetail, useAgentList, type AgentRead } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
 
@@ -181,72 +182,22 @@ function AgentList({
   )
 }
 
-/** The sidebar's place on wide windows: 新会话, 搜索, the two entries, then the Agents. */
-function AgentsNav({
-  shell,
-  read,
-  current,
-  onOpen,
-}: {
-  shell: ShellState
-  read: AgentRead<CustomAgentList>
-  current: string | undefined
-  onOpen: (id?: string) => void
-}) {
-  const desktop = currentShell() !== null
-  const entries = agentEntries('value' in read ? read.value : undefined)
-  const capsOf = (id: 'new' | 'palette') => {
-    const keys = shortcutButtonKeys(id, desktop)
-    return keys ? { keys } : {}
-  }
+/** The sidebar's place on wide windows: the same top as the sidebar's in 我的 Agent, its list and the shared foot. */
+function AgentsNav({ shell }: { shell: ShellState }) {
   return (
-    <div className="sidebar-body agents-nav-body">
-      <div className="sidebar-top agents-nav-top">
-        <Button variant="ghost" className="sidebar-nav-row" aria-label="新建会话" {...capsOf('new')} onClick={shell.startNew}>
-          <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>新会话</span>
-        </Button>
-        <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette')} onClick={shell.openSearch}>
-          <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>搜索</span>
-        </Button>
-        <EntryRows current="agents" onEntry={shell.goEntry} />
-        <AppsGroup shell={shell} />
-      </div>
-      <nav className="agents-nav" aria-label="Agent 列表">
-        <h2 className="agents-nav-head">
-          <button
-            type="button"
-            onClick={() => {
-              onOpen()
-            }}>
-            我的 Agent
-          </button>
-          {entries.length > 1 && <Count value={entries.length - 1} />}
-        </h2>
-        <ul>
-          {entries.map(entry => (
-            <li key={entry.id}>
-              <button
-                type="button"
-                className="agents-nav-row"
-                aria-current={current === entry.id ? 'page' : undefined}
-                onClick={() => {
-                  onOpen(entry.id)
-                }}>
-                <EntryAvatar shell={shell} entry={entry} size={24} />
-                <span className="agents-nav-text">
-                  <span className="agents-nav-name">{entry.name}</span>
-                  <span className="agents-nav-meta">
-                    <EntryMark shell={shell} entry={entry} />
-                    <span>{entry.kind === 'general' ? '内置' : runsWith(shell.catalog ?? undefined, entry.summary)}</span>
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
+    <div className="sidebar-body agents-nav-body" data-space="agents">
+      <NavTop
+        snapshot={shell.snapshot}
+        spaces={shellSpaces(shell)}
+        primary={<ShellDelegate shell={shell} />}
+        onSearch={shell.openSearch}
+        drawer={false}
+        onManageComputers={() => {
+          shell.openSettings('computers')
+        }}
+      />
+      <AgentsSpaceList shell={shell} />
+      <ShellNavFoot shell={shell} />
     </div>
   )
 }
@@ -262,6 +213,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const target = route.myAgent
   const id = target?.id
   const { read, reload } = useAgentList(snapshot)
+  const frozen = useLastConfirmed(connection, snapshot)
   const detail = useAgentDetail(snapshot, id ?? null)
   const settle = useCallback(() => {
     reload()
@@ -297,13 +249,11 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
     if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
     back()
   }
-  // A list page asked to delegate opens the Agent's page on 委托 with its input ready.
-  const focusDelegate = useRef(false)
+  // A list page or the sidebar asked to delegate: the Agent's page opens on 委托 with its input ready, once it is drawn.
   useEffect(() => {
-    if (!focusDelegate.current || target?.tab !== 'delegate') return
-    focusDelegate.current = false
+    if (target?.tab !== 'delegate') return
     requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>('.agent-delegate textarea')?.focus({ preventScroll: true })
+      takeDelegateFocus()
     })
   })
   const locked = read.state === 'locked'
@@ -319,7 +269,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             open(next)
           }}
           onDelegate={next => {
-            focusDelegate.current = true
+            askDelegateFocus()
             open(next, 'delegate')
           }}
           onNew={() => {
@@ -424,7 +374,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                         open(next)
                       }}
                       onDelegate={next => {
-                        focusDelegate.current = true
+                        askDelegateFocus()
                         open(next, 'delegate')
                       }}
                       onNew={() => {
@@ -433,11 +383,16 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                       onRetry={reload}
                     />
                   }
+                  {read.state !== 'locked' && (
+                    <div className="space-list phone-delegations">
+                      <Delegations shell={shell} frozen={frozen} />
+                    </div>
+                  )}
                 </div>
               </div>
             </>
           ) : (
-            <AgentsNav shell={shell} read={read} current={id} onOpen={open} />
+            <AgentsNav shell={shell} />
           )}
         </div>
         <section

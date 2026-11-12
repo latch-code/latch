@@ -8,6 +8,7 @@ import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { canDelegate } from '../agents/model.ts'
 
 /**
  * Lifts the window's toast 12 above the composer while one is on screen and not covered, centred on it, so it never lies
@@ -104,6 +105,8 @@ export function Overlays({ shell }: { shell: ShellState }) {
       {commandOpen && <ShellPalette shell={shell} />}
       {shortcutsOpen && (
         <ShortcutsOverlay
+          spaces={shell.entries.includes('agents')}
+          delegate={canDelegate(shell.snapshot, shell.access)}
           onClose={() => {
             setShortcutsOpen(false)
             // The dialog gives the focus back to where it was; opened from nowhere in particular, it lands in the input.

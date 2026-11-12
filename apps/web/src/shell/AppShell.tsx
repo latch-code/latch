@@ -18,7 +18,9 @@ import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
 import { AgentsPage } from '../agents/AgentsPage.tsx'
-import { AppsGroup, AppsPage } from '../plugin-pages/AppsPage.tsx'
+import { AppsPage } from '../plugin-pages/AppsPage.tsx'
+import { AgentsSpaceList } from '../agents/AgentsSpaceList.tsx'
+import { ShellDelegate, shellSpaces } from './SpaceNav.tsx'
 import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
@@ -176,6 +178,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   (phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) || route.entry !== 'sessions' || undefined
                 }>
                 <PhoneSessionList
+                  space={entries.includes('agents') ? 'code' : undefined}
                   snapshot={snapshot}
                   searchResults={searchResults}
                   archiveBatch={archiveBatch}
@@ -231,8 +234,19 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   onNew={startNew}
                   onNewIn={startIn}
                   onCreateProject={createProjectAndStart}
-                  entries={entries}
-                  onEntry={goEntry}
+                  onSettings={
+                    entries.includes('settings')
+                      ? () => {
+                          goEntry('settings')
+                        }
+                      : undefined
+                  }
+                  spaces={shellSpaces(shell)}
+                  agents={
+                    entries.includes('agents')
+                      ? { primary: <ShellDelegate shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
+                      : undefined
+                  }
                   hostProblem={hostProblem}
                   onEditProject={owner ? openProjectSettings : undefined}
                   onProjectsChanged={() => {
@@ -249,7 +263,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   }}
                   sessionMenu={sessionMenu}
                   now={now}
-                  apps={<AppsGroup shell={shell} />}
+                  apps={entries.includes('apps') ? { current: false, onOpen: () => shell.openApp() } : undefined}
                   onManageComputers={() => {
                     openSettings('computers')
                   }}

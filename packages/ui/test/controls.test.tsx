@@ -126,6 +126,45 @@ function Modes({ third = false }: { third?: boolean }) {
 }
 
 describe('segmented control', () => {
+  it('chooses none where none is shown, and a press on either goes to it', async () => {
+    const chosen = vi.fn()
+    const screen = await render(
+      <SegmentedControl
+        label="地点"
+        value={null}
+        onValueChange={chosen}
+        options={[
+          { value: 'code', label: 'Code' },
+          { value: 'agents', label: '我的 Agent' },
+        ]}
+      />,
+    )
+    await expect.element(screen.getByRole('radio', { name: 'Code' })).toHaveAttribute('aria-checked', 'false')
+    await expect.element(screen.getByRole('radio', { name: '我的 Agent' })).toHaveAttribute('aria-checked', 'false')
+    expect(tabStops(screen.getByRole('radiogroup', { name: '地点' }).element())).toBe(1)
+    await screen.getByRole('radio', { name: 'Code' }).click()
+    expect(chosen).toHaveBeenCalledWith('code')
+  })
+  it("draws a place's glyph before its words and a mark after them, named by the words alone", async () => {
+    const screen = await render(
+      <SegmentedControl
+        label="地点"
+        value="code"
+        onValueChange={() => {}}
+        options={[
+          { value: 'code', label: 'Code', icon: <svg data-testid="glyph" aria-hidden="true" /> },
+          { value: 'agents', label: '我的 Agent', badge: <span data-testid="dot" aria-hidden="true" />, title: '有等你处理的会话' },
+        ]}
+      />,
+    )
+    const agents = screen.getByRole('radio', { name: '我的 Agent' })
+    await expect.element(agents).toBeInTheDocument()
+    await expect.element(agents).toHaveAccessibleDescription('有等你处理的会话')
+    const code = screen.getByRole('radio', { name: 'Code' }).element()
+    expect(code.firstElementChild?.getAttribute('data-testid')).toBe('glyph')
+    expect(agents.element().lastElementChild?.getAttribute('data-testid')).toBe('dot')
+  })
+
   it('is one radio group with one tab stop, where the arrows, Home and End move and select at once', async () => {
     const screen = await render(<Modes />)
     const group = screen.getByRole('radiogroup', { name: '会话模式' })

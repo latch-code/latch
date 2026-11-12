@@ -64,8 +64,8 @@ describe('workbench key routing', () => {
       // Each client has only its own keys.
       expect(workbenchShortcut(key(code, { metaKey: true }), false)).toBeNull()
       expect(workbenchShortcut(key(code, { altKey: true }), true)).toBeNull()
-      // ⇧ with ⌘ is nothing in the desktop app; the browser has no ⌘ digits at all.
-      expect(workbenchShortcut(key(code, { metaKey: true, shiftKey: true }), true)).toBeNull()
+      // ⇧ with ⌘ is nothing past the two places; the browser has no other ⌘ digits.
+      if (index > 2) expect(workbenchShortcut(key(code, { metaKey: true, shiftKey: true }), true)).toBeNull()
       expect(workbenchShortcut(key(code, { metaKey: true, altKey: true, shiftKey: true }), true)).toBeNull()
       expect(workbenchShortcut(key(code, { altKey: true, ctrlKey: true }), false)).toBeNull()
       expect(workbenchShortcut(key(code), false)).toBeNull()
@@ -85,6 +85,32 @@ describe('workbench key routing', () => {
     }
     expect(workbenchShortcut(key('Digit0', { metaKey: true }), true)).toBeNull()
     expect(workbenchShortcut(key('Digit0', { altKey: true }), false)).toBeNull()
+  })
+  it('goes to Code with ⇧⌘1 and to 我的 Agent with ⇧⌘2, in the desktop app and a browser alike', () => {
+    for (const desktop of [true, false]) {
+      expect(workbenchShortcut(key('Digit1', { metaKey: true, shiftKey: true }), desktop)).toEqual({ kind: 'space', space: 'code' })
+      expect(workbenchShortcut(key('Digit2', { ctrlKey: true, shiftKey: true }), desktop)).toEqual({ kind: 'space', space: 'agents' })
+      expect(workbenchShortcut(key('Digit3', { metaKey: true, shiftKey: true }), desktop)).toBeNull()
+    }
+    // The composer's controls and the sessions keep their keys.
+    expect(workbenchShortcut(key('Digit1', { altKey: true, shiftKey: true }), false)).toEqual({ kind: 'control', control: 'harness' })
+    expect(workbenchShortcut(key('Digit2', { metaKey: true }), true)).toEqual({ kind: 'session', index: 2 })
+    expect(shortcutWorksOnPage({ kind: 'space', space: 'agents' })).toBe(true)
+    expect(shortcutKeys('space-code', true)).toBe('⇧⌘1')
+    expect(shortcutKeys('space-agents', false, false)).toBe('Ctrl Shift 2')
+    // Only where the Host has 我的 Agent.
+    expect(shortcutRows(true, true, { spaces: false }).some(row => row.id === 'space-code')).toBe(false)
+    // ⌘N says 委托 too only where this device can delegate.
+    expect(shortcutRows(true, true).find(row => row.id === 'new')?.label).toBe('新会话 · 委托')
+    expect(shortcutRows(true, true, { delegate: false }).find(row => row.id === 'new')?.label).toBe('新会话')
+    expect(shortcutRows(true, true, { spaces: false }).find(row => row.id === 'new')?.label).toBe('新会话')
+    expect(shortcutRows(true, true).some(row => row.id === 'space-agents')).toBe(true)
+  })
+  it('gives no two rows the same keys', () => {
+    for (const desktop of [true, false]) {
+      const keys = shortcutRows(desktop, true).map(row => row.keys)
+      expect(new Set(keys).size).toBe(keys.length)
+    }
   })
   it('keeps only what still shows over a page, whose session columns are hidden', () => {
     for (const action of ['new', 'sidebar', 'shortcuts', 'settings'] as const) expect(shortcutWorksOnPage(action)).toBe(true)
@@ -135,7 +161,7 @@ describe('workbench key routing', () => {
       expect(shortcutKeys(id as keyof typeof before, true), id).toBe(desktop)
       expect(shortcutKeys(id as keyof typeof before, false, false), id).toBe(browser)
     }
-    expect(shortcutRows(true, true).map(row => row.id)).toHaveLength(24)
+    expect(shortcutRows(true, true).map(row => row.id)).toHaveLength(26)
     expect(shortcutKeys('terminal', true)).toBe('⌘J')
     expect(shortcutKeys('terminal', false, false)).toBe('Alt J')
   })

@@ -328,7 +328,7 @@ it.each([
           expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt', '1', 'Alt', '9'])
           expect(await overlay.locator('[data-keys="Alt Shift 1 … Alt Shift 4"]').count()).toBe(1)
           expect(await overlay.locator('[data-keys="⌘1 … ⌘9"]').count()).toBe(0)
-          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(23)
+          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(25)
           expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '终端' }).count()).toBe(1)
           await noHorizontalOverflow(page, overlay.locator('.ui-dialog-surface'))
           await shoot('keys-overlay')

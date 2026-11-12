@@ -49,6 +49,14 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
+.ui-segmented-option > svg {
+  flex-shrink: 0;
+}
+.ui-segmented-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ui-segmented-option[aria-checked='true'] {
   background: var(--seg-on);
   box-shadow:

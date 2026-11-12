@@ -603,8 +603,16 @@ async function startUpdates({ proxy, supervisor }) {
     mainWindow.focus()
     mainWindow.webContents.send(channels.show)
   }
+  // Code and 我的 Agent from the menu: the focused window's page goes there; only the place's name crosses.
+  const showSpace = space => {
+    if (space !== 'code' && space !== 'agents') return
+    const window = BrowserWindow.getFocusedWindow() ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    window?.webContents.send('latch:space', space)
+  }
   if (process.platform === 'darwin')
-    Menu.setApplicationMenu(Menu.buildFromTemplate(menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates })))
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates, onSpace: showSpace })),
+    )
 
   // The same gate for a quit the user starts: an install at quit waits for nothing that runs; a waiting install is given
   // up. A quit macOS starts (logout, restart, shutdown) is never held; the update waits for the next time.
@@ -894,8 +902,27 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (!gestureOf(event)) return noGesture
     return computers.remove(hostId)
   })
+  // 显示 › Code and 我的 Agent work only while the focused window's page has said it has the two places (its Host has
+  // 我的 Agent). The page sends only that yes or no; a page that loads a new document says it again.
+  const spaceMenu = menus.spaceMenu({
+    // The window the items act on: the focused one, else this Mac's (as showSpace does).
+    focused: () => {
+      const window = BrowserWindow.getFocusedWindow() ?? mainWindow
+      return window && !window.isDestroyed() ? window.webContents : null
+    },
+    item: id => Menu.getApplicationMenu()?.getMenuItemById(id),
+  })
+  const syncSpaceMenu = spaceMenu.sync
+  ipcMain.on('latch:space:ready', (event, ready) => {
+    if (!senderOf(event) || typeof ready !== 'boolean') return
+    spaceMenu.ready(event.sender, ready)
+  })
+  app.on('browser-window-blur', syncSpaceMenu)
   app.on('will-quit', () => computers.stop())
-  app.on('browser-window-focus', () => computers.refocus())
+  app.on('browser-window-focus', () => {
+    computers.refocus()
+    syncSpaceMenu()
+  })
   await computers.start()
   // The page storage of a computer that is no longer listed (removed while Chromium still wrote to it).
   const partitions = await readdir(join(userData, 'Partitions')).catch(() => [])

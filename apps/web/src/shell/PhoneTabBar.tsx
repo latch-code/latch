@@ -23,7 +23,12 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
       {entries.flatMap(entry => {
         const tab = TABS[entry]
         if (!tab) return []
-        const waits = entry === 'sessions' && route.entry !== 'sessions' && waitingCount(snapshot) > 0
+        // A tab not shown carries a dot while something of its own waits; with 我的 Agent, each tab counts only its place.
+        const agents = entries.includes('agents')
+        const waits =
+          route.entry !== entry
+          && ((entry === 'sessions' && waitingCount(snapshot, agents ? 'code' : undefined) > 0)
+            || (entry === 'agents' && waitingCount(snapshot, 'agents') > 0))
         return [
           <button
             key={entry}

@@ -94,6 +94,10 @@ export function sessionAgent(
 /** Whether this device may read Agents at all: their contents are private to a device with the full data scope. */
 export const readsAgents = (snapshot: Pick<AppSnapshot, 'device'>) => snapshot.device.dataScope === 'all'
 
+/** Whether this device can delegate: the Host has 我的 Agent, and the device runs sessions and reads Agents. */
+export const canDelegate = (snapshot: Pick<AppSnapshot, 'device' | 'catalog'>, access: { scopes: ReadonlySet<string> }) =>
+  snapshot.catalog?.features?.customAgents === true && access.scopes.has('run') && readsAgents(snapshot)
+
 /**
  * What an Agent's face shows, from the Host's own data: its sessions by `agent.customAgentId`, 等你处理 before 运行中,
  * then 休息 while it cannot start, then a failure of its latest session, else nothing.

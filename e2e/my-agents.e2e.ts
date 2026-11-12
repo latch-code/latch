@@ -56,6 +56,11 @@ async function pickAvatar(page: Page, owner: TestDevice, agentId: string, row: '
   return agents.find(agent => agent.id === agentId)!.avatar
 }
 
+/** The switch at the top of the sidebar: Code or 我的 Agent. */
+const place = (page: Page, name: 'Code' | '我的 Agent') => page.getByRole('radio', { name, exact: true }).first()
+/** 我的 Agent's list in the sidebar. */
+const agentsNav = (page: Page) => page.getByRole('navigation', { name: '我的 Agent', exact: true })
+
 const choice = (page: Page, name: RegExp) => page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
 
 it('creates an Agent, delegates real sessions to it, edits its memory, and says when a start is refused or unknown', async () => {
@@ -85,8 +90,8 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     page.setDefaultTimeout(15_000)
     await fullScopeBrowser(page, host, owner, '我的 Agent 1440')
 
-    // 我的 Agent sits under Code; its list starts with 通用, built in, and nothing of the person's own yet.
-    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
+    // 我的 Agent is the other place beside Code; its list starts with 通用, built in, and nothing of the person's own yet.
+    await place(page, '我的 Agent').click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
       .getByRole('button', { name: /^通用 内置/u })
@@ -94,8 +99,8 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await page.getByText('还没有自己的 Agent').waitFor()
     await page.screenshot({ path: `${OUT}/list-empty-1440.png` })
 
-    // Create one on the fake ACP Harness, working in the project.
-    await page.getByRole('button', { name: '新建 Agent', exact: true }).click()
+    // Create one on the fake ACP Harness, working in the project, from the sidebar's own 新建 Agent.
+    await agentsNav(page).getByRole('button', { name: '新建 Agent', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByLabel('名称').fill('资料助手')
     await form.getByLabel('职责').fill('查资料，写成一页摘要')
@@ -138,15 +143,15 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await page.keyboard.press('Escape')
     await page.reload()
     await connected(page)
-    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
-    await page
-      .getByRole('navigation', { name: 'Agent 列表' })
+    // A reload comes back to the place this device was in.
+    await expect.poll(() => place(page, '我的 Agent').getAttribute('aria-checked')).toBe('true')
+    await agentsNav(page)
       .getByRole('button', { name: /资料助手/u })
       .click()
     await page.getByRole('tab', { name: '委托', exact: true, selected: true }).waitFor()
     const head = page.locator('.agent-head-avatar .agent-avatar')
     await expect.poll(() => head.getAttribute('data-hue')).toBe('wisteria')
-    expect(await page.locator('.agents-nav-row .agent-avatar').first().getAttribute('data-hue')).toBe('neutral')
+    expect(await page.locator('.agents-page .space-agent .agent-avatar').first().getAttribute('data-hue')).toBe('neutral')
 
     // A new face while 设置 has unsaved edits keeps them: the avatar is not part of the form.
     await page.getByRole('tab', { name: '设置', exact: true }).click()
@@ -173,19 +178,81 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await recent.getByRole('button', { name: new RegExp(session!.title.slice(0, 6), 'u') }).waitFor()
     await page.screenshot({ path: `${OUT}/delegated-1440.png` })
 
-    // Next time: from Code back to 我的 Agent, the Agent's page lists it, and it opens the normal conversation.
-    await page.getByRole('button', { name: 'Code', exact: true }).click()
-    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
-    await page
-      .getByRole('navigation', { name: 'Agent 列表' })
-      .getByRole('button', { name: /资料助手/u })
-      .click()
-    await recent.getByRole('button', { name: new RegExp(session!.title.slice(0, 6), 'u') }).click()
-    const way = page.getByRole('button', { name: '为 资料助手 委托', exact: true })
+    // The delegation lives in 我的 Agent: 最近委托 lists it, Code does not.
+    const delegation = agentsNav(page)
+      .getByRole('region', { name: '最近委托' })
+      .getByRole('button', { name: new RegExp(session!.title.slice(0, 6), 'u') })
+    await delegation.waitFor()
+    await place(page, 'Code').click()
+    await page.getByRole('navigation', { name: '会话列表' }).waitFor()
+    expect(await page.getByRole('navigation', { name: '会话列表' }).locator(`[data-task-id="${session!.id}"]`).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '新建会话', exact: true }).first().isVisible()).toBe(true)
+
+    // Back in 我的 Agent it opens the normal conversation, under 我的 Agent / the Agent, and the place follows it.
+    await place(page, '我的 Agent').click()
+    await delegation.click()
+    const way = page.locator('.topbar').getByRole('button', { name: '资料助手', exact: true })
     await way.waitFor()
+    expect(await place(page, '我的 Agent').getAttribute('aria-checked')).toBe('true')
+    await expect.poll(() => delegation.getAttribute('aria-current')).toBe('page')
     await page.screenshot({ path: `${OUT}/conversation-1440.png` })
-    await way.click()
+
+    // Something waits in 我的 Agent while Code is shown: an amber dot on its segment, and on its button when shut.
+    await page.route('**/link/api/snapshot*', async route => {
+      const response = await route.fetch()
+      const snapshot = (await response.json()) as AppSnapshot
+      if (!Array.isArray(snapshot.tasks)) return route.fulfill({ response })
+      const tasks = snapshot.tasks.map(task => (task.id === session!.id ? { ...task, status: 'waiting-approval' as const } : task))
+      await route.fulfill({ response, json: { ...snapshot, tasks } })
+    })
+    // The keys: ⇧⌘1 to Code, ⇧⌘2 back.
+    await page.keyboard.press('Meta+Shift+Digit1')
+    await expect.poll(() => place(page, 'Code').getAttribute('aria-checked')).toBe('true')
+    await page.reload()
+    await connected(page)
+    await expect.poll(() => place(page, '我的 Agent').locator('.space-dot').count()).toBe(1)
+    expect(await place(page, 'Code').locator('.space-dot').count()).toBe(0)
+    await page.screenshot({ path: `${OUT}/waiting-dot-1440.png` })
+    await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+    const shut = page.locator('.titlebar').getByRole('group', { name: 'Code 与我的 Agent' })
+    await expect.poll(() => shut.getByRole('button', { name: '我的 Agent', exact: true }).locator('.space-dot').count()).toBe(1)
+    await shut.getByRole('button', { name: '我的 Agent', exact: true }).click()
+    await expect.poll(() => shut.getByRole('button', { name: '我的 Agent', exact: true }).getAttribute('aria-pressed')).toBe('true')
+    await page.screenshot({ path: `${OUT}/shut-1440.png` })
+    await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+    await page.unroute('**/link/api/snapshot*')
+    await page.keyboard.press('Meta+Shift+Digit1')
+    await expect.poll(() => place(page, 'Code').getAttribute('aria-checked')).toBe('true')
+    await page.keyboard.press('Meta+Shift+Digit2')
+    await expect.poll(() => place(page, '我的 Agent').getAttribute('aria-checked')).toBe('true')
+    // Focus lands on the place's primary, never on the page.
+    await expect.poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-space-primary'))).toBe(true)
+
+    // 委托… (the key of 新会话, a browser's Alt N) chooses an Agent and opens its page on 委托 with the input ready.
+    await page.keyboard.press('Alt+KeyN')
+    await page.getByRole('menuitem', { name: /资料助手/u }).click()
     await page.getByRole('tab', { name: '委托', exact: true, selected: true }).waitFor()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('委托内容')
+    await way.waitFor({ state: 'detached' })
+    await page.locator('.agents-crumb').getByRole('button', { name: '我的 Agent', exact: true }).waitFor()
+
+    // Archived, the delegation stays in 我的 Agent: under its own 已归档, not in 最近委托 and not in Code.
+    await owner.json('tasks/' + session!.id, { method: 'PATCH', body: { archived: true } })
+    const shelf = agentsNav(page).getByRole('button', { name: /^已归档的委托/u })
+    await shelf.click()
+    await agentsNav(page)
+      .getByRole('region', { name: '已归档' })
+      .getByRole('button', { name: new RegExp(session!.title.slice(0, 6), 'u') })
+      .waitFor()
+    await page.screenshot({ path: `${OUT}/archived-1440.png` })
+    await agentsNav(page)
+      .getByRole('region', { name: '已归档' })
+      .getByRole('button', { name: /^已归档/u })
+      .first()
+      .click()
+    await shelf.waitFor()
+    await owner.json('tasks/' + session!.id, { method: 'PATCH', body: { archived: false } })
+    await delegation.waitFor()
 
     // 记忆: add one, then change it; the Host keeps what the page says.
     await page.getByRole('tab', { name: '记忆', exact: true }).click()
@@ -245,9 +312,11 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     const tabs = narrow.getByRole('navigation', { name: '主导航' })
     await tabs.getByRole('button', { name: 'Code', exact: true }).waitFor()
     await tabs.getByRole('button', { name: '我的 Agent', exact: true }).click()
+    // The tab lists the delegations too, under the Agents.
+    await narrow.getByRole('region', { name: '最近委托' }).first().getByRole('button').first().waitFor()
     await narrow
+      .getByRole('list', { name: '我的 Agent', exact: true })
       .getByRole('button', { name: /资料助手/u })
-      .first()
       .click()
     await narrow.getByRole('textbox', { name: '委托内容', exact: true }).waitFor()
     await narrow.getByRole('region', { name: '近期委托' }).getByRole('listitem').nth(1).waitFor()
@@ -269,8 +338,8 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     await connected(narrow)
     await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
     await narrow
+      .getByRole('list', { name: '我的 Agent', exact: true })
       .getByRole('button', { name: /资料助手/u })
-      .first()
       .click()
     await expect.poll(() => narrow.locator('.agent-head-avatar .agent-avatar path').nth(2).getAttribute('d')).toContain('Q16.9 19.4')
     await narrow.getByRole('button', { name: '返回', exact: true }).click()
@@ -284,8 +353,9 @@ it('creates an Agent, delegates real sessions to it, edits its memory, and says 
     const scoped = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
     const limited = await scoped.newPage()
     await enrollBrowser(limited, host, { name: `工作范围 ${randomUUID().slice(0, 4)}` })
-    await limited.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
-    await limited.getByText('这台设备看不到 Agent').waitFor()
+    await place(limited, '我的 Agent').click()
+    await limited.locator('.agents-content').getByText('这台设备看不到 Agent').waitFor()
+    await agentsNav(limited).getByText('这台设备看不到 Agent').waitFor()
     expect(await limited.getByText('还没有自己的 Agent').count()).toBe(0)
     await scoped.close()
   } finally {
@@ -311,9 +381,8 @@ it('delegates from an Agent with no default project into the start folder', asyn
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await fullScopeBrowser(page, host, owner, '无项目 Agent')
-    await page.getByRole('button', { name: '我的 Agent', exact: true }).first().click()
-    await page
-      .getByRole('navigation', { name: 'Agent 列表' })
+    await place(page, '我的 Agent').click()
+    await agentsNav(page)
       .getByRole('button', { name: /随手助手/u })
       .click()
     const sent: unknown[] = []
@@ -326,7 +395,10 @@ it('delegates from an Agent with no default project into the start folder', asyn
     const delegated = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
     await expect.poll(async () => (await delegated()).length, { timeout: 15_000 }).toBe(1)
     expect(sent).toEqual([expect.objectContaining({ customAgentId: agent.id, workspaceId: 'default' })])
-    expect((await delegated())[0]).toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: host.workspaceRoot })
+    // The Host fills in where it works after the row first appears: wait for the whole of it.
+    await expect
+      .poll(async () => (await delegated())[0], { timeout: 15_000 })
+      .toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: host.workspaceRoot })
     await expect.poll(() => input.inputValue()).toBe('')
     expect(await page.getByText(/委托没开始/u).count()).toBe(0)
     await context.close()

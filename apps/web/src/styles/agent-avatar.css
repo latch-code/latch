@@ -136,17 +136,6 @@
   transition: none;
 }
 
-/* The 我的 Agent entry: the face in line, in the colour of the icons beside it. */
-.agents-mark path {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.agents-mark circle {
-  fill: currentColor;
-}
-
 /* The Agent page's face opens the picker. */
 .agent-head {
   flex-wrap: wrap;

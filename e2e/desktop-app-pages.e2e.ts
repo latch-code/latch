@@ -114,6 +114,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await connect.or(connected).first().waitFor()
       if (await connect.isVisible()) await connect.click()
       await connected.waitFor()
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '应用', exact: true }).click()
       await page.locator('.sidebar-apps').getByRole('button', { name: '桌面框' }).click()
       const iframe = page.locator('iframe.app-frame')
       await iframe.waitFor()

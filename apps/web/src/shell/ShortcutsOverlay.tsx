@@ -9,10 +9,24 @@ import { shortcutRows } from '../workbenchShortcuts.ts'
  * columns with a search that takes the focus. Esc, the scrim or ⌘/ again closes it; 设置 › 快捷键 is the same table
  * as a page. Flat, without groups: the group names are only a proposal so far.
  */
-export function ShortcutsOverlay({ onClose, onSettings }: { onClose: () => void; onSettings?: (() => void) | undefined }) {
+export function ShortcutsOverlay({
+  onClose,
+  onSettings,
+  spaces = true,
+  delegate = true,
+}: {
+  onClose: () => void
+  onSettings?: (() => void) | undefined
+  /** The Host has 我的 Agent: the keys between the two places do something. */
+  spaces?: boolean
+  /** This device can delegate (it runs sessions and reads Agents): ⌘N is also 委托 in 我的 Agent. */
+  delegate?: boolean
+}) {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
-  const rows = shortcutRows(currentShell() !== null).filter(row => `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle))
+  const rows = shortcutRows(currentShell() !== null, undefined, { spaces, delegate }).filter(row =>
+    `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle),
+  )
   const half = Math.ceil(rows.length / 2)
   const columns = [rows.slice(0, half), rows.slice(half)].filter(column => column.length)
   return (

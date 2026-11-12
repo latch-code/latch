@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import {
   ArrowUp,
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -8,6 +9,7 @@ import {
   Circle,
   CircleAlert,
   CircleDot,
+  Code2,
   Copy,
   Download,
   Ellipsis,
@@ -884,6 +886,24 @@ function Choices() {
               { value: 'system', label: '跟随系统' },
               { value: 'light', label: '浅色' },
               { value: 'dark', label: '深色' },
+            ]}
+          />
+        </Cell>
+        <Cell caption="地点 · 图标与标记">
+          <SegmentedControl
+            label="地点"
+            size="md"
+            value="code"
+            onValueChange={() => {}}
+            options={[
+              { value: 'code', label: 'Code', icon: <Code2 size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" /> },
+              {
+                value: 'agents',
+                label: '我的 Agent',
+                icon: <Bot size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />,
+                badge: <span className="gallery-dot" aria-hidden="true" />,
+                title: '我的 Agent 里有等你处理的会话',
+              },
             ]}
           />
         </Cell>

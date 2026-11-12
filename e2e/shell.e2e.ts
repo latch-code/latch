@@ -55,7 +55,11 @@ describe('the shell', () => {
     expect(await foot.getByRole('button').allTextContents()).toEqual(['设置'])
     const name = page.locator('#session-navigation .sidebar-top > .sidebar-host')
     expect((await name.textContent())?.trim()).not.toBe('')
-    expect((await box(page, '.sidebar-host')).top).toBeLessThan((await box(page, '.sidebar-top .sidebar-nav-line')).top)
+    // The computer's name is above the switch between Code and 我的 Agent, which leads the sidebar's own rows.
+    expect((await box(page, '.sidebar-host')).top).toBeLessThan((await box(page, '#session-navigation .space-switch')).top)
+    expect((await box(page, '#session-navigation .space-switch')).top).toBeLessThan(
+      (await box(page, '#session-navigation .sidebar-top .sidebar-nav-row >> nth=0')).top,
+    )
     expect(await page.locator('main.workspace').getAttribute('class')).toContain('is-new')
     await noHorizontalOverflow(page)
     await page.context().close()

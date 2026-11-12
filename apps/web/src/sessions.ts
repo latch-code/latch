@@ -8,6 +8,19 @@ import { storageGet, storageSet } from './preferences.ts'
 export type SessionFilter = 'all' | 'archived'
 
 /**
+ * The two places of a wide window's navigation: Code (the sessions you start) and 我的 Agent (the sessions delegated to
+ * one of your Agents). A session's place is fixed when it starts: only `TaskSummary.agent` says it was delegated.
+ */
+export type Space = 'code' | 'agents'
+
+export const spaceOf = (task: Pick<TaskSummary, 'agent'>): Space => (task.agent ? 'agents' : 'code')
+
+/** The sessions of one place; every session when no place is given. */
+export function inSpace<T extends Pick<TaskSummary, 'agent'>>(tasks: readonly T[], space: Space | undefined): T[] {
+  return space === undefined ? [...tasks] : tasks.filter(task => spaceOf(task) === space)
+}
+
+/**
  * What a session is doing, as far as the Host has said. Nothing here is guessed from elapsed time: silence is the Host's
  * own judgement, 正在停止 lasts until the run has really settled, and 已停止 is said only after that.
  */
@@ -45,11 +58,17 @@ export function waitsOnYou(task: TaskSummary): boolean {
   return task.status === 'running' && (Boolean(task.pendingQuestions) || live?.silent === true || stuckOnRequest(live))
 }
 
-/** How many sessions wait on the person; what 等你处理 counts, here and on the Dock. An approval's session may be outside the list. */
-export function waitingCount(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>): number {
+/**
+ * How many sessions wait on the person; what 等你处理 counts, here and on the Dock. An approval's session may be outside
+ * the list; with a place given, only that place's listed sessions count, so its dot always has a row to point at.
+ */
+export function waitingCount(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>, space?: Space): number {
   const stopping = new Set(snapshot.tasks.filter(task => liveNow(task)?.activity === 'cancelling').map(task => task.id))
-  const asking = snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopping.has(id))
-  return new Set([...asking, ...snapshot.tasks.filter(waitsOnYou).map(task => task.id)]).size
+  const placed = new Map(snapshot.tasks.map(task => [task.id, spaceOf(task)]))
+  // A place counts only what its own lists can show: an approval of a session no list holds counts in the total alone.
+  const here = (id: string) => space === undefined || placed.get(id) === space
+  const asking = snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopping.has(id) && here(id))
+  return new Set([...asking, ...snapshot.tasks.filter(task => waitsOnYou(task) && here(task.id)).map(task => task.id)]).size
 }
 
 export function rowStatus(task: TaskSummary, { unread = false, stopping = false, frozen = false } = {}): RowStatus {
@@ -137,11 +156,12 @@ export function waitKind(task: TaskSummary): WaitKind | undefined {
   return live?.silent ? { kind: 'silent' } : undefined
 }
 
-/** Archived sessions appear only under their own filter; search matches titles. */
-export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, query: string): TaskSummary[] {
+/** Archived sessions appear only under their own filter; search matches titles; a place keeps only its own sessions. */
+export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, query: string, space?: Space): TaskSummary[] {
   const needle = query.trim().toLocaleLowerCase()
   return tasks.filter(task => {
     if (filter === 'archived' ? !task.archived : task.archived) return false
+    if (space !== undefined && spaceOf(task) !== space) return false
     return !needle || task.title.toLocaleLowerCase().includes(needle)
   })
 }
@@ -254,11 +274,68 @@ export function groupSessions(
 export function listedSessions(
   tasks: TaskSummary[],
   workspaces: readonly WorkspaceInfo[] | undefined,
-  { filter, search, folded }: { filter: SessionFilter; search: string; folded: ReadonlySet<string> },
+  {
+    filter,
+    search,
+    folded,
+    space,
+    expanded = false,
+  }: {
+    filter: SessionFilter
+    search: string
+    folded: ReadonlySet<string>
+    space?: Space
+    /** 我的 Agent: 最近委托 shows every delegation (全部). */
+    expanded?: boolean
+  },
 ): TaskSummary[] {
-  return groupSessions(filterSessions(tasks, filter, search), workspaces, filter !== 'archived' && !search ? { waitingFrom: tasks } : {})
+  if (space === 'agents') return delegationRows(tasks, { filter, expanded }).rows
+  return groupSessions(
+    filterSessions(tasks, filter, search, space),
+    workspaces,
+    filter !== 'archived' && !search ? { waitingFrom: inSpace(tasks, space) } : {},
+  )
     .filter(group => !folded.has(group.id))
     .flatMap(group => group.tasks)
+}
+
+/** How many delegations 我的 Agent's list shows under 最近委托 before 全部. */
+export const RECENT_DELEGATIONS = 6
+
+/**
+ * The delegations 我的 Agent's list draws, in its order. 最近委托 lifts what waits on you to the top (archived or not,
+ * as Code's 等你处理 does), then the rest newest first without the archived, and cuts after `limit` unless expanded,
+ * never before the last one that waits; under 已归档 it is the archived ones, newest first. `total` is how many 全部
+ * would show; `archived` how many 已归档 holds.
+ */
+export function delegationRows(
+  tasks: readonly TaskSummary[],
+  { filter = 'all', expanded = false, limit = RECENT_DELEGATIONS }: { filter?: SessionFilter; expanded?: boolean; limit?: number } = {},
+): { rows: TaskSummary[]; total: number; archived: number } {
+  const own = inSpace(tasks, 'agents').toSorted(byRecency)
+  const archived = own.filter(task => task.archived)
+  if (filter === 'archived') return { rows: archived, total: archived.length, archived: archived.length }
+  const waiting = own.filter(waitsOnYou)
+  const lifted = new Set(waiting.map(task => task.id))
+  const listed = [...waiting, ...own.filter(task => !task.archived && !lifted.has(task.id))]
+  const cut = expanded ? listed.length : Math.max(limit, waiting.length)
+  return { rows: listed.slice(0, cut), total: listed.length, archived: archived.length }
+}
+
+/** 最近委托 as it stands before 全部. */
+export function recentDelegations(tasks: readonly TaskSummary[], limit = RECENT_DELEGATIONS): TaskSummary[] {
+  return delegationRows(tasks, { limit }).rows
+}
+
+/** Where this device was last, kept per device; Code when nothing (or nothing readable) was kept. */
+export const spaceKey = (deviceId: string) => `latch.space.${location.origin}.${deviceId}`
+
+export function readSpace(key: string): Space {
+  return storageGet(key) === 'agents' ? 'agents' : 'code'
+}
+
+export function writeSpace(key: string, space: Space): void {
+  storageSet(key, space)
 }
 
 /** The row one step from `selectedId`, wrapping; from outside the list, the first or the last. */

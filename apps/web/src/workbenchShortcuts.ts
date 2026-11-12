@@ -12,6 +12,8 @@ export type WorkbenchAction =
   | 'compose'
   | 'side-panel'
   | 'settings'
+  /** ⇧⌘1 and ⇧⌘2: Code and 我的 Agent. */
+  | { kind: 'space'; space: 'code' | 'agents' }
   /** ⌘1 to ⌘9: the Nth session as the sidebar draws it. */
   | { kind: 'session'; index: number }
   /** ⌥⌘1 to ⌥⌘4: open one of the composer's four controls. */
@@ -57,6 +59,8 @@ function typesCharacter(event: KeyStroke): boolean {
 const SHORTCUTS = [
   { id: 'settings', label: '设置', desktop: '⌘,', browser: 'Alt ,' },
   { id: 'new', label: '新会话', desktop: '⌘N', browser: 'Alt N' },
+  { id: 'space-code', label: 'Code', desktop: '⇧⌘1', browser: 'Mod Shift 1' },
+  { id: 'space-agents', label: '我的 Agent', desktop: '⇧⌘2', browser: 'Mod Shift 2' },
   { id: 'palette', label: '搜索', desktop: '⌘K', browser: 'Mod K' },
   { id: 'sidebar', label: '收起或展开侧栏', desktop: '⌘B', browser: 'Alt B' },
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
@@ -92,8 +96,18 @@ export function shortcutKeys(id: ShortcutId, desktop: boolean, mac: boolean = on
   return row.browser?.replace(/Mod /gu, mac ? '⌘' : 'Ctrl ') ?? null
 }
 
-export function shortcutRows(desktop: boolean, mac: boolean = onMac()): Array<{ id: ShortcutId; label: string; keys: string }> {
-  return SHORTCUTS.flatMap(({ id, label }) => {
+/** The keys that go to a place only where there are two: without 我的 Agent they would do nothing. */
+const SPACE_SHORTCUTS: ReadonlySet<ShortcutId> = new Set(['space-code', 'space-agents'])
+
+export function shortcutRows(
+  desktop: boolean,
+  mac: boolean = onMac(),
+  { spaces = true, delegate = true }: { spaces?: boolean; delegate?: boolean } = {},
+): Array<{ id: ShortcutId; label: string; keys: string }> {
+  return SHORTCUTS.flatMap(({ id, label: named }) => {
+    if (!spaces && SPACE_SHORTCUTS.has(id)) return []
+    // In 我的 Agent the same key is 委托…, said only where this device can delegate.
+    const label = id === 'new' && spaces && delegate ? '新会话 · 委托' : named
     const keys = shortcutKeys(id, desktop, mac)
     return keys === null ? [] : [{ id, label, keys }]
   })
@@ -124,13 +138,22 @@ export function shortcutButtonKeys(id: ShortcutId, desktop: boolean, mac: boolea
 
 /** What still shows over a page, which hides the session's columns: moving to another page, and what opens above it. */
 export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
-  return action === 'new' || action === 'sidebar' || action === 'shortcuts' || action === 'settings'
+  return (
+    action === 'new'
+    || action === 'sidebar'
+    || action === 'shortcuts'
+    || action === 'settings'
+    || (typeof action === 'object' && action.kind === 'space')
+  )
 }
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {
   if (event.isComposing) return null
   if (!desktop && event.altKey && typesCharacter(event)) return null
   // The digits come first: their ⌥ (the desktop app's) or Shift (a browser's) picks a control instead of a session.
   const digit = /^Digit([1-9])$/u.exec(event.code)?.[1]
+  // ⇧⌘1 and ⇧⌘2 in both kinds of client: a browser's own Mod Shift digits are free, and the shifted digit types nothing.
+  if ((digit === '1' || digit === '2') && (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey)
+    return { kind: 'space', space: digit === '1' ? 'code' : 'agents' }
   if (digit !== undefined) {
     const index = Number(digit)
     const held = desktop ? (event.metaKey || event.ctrlKey) && !event.shiftKey : event.altKey && !event.metaKey && !event.ctrlKey

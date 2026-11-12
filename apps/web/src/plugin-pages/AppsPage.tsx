@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Code2,
   Ellipsis,
   FileText,
   FlaskConical,
@@ -26,7 +27,6 @@ import {
   Sparkles,
   SquareCheckBig,
   SquareKanban,
-  SquarePen,
   Table,
   WifiOff,
   Wrench,
@@ -48,11 +48,9 @@ import {
 import type { AppDiagnostic, AppMigrationLease, AppSummary, PluginPackageDetail } from '@latch/protocol'
 import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
-import { currentShell } from '../core/shell.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
-import { EntryRows } from '../agents/parts.tsx'
-import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
+import { NavTop, NewSessionRow, ShellDelegate, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
@@ -94,7 +92,7 @@ function AppIcon({ name, size = 16 }: { name: string | undefined; size?: 14 | 16
 }
 
 /** The sidebar's 「应用」 group: one row per page, its icon and title. Gone the moment a page is disabled or removed. */
-export function AppsGroup({ shell, current }: { shell: ShellState; current?: AppTarget | undefined }) {
+function AppsGroup({ shell, current }: { shell: ShellState; current?: AppTarget | undefined }) {
   const pages = listedApps(shell.snapshot)
   if (!pages.length) return null
   return (
@@ -117,27 +115,46 @@ export function AppsGroup({ shell, current }: { shell: ShellState; current?: App
   )
 }
 
-/** The sidebar's place on wide windows while a page is open: 新会话, 搜索, the entries, then 「应用」. */
+/**
+ * The sidebar's place on wide windows while a page is open: the sidebar's top in the place last shown (choosing either
+ * leaves 应用 for it), the pages, and the shared foot.
+ */
 function AppsNav({ shell, current }: { shell: ShellState; current: AppTarget | undefined }) {
-  const desktop = currentShell() !== null
-  const capsOf = (id: 'new' | 'palette') => {
-    const keys = shortcutButtonKeys(id, desktop)
-    return keys ? { keys } : {}
-  }
+  const spaces = shellSpaces(shell)
   return (
     <div className="sidebar-body apps-nav-body">
-      <div className="sidebar-top apps-nav-top">
-        <Button variant="ghost" className="sidebar-nav-row" aria-label="新建会话" {...capsOf('new')} onClick={shell.startNew}>
-          <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>新会话</span>
-        </Button>
-        <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette')} onClick={shell.openSearch}>
-          <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>搜索</span>
-        </Button>
-        <EntryRows current="apps" onEntry={shell.goEntry} agents={shell.entries.includes('agents')} />
+      <NavTop
+        className="apps-nav-top"
+        snapshot={shell.snapshot}
+        spaces={spaces && { ...spaces, onSpace: shell.goSpace }}
+        primary={
+          shell.space === 'agents' && spaces ? (
+            <ShellDelegate shell={shell} />
+          ) : (
+            <NewSessionRow onNew={shell.startNew} active={false} drawer={false} />
+          )
+        }
+        onSearch={shell.openSearch}
+        drawer={false}
+        onManageComputers={() => {
+          shell.openSettings('computers')
+        }}
+      />
+      {!spaces && (
+        <button
+          type="button"
+          className="sidebar-nav-row apps-nav-code"
+          onClick={() => {
+            shell.goEntry('sessions')
+          }}>
+          <Code2 size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <span>Code</span>
+        </button>
+      )}
+      <nav className="space-list" aria-label="应用">
         <AppsGroup shell={shell} current={current} />
-      </div>
+      </nav>
+      <ShellNavFoot shell={shell} />
     </div>
   )
 }

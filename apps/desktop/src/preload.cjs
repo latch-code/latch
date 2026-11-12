@@ -126,6 +126,26 @@ const holdEarlyShow = () => {
 }
 ipcRenderer.on('latch:updates:show', holdEarlyShow)
 
+/**
+ * `spaces`: Code or 我的 Agent chosen in the menu bar, for any window's page. Only the two names cross; anything else
+ * from main is dropped here.
+ */
+const spacesApi = Object.freeze({
+  onShow: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, space) => {
+      if (space === 'code' || space === 'agents') callback(space)
+    }
+    ipcRenderer.on('latch:space', listener)
+    // The page has the two places: main enables 显示 › Code and 我的 Agent for its window, until it stops listening.
+    ipcRenderer.send('latch:space:ready', true)
+    return () => {
+      ipcRenderer.removeListener('latch:space', listener)
+      ipcRenderer.send('latch:space:ready', false)
+    }
+  },
+})
+
 /** Absent is null; a given ID must match, otherwise undefined and the call is refused here. */
 function optionalId(value, pattern) {
   if (value === undefined || value === null) return null
@@ -438,7 +458,14 @@ const REMOTE = /^h-[a-z2-7]{52}$/.test(HOME)
 if (REMOTE)
   contextBridge.exposeInMainWorld(
     'latchShell',
-    Object.freeze({ kind: 'electron', remote: true, devMode: true, platform: process.platform, computers: computersApi(false) }),
+    Object.freeze({
+      kind: 'electron',
+      remote: true,
+      devMode: true,
+      platform: process.platform,
+      computers: computersApi(false),
+      spaces: spacesApi,
+    }),
   )
 
 // The channels are OPEN_IN_BROWSER and COPY_COMPUTER_LINK in proxy.cjs, LIFECYCLE_CHANNELS in lifecycle.cjs and CHANNELS in browser.cjs, which
@@ -451,6 +478,7 @@ if (!REMOTE)
       kind: 'electron',
       devMode: true,
       computers: computersApi(true),
+      spaces: spacesApi,
       platform: process.platform,
       previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
       folders: Object.freeze({

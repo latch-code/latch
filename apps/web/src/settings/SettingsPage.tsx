@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { canDelegate } from '../agents/model.ts'
 import {
   ArrowLeft,
   Box,
@@ -354,7 +355,12 @@ export function SettingsPage({
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
-                    {panel === 'shortcuts' && <ShortcutsSettings />}
+                    {panel === 'shortcuts' && (
+                      <ShortcutsSettings
+                        spaces={snapshot.catalog?.features?.customAgents === true}
+                        delegate={canDelegate(snapshot, access)}
+                      />
+                    )}
                     {panel === 'workspaces' && (
                       <WorkspacesSettings
                         snapshot={snapshot}

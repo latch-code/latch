@@ -21,10 +21,12 @@ export function ShortcutCaps({ keys }: { keys: string }) {
 }
 
 /** The shortcuts of this kind of client, and no other's. The page's name heads the section; the search stands under it. */
-export function ShortcutsSettings() {
+export function ShortcutsSettings({ spaces = true, delegate = true }: { spaces?: boolean; delegate?: boolean }) {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
-  const rows = shortcutRows(currentShell() !== null).filter(row => `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle))
+  const rows = shortcutRows(currentShell() !== null, undefined, { spaces, delegate }).filter(row =>
+    `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle),
+  )
   return (
     <>
       <SearchField className="shortcuts-search" label="搜索快捷键" value={query} onValueChange={setQuery} />

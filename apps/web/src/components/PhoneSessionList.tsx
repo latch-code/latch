@@ -14,12 +14,14 @@ import { projectName } from '../projects.tsx'
 import {
   filterSessions,
   groupSessions,
+  inSpace,
   projectOf,
   rowMeta,
   rowStatus,
   waitsOnYou,
   type SessionFilter,
   type SessionGroup,
+  type Space,
 } from '../sessions.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
@@ -302,6 +304,7 @@ function PhoneGroup({
  * app on that computer, the computer's name heads the page.
  */
 export function PhoneSessionList({
+  space,
   snapshot,
   searchResults,
   archiveBatch,
@@ -356,10 +359,12 @@ export function PhoneSessionList({
   now: number
   /** Notices about the connection and the Host, at the top of the list. */
   banners?: ReactNode
+  /** Code's tab where the Host has 我的 Agent: its own sessions, though a search finds delegations too. */
+  space?: Space | undefined
 }) {
   const list = useRef<HTMLElement>(null)
   const [held, setHeld] = useState<TaskSummary | null>(null)
-  const empty = snapshot.tasks.length === 0
+  const empty = inSpace(snapshot.tasks, space).length === 0
   const closeSearch = () => {
     onSearch('')
     onSearching(false)
@@ -367,14 +372,16 @@ export function PhoneSessionList({
   }
   const frozen = useLastConfirmed(connection, snapshot)
   const archived = filter === 'archived'
-  const visible = filterSessions(snapshot.tasks, filter, search)
+  const listed = search.trim() ? undefined : space
+  const own = inSpace(snapshot.tasks, listed)
+  const visible = filterSessions(snapshot.tasks, filter, search, listed)
   const browsing = !search && !archived
   const projectSections = snapshot.catalog?.projectFolders !== undefined && browsing
   const groups = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
-    ...(browsing ? { waitingFrom: snapshot.tasks } : {}),
+    ...(browsing ? { waitingFrom: own } : {}),
   })
-  const archivedCount = snapshot.tasks.filter(task => task.archived).length
+  const archivedCount = own.filter(task => task.archived).length
   const context = `${filter}\u0000${search}`
   const signature = groups.map(group => `${group.id}:${group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)

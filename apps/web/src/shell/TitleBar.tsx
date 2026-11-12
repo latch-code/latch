@@ -3,6 +3,7 @@ import { Count, IconButton, useLivePrevious } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
 import { ConversationHeader } from './ConversationHeader.tsx'
+import { ShellDelegate, SpaceButtons, shellSpaces } from './SpaceNav.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -27,6 +28,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     openApprovals,
     setTitleSlot,
   } = shell
+  const spaces = shellSpaces(shell)
   const desktop = currentShell()
   const approvals = waitingCount(snapshot)
   // The button shows only while something waits, so its count is told the value it rose from.
@@ -34,13 +36,16 @@ export function TitleBar({ shell }: { shell: ShellState }) {
   const sessions = route.entry === 'sessions'
   // What the shut panel would otherwise offer stays one click away here.
   const shut = sidebarColumn ? sidebarCollapsed : drawerMode && sessions
+  // With two places, the shut lead holds the way between them, and the place's own primary.
+  const placed = spaces !== undefined && (sessions || route.entry === 'agents')
   return (
     <div
       ref={titlebar}
       className="titlebar"
       data-lights={desktop?.platform === 'darwin' ? '' : undefined}
       data-shut={shut ? '' : undefined}
-      data-waiting={approvals > 0 ? '' : undefined}>
+      data-waiting={approvals > 0 ? '' : undefined}
+      data-spaces={shut && placed ? '' : undefined}>
       <div className="titlebar-lead">
         {sidebarColumn ? (
           <IconButton
@@ -70,8 +75,11 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         {!shut && (sidebarColumn || !sessions) && <span className="titlebar-wordmark">Latch</span>}
         {shut && (
           <>
-            {sessions ? (
-              <IconButton label="新建会话" icon={SquarePen} pressed={selectedId === null} onClick={startNew} />
+            {placed && <SpaceButtons {...spaces} />}
+            {placed && shell.space === 'agents' ? (
+              <ShellDelegate shell={shell} compact />
+            ) : sessions ? (
+              <IconButton label="新建会话" data-space-primary="" icon={SquarePen} pressed={selectedId === null} onClick={startNew} />
             ) : (
               <IconButton
                 label="返回会话"
