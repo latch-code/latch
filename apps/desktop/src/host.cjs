@@ -192,12 +192,20 @@ function isActivity(value) {
   return count(value.running) && count(value.waiting)
 }
 
+function isScheduleWake(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (!(Number.isInteger(value.running) && value.running >= 0)) return false
+  return value.next === undefined || (typeof value.next === 'string' && value.next.length <= 64 && Number.isFinite(Date.parse(value.next)))
+}
+
 function parseHostInfo(value) {
   if (!value || typeof value !== 'object') return undefined
   if (value.product !== 'Latch' || typeof value.hostId !== 'string' || typeof value.instanceId !== 'string') return undefined
   if (!Number.isInteger(value.pid) || typeof value.devMode !== 'boolean') return undefined
   // Optional, as in host-state.ts: running sessions and waiting approvals, which the desktop app keeps the Mac awake for.
   if (value.activity !== undefined && !isActivity(value.activity)) return undefined
+  // Optional: the next due time and running count of schedules whose Agent asked to keep the Mac awake (lifecycle.cjs).
+  if (value.scheduleWake !== undefined && !isScheduleWake(value.scheduleWake)) return undefined
   // Optional too: the Host API version, which the updater compares with a release's bundled Host (updater.cjs).
   if (value.protocol !== undefined && !(Number.isInteger(value.protocol) && value.protocol > 0)) return undefined
   // Optional: the model gateway's loopback port, which the preview tabs may not reach (browser.cjs).

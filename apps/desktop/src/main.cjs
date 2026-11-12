@@ -60,6 +60,7 @@ const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
   createKeepAwake,
+  createDesktopReports,
   createLoginItem,
   createSystemQuit,
   excludeFromBackup,
@@ -451,14 +452,22 @@ async function startLifecycle({ supervisor, hooks }) {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(LIFECYCLE_CHANNELS.changed, lifecycleView())
   }
   const loginItem = createLoginItem({ app, platform: process.platform, packaged: app.isPackaged })
+  // The Host shows in 「电脑」 what this app keeps awake, and that it runs at all.
+  const reports = createDesktopReports({ send: body => supervisor.announce(body) })
   const keepAwake = createKeepAwake({
     blocker: powerSaveBlocker,
     onBattery: () => powerMonitor.isOnBatteryPower(),
     enabled: preferences.keepAwake,
-    onChange: broadcast,
+    onChange: view => {
+      broadcast()
+      reports.update(view, supervisor.instance())
+    },
   })
   hooks.onChange = broadcast
-  hooks.onActivity = activity => keepAwake.setActivity(activity)
+  hooks.onActivity = activity => {
+    keepAwake.setActivity(activity)
+    reports.update(keepAwake.view(), supervisor.instance())
+  }
   started = true
 
   const refused = { ok: false, error: 'forbidden', message: '只接受 Latch 页面的请求。' }
@@ -511,6 +520,8 @@ async function startLifecycle({ supervisor, hooks }) {
     void supervisor.systemShutdown().finally(() => app.quit())
   })
   app.on('will-quit', () => {
+    // Best effort while the app ends: the Host hears that nothing is kept awake now.
+    void reports.stop()
     supervisor.stop()
     keepAwake.stop()
   })

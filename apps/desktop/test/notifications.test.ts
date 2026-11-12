@@ -125,6 +125,60 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     expect(show).toHaveBeenCalledTimes(1)
   })
+  it("follows each Agent's switch for its topics and its scheduled runs, and leaves everything else on", async () => {
+    let time = 10_000
+    const agent = 'agt_00000000-0000-4000-8000-000000000001'
+    const topic = { id: 'topic', status: 'running', agent: { customAgentId: agent } } as Record<string, unknown>
+    const run = { id: 'run', status: 'running', automationId: 'auto_1' } as Record<string, unknown>
+    const other = { id: 'other', status: 'running' } as Record<string, unknown>
+    const snapshot = {
+      tasks: [topic, run, other],
+      approvals: [] as Array<Record<string, unknown>>,
+      customAgents: [{ id: agent, notifications: { completed: false, failed: true, waiting: false } }],
+      automations: [{ id: 'auto_1', customAgentId: agent }],
+    }
+    const show = vi.fn()
+    const save = vi.fn()
+    const controller = createNotifications({
+      snapshot: async () => structuredClone(snapshot),
+      focused: () => false,
+      supported: () => true,
+      show,
+      open: vi.fn(),
+      save,
+      now: () => time,
+    })
+    cleanup.push(() => controller.close())
+    await controller.poll()
+    // Completed while 完成 is off for this Agent: no notification, and no first-time opt-in from it either.
+    topic.status = 'idle'
+    topic.runOutcome = 'completed'
+    run.status = 'idle'
+    run.runOutcome = 'completed'
+    await controller.poll()
+    expect(show).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    expect(controller.view().consent).toBe('unasked')
+    // Another session completes: as before.
+    other.status = 'idle'
+    other.runOutcome = 'completed'
+    await controller.poll()
+    expect(show).toHaveBeenCalledTimes(1)
+    // 失败 is on; 需要你处理 is off for the Agent's approvals and questions.
+    time += 20_000
+    topic.status = 'running'
+    run.status = 'running'
+    run.runOutcome = undefined
+    await controller.poll()
+    topic.status = 'failed'
+    topic.runOutcome = 'failed'
+    snapshot.approvals.push({ id: 'ap', sessionId: 'run' })
+    run.status = 'waiting-approval'
+    run.pendingQuestions = 1
+    await controller.poll()
+    expect(show).toHaveBeenCalledTimes(2)
+    expect(show).toHaveBeenLastCalledWith(expect.objectContaining({ body: '一个会话失败了。' }))
+  })
   it('turns notifications on at the first real ending in the background and keeps a choice across restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-notification-consent-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))

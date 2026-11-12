@@ -13,6 +13,7 @@ export function loginItemNote(view: ShellLifecycle['loginItem']): string {
 
 /** Whether the Mac is being kept awake now and why, in a few words; empty when the switch already says it all. */
 export function keepAwakeLine(view: ShellLifecycle['keepAwake']): string {
+  if (view.active && view.cause === 'schedule') return '保持唤醒中：定时任务快到点了'
   if (!view.enabled) return ''
   if (view.active) return view.cause === 'waiting' ? '保持唤醒中：有审批在等你' : '保持唤醒中：有会话在运行'
   if (view.batteryLimitReached) return '用电池时已到 1 小时上限'

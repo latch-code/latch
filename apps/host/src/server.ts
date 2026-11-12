@@ -214,6 +214,7 @@ import { writeProjectContext } from './project-context.ts'
 import { AgentProbes } from './agent-probes.ts'
 import type { HostInfo } from './host-state.ts'
 import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
+import { HostComputer, KEEP_AWAKE_HOLD_MS, desktopReportSchema } from './computer.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
 import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
@@ -1445,6 +1446,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     purgeTimer.unref()
     startupCleanup.push(() => clearInterval(purgeTimer))
     startupCleanup.push(() => customAgents.close())
+    const computer = await HostComputer.open({
+      dataDir,
+      now,
+      changed: () => refresh(),
+      setAside: reason => log(`电脑记录无法读取（${reason}），已移到一边，睡眠记录从空开始。`),
+    })
+    startupCleanup.push(() => computer.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id), log })
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
@@ -1494,7 +1502,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function agentSummaries(
       caller: Caller,
       tasks: readonly TaskSummary[],
-    ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals' | 'agentResults'> {
+    ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals' | 'agentResults' | 'computer'> {
       if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all') return {}
       if (caller.nativeOpening && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now()) return {}
       // Absent, as on a Host without them, while a write is being confirmed: the rest of the app has nothing to wait for.
@@ -1504,7 +1512,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         automations: automations.list().map(automationSummary),
         agentProposals: customAgents.proposalStates(),
         agentResults: automations.resultStates(),
+        computer: computer.view(),
       }
+    }
+    /**
+     * For the desktop app's 「到点前后保持唤醒」 (host-info, host.sock only): when the next schedule of an Agent that asked
+     * for it is due, and how many of their scheduled runs go on. Times and a count only. Nothing while a write is being
+     * confirmed, since the definitions cannot be read then.
+     */
+    function scheduleWake(): { next?: string; running: number } {
+      if (customAgents.hasPending() || automations.hasPending()) return { running: 0 }
+      const owners = new Set(
+        customAgents
+          .list()
+          .filter(agent => agent.keepAwakeForSchedules)
+          .map(agent => agent.id),
+      )
+      return owners.size ? automations.wakeFor(owners, KEEP_AWAKE_HOLD_MS) : { running: 0 }
     }
     function questionSummary(task: TaskSummary): TaskSummary {
       const { pendingQuestions: _untrustedCount, ...summary } = task
@@ -2177,6 +2201,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         plugins: enabledPluginInfo,
         detail: id => hub!.detail(id),
         sessionFiles: id => changeRoutes.sessionFiles(id),
+        computer: () => computer,
       },
       automations: {
         automations: () => automations,
@@ -5518,12 +5543,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Only this computer reports sleep, wake and why it is about to stop the Host: the desktop app and the command line.
         if (!isLocalListener(listener.listener)) throw new AppError(404, 'not-found', '接口不存在')
         if (method !== 'POST') throw new AppError(405, 'method-not-allowed', '不支持此操作')
-        const event = lifecycle.report(hostStateInputSchema.parse(await jsonBody(req)))
+        const body = await jsonBody(req)
+        if (body && typeof body === 'object' && (body as { state?: unknown }).state === 'desktop') {
+          // What the desktop app keeps this Mac awake for; it reports this at least every half minute while it runs.
+          computer.report(desktopReportSchema.parse(body))
+          json(res, { ok: true })
+          return true
+        }
+        const input = hostStateInputSchema.parse(body)
+        const event = lifecycle.report(input)
         if (event) {
           for (const stream of [...streams.keys()]) sendHostState(stream, event)
           // Clients resynchronize after a wake; runs the sleep interrupted show as they are now.
           if (event.state === 'awake') refresh()
         }
+        // Recorded after the announcement: the Mac may be asleep before a write lands, the clients must hear it first.
+        if (input.state === 'sleeping') await computer.sleeping()
+        if (input.state === 'awake') await computer.awake()
         json(res, { ok: true })
         return true
       }
@@ -5545,6 +5581,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           presence: await presenceStatus(),
           activeSessions: running + waiting,
           activity: { running, waiting },
+          scheduleWake: scheduleWake(),
           protocol: HOST_PROTOCOL,
           ...(modelGateway.listeningPort === undefined ? {} : { modelGatewayPort: modelGateway.listeningPort }),
         }
@@ -8022,6 +8059,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => questions.close(),
             () => clearInterval(purgeTimer),
             () => customAgents.close(),
+            // An orderly stop is recorded, so a time missed until the next start reads as Latch not running.
+            () => computer.close(),
             () => fileTracking.close(),
             () => fileRoutes.close(),
             () => pluginAssets.close(),

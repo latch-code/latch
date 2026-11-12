@@ -430,6 +430,11 @@ export interface HostInfo {
   activeSessions: number
   /** The same, split; absent from older Hosts. */
   activity?: { running: number; waiting: number }
+  /**
+   * For the desktop app's 「到点前后保持唤醒」: the earliest due time of a schedule whose Agent asked for it, and how many
+   * of those scheduled runs go on (each for at most the hold); absent from older Hosts.
+   */
+  scheduleWake?: { next?: string; running: number }
   /** The Host API version the desktop app compares with an update's bundled Host (update-window.ts); absent from older Hosts. */
   protocol?: number
   /** The model gateway's loopback port, which the desktop app keeps its preview tabs from; absent from older Hosts. */
@@ -449,6 +454,7 @@ const hostInfoSchema = z.object({
   presence: z.object({ status: z.enum(['available', 'unavailable']), message: z.string().optional() }),
   activeSessions: z.number().int().nonnegative(),
   activity: z.object({ running: z.number().int().nonnegative(), waiting: z.number().int().nonnegative() }).optional(),
+  scheduleWake: z.object({ next: z.string().datetime().optional(), running: z.number().int().nonnegative() }).optional(),
   protocol: z.number().int().positive().optional(),
   modelGatewayPort: z.number().int().min(1).max(65_535).optional(),
 })

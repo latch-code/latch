@@ -19,6 +19,7 @@ import {
   type AgentDraft,
 } from './model.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
+import { ROLE_TEMPLATES } from './roleTemplates.ts'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
 export function TakesEffect({ label = '何时生效' }: { label?: string }) {
@@ -212,6 +213,27 @@ export function AgentForm({
         event.preventDefault()
         void save()
       }}>
+      {!agent && (
+        <div className="agent-role-templates" role="group" aria-label="从模板开始">
+          <span>从模板开始</span>
+          {ROLE_TEMPLATES.map(template => (
+            <Button
+              key={template.label}
+              size="sm"
+              variant="ghost"
+              disabled={locked}
+              onClick={() => {
+                update({
+                  ...(draft.name.trim() ? {} : { name: template.label }),
+                  description: template.description,
+                  instructions: template.instructions,
+                })
+              }}>
+              {template.label}
+            </Button>
+          ))}
+        </div>
+      )}
       <TextField
         label="名称"
         value={draft.name}

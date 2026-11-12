@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as wait } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { AutomationConfig, TaskDetail } from '@latch/protocol'
@@ -111,7 +112,7 @@ test('a time the Mac missed is reported, not caught up, and the automation stays
   expect(service.get(value.id).lastRun).not.toHaveProperty('sessionId')
 })
 
-test('missed times across a restart are reported once and nothing runs in a burst', async () => {
+test('missed times across a restart are each reported once and nothing runs in a burst', async () => {
   const { f, service, start } = await fixture()
   const { value } = await service.create(definition(), actor)
   await service.close()
@@ -119,9 +120,123 @@ test('missed times across a restart are reported once and nothing runs in a burs
   const again = await f.open()
   services.push(again)
   await again.tick()
+  await again.tick()
   expect(start).not.toHaveBeenCalled()
-  expect(again.detail(value.id).runs.map(run => run.state)).toEqual(['missed'])
+  expect(again.detail(value.id).runs.map(run => [run.state, run.at])).toEqual([
+    ['missed', '2026-11-05T09:00:00.000Z'],
+    ['missed', '2026-11-04T09:00:00.000Z'],
+    ['missed', '2026-11-03T09:00:00.000Z'],
+    ['missed', '2026-11-02T09:00:00.000Z'],
+  ])
   expect(again.get(value.id).nextRunAt).toBe('2026-11-06T09:00:00.000Z')
+  expect(again.missedOf('general').map(item => item.at)).toEqual([
+    '2026-11-05T09:00:00.000Z',
+    '2026-11-04T09:00:00.000Z',
+    '2026-11-03T09:00:00.000Z',
+    '2026-11-02T09:00:00.000Z',
+  ])
+})
+
+test('more than 50 missed times keep exactly the newest 50, and the real runs stay in the history', async () => {
+  const { f, service, start } = await fixture()
+  const agent = `agt_${randomUUID()}`
+  const { value } = await service.create(definition({ customAgentId: agent }), actor)
+  await service.runNow(value.id, { requestId: randomUUID() }, actor)
+  await service.tick()
+  await service.tick()
+  expect(service.detail(value.id).runs).toMatchObject([{ trigger: 'manual', state: 'completed' }])
+  await service.close()
+  services.splice(services.indexOf(service), 1)
+  // Off for four months: 120 daily times came and went.
+  f.clock = Date.parse('2027-03-01T12:00:00Z')
+  const again = await f.open()
+  services.push(again)
+  await again.tick()
+  expect(start).toHaveBeenCalledTimes(1)
+  const runs = again.detail(value.id).runs
+  const missed = runs.filter(run => run.state === 'missed')
+  expect(missed).toHaveLength(50)
+  expect(missed[0]!.at).toBe('2027-03-01T09:00:00.000Z')
+  expect(missed.at(-1)!.at).toBe('2027-01-11T09:00:00.000Z')
+  expect(runs.filter(run => run.trigger === 'manual')).toMatchObject([{ state: 'completed' }])
+  expect(again.get(value.id)).toMatchObject({
+    lastRun: { state: 'missed', at: '2027-03-01T09:00:00.000Z' },
+    nextRunAt: '2027-03-02T09:00:00.000Z',
+  })
+  expect(again.missedOf(agent)).toHaveLength(50)
+  // Turned off: nothing is missing it any more.
+  await again.setEnabled(value.id, { requestId: randomUUID(), baseRevision: again.get(value.id).revision, enabled: false }, actor)
+  expect(again.missedOf(agent)).toEqual([])
+})
+
+test('a sleep gap seen by the running scheduler records every time it covered, and a run since clears the count', async () => {
+  vi.useFakeTimers({
+    now: Date.parse('2026-11-02T08:00:00Z'),
+    toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'],
+  })
+  // Ticks of the scheduler's own interval, with the file writes they wait for given real time to land.
+  const ticks = async () => {
+    for (let index = 0; index < 12; index++) {
+      await vi.advanceTimersByTimeAsync(500)
+      await wait(10)
+    }
+  }
+  try {
+    const { f, start } = await fixture()
+    const service = await Automations.open({
+      dataDir: f.dataDir,
+      audit: f.audit,
+      timeZone: () => 'UTC',
+      plan: () => ({ basis: f.basis, persistent: true, harnessId: 'standard', mode: 'agent' }),
+      authorize: () => {},
+      start: f.start,
+      detail: f.detail,
+      cancel: f.cancel,
+      approvalTtlMs: () => 3_600_000,
+      changed: f.changed,
+    })
+    services.push(service)
+    const { value } = await service.create(definition({ customAgentId: `agt_${randomUUID()}` }), actor)
+    await ticks()
+    expect(start).not.toHaveBeenCalled()
+    // The Mac sleeps: no timer fires while the clock moves two days and three hours on.
+    vi.setSystemTime(Date.parse('2026-11-04T11:00:00Z'))
+    await ticks()
+    expect(start).not.toHaveBeenCalled()
+    const owner = value.customAgentId!
+    expect(service.missedOf(owner).map(item => item.at)).toEqual([
+      '2026-11-04T09:00:00.000Z',
+      '2026-11-03T09:00:00.000Z',
+      '2026-11-02T09:00:00.000Z',
+    ])
+    expect(service.missedOf('general')).toEqual([])
+    expect(service.get(value.id)).toMatchObject({ enabled: true, state: 'ready', nextRunAt: '2026-11-05T09:00:00.000Z' })
+    // 立即运行 is a real run: the times before it are no longer counted.
+    await service.runNow(value.id, { requestId: randomUUID() }, actor)
+    await ticks()
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(service.missedOf(owner)).toEqual([])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('the keep-awake times name only the asked owners, and a run counts only within the hold', async () => {
+  const { f, service } = await fixture()
+  const agent = `agt_${randomUUID()}`
+  f.detail.mockImplementation(async (id: string) => summary(id, { status: 'running' }))
+  const { value } = await service.create(definition({ customAgentId: agent }), actor)
+  await service.create(definition({ schedule: { kind: 'daily', time: '08:30' } }), actor)
+  expect(service.wakeFor(new Set([agent]), 30 * 60_000)).toEqual({ next: '2026-11-02T09:00:00.000Z', running: 0 })
+  expect(service.wakeFor(new Set(['general']), 30 * 60_000)).toEqual({ next: '2026-11-02T08:30:00.000Z', running: 0 })
+  expect(service.wakeFor(new Set(), 30 * 60_000)).toEqual({ running: 0 })
+  f.clock = Date.parse('2026-11-02T09:00:05Z')
+  await service.tick()
+  expect(service.get(value.id).state).toBe('running')
+  expect(service.wakeFor(new Set([agent]), 30 * 60_000)).toEqual({ running: 1 })
+  // Past the hold, a run that has not settled no longer keeps anything awake.
+  f.clock = Date.parse('2026-11-02T09:31:00Z')
+  expect(service.wakeFor(new Set([agent]), 30 * 60_000)).toEqual({ running: 0 })
 })
 
 test('a start with an unknown result is never sent again and asks the owner', async () => {

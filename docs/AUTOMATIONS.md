@@ -2,6 +2,8 @@
 description: 定时任务：任一 Harness 上的定时运行、开启与暂停、错过的时间、运行记录。
 sources:
   - apps/host/src/automations.ts
+  - apps/host/src/computer.ts
+  - apps/desktop/src/lifecycle.cjs
   - apps/host/src/schedule.ts
   - apps/host/src/agent-plans.ts
   - apps/host/src/routes/automations.ts
@@ -19,7 +21,7 @@ sources:
 | 接口 | 作用 |
 | --- | --- |
 | `GET`、`POST /automations` | 列表；新建，保存后即开启；带 `proposalId` 时是从 Agent 的定时提议保存（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#定时提议)） |
-| `GET`、`PATCH`、`DELETE /automations/:id` | 详情与最近 50 条运行记录；修改；删除。运行中不能修改或删除 |
+| `GET`、`PATCH`、`DELETE /automations/:id` | 详情与运行记录（最近 50 次运行，另有最近 50 个错过或跳过的时间）；修改；删除。运行中不能修改或删除 |
 | `POST /automations/:id/enabled` | `{requestId,baseRevision,enabled}` |
 | `POST /automations/:id/run` | 立即运行，开或关都可以，不影响下一次时间；已有两个在运行时拒绝（`automation-limit-running`） |
 
@@ -43,13 +45,22 @@ sources:
 
 **运行记录**的 `state` 是 `running`、`waiting`（在等审批）、`completed`、`failed`、`cancelled`、`interrupted`、`unknown`、`missed`、`skipped`。运行是一个会话，`TaskSummary.automationId` 指向定时任务，标题是它的名字；它显示保存的提示，所以读取要完整数据范围，与定时任务本身相同。
 
-**错过的时间**：Mac 关机、睡眠、Host 没有运行或正在安装更新（启动得到 409 `host-updating`）时错过，记一条 `missed`，定时任务保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。
+**错过的时间**：Mac 关机、睡眠、Host 没有运行或正在安装更新（启动得到 409 `host-updating`）时错过。调度器按自己的计划逐个算出这段时间里每一个到点的时间，各记一条 `missed`（Mac 睡了三天，每天一次的定时记三条）。只留最新的 50 个错过或跳过的时间，与最近 50 次真实运行分开保留，所以错过再多也不挤掉运行记录；计算只从够算出这 50 个的时间往后走（每天 52 天、工作日 75 天、每周 52 周），醒来前一分钟内到点的那一次照常运行。定时任务保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。资料面板的「电脑」列出开启着的定时任务上一次真实运行之后错过的时间与原因（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)）。
 
 **运行期间经过的时间**：上一次运行还没结束时到了下一个时间，结束时补记一条 `skipped`，同样不补跑。`lastRun` 仍是那次真实运行的结果。
 
 **没有人看着时**：运行照常在每个审批处停下，超过审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
 
 **同时最多两个运行**：到点时已有两个在运行，这一次排队，有位置时按到点先后开始，不算错过；排队期间 Host 重启则记为 `missed`。
+
+## 到点前后保持唤醒
+
+Agent 的 `keepAwakeForSchedules` 打开时，Latch 应用（桌面端）在它的定时任务到点前 2 分钟起保持这台 Mac 不闲置睡眠，直到这次运行结算，一次最长 32 分钟（`SCHEDULE_LEAD_MS` 加 `SCHEDULE_HOLD_MS`），插电与用电池都一样，与设置里「有会话时保持唤醒」的开关无关。
+
+- Host 只给时间：`host-info`（只在 host.sock）的 `scheduleWake` 是打开了这一项的 Agent 的定时任务里最早的 `nextRunAt`，以及它们正在进行的定时运行数（每次运行只在到点后 30 分钟内计入，所以不结算的运行不会一直让 Mac 醒着）；没有 ID。写入结果未知时为空。
+- 由主进程决定（`createKeepAwake`）：用同一个 `powerSaveBlocker`（`prevent-app-suspension`），自己的计时器在窗口开始时生效，不等下一次读取；到上限就放开，直到不再临近定时才重新计。页面只得到视图（`cause: 'schedule'`）。
+- 它不改系统的唤醒计划（不用 `pmset`，不需要管理员权限），不能唤醒已经睡眠或合上盖子的 Mac；Latch 应用没有运行时不起作用，界面这样写。
+- 桌面端把正在保持唤醒的原因经 `POST /link/api/host/state`（`{ state: 'desktop', keepAwake: 'busy' | 'schedule' | null }`，只在 host.sock，页面经代理 403）在每次变化时、换了 Host 实例时立即、至少每 25 秒报告一次，只有 Host 收下的才算发过，退出时报告 `null`。它与睡眠、停止的报告同一级别：经 host.sock、不带设备凭据，所以同一用户的本机进程也能报告，Host 只把它当作展示用的状态，不据此授予任何东西；Host 只在内存里记下，一分钟没有报告就当作桌面端没有运行。睡眠与醒来的报告另记在 `agents/computer.json`，用来说明错过的原因。
 
 ## 结果回到对话
 

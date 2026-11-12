@@ -149,6 +149,28 @@ function attentionOf(snapshot, { limit = ATTENTION_LIMIT, now = Date.now() } = {
   const running = tasks.filter(task => task.status === 'running' && !waiting.has(task.id) && !stopped.has(task.id)).length
   return { count: items.length, items: items.slice(0, limit), running: Math.min(running, RUNNING_LIMIT) }
 }
+/** The per-Agent switch each kind of notification answers to (CustomAgent.notifications). */
+const AGENT_SETTING = Object.freeze({ completion: 'completed', failure: 'failed', approval: 'waiting', question: 'waiting' })
+/**
+ * Whether an Agent turned this kind of notification off, from the same authenticated snapshot: a session is the Agent's
+ * when it is one of its topics, or a run of one of its schedules. Anything not shaped as expected leaves it on.
+ */
+function agentSilenced(snapshot) {
+  const listed = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const settings = new Map()
+  for (const agent of Array.isArray(snapshot?.customAgents) ? snapshot.customAgents : [])
+    if (listed(agent) && typeof agent.id === 'string' && listed(agent.notifications)) settings.set(agent.id, agent.notifications)
+  const owners = new Map()
+  for (const automation of Array.isArray(snapshot?.automations) ? snapshot.automations : [])
+    if (listed(automation) && typeof automation.id === 'string' && typeof automation.customAgentId === 'string')
+      owners.set(automation.id, automation.customAgentId)
+  return (task, kind) => {
+    const own = listed(task.agent) && typeof task.agent.customAgentId === 'string' ? task.agent.customAgentId : undefined
+    const owner = own ?? (typeof task.automationId === 'string' ? owners.get(task.automationId) : undefined)
+    const setting = owner === undefined ? undefined : settings.get(owner)
+    return setting !== undefined && setting[AGENT_SETTING[kind]] === false
+  }
+}
 /** A name as two names are compared: NFKC, nothing invisible, case folded, so look-alikes count as one. */
 function sameName(value) {
   return String(value).normalize('NFKC').replace(INVISIBLE, '').toLowerCase()
@@ -199,7 +221,8 @@ function createNotifications(options) {
     )
     return pending
   }
-  const notify = (source, task, kind) => {
+  const notify = (source, task, kind, silenced) => {
+    if (silenced(task, kind)) return
     const setting = kind === 'failure' ? 'completion' : kind === 'question' ? 'approval' : kind
     const key = `${source.key}\u0000${task.id}`
     if (closed || options.focused() || !options.supported() || !state.preferences[setting] || now() - (last.get(key) ?? -Infinity) < 10_000)
@@ -223,6 +246,7 @@ function createNotifications(options) {
   async function observe(source, snapshot) {
     const current = new Map(snapshot.tasks.map(task => [task.id, { ...task }]))
     const before = previous.get(source.key)
+    const silenced = agentSilenced(snapshot)
     if (before) {
       for (const task of snapshot.tasks) {
         const earlier = before.tasks.get(task.id)
@@ -233,7 +257,7 @@ function createNotifications(options) {
             : task.status === 'idle' && (task.runOutcome === undefined || task.runOutcome === 'completed')
               ? 'completion'
               : undefined
-        if (!outcome) continue
+        if (!outcome || silenced(task, outcome)) continue
         // The first real ending seen in the background turns notifications on; the OS asks on the first one shown.
         if (!options.focused() && options.supported() && state.consent === 'unasked')
           await change(value =>
@@ -241,18 +265,18 @@ function createNotifications(options) {
               ? { ...value, preferences: { ...value.preferences, completion: true, approval: true }, consent: 'accepted' }
               : value,
           )
-        notify(source, task, outcome)
+        notify(source, task, outcome, silenced)
       }
       for (const approval of snapshot.approvals)
         if (!before.approvals.has(approval.id)) {
           const task = current.get(approval.sessionId)
-          if (task) notify(source, task, 'approval')
+          if (task) notify(source, task, 'approval', silenced)
         }
       // A new question from the agent waits for the person as a request does; the list says only how many there are.
       for (const task of snapshot.tasks) {
         const asked = Number.isSafeInteger(task.pendingQuestions) ? task.pendingQuestions : 0
         const earlier = before.tasks.get(task.id)?.pendingQuestions
-        if (asked > (Number.isSafeInteger(earlier) ? earlier : 0)) notify(source, task, 'question')
+        if (asked > (Number.isSafeInteger(earlier) ? earlier : 0)) notify(source, task, 'question', silenced)
       }
     }
     previous.set(source.key, { tasks: current, approvals: new Set(snapshot.approvals.map(item => item.id)) })
@@ -333,6 +357,7 @@ module.exports = {
   validPreferences,
   handleNotificationRequests,
   attentionOf,
+  agentSilenced,
   attentionTitle,
   sameName,
   waitingCount,

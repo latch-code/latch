@@ -28,7 +28,8 @@ import { agentActivity, dutyLine, GENERAL_NAME, runsWith, scheduleWords, worksIn
 import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
-import { useAgentDetail, useAgentList, useProposals } from './useAgentData.ts'
+import { useAgentComputer, useAgentDetail, useAgentList, useProposals } from './useAgentData.ts'
+import { ComputerSection, NotificationSection } from './Computer.tsx'
 import { effectWords } from './proposals.ts'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
 
@@ -130,15 +131,22 @@ export function AgentProfile({
   const { read: listRead, reload: reloadList } = useAgentList(snapshot)
   const detail = useAgentDetail(snapshot, owner)
   const { read: proposalRead, reload: reloadProposals } = useProposals(snapshot, owner)
+  const { read: computerRead, reload: reloadComputer } = useAgentComputer(snapshot, owner)
   const refreshShell = shell.refresh
   const settle = useCallback(() => {
     reloadList()
     detail.reload()
     reloadProposals()
+    reloadComputer()
     void refreshShell()
-  }, [reloadList, detail.reload, reloadProposals, refreshShell])
+  }, [reloadList, detail.reload, reloadProposals, reloadComputer, refreshShell])
   const writes = useAgentWrites(settle)
-  const scheduleWrites = useAgentWrites(useCallback(() => void refreshShell(), [refreshShell]))
+  const scheduleWrites = useAgentWrites(
+    useCallback(() => {
+      reloadComputer()
+      void refreshShell()
+    }, [reloadComputer, refreshShell]),
+  )
   const viewOf = (wanted: ProfileSection | undefined): View =>
     wanted === 'settings' ? 'settings' : wanted === 'schedules' ? 'schedules' : 'main'
   const [view, setView] = useState<View>(() => viewOf(section))
@@ -306,11 +314,21 @@ export function AgentProfile({
                 />
               </div>
             )}
+            <ComputerSection
+              hostName={snapshot.hostName}
+              read={computerRead}
+              reachable={connection === 'connected'}
+              sleeping={shell.harness.hostNotice?.state === 'sleeping'}
+              agent={summary}
+              schedulesOn={schedulesOn}
+              canRun={canRun}
+              disabled={held}
+              runBlock={scheduleBlock({ offline, canRun, agent: summary })}
+              writes={writes}
+              scheduleWrites={scheduleWrites}
+            />
+            {summary && <NotificationSection agent={summary} canRun={canRun} disabled={held} writes={writes} />}
             <dl className="agent-facts agent-profile-section">
-              <dt>电脑</dt>
-              <dd>
-                <span>{snapshot.hostName}</span>
-              </dd>
               <dt>工作位置</dt>
               <dd>
                 <span>{summary ? worksIn(catalog ?? undefined, summary.defaultProjectId) : '不带项目'}</span>

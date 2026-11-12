@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type {
+  AgentComputer,
   ChangedFile,
   CustomAgentDetail,
   CustomAgentList,
@@ -15,6 +16,7 @@ import { AppError } from '@latch/sdk'
 import type { AgentActor, AgentMutation, CustomAgents } from '../custom-agents.ts'
 import type { AgentPlans } from '../agent-plans.ts'
 import type { Automations } from '../automations.ts'
+import type { HostComputer } from '../computer.ts'
 import { activityPage, libraryPage, sessionOwner } from '../agent-activity.ts'
 import { json, jsonBody } from '../http-util.ts'
 import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } from './registry.ts'
@@ -30,13 +32,14 @@ export interface AgentRouteDeps {
   /** A session's detail and the files its turns changed, for 资料库. */
   detail: (sessionId: string) => Promise<TaskDetail>
   sessionFiles: (sessionId: string) => Promise<ChangedFile[] | undefined>
+  computer: () => HostComputer
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo)?)?)?$/u
 const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
-/** Read-only views of an owner's own records: result cards waiting for a topic, 动态 and 资料库. */
-const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library)$/u
+/** Read-only views of an owner's own records: result cards waiting for a topic, 动态, 资料库 and 电脑. */
+const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library|computer)$/u
 
 /** 我的 Agent and 通用. `/link/api/agents` keeps meaning engine definitions. */
 export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): RouteModule {
@@ -91,6 +94,16 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           const list: ScheduleResultList = { results: automations.resultsOf(owner, null) }
           actor.authorize()
           json(res, list)
+          return true
+        }
+        if (which === 'computer') {
+          const computer = deps.computer()
+          const view: AgentComputer = {
+            computer: computer.view(),
+            missed: automations.missedOf(owner).map(item => ({ ...item, cause: computer.cause(item.at) })),
+          }
+          actor.authorize()
+          json(res, view)
           return true
         }
         // Its own sessions, by the owner each one ran for: a schedule moved to another Agent leaves its runs behind. A run

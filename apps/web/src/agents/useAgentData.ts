@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  AgentComputer,
   AppSnapshot,
   CustomAgentDetail,
   CustomAgentList,
@@ -89,6 +90,30 @@ export function useWaitingResults(snapshot: Pick<AppSnapshot, 'device' | 'custom
     snapshot,
     owner === null ? null : `custom-agents/${encodeURIComponent(owner)}/results`,
     owner === null ? '' : resultsVersion(snapshot, owner),
+  )
+}
+
+/**
+ * 「电脑」 of an owner: read again whenever the snapshot's computer state or that owner's schedules change (a missed time
+ * or a run moves `lastRun`).
+ */
+export function computerVersion(snapshot: Pick<AppSnapshot, 'computer' | 'automations' | 'customAgents'>, owner: string): string {
+  const schedules =
+    snapshot.automations
+      ?.filter(item => (item.customAgentId ?? GENERAL_AGENT_ID) === owner)
+      .map(item => `${item.id}:${item.revision}:${item.lastRun?.at ?? ''}:${item.lastRun?.state ?? ''}`)
+      .join() ?? '-'
+  return `${JSON.stringify(snapshot.computer ?? null)}|${schedules}|${snapshot.customAgents === undefined ? 'absent' : 'present'}`
+}
+
+export function useAgentComputer(
+  snapshot: Pick<AppSnapshot, 'device' | 'computer' | 'automations' | 'customAgents'>,
+  owner: string | null,
+) {
+  return useAgentRead<AgentComputer>(
+    snapshot,
+    owner === null ? null : `custom-agents/${encodeURIComponent(owner)}/computer`,
+    owner === null ? '' : computerVersion(snapshot, owner),
   )
 }
 

@@ -26,6 +26,7 @@ interface LaunchRecord {
 interface HostState {
   pid: number
   hostId: string
+  instanceId?: string
   socketPath: string
 }
 interface HostView {
@@ -46,14 +47,15 @@ type Result = { ok: true } | { ok: false; error: string; message: string }
 interface Supervisor {
   check(): Promise<void>
   restartNow(options?: { retry?: boolean }): Promise<Result>
-  announce(body: unknown): Promise<void>
+  announce(body: unknown): Promise<boolean>
+  instance(): string | undefined
   systemShutdown(): Promise<void>
   view(): HostView
   stop(): void
 }
 interface KeepAwake {
   view(): KeepAwakeView
-  setActivity(activity: { running: number; waiting: number }): void
+  setActivity(activity: { running: number; waiting: number; schedule?: { next?: string; running: number } }): void
   setEnabled(enabled: boolean): void
   powerChanged(): void
   stop(): void
@@ -69,6 +71,13 @@ const lifecycle = require('../src/lifecycle.cjs') as {
   LIFECYCLE_CHANNELS: Record<string, string>
   CRASH_LIMIT: number
   BATTERY_LIMIT_MS: number
+  SCHEDULE_LEAD_MS: number
+  SCHEDULE_HOLD_MS: number
+  DESKTOP_REPORT_MS: number
+  createDesktopReports(options: { send: (body: unknown) => unknown; now?: () => number }): {
+    update(view: unknown, instance?: string): Promise<void> | undefined
+    stop(): Promise<void>
+  }
   SYSTEM_QUIT_WINDOW_MS: number
   BACKUP_EXCLUSION_ATTRIBUTE: string
   BACKUP_EXCLUSION_VALUE: string
@@ -262,7 +271,7 @@ function world() {
       if (mode === 'exit') {
         alive.delete(pid)
         exits.get(pid)?.()
-      } else if (mode === 'up') state.hostJson = { pid, hostId: HOST_ID, socketPath: `/run/${pid}.sock` }
+      } else if (mode === 'up') state.hostJson = { pid, hostId: HOST_ID, instanceId: `instance-${pid}`, socketPath: `/run/${pid}.sock` }
     }, 300)
     return { pid, exited }
   })
@@ -298,7 +307,7 @@ function world() {
   function launched(record: Partial<LaunchRecord> = {}) {
     const pid = nextPid++
     alive.add(pid)
-    state.hostJson = { pid, hostId: HOST_ID, socketPath: `/run/${pid}.sock` }
+    state.hostJson = { pid, hostId: HOST_ID, instanceId: `instance-${pid}`, socketPath: `/run/${pid}.sock` }
     state.record = { version: 1, pid, hostId: HOST_ID, launch: launch(), ...record }
     return pid
   }
@@ -320,12 +329,12 @@ describe('Host supervision', () => {
     expect(w.supervisor.view()).toEqual({ status: 'running', supervised: true, crashes: 0 })
     w.state.busy = { running: 1, waiting: 0 }
     await w.supervisor.check()
-    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0, schedule: { running: 0 } })
 
     w.crash()
     await w.supervisor.check()
     expect(w.supervisor.view()).toMatchObject({ status: 'restarting', supervised: true, crashes: 1, restartInMs: 1_000 })
-    expect(w.activity.at(-1)).toEqual({ running: 0, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 0, waiting: 0, schedule: { running: 0 } })
     expect(w.lines.at(-1)).toBe('Host 意外退出，1 秒后重新启动（10 分钟内第 1 次）。')
     // The same dead process is counted once, however often it is looked at.
     await w.supervisor.check()
@@ -478,22 +487,22 @@ describe('Host supervision', () => {
     w.launched()
     w.state.busy = { running: 1, waiting: 0 }
     await w.supervisor.check()
-    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0, schedule: { running: 0 } })
     w.state.answering = false
     await w.supervisor.check()
     await w.supervisor.check()
     // Two checks may be a busy moment; the third in a row is not.
     expect(w.supervisor.view().status).toBe('running')
-    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0, schedule: { running: 0 } })
     await w.supervisor.check()
     expect(w.supervisor.view()).toMatchObject({ status: 'unresponsive', supervised: true })
-    expect(w.activity.at(-1)).toEqual({ running: 0, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 0, waiting: 0, schedule: { running: 0 } })
     expect(await w.supervisor.restartNow()).toMatchObject({ ok: false, error: 'host-unverified' })
     expect(w.state.terminated).toEqual([])
     w.state.answering = true
     await w.supervisor.check()
     expect(w.supervisor.view().status).toBe('running')
-    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0 })
+    expect(w.activity.at(-1)).toEqual({ running: 1, waiting: 0, schedule: { running: 0 } })
     // Gone while not answering: a crash like any other.
     w.state.answering = false
     for (let check = 0; check < 3; check++) await w.supervisor.check()
@@ -528,10 +537,13 @@ describe('Host supervision', () => {
     vi.useFakeTimers()
     const w = world()
     const pid = w.launched()
-    await w.supervisor.announce({ state: 'sleeping' })
+    // No Host checked yet: nothing is sent, and the caller hears so.
+    expect(await w.supervisor.announce({ state: 'sleeping' })).toBe(false)
     expect(w.reports).toEqual([])
+    expect(w.supervisor.instance()).toBeUndefined()
     await w.supervisor.check()
-    await w.supervisor.announce({ state: 'sleeping' })
+    expect(w.supervisor.instance()).toBe(`instance-${pid}`)
+    expect(await w.supervisor.announce({ state: 'sleeping' })).toBe(true)
     await w.supervisor.announce({ state: 'awake' })
     await w.supervisor.systemShutdown()
     expect(w.reports.map(report => report.body)).toEqual([
@@ -581,7 +593,14 @@ describe('keeping the Mac awake', () => {
   it('holds off idle sleep on power while a session runs or an approval waits', () => {
     const b = blocker()
     const keepAwake = lifecycle.createKeepAwake({ blocker: b, onBattery: () => false })
-    expect(keepAwake.view()).toEqual({ enabled: true, active: false, cause: null, power: 'ac', batteryLimitReached: false })
+    expect(keepAwake.view()).toEqual({
+      enabled: true,
+      active: false,
+      cause: null,
+      power: 'ac',
+      batteryLimitReached: false,
+      scheduleLimitReached: false,
+    })
     keepAwake.setActivity({ running: 0, waiting: 1 })
     expect(keepAwake.view()).toMatchObject({ active: true, cause: 'waiting' })
     keepAwake.setActivity({ running: 2, waiting: 1 })
@@ -637,6 +656,120 @@ describe('keeping the Mac awake', () => {
     expect(keepAwake.view()).toMatchObject({ active: true, batteryLimitReached: false })
     expect(views.at(-1)).toMatchObject({ active: true })
     keepAwake.stop()
+  })
+})
+
+describe('keeping awake around scheduled times', () => {
+  const blocker = () => {
+    const started = new Set<number>()
+    let next = 1
+    return {
+      started,
+      start: vi.fn(() => {
+        started.add(next)
+        return next++
+      }),
+      stop: vi.fn((id: number) => started.delete(id)),
+    }
+  }
+  const minute = 60_000
+
+  it('holds from two minutes before the time until the run settles, apart from the busy switch and on battery too', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-11-13T08:00:00Z') })
+    const b = blocker()
+    const keepAwake = lifecycle.createKeepAwake({ blocker: b, onBattery: () => true, enabled: false })
+    const next = '2026-11-13T08:10:00.000Z'
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { next, running: 0 } })
+    expect(keepAwake.view().active).toBe(false)
+    // Its own timer starts the hold, without another report from the Host.
+    await vi.advanceTimersByTimeAsync(8 * minute - 1)
+    expect(keepAwake.view().active).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(keepAwake.view()).toMatchObject({ active: true, cause: 'schedule', enabled: false })
+    // The time comes and the run starts: the Host no longer has a next time near, only a run.
+    await vi.advanceTimersByTimeAsync(2 * minute)
+    keepAwake.setActivity({ running: 1, waiting: 0, schedule: { next: '2026-11-14T08:10:00.000Z', running: 1 } })
+    expect(keepAwake.view()).toMatchObject({ active: true, cause: 'schedule' })
+    // It settles: released.
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { next: '2026-11-14T08:10:00.000Z', running: 0 } })
+    expect(keepAwake.view().active).toBe(false)
+    expect(b.started.size).toBe(0)
+    keepAwake.stop()
+  })
+
+  it('never holds longer than lead plus hold in one go, even while the run goes on', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-11-13T08:00:00Z') })
+    const b = blocker()
+    const keepAwake = lifecycle.createKeepAwake({ blocker: b, onBattery: () => false })
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { next: '2026-11-13T08:02:00.000Z', running: 0 } })
+    expect(keepAwake.view()).toMatchObject({ active: true, cause: 'schedule' })
+    await vi.advanceTimersByTimeAsync(2 * minute)
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { running: 1 } })
+    await vi.advanceTimersByTimeAsync(lifecycle.SCHEDULE_HOLD_MS - 1)
+    expect(keepAwake.view().active).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(keepAwake.view()).toMatchObject({ active: false, scheduleLimitReached: true })
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { running: 1 } })
+    expect(keepAwake.view().active).toBe(false)
+    // Once nothing is scheduled near, the next time holds again.
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { running: 0 } })
+    expect(keepAwake.view()).toMatchObject({ active: false, scheduleLimitReached: false })
+    // A busy Host still holds with the switch on, and says so before the schedule.
+    keepAwake.setActivity({ running: 1, waiting: 0, schedule: { running: 1 } })
+    expect(keepAwake.view()).toMatchObject({ active: true, cause: 'running' })
+    keepAwake.stop()
+    expect(b.started.size).toBe(0)
+  })
+
+  it('a Host that is gone keeps nothing awake', () => {
+    const b = blocker()
+    const keepAwake = lifecycle.createKeepAwake({ blocker: b, onBattery: () => false })
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { running: 2 } })
+    expect(keepAwake.view().active).toBe(true)
+    keepAwake.setActivity({ running: 0, waiting: 0, schedule: { running: 0 } })
+    expect(keepAwake.view().active).toBe(false)
+    keepAwake.stop()
+  })
+
+  it('tells the Host what it keeps awake on every change, to each new instance, at least every 25 seconds, and on quit', async () => {
+    let clock = 0
+    let taken = true
+    const sent: unknown[] = []
+    const reports = lifecycle.createDesktopReports({
+      send: body => {
+        sent.push(body)
+        return Promise.resolve(taken)
+      },
+      now: () => clock,
+    })
+    await reports.update({ active: false, cause: null }, 'one')
+    await reports.update({ active: false, cause: null }, 'one')
+    expect(sent).toEqual([{ state: 'desktop', keepAwake: null }])
+    await reports.update({ active: true, cause: 'schedule' }, 'one')
+    await reports.update({ active: true, cause: 'running' }, 'one')
+    expect(sent.slice(1)).toEqual([
+      { state: 'desktop', keepAwake: 'schedule' },
+      { state: 'desktop', keepAwake: 'busy' },
+    ])
+    // A restarted Host has heard nothing yet: it gets the report at once.
+    await reports.update({ active: true, cause: 'running' }, 'two')
+    expect(sent).toHaveLength(4)
+    // A report the Host did not take is not counted as sent: the next update tries again.
+    taken = false
+    await reports.update({ active: false, cause: null }, 'two')
+    await reports.update({ active: false, cause: null }, 'two')
+    expect(sent).toHaveLength(6)
+    taken = true
+    await reports.update({ active: false, cause: null }, 'two')
+    await reports.update({ active: false, cause: null }, 'two')
+    expect(sent).toHaveLength(7)
+    clock += lifecycle.DESKTOP_REPORT_MS
+    await reports.update({ active: false, cause: null }, 'two')
+    expect(sent).toHaveLength(8)
+    // Quitting says nothing is kept awake, even right after the same report.
+    await reports.stop()
+    expect(sent.at(-1)).toEqual({ state: 'desktop', keepAwake: null })
+    expect(sent).toHaveLength(9)
   })
 })
 

@@ -1,6 +1,6 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
-import type { AgentProposalState, CustomAgentSummary } from './custom-agents.ts'
+import type { AgentProposalState, CustomAgentSummary, HostComputerState } from './custom-agents.ts'
 import type { AgentResultState, AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
 import type { AppSummary } from './apps.ts'
@@ -73,6 +73,8 @@ export interface AppSnapshot {
   agentProposals?: Record<string, AgentProposalState>
   /** Schedule result cards by owner, under the same condition: counts and a time only. */
   agentResults?: Record<string, AgentResultState>
+  /** What the Host recorded about this computer, under the same condition: no IDs. */
+  computer?: HostComputerState
   /** Handoffs whose source or target is among `tasks`; absent on older Hosts. */
   handoffs?: HandoffSummary[]
   /** Applied plugin pages; absent on older Hosts. */

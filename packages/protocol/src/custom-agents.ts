@@ -44,9 +44,22 @@ export interface CustomAgentConfig {
   /** Project a new session starts in unless the client names another. */
   defaultProjectId?: string
 }
+/** Which of this Agent's notifications the desktop app sends: its topics and its scheduled runs. Absent: all of them. */
+export interface AgentNotifications {
+  completed: boolean
+  failed: boolean
+  /** 需要你处理: a request or a question waiting for the person. */
+  waiting: boolean
+}
 export interface CustomAgent extends CustomAgentConfig {
   id: string
   avatar: AgentAvatar
+  notifications?: AgentNotifications
+  /**
+   * 「到点前后保持唤醒」: the desktop app, while it runs, keeps this Mac from idle sleep shortly before each of this Agent's
+   * scheduled runs until the run settles, within a cap. Absent: off. It never wakes a Mac that already sleeps.
+   */
+  keepAwakeForSchedules?: true
   revision: number
   createdAt: string
   updatedAt: string
@@ -67,6 +80,9 @@ export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools'
   requestId: string
   baseRevision: number
   avatar?: AgentAvatar
+  /** Null: back to every notification. */
+  notifications?: AgentNotifications | null
+  keepAwakeForSchedules?: boolean
   model?: ModelRef | null
   engineOptions?: Record<string, string> | null
   tools?: string[] | null
@@ -287,6 +303,37 @@ export interface AgentLibraryGroup {
 export interface AgentLibraryPage {
   groups: AgentLibraryGroup[]
   next?: string
+}
+
+/**
+ * What the Host recorded about the computer it runs on, from the desktop app's own reports (sleep, wake and what it keeps
+ * awake). A Host without the desktop app knows only that it answers.
+ */
+export interface HostComputerState {
+  /** When the desktop app last reported this Mac waking up. */
+  wokeAt?: string
+  /** The desktop app on this Mac reported within the last minute. */
+  desktop: boolean
+  /** What the desktop app keeps this Mac awake for now: sessions at work, or a scheduled time. Absent: nothing. */
+  keepAwake?: 'busy' | 'schedule'
+}
+/** A scheduled time one of an Agent's schedules missed since that schedule last really ran. */
+export interface AgentMissedRun {
+  automationId: string
+  name: string
+  /** The scheduled time. */
+  at: string
+  /**
+   * Only what the Host's records show: `sleep`, inside a sleep the desktop app reported from start to wake; `off`, while
+   * this Host was stopped in order; `unknown`, no record covers it.
+   */
+  cause: 'sleep' | 'off' | 'unknown'
+}
+/** 「电脑」 of an Agent's profile: `GET /custom-agents/:id/computer`, for devices that may read Agents. */
+export interface AgentComputer {
+  computer: HostComputerState
+  /** Newest first. */
+  missed: AgentMissedRun[]
 }
 
 export interface SessionAgentRef {

@@ -422,6 +422,8 @@ describe('listeners and request context', () => {
       presence: { status: 'available' },
       activeSessions: 0,
       activity: { running: 0, waiting: 0 },
+      // Times and a count for the desktop app's keep-awake around scheduled runs; no IDs.
+      scheduleWake: { running: 0 },
       protocol: 1,
       // The preview tabs of the desktop app may not reach it (apps/desktop/src/browser.cjs).
       modelGatewayPort: expect.any(Number),

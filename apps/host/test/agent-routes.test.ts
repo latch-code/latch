@@ -3,6 +3,7 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import type {
+  AgentComputer,
   AppSnapshot,
   Automation,
   AutomationDetail,
@@ -16,6 +17,7 @@ import type {
 } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { queryHostInfo } from '../src/host-state.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -770,3 +772,70 @@ test.each([{ sessionFolders: false }, { sessionFolders: true }])(
     expect(await delegate(moved, 'default')).toMatchObject({ workspaceId: 'default' })
   },
 )
+
+test("an Agent's computer: missed times with their cause, its switches, the desktop report and the keep-awake times", async () => {
+  let shift = 0
+  const { host, owner } = await fixture({ now: () => Date.now() + shift })
+  const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+  const at = new Date(Date.now() + 10 * 60_000)
+  const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const automation = await owner.json<Automation>('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name: '晨报',
+      customAgentId: agent.id,
+      prompt: '写晨报',
+      schedule: { kind: 'daily', time },
+      notify: false,
+    },
+  })
+  // Switches: stored on the Agent, through the revision and the request, and outside what its runs receive.
+  const patched = await owner.json<CustomAgent>(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: {
+      requestId: randomUUID(),
+      baseRevision: agent.revision,
+      notifications: { completed: false, failed: true, waiting: true },
+      keepAwakeForSchedules: true,
+    },
+  })
+  expect(patched).toMatchObject({ notifications: { completed: false, failed: true, waiting: true }, keepAwakeForSchedules: true })
+  const refused = await owner.request(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: patched.revision, notifications: { completed: false } },
+  })
+  expect(refused.status).toBe(400)
+  const snapshot = await owner.json<AppSnapshot>('snapshot')
+  expect(snapshot.customAgents?.find(item => item.id === agent.id)).toMatchObject({ keepAwakeForSchedules: true })
+  expect(snapshot.computer).toEqual({ desktop: false })
+  expect(snapshot.automations?.find(item => item.id === automation.id)).toMatchObject({ enabled: true })
+  // host-info (host.sock only) gives the desktop app the time, never an ID.
+  const info = await queryHostInfo(host.host.socketPath)
+  expect(info.scheduleWake).toEqual({ next: snapshot.automations!.find(item => item.id === automation.id)!.nextRunAt, running: 0 })
+  expect(JSON.stringify(info)).not.toContain(automation.id)
+  expect(JSON.stringify(info)).not.toContain(agent.id)
+  // The desktop app reports what it keeps awake; a page cannot (only host.sock is heard).
+  expect(
+    (await host.raw('loopback-tcp', 'api/host/state', { method: 'POST', body: { state: 'desktop', keepAwake: 'schedule' } })).status,
+  ).toBe(404)
+  expect((await host.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'desktop', keepAwake: 'schedule' } })).status).toBe(200)
+  expect((await host.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'desktop', keepAwake: 'forever' } })).status).toBe(400)
+  expect((await owner.json<AppSnapshot>('snapshot')).computer).toEqual({ desktop: true, keepAwake: 'schedule' })
+  // The Mac sleeps past the time: the scheduler records the miss, the sleep report gives its cause.
+  expect((await host.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'sleeping' } })).status).toBe(200)
+  shift = at.getTime() - Date.now() + 5 * 60_000
+  await expect
+    .poll(async () => (await owner.json<AgentComputer>(`custom-agents/${agent.id}/computer`)).missed.length, { timeout: 10_000 })
+    .toBe(1)
+  expect((await host.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'awake' } })).status).toBe(200)
+  const view = await owner.json<AgentComputer>(`custom-agents/${agent.id}/computer`)
+  expect(view.missed).toEqual([{ automationId: automation.id, name: '晨报', at: expect.any(String), cause: 'sleep' }])
+  expect(view.computer.wokeAt).toBeTruthy()
+  expect((await owner.json<AgentComputer>('custom-agents/general/computer')).missed).toEqual([])
+  // Only a device that may read Agents sees any of it.
+  const limited = await host.enroll({ listener: 'loopback-tcp' })
+  await owner.json(`devices/${limited.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+  expect((await limited.request(`custom-agents/${agent.id}/computer`)).status).toBe(403)
+  expect(await limited.json<AppSnapshot>('snapshot')).not.toHaveProperty('computer')
+})

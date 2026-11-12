@@ -5,6 +5,7 @@ sources:
   - apps/host/src/agent-plans.ts
   - apps/host/src/agent-journal.ts
   - apps/host/src/agent-activity.ts
+  - apps/host/src/computer.ts
   - apps/host/src/routes/agents.ts
   - apps/host/src/hub.ts
   - apps/host/src/server.ts
@@ -40,6 +41,9 @@ sources:
   - apps/web/src/agents/Schedules.tsx
   - apps/web/src/agents/CarryResults.tsx
   - apps/web/src/agents/scheduleModel.ts
+  - apps/web/src/agents/Computer.tsx
+  - apps/web/src/agents/computer.ts
+  - apps/web/src/agents/roleTemplates.ts
   - native/ios/Sources/LatchNativeCore/PhoneAgents.swift
   - native/ios/App/Agents/AgentsView.swift
   - native/ios/Sources/LatchNativeCore/PhoneAgentChat.swift
@@ -64,6 +68,7 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 | `GET /custom-agents/:id/results` | 还没有话题时等着的定时结果卡（见 [AUTOMATIONS.md](AUTOMATIONS.md#结果回到对话)） |
 | `GET /custom-agents/:id/activity?before=` | 动态，按时间倒序分页（每页 30 条） |
 | `GET /custom-agents/:id/library?before=` | 资料库，按会话倒序分页（每页最多 8 组） |
+| `GET /custom-agents/:id/computer` | 「电脑」：Host 记下的这台电脑（`computer`）与这个 Agent 的定时错过的时间（`missed`） |
 
 快照的 `customAgents` 只有摘要（不含指令、技能和工具的内容）。写操作都带 `requestId`，重试按回执回答；结果未知时拒绝其他修改和读取，Host 每秒自己重试写入，也可以重试同一请求；这期间快照没有 `customAgents` 和 `automations`，其余照常。定义在 `agents/custom.json`。
 
@@ -76,6 +81,8 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 - `tools`：「可以使用」，只对内置 Harness 生效，是可调用工具的插件 ID；缺省时不额外限制。它只收紧，不授予新能力。
 - `defaultProjectId`：新会话的默认项目。
 - `avatar`：头像，`{ kind: 'face', bracket, eyes, hue }`，括号 `round`、`curly`、`square`、`angle`，眼睛 `dot`、`arc`、`oval`、`sleepy`，颜色 `ink`、`slate`、`pine`、`plum`、`wisteria`、`cocoa`、`sand`、`moss`、`mist`（`AGENT_BRACKETS`、`AGENT_EYES`、`AGENT_HUES`）。新建时 Host 分配一个还没用过的括号 × 颜色组合，眼睛用圆点；`PATCH` 带 `avatar` 修改，和其他字段一样经 `baseRevision`、`requestId`、先审计再写和回执，审计 detail 只有哈希。未知的字段与取值都拒绝。头像不进 `definitionHash`，会话收不到它。只有 `definitionHash` 变了的修改才把这个 Agent 的定时任务重新绑定到修改的设备（读不到时照旧重新绑定）；改名称、说明或头像既不移动也不暂停定时任务，但新名称会出现在之后运行的第一轮文本块里，因为它写着 Agent 的名称。`kind` 为以后上传图片留位，尚未实现。
+
+- `notifications`：`{ completed, failed, waiting }`，这个 Agent 的话题与定时运行完成、失败、需要你处理时桌面端是否通知；缺省时全部开启（与之前相同），`PATCH` 传 `null` 回到缺省。`keepAwakeForSchedules`：「到点前后保持唤醒」，缺省为关，只存为 `true`。两者都只经 `PATCH`（`baseRevision`、`requestId`、先审计再写、strict schema），不进 `definitionHash`，所以不移动也不暂停定时任务。
 
 摘要里的 `available` 与 `unavailableReason` 说明现在能否开始会话，`canAutomate` 说明能否用于定时任务。
 
@@ -154,6 +161,9 @@ Agent 也能提议定时任务：`propose_schedule(name, plan, prompt)`，与 `p
 - **资料面板**（[AgentProfile.tsx](../apps/web/src/agents/AgentProfile.tsx)）：点外框的头像或名称才出现，宽窗口占右侧面板的位置，和改动、文件等面板互斥（面板开关把面板换回来），新话题上同样在右边，窄于 1024 时浮在对话上；手机上是底部面板；可以关掉。自上而下：大头像（能开始会话的设备点开头像选择器）、名称与职责、不可用或不在线时的原因；分段「动态 · 资料库 · 记忆」（见下面「动态与资料库」；记忆可以添加、修改、删除，规则见下面「写入」）；「即将进行」：这个 Agent 的定时任务，每条写名称与计划，带开关（经 `…/enabled`，带 `baseRevision` 与 `requestId`），「编辑」或「新建定时」进入现有的定时编辑；电脑与工作位置；Harness · 模型、技能与工具的数量；最后「设置」打开现有的编辑表单（「通用」是指令与技能）。「通用」的「即将进行」是不指定 Agent 的定时任务，在这里同样能开关、编辑和新建。
 - **头像**：一对括号围着两只眼睛，放在浅色圆角方块上，颜色取 `--agent-<hue>` 令牌（「通用」是中性灰的圆括号加圆点）。列表 40、资料面板与新话题 56、侧栏 24、对话外框 24（手机 28）、命令面板 16；「我的 Agent」入口是上面的单色 `{··}`。资料面板的大头像打开选择器（桌面是弹层，手机是底部面板）：会动的预览，下面是括号、眼睛、颜色三行，选项本身就是头像，选中项是墨色环，每行一个 Tab 停靠点，方向键从当前焦点移动，空格或回车选择；「设置」里没保存的修改在 Agent 有新版本时保留，同一字段在别处也改了时提示「已在别处修改」；选了立即提交，只显示 Host 读回的值，失败、结果未知与离线沿用「写入」的提示与原 `requestId` 重试。
 - **头像的状态**：只由 Host 已有的数据推出，来自这个 Agent 的会话（`TaskSummary.agent.customAgentId`）：等你处理 > 运行中 > 休息（摘要 `available: false`）> 最近一次未归档会话失败 > 空闲（`agentActivity`）。状态词始终写在旁边（运行中、等你处理、失败；休息时是「不可用」），头像只陪衬：运行中右下角闪烁的 `_`、眼睛看向它；等你处理眼睛抬起，右上角不时冒出琥珀色「?」；失败眼睛低下，右上角红色「!」；休息闭眼，飘出「z」；会话在页面打开时结束，笑眯眯一次。空闲时每隔几秒随机眨眼、看一眼或笑眯眯。32 px 起有全部动作与配件，20–31 px 只偶尔眨眼，16 px 不动。全页一个调度器（`avatarMotion.ts`）、一个计时器，只驱动视口内的头像，页面隐藏时停；同时笑眯眯或冒配件的不超过 3 个；只动 transform 与 opacity。减少动态效果或根元素 `data-motion="still"`（e2e 的 `stillMotion`，与固定时钟一起在 `visualContext` 里）时完全不动，配件静态显示。
+- **电脑**（[Computer.tsx](../apps/web/src/agents/Computer.tsx)）：资料面板「即将进行」之下。状态词只来自 Host：页面连得上是「在线」；Host 在睡眠前宣布过（`host-state` 的 `sleeping`）且之后没连上是「睡眠中」；桌面端报告正在保持唤醒时是「保持唤醒中」（ⓘ 里是为会话还是为定时）；连不上又没有宣布是「不在线」。从不写「永远在线」，也没有电脑缩略图。下面是「上次唤醒」（桌面端报告的最近一次醒来，没有报告时不写），和琥珀色「错过 N 次」：这个 Agent 开启着的定时任务各自上一次真实运行（含立即运行）之后错过的时间，按定时任务分行，每个时间只按记录写原因：落在桌面端报告的、已经醒来的睡眠里是「Mac 在睡眠」，落在这个 Host 有序停止到下次启动之间是「Mac 关机或 Latch 没有运行」，其余（睡眠还没报告醒来、Host 崩溃、没有桌面端、早于保留的记录）一律是「睡眠、关机或 Latch 没有运行」，每行一个「立即运行」（带 `requestId`，结果未知时重试同一请求）；运行之后这一行消失。数据来自 `GET …/computer`：`computer` 与快照的 `computer`（完整数据范围的设备才有，不含 ID）相同；`missed` 由定时任务自己的运行记录得出（[AUTOMATIONS.md](AUTOMATIONS.md#运行与状态)），原因由 Host 的 `agents/computer.json` 判断：桌面端经 host.sock 报告的睡眠与醒来（再次报告睡眠时，前一段在那时结束、新的一段开始；Host 启动时丢掉没有醒来报告的那一段），以及 Host 有序停止到下次启动的时段，各最多 32 段，strict schema，只有时间；读不了的文件移到一边（`computer.json.invalid-<时间>`，日志只写原因），从空记录开始，不影响 Host 启动。我的 Agent 另有「到点前后保持唤醒」开关（需要 `run`），ⓘ 写明它只在 Latch 应用运行时有效、最长多久、不会唤醒已经睡眠的 Mac；桌面端没有在报告时写琥珀色「Latch 应用没有运行，现在不起作用」。机制见 [AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)。「通用」只有状态与错过的时间。
+- **通知**：我的 Agent 的资料面板里「完成」「失败」「需要你处理」三个开关（`notifications`，需要 `run`），每次改一个，全部打开时发 `null`。桌面端按它过滤（[NOTIFICATIONS.md](NOTIFICATIONS.md)）；iPhone 与 iPad 目前只在 App 在前台时为其他电脑的「等你处理」发通知，不分 Agent，按 Agent 区分尚未实现。
+- **职责模板**：新建 Agent 的表单上方「从模板开始」：代码审阅、周报、发布检查、资料整理（[roleTemplates.ts](../apps/web/src/agents/roleTemplates.ts)）。选一个只填「职责」与「指令」（名称为空时也填名称），不预置任何工具、权限或 Harness，人可以随意修改；编辑已有 Agent 时没有它。
 - **定时**：这个 Agent 的定时任务（「通用」的是不指定 Agent 的那些），界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
 - **记忆提议**：对话里在提议来自的那一轮之后是一行「想记住：<文字>」，下面是来源的短词「你说的」或「它推断的」、外部内容时琥珀色的「来自外部内容」、理由（在 `Hint` 里）与「不要」「保存」（这一处唯一的蓝色主按钮）。保存中、不要中、已保存（「已保存」与「已生效」或「从下一个话题起」）、不要了、结果未知（保留原 `requestId`，「重试同一请求」）与失败（Host 的原因）都是真实状态。资料面板的「记忆」最上面是待处理的「提议」，同样的两个按钮（保存不用蓝色，面板的蓝色留给它的表单）；从提议保存的记忆写出来源、链到话题和时间；改过的记忆有「撤销修改」，删除的记忆在列表下面带「撤销」。
 - **定时结果**：这个 Agent 的定时任务运行结束时，对话里出现一张结果卡（「定时 · <名称> · 时间 · 已完成」，规则见 [AUTOMATIONS.md](AUTOMATIONS.md#结果回到对话)），按它结束的时间排进当前话题；卡上是最后一条回复的开头（「展开」看全部存下的部分）、它改动或产出的文件（点开是那次运行的会话里的文件预览，删除的只写路径）、没有完成时的原因，和「打开运行」。失败与中断的卡按失败的错误码给一个下一步：「重试」类是「立即运行」（带 `requestId`，结果未知时「重试同一请求」），Harness 与模型服务类在这台 Mac 上打开对应的设置，其余在运行的会话里处理。还没有话题时，卡在新话题页的中间；人发出第一条消息开始的话题收下它们，排在第一条消息之前。同一处多于 3 张时只画最新的 3 张，上面是「还有 N 条结果」，打开资料面板的「动态」。卡不是消息，Harness 收不到，话题的上下文与历史不变。

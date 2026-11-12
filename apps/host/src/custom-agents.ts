@@ -88,6 +88,7 @@ const config = z.strictObject({
 const avatar = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('face'), bracket: z.enum(AGENT_BRACKETS), eyes: z.enum(AGENT_EYES), hue: z.enum(AGENT_HUES) }),
 ])
+const notifications = z.strictObject({ completed: z.boolean(), failed: z.boolean(), waiting: z.boolean() })
 const createSchema = config.extend({ requestId })
 const patchSchema = z.strictObject({
   name: name.optional(),
@@ -105,6 +106,8 @@ const patchSchema = z.strictObject({
   tools: tools.nullable().optional(),
   defaultProjectId: projectId.nullable().optional(),
   avatar: avatar.optional(),
+  notifications: notifications.nullable().optional(),
+  keepAwakeForSchedules: z.boolean().optional(),
   requestId,
   baseRevision: revision,
 })
@@ -138,6 +141,8 @@ const memoryPatchSchema = memoryCreateSchema.extend({ baseRevision: revision })
 const agentSchema = config.extend({
   id: agentId,
   avatar,
+  notifications: notifications.optional(),
+  keepAwakeForSchedules: z.literal(true).optional(),
   revision,
   createdAt: stamp,
   updatedAt: stamp,
@@ -338,9 +343,14 @@ export class CustomAgents {
         engineOptions: nextOptions,
         tools: nextTools,
         defaultProjectId: project,
+        notifications: nextNotifications,
+        keepAwakeForSchedules: wake,
         ...rest
       } = parsed
       Object.assign(found, stripUndefined(rest), { revision: found.revision + 1, updatedAt: this.at() })
+      assign(found, 'notifications', nextNotifications)
+      // Off is the default, so it is stored only as on.
+      assign(found, 'keepAwakeForSchedules', wake === undefined ? undefined : wake ? true : null)
       assign(found, 'model', nextModel)
       assign(found, 'engineOptions', nextOptions)
       assign(found, 'tools', nextTools)

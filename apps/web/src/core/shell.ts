@@ -39,9 +39,12 @@ export interface ShellLifecycle {
   keepAwake: {
     enabled: boolean
     active: boolean
-    cause: 'running' | 'waiting' | null
+    /** `schedule`: an Agent's 「到点前后保持唤醒」 near one of its scheduled times. */
+    cause: 'running' | 'waiting' | 'schedule' | null
     power: 'ac' | 'battery'
     batteryLimitReached: boolean
+    /** Absent from older shells. */
+    scheduleLimitReached?: boolean
   }
   /** Whether main starts the Host again after a crash, and where that stands. */
   host: {

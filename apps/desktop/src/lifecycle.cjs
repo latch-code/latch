@@ -40,6 +40,14 @@ const UNANSWERED_LIMIT = 3
 
 /** On battery the Mac is kept awake only while a session runs, for at most this long at a time. */
 const BATTERY_LIMIT_MS = 60 * 60 * 1000
+/**
+ * 「到点前后保持唤醒」: from this long before a scheduled time of an Agent that asked for it, until its run settles, but
+ * never longer than lead plus hold in one go (the Host's apps/host/src/computer.ts has the same numbers).
+ */
+const SCHEDULE_LEAD_MS = 2 * 60 * 1000
+const SCHEDULE_HOLD_MS = 30 * 60 * 1000
+/** The desktop app tells the Host what it keeps awake on every change and at least this often (it shows it in 「电脑」). */
+const DESKTOP_REPORT_MS = 25_000
 /** A quit within this long of macOS announcing a logout, restart or shutdown is the system's. */
 const SYSTEM_QUIT_WINDOW_MS = 30_000
 
@@ -212,12 +220,21 @@ function backoff(crashes) {
   return Math.min(BACKOFF_MAX_MS, BACKOFF_FIRST_MS * 2 ** Math.max(0, crashes - 1))
 }
 
+/** host-info's `scheduleWake` (host.cjs checked its shape): the next due time and the scheduled runs going on. */
+function scheduleOf(info) {
+  const wake = info && plainObject(info.scheduleWake) ? info.scheduleWake : undefined
+  if (!wake || !Number.isInteger(wake.running) || wake.running < 0) return { running: 0 }
+  const next = typeof wake.next === 'string' && Number.isFinite(Date.parse(wake.next)) ? wake.next : undefined
+  return { ...(next ? { next } : {}), running: wake.running }
+}
+
 function activityOf(info) {
-  if (!info) return { running: 0, waiting: 0 }
+  const schedule = scheduleOf(info)
+  if (!info) return { running: 0, waiting: 0, schedule }
   if (plainObject(info.activity) && Number.isInteger(info.activity.running) && Number.isInteger(info.activity.waiting))
-    return { running: info.activity.running, waiting: info.activity.waiting }
+    return { running: info.activity.running, waiting: info.activity.waiting, schedule }
   // Older Hosts report one count; it is treated as running sessions.
-  return { running: Number.isInteger(info.activeSessions) ? info.activeSessions : 0, waiting: 0 }
+  return { running: Number.isInteger(info.activeSessions) ? info.activeSessions : 0, waiting: 0, schedule }
 }
 
 /**
@@ -245,11 +262,13 @@ function createHostSupervisor(options) {
     clearTimer = clearTimeout,
     log = /** @type {(text: string) => void} */ (() => {}),
     onChange = /** @type {(view: object) => void} */ (() => {}),
-    onActivity = /** @type {(activity: { running: number, waiting: number }) => void} */ (() => {}),
+    onActivity = /** @type {(activity: { running: number, waiting: number, schedule: { next?: string, running: number } }) => void} */ (
+      () => {}
+    ),
   } = options
   /** @type {'running' | 'unresponsive' | 'starting' | 'restarting' | 'stopped' | 'crashed' | 'crash-loop'} */
   let status = 'stopped'
-  /** @type {{ pid: number, socketPath: string } | undefined} */
+  /** @type {{ pid: number, socketPath: string, instanceId?: string } | undefined} */
   let current
   /**
    * Whether the running (or last) Host came from the launch record, and why not.
@@ -385,7 +404,7 @@ function createHostSupervisor(options) {
       if (state && state.pid === child.pid && state.hostId === hostId) {
         const result = await inspect(state)
         if (result.ok) {
-          current = { pid: state.pid, socketPath: state.socketPath }
+          current = { pid: state.pid, socketPath: state.socketPath, instanceId: state.instanceId }
           countedPid = undefined
           setStatus('running')
           onActivity(activityOf(result.info))
@@ -416,7 +435,7 @@ function createHostSupervisor(options) {
         return
       }
       unanswered = 0
-      current = { pid: state.pid, socketPath: state.socketPath }
+      current = { pid: state.pid, socketPath: state.socketPath, instanceId: state.instanceId }
       supervision = supervisionFor(await readLaunch(), state.pid)
       if (status !== 'running') {
         clearTimer(timer)
@@ -489,9 +508,13 @@ function createHostSupervisor(options) {
   }
 
   /** Reports sleep, wake or a coming stop to the running Host; best effort. */
+  /** @returns {Promise<boolean>} whether the Host took it */
   async function announce(body) {
-    if (!current) return
-    await report(current.socketPath, body).catch(() => {})
+    if (!current) return false
+    return report(current.socketPath, body).then(
+      () => true,
+      () => false,
+    )
   }
 
   /**
@@ -539,6 +562,8 @@ function createHostSupervisor(options) {
     systemShutdown,
     stopForUpdate,
     view,
+    /** The instance of the Host last checked over host.sock; a new one has heard nothing from this app yet. */
+    instance: () => current?.instanceId,
     stop() {
       clearTimer(timer)
       timer = undefined
@@ -551,6 +576,10 @@ function createHostSupervisor(options) {
  * only while a session runs, for at most an hour at a time (the hour starts again once no session runs or power
  * returns). The blocker is Electron's powerSaveBlocker with 'prevent-app-suspension', which holds an assertion against
  * idle system sleep and lets the display sleep. Closing the lid still puts a Mac without an external display to sleep.
+ *
+ * Apart from that switch, an Agent's 「到点前后保持唤醒」 holds the same assertion from two minutes before its scheduled
+ * time until the run settles, at most 32 minutes in one go, on power or battery. The Host says only when (host-info's
+ * `scheduleWake`); this decides. It cannot wake a Mac that already sleeps, and it changes no system wake schedule.
  */
 function createKeepAwake({
   blocker,
@@ -563,9 +592,14 @@ function createKeepAwake({
 }) {
   let on = enabled
   let activity = { running: 0, waiting: 0 }
+  /** @type {{ next?: string, running: number }} */
+  let schedule = { running: 0 }
   let blockerId
   let batterySince
   let batteryLimitReached = false
+  let scheduleSince
+  let scheduleLimitReached = false
+  let busy = false
   let timer
   let lastView = ''
 
@@ -574,9 +608,10 @@ function createKeepAwake({
     return {
       enabled: on,
       active,
-      cause: !active ? null : activity.running > 0 ? 'running' : 'waiting',
+      cause: !active ? null : busy ? (activity.running > 0 ? 'running' : 'waiting') : 'schedule',
       power: onBattery() ? 'battery' : 'ac',
       batteryLimitReached,
+      scheduleLimitReached,
     }
   }
 
@@ -588,9 +623,20 @@ function createKeepAwake({
     }
   }
 
+  /** Whether a scheduled time is near, or a scheduled run goes on; and when that next changes on its own. */
+  function scheduleWindow(at) {
+    const next = schedule.next === undefined ? Number.NaN : Date.parse(schedule.next)
+    const starts = next - SCHEDULE_LEAD_MS
+    const near = Number.isFinite(next) && at >= starts && at < next + SCHEDULE_HOLD_MS
+    const change = !Number.isFinite(next) ? undefined : at < starts ? starts - at : near ? next + SCHEDULE_HOLD_MS - at : undefined
+    return { wanted: near || schedule.running > 0, change }
+  }
+
   function evaluate() {
     clearTimer(timer)
     timer = undefined
+    const at = now()
+    const waits = []
     const battery = onBattery()
     if (!battery || activity.running === 0) {
       batterySince = undefined
@@ -598,14 +644,28 @@ function createKeepAwake({
     }
     let want = on && (battery ? activity.running > 0 && !batteryLimitReached : activity.running + activity.waiting > 0)
     if (want && battery) {
-      batterySince ??= now()
-      const left = batterySince + BATTERY_LIMIT_MS - now()
+      batterySince ??= at
+      const left = batterySince + BATTERY_LIMIT_MS - at
       if (left <= 0) {
         batteryLimitReached = true
         want = false
-      } else timer = setTimer(evaluate, left)
+      } else waits.push(left)
     }
-    apply(want)
+    busy = want
+    const window = scheduleWindow(at)
+    if (window.change !== undefined) waits.push(window.change)
+    if (!window.wanted) {
+      scheduleSince = undefined
+      scheduleLimitReached = false
+    } else {
+      scheduleSince ??= at
+      const left = scheduleSince + SCHEDULE_LEAD_MS + SCHEDULE_HOLD_MS - at
+      if (left <= 0) scheduleLimitReached = true
+      else waits.push(left)
+    }
+    const forSchedule = window.wanted && !scheduleLimitReached
+    if (waits.length) timer = setTimer(evaluate, Math.max(1, Math.min(...waits)))
+    apply(want || forSchedule)
     const next = view()
     const key = JSON.stringify(next)
     if (key !== lastView) {
@@ -620,6 +680,8 @@ function createKeepAwake({
     /** From host-info over host.sock; zero when the Host is not running. */
     setActivity(next) {
       activity = { running: Math.max(0, next.running), waiting: Math.max(0, next.waiting) }
+      if (next.schedule)
+        schedule = { ...(next.schedule.next ? { next: next.schedule.next } : {}), running: Math.max(0, next.schedule.running) }
       evaluate()
     },
     setEnabled(value) {
@@ -631,6 +693,53 @@ function createKeepAwake({
     stop() {
       clearTimer(timer)
       apply(false)
+    },
+  }
+}
+
+/**
+ * What the desktop app tells the Host it keeps awake (`POST /link/api/host/state`, `state: 'desktop'`): on every change,
+ * at once to a Host instance that has not heard it, and at least every 25 seconds so the Host can tell the app still
+ * runs. Only a report the Host took counts as sent; one that failed goes again on the next update. `send` resolves
+ * whether the Host took it.
+ */
+function createDesktopReports({ send, now = Date.now }) {
+  let last = ''
+  let sentAt = -Infinity
+  let sending = false
+  const keepAwakeOf = value => {
+    const view = /** @type {{ active?: unknown, cause?: unknown }} */ (value ?? {})
+    return view.active !== true ? null : view.cause === 'schedule' ? 'schedule' : 'busy'
+  }
+  function post(keepAwake, key) {
+    sending = true
+    return Promise.resolve(send({ state: 'desktop', keepAwake }))
+      .then(
+        taken => {
+          if (taken !== true) return
+          last = key
+          sentAt = now()
+        },
+        () => {},
+      )
+      .finally(() => {
+        sending = false
+      })
+  }
+  return {
+    /**
+     * @param {unknown} value the keep-awake view
+     * @param {string | undefined} instance the Host instance it goes to
+     */
+    update(value, instance) {
+      const keepAwake = keepAwakeOf(value)
+      const key = JSON.stringify([keepAwake, instance ?? null])
+      if (sending || (key === last && now() - sentAt < DESKTOP_REPORT_MS)) return undefined
+      return post(keepAwake, key)
+    },
+    /** The app quits: the Host hears at once that nothing is kept awake, rather than a minute later. */
+    stop() {
+      return post(null, '')
     },
   }
 }
@@ -733,6 +842,9 @@ module.exports = {
   LIFECYCLE_CHANNELS,
   CRASH_LIMIT,
   BATTERY_LIMIT_MS,
+  SCHEDULE_LEAD_MS,
+  SCHEDULE_HOLD_MS,
+  DESKTOP_REPORT_MS,
   SYSTEM_QUIT_WINDOW_MS,
   BACKUP_EXCLUSION_ATTRIBUTE,
   BACKUP_EXCLUSION_VALUE,
@@ -746,6 +858,7 @@ module.exports = {
   backoff,
   createHostSupervisor,
   createKeepAwake,
+  createDesktopReports,
   createLoginItem,
   createSystemQuit,
   excludeFromBackup,

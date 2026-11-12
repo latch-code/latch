@@ -128,6 +128,41 @@ test('the definition hash follows what a run receives, not its name', async () =
   expect(store.definitionHash(id)).not.toBe(edited)
 })
 
+test('notifications and keep-awake are stored per Agent, audited, outside the definition hash, and cleared back to the default', async () => {
+  const { store, audit } = await fixture()
+  const { id } = (await store.create(definition(), actor)).value
+  const hash = store.definitionHash(id)
+  const calls = audit.append.mock.calls.length
+  const first = await store.patch(
+    id,
+    {
+      requestId: randomUUID(),
+      baseRevision: 1,
+      notifications: { completed: false, failed: true, waiting: false },
+      keepAwakeForSchedules: true,
+    },
+    actor,
+  )
+  expect(first.value).toMatchObject({
+    revision: 2,
+    notifications: { completed: false, failed: true, waiting: false },
+    keepAwakeForSchedules: true,
+  })
+  expect(audit.append.mock.calls.length).toBe(calls + 1)
+  expect(store.definitionHash(id)).toBe(hash)
+  const second = await store.patch(
+    id,
+    { requestId: randomUUID(), baseRevision: 2, notifications: null, keepAwakeForSchedules: false },
+    actor,
+  )
+  expect(second.value).not.toHaveProperty('notifications')
+  expect(second.value).not.toHaveProperty('keepAwakeForSchedules')
+  await expect(store.patch(id, { requestId: randomUUID(), baseRevision: 1, keepAwakeForSchedules: true }, actor)).rejects.toMatchObject({
+    code: 'agent-changed',
+  })
+  expect(() => store.patch(id, { requestId: randomUUID(), baseRevision: 3, notifications: { completed: true } } as never, actor)).toThrow()
+})
+
 test('a start keeps its first selection even if the agent moves to another engine', async () => {
   const { store } = await fixture()
   const { id } = (await store.create(definition(), actor)).value

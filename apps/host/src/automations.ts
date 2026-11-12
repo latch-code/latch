@@ -12,6 +12,7 @@ import type {
   AutomationRun,
   AutomationRunRequest,
   AutomationRunState,
+  AutomationSchedule,
   AutomationSummary,
   ModelRef,
   ScheduleResult,
@@ -29,7 +30,18 @@ import { CUSTOM_AGENT_ID, type AgentActor } from './custom-agents.ts'
 import { nextRun, scheduleDate, scheduleSchema } from './schedule.ts'
 
 const MAX_AUTOMATIONS = 128
+/** Real runs kept per schedule; missed and skipped times are kept apart, as many again, newest first. */
 const MAX_RUNS = 50
+const DAY = 24 * 60 * 60 * 1000
+/** How far back a walk over missed times starts: enough for the newest `MAX_RUNS` of them, and never more. */
+const LOOKBACK: Record<AutomationSchedule['kind'], number> = { daily: 52 * DAY, weekdays: 75 * DAY, weekly: 52 * 7 * DAY }
+const gap = (run: AutomationRun) => run.state === 'missed' || run.state === 'skipped'
+/** Newest first: the newest `MAX_RUNS` real runs and, apart from them, the newest `MAX_RUNS` missed or skipped times. */
+function trimRuns(runs: AutomationRun[]): AutomationRun[] {
+  let real = 0,
+    gaps = 0
+  return runs.filter(run => (gap(run) ? ++gaps : ++real) <= MAX_RUNS)
+}
 const MAX_RECEIPTS = 4096
 const MAX_ATTEMPTS = 2
 /** Ticks (half a second each) a run's card waits for the files observed after it ended. */
@@ -117,7 +129,7 @@ const row = z.strictObject({
   lastDate: z.string().max(10).optional(),
   /** The time zone `nextRunAt` was worked out in. */
   zone: z.string().max(80).optional(),
-  runs: z.array(runSchema).max(MAX_RUNS),
+  runs: z.array(runSchema).max(2 * MAX_RUNS),
 })
 const resultFile = z.strictObject({
   root: z.string().min(1).max(128),
@@ -386,6 +398,40 @@ export class Automations {
         automation: item.automation,
         runs: item.ownedSince ? item.runs.filter(run => run.at >= item.ownedSince!) : item.runs,
       }))
+  }
+  /**
+   * The times an owner's schedules missed since each one last really ran (a run, or 立即运行), newest first: what the
+   * scheduler recorded against its own schedule, never guessed.
+   */
+  missedOf(owner: string): Array<{ automationId: string; name: string; at: string }> {
+    const missed: Array<{ automationId: string; name: string; at: string }> = []
+    for (const { automation, runs } of this.runsOf(owner)) {
+      // Turned off or paused: nothing is missing it now.
+      if (!automation.enabled) continue
+      for (const run of runs) {
+        if (run.state === 'skipped') continue
+        if (run.state !== 'missed') break
+        missed.push({ automationId: automation.id, name: automation.name, at: run.at })
+      }
+    }
+    return missed.sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_RUNS)
+  }
+  /**
+   * For the desktop app's 「到点前后保持唤醒」: the earliest time a schedule of these owners is due, and how many of their
+   * scheduled runs are under way. A run counts only for `holdMs` after its time, so a run that never settles cannot keep
+   * the Mac awake. No IDs: the desktop app needs only the times.
+   */
+  wakeFor(owners: ReadonlySet<string>, holdMs: number): { next?: string; running: number } {
+    let next: string | undefined
+    let running = 0
+    for (const item of this.journal.read().rows) {
+      if (!owners.has(item.automation.customAgentId ?? GENERAL_AGENT_ID)) continue
+      const due = item.automation.enabled && item.automation.state === 'ready' ? item.automation.nextRunAt : undefined
+      if (due && (next === undefined || due < next)) next = due
+      const run = item.attempt ? item.runs[0] : undefined
+      if (run?.trigger === 'schedule' && this.now() - Date.parse(run.at) < holdMs) running++
+    }
+    return { ...(next ? { next } : {}), running }
   }
   /** Every result card, oldest first. */
   results(): ScheduleResult[] {
@@ -995,11 +1041,28 @@ export class Automations {
     const zone = this.zone(),
       run = item.runs[0]
     const after = (at: number) => nextRun(item.automation.schedule, at, zone, scheduleDate(at, zone))
-    let due = item.automation.nextRunAt ?? (run ? after(Date.parse(run.at)) : undefined)
-    for (let count = 0; due && Date.parse(due) <= this.now() && count < MAX_RUNS; count++) {
-      item.runs = [{ at: due, state: 'skipped' as const, trigger: 'schedule' as const }, ...item.runs].slice(0, MAX_RUNS)
-      due = after(Date.parse(due))
+    const due = item.automation.nextRunAt ?? (run ? after(Date.parse(run.at)) : undefined)
+    if (!due) return
+    for (const at of this.dueTimes(item, due))
+      item.runs = trimRuns([{ at, state: 'skipped' as const, trigger: 'schedule' as const }, ...item.runs])
+  }
+  /**
+   * The schedule's own times from `first` up to now, oldest first, at most the newest `MAX_RUNS`. The walk starts no
+   * further back than those need, so a Mac off for a year costs no more than one off for two months.
+   */
+  private dueTimes(item: Row, first: string): string[] {
+    const zone = this.zone(),
+      schedule = item.automation.schedule,
+      floor = this.now() - LOOKBACK[schedule.kind]
+    const times: string[] = []
+    let at: string | undefined = Date.parse(first) >= floor ? first : nextRun(schedule, floor, zone)
+    while (at && Date.parse(at) <= this.now()) {
+      times.push(at)
+      if (times.length > MAX_RUNS) times.shift()
+      const after = Date.parse(at)
+      at = nextRun(schedule, after, zone, scheduleDate(after, zone))
     }
+    return times
   }
   private grant(item: Row, actor: AgentActor): void {
     const definition = configOf(item.automation)
@@ -1019,14 +1082,27 @@ export class Automations {
     item.automation.nextRunAt = nextRun(item.automation.schedule, this.now(), zone, item.lastDate)
     item.zone = zone
   }
+  /**
+   * Every scheduled time that came and went with no run, from the schedule itself: a Mac asleep for three days misses
+   * three daily times, each recorded once (at most the run history), none caught up. A time due within the last minute
+   * still runs.
+   */
   private reportMissed(item: Row): void {
     const due = item.automation.nextRunAt
     if (!due || Date.parse(due) > this.now()) return
-    this.record(item, { at: due, state: 'missed', trigger: 'schedule' })
-    this.schedule(item)
+    const times = this.dueTimes(item, due)
+    const last = times.at(-1)
+    // The time due within the last minute, past the one that was missed, still runs.
+    const runnable = last !== undefined && last !== due && this.now() - Date.parse(last) <= MISSED_AFTER_MS ? times.pop() : undefined
+    for (const at of times) this.record(item, { at, state: 'missed', trigger: 'schedule' })
+    if (runnable) {
+      delete item.queued
+      item.automation.nextRunAt = runnable
+      item.zone = this.zone()
+    } else this.schedule(item)
   }
   private record(item: Row, run: AutomationRun): void {
-    item.runs = [run, ...item.runs].slice(0, MAX_RUNS)
+    item.runs = trimRuns([run, ...item.runs])
     item.automation.lastRun = run
   }
   private update(item: Row, change: Partial<AutomationRun>): void {
