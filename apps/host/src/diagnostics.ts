@@ -2,11 +2,11 @@
 // `pnpm latch diagnostics`). It holds versions, the Harnesses' and plugins' states, the shape of the policy, connection
 // counts and the Host's recent events. The events are not log lines: the Host notes them at a fixed list of its own log
 // sites as a category, an ID and an error code, so agent stderr, agent text, prompts and policy hosts never reach them.
-// Every free string left (IDs, the first line of a Harness's status) passes through `redactSecrets` again, with the home
+// Every free string left (IDs, the first line of a Harness's status) passes through `redactKnownSecrets` again, with the home
 // folder written as `~` and any other absolute path as a placeholder. Never prompts, transcripts, file contents,
 // memories, device names or anything from auth/ or providers.json: the bundle is built from an explicit list of fields.
 import { arch, platform, release } from 'node:os'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import type { HarnessInfo, ListenerClass, PluginInfo } from '@latch/protocol'
 import type { Policy } from './policy.ts'
 
@@ -73,8 +73,8 @@ export class DiagnosticLog {
     const event: DiagnosticEvent = {
       at: new Date(this.now()).toISOString(),
       category,
-      ...(detail.id !== undefined && EVENT_ID.test(detail.id) && redactSecrets(detail.id) === detail.id ? { id: detail.id } : {}),
-      ...(code && redactSecrets(code) === code ? { code } : {}),
+      ...(detail.id !== undefined && EVENT_ID.test(detail.id) && redactKnownSecrets(detail.id) === detail.id ? { id: detail.id } : {}),
+      ...(code && redactKnownSecrets(code) === code ? { code } : {}),
     }
     this.events.push(event)
     if (this.events.length > DIAGNOSTIC_EVENTS) this.events.shift()
@@ -137,14 +137,14 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$
  * other user's home folder hidden too.
  */
 export function diagnosticText(text: string, home: string, hidden: readonly string[] = []): string {
-  let out = redactSecrets(text)
+  let out = redactKnownSecrets(text)
   for (const word of [...new Set(hidden)].filter(word => word.trim().length >= 2).toSorted((a, b) => b.length - a.length))
     out = out.replaceAll(word, '‹已隐去›')
   if (home && home !== '/') out = out.replace(new RegExp(`${escapeRegExp(home.replace(/\/+$/u, ''))}(?=/|\\b|$)`, 'gu'), '~')
   out = out.replace(/\/(?:Users|home)\/[^/\s'"`)]+/gu, '~other')
   // Any other absolute path (a temporary folder, a mounted volume): only that there was one.
   out = out.replace(/(?<![\w~:/.-])\/[^\s'"`)，。；]+/gu, '‹路径›')
-  return redactSecrets(out)
+  return redactKnownSecrets(out)
 }
 
 /** The first line of a status message, at most `DIAGNOSTIC_STATUS_CHARS` code points. */

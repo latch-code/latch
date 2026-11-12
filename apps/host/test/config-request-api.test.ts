@@ -20,7 +20,7 @@ async function fixture(extraEnv: Record<string, string> = {}) {
   const owner = await host.enroll({ listener: 'unix' }),
     other = await host.enroll({ listener: 'unix' }),
     log = join(host.workspaceRoot, 'acp-config-log')
-  await owner.json('agents', {
+  await owner.confirmedJson('agents', {
     method: 'POST',
     body: {
       id: 'config-fixture',

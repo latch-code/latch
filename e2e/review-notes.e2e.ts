@@ -51,7 +51,7 @@ it('keeps line feedback on the Host: a range, the pending set, one message, re-a
     const queue = join(host.root, 'edits.json')
     await writeFile(queue, JSON.stringify([{ path: 'rates.ts', content: text(first) }]))
     const owner = await host.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_EDIT_QUEUE: queue } },
     })

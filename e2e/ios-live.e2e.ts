@@ -275,7 +275,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         git('init', '-q', '-b', 'main')
         git('commit', '-q', '--allow-empty', '-m', 'first')
         const enrolled = await target.enroll({ listener: 'unix' })
-        const saved = await enrolled.request('agents', {
+        const saved = await enrolled.confirmed('agents', {
           method: 'POST',
           body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })
@@ -285,7 +285,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       }
       const owner = await prepare(host)
       if (ATTACH) {
-        const images = await owner.request('agents', {
+        const images = await owner.confirmed('agents', {
           method: 'POST',
           body: { name: 'Fake Images', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: 'images,embedded' } },
         })
@@ -496,7 +496,7 @@ async function addAgent(owner: TestDevice): Promise<void> {
 
 /** 资讯 on the fake ACP Agent with a project of its own, a schedule whose run edits files and one whose agent exits. */
 async function addActivityAgent(host: TestHost, owner: TestDevice): Promise<{ edits: string; fails: string }> {
-  const saved = await owner.request('agents', {
+  const saved = await owner.confirmed('agents', {
     method: 'POST',
     body: { id: 'fake-news', name: 'Fake News', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
   })

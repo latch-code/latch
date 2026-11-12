@@ -143,7 +143,7 @@ touch '${control}/commit-ran'`,
     const owner = await host.enroll({ listener: 'unix' })
     expect(
       (
-        await owner.request('agents', {
+        await owner.confirmed('agents', {
           method: 'POST',
           body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })
@@ -496,7 +496,7 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
     const owner = await host.enroll({ listener: 'unix' })
     expect(
       (
-        await owner.request('agents', {
+        await owner.confirmed('agents', {
           method: 'POST',
           body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })

@@ -1546,3 +1546,40 @@ button.agent-library-file:focus-visible {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+
+/* The profile's MCP: one line per server, its state or 所有会话, and on this Mac a switch that puts it on the Agent. */
+.agent-mcp-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-mcp-list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 36px;
+  min-width: 0;
+}
+.agent-mcp-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.agent-mcp-list > li[data-dim] .agent-mcp-name {
+  color: var(--ink-2);
+}
+.agent-mcp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-mcp-tag,
+.agent-mcp-empty {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-mcp-empty {
+  margin: 0;
+}

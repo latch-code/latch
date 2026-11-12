@@ -26,6 +26,7 @@ import {
   type DraftPick,
 } from '../composerChoice.ts'
 import { forkedChoice, type ForkSource } from '../forkChoice.ts'
+import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import {
   abandonSubmission,
@@ -292,7 +293,8 @@ export function useSubmission({
         env: {},
         enabled: true,
       }
-      await api('agents', { method: 'POST', body })
+      // Saving a Harness definition is confirmed on this Mac; the composer's card shows it.
+      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
       return true
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'agent-exists') return true
@@ -408,7 +410,14 @@ export function useSubmission({
     setError('')
     try {
       const { path, body } = submissionRequest(submission)
-      const result = await api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string }>(path, { method: 'POST', body })
+      // A Harness saved before confirmations is confirmed on this Mac at its first start; the same request goes again.
+      const result = await withConfirmation(confirmation =>
+        api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string }>(path, {
+          method: 'POST',
+          body,
+          ...(confirmation ? { confirmation } : {}),
+        }),
+      )
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })

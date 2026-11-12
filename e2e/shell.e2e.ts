@@ -305,7 +305,7 @@ describe('the session menu', () => {
   beforeAll(async () => {
     host = await startTestHost({ uiDir: resolve('dist/web') })
     owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',

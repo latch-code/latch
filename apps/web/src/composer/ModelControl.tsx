@@ -296,7 +296,8 @@ export function DraftHarnessControl({
         adding ? (
           <EngineAddPanel
             catalog={catalog}
-            canAdd={canAdd}
+            // Saving a Harness is confirmed on the Mac: elsewhere the panel says where to add it.
+            canAdd={canAdd && access.local}
             admin={access.admin}
             onBack={() => {
               setAdding(false)

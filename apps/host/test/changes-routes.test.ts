@@ -37,7 +37,7 @@ async function fixture(options: TestHostOptions = {}) {
   git('commit', '-q', '-m', 'first')
   const owner = await t.enroll({ listener: 'unix' })
   const agentLog = join(t.root, 'agent.log')
-  const saved = await owner.request('agents', {
+  const saved = await owner.confirmed('agents', {
     method: 'POST',
     body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: agentLog } },
   })
@@ -81,7 +81,7 @@ describe('changes routes', () => {
     const t = await startTestHost()
     hosts.push(t)
     const owner = await t.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
     })

@@ -226,6 +226,36 @@ describe('Codex over its app-server', () => {
     expect(resumed.config.mcp_servers['latch-browser'].args.at(-1)).toBe(leases[1]!.tokenFile)
   })
 
+  it('gives the thread each of Latch’s MCP servers as a latch-mcp bridge: paths only, no secret, a longer start', async () => {
+    const closed: string[] = []
+    const toolGateway: ToolGateway = {
+      open: () => undefined,
+      async openMcp(input) {
+        expect(input).toMatchObject({ projectId: 'default' })
+        return [
+          {
+            name: 'github',
+            socketPath: '/tmp/latch-test/tools/gateway.sock',
+            tokenFile: '/tmp/latch-test/tools/github.lbt',
+            token: `lbt1.${'g'.repeat(43)}`,
+            close: () => void closed.push('github'),
+          },
+        ]
+      },
+    }
+    const t = await computer({}, [], {}, { toolGateway })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo hello')
+    await settled(bridge, id)
+    const started = sent(await t.log(), 'thread/start')[0]!.params as { config: { mcp_servers: Record<string, any> } }
+    const server = started.config.mcp_servers.github
+    expect(server).toMatchObject({ command: process.execPath, env: {}, startup_timeout_sec: 60 })
+    expect(server.args.slice(-2)).toEqual(['/tmp/latch-test/tools/gateway.sock', '/tmp/latch-test/tools/github.lbt'])
+    expect(JSON.stringify(started)).not.toContain('lbt1.')
+    await bridge.close()
+    expect(closed).toEqual(['github'])
+  })
+
   it('puts Codex’s approvals to the person with one-time answers, and tells Codex what they chose', async () => {
     const t = await computer()
     const bridge = await t.open()

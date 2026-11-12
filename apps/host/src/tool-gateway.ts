@@ -8,12 +8,20 @@ import { chmod, lstat, mkdir, rm, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, join } from 'node:path'
 import type { TaskSummary } from '@latch/protocol'
-import { AppError, type ToolGateway, type ToolGatewayCallContext, type ToolGatewayLease } from '@latch/sdk'
+import {
+  AppError,
+  type McpServerLease,
+  type McpStartFailure,
+  type ToolGateway,
+  type ToolGatewayCallContext,
+  type ToolGatewayLease,
+} from '@latch/sdk'
 
 const TOKEN_PREFIX = 'lbt1.'
 /** A request line: a tool's arguments are small; anything longer ends the connection. */
 const MAX_REQUEST_BYTES = 256 * 1024
-const MAX_CONNECTIONS = 64
+// Each `latch-mcp` bridge holds one connection for its process's life; `latch-browser` connects per call.
+const MAX_CONNECTIONS = 512
 /** Calls one connection may have in flight. */
 const MAX_INFLIGHT = 8
 /** The longest path a Unix socket may have on macOS, without its terminating byte. */
@@ -67,6 +75,53 @@ export interface GatewayCall {
   context: ToolGatewayCallContext
 }
 
+/** One `latch-mcp` bridge's binding, as the Host's MCP handlers see it. */
+export interface McpBinding {
+  /** Random, for this binding alone. */
+  id: string
+  sessionId: string
+  serverId: string
+  /** The definition the session was given; a call is refused once it changed. */
+  specHash: string
+  /** The session's main folder. */
+  cwd: string
+  /** The session's Agent and project, for the server's 「用在」 at each call. */
+  agentId?: string
+  projectId?: string
+}
+
+/** What a bridge's server runs as, and the tools switched off. */
+export interface McpLaunchReply {
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string
+  disabledTools: string[]
+}
+
+const MCP_FAILURES = new Set<McpStartFailure>(['spawn-failed', 'exited', 'timeout', 'protocol', 'list-failed', 'output-too-large'])
+const MCP_RESULTS = new Set(['ok', 'error', 'cancelled', 'failed'])
+
+/** The Host's side of Latch's MCP servers; see docs/MCP.md. */
+export interface McpGatewayHandlers {
+  /** The servers a session gets now. */
+  select(input: {
+    sessionId: string
+    agentId?: string
+    projectId?: string
+  }): Promise<Array<{ serverId: string; name: string; specHash: string }>>
+  /** The launch, with the server's secrets in `env`; rejects when the server is gone, off or changed. */
+  launch(binding: McpBinding): Promise<McpLaunchReply>
+  /** What the bridge saw when it started the server. */
+  report(binding: McpBinding, report: { ok: true; tools: string[] } | { ok: false; reason: McpStartFailure }): void
+  /** Before a call is sent to the server: its audit record. Rejects, with words for the agent, when it must not go. */
+  callStarted(binding: McpBinding, tool: string): Promise<string>
+  /** After it: the outcome and how long it took. */
+  callEnded(binding: McpBinding, callId: string, result: 'ok' | 'error' | 'cancelled' | 'failed', ms: number): void
+  /** The binding ended: its process went, or the server was removed, switched off or changed. */
+  closed(binding: McpBinding): void
+}
+
 export interface ToolGatewayOptions {
   socketPath: string
   /** Whether a session gets the tools when it opens now; false: no token, and its agent gets no server this time. */
@@ -74,6 +129,8 @@ export interface ToolGatewayOptions {
   tools(): GatewayTool[]
   /** One call; the Host classifies, audits and runs it. Never rejects with the token or the arguments in its words. */
   call(input: GatewayCall): Promise<GatewayResult>
+  /** Latch's MCP servers, through `latch-mcp` bridges; without it a session gets none. */
+  mcp?: McpGatewayHandlers
   log?(text: string): void
 }
 
@@ -88,6 +145,10 @@ interface Binding {
   /** Who waits for the calls to end. */
   idle: Set<() => void>
   tokenFile: string
+  /** A `latch-mcp` bridge's binding; absent for `latch-browser`. */
+  mcp?: McpBinding & { onFailed?: (name: string, reason: McpStartFailure) => void; name: string; launched: boolean }
+  /** A bridge's connections that used this token: ended with it, so the bridge stops its server. */
+  sockets: Set<Socket>
 }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -148,30 +209,13 @@ export class ToolGatewayServer implements ToolGateway {
   open(input: { sessionId: string; describe?: Binding['describe'] }): ToolGatewayLease | undefined {
     if (!this.server) throw new AppError(503, 'tool-gateway-unavailable', 'Latch 的工具网关没有运行')
     if (this.options.admits && !this.options.admits(input.sessionId)) return undefined
-    const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
-    const hash = hashOf(token)
-    // The token goes to the server in a file only this user reads, created here and nowhere else; the server deletes it
-    // once read. Never in an argument or the environment, which `ps` shows.
-    const tokenFile = join(dirname(this.options.socketPath), `${randomBytes(16).toString('hex')}.lbt`)
-    const fd = openSync(tokenFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-    try {
-      writeSync(fd, token)
-    } finally {
-      closeSync(fd)
-    }
-    const binding: Binding = {
+    const { token, hash, binding } = this.bind({
       sessionId: input.sessionId,
       ...(input.describe ? { describe: input.describe } : {}),
-      calls: new Set(),
-      closed: false,
-      unknown: false,
-      idle: new Set(),
-      tokenFile,
-    }
-    this.bindings.set(hash, binding)
+    })
     return {
       socketPath: this.options.socketPath,
-      tokenFile,
+      tokenFile: binding.tokenFile,
       token,
       active: () => this.bindings.get(hash) === binding && !binding.closed,
       cancel: () => {
@@ -188,11 +232,79 @@ export class ToolGatewayServer implements ToolGateway {
           if (!binding.calls.size) done()
           else binding.idle.add(done)
         }),
-      close: () => {
-        if (this.bindings.get(hash) === binding) this.bindings.delete(hash)
-        this.end(binding)
-      },
+      close: () => this.release(hash, binding),
     }
+  }
+
+  async openMcp(input: Parameters<NonNullable<ToolGateway['openMcp']>>[0]): Promise<McpServerLease[]> {
+    const handlers = this.options.mcp
+    if (!this.server || !handlers) return []
+    const chosen = await handlers.select({
+      sessionId: input.sessionId,
+      ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    })
+    return chosen.map(server => {
+      const { token, hash, binding } = this.bind({
+        sessionId: input.sessionId,
+        mcp: {
+          id: randomBytes(12).toString('hex'),
+          sessionId: input.sessionId,
+          serverId: server.serverId,
+          specHash: server.specHash,
+          cwd: input.cwd,
+          ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+          ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+          name: server.name,
+          launched: false,
+          ...(input.onFailed ? { onFailed: input.onFailed } : {}),
+        },
+      })
+      return {
+        name: server.name,
+        socketPath: this.options.socketPath,
+        tokenFile: binding.tokenFile,
+        token,
+        close: () => this.release(hash, binding),
+      }
+    })
+  }
+
+  /** Ends every bridge of a server: it was removed, switched off or changed. Their agents keep running without it. */
+  revokeMcp(serverId: string): void {
+    for (const [hash, binding] of this.bindings) if (binding.mcp?.serverId === serverId) this.release(hash, binding)
+  }
+
+  private release(hash: string, binding: Binding): void {
+    if (this.bindings.get(hash) === binding) this.bindings.delete(hash)
+    this.end(binding)
+  }
+
+  private bind(input: Pick<Binding, 'sessionId' | 'describe' | 'mcp'>): { token: string; hash: string; binding: Binding } {
+    const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
+    const hash = hashOf(token)
+    // The token goes to the server in a file only this user reads, created here and nowhere else; the server deletes it
+    // once read. Never in an argument or the environment, which `ps` shows.
+    const tokenFile = join(dirname(this.options.socketPath), `${randomBytes(16).toString('hex')}.lbt`)
+    const fd = openSync(tokenFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try {
+      writeSync(fd, token)
+    } finally {
+      closeSync(fd)
+    }
+    const binding: Binding = {
+      sessionId: input.sessionId,
+      ...(input.describe ? { describe: input.describe } : {}),
+      ...(input.mcp ? { mcp: input.mcp } : {}),
+      calls: new Set(),
+      closed: false,
+      unknown: false,
+      idle: new Set(),
+      tokenFile,
+      sockets: new Set(),
+    }
+    this.bindings.set(hash, binding)
+    return { token, hash, binding }
   }
 
   /**
@@ -212,9 +324,15 @@ export class ToolGatewayServer implements ToolGateway {
   }
 
   private end(binding: Binding): void {
+    const first = !binding.closed
     binding.closed = true
     for (const call of binding.calls) call.abort()
     rmSync(binding.tokenFile, { force: true })
+    // A bridge whose connection ends stops its server's whole process group. (`latch-browser` keeps its connection and
+    // hears why at its next request.)
+    for (const socket of binding.sockets) socket.destroy()
+    binding.sockets.clear()
+    if (first && binding.mcp) this.options.mcp?.closed(binding.mcp)
   }
 
   private settle(binding: Binding): void {
@@ -226,6 +344,60 @@ export class ToolGatewayServer implements ToolGateway {
     if (typeof token !== 'string' || !token.startsWith(TOKEN_PREFIX) || token.length !== TOKEN_PREFIX.length + 43) return undefined
     const binding = this.bindings.get(hashOf(token))
     return binding && !binding.closed ? binding : undefined
+  }
+
+  /**
+   * A `latch-mcp` bridge's request: its launch (once per token), its report, and the record before and after each tool
+   * call. The bridge forwards the call itself, to the server it started; the gateway never sees arguments or results.
+   */
+  private mcpRequest(
+    binding: Binding,
+    mcp: NonNullable<Binding['mcp']>,
+    id: string | number,
+    method: unknown,
+    params: unknown,
+    reply: (message: Record<string, unknown>) => void,
+    refuse: (id: unknown, code: number, message: string) => void,
+  ): void {
+    const handlers = this.options.mcp
+    const args = isPlainObject(params) ? params : {}
+    if (!handlers) return refuse(id, -32601, 'Method not found')
+    if (method === 'mcp/launch') {
+      if (mcp.launched) return refuse(id, -32000, 'This server was started already.')
+      mcp.launched = true
+      void handlers.launch(mcp).then(
+        launch => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: launch })),
+        error => refuse(id, -32000, error instanceof AppError ? error.message : 'The server cannot start now.'),
+      )
+      return
+    }
+    if (method === 'mcp/report') {
+      if (args.ok === true && Array.isArray(args.tools)) {
+        const tools = args.tools.filter((tool): tool is string => typeof tool === 'string' && tool.length <= 128).slice(0, 256)
+        handlers.report(mcp, { ok: true, tools })
+      } else if (args.ok === false && MCP_FAILURES.has(args.reason as McpStartFailure)) {
+        const reason = args.reason as McpStartFailure
+        handlers.report(mcp, { ok: false, reason })
+        mcp.onFailed?.(mcp.name, reason)
+      }
+      return reply({ id, result: {} })
+    }
+    if (method === 'mcp/call') {
+      if (typeof args.tool !== 'string' || !args.tool || args.tool.length > 128) return refuse(id, -32602, 'Invalid tool.')
+      if (binding.calls.size >= MAX_INFLIGHT * 4) return refuse(id, -32000, 'Too many calls at once.')
+      void handlers.callStarted(mcp, args.tool).then(
+        callId => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: { callId } })),
+        error => refuse(id, -32000, error instanceof AppError ? error.message : 'The call cannot be made now.'),
+      )
+      return
+    }
+    if (method === 'mcp/called') {
+      const ms = typeof args.ms === 'number' && Number.isFinite(args.ms) ? Math.max(0, Math.min(Math.round(args.ms), 86_400_000)) : 0
+      if (typeof args.callId === 'string' && MCP_RESULTS.has(args.result as string))
+        handlers.callEnded(mcp, args.callId, args.result as 'ok' | 'error' | 'cancelled' | 'failed', ms)
+      return reply({ id, result: {} })
+    }
+    refuse(id, -32601, 'Method not found')
   }
 
   private accept(socket: Socket): void {
@@ -275,6 +447,11 @@ export class ToolGatewayServer implements ToolGateway {
           socket.end()
           return
         }
+        if (binding.mcp) {
+          binding.sockets.add(socket)
+          this.mcpRequest(binding, binding.mcp, id, method, params, reply, refuse)
+          continue
+        }
         if (method === 'cancel') {
           inflight.get(id)?.abort()
           continue
@@ -322,6 +499,7 @@ export class ToolGatewayServer implements ToolGateway {
     socket.on('error', () => {})
     socket.on('close', () => {
       this.sockets.delete(socket)
+      for (const binding of this.bindings.values()) binding.sockets.delete(socket)
       // The server went away: its calls stop.
       for (const controller of inflight.values()) controller.abort()
       inflight.clear()

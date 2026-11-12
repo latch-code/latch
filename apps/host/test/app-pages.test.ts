@@ -120,7 +120,7 @@ async function generalRules(owner: TestDevice): Promise<void> {
 }
 
 async function defineFake(host: TestHost, owner: TestDevice, env: Record<string, string> = {}): Promise<void> {
-  const created = await owner.request('agents', {
+  const created = await owner.confirmed('agents', {
     body: {
       id: 'fake',
       name: 'Fake agent',
@@ -250,7 +250,7 @@ describe('applying plugin pages', () => {
     })
     expect(
       (
-        await owner.request('agents', {
+        await owner.confirmed('agents', {
           body: {
             id: 'fake',
             name: 'Fake agent',

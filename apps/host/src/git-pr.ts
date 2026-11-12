@@ -13,7 +13,7 @@ import type {
   GitReviewDecision,
   GitReviewState,
 } from '@latch/protocol'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 
 /** A failed job's log: at most this many of its last lines, and this many bytes. */
 export const LOG_LINES = 200
@@ -92,7 +92,7 @@ export function repoOfPr(url: string): { repo: GhRepo; number: number } | undefi
 
 /** Text a person may read: escape sequences and carriage-return overwrites resolved, control characters gone, redacted. */
 export function plainText(text: string): string {
-  return redactSecrets(
+  return redactKnownSecrets(
     text
       // eslint-disable-next-line no-control-regex
       .replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/gu, '')

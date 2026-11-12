@@ -19,7 +19,7 @@ async function fixture(env: Record<string, string> = {}) {
   hosts.push(t)
   const desktop = await t.enroll({ listener: 'unix' })
   const log = join(t.root, 'probe.jsonl')
-  await desktop.json('agents', {
+  await desktop.confirmedJson('agents', {
     method: 'POST',
     body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: log, ...env } },
   })
@@ -50,9 +50,11 @@ describe('Agent probe HTTP boundary', () => {
     expect(agents[0]!.lastProbe).toEqual(response)
     expect((await HostConfig.open(t.dataDir)).settings().agents[0]!.lastProbe).toEqual(response)
     expect(agents[0]!.started).toBe(false)
-    await desktop.json('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--changed'] } })
+    const confirmed = t.presence.requests.length
+    await desktop.confirmedJson('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--changed'] } })
     expect((await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0]!.lastProbe).toBeUndefined()
-    expect(t.presence.requests).toHaveLength(0)
+    // The probe itself asks nothing; the new arguments are a new program, confirmed once.
+    expect(t.presence.requests).toHaveLength(confirmed + 1)
   })
   it('keeps the version of the program an adapter drives beside the adapter, and marks a pair it was not built for', async () => {
     const bin = await mkdtemp(join(tmpdir(), 'latch-probe-bin-'))
@@ -70,7 +72,7 @@ describe('Agent probe HTTP boundary', () => {
     })
     hosts.push(t)
     const desktop = await t.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })
@@ -168,7 +170,7 @@ describe("a Harness's lists read before a session, and typed model IDs", () => {
     const t = await startTestHost()
     hosts.push(t)
     const desktop = await t.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })

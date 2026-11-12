@@ -652,6 +652,8 @@ describe('PresenceService', () => {
       'policy.change',
       'provider.confirm-origin',
       'plugin.package.apply',
+      'mcp.server.apply',
+      'harness.command.apply',
     ] as const
     for (const action of refused) {
       const enrolling = action === 'device.enroll' || action === 'device.enroll-native'

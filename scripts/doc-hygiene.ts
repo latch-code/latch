@@ -23,6 +23,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'GIT-DELIVERY',
     'HANDOFFS',
     'HARNESSES',
+    'MCP',
     'MODEL-CONFIGURATION',
     'NOTIFICATIONS',
     'PLUGIN-DEVELOPMENT',

@@ -11,6 +11,7 @@ import { DEVICE_ACTIONS } from './audit-actions/devices.ts'
 import { attachmentId, deviceId, hex64, opaqueId } from './audit-actions/fields.ts'
 import { GIT_ACTIONS } from './audit-actions/git.ts'
 import { HOST_ACTIONS } from './audit-actions/host.ts'
+import { MCP_ACTIONS } from './audit-actions/mcp.ts'
 import { NATIVE_APPROVAL_ACTIONS } from './audit-actions/native-approvals.ts'
 import { NATIVE_ACTIONS } from './audit-actions/native.ts'
 import { PERSONAL_ACTIONS } from './audit-actions/personal.ts'
@@ -42,6 +43,7 @@ export const AUDIT_DETAIL = {
   ...BROWSER_ACTIONS,
   ...NATIVE_APPROVAL_ACTIONS,
   ...PUSH_ACTIONS,
+  ...MCP_ACTIONS,
 } as const
 
 export type AuditAction = keyof typeof AUDIT_DETAIL

@@ -103,7 +103,7 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
     const owner = await host.enroll({ listener: 'unix' })
     expect(
       (
-        await owner.request('agents', {
+        await owner.confirmed('agents', {
           method: 'POST',
           body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_EDIT_QUEUE: queue } },
         })

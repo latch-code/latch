@@ -300,8 +300,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await open.waitFor({ state: 'hidden' })
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 
-        // Sending saves the definition and runs what was saved.
+        // Sending saves the definition, confirmed on this Mac in place (the system sheet stands in), and runs it.
         await input.press('Meta+Enter')
+        await expect.poll(() => host.presence.requests.at(-1)?.preview.action).toBe('harness.command.apply')
+        await page.locator('.composer-confirm').getByText('确认详情').waitFor()
+        await mkdir('test-results/desktop-first-use', { recursive: true })
+        await page.screenshot({ path: 'test-results/desktop-first-use/confirm-harness-1440.png', animations: 'disabled' })
+        host.presence.approveNext()
         await expect.poll(async () => (await owner.json<{ agents: AgentSettings[] }>('agents')).agents.length).toBe(1)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()

@@ -52,6 +52,37 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
     actions: ['plugin.package.apply'],
     segments: ['让插件页面可以：', { slot: 'capabilities', max: 48 }, '（插件「', { slot: 'plugin', max: 16 }, '」）'],
   },
+  /**
+   * The absolute path the Host found for a local MCP server's command, before the name a person chose, so the name can
+   * only follow the real program. The path keeps its end: the program's own name.
+   */
+  'mcp.server.apply': {
+    actions: ['mcp.server.apply'],
+    segments: ['让 Agent 运行 ', { slot: 'command', max: 40, keep: 'end' }, '（MCP 服务器「', { slot: 'server', max: 16 }, '」）'],
+  },
+  /**
+   * The same for a package runner or an interpreter (`npx`, `uvx`, `node`, `python` …): the package or script its first
+   * argument names follows the program, so the sheet says what really runs.
+   */
+  'mcp.server.apply-runner': {
+    actions: ['mcp.server.apply'],
+    segments: [
+      '让 Agent 运行 ',
+      { slot: 'command', max: 12, keep: 'end' },
+      ' ',
+      { slot: 'target', max: 32 },
+      '（',
+      { slot: 'hash', max: 4 },
+      '，MCP「',
+      { slot: 'server', max: 10 },
+      '」）',
+    ],
+  },
+  /** The same for a Harness definition: the command as the Host resolved it, then the definition's name. */
+  'harness.command.apply': {
+    actions: ['harness.command.apply'],
+    segments: ['让 Harness 运行 ', { slot: 'command', max: 40, keep: 'end' }, '（「', { slot: 'harness', max: 16 }, '」）'],
+  },
 }
 
 const graphemes = new Intl.Segmenter('und', { granularity: 'grapheme' })
@@ -74,6 +105,17 @@ function slotNames(form: ReasonForm): string[] {
 /** The slot names a form fills, in order. */
 export function reasonSlots(form: PresenceReasonForm): string[] {
   return slotNames(REASON_FORMS[form])
+}
+
+/**
+ * A slot's text cut in its middle to `max` grapheme clusters (escaped first), so both ends of a long package name or
+ * path stay on the sheet: `@modelcon…/server-github`. The Host fills the slot with it, so the sheet never cuts it again.
+ */
+export function middleSlot(text: string, max: number): string {
+  const clusters = Array.from(graphemes.segment(escapeSecurityText(text)), part => part.segment)
+  if (clusters.length <= max) return clusters.join('')
+  const head = Math.floor((max - 1) / 2)
+  return `${clusters.slice(0, head).join('')}…${clusters.slice(clusters.length - (max - 1 - head)).join('')}`
 }
 
 /**

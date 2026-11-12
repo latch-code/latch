@@ -17,7 +17,7 @@ test("pi's /compact runs between turns, and is refused queued or added to a runn
   const owner = await host.enroll({ listener: 'unix' })
   const sessions = join(host.workspaceRoot, 'pi-sessions')
   await mkdir(sessions)
-  await owner.json('agents', {
+  await owner.confirmedJson('agents', {
     method: 'POST',
     body: {
       id: 'pi',

@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises'
 import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentRecord } from '@latch/protocol'
 import { AppError, type LaunchPreview } from '@latch/sdk'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
@@ -85,7 +85,7 @@ export async function probeAgent(
     .filter(([name, value]) => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH/iu.test(name) && value.length > 0 && value.length < 4)
     .map(([, value]) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
   const shortPattern = shortSecrets.length ? new RegExp(shortSecrets.join('|'), 'gu') : undefined
-  const redact = (text: string) => redactSecrets(mask(shortPattern ? text.replace(shortPattern, '[redacted]') : text))
+  const redact = (text: string) => redactKnownSecrets(mask(shortPattern ? text.replace(shortPattern, '[redacted]') : text))
   const bounded = (text: string, bytes = 4096) => Buffer.from(redact(text), 'utf8').subarray(-bytes).toString('utf8')
   // A command older than its profile supports is refused as a session start is (409 `harness-version-unsupported`),
   // before anything else; the checks below stay the last before the spawn, so a cancel meanwhile starts nothing.

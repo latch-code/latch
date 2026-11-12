@@ -8,6 +8,7 @@ import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
 import { createHistoryRoutes, type HistoryRouteDeps } from './history.ts'
+import { createMcpRoutes, type McpRouteDeps } from './mcp.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
@@ -27,6 +28,7 @@ export interface RouteDeps {
   git?: GitRouteOptions
   apps: AppRouteDeps
   browser: BrowserRouteDeps
+  mcp: McpRouteDeps
 }
 
 /**
@@ -63,6 +65,7 @@ export function createRoutes(
       createGitRoutes(context, deps.git),
       terminal,
       createBrowserRoutes(context, deps.browser),
+      createMcpRoutes(context, deps.mcp),
       createAgentRoutes(context, deps.agents),
       agentLogin,
       createAutomationRoutes(context, deps.automations),

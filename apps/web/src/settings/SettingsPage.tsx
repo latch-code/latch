@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Cable } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -47,6 +47,7 @@ const ProvidersSettings = deferredComponent(
   async () => ({ default: (await import('./ProvidersSettings.tsx')).ProvidersSettings }),
   '模型服务设置',
 )
+const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
   '快捷键',
@@ -61,6 +62,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
   providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
+  mcp: 'mcp 服务器 工具 连接器 npx 命令',
   workspaces: '文件夹 添加项目 新建项目 快照',
   plugins: '工具 技能 扩展',
   shortcuts: '键盘',
@@ -89,10 +91,13 @@ const sections: Array<{
   catalog?: boolean
   secured?: boolean
   shell?: boolean
+  /** A Host feature the section's routes need. */
+  feature?: 'mcp'
 }> = [
   { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
   { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
   { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
+  { id: 'mcp', label: 'MCP', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
   { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
@@ -118,7 +123,8 @@ export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = d
         (access.admin || !section.admin)
         && (snapshot.catalog || !section.catalog)
         && (!access.legacy || !section.secured)
-        && (!section.shell || shellComputers() !== null),
+        && (!section.shell || shellComputers() !== null)
+        && (!section.feature || snapshot.catalog?.features?.[section.feature] === true),
     )
     .map(section => section.id)
 }
@@ -361,6 +367,7 @@ export function SettingsPage({
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
+                    {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
                     {panel === 'shortcuts' && (
                       <ShortcutsSettings
                         spaces={snapshot.catalog?.features?.customAgents === true}

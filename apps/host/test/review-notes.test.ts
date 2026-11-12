@@ -195,7 +195,7 @@ describe('review note routes', { timeout: 30_000 }, () => {
     hosts.push(t)
     await writeFile(join(t.workspaceRoot, 'a.ts'), 'one\ntwo\nthree\n')
     const owner = await t.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
     })

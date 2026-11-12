@@ -57,7 +57,7 @@ it('marks a fake ACP turn the Host stopped mid-tool as interrupted after the res
   const owner = await first.enroll({ listener: 'unix' })
   expect(
     (
-      await owner.request('agents', {
+      await owner.confirmed('agents', {
         method: 'POST',
         body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
       })

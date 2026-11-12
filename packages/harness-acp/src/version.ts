@@ -161,6 +161,16 @@ export function knownVersion(record: AgentRecord, path: string): VersionVerdict 
   return cached(record, path)?.verdict
 }
 
+/**
+ * The last read of this very file, re-checks aside: for a preset that has no confirmed definition, whose program is not
+ * run again to read its version, so what the read under its confirmation said stays known.
+ */
+export function lastVersion(record: AgentRecord, path: string): VersionVerdict | undefined {
+  const gate = gateOf(record, path)
+  const known = gate ? cache.get(keyOf(path, gate.minimum)) : undefined
+  return known && known.stamp === stampOf(path) ? known.verdict : undefined
+}
+
 /** Waits for the version of each, at most `timeoutMs`, so that a re-check answers with what it found. */
 export async function settleVersions(
   items: ReadonlyArray<{ record: AgentRecord; path: string | undefined }>,

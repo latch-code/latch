@@ -117,8 +117,11 @@ describe('tool rows and command blocks', () => {
     await writeFile(agent, agentSource(control))
     host = await startTestHost()
     owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', { method: 'POST', body: { id: 'rows-agent', name: 'Rows Agent', command: process.execPath, args: [agent] } })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: { id: 'rows-agent', name: 'Rows Agent', command: process.execPath, args: [agent] },
+    })
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
     })

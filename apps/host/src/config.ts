@@ -326,6 +326,7 @@ const agentSchema = z.object({
     )
     .refine(env => Object.keys(env).length <= 64, '环境变量数量过多'),
   enabled: z.boolean(),
+  confirmedCommand: z.string().min(1).max(4096).optional(),
   startedHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/u)

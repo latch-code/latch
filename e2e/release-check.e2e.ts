@@ -60,7 +60,7 @@ const VALID = [
 const MALFORMED = '版本号对了，变更记录还差一节。\n\n```latch-release-check\n{ items: 版本号 通过\n```'
 
 async function fakeAgent(host: TestHost, owner: TestDevice, edits: string, replies: string): Promise<void> {
-  const saved = await owner.request('agents', {
+  const saved = await owner.confirmed('agents', {
     method: 'POST',
     body: {
       id: 'fake',

@@ -454,7 +454,7 @@ test('an automation runs on the built-in engine from any allowed device, and its
 
 test('an automation may use a Harness, on record, and 立即运行 goes through the route', async () => {
   const { host, owner } = await fixture()
-  const defined = await owner.request('agents', {
+  const defined = await owner.confirmed('agents', {
     method: 'POST',
     body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
   })

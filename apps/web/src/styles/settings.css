@@ -1991,3 +1991,68 @@
 .about-older .ui-hint-lead {
   color: var(--amber-icon);
 }
+
+/* 设置 › MCP: a server's page heads with its state, when that was read, and 测试 · 停用 · 移除. */
+.mcp-heading p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.mcp-reason,
+.mcp-when {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.mcp-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--amber);
+}
+.mcp-warn svg {
+  color: var(--amber-icon);
+}
+.mcp-row-actions {
+  display: inline-flex;
+  gap: var(--sp-4);
+}
+.mcp-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: var(--sp-8);
+}
+.mcp-scope {
+  display: grid;
+  gap: var(--sp-12);
+}
+.mcp-scope fieldset {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.mcp-scope legend {
+  margin-bottom: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+@media (max-width: 767.98px) {
+  .mcp-env-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .mcp-heading {
+    flex-direction: column;
+  }
+}

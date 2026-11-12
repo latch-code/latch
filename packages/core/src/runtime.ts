@@ -47,7 +47,7 @@ import {
 } from '@latch/sdk'
 import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
-import { redactSecrets } from './node-kit/redact.ts'
+import { redactKnownSecrets } from './node-kit/redact.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 
@@ -1391,7 +1391,7 @@ class HarnessRuntime implements Bridge {
         : signal.aborted
           ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
           : // A schema failure's own message is a JSON list of issues: on one line, each with the field it is about.
-            `TOOL_ERROR: ${redactSecrets(error instanceof z.ZodError ? schemaIssues(error) : error instanceof Error ? error.message : String(error))}`
+            `TOOL_ERROR: ${redactKnownSecrets(error instanceof z.ZodError ? schemaIssues(error) : error instanceof Error ? error.message : String(error))}`
       this.output(run)
       await this.change(run.sessionId, task => {
         if (stopped)
@@ -1599,7 +1599,7 @@ class HarnessRuntime implements Bridge {
     } catch (error) {
       status = signal.aborted ? 'cancelled' : 'failed'
       // The reason as the Host or the model service said it, with any key in it replaced, and its code for the next step.
-      failure = signal.aborted ? undefined : capped(redactSecrets(error instanceof Error ? error.message : String(error)))
+      failure = signal.aborted ? undefined : capped(redactKnownSecrets(error instanceof Error ? error.message : String(error)))
       failureCode = signal.aborted ? undefined : errorCodeOf(error)
     } finally {
       // Present only while the step's output is uncommitted; the step commit removes it.

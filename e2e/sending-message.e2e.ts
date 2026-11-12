@@ -346,7 +346,7 @@ test('a new full-access session shows what was sent at once, as any other start 
     browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })

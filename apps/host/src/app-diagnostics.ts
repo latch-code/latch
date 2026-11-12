@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { AppDiagnostic, AppDiagnosticSource } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import { redactSecrets, writeFileAtomic } from '@latch/core/node-kit'
+import { redactKnownSecrets, writeFileAtomic } from '@latch/core/node-kit'
 import { privateDirectory, readPrivate } from './app-data.ts'
 
 /** Entries kept per page, and the longest message after redaction. */
@@ -38,7 +38,7 @@ function clip(text: string, max: number): string {
 
 /**
  * A page's recent diagnostics: build output, uncaught errors a frame reports, handshake timeouts, bridge refusals and
- * migrations. Every message passes through `redactSecrets` before it is kept; a page reads only its plugin's file.
+ * migrations. Every message passes through `redactKnownSecrets` before it is kept; a page reads only its plugin's file.
  */
 export class AppDiagnostics {
   private readonly cache = new Map<string, AppDiagnostic[]>()
@@ -74,7 +74,7 @@ export class AppDiagnostics {
       appId: input.appId,
       source: input.source,
       ...(input.code ? { code: input.code } : {}),
-      message: clip(redactSecrets(input.message), DIAGNOSTIC_BYTES),
+      message: clip(redactKnownSecrets(input.message), DIAGNOSTIC_BYTES),
     })
     const run = this.queue.then(async () => {
       const entries = [...(await this.load(pluginId)), entry]

@@ -35,7 +35,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { existsSync } from 'node:fs'
-import { lstat, mkdir, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
@@ -108,7 +108,7 @@ import {
   type SessionFolder,
 } from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
-import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, redactKnownSecrets } from '@latch/core/node-kit'
 import {
   assertCommandVersion,
   createAcpAgentPlugin,
@@ -164,7 +164,23 @@ import { PresenceService, createPresenceBackend, paramsHash, policySubject, type
 import { BROWSER_PLUGIN, classifyStandardCall, targetFolder, type BrowserCallFacts, type CallFolder } from './risk.ts'
 import { BrowserBroker, isBrowserTool, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
 import { BROWSER_TOOL_DEFINITIONS, browserFailure, browserResultText, createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
-import { MAX_SOCKET_PATH, ToolGatewayServer, gatewayRefusal, type GatewayCall, type GatewayResult } from './tool-gateway.ts'
+import {
+  MAX_SOCKET_PATH,
+  ToolGatewayServer,
+  gatewayRefusal,
+  type GatewayCall,
+  type GatewayResult,
+  type McpGatewayHandlers,
+} from './tool-gateway.ts'
+import {
+  MCP_DIRECTORY,
+  McpStore,
+  expandArgs,
+  isConfirmed as mcpConfirmed,
+  serverEnvironment,
+  toolHash,
+  usedIn as mcpUsedIn,
+} from './mcp.ts'
 import {
   authFailure,
   createRateLimits,
@@ -1069,7 +1085,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
   const sink = options.log ?? (text => console.error(`[Latch] ${text}`))
   // The recent lines stay in memory for 诊断导出, as redacted as the log itself.
   const diagnosticLog = new DiagnosticLog(options.clock ?? Date.now)
-  const log = (text: string) => sink(redactSecrets(text))
+  const log = (text: string) => sink(redactKnownSecrets(text))
   // 诊断导出 keeps no log line: only these Host-written sites note an event, as a category, an ID and an error code.
   const logNoted = (category: DiagnosticCategory, detail: { id?: string; error?: unknown }, text: string) => {
     diagnosticLog.note(category, detail)
@@ -1104,9 +1120,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => devices.close())
     const runtime = await prepareRuntimeDir({ hostId8, ...(options.runtimeParent ? { parent: options.runtimeParent } : {}) })
     const config = await HostConfig.open(dataDir)
-    // Key material, Agent definitions and the Host identity stay out of Time Machine backups; sessions, the audit log
-    // and the policy are backed up as usual.
-    await excludeFromBackup([authDir, join(dataDir, 'identity'), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))], { log })
+    // Latch's own MCP servers: definitions and, apart, the values of their variables (docs/MCP.md).
+    const mcpStore = await McpStore.open(dataDir, now)
+    // Key material, Agent definitions, MCP servers and the Host identity stay out of Time Machine backups; sessions, the
+    // audit log and the policy are backed up as usual.
+    await excludeFromBackup(
+      [authDir, join(dataDir, 'identity'), join(dataDir, MCP_DIRECTORY), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))],
+      { log },
+    )
     // A policy.json from before confirmed origins: record the origins the owner had already confirmed, once.
     if (policy.needsAddressMigration) {
       await policy
@@ -1144,7 +1165,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const lifecycle = new HostLifecycle(instanceId, now)
     const registry = new PluginRegistry()
     startupCleanup.push(() => registry.close())
-    const buildAgentPlugin = options.agentPlugin ?? ((agent: AgentRecord) => createAcpAgentPlugin(agent, { log }))
+    const buildAgentPlugin =
+      options.agentPlugin ?? ((agent: AgentRecord) => createAcpAgentPlugin(agent, { log, requireConfirmedCommand: true }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({
       allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
@@ -1494,6 +1516,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tools: () =>
               BROWSER_TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters })),
             call: input => gatewayBrowserCall(input),
+            mcp: mcpGateway(),
             log,
           })
         : undefined
@@ -2140,9 +2163,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // A command found too old after a client read the catalog: clients read it again.
     onVersionChange(() => hub?.changed())
     // Read before the first catalog, so that a client never starts with a Harness too old to run as ready.
+    // Only programs this Mac confirmed are run to read their versions.
     if (options.loginPrograms)
       await recheckVersions(
-        config.settings().agents.filter(agent => agent.enabled),
+        config.settings().agents.filter(agent => agent.enabled && versionReadable(agent)),
         VERSION_RECHECK_MS,
       )
     const historyImports = new HistoryImports(routeContext, await HistoryReceipts.open(dataDir), {
@@ -2236,6 +2260,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         promptHeld: (id, requestId) => turnRequests.some(key => key.startsWith(`${id}:`) && key.endsWith(`:${requestId}`)),
       },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
+      mcp: {
+        store: mcpStore,
+        resolveCommand,
+        forbiddenRoots: () => [
+          dataDir,
+          codeRoot,
+          workspaceRoot,
+          ...config.settings().workspaces.flatMap(record => record.folders.map(folder => folder.path)),
+        ],
+        testForbiddenRoots: async () => [
+          dataDir,
+          codeRoot,
+          workspaceRoot,
+          worktreesDir,
+          agentsDir,
+          ...config.settings().workspaces.flatMap(record => record.folders.map(folder => folder.path)),
+          ...(await hub!.listTasks()).flatMap(task => sessionFolders(task, workspaceRoot)),
+        ],
+        commandDirectories: () => [...(options.commandDirectories?.() ?? [])],
+        tmpRoot: runtime.tmpRoot,
+        revoke: serverId => toolGateway?.revokeMcp(serverId),
+      },
       browser: {
         broker: browserBroker,
         async readSession(caller, id) {
@@ -2271,7 +2317,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       agentLogin: {
         record: (id, caller) =>
           config.settings().agents.find(agent => agent.id === id)
-          ?? (caller.device?.scopes.includes('admin') && presetsToOffer().some(offer => offer.id === id) ? presetRoute(id) : undefined),
+          ?? (caller.device?.scopes.includes('admin')
+          && isLocalListener(caller.connection.listener)
+          && presetsToOffer().some(offer => offer.id === id)
+            ? presetRoute(id)
+            : undefined),
         login: id => hub?.harnessLogin(id),
         logout: id => hub!.logoutHarness(id),
         ...(options.loginTerminal ? { openTerminal: options.loginTerminal } : {}),
@@ -2598,7 +2648,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           authorize()
           return hub!.createTask({ ...task, ...started })
         })()
-        if (started.expectedLaunchHash)
+        if (started.expectedLaunchHash) {
+          const mcpSetHash = await mcpSetHashOf(created.sessionId, plan.harnessId)
           await audited({
             action: 'task.l3.started',
             actor: { listener: 'host', via: 'startup' },
@@ -2609,8 +2660,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               harnessId: plan.harnessId,
               launchHash: started.expectedLaunchHash,
               promptHash: sha256Hex(prompt),
+              ...(mcpSetHash ? { mcpSetHash } : {}),
             },
           }).catch(() => {})
+        }
         return created
       })
     }
@@ -2794,6 +2847,100 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         revealBlocking: devices.get(caller.device.id)?.scopes.includes('view') === true,
       })
       throw stepupRequired(publicTicket(record))
+    }
+
+    /**
+     * Whether a Harness definition's change runs another program, or the same one differently.
+     */
+    function runsDifferently(previous: AgentRecord, next: AgentRecord): boolean {
+      return (
+        previous.command !== next.command
+        || canonicalJson(previous.args) !== canonicalJson(next.args)
+        // Any variable added, changed or removed: removing `CODEX_PATH` or a `DISABLE_*` flag changes what runs too.
+        || canonicalJson(previous.env) !== canonicalJson(next.env)
+        // The command now resolves to another program than the one confirmed: saving it again confirms that one.
+        || (previous.confirmedCommand !== undefined && resolveCommand(next.command) !== previous.confirmedCommand)
+      )
+    }
+
+    /**
+     * The local confirmation for a Harness definition's program (`harness.command.apply`): only from this Mac's desktop
+     * app, and held back while a full-access session runs or waits, as every other one is. The sheet names the command
+     * as the Host finds it; the variables' values are bound to the confirmation without being shown.
+     */
+    async function confirmHarnessCommand(
+      req: IncomingMessage,
+      caller: Caller,
+      next: AgentRecord,
+    ): Promise<{ stepup: StepupMethod; found: string | undefined }> {
+      requireLocal(caller)
+      const resolved = resolveCommand(next.command)
+      const found = resolved ?? next.command
+      const names = Object.keys(next.env).sort()
+      const stepup = await confirm(
+        req,
+        caller,
+        'harness.command.apply',
+        {
+          id: next.id,
+          name: next.name,
+          command: next.command,
+          found,
+          args: next.args,
+          envNames: names,
+          envHash: sha256Hex(canonicalJson(next.env)),
+        },
+        { form: 'harness.command.apply', slots: { command: found, harness: next.name } },
+        [
+          { label: '命令', value: found },
+          { label: '参数', value: next.args.length ? next.args.join(' ') : '无' },
+          { label: '环境变量', value: names.length ? names.join('、') : '无' },
+          { label: 'Harness', value: `${next.name}（${next.id}）` },
+        ],
+      )
+      // Exactly the path the sheet showed is what the definition is bound to; nothing is looked up again.
+      return { stepup, found: resolved }
+    }
+
+    /** Whether a definition's version may be read: its command confirmed on this Mac and still resolving to that program. */
+    function versionReadable(record: AgentRecord): boolean {
+      return record.confirmedCommand !== undefined && resolveCommand(record.command) === record.confirmedCommand
+    }
+
+    /**
+     * A start of a definition saved before confirmations: from this Mac's desktop app it takes the confirmation once and
+     * is bound to the program it names; from anywhere else it is refused until that has happened.
+     */
+    async function bindUnconfirmedHarness(req: IncomingMessage, caller: DeviceCaller, harnessId: string | undefined): Promise<void> {
+      const record = harnessId ? config.settings().agents.find(agent => agent.id === harnessId) : undefined
+      if (!record || record.confirmedCommand !== undefined) return
+      if (!isLocalListener(caller.connection.listener))
+        throw new AppError(
+          409,
+          'harness-unconfirmed',
+          `${record.name} 还没有在这台 Mac 上确认过：先在这台 Mac 上用它开始一个会话，确认一次后其他设备才能用它`,
+        )
+      const { stepup, found } = await confirmHarnessCommand(req, caller, record)
+      if (!found) throw new AppError(503, 'agent-not-found', `未找到命令 ${record.command}`)
+      const next: AgentRecord = { ...record, confirmedCommand: found }
+      await serial(caller, 'run', async () => {
+        const latest = config.settings().agents.find(agent => agent.id === record.id)
+        if (!latest || definitionHash(latest) !== definitionHash(record) || latest.confirmedCommand !== undefined)
+          throw new AppError(409, 'agent-changed', 'Agent 定义已被修改，请刷新后重试')
+        const seq = await audited({
+          action: 'agent.defined',
+          actor: actorOf(caller),
+          target: record.id,
+          stepup,
+          detail: { agentId: record.id, definitionHash: definitionHash(next), created: false },
+        })
+        try {
+          await saveAgent(caller, next, false)
+        } catch (error) {
+          auditFailed(seq, caller)
+          throw error
+        }
+      })
     }
 
     function currentDevice(caller: DeviceCaller): CurrentDevice {
@@ -3414,7 +3561,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(context.waitForUser ? { waitForUser: context.waitForUser } : {}),
       })
       // What the page says reaches the model with any key in it replaced.
-      return outcome.ok ? { ...outcome, text: redactSecrets(outcome.text) } : outcome
+      return outcome.ok ? { ...outcome, text: redactKnownSecrets(outcome.text) } : outcome
     }
 
     /**
@@ -3467,7 +3614,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       return {
         content: [
-          { type: 'text', text: browserResultText(tool, redactSecrets(outcome.text)) },
+          { type: 'text', text: browserResultText(tool, redactKnownSecrets(outcome.text)) },
           ...(outcome.image ? [{ type: 'image' as const, data: outcome.image.toString('base64'), mimeType: 'image/png' as const }] : []),
         ],
       }
@@ -3540,6 +3687,134 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return undefined
         },
       })
+    }
+
+    /**
+     * Latch's MCP servers through the tool gateway: which a session gets when its agent starts, each bridge's launch
+     * (with the server's secrets, the only place they leave the Host), and the record of every tool call before it is
+     * sent. A call is refused once the server was removed, switched off, changed, no longer used in the session, or the
+     * tool switched off. See docs/MCP.md.
+     */
+    /**
+     * The Latch MCP servers a session's agent gets as it starts, with the definitions they run, as one hash for its
+     * `task.l3.started`: undefined for a Harness that takes none.
+     */
+    /** The set each session's agent was last given (`select`), by session: what `task.l3.started` names. */
+    const mcpSets = new Map<string, string>()
+    const setHash = (records: ReadonlyArray<{ id: string; specHash: string }>) =>
+      sha256Hex(
+        canonicalJson(records.map(record => ({ id: record.id, specHash: record.specHash })).toSorted((a, b) => (a.id < b.id ? -1 : 1))),
+      )
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
+      mcpSets.delete(sessionId)
+    })
+
+    async function mcpSetHashOf(sessionId: string, harnessId: string): Promise<string | undefined> {
+      if (hub!.info(harnessId)?.skills !== 'server') return undefined
+      const given = mcpSets.get(sessionId)
+      if (given) return given
+      const summary = await hub!
+        .detail(sessionId)
+        .then(detail => detail.summary)
+        .catch(() => undefined)
+      if (!summary) return undefined
+      return setHash(
+        mcpStore
+          .usedIn({ ...(summary.agent ? { agentId: summary.agent.customAgentId } : {}), projectId: projectIdOf(summary) })
+          .filter(record => mcpConfirmed(record)),
+      )
+    }
+
+    function mcpGateway(): McpGatewayHandlers {
+      /** Each bridge's empty working folder, removed when its binding ends. */
+      const folders = new Map<string, string>()
+      const current = (binding: { serverId: string; specHash: string }) => {
+        const record = mcpStore.get(binding.serverId)
+        return record && record.enabled && record.specHash === binding.specHash && mcpConfirmed(record) ? record : undefined
+      }
+      const gone = () => new AppError(409, 'mcp-server-gone', 'This MCP server was removed, switched off or changed in Latch.')
+      return {
+        async select(input) {
+          const chosen = mcpStore.usedIn(input).filter(record => mcpConfirmed(record))
+          mcpSets.set(input.sessionId, setHash(chosen))
+          return chosen.map(record => ({ serverId: record.id, name: record.name, specHash: record.specHash }))
+        },
+        async launch(binding) {
+          const record = current(binding)
+          // Still used in this session: 「用在」 may have changed since the agent started.
+          if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
+          // The person's program starts now, on record first: no record, no start.
+          try {
+            await audit.append({
+              action: 'mcp.server.started',
+              actor: { listener: 'host' },
+              target: binding.sessionId,
+              detail: { serverId: record.id, sessionId: binding.sessionId, specHash: record.specHash },
+            })
+          } catch {
+            throw new AppError(503, 'audit-failed', 'Latch could not record this start, so the server was not started.')
+          }
+          let cwd = binding.cwd
+          if (!record.projectCwd) {
+            cwd = await mkdtemp(join(runtime.tmpRoot, 'mcp-'))
+            folders.set(binding.id, cwd)
+          }
+          return {
+            command: record.command,
+            args: expandArgs(record.args, binding.cwd),
+            env: serverEnvironment(
+              record.command,
+              { ...record.env, ...mcpStore.secretsOf(record.id) },
+              options.commandDirectories?.() ?? [],
+            ),
+            cwd,
+            disabledTools: [...record.disabledTools],
+          }
+        },
+        report(binding, report) {
+          void mcpStore
+            .report(binding.serverId, binding.specHash, {
+              status: report.ok ? 'ok' : 'failed',
+              tools: report.ok ? report.tools.filter(tool => /^[A-Za-z0-9_.:/-]{1,128}$/u.test(tool)) : [],
+              ...(report.ok ? {} : { reason: report.reason }),
+              via: 'session',
+            })
+            .then(() => refresh())
+            .catch(error => log(`MCP 服务器的状态没有保存：${errorText(error)}`))
+        },
+        async callStarted(binding, tool) {
+          const record = current(binding)
+          if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
+          if (record.disabledTools.includes(tool)) throw new AppError(403, 'mcp-tool-off', 'This tool is switched off in Latch.')
+          const callId = randomUUID()
+          try {
+            await audit.append({
+              action: 'mcp.tool.called',
+              actor: { listener: 'host' },
+              target: binding.sessionId,
+              detail: { serverId: record.id, sessionId: binding.sessionId, callId, toolHash: toolHash(record.id, tool) },
+            })
+          } catch {
+            throw new AppError(503, 'audit-failed', 'Latch could not record this call, so it was not made.')
+          }
+          return callId
+        },
+        callEnded(binding, callId, result, ms) {
+          void audit
+            .append({
+              action: 'mcp.tool.settled',
+              actor: { listener: 'host' },
+              target: binding.sessionId,
+              detail: { serverId: binding.serverId, sessionId: binding.sessionId, callId, result, ms },
+            })
+            .catch(() => {})
+        },
+        closed(binding) {
+          const folder = folders.get(binding.id)
+          folders.delete(binding.id)
+          if (folder) void rm(folder, { recursive: true, force: true })
+        },
+      }
     }
 
     async function mount(driver: HarnessDriver, required = false): Promise<void> {
@@ -4799,7 +5074,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function rereadOutdated(id: string): Promise<void> {
       const record = config.settings().agents.find(agent => agent.id === id)
-      if (record && outdatedRefusal(record)) await assertCommandVersion(record)
+      if (record && versionReadable(record) && outdatedRefusal(record)) await assertCommandVersion(record)
     }
 
     /** A saved definition whose command is too old is refused as a running session would refuse it: one code, one sentence. */
@@ -4846,7 +5121,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function catalog(caller: Caller): Promise<HostCatalog> {
       // Only a device that may save a definition is offered one; everyone else keeps what is defined.
-      const mayDefine = caller.device?.scopes.includes('admin') === true
+      const mayDefine = caller.device?.scopes.includes('admin') === true && isLocalListener(caller.connection.listener)
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -5736,6 +6011,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      const agentHarness =
+        input.customAgentId && input.customAgentId !== GENERAL_AGENT_ID
+          ? customAgents.list().find(agent => agent.id === input.customAgentId)?.harnessId
+          : undefined
+      await bindUnconfirmedHarness(req, caller as DeviceCaller, input.harnessId ?? agentHarness ?? config.settings().defaults.harnessId)
       const started = await startSession(caller, input, res)
       // A new topic of 我的 Agent keeps the result cards that waited for one.
       if (input.customAgentId && !input.forkOf)
@@ -6154,6 +6434,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           auditFailed(intent, caller)
           throw error
         }
+        const mcpSetHash = await mcpSetHashOf(created.sessionId, harnessId)
         await audited(
           {
             action: 'task.l3.started',
@@ -6165,6 +6446,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               harnessId,
               launchHash,
               promptHash,
+              ...(mcpSetHash ? { mcpSetHash } : {}),
               ...foldersAudited,
               ...configAudited,
               ...routeAudited,
@@ -6965,13 +7247,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Reading the agent settings is a re-check: the next catalog looks for every command again.
         forgetCommandLookups()
         // A command too old for its preset says so in this answer, and in the catalog read after it.
+        // Only programs this Mac confirmed are run to read their versions; a preset not added yet is read once it is.
         await recheckVersions(
-          config.settings().agents.filter(agent => agent.enabled),
+          config.settings().agents.filter(agent => agent.enabled && versionReadable(agent)),
           VERSION_RECHECK_MS,
-          // A preset chosen from a draft but refused, so never saved; one with a definition follows that definition.
-          AGENT_PRESETS.filter(preset => !config.settings().agents.some(agent => agent.presetId === preset.id)).flatMap(
-            preset => presetRecord(preset.id) ?? [],
-          ),
         )
         // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
         presetLookup = undefined
@@ -7024,7 +7303,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           next.args = [...fallback.args]
           hash = checkAgent(next)
         }
-        if (next.enabled) {
+        // A new definition is a new program sessions start: only this Mac's desktop app saves one, and confirms it. A
+        // preset's command too old for it is refused first, so nobody confirms what cannot run.
+        requireLocal(caller)
+        const { stepup, found } = await confirmHarnessCommand(req, caller, next)
+        // Bound to the program the sheet named: one that later resolves elsewhere waits for a new confirmation. Its
+        // version is read only now, from that program.
+        if (found) next.confirmedCommand = found
+        if (next.enabled && found) {
           await assertCommandVersion(next)
           recheck(caller, 'admin')
         }
@@ -7034,7 +7320,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             action: 'agent.defined',
             actor: actorOf(caller),
             target: id,
-            stepup: 'none',
+            stepup,
             detail: { agentId: id, definitionHash: hash, created: true },
           })
           try {
@@ -7197,7 +7483,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           delete next.lastProbe
           delete next.probedDefinitionHash
         }
-        const hash = changed ? checkAgent(next) : undefined
+        // Another command, other arguments, any variable change or a command that moved: confirmed on this Mac. A new
+        // name or switching it on or off changes nothing that runs.
+        const legacy = current.confirmedCommand === undefined && input.command !== undefined
+        const confirmed = runsDifferently(current, next) || legacy ? await confirmHarnessCommand(req, caller, next) : undefined
+        const stepup = confirmed?.stepup ?? 'none'
+        if (confirmed) {
+          if (confirmed.found) next.confirmedCommand = confirmed.found
+          else delete next.confirmedCommand
+        }
+        const hash = changed || stepup !== 'none' ? checkAgent(next) : undefined
         const record = await serial(caller, 'admin', async () => {
           const latest = config.settings().agents.find(agent => agent.id === id)
           if (!latest) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
@@ -7208,7 +7503,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 action: 'agent.defined',
                 actor: actorOf(caller),
                 target: id,
-                stepup: 'none',
+                stepup,
                 detail: { agentId: id, definitionHash: hash, created: false },
               })
             : undefined

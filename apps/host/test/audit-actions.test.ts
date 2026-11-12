@@ -9,6 +9,7 @@ import { CHANGE_ACTIONS } from '../src/audit-actions/changes.ts'
 import { DEVICE_ACTIONS } from '../src/audit-actions/devices.ts'
 import { GIT_ACTIONS } from '../src/audit-actions/git.ts'
 import { HOST_ACTIONS } from '../src/audit-actions/host.ts'
+import { MCP_ACTIONS } from '../src/audit-actions/mcp.ts'
 import { NATIVE_APPROVAL_ACTIONS } from '../src/audit-actions/native-approvals.ts'
 import { NATIVE_ACTIONS } from '../src/audit-actions/native.ts'
 import { PERSONAL_ACTIONS } from '../src/audit-actions/personal.ts'
@@ -44,6 +45,19 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     approvalId: 'approval-1',
   },
   'browser.provider.registered': {},
+  'mcp.server.added': { serverId: `mcp_${'F'.repeat(22)}`, specHash: hex, envCount: 1, scope: 'all', projectCwd: false },
+  'mcp.server.changed': { serverId: `mcp_${'F'.repeat(22)}`, kinds: ['spec', 'secret'], specHash: hex, enabled: true },
+  'mcp.server.removed': { serverId: `mcp_${'F'.repeat(22)}` },
+  'mcp.server.test': { serverId: `mcp_${'F'.repeat(22)}`, specHash: hex },
+  'mcp.server.started': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, specHash: hex },
+  'mcp.tool.called': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, callId: '00000000-0000-4000-8000-000000000000', toolHash: hex },
+  'mcp.tool.settled': {
+    serverId: `mcp_${'F'.repeat(22)}`,
+    sessionId,
+    callId: '00000000-0000-4000-8000-000000000000',
+    result: 'ok',
+    ms: 12,
+  },
   'browser.provider.ended': {},
   'history.list': { harnessId: 'codex', workspaceId: 'proj' },
   'history.preview': { harnessId: 'codex', workspaceId: 'proj', agentSessionHash: hex },
@@ -236,6 +250,7 @@ describe('audit actions', () => {
       BROWSER_ACTIONS,
       NATIVE_APPROVAL_ACTIONS,
       PUSH_ACTIONS,
+      MCP_ACTIONS,
     ]
     const names = areas.flatMap(area => Object.keys(area))
     expect(new Set(names).size).toBe(names.length)

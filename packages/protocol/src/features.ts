@@ -3,6 +3,8 @@ import type { TokenUsage } from './types.ts'
 
 /** Optional feature discovery; older Hosts omit these fields. */
 export interface HostFeatures {
+  /** 设置 › MCP: Latch's own MCP servers (`/mcp/servers`). */
+  mcp?: true
   configReceipts?: true
   promptTemplates?: true
   fileSearch?: true

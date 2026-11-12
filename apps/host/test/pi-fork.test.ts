@@ -20,7 +20,7 @@ test("a fork of a pi session into pi forks pi's own record, and falls back to th
   const log = join(host.workspaceRoot, 'pi.log')
   // The fake pi under two definitions; no lookup of a program named pi is involved.
   for (const id of ['pi', 'pi-two'])
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id,

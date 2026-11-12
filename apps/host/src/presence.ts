@@ -44,6 +44,10 @@ export const PRESENCE_ACTIONS: Readonly<Record<PresenceAction, { title: string; 
   'policy.change': { title: '放宽本机安全策略', target: target => `允许 Host 访问 ${target}` },
   // The first use of a model-service address: the address, its key and its outbound allowance in one confirmation.
   'provider.confirm-origin': { title: '确认模型服务地址', target: target => `确认模型服务地址 ${target}` },
+  // A local command an agent's MCP bridge starts, added or widened: code that runs as this user, as a plugin's does.
+  'mcp.server.apply': { title: '添加 MCP 服务器' },
+  // A Harness definition added, or its command, arguments or variables changed: the program sessions start.
+  'harness.command.apply': { title: '确认 Harness 命令' },
 }
 
 /** The refusal's text; clients show their own words for the code. */

@@ -40,7 +40,7 @@ async function setup(options: { now?: () => number } = {}) {
   const host = await startTestHost(options.now ? { now: options.now } : {})
   hosts.push(host)
   const desktop = await host.enroll({ listener: 'unix' })
-  await desktop.json('agents', {
+  await desktop.confirmedJson('agents', {
     body: { id: 'acp', name: 'ACP', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: 'images,embedded' } },
   })
   expect((await desktop.confirmed('agents/acp/probe', { body: { requestId: randomUUID() } })).status).toBe(200)

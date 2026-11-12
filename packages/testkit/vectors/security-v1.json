@@ -577,6 +577,89 @@
         }
       },
       "reason": "让插件页面可以：开始会话（任何项目）（插件「X」，页面可以：只显示」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply",
+        "slots": {
+          "command": "/opt/homebrew/bin/npx",
+          "server": "github"
+        }
+      },
+      "reason": "让 Agent 运行 /opt/homebrew/bin/npx（MCP 服务器「github」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply",
+        "slots": {
+          "command": "/Users/someone/Library/Application Support/very/long/path/to/a/server/bin/mcp-server-filesystem",
+          "server": "files‮ for every project here"
+        }
+      },
+      "reason": "让 Agent 运行 …h/to/a/server/bin/mcp-server-filesystem（MCP 服务器「files\\u{202E} f…」）"
+    },
+    {
+      "action": "harness.command.apply",
+      "subject": {
+        "form": "harness.command.apply",
+        "slots": {
+          "command": "/usr/local/bin/claude-agent-acp",
+          "harness": "Claude Agent"
+        }
+      },
+      "reason": "让 Harness 运行 /usr/local/bin/claude-agent-acp（「Claude Agent」）"
+    },
+    {
+      "action": "harness.command.apply",
+      "subject": {
+        "form": "harness.command.apply",
+        "slots": {
+          "command": "/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z/agent",
+          "harness": "我的 Agent 启动器，带一个很长很长的名字"
+        }
+      },
+      "reason": "让 Harness 运行 …j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z/agent（「我的 Agent 启动器，带一…」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-runner",
+        "slots": {
+          "command": "npx",
+          "target": "@modelcontextpr…ol/server-github",
+          "hash": "9ee4",
+          "server": "github"
+        }
+      },
+      "reason": "让 Agent 运行 npx @modelcontextpr…ol/server-github（9ee4，MCP「github」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-runner",
+        "slots": {
+          "command": "npx",
+          "target": "evilmodelcontex…ol/server-github",
+          "hash": "6c27",
+          "server": "github"
+        }
+      },
+      "reason": "让 Agent 运行 npx evilmodelcontex…ol/server-github（6c27，MCP「github」）"
+    },
+    {
+      "action": "mcp.server.apply",
+      "subject": {
+        "form": "mcp.server.apply-runner",
+        "slots": {
+          "command": "node",
+          "target": "/Users/someone/…}evil-server.mjs",
+          "hash": "cc1c",
+          "server": "files"
+        }
+      },
+      "reason": "让 Agent 运行 node /Users/someone/…}evil-server.mjs（cc1c，MCP「files」）"
     }
   ],
   "presenceRequest": [

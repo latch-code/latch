@@ -5,7 +5,7 @@
  */
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
@@ -633,7 +633,7 @@ export class PiWire implements AgentWire {
     if (turn.cancelled || aborted || turn.stopReason === 'aborted')
       return turn.resolve({ stopReason: 'cancelled', ...(usage ? { usage } : {}) })
     if (turn.stopReason === 'error')
-      return turn.reject(new RpcError(RPC.internal, clip(redactSecrets(turn.errorMessage || 'pi stopped with an error'), 4000)))
+      return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(turn.errorMessage || 'pi stopped with an error'), 4000)))
     turn.resolve({ stopReason: turn.stopReason === 'length' ? 'max_tokens' : 'end_turn', ...(usage ? { usage } : {}) })
   }
 
@@ -735,7 +735,7 @@ export class PiWire implements AgentWire {
           status: event.aborted === true ? 'cancelled' : failed !== undefined ? 'failed' : 'completed',
           ...(typeof result?.summary === 'string' ? { summary: [{ type: 'text', text: result.summary }] } : {}),
           // The summary request goes to the model service, whose error can echo part of a key.
-          ...(failed !== undefined ? { error: clip(redactSecrets(failed), 2000) } : {}),
+          ...(failed !== undefined ? { error: clip(redactKnownSecrets(failed), 2000) } : {}),
         })
         return
       }
@@ -746,7 +746,7 @@ export class PiWire implements AgentWire {
           sessionUpdate: 'notice',
           severity: 'warning',
           // A model service's error can echo part of a key.
-          title: clip(redactSecrets(event.errorMessage), 300),
+          title: clip(redactKnownSecrets(event.errorMessage), 300),
           ...(typeof event.attempt === 'number' && typeof event.maxAttempts === 'number'
             ? { description: `第 ${event.attempt} 次重试，最多 ${event.maxAttempts} 次` }
             : {}),
@@ -757,7 +757,7 @@ export class PiWire implements AgentWire {
         this.update({
           sessionUpdate: 'notice',
           severity: 'error',
-          title: clip(redactSecrets(event.error), 300),
+          title: clip(redactKnownSecrets(event.error), 300),
           ...(typeof event.extensionPath === 'string' ? { description: `扩展 ${clip(event.extensionPath, 500)}` } : {}),
         })
         return

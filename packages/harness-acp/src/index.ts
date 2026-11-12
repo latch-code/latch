@@ -3,11 +3,21 @@ import { AGENT_PRESETS, isHarnessMark, type AgentPreset, type HarnessCapabilitie
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
 import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
-import { resolveCommand } from './command.ts'
+import { commandMoved, resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
 import { commandName, selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
-import { assertVersion, forgetVersions, knownVersion, settleVersions, tooOld, tooOldText, versionRefusal, wasRead } from './version.ts'
+import {
+  assertVersion,
+  forgetVersions,
+  knownVersion,
+  lastVersion,
+  settleVersions,
+  tooOld,
+  tooOldText,
+  versionRefusal,
+  wasRead,
+} from './version.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
 
 export { agentProbePreview, probeAgent } from './probe.ts'
@@ -34,7 +44,7 @@ export function forgetCommandLookups(): void {
  * unknown or not read yet. It reads nothing itself; a re-check, a start or choosing the preset does.
  */
 export function outdatedCommand(record: AgentRecord, path: string | undefined): { need: string; upgrade: string } | undefined {
-  return path ? tooOld(record, knownVersion(record, path)) : undefined
+  return path ? tooOld(record, knownVersion(record, path) ?? lastVersion(record, path)) : undefined
 }
 
 /** The refusal a saved definition gets while its command is known to be too old. */
@@ -234,6 +244,9 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           if (missing) return { status: 'unavailable', statusMessage: `${missing}${install}` }
           const outdated = outdatedLine(record, located())
           if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}` }
+          const path = located()
+          if (record.confirmedCommand !== undefined && path !== undefined && path !== record.confirmedCommand)
+            return { status: 'unavailable', statusMessage: commandMoved(record.name).message }
           if (health.pausedUntil())
             return { status: 'unavailable', statusMessage: `${record.name} 在一分钟内连续崩溃 3 次，已暂停自动重启，请稍后再试` }
           return health.lastError ? { status: 'ready', statusMessage: `上次运行异常：${health.lastError}` } : { status: 'ready' }

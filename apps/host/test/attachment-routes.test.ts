@@ -111,7 +111,7 @@ describe('authenticated attachment routes', () => {
     const host = await startTestHost()
     hosts.push(host)
     const desktop = await host.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       body: {
         id: 'attachment-agent',
         name: 'Attachment Agent',
@@ -429,7 +429,7 @@ describe('authenticated attachment routes', () => {
     hosts.push(host)
     const desktop = await host.enroll({ listener: 'unix' })
     const define = (id: string, caps: string) =>
-      desktop.json('agents', {
+      desktop.confirmedJson('agents', {
         body: { id, name: id, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } },
       })
     await define('seeing-agent', 'images,embedded')
@@ -842,7 +842,7 @@ describe('whether the snapshot lists every session', () => {
         }),
     }
     // A saved Agent turned off lists nothing: its sessions may exist.
-    await device.json('agents', {
+    await device.confirmedJson('agents', {
       body: { id: 'resting', name: 'Resting', command: process.execPath, args: [FAKE_ACP_AGENT], enabled: false },
     })
     expect((await device.json<{ tasksComplete?: true }>('snapshot')).tasksComplete).toBeUndefined()

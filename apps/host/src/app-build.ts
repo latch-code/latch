@@ -11,7 +11,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { APP_MODULE_BYTES, type PluginPackageBundle } from '@latch/protocol'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { APP_SDK_DTS } from './app-sdk-types.ts'
 
 export const APP_BUILD_LIMITS = {
@@ -335,7 +335,7 @@ function runChild(
   })
 }
 
-const clean = (text: string) => redactSecrets(text).slice(0, APP_BUILD_LIMITS.diagnosticChars)
+const clean = (text: string) => redactKnownSecrets(text).slice(0, APP_BUILD_LIMITS.diagnosticChars)
 
 /** `file(line,col): error TS1234: message` lines of `tsc --pretty false`, with the follow-up lines joined. */
 export function parseTscOutput(output: string): BuildDiagnostic[] {

@@ -2,6 +2,7 @@ import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { loginShellValues, PROXY_NAMES } from './login-shell.ts'
+import { AppError } from '@latch/sdk'
 
 /** Install locations that a GUI-launched Host often lacks on PATH. */
 const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global/bin', '~/.local/bin', '~/.bun/bin']
@@ -139,4 +140,18 @@ export function redactor(extra: Record<string, string>): (text: string) => strin
   }
   const secrets = [...values].sort((a, b) => b.length - a.length)
   return text => secrets.reduce((current, secret) => current.split(secret).join('[redacted]'), text)
+}
+
+/** A definition saved before confirmations: it starts once this Mac has confirmed it. */
+export function commandUnconfirmed(name: string): AppError {
+  return new AppError(
+    409,
+    'harness-unconfirmed',
+    `${name} 还没有在这台 Mac 上确认过：在这台 Mac 上用它开始一个会话，或在「设置 → Harness」里保存一次它的命令，确认后才能启动`,
+  )
+}
+
+/** A confirmed Harness whose command now resolves to another program: it waits for the Mac to confirm it again. */
+export function commandMoved(name: string): AppError {
+  return new AppError(409, 'harness-command-moved', `${name} 的命令现在指向另一个程序，在这台 Mac 的「设置 → Harness」里重新确认后才能启动`)
 }

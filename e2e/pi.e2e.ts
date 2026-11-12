@@ -325,7 +325,7 @@ describe('pi over its own RPC mode', () => {
       await noHorizontalOverflow(page)
       await shot(page, 'too-old-1440-dark')
 
-      const saved = await owner.request('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
+      const saved = await owner.confirmed('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
       expect([201, 409]).toContain(saved.status)
       const settings = await openSettings(page)
       await openSection(settings, 'Harness')

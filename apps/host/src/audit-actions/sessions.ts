@@ -77,6 +77,8 @@ export const SESSION_ACTIONS = {
     configHash: hex64.optional(),
     providerId: opaqueId.optional(),
     routeHash: hex64.optional(),
+    /** The Latch MCP servers the session gets as it starts, with their definitions' hashes (docs/MCP.md). */
+    mcpSetHash: hex64.optional(),
   }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
   /**

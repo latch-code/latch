@@ -10,6 +10,7 @@ import {
   writeSessionSkills,
 } from './skills-server.ts'
 import { browserServer } from './browser-server.ts'
+import { mcpBridgeServer } from './mcp-bridge.ts'
 import type { AttachmentRef, QuestionResult } from '@latch/protocol'
 import {
   CURSOR_DECLINE_REPLY,
@@ -62,13 +63,15 @@ import {
   type ModelGatewayLease,
   type ToolGatewayCallContext,
   type ToolGatewayLease,
+  type McpServerLease,
+  type McpStartFailure,
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
-import { canonicalJson, isoTime, ReasoningTimer, redactSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
+import { canonicalJson, isoTime, maskKnownSecretsIn, ReasoningTimer, redactKnownSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { errorCodeOf, interruptedNote, runEndRecord } from '@latch/core/run-end'
 import {
   catalogueReadOf,
@@ -82,7 +85,7 @@ import {
 } from './catalogue.ts'
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { codexOptions, readCodexModels } from './codex-models.ts'
-import { redactor, resolveCommand } from './command.ts'
+import { commandMoved, commandUnconfirmed, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
@@ -247,6 +250,18 @@ interface Live {
    * turn is stopped its calls end.
    */
   tools?: ToolGatewayLease
+  /** The tokens of the session's own MCP servers' `latch-mcp` bridges on this process, renewed as `tools` is. */
+  mcp?: McpServerLease[]
+}
+
+/** Why a Latch MCP server did not start, as the session says it. */
+const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
+  'spawn-failed': '命令无法启动',
+  exited: '进程已退出',
+  timeout: '30 秒内没有完成初始化',
+  protocol: '它的回答不是 MCP',
+  'list-failed': '没有列出工具',
+  'output-too-large': '输出过大',
 }
 
 interface Segment {
@@ -718,7 +733,8 @@ export class AgentRuntime implements Bridge {
     this.workspaceRoot = resolve(options.workspaceRoot)
     const own = redactor(agent.env)
     // An agent's error may echo the gateway token it was given, or part of a key from its own configuration.
-    this.redact = text => redactSecrets([...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text)))
+    this.redact = text =>
+      redactKnownSecrets([...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text)))
     this.selection = selectProfile(agent)
     this.auth = authFacts(agent, true)
     this.profile = this.selection.profile?.permission
@@ -2505,6 +2521,9 @@ export class AgentRuntime implements Bridge {
         'agent-not-found',
         `未找到命令 ${this.agent.command}。请先安装 ${this.agent.name}，或在设置中填写可执行文件的绝对路径。`,
       )
+    // The program confirmed on this Mac, and no other: a command that now resolves elsewhere waits for a new confirmation.
+    if (this.agent.confirmedCommand !== undefined && command !== this.agent.confirmedCommand) throw commandMoved(this.agent.name)
+    if (this.agent.confirmedCommand === undefined && this.limits.requireConfirmedCommand) throw commandUnconfirmed(this.agent.name)
     const definition = {
       resolvedCommand: command,
       args: this.agent.args,
@@ -3680,6 +3699,52 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
+   * Fresh tokens for the session's own MCP servers (Latch's, as the Host defines them now) on this process, revoking the
+   * ones before: none for a harness that takes no MCP servers or a Host without a gateway. A server that fails to start
+   * is said in the session, which goes on without it.
+   */
+  private async openMcp(taskId: string, live: Live): Promise<McpServerLease[]> {
+    for (const lease of live.mcp ?? []) lease.close()
+    delete live.mcp
+    const gateway = this.options.toolGateway
+    if (!gateway?.openMcp || !this.takesMcpServers()) return []
+    const task = this.task(taskId)
+    let leases: McpServerLease[]
+    try {
+      leases = await gateway.openMcp({
+        sessionId: taskId,
+        ...(task.summary.agent ? { agentId: task.summary.agent.customAgentId } : {}),
+        projectId: task.summary.workspaceId ?? 'default',
+        cwd: task.acp.cwd,
+        onFailed: (name, reason) => this.noteMcpFailure(taskId, name, reason),
+      })
+    } catch (error) {
+      this.limits.log(`${this.agent.name} 会话 ${taskId} 没有拿到 MCP 服务器：${clip(this.redact(message(error)), 200)}`)
+      return []
+    }
+    for (const lease of leases) this.tokens.add(lease.token)
+    live.mcp = leases
+    void live.wire.exited.then(() => {
+      for (const lease of leases) lease.close()
+    })
+    return leases
+  }
+
+  private noteMcpFailure(taskId: string, name: string, reason: McpStartFailure): void {
+    const task = this.state.tasks[taskId]
+    if (!task) return
+    task.messages.push({
+      id: randomUUID(),
+      role: 'system',
+      text: `MCP 服务器「${name}」没有启动：${MCP_FAILURE_TEXT[reason]}`,
+      createdAt: this.now(),
+    })
+    this.touch(task)
+    this.mark()
+    this.notify(taskId)
+  }
+
+  /**
    * The session's own row of a call that reached the tool gateway: the oldest unmatched call of this turn whose name or
    * title is exactly `tool` of the `latch-browser` server (as `mcp__latch-browser__<tool>`, Codex's
    * `latch-browser.<tool>`, or `latch-browser: <tool>`) and whose input is `args`. Its approval is named only when that row
@@ -3756,6 +3821,7 @@ export class AgentRuntime implements Bridge {
         : []
     const tools = this.openTools(taskId, live)
     if (tools) mcpServers.push(browserServer(tools))
+    for (const lease of await this.openMcp(taskId, live)) mcpServers.push(mcpBridgeServer(lease))
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
       void live.wire.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)
@@ -4471,7 +4537,9 @@ export class AgentRuntime implements Bridge {
         this.onChildUpdate(live, child, projected.value as { sessionUpdate: string })
       return
     }
-    const update = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
+    // What the agent says and its tools print may hold a Latch MCP server's secret (a server echoing its environment):
+    // masked before anything is stored or sent to a device.
+    const update = maskKnownSecretsIn(this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update)
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
     if (run) run.lastEventAt = this.clock()

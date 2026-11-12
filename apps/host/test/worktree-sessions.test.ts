@@ -64,7 +64,7 @@ async function fixture(agentEnv: Record<string, string> = {}, hostOptions: TestH
   await writeFile(join(project, '.qwen', 'settings.json'), '{"committed":false}\n')
   await writeFile(join(project, 'new.txt'), 'untracked\n')
   const owner = await t.enroll({ listener: 'unix' })
-  await owner.json('agents', {
+  await owner.confirmedJson('agents', {
     method: 'POST',
     body: { id: 'qwen', name: 'Qwen Code', presetId: 'qwen', command: 'qwen', args: ['--acp'], env: {} },
   })

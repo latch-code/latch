@@ -59,7 +59,7 @@ it('starts a worktree from another branch, then removes a dirty one after the di
 
     const owner = await host.enroll({ listener: 'unix' })
     const preset = AGENT_PRESETS.find(item => item.id === 'qwen')!
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'qwen', name: preset.name, presetId: 'qwen', command: preset.command, args: preset.args, env: {}, enabled: true },
     })

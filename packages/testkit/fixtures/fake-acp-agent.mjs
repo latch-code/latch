@@ -1031,6 +1031,49 @@ const scenarios = {
     say(lines.join('\n'))
     return END
   },
+  // `mcp <server> <tool> [json arguments]`: calls one tool of the session's MCP server by that name (one of Latch's,
+  // through its `latch-mcp` bridge), reporting the call as a tool row `mcp__<server>__<tool>`, and says what came back.
+  // `mcp-list <server>` says the names of the tools it lists.
+  mcp: async ({ sessionId, input, say, tool }) => {
+    const [, name = '', toolName = '', ...rest] = input.trim().split(/\s+/u)
+    const server = mcpServers.get(sessionId)?.find(item => item.name === name)
+    if (!server) {
+      say(`no MCP server ${name}`)
+      return END
+    }
+    let args = {}
+    try {
+      args = rest.length ? JSON.parse(rest.join(' ')) : {}
+    } catch {
+      say('arguments are not JSON')
+      return END
+    }
+    const id = `mcp_${Date.now()}`
+    tool({ toolCallId: id, title: `mcp__${name}__${toolName}`, kind: 'other', status: 'in_progress', rawInput: args })
+    const reply = await server.ask('tools/call', { name: toolName, arguments: args }, 30_000)
+    const text = reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply)
+    tool(
+      {
+        toolCallId: id,
+        status: reply.result?.isError ? 'failed' : 'completed',
+        content: [{ type: 'content', content: { type: 'text', text } }],
+      },
+      'tool_call_update',
+    )
+    say(`${name}.${toolName}: ${reply.result?.isError ? 'error' : 'ok'}: ${text}`)
+    return END
+  },
+  'mcp-list': async ({ sessionId, input, say }) => {
+    const [, name = ''] = input.trim().split(/\s+/u)
+    const server = mcpServers.get(sessionId)?.find(item => item.name === name)
+    if (!server) {
+      say(`no MCP server ${name}`)
+      return END
+    }
+    const reply = await server.ask('tools/list')
+    say(`${name} tools: ${(reply.result?.tools ?? []).map(item => item.name).join(',')}`)
+    return END
+  },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.
   skills: async ({ sessionId, say }) => {
     const server = mcpServers.get(sessionId)?.[0]

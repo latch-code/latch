@@ -150,7 +150,7 @@ describe('诊断导出 from a real Host', () => {
     const t = await startTestHost({ egressAllow: ['secret-host.internal:443'], log: text => lines.push(text) })
     try {
       const desktop = await t.enroll({ listener: 'unix' })
-      await desktop.json('agents', {
+      await desktop.confirmedJson('agents', {
         body: {
           id: 'leaky-agent',
           name: 'Leaky Agent',

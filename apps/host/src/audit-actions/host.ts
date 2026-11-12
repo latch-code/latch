@@ -16,6 +16,8 @@ const presenceAction = z.enum([
   'provider.set-key',
   'provider.confirm-origin',
   'approval.r2',
+  'mcp.server.apply',
+  'harness.command.apply',
 ])
 /** Plugin, page, project and Harness IDs as manifests and projects spell them. */
 const pageId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)

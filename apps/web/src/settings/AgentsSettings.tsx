@@ -11,6 +11,8 @@ import { foundWithoutAdapter, missingText } from '../core/agentDetection.ts'
 export { missingText } from '../core/agentDetection.ts'
 import { hostOf } from '../format.ts'
 import { ConfirmDialog } from '../components/overlays.tsx'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
+import { withConfirmation } from '../core/confirmations.ts'
 import {
   Button,
   ButtonLink,
@@ -212,7 +214,8 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         ...(preset ? { presetId: preset.id } : {}),
         env: Object.fromEntries(env.filter(item => item.key.trim()).map(item => [item.key.trim(), item.value])),
       }
-      await api('agents', { method: 'POST', body })
+      // A new Harness is a new program: the Host asks for Touch ID on this Mac first.
+      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
       onSaved()
     } catch (cause) {
       setError(inlineError(cause))
@@ -286,6 +289,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      <InlineConfirm active={busy} rank={1} />
       <div className="settings-actions">
         <Button size="md" disabled={busy} onClick={onCancel}>
           取消
@@ -378,6 +382,7 @@ function DefinitionDialog({
           }}
         />
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} rank={1} />
       </form>
     </Dialog>
   )
@@ -461,6 +466,7 @@ function EnvDialog({
           }}
         />
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} rank={1} />
       </form>
     </Dialog>
   )
@@ -483,6 +489,7 @@ function AgentPage({
   onSaved,
   onDeleted,
   on,
+  local = false,
 }: {
   agent: AgentSettings
   preset?: AgentPreset
@@ -498,6 +505,8 @@ function AgentPage({
   onDeleted: () => void
   /** 「这台 Mac 上」 or 「 <name> 上」: where the definition starts. */
   on: string
+  /** The desktop app on this Mac: the only place a command, its arguments or variables can change. */
+  local?: boolean
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -516,7 +525,8 @@ function AgentPage({
     setBusy(true)
     setError('')
     try {
-      await api(`agents/${id}`, { method: 'PUT', body })
+      // Another command, other arguments or a variable's new value: the Host asks for Touch ID on this Mac first.
+      await withConfirmation(confirmation => api(`agents/${id}`, { method: 'PUT', body, ...(confirmation ? { confirmation } : {}) }))
       onSaved()
       return ''
     } catch (cause) {
@@ -562,15 +572,17 @@ function AgentPage({
       <SettingsGroup
         title="启动方式"
         meta={
-          <Button
-            variant="link"
-            size="xs"
-            disabled={busy}
-            onClick={() => {
-              setDialog('definition')
-            }}>
-            编辑…
-          </Button>
+          local && (
+            <Button
+              variant="link"
+              size="xs"
+              disabled={busy}
+              onClick={() => {
+                setDialog('definition')
+              }}>
+              编辑…
+            </Button>
+          )
         }
         note={FULL_ACCESS_NOTE}>
         {agent.started === false && <SettingsRow title={NOT_STARTED} />}
@@ -583,18 +595,21 @@ function AgentPage({
       <SettingsGroup
         title="环境变量"
         meta={
-          <Button
-            variant="link"
-            size="xs"
-            disabled={busy}
-            onClick={() => {
-              setDialog('env')
-            }}>
-            添加…
-          </Button>
+          local && (
+            <Button
+              variant="link"
+              size="xs"
+              disabled={busy}
+              onClick={() => {
+                setDialog('env')
+              }}>
+              添加…
+            </Button>
+          )
         }
         caption={ENV_HELD}
         captionIcon="lock">
+        <InlineConfirm active={busy && dialog === null} rank={1} />
         {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" />}
         {agent.envKeys.map(key => (
           <SettingsRow
@@ -602,17 +617,19 @@ function AgentPage({
             title={<code className="settings-mono">{key}</code>}
             description="已设置"
             trailing={
-              <Button
-                variant="ghost"
-                disabled={busy}
-                aria-label={`移除 ${key}`}
-                onClick={() => {
-                  void update({ env: { [key]: null } }).then(text => {
-                    if (text) setError(text)
-                  })
-                }}>
-                移除
-              </Button>
+              local && (
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label={`移除 ${key}`}
+                  onClick={() => {
+                    void update({ env: { [key]: null } }).then(text => {
+                      if (text) setError(text)
+                    })
+                  }}>
+                  移除
+                </Button>
+              )
             }
           />
         ))}
@@ -1101,6 +1118,7 @@ export function AgentsSettings({
           onSaved={refreshed}
           onDeleted={done}
           on={on}
+          local={deviceAccess(snapshot, currentShell()).local}
         />
       ),
     })

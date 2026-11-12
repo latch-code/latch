@@ -464,7 +464,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       commandDirectories: () => [directory],
     })
     owner = await host.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: {
         id: 'generic',

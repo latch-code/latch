@@ -49,7 +49,7 @@ describe('the composer status line', () => {
   beforeAll(async () => {
     host = await startTestHost()
     owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
     })

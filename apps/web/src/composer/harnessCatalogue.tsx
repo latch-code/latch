@@ -1,8 +1,8 @@
 import { useState, useSyncExternalStore } from 'react'
 import { TextCursorInput } from 'lucide-react'
-import { AGENT_PRESETS, type HarnessInfo } from '@latch/protocol'
+import type { HarnessInfo } from '@latch/protocol'
 import { Button, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
-import { api, ApiError, errorMessage } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
 import { dateTime } from '../format.ts'
@@ -33,26 +33,11 @@ export function useReading(harness: HarnessInfo | undefined): boolean {
   return here || harness?.catalogueRead?.running === true
 }
 
-/** A preset chosen before it has a definition gets one, as its first session would save it; saving runs nothing. */
-async function saveOffered(harness: HarnessInfo): Promise<void> {
-  const preset = AGENT_PRESETS.find(item => item.id === harness.offer?.presetId)
-  if (!preset) return
-  try {
-    await api('agents', {
-      method: 'POST',
-      body: { id: preset.id, name: preset.name, presetId: preset.id, command: preset.command, args: preset.args, env: {}, enabled: true },
-    })
-  } catch (cause) {
-    if (!(cause instanceof ApiError && cause.code === 'agent-exists')) throw cause
-  }
-}
-
 /** Reads what the Harness offers without a turn; the catalog the Host sends next carries it, or why it failed. */
 export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean): Promise<void> {
   waiting.add(harness.id)
   changed()
   try {
-    await saveOffered(harness)
     await api(`agents/${encodeURIComponent(harness.id)}/catalogue`, { method: 'POST', body: { auto } })
   } finally {
     waiting.delete(harness.id)
@@ -65,6 +50,8 @@ export function readsOnSelect(harness: HarnessInfo | undefined, access: Pick<Dev
   const read = harness?.catalogueRead
   return (
     harness !== undefined
+    // A preset without a definition yet is read once its first session saves one: saving it takes Touch ID.
+    && harness.offer === undefined
     && access.scopes.has('run')
     && harness.status === 'ready'
     && read?.when === 'select'
@@ -112,7 +99,7 @@ export function CatalogueRows({
   const [error, setError] = useState('')
   const name = harnessName(harness)
   const read = harness.catalogueRead
-  const canRun = access.scopes.has('run') && harness.status === 'ready'
+  const canRun = access.scopes.has('run') && harness.status === 'ready' && harness.offer === undefined
   const running = useReading(harness)
   const catalogue = harness.catalogue
   const run = async () => {

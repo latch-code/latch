@@ -752,7 +752,7 @@ describe('handoff routes', () => {
 
   it('hands a file between the built-in Harness and an ACP Agent under each one’s own name for the folder', async () => {
     const { host, owner } = await hostFixture()
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',

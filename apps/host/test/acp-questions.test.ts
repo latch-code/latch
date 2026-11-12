@@ -23,7 +23,7 @@ async function asked(prompt: string, dirs?: { dataDir: string; workspaceRoot: st
   const phone = await host.enroll({ scopes: ['view', 'run'] })
   expect(
     (
-      await owner.request('agents', {
+      await owner.confirmed('agents', {
         method: 'POST',
         body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
       })

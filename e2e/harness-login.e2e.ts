@@ -190,7 +190,7 @@ describe('logging in to a Harness from a browser', () => {
 
   it('takes a test start that says otherwise as the newer answer', async () => {
     const owner = await host.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })
     expect([201, 409]).toContain(saved.status)
@@ -222,7 +222,7 @@ describe('logging in to a Harness from a browser', () => {
 
   it('says how to log in when a test start is refused while the program says it is logged in', async () => {
     const owner = await host.enroll({ listener: 'unix' })
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })
     expect([201, 409]).toContain(saved.status)

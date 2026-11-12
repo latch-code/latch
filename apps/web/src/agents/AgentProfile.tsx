@@ -30,6 +30,8 @@ import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
 import { useAgentComputer, useAgentDetail, useAgentList, useProposals } from './useAgentData.ts'
 import { ComputerSection, NotificationSection } from './Computer.tsx'
+import { McpSection } from './McpSection.tsx'
+import { builtinHarness } from '../composerChoice.ts'
 import { effectWords } from './proposals.ts'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
 
@@ -328,6 +330,15 @@ export function AgentProfile({
               scheduleWrites={scheduleWrites}
             />
             {summary && <NotificationSection agent={summary} canRun={canRun} disabled={held} writes={writes} />}
+            {summary && catalog?.features?.mcp === true && (
+              <McpSection
+                agentId={summary.id}
+                harness={harness}
+                builtin={harness !== undefined && harness.id === builtinHarness(catalog ?? undefined)?.id}
+                access={access}
+                disabled={held}
+              />
+            )}
             <dl className="agent-facts agent-profile-section">
               <dt>工作位置</dt>
               <dd>

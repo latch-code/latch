@@ -28,7 +28,7 @@ test('a turn with a shell edit: attribution, undo, redo, the note to the engine,
 
     const owner = await t.enroll({ listener: 'unix' })
     const agentLog = join(t.root, 'agent.log')
-    const saved = await owner.request('agents', {
+    const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: agentLog } },
     })

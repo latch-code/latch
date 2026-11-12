@@ -111,7 +111,7 @@ describe('queue HTTP boundaries', () => {
     // This Host looks up no command by name, so no agent installed on this computer can be found or started.
     const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
     expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'late-agent', name: 'Late fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })
@@ -144,7 +144,7 @@ describe('queue HTTP boundaries', () => {
     hosts.push(host)
     const owner = await host.enroll({ listener: 'unix' }),
       phone = await host.enroll({ scopes: ['view', 'run'] })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'queue-agent', name: 'Queue fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })
@@ -203,7 +203,7 @@ describe('steering a running turn over HTTP', () => {
     // This Host looks up no command by name, so no agent installed on this computer can be found or started.
     const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
     expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'steer-agent',
@@ -242,7 +242,7 @@ describe('steering a running turn over HTTP', () => {
     const owner = await host.enroll({ listener: 'unix' })
     const { presets } = await owner.json<{ presets: Array<{ detected?: { found: boolean } }> }>('agents')
     expect(presets.every(preset => preset.detected?.found === false)).toBe(true)
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'steer-agent',
@@ -273,7 +273,7 @@ describe('steering a running turn over HTTP', () => {
     const host = await startTestHost()
     hosts.push(host)
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'plain-agent', name: 'Plain fixture', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })

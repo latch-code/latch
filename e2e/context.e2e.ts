@@ -20,7 +20,7 @@ describe('a new context in a session', () => {
   beforeAll(async () => {
     host = await startTestHost()
     owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',
@@ -32,7 +32,7 @@ describe('a new context in a session', () => {
     })
     models = join(host.root, 'models.txt')
     await writeFile(models, 'small,large')
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'shrinking-agent',

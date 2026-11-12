@@ -1507,7 +1507,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           }
         // B has a session waiting for a decision, from the fake ACP Agent; only now, since one holds back pairing.
         const ownerB = owners[1]!
-        await ownerB.json('agents', {
+        await ownerB.confirmedJson('agents', {
           method: 'POST',
           body: { id: 'fake', name: 'Fake agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })
@@ -1643,7 +1643,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     try {
       const owner = await host.enroll({ listener: 'unix' })
       // The fake ACP Agent: `shell-edit` writes files, `schedule …` proposes a schedule through the skills server.
-      const saved = await owner.request('agents', {
+      const saved = await owner.confirmed('agents', {
         method: 'POST',
         body: { id: 'fake-news', name: 'Fake News', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
       })
@@ -1713,7 +1713,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     try {
       const owner = await host.enroll({ listener: 'unix' })
       // This Host looks up no command by name, so no agent installed on this computer can be found or started.
-      await owner.json('agents', {
+      await owner.confirmedJson('agents', {
         method: 'POST',
         body: {
           id: 'fake',
@@ -1865,7 +1865,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         ['fake', 'images,embedded'],
         ['plain', ''],
       ])
-        await owner.json('agents', {
+        await owner.confirmedJson('agents', {
           method: 'POST',
           body: { id, name: id, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } },
         })
@@ -2927,7 +2927,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await chmod(join(remote, 'hooks', 'pre-receive'), 0o755)
       git('remote', 'add', 'origin', remote)
       const owner = await host.enroll({ listener: 'unix' })
-      await owner.json('agents', {
+      await owner.confirmedJson('agents', {
         method: 'POST',
         body: { id: 'fake', name: 'Fake agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
       })

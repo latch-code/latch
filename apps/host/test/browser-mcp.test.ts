@@ -89,7 +89,7 @@ describe('the browser tools of an external harness, through latch-browser and th
     const t = await startTestHost({ demo: false, log: text => void logs.push(text) })
     cleanups.push(() => t.close())
     const desktop = await t.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       body: {
         id: 'browser-agent',
         name: 'Browser Agent',
@@ -184,7 +184,7 @@ describe('the browser tools of an external harness, through latch-browser and th
     const t = await startTestHost({ demo: false })
     cleanups.push(() => t.close())
     const desktop = await t.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       body: { id: 'browser-agent', name: 'Browser Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
     })
     const provider = await openProvider(desktop)
@@ -232,7 +232,7 @@ describe('the browser tools of an external harness, through latch-browser and th
     const desktop = await t.enroll({ listener: 'unix' })
     const agentLog = join(t.dataDir, '..', 'plain-agent.log')
     // An agent that does not start its MCP servers, and lingers after being told to stop: the test speaks for the server.
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       body: {
         id: 'plain-agent',
         name: 'Plain Agent',
@@ -288,7 +288,7 @@ describe('the browser tools of an external harness, through latch-browser and th
     const t = await startTestHost({ demo: false })
     cleanups.push(() => t.close())
     const desktop = await t.enroll({ listener: 'unix' })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       body: { id: 'browser-agent', name: 'Browser Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
     })
     const start = async () => {

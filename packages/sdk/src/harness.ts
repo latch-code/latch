@@ -136,6 +136,24 @@ export interface ToolGatewayLease {
   close(): void
 }
 
+/**
+ * One of Latch's own MCP servers for one agent process: the agent starts its `latch-mcp` bridge with these two paths,
+ * and the bridge takes the server's launch from the gateway with the token in the file. The token is a credential, as
+ * a `ToolGatewayLease`'s is; the server's secrets are in neither.
+ */
+export interface McpServerLease {
+  /** The name the agent shows the server by. */
+  name: string
+  socketPath: string
+  tokenFile: string
+  token: string
+  /** Revokes the token, which ends the bridge's server. Idempotent. */
+  close(): void
+}
+
+/** Why a server's bridge reported it did not come up. */
+export type McpStartFailure = 'spawn-failed' | 'exited' | 'timeout' | 'protocol' | 'list-failed' | 'output-too-large'
+
 export interface ToolGateway {
   /**
    * A token bound to the session and one agent process. `describe` names the driver's call that matches a gateway call,
@@ -147,6 +165,19 @@ export interface ToolGateway {
     sessionId: string
     describe?: (tool: string, args: Record<string, unknown>) => ToolGatewayCallContext
   }): ToolGatewayLease | undefined
+  /**
+   * The session's Latch MCP servers for one agent process, as the Host's definitions stand now: those switched on and
+   * used in every session, in its Agent's or in its project's. One lease per server. `cwd` is the session's main folder,
+   * for a server that starts there and for `${workspaceFolder}`. `onFailed` hears of a server whose bridge could not
+   * start it, so the session can say so; the session goes on without it.
+   */
+  openMcp?(input: {
+    sessionId: string
+    agentId?: string
+    projectId?: string
+    cwd: string
+    onFailed?: (name: string, reason: McpStartFailure) => void
+  }): Promise<McpServerLease[]>
 }
 
 /** Host capabilities offered to a driver, without prescribing its loop or persistence. */

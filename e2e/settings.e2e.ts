@@ -330,22 +330,23 @@ describe('adding a model service', () => {
 })
 
 /**
- * Adding an agent asks for no confirmation; its definition says it has not started yet, and the first full-access start
- * (confirmed with what it runs) clears that.
+ * Adding an agent is confirmed on this Mac (its program runs from then on); its definition says it has not started yet,
+ * and the first full-access start clears that.
  */
 describe('an agent that has not started yet', () => {
-  it('saves without a confirmation and says 还没有开启过会话 until a session starts with it', async () => {
+  it('saves with one confirmation on this Mac and says 还没有开启过会话 until a session starts with it', async () => {
     const testHost = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     const browser = await chromium.launch(browserLaunchOptions())
     try {
       const desktop = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
       const before = testHost.presence.requests.length
-      const saved = await desktop.request('agents', {
+      const saved = await desktop.confirmed('agents', {
         method: 'POST',
         body: { name: '本地 ACP Harness', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
       })
       expect(saved.status).toBe(201)
-      expect(testHost.presence.requests).toHaveLength(before)
+      expect(testHost.presence.requests).toHaveLength(before + 1)
+      expect(testHost.presence.requests.at(-1)?.preview.action).toBe('harness.command.apply')
       const { agent }: { agent: AgentSettings } = await saved.json()
       expect(agent.started).toBe(false)
 

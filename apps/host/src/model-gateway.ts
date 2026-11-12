@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { PROVIDER_WIRES, type ModelWire, type ProviderKind, type RoutedModel, type RoutedTurn, type TokenUsage } from '@latch/protocol'
 import { AppError, type ModelGateway, type ModelGatewayLease, type ModelRoute } from '@latch/sdk'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { originOf } from './config.ts'
 import { replyReader, type ReplyFacts, type ReplyReader } from './model-reply.ts'
 import { chatEndpoint, chatHeaders } from './plugins/providers/chat-wire.ts'
@@ -93,7 +93,7 @@ function addUsage(total: TokenUsage | undefined, usage: TokenUsage): TokenUsage 
 
 /** The turn's entry for `model`, counting one more request; undefined once the turn lists as many models as it may. */
 function counted(tally: Tally, model: string): RoutedModel | undefined {
-  const name = redactSecrets(model).slice(0, MAX_MODEL_CHARS)
+  const name = redactKnownSecrets(model).slice(0, MAX_MODEL_CHARS)
   let entry = tally.models.get(name)
   if (!entry) {
     if (tally.models.size >= MAX_TURN_MODELS) return undefined
@@ -144,7 +144,7 @@ function tokenOf(req: IncomingMessage): string | undefined {
  * have been cut short, so a tail that is still the start of the key goes as well.
  */
 function withoutKey(text: string, apiKey: string): string {
-  if (!apiKey) return redactSecrets(text)
+  if (!apiKey) return redactKnownSecrets(text)
   const json = JSON.stringify(apiKey).slice(1, -1)
   const forms = [...new Set([apiKey, json, json.replace(/\//gu, '\\/'), encodeURIComponent(apiKey)])].toSorted(
     (a, b) => b.length - a.length,
@@ -158,7 +158,7 @@ function withoutKey(text: string, apiKey: string): string {
       }
     }
   }
-  return redactSecrets(output)
+  return redactKnownSecrets(output)
 }
 
 /** An error in the shape the OpenAI and Gemini protocols both read: `error.message`. */

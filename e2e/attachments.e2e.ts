@@ -305,7 +305,7 @@ describe('the attach button and @ on every Harness', () => {
     await host?.close()
   })
   const define = (id: string, name: string, caps: string) =>
-    owner.json('agents', { body: { id, name, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } } })
+    owner.confirmedJson('agents', { body: { id, name, command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: caps } } })
   const start = async (harnessId: string, title: string) => {
     const created = await owner.confirmed('tasks', { body: { prompt: 'echo ' + title, requestId: randomUUID(), harnessId } })
     const { sessionId } = (await created.json()) as { sessionId: string }

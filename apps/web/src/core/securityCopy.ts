@@ -226,6 +226,8 @@ export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
   'device.grant': '更新权限',
   'policy.change': '更新设置',
   'provider.confirm-origin': '保存',
+  'mcp.server.apply': '保存',
+  'harness.command.apply': '保存',
 }
 
 /** What a confirmation held back by a running agent was for, in 「…，结束后才能放宽设置。」. */
@@ -236,6 +238,8 @@ export const BLOCKED_ACTION_TEXT: Record<PresenceAction, string> = {
   'device.grant': '为设备增加权限',
   'policy.change': '放宽设置',
   'provider.confirm-origin': '确认模型服务地址',
+  'mcp.server.apply': '添加 MCP 服务器',
+  'harness.command.apply': '确认 Harness 命令',
 }
 
 /** A session named in the copy: its title and agent, already escaped and shortened (`core/blocking.ts`). */

@@ -123,7 +123,8 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 
 **ACP Agent** 是与 Host 同权限运行的本机代码，Latch 不提供操作系统沙箱：
 
-- 在运行 Host 的电脑上安装并登录 Agent，新会话找到预设的命令后就能选，第一次发送时保存定义；自定义命令在「设置 → Harness」填写并保存，有管理权限的设备都能改，每次改动都有记录。Latch 不下载、不安装 Agent，也不代为登录。
+- 在运行 Host 的电脑上安装并登录 Agent，新会话找到预设的命令后就能选，第一次发送时保存定义；自定义命令在「设置 → Harness」填写并保存。新增 Harness、改它的命令、参数或环境变量只在这台 Mac 的桌面端，并用 Touch ID 或登录密码确认一次，因为它决定运行哪个程序；改名与开关在有管理权限的设备上都能做。每次改动都有记录。Latch 不下载、不安装 Agent，也不代为登录。
+- **MCP。** 「设置 → MCP」添加本机命令的 MCP 服务器（名称、命令、参数、环境变量），选「用在」所有会话、某些 Agent 或项目。添加与放宽（换命令、参数、新的变量）在桌面端确认一次；换变量的值、改「用在」、开关工具、停用与移除不要确认，其他设备只能停用。变量的值只存在这台 Mac 上，从不返回任何设备。经 ACP 的 Harness 与 Codex 直连经 Latch 的 `latch-mcp` 拿到它，每次调用都有记录；pi 不接收，内置 Harness 尚未支持本机命令。本机命令以你的身份运行，Latch 不隔离它。远程地址与 OAuth 尚未实现。见 [docs/MCP.md](docs/MCP.md)。
 - 发送就开始。这个启动内容第一次运行时，会话最上面说一次它能做什么；每次启动都记入审计（命令、项目配置与第一条输入的哈希）。定义或这些配置变了时，已有会话停止接受输入，换新会话继续。
 - Latch 把 Agent 设到你选的权限模式（没选时是预设的「先问你」），每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批，只有 pi 扩展要求确认时才会问你。
 - Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，你的代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）与 CA 文件变量（`SSL_CERT_FILE`、`NODE_EXTRA_CA_CERTS` 等），以及预设里这个 Agent 自己的目录变量（如 Codex 的 `CODEX_HOME`）；后三类在 Host 自己的环境里没有时，从登录 shell 读取。每个会话有私有临时目录。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。

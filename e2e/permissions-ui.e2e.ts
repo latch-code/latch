@@ -354,7 +354,7 @@ describe('permission states in a browser', () => {
   })
 
   it('runs a Harness session in the browser: it starts here, answers, widens with no prompt, and stops on drift', async () => {
-    const saved = await local.request('agents', {
+    const saved = await local.confirmed('agents', {
       method: 'POST',
       body: {
         name: 'Fake Agent',

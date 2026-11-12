@@ -3,7 +3,7 @@ import { isIP } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HarnessPlugin } from '@latch/sdk'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { loadLoginShell, personCommandDirectories, resolveCommand } from '@latch/harness-acp'
 import { detectPresetCommands, LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
 import {
@@ -194,8 +194,8 @@ async function main(): Promise<void> {
   }
   const codeRoot = latchCodeRoot()
   if (process.platform === 'darwin' && !existsSync(presenceHelperPath(codeRoot)) && !presenceDisabled(paths.dataDir)) {
-    const built = await buildPresenceHelper({ codeRoot, log: (text: string) => console.error(redactSecrets(text)) })
-    if (!built.built) console.error(redactSecrets(built.message))
+    const built = await buildPresenceHelper({ codeRoot, log: (text: string) => console.error(redactKnownSecrets(text)) })
+    if (!built.built) console.error(redactKnownSecrets(built.message))
   }
   const egressAllow: string[] = []
   const baseURL = latchEnv(env, 'BASE_URL')
@@ -253,7 +253,7 @@ async function main(): Promise<void> {
       void stop().then(
         () => process.exit(0),
         error => {
-          console.error(redactSecrets(String(error)))
+          console.error(redactKnownSecrets(String(error)))
           process.exit(1)
         },
       )
@@ -288,6 +288,6 @@ async function main(): Promise<void> {
 try {
   await main()
 } catch (error) {
-  console.error(redactSecrets(error instanceof Error ? error.message : String(error)))
+  console.error(redactKnownSecrets(error instanceof Error ? error.message : String(error)))
   process.exit(1)
 }

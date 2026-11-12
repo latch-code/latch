@@ -200,7 +200,7 @@ describe('runs', () => {
       args: [FAKE_ACP_AGENT],
       env: { FAKE_ACP_STATE: join(t.root, 'acp-state.json'), FAKE_ACP_LOG: agentLog },
     }
-    expect((await desktop.request('agents', { method: 'POST', body: definition })).status).toBe(201)
+    expect((await desktop.confirmed('agents', { method: 'POST', body: definition })).status).toBe(201)
     const prompts = async () =>
       (await readFile(agentLog, 'utf8').catch(() => ''))
         .split('\n')
@@ -294,7 +294,7 @@ describe('runs', () => {
       args: [FAKE_ACP_AGENT],
       env: { FAKE_ACP_STATE: join(t.root, 'acp-state.json'), FAKE_ACP_LOG: agentLog },
     }
-    expect((await desktop.request('agents', { method: 'POST', body: definition })).status).toBe(201)
+    expect((await desktop.confirmed('agents', { method: 'POST', body: definition })).status).toBe(201)
     t.host.lifecycle.on('runStarted', () => new Promise<void>(() => {}))
     const sessionId = await create(desktop, 'echo held', { harnessId: 'fake' })
     await expect.poll(() => events.length, SLOW).toBe(1)

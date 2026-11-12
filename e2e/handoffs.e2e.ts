@@ -94,7 +94,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
   const browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',

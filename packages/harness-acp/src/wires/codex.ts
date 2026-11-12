@@ -6,7 +6,7 @@
  */
 import { z } from 'zod'
 import { escapeSecurityText } from '@latch/protocol'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexModels } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
@@ -143,7 +143,14 @@ function threadSettings(mode: Mode, cwd: string, servers: Array<z.infer<typeof m
             mcp_servers: Object.fromEntries(
               servers.map(server => [
                 server.name,
-                { command: server.command, args: server.args, env: Object.fromEntries(server.env.map(item => [item.name, item.value])) },
+                {
+                  command: server.command,
+                  args: server.args,
+                  env: Object.fromEntries(server.env.map(item => [item.name, item.value])),
+                  // A Latch MCP server's bridge starts the person's command, and `npx` fetching a package often takes
+                  // longer than Codex's default 10 s; Latch's own servers start at once.
+                  ...(server.name.startsWith('latch-') ? {} : { startup_timeout_sec: 60 }),
+                },
               ]),
             ),
           },
@@ -569,7 +576,7 @@ export class CodexWire implements AgentWire {
       if (isRecord(error) && error.codexErrorInfo === 'unauthorized')
         return turn.reject(new RpcError(RPC.authRequired, 'Codex is not logged in'))
       const said = isRecord(error) && typeof error.message === 'string' ? error.message : turn.error
-      return turn.reject(new RpcError(RPC.internal, clip(redactSecrets(said || 'Codex stopped with an error'), 4000)))
+      return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(said || 'Codex stopped with an error'), 4000)))
     }
     turn.resolve({ stopReason: 'end_turn', ...usage })
   }
@@ -851,7 +858,7 @@ export class CodexWire implements AgentWire {
             this.update({
               sessionUpdate: 'notice',
               severity: 'warning',
-              title: clip(redactSecrets(message), 300),
+              title: clip(redactKnownSecrets(message), 300),
               description: 'Codex 正在重试',
             })
         } else if (turn) turn.error = message

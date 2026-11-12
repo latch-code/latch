@@ -69,7 +69,7 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
   const browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',
@@ -443,7 +443,7 @@ it('delegates from an Agent with no default project into the start folder', asyn
   const browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })

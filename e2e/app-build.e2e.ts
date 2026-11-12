@@ -77,7 +77,7 @@ export default defineApp({ page: () => null })
 `
 
 async function fakeAgent(host: TestHost, owner: TestDevice, queue: string): Promise<void> {
-  const saved = await owner.request('agents', {
+  const saved = await owner.confirmed('agents', {
     method: 'POST',
     body: {
       id: 'fake',

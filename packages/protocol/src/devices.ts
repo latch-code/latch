@@ -75,6 +75,8 @@ export type PresenceAction =
   | 'device.grant'
   | 'policy.change'
   | 'provider.confirm-origin'
+  | 'mcp.server.apply'
+  | 'harness.command.apply'
 
 /** A full-access session, running or waiting for an answer, that holds back a confirmation (`presence-blocked`). */
 export interface BlockingTask {
@@ -118,6 +120,9 @@ export type PresenceReasonForm =
   | 'policy.several'
   | 'plugin.package.apply'
   | 'plugin.package.apply-pages'
+  | 'mcp.server.apply'
+  | 'mcp.server.apply-runner'
+  | 'harness.command.apply'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
 export interface PresenceSubject {

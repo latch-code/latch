@@ -22,7 +22,7 @@ import type {
   GitPushResult,
   GitStageResult,
 } from '@latch/protocol'
-import { canonicalJson, redactSecrets, sha256Hex } from '@latch/core/node-kit'
+import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
 import { GitError, GitReader, findGit, gitOperation } from './changes/git.ts'
@@ -271,7 +271,7 @@ export function readableTail(bytes: Buffer, limit = TAIL_LIMIT): string {
     .join('\n')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, '')
-  const redacted = redactSecrets(text).trim()
+  const redacted = redactKnownSecrets(text).trim()
   return redacted.length > limit ? redacted.slice(redacted.length - limit) : redacted
 }
 

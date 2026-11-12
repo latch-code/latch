@@ -56,7 +56,7 @@ async function dshHost(version: string) {
   })
   cleanups.push(() => t.close())
   const owner = await t.enroll({ listener: 'unix' })
-  await owner.json('agents', {
+  await owner.confirmedJson('agents', {
     method: 'POST',
     body: { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} },
   })
@@ -143,7 +143,7 @@ describe('a DeepSeek Harness older than its preset supports', () => {
 
     // Chosen from a draft: saving its definition reads the version once and refuses, so no session and no definition.
     const body = { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} }
-    const chosen = await owner.request('agents', { method: 'POST', body })
+    const chosen = await owner.confirmed('agents', { method: 'POST', body })
     expect(chosen.status).toBe(409)
     expect(await chosen.json()).toEqual({ error: 'harness-version-unsupported', message: `DeepSeek Harness ${text}` })
     expect((await readFile(versionsRead, 'utf8')).length).toBe(1)
@@ -157,7 +157,7 @@ describe('a DeepSeek Harness older than its preset supports', () => {
 
     // Saved while new enough, then found too old on 重新检测: a session is refused the same way.
     await writeFile(versionFile, '0.2.2-rc.1')
-    await owner.json('agents', { method: 'POST', body })
+    await owner.confirmedJson('agents', { method: 'POST', body })
     await writeFile(versionFile, '0.1.1-rc.2')
     const saved = await owner.json<{ agents: AgentSettings[] }>('agents')
     expect(saved.agents.find(agent => agent.id === 'dsh')?.detected).toMatchObject({ found: true, outdated })
@@ -189,7 +189,7 @@ describe('an agent that never answers its handshake', () => {
     })
     cleanups.push(() => t.close())
     const owner = await t.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'stuck', name: 'Stuck', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_INIT_SILENT: '1' } },
     })
@@ -213,7 +213,7 @@ describe('pi 1.5', () => {
     const t: TestHost = await startTestHost()
     cleanups.push(() => t.close())
     const owner = await t.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'pi', name: 'pi', presetId: 'pi', command: process.execPath, args: [FAKE_PI_AGENT], env: { FAKE_PI_SHAPE: '1.5' } },
     })
@@ -249,13 +249,13 @@ describe('Codex chosen from a draft', () => {
 
   it('is saved on Codex itself when it is new enough', async () => {
     const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.167.0'; exit 0; }\n${acp}`, 'codex-acp': acp })
-    const saved = await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })
+    const saved = await owner.confirmedJson<{ agent: AgentSettings }>('agents', { method: 'POST', body })
     expect(saved.agent).toMatchObject({ command: 'codex', args: [], verified: true })
   })
 
   it('is refused when Codex is too old, even with its adapter installed: the adapter would run that same Codex', async () => {
     const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.150.0'; exit 0; }\n${acp}`, 'codex-acp': acp })
-    const refused = await owner.request('agents', { method: 'POST', body })
+    const refused = await owner.confirmed('agents', { method: 'POST', body })
     expect(refused.status).toBe(409)
     expect(await refused.json()).toMatchObject({ error: 'harness-version-unsupported' })
     expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
@@ -268,7 +268,7 @@ describe('Codex chosen from a draft', () => {
       command: 'codex-acp',
       description: '经适配器 codex-acp 运行它自带的 Codex；模型、登录与沙箱由 Codex 自身配置。',
     })
-    expect((await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent).toMatchObject({
+    expect((await owner.confirmedJson<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent).toMatchObject({
       command: 'codex-acp',
       verified: true,
     })
@@ -282,7 +282,7 @@ describe('Codex chosen from a draft', () => {
       install: 'npm i -g @openai/codex',
       detected: { found: false },
     })
-    const saved = (await owner.json<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent
+    const saved = (await owner.confirmedJson<{ agent: AgentSettings }>('agents', { method: 'POST', body })).agent
     expect(saved).toMatchObject({ command: 'codex' })
     const harness = (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'codex')
     expect(harness).toMatchObject({ status: 'unavailable', statusMessage: '未找到命令 codex。安装：npm i -g @openai/codex' })
@@ -290,7 +290,7 @@ describe('Codex chosen from a draft', () => {
 
   it('is refused when Codex is too old and no adapter is installed', async () => {
     const owner = await codexHost({ codex: `[ "$1" = --version ] && { echo 'codex-cli 0.150.0'; exit 0; }\n${acp}` })
-    const refused = await owner.request('agents', { method: 'POST', body })
+    const refused = await owner.confirmed('agents', { method: 'POST', body })
     expect(refused.status).toBe(409)
     expect(await refused.json()).toEqual({
       error: 'harness-version-unsupported',

@@ -178,6 +178,7 @@ describe('shell routes', () => {
       'general',
       'providers',
       'engines',
+      'mcp',
       'workspaces',
       'plugins',
       'devices',
@@ -185,7 +186,17 @@ describe('shell routes', () => {
       'shortcuts',
       'about',
     ])
-    expect(settingsSectionsAt(true)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'computers', 'about'])
+    expect(settingsSectionsAt(true)).toEqual([
+      'general',
+      'providers',
+      'engines',
+      'mcp',
+      'workspaces',
+      'plugins',
+      'devices',
+      'computers',
+      'about',
+    ])
   })
 })
 

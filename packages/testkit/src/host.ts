@@ -78,6 +78,8 @@ export interface TestDevice {
   json<T>(path: string, init?: TestRequestInit): Promise<T>
   /** Performs the request; on 403 stepup-required with a confirmation, approves via presence and retries with the header. */
   confirmed(path: string, init?: TestRequestInit): Promise<Response>
+  /** `confirmed`, then as `json`: the body, or `{ status, body }` thrown when the response is not ok. */
+  confirmedJson<T>(path: string, init?: TestRequestInit): Promise<T>
   renew(): Promise<void>
   /**
    * Adds folders the way the desktop app's main process does: a nonce from `folder-grants`, then a body signed with
@@ -308,6 +310,13 @@ export async function startHostFixture<H extends FixtureHost>(
         const status = await settleConfirmation(body.confirmation.id, id => testDevice.request(`confirmations/${id}`))
         if (status !== 'approved') throw new Error(`confirmation ${status}`)
         return testDevice.request(path, { ...init, confirmation: body.confirmation.id })
+      },
+      async confirmedJson<T>(path: string, init?: TestRequestInit): Promise<T> {
+        const response = await testDevice.confirmed(path, init)
+        const text = await response.text()
+        const body = text ? JSON.parse(text) : undefined
+        if (!response.ok) throw new HttpFailure(response.status, body)
+        return body as T
       },
       async addFolders(input) {
         const nonce = input.nonce ?? (await testDevice.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })).nonce

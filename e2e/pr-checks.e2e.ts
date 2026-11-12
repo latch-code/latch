@@ -118,7 +118,7 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     const owner = await host.enroll({ listener: 'unix' })
     expect(
       (
-        await owner.request('agents', {
+        await owner.confirmed('agents', {
           method: 'POST',
           body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
         })

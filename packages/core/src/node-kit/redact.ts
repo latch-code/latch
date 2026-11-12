@@ -53,6 +53,58 @@ export function redactSecrets(text: string): string {
   return output
 }
 
+/** Secrets the Host keeps that have no shape of their own (an MCP server's secret variables), by source. */
+const known = new Map<string, readonly string[]>()
+let knownValues: readonly string[] = []
+
+/** A value as it may appear in text: itself, JSON-escaped and URL-encoded. */
+function forms(value: string): string[] {
+  return [value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value)]
+}
+
+/**
+ * Sets one source's secret values for `redactKnownSecrets`, replacing that source's earlier list. Values under 8
+ * characters are never added: masking them would garble ordinary text, so such a value is not protected this way.
+ */
+export function setKnownSecrets(source: string, values: readonly string[]): void {
+  known.set(
+    source,
+    values.filter(value => value.length >= 8),
+  )
+  // Longest first, so a value that contains another is masked whole.
+  knownValues = [...new Set([...known.values()].flat().flatMap(forms))].toSorted((a, b) => b.length - a.length)
+}
+
+/** Every value `setKnownSecrets` holds, in any of its forms, masked; nothing else changes. */
+export function maskKnownSecrets(text: string): string {
+  let output = String(text)
+  for (const value of knownValues) if (output.includes(value)) output = output.replaceAll(value, '[redacted]')
+  return output
+}
+
+/** `maskKnownSecrets` over every string of a JSON-shaped value (an agent's update), returning the same shape. */
+export function maskKnownSecretsIn<T>(value: T): T {
+  if (knownValues.length === 0) return value
+  const walk = (item: unknown): unknown =>
+    typeof item === 'string'
+      ? maskKnownSecrets(item)
+      : Array.isArray(item)
+        ? item.map(walk)
+        : item && typeof item === 'object'
+          ? Object.fromEntries(Object.entries(item).map(([key, entry]) => [key, walk(entry)]))
+          : item
+  return walk(value) as T
+}
+
+/**
+ * `redactSecrets`, and every value `setKnownSecrets` holds, for text the Host sends out: log lines, session text,
+ * errors, events and diagnostics. Not for deciding whether a file or a text holds a secret: that is `redactSecrets` and
+ * `containsSecret`, which know only shapes.
+ */
+export function redactKnownSecrets(text: string): string {
+  return redactSecrets(maskKnownSecrets(text))
+}
+
 /**
  * Whether the text holds a credential itself: a Latch credential or code, a private key's armour or a service key by
  * its prefix. The Host treats a text file that does as likely to hold a secret. The cookie, header and URL forms are

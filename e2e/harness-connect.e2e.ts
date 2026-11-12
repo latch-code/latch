@@ -53,7 +53,7 @@ describe('a Harness that cannot connect yet', () => {
     })
     // A definition saved while its version was new enough, found too old on a later 重新检测 (as after a downgrade).
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} },
     })
@@ -100,9 +100,11 @@ describe('a Harness that cannot connect yet', () => {
         await shot(page, `new-session-${width}-${theme}`)
         await page.getByRole('button', { name: '取消', exact: true }).click()
       } else {
-        // The new session's Harness menu offers Codex, reached directly with no adapter, and not the too-old DeepSeek Harness.
+        // The new session's Harness menu offers no preset to a browser, since saving one is confirmed on the Mac, and
+        // not the too-old DeepSeek Harness.
         await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
-        await page.getByRole('menuitemradio', { name: /^Codex/u }).waitFor()
+        await page.getByRole('menuitem', { name: '添加 Harness…', exact: true }).waitFor()
+        expect(await page.getByRole('menuitemradio', { name: /^Codex/u }).count()).toBe(0)
         expect(await page.getByRole('menuitemradio', { name: /DeepSeek Harness/u }).count()).toBe(0)
         await noHorizontalOverflow(page)
         await shot(page, `new-session-harnesses-${width}-${theme}`)
@@ -152,26 +154,26 @@ describe('a Harness that cannot connect yet', () => {
     expect(await refused.json()).toMatchObject({ error: 'harness-version-unsupported' })
   })
 
-  it('refuses a too-old preset that was never added when it is chosen, keeping the draft and saving nothing', async () => {
+  it('reads the version of a preset only once it is confirmed, refuses a too-old one then, and says it needs an upgrade', async () => {
     const owner = await host.enroll({ listener: 'unix' })
-    const page = await open(1440, 'light')
-    await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
-    await page.getByRole('menuitemradio', { name: /^pi/u }).click()
-    const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
-    await input.fill('先看看这个项目')
-    await input.press('Meta+Enter')
-    const chooseFolder = page.getByText(/ 在一个新的空文件夹里开始$/u)
-    if (await chooseFolder.isVisible().catch(() => false)) await chooseFolder.click()
-    await page
-      .getByText('pi 需要 0.84.4 或更高版本（当前 0.84.3）。升级：npm i -g @earendil-works/pi-coding-agent@latest')
-      .first()
-      .waitFor()
-    expect(await input.inputValue()).toBe('先看看这个项目')
-    await shot(page, 'unsaved-refused-1440-light')
+    const asked = host.presence.requests.length
+    // The desktop app saves a preset when it is first used: the program is confirmed before it is run for its version.
+    const refused = await owner.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {}, enabled: true },
+    })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({
+      error: 'harness-version-unsupported',
+      message: 'pi 需要 0.84.4 或更高版本（当前 0.84.3）。升级：npm i -g @earendil-works/pi-coding-agent@latest',
+    })
+    expect(host.presence.requests).toHaveLength(asked + 1)
+    expect(host.presence.requests.at(-1)?.preview.action).toBe('harness.command.apply')
     const after = await owner.json<{ agents: Array<{ id: string }> }>('agents')
     expect(after.agents.map(agent => agent.id)).toEqual(['dsh'])
     expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
     // The picker now says it needs an upgrade instead of offering it.
+    const page = await open(1440, 'light')
     await page.getByRole('button', { name: /^Harness[：\s]/u }).click()
     await page.getByRole('menuitem', { name: '添加 Harness…', exact: true }).click()
     const presets = page.getByRole('group', { name: '添加 Harness', exact: true })

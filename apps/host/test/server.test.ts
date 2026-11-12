@@ -27,7 +27,7 @@ import {
 import { AppError, type HarnessPlugin, type ModelProvider, type ToolDefinition } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { renewSigningText, HttpFailure, type TestDevice, makeTestTls, FAKE_ACP_AGENT, startFakeModels } from '@latch/testkit'
-import { createAcpAgentPlugin } from '@latch/harness-acp'
+import { createAcpAgentPlugin, forgetCommandLookups } from '@latch/harness-acp'
 import { AuditLog } from '../src/audit.ts'
 import { createOfflineTicket } from '../src/auth.ts'
 import { HostConfig } from '../src/config.ts'
@@ -1437,7 +1437,7 @@ describe('agent settings', () => {
     expect((await harnesses(browser)).some(harness => harness.offer)).toBe(false)
     // Offering saved nothing, and only saving makes it a Harness like any other.
     expect((await desktop.json<{ agents: unknown[] }>('agents')).agents).toEqual([])
-    const saved = await desktop.request('agents', {
+    const saved = await desktop.confirmed('agents', {
       method: 'POST',
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {}, enabled: true },
     })
@@ -1448,7 +1448,7 @@ describe('agent settings', () => {
     // What the draft said before anything was saved is what the saved Harness says.
     expect(after.find(harness => harness.id === 'codex')?.capabilities).toEqual(facts)
     // The second save of the same offer, from another window, says it exists instead of making codex-2.
-    const again = await desktop.request('agents', {
+    const again = await desktop.confirmed('agents', {
       method: 'POST',
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {}, enabled: true },
     })
@@ -1827,11 +1827,16 @@ describe('full-access (L3) sessions', () => {
       args: [FAKE_ACP_AGENT],
       env: { FAKE_ACP_STATE: join(t.root, 'acp-state.json'), FAKE_ACP_MODES: 'read-only,auto', FAKE_ACP_CONFIG: 'options' },
     }
-    const enrolled = t.presence.requests.length
-    const created = await browser.request('agents', { method: 'POST', body: definition })
+    // A new Harness is a new program: only this Mac's desktop app saves it, with a local confirmation.
+    expect(await body(await browser.request('agents', { method: 'POST', body: definition }))).toMatchObject({ error: 'local-only' })
+    const created = await desktop.confirmed('agents', { method: 'POST', body: definition })
     expect(created.status).toBe(201)
-    expect(t.presence.requests).toHaveLength(enrolled)
-    expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({ stepup: 'none' })
+    expect(t.presence.requests.at(-1)?.preview).toMatchObject({
+      action: 'harness.command.apply',
+      subject: { form: 'harness.command.apply' },
+    })
+    expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({ stepup: 'lpc-local' })
+    const enrolled = t.presence.requests.length
     return { t, desktop, browser, enrolled }
   }
 
@@ -1875,9 +1880,8 @@ describe('full-access (L3) sessions', () => {
 
   it('records each call run unasked while the model decides, by hash and enum, with no prompt to enter that mode', async () => {
     const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
-    await t.enroll({ listener: 'unix' })
+    const desktop = await t.enroll({ listener: 'unix' })
     const phone = await t.enroll({ scopes: [...ADMIN] })
-    const enrolled = t.presence.requests.length
     const definition = {
       id: 'qwen',
       name: 'Qwen',
@@ -1891,7 +1895,8 @@ describe('full-access (L3) sessions', () => {
         FAKE_ACP_CONFIG: 'options',
       },
     }
-    expect((await phone.request('agents', { method: 'POST', body: definition })).status).toBe(201)
+    expect((await desktop.confirmed('agents', { method: 'POST', body: definition })).status).toBe(201)
+    const enrolled = t.presence.requests.length
     const sessionId = await startTask(phone, 'hello', { harnessId: 'qwen' })
     await settled(t, sessionId)
     expect(
@@ -2226,41 +2231,66 @@ describe('full-access (L3) sessions', () => {
     expect(await body(refused)).toMatchObject({ error: 'harness-folder-limit' })
   })
 
-  it('saves definitions from any admin device without a confirmation, on record, values never returned', async () => {
+  it('confirms the program of a definition on this Mac and nothing else about it, on record, values never returned', async () => {
     const { t, desktop, browser, enrolled } = await acpHost()
     const settings = async () => (await desktop.json<{ agents: AgentSettings[] }>('agents')).agents.find(agent => agent.id === 'fake')!
     expect(await settings()).toMatchObject({ started: false })
     expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({
-      stepup: 'none',
-      actor: { deviceId: browser.id, listener: 'loopback-tcp' },
+      stepup: 'lpc-local',
+      actor: { deviceId: desktop.id, listener: 'unix' },
       detail: { agentId: 'fake', created: true },
     })
     const sessionId = await startTask(desktop, 'echo one', { harnessId: 'fake' })
     await settled(t, sessionId)
     expect(await settings()).toMatchObject({ started: true })
+    // A name changes nothing that runs: any admin device, no confirmation.
     const renamed = await browser.json<{ agent: AgentSettings }>('agents/fake', { method: 'PUT', body: { name: 'Renamed' } })
     expect(renamed.agent).toMatchObject({ started: true, name: 'Renamed', verified: false })
+    expect(t.presence.requests).toHaveLength(enrolled)
+    // Arguments and variables do: refused off this Mac, and on it without the confirmation nothing changes.
+    expect(await body(await browser.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } }))).toMatchObject({
+      error: 'local-only',
+    })
+    expect(await body(await browser.request('agents/fake', { method: 'PUT', body: { env: { FAKE_ACP_VERSION: '9.9.9' } } }))).toMatchObject(
+      {
+        error: 'local-only',
+      },
+    )
+    const unconfirmed = await desktop.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } })
+    expect(unconfirmed.status).toBe(403)
+    expect(await body(unconfirmed)).toMatchObject({ error: 'stepup-required', confirmation: { action: 'harness.command.apply' } })
+    expect((await settings()).args).toEqual([FAKE_ACP_AGENT])
     // A new definition counts as not started again, and its variables' values do not come back.
-    const changed = await browser.json<{ agent: AgentSettings }>('agents/fake', {
+    const changed = await desktop.confirmedJson<{ agent: AgentSettings }>('agents/fake', {
       method: 'PUT',
       body: { env: { FAKE_ACP_VERSION: '9.9.9' } },
     })
     expect(changed.agent).toMatchObject({ started: false })
     expect(JSON.stringify(changed)).not.toContain('9.9.9')
-    expect(await body(await browser.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } }))).toMatchObject({
+    expect(JSON.stringify(t.presence.requests.at(-1))).not.toContain('9.9.9')
+    expect(await body(await desktop.confirmed('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } }))).toMatchObject({
       agent: { started: false },
     })
-    expect((await auditRecords(t)).filter(record => record.action === 'agent.defined').map(record => record.detail.created)).toEqual([
-      true,
-      false,
-      false,
+    const confirmed = t.presence.requests.length
+    // Taking a variable away changes what runs too (a `CODEX_PATH`, a `DISABLE_*` flag): asked as well.
+    const removing = await desktop.request('agents/fake', { method: 'PUT', body: { env: { FAKE_ACP_VERSION: null } } })
+    expect(await body(removing)).toMatchObject({ error: 'stepup-required' })
+    await desktop.confirmedJson('agents/fake', { method: 'PUT', body: { env: { FAKE_ACP_VERSION: null } } })
+    expect(t.presence.requests).toHaveLength(confirmed + 2)
+    // The name is bound to the confirmation, with the path the command resolved to.
+    expect(t.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: 'Harness', value: 'Renamed（fake）' })
+    const defined = (await auditRecords(t)).filter(record => record.action === 'agent.defined')
+    expect(defined.map(record => [record.detail.created, record.stepup])).toEqual([
+      [true, 'lpc-local'],
+      [false, 'lpc-local'],
+      [false, 'lpc-local'],
+      [false, 'lpc-local'],
     ])
-    expect(t.presence.requests).toHaveLength(enrolled)
     // Every write of the record is on record as a settings change.
     expect((await auditRecords(t)).filter(record => record.action === 'settings.changed').length).toBeGreaterThanOrEqual(4)
     expect(
       await body(
-        await browser.request('agents', {
+        await desktop.confirmed('agents', {
           method: 'POST',
           body: { name: 'Bad', command: process.execPath, env: { NODE_OPTIONS: '--inspect' } },
         }),
@@ -2274,6 +2304,112 @@ describe('full-access (L3) sessions', () => {
     expect((await browser.request('plugins/agent-fake', { method: 'POST', body: { enabled: false } })).status).toBe(200)
     expect((await browser.request('agents/fake', { method: 'DELETE' })).status).toBe(200)
     expect((await auditRecords(t)).some(record => record.action === 'agent.deleted')).toBe(true)
+  })
+
+  it('starts a confirmed Harness only while its command resolves to the program confirmed', async () => {
+    const first = await mkdtemp(join(tmpdir(), 'latch-bin-a-'))
+    const second = await mkdtemp(join(tmpdir(), 'latch-bin-b-'))
+    for (const bin of [first, second]) {
+      await writeFile(join(bin, 'fakeacp'), `#!/bin/sh\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`)
+      await chmod(join(bin, 'fakeacp'), 0o755)
+    }
+    const t = await testHost({
+      agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }),
+      commandDirectories: () => [first, second],
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    await desktop.confirmedJson('agents', {
+      method: 'POST',
+      body: { id: 'moving', name: 'Moving', command: 'fakeacp', args: [], env: { FAKE_ACP_STATE: join(t.root, 'state.json') } },
+    })
+    expect(t.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '命令', value: join(first, 'fakeacp') })
+    // The program confirmed goes away, and the same name now finds another: nothing starts until this Mac confirms it.
+    await rm(join(first, 'fakeacp'))
+    forgetCommandLookups()
+    const refused = await desktop.request('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'moving' } })
+    expect(refused.status).toBe(409)
+    const again = await desktop.request('agents/moving', { method: 'PUT', body: { command: 'fakeacp' } })
+    expect(await body(again)).toMatchObject({ error: 'stepup-required', confirmation: { action: 'harness.command.apply' } })
+    await desktop.confirmedJson('agents/moving', { method: 'PUT', body: { command: 'fakeacp' } })
+    expect(t.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '命令', value: join(second, 'fakeacp') })
+    const sessionId = await startTask(desktop, 'echo hi', { harnessId: 'moving' })
+    await settled(t, sessionId)
+  })
+
+  it('confirms a definition from before confirmations at its first start on this Mac, refuses it elsewhere until then, and reads no unconfirmed version', async () => {
+    const root = await temporaryDirectory('latch-legacy-')
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    const marker = join(root, 'versions.txt')
+    // A preset with a version rule: reading its version runs it.
+    await writeFile(
+      join(bin, 'dsh'),
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo ran >> '${marker}'; echo 0.2.2-rc.1; exit 0; fi\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+    )
+    await chmod(join(bin, 'dsh'), 0o755)
+    const dataDir = join(root, 'data')
+    const workspaceRoot = join(root, 'workspace')
+    const at = (name: string) => join(bin, name)
+    const options = { dataDir, workspaceRoot, commandDirectories: () => [bin], loginPrograms: at }
+    const first = await startTestHost(options)
+    const owner = await first.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      body: {
+        id: 'dsh',
+        name: 'DeepSeek Harness',
+        presetId: 'dsh',
+        command: 'dsh',
+        args: ['--profile', 'acp'],
+        env: { FAKE_ACP_STATE: join(root, 'state.json') },
+      },
+    })
+    await first.close()
+    // As saved before this Host bound definitions to the program confirmed.
+    const file = join(dataDir, 'settings.json')
+    const settings = JSON.parse(await readFile(file, 'utf8'))
+    for (const agent of settings.agents) delete agent.confirmedCommand
+    await writeFile(file, JSON.stringify(settings))
+    await rm(marker, { force: true })
+    const t = await testHost(options)
+    const desktop = await t.enroll({ listener: 'unix' })
+    const phone = await t.enroll({ scopes: [...ADMIN] })
+    await desktop.json('agents')
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    // Elsewhere: refused with the reason. On this Mac: one confirmation, bound to the program it names, then it runs.
+    const remote = await phone.request('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'dsh' } })
+    expect(await body(remote)).toMatchObject({ error: 'harness-unconfirmed' })
+    const local = await desktop.request('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'dsh' } })
+    expect(await body(local)).toMatchObject({ error: 'stepup-required', confirmation: { action: 'harness.command.apply' } })
+    const requestId = randomUUID()
+    const started = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+      body: { prompt: 'echo hi', requestId, harnessId: 'dsh' },
+    })
+    await settled(t, started.sessionId)
+    expect(JSON.parse(await readFile(file, 'utf8')).agents[0].confirmedCommand).toBe(join(bin, 'dsh'))
+    expect((await auditRecords(t)).filter(record => record.action === 'agent.defined').at(-1)).toMatchObject({ stepup: 'lpc-local' })
+    // Confirmed and bound: now its version may be read.
+    await desktop.json('agents')
+    expect(await readFile(marker, 'utf8')).toContain('ran')
+    expect(
+      await body(await phone.request('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'dsh' } })),
+    ).toMatchObject({
+      sessionId: expect.any(String),
+    })
+  })
+
+  it('refuses a Harness command change while a full-access session waits, and goes through once it ends', async () => {
+    const { t, desktop } = await acpHost()
+    const sessionId = await startTask(desktop, 'delegate stop', { harnessId: 'fake' })
+    await pendingApproval(t, sessionId)
+    expect(await body(await desktop.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--y'] } }))).toMatchObject({
+      error: 'presence-blocked',
+      blockingTasks: [{ id: sessionId }],
+    })
+    await desktop.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: {} })
+    await expect
+      .poll(async () => (await t.host.bridge.detail(sessionId)).summary.status, { timeout: 10_000 })
+      .not.toMatch(/running|waiting/u)
+    expect((await desktop.confirmed('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--y'] } })).status).toBe(200)
   })
 })
 

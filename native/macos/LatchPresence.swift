@@ -429,6 +429,16 @@ let reasonForms: [String: ReasonForm] = [
   "plugin.package.apply-pages": ReasonForm(actions: ["plugin.package.apply"], segments: [
     .text("让插件页面可以："), slot("capabilities", 48), .text("（插件「"), slot("plugin", 16), .text("」）"),
   ]),
+  "mcp.server.apply": ReasonForm(actions: ["mcp.server.apply"], segments: [
+    .text("让 Agent 运行 "), slot("command", 40, keepEnd: true), .text("（MCP 服务器「"), slot("server", 16), .text("」）"),
+  ]),
+  "mcp.server.apply-runner": ReasonForm(actions: ["mcp.server.apply"], segments: [
+    .text("让 Agent 运行 "), slot("command", 12, keepEnd: true), .text(" "), slot("target", 32),
+    .text("（"), slot("hash", 4), .text("，MCP「"), slot("server", 10), .text("」）"),
+  ]),
+  "harness.command.apply": ReasonForm(actions: ["harness.command.apply"], segments: [
+    .text("让 Harness 运行 "), slot("command", 40, keepEnd: true), .text("（「"), slot("harness", 16), .text("」）"),
+  ]),
 ]
 
 /// The reason for `action` from a subject, or nil when the form, its action or its slots do not match exactly.

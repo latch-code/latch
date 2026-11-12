@@ -75,7 +75,7 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
   const browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.json('agents', {
+    await owner.confirmedJson('agents', {
       method: 'POST',
       body: {
         id: 'fake-agent',

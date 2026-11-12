@@ -25,6 +25,11 @@ export interface AcpAgentOptions {
   maxProcesses?: number
   /** Owner-only diagnostics such as an agent's redacted stderr, kept out of task messages. Default: the Host log. */
   log?: (text: string) => void
+  /**
+   * Starts only a definition this Mac confirmed (`AgentRecord.confirmedCommand`); one saved before confirmations is
+   * refused (409 `harness-unconfirmed`) until it is confirmed once. The Host sets it; drivers built in tests may not.
+   */
+  requireConfirmedCommand?: boolean
 }
 
 export interface ResolvedOptions {
@@ -38,6 +43,7 @@ export interface ResolvedOptions {
   restartDelayMs: number
   maxProcesses: number
   log(text: string): void
+  requireConfirmedCommand: boolean
 }
 
 export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
@@ -47,6 +53,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     return value
   }
   return {
+    requireConfirmedCommand: options.requireConfirmedCommand === true,
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
     requestTimeoutMs: pick(options.requestTimeoutMs, 120_000),

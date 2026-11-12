@@ -34,6 +34,7 @@ export const PRIVATE_ENTRIES = [
   'review-notes',
   'queues.json',
   'attachments',
+  'mcp',
 ]
 /**
  * Names the Host writes next to private entries for a moment: atomic-write temp files (the `prefix` their writers pass to

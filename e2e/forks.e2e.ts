@@ -97,7 +97,7 @@ describe('conversation forks', () => {
       const owner = await host.enroll({ listener: 'unix' })
       for (const id of ['qwen', 'goose']) {
         const preset = AGENT_PRESETS.find(item => item.id === id)!
-        await owner.json('agents', {
+        await owner.confirmedJson('agents', {
           method: 'POST',
           body: { id, name: preset.name, presetId: id, command: preset.command, args: preset.args, env: {}, enabled: true },
         })
@@ -214,7 +214,7 @@ describe('conversation forks', () => {
       const owner = await host.enroll({ listener: 'unix' })
       for (const id of ['qwen', 'goose']) {
         const preset = AGENT_PRESETS.find(item => item.id === id)!
-        await owner.json('agents', {
+        await owner.confirmedJson('agents', {
           method: 'POST',
           body: { id, name: preset.name, presetId: id, command: preset.command, args: preset.args, env: {}, enabled: true },
         })

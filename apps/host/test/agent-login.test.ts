@@ -76,7 +76,7 @@ describe('harness login routes', () => {
   it('takes a test start’s different answer as newer than the one it remembers', async () => {
     const { t, loginFile } = await fixture()
     const desktop = await t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
     })
@@ -122,13 +122,16 @@ describe('harness login routes', () => {
     expect((await audited(t, 'agent.login.checked')).map(entry => entry.detail)).toEqual([{ agentId: 'codex', status: 'unauthenticated' }])
   })
 
-  it('needs `run`, and a preset with no saved definition needs a device that could save one', async () => {
+  it('needs `run`, and a preset with no saved definition needs a device that could save one: this Mac with admin', async () => {
     const { t } = await fixture()
     const viewer = await t.enroll({ listener: 'unix', name: 'Viewer', scopes: ['view'] })
     expect((await viewer.request('harnesses/codex/login-status', { body: {} })).status).toBe(403)
     const runner = await t.enroll({ listener: 'tls', name: 'Phone', scopes: ['view', 'run'] })
     expect((await runner.request('harnesses/codex/login-status', { body: {} })).status).toBe(404)
-    const owner = await t.enroll({ listener: 'tls', name: 'Tablet', scopes: ['view', 'run', 'admin'] })
+    // Saving a definition takes a confirmation on this Mac, so only its desktop app could.
+    const tablet = await t.enroll({ listener: 'tls', name: 'Tablet', scopes: ['view', 'run', 'admin'] })
+    expect((await tablet.request('harnesses/codex/login-status', { body: {} })).status).toBe(404)
+    const owner = await t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
     expect((await owner.request('harnesses/codex/login-status', { body: {} })).status).toBe(200)
     expect((await owner.request('harnesses/nothing/login-status', { body: {} })).status).toBe(404)
   })
@@ -196,7 +199,7 @@ describe('what a running harness says about its login', () => {
     })
     cleanups.push(() => t.close())
     const desktop = await t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
-    await desktop.json('agents', { method: 'POST', body: { id: 'fake', name: 'Fake', command: 'fake-agent', args: [], env: {} } })
+    await desktop.confirmedJson('agents', { method: 'POST', body: { id: 'fake', name: 'Fake', command: 'fake-agent', args: [], env: {} } })
     await writeFile(loginFile, 'yes')
     const created = await desktop.confirmed('tasks', {
       method: 'POST',
@@ -277,7 +280,7 @@ describe('what a running harness says about its login', () => {
     })
     cleanups.push(() => t.close())
     const desktop = await t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
-    await desktop.json('agents', {
+    await desktop.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'claude-agent', name: 'Claude Agent', presetId: 'claude-agent', command: 'claude-agent-acp', args: [], env: {} },
     })

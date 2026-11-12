@@ -19,7 +19,7 @@ import type {
   TaskDetail,
 } from '@latch/protocol'
 import { AppError, type Bridge, type ExternalSessionLoad, type ProjectFolder } from '@latch/sdk'
-import { canonicalJson, redactSecrets, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import { canonicalJson, redactKnownSecrets, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import { forkSeed } from './forks.ts'
 import type { HarnessHub } from './hub.ts'
 import type { ImportedMeta } from './session-meta.ts'
@@ -209,11 +209,11 @@ export function previewMessages(messages: readonly Message[]): { messages: Histo
   let cut = shown.length > PREVIEW_MESSAGES
   const out: HistoryPreviewMessage[] = shown.slice(-PREVIEW_MESSAGES).map(message => {
     if (message.role === 'tool') {
-      const title = clipBytes(redactSecrets(message.tool?.title ?? message.toolName ?? '工具'), PREVIEW_MESSAGE_BYTES)
+      const title = clipBytes(redactKnownSecrets(message.tool?.title ?? message.toolName ?? '工具'), PREVIEW_MESSAGE_BYTES)
       const status = toolStatus(message.state)
       return { role: 'tool', text: title.text, outputHidden: true, ...(status ? { status } : {}) }
     }
-    const text = clipBytes(redactSecrets(message.text), PREVIEW_MESSAGE_BYTES)
+    const text = clipBytes(redactKnownSecrets(message.text), PREVIEW_MESSAGE_BYTES)
     return { role: message.role as 'user' | 'assistant', text: text.text, ...(text.clipped ? { clipped: true as const } : {}) }
   })
   // Room for the rest of the answer; the messages give way from the oldest.
@@ -232,7 +232,7 @@ export function textSeed(
 ): { text: string; prefixLength: number; truncated: boolean } | undefined {
   const kept = messages
     .filter(message => (message.role === 'user' || message.role === 'assistant') && message.text.trim())
-    .map((message, index) => ({ id: `m${index}`, role: message.role, text: redactSecrets(message.text) }))
+    .map((message, index) => ({ id: `m${index}`, role: message.role, text: redactKnownSecrets(message.text) }))
   if (!kept.length) return undefined
   const detail = { summary: { id: 'history', status: 'idle' }, messages: kept } as unknown as TaskDetail
   const seed = forkSeed(
@@ -365,7 +365,7 @@ export class HistoryImports {
           agentSessionId: session.agentSessionId,
           cwd: session.cwd,
           title:
-            redactSecrets(session.title ?? '')
+            redactKnownSecrets(session.title ?? '')
               .slice(0, TITLE_LIMIT)
               .trim() || '未命名会话',
           ...(Number.isFinite(at) ? { updatedAt: new Date(at).toISOString() } : {}),
@@ -450,7 +450,7 @@ export class HistoryImports {
     return {
       previewId,
       title: source.title,
-      ...(load.model ? { model: redactSecrets(load.model).slice(0, TITLE_LIMIT) } : {}),
+      ...(load.model ? { model: redactKnownSecrets(load.model).slice(0, TITLE_LIMIT) } : {}),
       turns: load.turns,
       messages: shown.messages,
       truncated: shown.cut || load.droppedBefore > 0,
@@ -547,7 +547,7 @@ export class HistoryImports {
         mode: 'text',
         fromTaskId: detail.summary.id,
         ...(detail.summary.workspaceId ? { workspaceId: detail.summary.workspaceId } : {}),
-        title: redactSecrets(detail.summary.title).slice(0, TITLE_LIMIT),
+        title: redactKnownSecrets(detail.summary.title).slice(0, TITLE_LIMIT),
       }
     }
     let source: Source

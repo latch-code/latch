@@ -221,6 +221,12 @@ export interface AgentRecord {
   startedHash?: string | null
   lastProbe?: AgentProbeResult
   probedDefinitionHash?: string
+  /**
+   * The path the command resolved to when this Mac confirmed the definition (`harness.command.apply`). While set, the
+   * Harness does not start once the command resolves elsewhere, until it is confirmed again. Absent on definitions saved
+   * before confirmations, which start as before.
+   */
+  confirmedCommand?: string
 }
 
 /** Result of resolving a command on the Host's PATH and install directories. */

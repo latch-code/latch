@@ -1,8 +1,8 @@
 // Terminal output as plain text: for 「加入对话」, which hands an agent the selection or the last lines, and for finding
 // local services in the output. Escape sequences go, carriage returns and line erases are applied as a terminal shows
-// them, and the result passes through redactLineSecrets and redactSecrets before it leaves the Host.
+// them, and the result passes through redactLineSecrets and redactKnownSecrets before it leaves the Host.
 import type { TerminalText } from '@latch/protocol'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 import { redactLineSecrets } from './line-secrets.ts'
 
 /** The most lines one 「加入对话」 takes, from the selection or the end of the output. */
@@ -228,7 +228,7 @@ export function attachmentText(raw: string, maxLines = ATTACH_LINE_LIMIT): Termi
   let truncated = last - first > lines.length
   const plain = lines.join('\n')
   // Redacted before the cut to the character limit, so a cut never leaves a secret without the prefix that marks it.
-  let text = redactSecrets(plain)
+  let text = redactKnownSecrets(plain)
   const redacted = multiline || text !== plain
   if (text.length > ATTACH_CHARACTER_LIMIT) {
     text = text.slice(text.length - ATTACH_CHARACTER_LIMIT)
