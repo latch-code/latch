@@ -152,6 +152,10 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         ...skillsOf(record.presetId),
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
+        ...(selectProfile(record).profile?.historyImport && selectProfile(record).profile?.wire === undefined
+          ? { historyImport: true as const }
+          : {}),
+        seededStart: true,
         login: () => harnessLogin(record),
         status() {
           const preset = AGENT_PRESETS.find(item => item.id === record.presetId)

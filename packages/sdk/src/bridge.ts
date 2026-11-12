@@ -2,6 +2,7 @@ import type {
   AttachmentRef,
   FileMention,
   Approval,
+  Message,
   ModelRef,
   AgentExecutionContext,
   RunLive,
@@ -71,6 +72,12 @@ export interface CreateTaskInput {
    * user message `nativeFork`.
    */
   fork?: { taskId: string; upToMessageId: string; prefixLength: number }
+  /**
+   * Drivers that declare `seededStart`: the session is recorded idle with no turn, and this text goes before the person's
+   * first message, which starts its first turn. `prompt` is then empty. A text rebuild of an earlier session uses it, so
+   * nothing reaches the model service until the person sends.
+   */
+  seed?: string
   /** L3 drivers: the launch fingerprint this start recorded. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }
@@ -149,6 +156,58 @@ export interface LaunchPreview {
   readback: 'mode' | 'none'
 }
 
+/** One session the harness itself lists (ACP `session/list`): metadata only, as the harness reported it. */
+export interface ExternalSession {
+  agentSessionId: string
+  /** Absolute, as the harness recorded it; the Host resolves it before trusting it. */
+  cwd: string
+  title?: string
+  updatedAt?: string
+}
+
+/** What one listing found, at most 500 sessions or 20 seconds. */
+export interface ExternalSessionList {
+  sessions: ExternalSession[]
+  /** The bound stopped the listing before the harness had no more. */
+  truncated: boolean
+}
+
+/** Where an external session is loaded: its own directory, inside the project the Host checked it against. */
+export interface ExternalSessionPlace {
+  agentSessionId: string
+  /** The session's directory, at or below `folders[0].path`. */
+  cwd: string
+  workspaceId: string
+  /** Every folder of the project, as `CreateTaskInput.folders`; `[0]` is the primary folder. */
+  folders: ReadonlyArray<ProjectFolder>
+}
+
+/**
+ * A session loaded with its replay kept, on a process held for it until `closeExternalSession` or its adoption. Never a
+ * prompt: nothing runs. `messages` are the replay, newest last, within the driver's bound, with tool output redacted.
+ */
+export interface ExternalSessionLoad {
+  loadId: string
+  messages: Message[]
+  /** Messages of the replay the bound left out before `messages`. */
+  droppedBefore: number
+  /** User turns in the whole replay. */
+  turns: number
+  model?: string
+}
+
+/**
+ * Binds a new session `sessionId` (chosen by the Host, so its record can exist first) to the external session, with the
+ * replay as its history. Idempotent: the same `sessionId` for the same session answers again. The external session is
+ * never deleted with it.
+ */
+export interface ExternalSessionAdopt extends ExternalSessionPlace {
+  sessionId: string
+  /** A load to reuse; without it, or once it is gone, the driver loads the session again. */
+  loadId?: string
+  title: string
+}
+
 export interface Bridge {
   start(): Promise<void>
   close(): Promise<void>
@@ -214,4 +273,23 @@ export interface Bridge {
     folders?: ReadonlyArray<ProjectFolder>
     modelRoute?: ModelRoute
   }): Promise<LaunchPreview>
+  /**
+   * Optional, with `HarnessDriver.historyImport`. The harness's own sessions, from a process in a private empty folder that
+   * is stopped afterwards; 409 `history-not-supported` when the running harness cannot list or load sessions.
+   */
+  listExternalSessions?(): Promise<ExternalSessionList>
+  /** Loads one external session and keeps its replay; 409 `history-session-busy` when the harness says it is open elsewhere. */
+  loadExternalSession?(place: ExternalSessionPlace): Promise<ExternalSessionLoad>
+  /** Closes a load and stops its process; unknown IDs are ignored. */
+  closeExternalSession?(loadId: string): Promise<void>
+  adoptExternalSession?(
+    input: ExternalSessionAdopt,
+  ): Promise<{ sessionId: string; launchHash: string; messageCount: number; droppedBefore: number }>
+  /**
+   * Which record the IDs of `listExternalSessions` belong to, stable across definitions that read the same one; the Host
+   * brings in each ID of a record once. Absent: the driver alone.
+   */
+  historyStore?(): string
+  /** The harness sessions this driver's own sessions use or used, adopted ones aside: never offered for import. */
+  agentSessionIds?(): string[]
 }

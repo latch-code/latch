@@ -6,6 +6,7 @@ import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
+import { createHistoryRoutes, type HistoryRouteDeps } from './history.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
@@ -20,6 +21,7 @@ export interface RouteDeps {
   agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
   handoffs: HandoffRouteDeps
+  history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
   apps: AppRouteDeps
@@ -62,6 +64,7 @@ export function createRoutes(
       agentLogin,
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
+      createHistoryRoutes(context, deps.history),
       apps,
     ]),
   }

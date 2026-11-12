@@ -188,6 +188,11 @@ export interface HarnessProfile {
   readonly projectConfigPaths?: readonly string[]
   readonly projectConfigManaged?: ProjectConfigManaged
   /**
+   * The Host may bring in this harness's own earlier sessions (`session/list`, `session/load`), once its adapter's
+   * listing and replay were checked against its source (docs/HARNESSES.md#接入已有会话).
+   */
+  readonly historyImport?: true
+  /**
    * A command that says whether the harness is logged in, without a prompt or a session. Only a clear answer is an answer:
    * `read` returns `unknown` for anything else. The output never leaves `read`, since it may hold an account or part of a key.
    */

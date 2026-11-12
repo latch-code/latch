@@ -343,6 +343,7 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行。只在修改还没发给 Agent 时用 409 `task-running` 拒绝（如会话的这一轮还在启动）：Host 把它记为明确失败，其他错误在回执之后都记为结果未知 |
 | `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter` 或 `wider`。Host 只用它决定是否写放宽模式的审计 |
 | `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
+| `listExternalSessions?`、`loadExternalSession?`、`closeExternalSession?`、`adoptExternalSession?`、`agentSessionIds?` | 可选，与 `HarnessDriver.historyImport` 一起。接入这个 Harness 在 Latch 之前的会话：只列元数据、一次保留重放的加载、以 Host 选定的会话 ID 绑定原会话（删除时不删原会话），以及 Driver 自己的会话用过的 Harness 会话 ID（不列出供接入）；见 [HARNESSES.md](HARNESSES.md#接入已有会话) |
 
 会话 ID 与审批 ID 必须全局唯一（建议 UUID 或带前缀的 UUID），不超过 256 字符；Host 按 ID 把请求路由到对应 Driver，冲突时先挂载者胜出。
 

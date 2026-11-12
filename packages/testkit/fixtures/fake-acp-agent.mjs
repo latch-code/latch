@@ -43,7 +43,7 @@ const capsFile = (() => {
     return undefined
   }
 })()
-/** Comma list: resume, load, delete, close, dirs (sessionCapabilities.additionalDirectories). */
+/** Comma list: resume, load, list, delete, close, dirs (sessionCapabilities.additionalDirectories). */
 const caps = new Set((capsFile ?? env.FAKE_ACP_CAPS ?? '').split(',').filter(Boolean))
 const stateFile = env.FAKE_ACP_STATE
 const logFile = env.FAKE_ACP_LOG
@@ -323,11 +323,33 @@ async function mountMcp(sessionId, servers, cwd) {
 
 // ---- sessions -----------------------------------------------------------------------------------------------
 
+/**
+ * FAKE_ACP_HISTORY_FILE: sessions this agent had before any client, as a CLI's own store would hold them:
+ * `{ sessions: [{ sessionId, cwd, title?, updatedAt?, busy?, updates: [<session/update>...] }] }`. `session/list` lists
+ * them with the sessions of FAKE_ACP_STATE; `session/load` replays their updates; `busy` (or FAKE_ACP_LOAD_BUSY=1)
+ * refuses a load as an agent holding a writer lock elsewhere would. Read on every request: a test may change it.
+ */
+const historySessions = () => {
+  try {
+    return env.FAKE_ACP_HISTORY_FILE ? (JSON.parse(readFileSync(env.FAKE_ACP_HISTORY_FILE, 'utf8')).sessions ?? []) : []
+  } catch {
+    return []
+  }
+}
+const historySession = sessionId => historySessions().find(item => item.sessionId === sessionId)
+/** Rows per `session/list` page; the cursor is the index of the next row. */
+const listPage = Number(env.FAKE_ACP_LIST_PAGE ?? 2)
+
 function existing(sessionId) {
   // Another process may have created it since this one started.
   if (!sessions[sessionId]) {
     const stored = readDisk()[sessionId]
     if (stored) sessions[sessionId] = stored
+  }
+  if (!sessions[sessionId]) {
+    const earlier = historySession(sessionId)
+    if (earlier)
+      sessions[sessionId] = { cwd: earlier.cwd, history: [], model: startModel(), mode: initialMode, effort: 'low', earlier: true }
   }
   const session = sessions[sessionId]
   if (!session) throw rpcError(-32002, `Session not found: ${sessionId}`)
@@ -474,6 +496,7 @@ async function handle(method, params) {
           ...(env.FAKE_ACP_AUTH_STATUS ? { _meta: { authStatus: {} } } : {}),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
+            ...(caps.has('list') ? { list: {} } : {}),
             ...(caps.has('delete') ? { delete: {} } : {}),
             ...(caps.has('close') ? { close: {} } : {}),
             ...(caps.has('dirs') ? { additionalDirectories: {} } : {}),
@@ -496,17 +519,44 @@ async function handle(method, params) {
       save()
       return { sessionId, ...configState(sessions[sessionId]) }
     }
+    case 'session/list': {
+      if (!caps.has('list')) throw rpcError(-32601, 'Method not found')
+      if (notLoggedIn()) throw rpcError(-32000, 'Authentication required')
+      const own = Object.entries(readDisk()).map(([sessionId, session]) => ({
+        sessionId,
+        cwd: session.cwd,
+        title: session.history?.[0]?.text ?? 'Fake session',
+        updatedAt: '2026-11-01T00:00:00.000Z',
+      }))
+      const rows = [
+        ...historySessions().map(({ sessionId, cwd, title, updatedAt }) => ({
+          sessionId,
+          cwd,
+          ...(title ? { title } : {}),
+          ...(updatedAt ? { updatedAt } : {}),
+        })),
+        ...own.filter(row => !historySession(row.sessionId)),
+      ]
+      const start = Number(params.cursor ?? 0)
+      const next = start + listPage
+      return { sessions: rows.slice(start, next), ...(next < rows.length ? { nextCursor: String(next) } : {}) }
+    }
     case 'session/load': {
       if (!caps.has('load')) throw rpcError(-32601, 'Method not found')
       if (slowSetup) await delay(slowSetup)
+      const earlier = historySession(params.sessionId)
+      if (earlier && (earlier.busy || env.FAKE_ACP_LOAD_BUSY === '1'))
+        throw rpcError(-32603, `Session ${params.sessionId} is locked by another process`)
       const session = restored(params.sessionId)
+      if (earlier) for (const value of earlier.updates ?? []) update(params.sessionId, value)
       for (const entry of session.history) {
         update(params.sessionId, {
           sessionUpdate: entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk',
           content: { type: 'text', text: entry.text },
         })
       }
-      update(params.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'replayed', title: 'Replayed tool', status: 'completed' })
+      if (!session.earlier)
+        update(params.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'replayed', title: 'Replayed tool', status: 'completed' })
       if (!resumeSilent) return configState(session)
       reportMode(params.sessionId, session)
       return {}

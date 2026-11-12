@@ -11,6 +11,7 @@ import {
 import { CustomAgents, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
+import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans } from './agent-plans.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
@@ -1857,6 +1858,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       terminalBinary,
     )
     setLoginPrograms(options.loginPrograms)
+    const historyImports = new HistoryImports(routeContext, await HistoryReceipts.open(dataDir), {
+      project: id => savedProject(id),
+      async assertProjectUsable(id) {
+        const record = savedProject(id)
+        if (!record) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
+        await assertWorkspaceUsable(record)
+      },
+      startText: (caller, { requestId, seed, harnessId, workspaceId, title, privateFrom }, res) =>
+        startSession(caller, { requestId, prompt: '', seed, harnessId, workspaceId, mode: 'agent', title, privateFrom }, res),
+    })
+    startupCleanup.push(() => historyImports.close())
     const {
       native: nativeRoutes,
       terminal: terminalRoutes,
@@ -1905,6 +1917,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       automations: { automations: () => automations, access: agentAccess },
       handoffs: { handoffs: () => handoffs },
+      history: { history: () => historyImports },
       reviewNotes: {
         notes: () => reviewNotes,
         async send(caller, id, input) {
@@ -5071,7 +5084,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function startSession(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true },
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
       res: ServerResponse,
     ): Promise<{ sessionId: string }> {
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
@@ -5084,11 +5097,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function startSessionChecked(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true },
+      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
       res: ServerResponse,
     ): Promise<{ sessionId: string }> {
       // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
-      const { privateFrom, title, withoutPrivateContext, ...requested } = start
+      const { privateFrom, title, withoutPrivateContext, seed, ...requested } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -5271,6 +5284,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const task: HubCreateInput = {
           prompt,
+          // A text rebuild waits for the person's first message, which carries it.
+          ...(seed ? { seed } : {}),
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
           // A Host-written start (a handoff) names itself; the driver would title it after the first message.
           ...(!fork && title ? { initialTitle: title } : {}),
@@ -5361,9 +5376,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
               : [{ id: 'default', path: workspaceRoot }]
         const promptHash = sha256Hex(
-          attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies
+          attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies || seed
             ? canonicalJson({
                 prompt,
+                ...(seed ? { seed } : {}),
                 // The block goes out with the prompt, so what the record names includes it.
                 ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
                 ...(agentContext?.skillBodies ? { skills: agentContext.skillBodies } : {}),

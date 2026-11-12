@@ -31,6 +31,17 @@ const fileAction = { sessionId, pathHash: hex, type: 'other' }
 /** One detail each action accepts. */
 const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'terminal.open': { sessionId: 'task_1', terminalId: 'term_1' },
+  'history.list': { harnessId: 'codex', workspaceId: 'proj' },
+  'history.preview': { harnessId: 'codex', workspaceId: 'proj', agentSessionHash: hex },
+  'history.import': {
+    harnessId: 'codex',
+    from: 'codex',
+    mode: 'native',
+    requestHash: hex,
+    workspaceId: 'proj',
+    agentSessionHash: hex,
+    taskId: 'task-1',
+  },
   'plugin.package.changed': { operation: 'apply', before: hex, after: hex },
   'plugin.package.build': { revision: hex, result: 'ok', bundleHashes: [hex], bytes: 1200, diagnostics: 0, typeChecked: true },
   'plugin.package.app-trust': { operation: 'apply', trust: 'confirmed', revision: hex, capabilitiesHash: hex },

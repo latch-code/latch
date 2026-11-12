@@ -75,6 +75,25 @@ export const SESSION_ACTIONS = {
     routeHash: hex64.optional(),
   }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
+  /**
+   * Bringing in a harness's own earlier sessions (docs/HARNESSES.md#接入已有会话), each step on record before it runs: the
+   * external session only by its hash, never a title, a path or any content.
+   */
+  'history.list': z.strictObject({ harnessId: opaqueId, workspaceId: opaqueId }),
+  'history.preview': z.strictObject({ harnessId: opaqueId, workspaceId: opaqueId, agentSessionHash: hex64 }),
+  'history.import': z.strictObject({
+    /** The harness the session continues in; `from` is the one whose record it came from. */
+    harnessId: opaqueId,
+    from: opaqueId,
+    mode: z.enum(['native', 'text']),
+    requestHash: hex64,
+    workspaceId: opaqueId.optional(),
+    agentSessionHash: hex64.optional(),
+    /** A text rebuild of a session brought in earlier. */
+    fromTaskId: opaqueId.optional(),
+    /** Native: the ID the Host chose for the new session. */
+    taskId: opaqueId.optional(),
+  }),
   'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
   'task.config.changed': z.strictObject({ sessionId: opaqueId, configIdHash: hex64, toHash: hex64 }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),

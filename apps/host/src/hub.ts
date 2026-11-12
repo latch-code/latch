@@ -20,6 +20,7 @@ import {
   type ConfigChangeClass,
   type CreateTaskInput,
   type DecideOptions,
+  type ExternalSessionAdopt,
   type LaunchPreview,
   type ModelRoute,
   type ProjectFolder,
@@ -28,7 +29,7 @@ import {
   type SteerOutcome,
 } from '@latch/sdk'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
-import { RUN_ID, SessionMetaStore, type PageOrigin, type SessionReceipts } from './session-meta.ts'
+import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
 import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
@@ -581,6 +582,8 @@ export class HarnessHub implements Bridge {
     return (
       this.briefSessions.has(sessionId)
       || !!meta?.agentPrivate
+      // Brought in from outside Latch's authority: it may hold anything the person ever pasted there.
+      || !!meta?.imported
       || !!meta?.automationId
       || this.agentOf(sessionId) !== undefined
       || this.personalOf(sessionId) !== undefined
@@ -606,6 +609,86 @@ export class HarnessHub implements Bridge {
     this.rememberAgent(sessionId, owner)
     if (this.meta.get(sessionId)?.agent?.customAgentId === owner.customAgentId) return
     await this.meta.update(sessionId, current => ({ ...current, agent: structuredClone(owner) }))
+  }
+
+  /** The record a harness's external session IDs belong to (`Bridge.historyStore`). */
+  historyStoreOf(harnessId: string): string | undefined {
+    try {
+      return this.member(harnessId)?.bridge.historyStore?.()
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Whether a session of this harness can wait for its first message with a seed (`CreateTaskInput.seed`). */
+  acceptsSeed(harnessId: string): boolean {
+    return this.entries.get(harnessId)?.driver.seededStart === true
+  }
+
+  /** Sessions brought in from a harness's own record, from the session metadata. */
+  importedSessions(): Array<{ sessionId: string; imported: ImportedMeta }> {
+    return this.meta.imported()
+  }
+
+  /** Marks a session as brought in, which makes it private; written before the session exists when its ID is known. */
+  async recordImported(sessionId: string, imported: ImportedMeta, workspaceId?: string): Promise<void> {
+    await this.meta.update(sessionId, current => ({
+      ...current,
+      imported: structuredClone(imported),
+      ...(workspaceId ? { workspaceId } : {}),
+    }))
+    this.emit(sessionId)
+  }
+
+  /** Undoes `recordImported` for a session that was not created after all. */
+  async forgetImported(sessionId: string): Promise<void> {
+    if (this.routes.has(sessionId)) return
+    await this.meta.update(sessionId, () => undefined)
+  }
+
+  /** The drivers that may bring in their own earlier sessions, with their bridges when started. */
+  historyDrivers(): Array<{ id: string; label: string; ready: boolean; bridge?: Bridge }> {
+    return [...this.entries.values()]
+      .filter(entry => entry.driver.historyImport === true && !entry.detaching)
+      .map(entry => {
+        const info = this.describe(entry)
+        return {
+          id: entry.driver.id,
+          label: info.capabilities.display.label,
+          ready: !!entry.bridge && !entry.starting && info.status === 'ready',
+          ...(entry.bridge ? { bridge: entry.bridge } : {}),
+        }
+      })
+  }
+
+  /** Every harness session behind a Latch session of any driver, except those brought in: never offered for import. */
+  agentSessionIds(): string[] {
+    const ids = new Set<string>()
+    for (const member of this.members()) {
+      try {
+        for (const id of member.bridge.agentSessionIds?.() ?? []) ids.add(id)
+      } catch (error) {
+        this.log(`Harness ${member.driver.id} 无法列出它的会话：${message(error)}`)
+      }
+    }
+    return [...ids]
+  }
+
+  /** Records a session bound to an earlier session of the harness `harnessId`, under the ID the Host chose. */
+  async adoptExternal(
+    harnessId: string,
+    input: ExternalSessionAdopt,
+  ): Promise<{ sessionId: string; messageCount: number; droppedBefore: number; launchHash: string }> {
+    const member = this.member(harnessId)
+    if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 当前不可用`)
+    const result = await this.accept(member, bridge => {
+      if (!bridge.adoptExternalSession) throw new AppError(409, 'history-not-supported', `${member.driver.name} 不能接入已有会话。`)
+      return bridge.adoptExternalSession(input)
+    })
+    if (result.sessionId !== input.sessionId || !this.claim(harnessId, result.sessionId))
+      throw new AppError(502, 'session-id-collision', `Harness ${harnessId} 返回的会话标识已属于另一个 Harness`)
+    this.emit(result.sessionId)
+    return result
   }
 
   /** The worktrees the Host made for sessions, from the session metadata. */
@@ -744,9 +827,35 @@ export class HarnessHub implements Bridge {
     if (this.options.lifecycle?.watchedRun(sessionId)) await this.readRunNow(member.bridge, sessionId)
     // As above: without a note to read, `accept` follows the route directly.
     const text = this.promptNote ? await this.withNote(this.promptNote, sessionId, prompt, requestId) : prompt
-    await this.accept(member, bridge =>
-      options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
-    )
+    try {
+      await this.accept(member, bridge =>
+        options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
+      )
+    } finally {
+      if (options?.freshContext) await this.dropSeedPrefix(member, sessionId)
+    }
+  }
+
+  /**
+   * A text rebuild whose first message started a new context sent no seed: its first message has no prefix to fold. Kept
+   * while a user message before the new context carries it.
+   */
+  private async dropSeedPrefix(member: Member, sessionId: string): Promise<void> {
+    if (!this.meta.get(sessionId)?.imported?.prefixLength) return
+    try {
+      const detail = await member.bridge.detail(sessionId)
+      const first = detail.messages.find(message => message.role === 'user')
+      // Cleared without a message yet (the turn was refused after the clear): the seed is gone all the same.
+      if (first ? !first.freshContext : !detail.contextCleared) return
+      await this.meta.update(sessionId, current => {
+        if (!current.imported) return current
+        const { prefixLength: _prefix, truncated: _truncated, ...imported } = current.imported
+        return { ...current, imported }
+      })
+      this.emit(sessionId)
+    } catch (error) {
+      this.log(`会话 ${sessionId} 的接入记录未能更新：${message(error)}`)
+    }
   }
 
   /** Adds text to the session's running turn; `prompt-required` from a driver that cannot. */
@@ -1011,6 +1120,7 @@ export class HarnessHub implements Bridge {
       worktree: _worktree,
       firstStart: _firstStart,
       forkOf: _forkOf,
+      imported: _imported,
       automationId: _automationId,
       origin: _origin,
       runId,
@@ -1035,6 +1145,16 @@ export class HarnessHub implements Bridge {
       ...(meta?.archived ? { archived: true } : {}),
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
+      ...(meta?.imported
+        ? {
+            imported: {
+              from: meta.imported.from,
+              mode: meta.imported.mode,
+              ...(meta.imported.prefixLength ? { prefixLength: meta.imported.prefixLength } : {}),
+              ...(meta.imported.truncated ? { truncated: true as const } : {}),
+            },
+          }
+        : {}),
       ...(personal ? { personal } : {}),
       ...(agent ? { agent } : {}),
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),

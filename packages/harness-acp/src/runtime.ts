@@ -4,8 +4,9 @@ import { checkedAttachments, promptBlocks } from './attachments.ts'
 import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
   AgentBrief,
@@ -36,6 +37,10 @@ import {
   type ConfigChangeClass,
   type CreateTaskInput,
   type DecideOptions,
+  type ExternalSessionAdopt,
+  type ExternalSessionList,
+  type ExternalSessionLoad,
+  type ExternalSessionPlace,
   type LaunchPreview,
   type ModelGatewayLease,
   type ModelRoute,
@@ -117,6 +122,7 @@ import {
   promptResult,
   providersList,
   PROTOCOL_VERSION,
+  sessionList,
   RPC,
   RpcError,
   sessionState,
@@ -145,6 +151,19 @@ import {
   type Child,
   type SubagentUpdate,
 } from './subagents.ts'
+import {
+  adoptedMessages,
+  captured,
+  captureUpdate,
+  historyNotSupported,
+  isBusy,
+  LIST_MAX,
+  LIST_MS,
+  LOAD_MS,
+  newCapture,
+  sessionBusy,
+  type Capture,
+} from './history.ts'
 import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
 
@@ -169,6 +188,8 @@ interface Live {
   initialized: boolean
   capabilities: {
     resume: boolean
+    /** `session/list`, which only bringing in an earlier session uses. */
+    list: boolean
     load: boolean
     delete: boolean
     close: boolean
@@ -182,8 +203,13 @@ interface Live {
   }
   authMethods: Array<{ name: string; description?: string }>
   agentVersion?: string
-  /** ACP session → Latch task. Updates for unbound sessions, including a session/load replay, are discarded. */
+  /**
+   * ACP session → Latch task. Updates for unbound sessions, including the replay of a session's own load, are discarded,
+   * except the replay of an earlier session being brought in (`capture`).
+   */
   sessions: Map<string, string>
+  /** The `session/load` of an agent's earlier session, whose replay is kept while it runs. */
+  capture?: Capture
   /** Subagent sessions the agent announced on a bound session, by their ACP session. */
   children: Map<string, Child>
   idleTimer?: NodeJS.Timeout
@@ -319,6 +345,25 @@ interface ModeChange {
   reported?: string
 }
 
+/** An earlier session of the agent, loaded on a process of its own for a preview or an adoption. */
+interface ExternalLoad {
+  /** The process's key. */
+  key: string
+  place: ExternalSessionPlace
+  scope: Scope
+  launch: Launch
+  load: ExternalSessionLoad
+}
+
+interface Adopted {
+  sessionId: string
+  launchHash: string
+  messageCount: number
+  droppedBefore: number
+}
+
+const TASK_ID = /^task-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
+
 /** Recorded, and shown, as the observed mode when the agent stops reporting a mode it reported before. */
 const UNREPORTED_MODE = '未报告'
 /**
@@ -449,6 +494,24 @@ function assertPrompt(prompt: unknown, requestId: unknown, attachments?: Attachm
     throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
 }
 
+/** A start's prompt, or with a seed an empty one: the seed waits for the first message. */
+function assertStart(input: CreateTaskInput): void {
+  if (input.seed !== undefined) {
+    if (
+      typeof input.seed !== 'string'
+      || !input.seed.trim()
+      || input.seed.length > 1_000_000
+      || input.prompt !== ''
+      || input.attachments?.length
+      || input.fork
+    )
+      throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
+    assertPrompt(input.seed, input.requestId)
+    return
+  }
+  assertPrompt(input.prompt, input.requestId, input.attachments)
+}
+
 function steerUnknown(): AppError {
   return new AppError(409, 'steer-unknown', '这条追加是否送达无法确认，没有重发；本轮结束后看回复再决定是否重发')
 }
@@ -463,6 +526,10 @@ function definitionChanged(): AppError {
 
 function permissionDrift(): AppError {
   return new AppError(409, 'permission-drift', '该会话检测到权限模式漂移，已停止接收输入。请新建会话。')
+}
+
+function outsideProject(): AppError {
+  return new AppError(409, 'history-outside-project', '这个会话不在所选项目的主文件夹里。')
 }
 
 function workspaceChanged(): AppError {
@@ -560,6 +627,10 @@ export class AgentRuntime implements Bridge {
   private readonly compactions = new Map<string, { status: string; summary: string; error?: string }>()
   /** Setup of a task's ACP session; a cancel before session/prompt aborts it instead of killing the process. */
   private readonly attaching = new Map<string, { promise: Promise<Binding>; controller: AbortController }>()
+  /** Earlier agent sessions loaded for a preview, by load ID, each on a process held for it. */
+  private readonly external = new Map<string, ExternalLoad>()
+  /** Adoptions in progress, by the session ID the Host chose. */
+  private readonly adopting = new Map<string, { agentSessionId: string; promise: Promise<Adopted> }>()
   /** Background cleanup of removed tasks: session/delete, process stop, temporary directory. */
   private readonly forgetting = new Map<string, Promise<void>>()
   private readonly inflight = new Map<string, { payloadHash: string; promise: Promise<void> }>()
@@ -792,6 +863,8 @@ export class AgentRuntime implements Bridge {
    * task says its context was cleared, so the message that is (whether or not it asked) shows the boundary.
    */
   private clearContext(task: AcpTask): void {
+    // A seed is for the first message of the session's context: a new context starts without it.
+    delete task.acp.seed
     if (task.acp.contextCleared) return
     task.acp.contextCleared = true
     const prior = task.acp.acpSessionId
@@ -964,6 +1037,322 @@ export class AgentRuntime implements Bridge {
     this.notify()
   }
 
+  // ---- earlier sessions of the agent ------------------------------------------------------------------------------
+
+  private assertHistoryImport(): void {
+    const profile = this.selection.profile
+    if (!profile?.historyImport || profile.wire !== undefined) throw historyNotSupported(this.agent.name)
+  }
+
+  /** The agent's sessions with what it reports of them, from a process in a private empty folder that only lists. */
+  async listExternalSessions(): Promise<ExternalSessionList> {
+    await this.ready()
+    this.assertOpen()
+    this.assertHistoryImport()
+    const key = `history-list-${randomUUID()}`
+    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
+    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'history-')))
+    try {
+      const launch = this.currentLaunch(await this.projectConfig(cwd))
+      const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      this.enter(this.holds, key)
+      try {
+        if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
+        const deadline = Date.now() + LIST_MS
+        const sessions: ExternalSessionList['sessions'] = []
+        let cursor: string | undefined
+        let truncated = false
+        for (;;) {
+          const left = deadline - Date.now()
+          if (left <= 0) {
+            truncated = true
+            break
+          }
+          let result: unknown
+          try {
+            // No `cwd`: an agent may match it exactly, and the Host filters by the project's folders itself.
+            result = await live.wire.request(
+              'session/list',
+              cursor ? { cursor } : {},
+              Math.min(left, this.limits.requestTimeoutMs),
+              this.lifetime.signal,
+            )
+          } catch (error) {
+            if (error instanceof RequestTimeout && sessions.length) {
+              truncated = true
+              break
+            }
+            throw error
+          }
+          const page = sessionList.safeParse(result)
+          if (!page.success) throw new AppError(502, 'agent-protocol', `${this.agent.name} 的会话列表无效`)
+          for (const row of page.data.sessions) {
+            if (sessions.length >= LIST_MAX) break
+            sessions.push({
+              agentSessionId: row.sessionId,
+              cwd: row.cwd,
+              ...(row.title ? { title: clip(this.redact(row.title), 200) } : {}),
+              ...(row.updatedAt ? { updatedAt: row.updatedAt } : {}),
+            })
+          }
+          cursor = page.data.nextCursor ?? undefined
+          if (!cursor) break
+          if (sessions.length >= LIST_MAX) {
+            truncated = true
+            break
+          }
+        }
+        return { sessions, truncated }
+      } catch (error) {
+        throw this.publicError(error, live)
+      } finally {
+        this.leave(this.holds, key)
+      }
+    } finally {
+      await this.discardProcess(key)
+      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  /**
+   * Where an earlier session may be loaded: its directory at or below the primary folder of a project the Host lists,
+   * with the project's other folders as a new session of that project would pass them.
+   */
+  private async externalScope(place: ExternalSessionPlace): Promise<{ cwd: string; real: string; scope: Scope }> {
+    if (typeof place.cwd !== 'string' || !isAbsolute(place.cwd) || place.cwd.includes('\0')) throw outsideProject()
+    const project = this.options.projects?.().find(item => item.id === place.workspaceId)
+    const primary = project?.folders[0]
+    if (!project || !primary) throw scopeUnavailable()
+    const scope = (await this.scopeOf(place, primary.path)) ?? {
+      workspaceId: project.id,
+      folders: [{ id: primary.id, path: primary.path }],
+    }
+    const root = await realpath(primary.path).catch(() => undefined)
+    const real = await realpath(place.cwd).catch(() => undefined)
+    if (!root || !real || (real !== root && !real.startsWith(root.endsWith(sep) ? root : `${root}${sep}`))) throw outsideProject()
+    return { cwd: place.cwd, real, scope }
+  }
+
+  /**
+   * Loads an earlier session of the agent and keeps its replay, on a process of its own in the session's directory. The
+   * project configuration there is checked as for any start; nothing is prompted, so no tool runs. A refusal because the
+   * session is open elsewhere is `history-session-busy`, never retried and never taken over.
+   */
+  async loadExternalSession(place: ExternalSessionPlace): Promise<ExternalSessionLoad> {
+    await this.ready()
+    this.assertOpen()
+    this.assertHistoryImport()
+    // The checked real path, never one through a link: the agent works where the check looked.
+    const { real: cwd, scope } = await this.externalScope(place)
+    const launch = this.currentLaunch(await this.projectConfig(cwd, scope.passed), scope.passed)
+    const loadId = `load-${randomUUID()}`
+    const key = `history-${loadId}`
+    this.enter(this.holds, key)
+    try {
+      const live = await this.ensureProcess(key, cwd, {
+        launchHash: launch.hash,
+        definitionHash: launch.definitionHash,
+        ...(scope.passed ? { folders: scope.passed } : {}),
+      })
+      if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
+      if (scope.passed?.via === 'acp' && !live.capabilities.additionalDirectories) throw this.foldersUnsupported(true)
+      const capture = newCapture(place.agentSessionId)
+      live.capture = capture
+      let result: unknown
+      try {
+        result = await live.wire.request(
+          'session/load',
+          {
+            sessionId: place.agentSessionId,
+            cwd,
+            mcpServers: [],
+            ...(scope.passed?.via === 'acp' ? { additionalDirectories: [...scope.passed.paths] } : {}),
+          },
+          LOAD_MS,
+          this.lifetime.signal,
+        )
+      } catch (error) {
+        if (error instanceof RpcError && error.code !== RPC.authRequired && error.code !== RPC.notFound && isBusy(error.message))
+          throw sessionBusy(this.harnessName())
+        throw this.publicError(error, live)
+      } finally {
+        live.capture = undefined
+      }
+      const state = sessionState.safeParse(result)
+      const folded = state.success ? foldConfig(state.data) : undefined
+      const model = modelName(folded?.options)
+      const load: ExternalSessionLoad = {
+        loadId,
+        ...captured(capture, this.now(), this.redact),
+        ...(model ? { model: clip(this.redact(model), 200) } : {}),
+      }
+      this.external.set(loadId, { key, place: structuredClone(place), scope, launch, load })
+      return structuredClone(load)
+    } catch (error) {
+      this.leave(this.holds, key)
+      await this.discardProcess(key)
+      throw error
+    }
+  }
+
+  /** Closes a load: `session/close` when the agent offers it, then its process stops. */
+  async closeExternalSession(loadId: string): Promise<void> {
+    const entry = this.external.get(loadId)
+    if (!entry) return
+    this.external.delete(loadId)
+    const live = this.lives.get(entry.key)
+    if (live?.initialized && !live.wire.stopping && live.capabilities.close)
+      await live.wire
+        .request('session/close', { sessionId: entry.place.agentSessionId }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        .catch(() => {})
+    this.leave(this.holds, entry.key)
+    await this.discardProcess(entry.key)
+  }
+
+  /**
+   * The store the adapter lists from. ACP does not name it, so definitions running the same command (by its real path,
+   * through links) count as one: they read the same store unless their environment points elsewhere, and then a second
+   * import is refused, never doubled. A reinstall to another path is another key.
+   */
+  historyStore(): string {
+    const command = resolveCommand(this.agent.command) ?? this.agent.command
+    let resolved = command
+    try {
+      resolved = realpathSync(command)
+    } catch {
+      /* A command not found now keeps its name. */
+    }
+    return `acp-command:${sha256Hex(resolved)}`
+  }
+
+  /** The agent's sessions behind this driver's own sessions, past and present; not those brought in. */
+  agentSessionIds(): string[] {
+    return Object.values(this.state.tasks).flatMap(task =>
+      [...(task.acp.earlierSessionIds ?? []), ...(task.acp.acpSessionId ? [task.acp.acpSessionId] : [])].filter(
+        id => id !== task.acp.imported?.agentSessionId,
+      ),
+    )
+  }
+
+  /**
+   * Records a session bound to the agent's earlier session, with the replay as its history. Its next turn resumes that
+   * session (or loads it, discarding the replay) as for any session whose process ended, and sets Latch's expected mode
+   * and reads it back before the prompt: the session's own mode is not carried over.
+   */
+  async adoptExternalSession(input: ExternalSessionAdopt): Promise<Adopted> {
+    await this.ready()
+    this.assertHistoryImport()
+    if (typeof input.sessionId !== 'string' || !TASK_ID.test(input.sessionId)) throw new AppError(400, 'invalid-input', '会话标识无效。')
+    const existing = this.state.tasks[input.sessionId]
+    if (existing) {
+      if (existing.acp.imported?.agentSessionId !== input.agentSessionId)
+        throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
+      return {
+        sessionId: input.sessionId,
+        launchHash: existing.acp.launchHash!,
+        messageCount: existing.messages.filter(message => message.imported).length,
+        droppedBefore: 0,
+      }
+    }
+    const pending = this.adopting.get(input.sessionId)
+    if (pending) {
+      if (pending.agentSessionId !== input.agentSessionId) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
+      return pending.promise
+    }
+    const promise = this.adoptOnce(input).finally(() => this.adopting.delete(input.sessionId))
+    this.adopting.set(input.sessionId, { agentSessionId: input.agentSessionId, promise })
+    return promise
+  }
+
+  private async adoptOnce(input: ExternalSessionAdopt): Promise<Adopted> {
+    this.assertOpen()
+    let entry = input.loadId ? this.external.get(input.loadId) : undefined
+    if (entry && (entry.place.agentSessionId !== input.agentSessionId || entry.place.cwd !== input.cwd)) entry = undefined
+    if (!entry) {
+      const load = await this.loadExternalSession(input)
+      entry = this.external.get(load.loadId)!
+    }
+    try {
+      // Checked again now: a preview's folders and configuration say nothing about this moment.
+      // The session works in the checked real path from now on, so a link swapped later cannot move it.
+      const { real, scope } = await this.externalScope(input)
+      const cwd = real
+      const launch = this.currentLaunch(await this.projectConfig(cwd, scope.passed), scope.passed)
+      if (launch.hash !== entry.launch.hash) throw this.projectConfigChanged()
+      this.assertOpen()
+      if (this.state.tasks[input.sessionId]) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
+      // One Latch session per agent session: neither one Latch started nor one brought in already.
+      if (
+        Object.values(this.state.tasks).some(
+          task =>
+            task.acp.acpSessionId === input.agentSessionId
+            || task.acp.earlierSessionIds?.includes(input.agentSessionId)
+            || task.acp.imported?.agentSessionId === input.agentSessionId,
+        )
+      )
+        throw new AppError(409, 'history-already-imported', '这个会话已经在 Latch 里了。')
+      const kept = adoptedMessages(entry.load.messages, entry.load.droppedBefore)
+      const at = this.now()
+      const messages: Message[] = [
+        ...(kept.droppedBefore
+          ? [
+              {
+                id: randomUUID(),
+                role: 'system' as const,
+                text: `更早的 ${kept.droppedBefore} 条消息只在 ${this.harnessName()} 里。`,
+                imported: true as const,
+                createdAt: at,
+              },
+            ]
+          : []),
+        ...kept.messages,
+      ]
+      // The agent holds the session while a load has it open: its own process lets go before the session is recorded.
+      await this.closeExternalSession(entry.load.loadId)
+      this.state.tasks[input.sessionId] = {
+        summary: {
+          id: input.sessionId,
+          title: clip(input.title.replace(/\s+/gu, ' ').trim() || this.harnessName(), 80),
+          status: 'idle',
+          updatedAt: at,
+          createdAt: at,
+          cwd,
+          mode: 'agent',
+          workspaceId: scope.workspaceId,
+          folders: scope.folders.map(({ id, path }) => ({ id, path })),
+          ...(scope.passed ? { folderAccess: 'all' as const } : {}),
+        },
+        messages,
+        revision: 1,
+        acp: {
+          acpSessionId: input.agentSessionId,
+          cwd,
+          turnSeq: 0,
+          launchHash: launch.hash,
+          definitionHash: launch.definitionHash,
+          deletable: false,
+          ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
+          ...(scope.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
+          imported: { agentSessionId: input.agentSessionId, cwd: real },
+        },
+      }
+      this.tools.set(input.sessionId, { seq: 0, calls: new Map() })
+      this.mark()
+      this.notify(input.sessionId)
+      try {
+        await this.flush()
+      } catch (error) {
+        delete this.state.tasks[input.sessionId]
+        this.tools.delete(input.sessionId)
+        this.mark()
+        throw error
+      }
+      return { sessionId: input.sessionId, launchHash: launch.hash, messageCount: kept.messages.length, droppedBefore: kept.droppedBefore }
+    } finally {
+      await this.closeExternalSession(entry.load.loadId)
+    }
+  }
+
   /** One read in a private empty folder that is removed afterwards, with the process started for it. */
   private async readOnce(definitionHash: string): Promise<void> {
     const key = `catalogue-${randomUUID()}`
@@ -1078,7 +1467,7 @@ export class AgentRuntime implements Bridge {
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
-    assertPrompt(input.prompt, input.requestId, input.attachments)
+    assertStart(input)
     const attachments = checkedAttachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
     const config = checkedStartConfig(input.config)
@@ -1094,6 +1483,7 @@ export class AgentRuntime implements Bridge {
       ...(config.length ? { config } : {}),
       ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
+      ...(input.seed ? { seed: digest(input.seed) } : {}),
     })
     const pending = this.creating.get(key)
     if (pending) {
@@ -1108,7 +1498,7 @@ export class AgentRuntime implements Bridge {
 
   private async createTaskOnce(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
-    assertPrompt(input.prompt, input.requestId, input.attachments)
+    assertStart(input)
     const mode = input.mode ?? 'agent'
     if (mode === 'chat') throw new AppError(400, 'mode-unsupported', `${this.agent.name} 只支持 Agent 模式`)
     if (mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
@@ -1137,6 +1527,7 @@ export class AgentRuntime implements Bridge {
       ...(config.length ? { config } : {}),
       ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
+      ...(input.seed ? { seed: digest(input.seed) } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -1164,6 +1555,7 @@ export class AgentRuntime implements Bridge {
       ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
       ...(route ? { route } : {}),
       ...(input.fork ? { fork: checkedFork(input.fork, input.prompt) } : {}),
+      ...(input.seed ? { seed: input.seed } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -1205,9 +1597,11 @@ export class AgentRuntime implements Bridge {
     startConfig?: StartChoice[]
     route?: ModelRoute
     fork?: NonNullable<AcpRecord['fork']>
+    seed?: string
   }): Promise<{ sessionId: string }> {
     const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route, fork } = create
     this.assertOpen()
+    if (create.seed !== undefined) return this.recordSeeded({ ...create, seed: create.seed })
     let context: string
     try {
       context = fileMentionContext(prompt, fileRefs, scope?.folders ?? [{ id: 'default', path: cwd }])
@@ -1278,6 +1672,62 @@ export class AgentRuntime implements Bridge {
     return { sessionId }
   }
 
+  /** A session recorded with no turn: its seed waits for the first message, so nothing is sent until the person sends. */
+  private async recordSeeded(create: Parameters<AgentRuntime['record']>[0] & { seed: string }): Promise<{ sessionId: string }> {
+    const { sessionId, cwd, launch, scope, agentContext, startConfig, route } = create
+    if (agentContext?.skillBodies?.length)
+      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext.skillBodies)
+    const at = this.now()
+    this.state.tasks[sessionId] = {
+      summary: {
+        id: sessionId,
+        title: (promptTitle(create.seed) || this.agent.name).slice(0, 80),
+        status: 'idle',
+        updatedAt: at,
+        createdAt: at,
+        cwd,
+        mode: 'agent',
+        ...(scope
+          ? { workspaceId: scope.workspaceId, folders: scope.folders.map(({ id, path }) => ({ id, path })), folderAccess: 'all' as const }
+          : {}),
+        ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
+        ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
+        ...(route ? { modelRoute: { providerId: route.providerId, model: route.model } } : {}),
+      },
+      messages: [],
+      revision: 1,
+      acp: {
+        cwd,
+        turnSeq: 0,
+        launchHash: launch.hash,
+        definitionHash: launch.definitionHash,
+        ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
+        ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
+        ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
+        ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
+        ...(startConfig ? { startConfig } : {}),
+        ...(route ? { route } : {}),
+        seed: create.seed,
+      },
+    }
+    this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
+    this.tools.set(sessionId, { seq: 0, calls: new Map() })
+    this.mark()
+    this.notify(sessionId)
+    try {
+      await this.flush()
+    } catch (error) {
+      delete this.state.tasks[sessionId]
+      delete this.state.receipts[create.key]
+      this.tools.delete(sessionId)
+      this.mark()
+      throw error
+    }
+    // A process started to learn whether it takes the folders is let go while the session waits.
+    this.scheduleIdle(sessionId)
+    return { sessionId }
+  }
+
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
     assertPrompt(prompt, requestId, options.attachments)
@@ -1332,6 +1782,9 @@ export class AgentRuntime implements Bridge {
     } catch {
       throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
     }
+    // A seeded session's first message carries its seed: sending it is what sends the seed.
+    const seed = fresh ? '' : (task.acp.seed ?? '')
+    context = seed + context
     const run = this.reserve(sessionId, task.acp.turnSeq + 1, context)
     run.attachments = attachments
     const promise = (async () => {
@@ -1352,10 +1805,11 @@ export class AgentRuntime implements Bridge {
         run.userMessageId = randomUUID()
         const freshContext = current.acp.contextCleared === true
         delete current.acp.contextCleared
+        delete current.acp.seed
         current.messages.push({
           id: run.userMessageId,
           role: 'user',
-          text: prompt,
+          text: seed + prompt,
           ...(freshContext ? { freshContext: true as const } : {}),
           turnId: run.id,
           requestId,
@@ -1627,7 +2081,11 @@ export class AgentRuntime implements Bridge {
     this.mark()
     await this.flush()
     this.notify(sessionId)
-    const agentSessionIds = acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId]
+    // A session brought in from the agent's own record stays the agent's: only those Latch opened after it go.
+    const kept = task.acp.imported?.agentSessionId
+    const agentSessionIds = (acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId]).filter(
+      id => id !== kept,
+    )
     this.forget(sessionId, agentSessionIds, cwd, deletable === true, confirmedOf(recorded.acp), () => this.stillListed(recorded))
   }
 
@@ -1805,6 +2263,14 @@ export class AgentRuntime implements Bridge {
    */
   private async stillListed(task: AcpTask): Promise<boolean> {
     const { workspaceId, folders } = task.summary
+    // A session brought in works in a directory at or below the primary folder: it must still be the one it was then.
+    const imported = task.acp.imported
+    if (imported) {
+      const real = await realpath(task.acp.cwd).catch(() => undefined)
+      const root = folders?.[0] && (await realpath(folders[0].path).catch(() => undefined))
+      if (!real || !root || real !== imported.cwd || (real !== root && !real.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)))
+        return false
+    }
     if (folders === undefined)
       return this.workspace(task.acp.cwd).then(
         () => true,
@@ -2818,6 +3284,7 @@ export class AgentRuntime implements Bridge {
       initialized: false,
       capabilities: {
         resume: false,
+        list: false,
         load: false,
         delete: false,
         close: false,
@@ -2861,6 +3328,7 @@ export class AgentRuntime implements Bridge {
       const capabilities = result.data.agentCapabilities
       live.capabilities = {
         resume: capabilities?.sessionCapabilities?.resume != null,
+        list: capabilities?.sessionCapabilities?.list != null,
         load: capabilities?.loadSession === true,
         delete: capabilities?.sessionCapabilities?.delete != null,
         close: capabilities?.sessionCapabilities?.close != null,
@@ -3541,6 +4009,11 @@ export class AgentRuntime implements Bridge {
   private onUpdate(live: Live, params: unknown): void {
     const envelope = updateEnvelope.safeParse(params)
     if (!envelope.success) return
+    if (live.capture && live.capture.acpSessionId === envelope.data.sessionId && !live.sessions.has(envelope.data.sessionId)) {
+      const update = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
+      captureUpdate(live.capture, update, this.now(), this.redact)
+      return
+    }
     const taskId = live.sessions.get(envelope.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
     if (!taskId || !task) {

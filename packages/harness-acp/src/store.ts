@@ -73,6 +73,14 @@ export interface AcpRecord {
    * agent forked, from then on the first prompt leaves the text record out.
    */
   fork?: { taskId: string; upToMessageId: string; prefixLength: number; native?: true }
+  /**
+   * Brought in from the agent's own session `agentSessionId`, which Latch did not start: removing the task, or clearing
+   * its context, never deletes that session in the agent. `cwd`: the real path of `AcpRecord.cwd` when it was brought in;
+   * every start, resume and prompt requires it unchanged and inside the primary folder (409 `workspace-changed`).
+   */
+  imported?: { agentSessionId: string; cwd: string }
+  /** Text that goes before the first message (`CreateTaskInput.seed`), until a turn has recorded it. */
+  seed?: string
 }
 
 export interface StartChoice {
@@ -208,6 +216,7 @@ const message = z.object({
   steered: z.literal(true).optional(),
   freshContext: z.literal(true).optional(),
   nativeFork: z.literal(true).optional(),
+  imported: z.literal(true).optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -357,6 +366,8 @@ const stateSchema = z.object({
             native: z.literal(true).optional(),
           })
           .optional(),
+        imported: z.object({ agentSessionId: z.string().min(1).max(512), cwd: z.string().min(1).max(4096) }).optional(),
+        seed: z.string().max(1_000_000).optional(),
       }),
     }),
   ),

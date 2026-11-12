@@ -44,7 +44,7 @@ pnpm check                                   # check:quick 加 knip 与 test；�
 pnpm check -- --plan                         # 只列出改动要求的检查与用例，不运行；--base <ref> 比较某个提交以来的改动
 pnpm typecheck                               # tsc -b，分同构包、插件 SDK、core、浏览器、Host（含 ACP Driver）、桌面端 CJS 与测试检查
 pnpm lint                                    # oxlint 与类型感知规则；导入边界、循环导入与运行环境的全局变量是错误，其余只报告
-pnpm fmt:check                               # oxfmt 格式检查（不改文件）；pnpm fmt 写入
+pnpm fmt:check                               # oxfmt 格式检查（不改文件）；pnpm fmt 写入，不处理 Markdown 与 packages/testkit/vectors/
 pnpm test                                    # 各项目的单元与集成用例（见下方「测试位置」），默认用例超时 15 秒
 pnpm test --project @latch/host              # 只运行一个项目：latch（tests/）、@latch/host、@latch/host-swift、@latch/web、@latch/desktop、@latch/harness-acp、@latch/ui
 pnpm build                                   # e2e 使用 dist/web；macOS 上同时构建 dist/native/latch-presence

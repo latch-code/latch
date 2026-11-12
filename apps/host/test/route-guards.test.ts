@@ -400,6 +400,52 @@ describe('route guards', () => {
     expect(results).toEqual(expected)
   })
 
+  it('keeps every history route to run and data scope all, before reading anything', async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const viewer = await t.enroll({ name: 'Viewer', scopes: ['view'] })
+    const member = await t.enroll({ listener: 'unix', name: 'Member', scopes: ['view', 'run'] })
+    const work = await t.enroll({ listener: 'loopback-tcp', name: 'Work', scopes: ['view', 'run'] })
+    await t.host.security.devices.setScopes(work.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
+    const devices: Record<string, TestDevice> = { viewer, member, work }
+    type Caller = 'anonymous' | 'viewer' | 'member' | 'work'
+    const call = (caller: Caller, method: Method, path: string, body: unknown): Promise<Response> => {
+      const init = { method, ...(body === undefined ? {} : { body }) }
+      return caller === 'anonymous' ? t.raw('unix', `api/${path}`, init) : devices[caller]!.request(path, init)
+    }
+    const denied: Partial<Record<Caller, Outcome>> = {
+      anonymous: [401, 'unauthorized'],
+      viewer: [403, 'scope-required'],
+      work: [403, 'history-scope'],
+    }
+    const rows: Array<Row<Caller>> = [
+      ['GET', 'history/sources', undefined, { ...denied, member: [200] }],
+      ['GET', 'history/sources?projectId=missing', undefined, { member: [409, 'workspace-unavailable'] }],
+      ['POST', 'history/list', {}, { ...denied, member: [400, 'invalid-input'] }],
+      ['POST', 'history/list', { projectId: 'missing', harnessId: 'codex' }, { member: [409, 'workspace-unavailable'] }],
+      ['POST', 'history/previews', {}, { ...denied, member: [400, 'invalid-input'] }],
+      ['POST', 'history/previews', { handle: `hh_${'0'.repeat(32)}` }, { member: [410, 'history-handle-expired'] }],
+      ['POST', 'history/imports', { requestId: 'import-request-01' }, { ...denied, member: [400, 'invalid-input'] }],
+      ['GET', 'history/imports/import-request-01', undefined, { ...denied, member: [404, 'history-import-not-found'] }],
+      [
+        'DELETE',
+        `history/previews/hp_${'0'.repeat(32)}`,
+        undefined,
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [204] },
+      ],
+      ['PUT', 'history/list', {}, { member: [404, 'not-found'] }],
+    ]
+    const results: Record<string, Outcome> = {}
+    const expected: Record<string, Outcome> = {}
+    for (const [method, path, body, outcomes] of rows)
+      for (const [caller, outcome] of Object.entries(outcomes) as Array<[Caller, Outcome]>) {
+        const key = `${caller} ${method} /link/api/${path}`
+        expected[key] = outcome
+        results[key] = await responseOutcome(await call(caller, method, path, body))
+      }
+    expect(results).toEqual(expected)
+  })
+
   it('keeps every plugin page route to its scopes: reading takes view, every change run, before any page check', async () => {
     const t = await startTestHost()
     cleanups.push(() => t.close())
@@ -501,6 +547,7 @@ describe('route guards', () => {
       ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'handoffs?sessionId=s', undefined, { phone: [403, 'native-verification-required'] }],
       ['POST', 'handoffs', {}, { phone: [403, 'native-verification-required'] }],
+      ['POST', 'history/list', {}, { phone: [403, 'native-verification-required'] }],
       ['GET', `apps/p/data/status?app=p%2Fmain&revision=${'a'.repeat(64)}`, undefined, { phone: [403, 'native-verification-required'] }],
     ])
     const locked = await phone.request('GET', '/link/api/snapshot')

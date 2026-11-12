@@ -47,6 +47,8 @@ export interface HostFeatures {
   pinnedDefaults?: true
   /** Plugin pages: `AppSnapshot.apps`, `via` on task starts and input, `/apps/:pluginId/...`; the value is the version. */
   appPages?: 1
+  /** `/history/*`: bring a session a harness had before Latch into Latch (docs/HARNESSES.md#接入已有会话); the value is the version. */
+  historyImport?: 1
 }
 
 export interface SearchHit {

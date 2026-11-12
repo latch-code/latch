@@ -181,6 +181,13 @@ export interface HarnessDriver {
   login?(): HarnessInfo['login']
   /** Optional readiness probe, e.g. whether an agent binary is installed. */
   status?(): { status: HarnessInfo['status']; statusMessage?: string }
+  /**
+   * The Host may offer to bring in sessions this harness had before Latch, through the Bridge's `listExternalSessions`,
+   * `loadExternalSession` and `adoptExternalSession`. Whether the running harness can list and load is learned at runtime.
+   */
+  historyImport?: true
+  /** `CreateTaskInput.seed` is honoured: a session can be recorded with no turn, waiting for its first message. */
+  seededStart?: true
   /** Creates an unstarted instance; asynchronous initialization belongs to Bridge.start(). */
   create(options: HarnessHostOptions): Bridge
 }

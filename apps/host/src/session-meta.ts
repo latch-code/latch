@@ -166,6 +166,17 @@ const sessionEntrySchema = z.object({
       truncated: z.literal(true).optional(),
     })
     .optional(),
+  imported: z
+    .strictObject({
+      from: z.string().min(1).max(128),
+      store: z.string().min(1).max(200).optional(),
+      mode: z.enum(['native', 'text']),
+      agentSessionId: z.string().min(1).max(512).optional(),
+      fromTaskId: z.string().min(1).max(256).optional(),
+      prefixLength: z.number().int().min(1).max(201_000).optional(),
+      truncated: z.literal(true).optional(),
+    })
+    .optional(),
   receipts: z.array(z.unknown()).max(MAX_RECEIPTS).optional(),
 })
 
@@ -221,6 +232,22 @@ export interface StoredMeta {
   /** The pull request 交付 made or found for the session's branch. */
   pr?: GitPrBinding
   forkOf?: TaskSummary['forkOf']
+  /**
+   * Brought in from the harness `from`'s own session `agentSessionId` (docs/HARNESSES.md#接入已有会话), or rebuilt as text
+   * from the Latch session `fromTaskId` that was. Makes the session private. One Latch session per external session.
+   */
+  imported?: ImportedMeta
+}
+
+export interface ImportedMeta {
+  from: string
+  /** The record the external session ID belongs to (`Bridge.historyStore`); one Latch session per ID in it. */
+  store?: string
+  mode: 'native' | 'text'
+  agentSessionId?: string
+  fromTaskId?: string
+  prefixLength?: number
+  truncated?: true
 }
 
 interface Entry {
@@ -346,6 +373,11 @@ export class SessionMetaStore implements SessionReceipts {
     for (const [sessionId, meta] of this.meta)
       if (meta.origin?.app === app && meta.origin.requestId === requestId && meta.origin.install === install) return sessionId
     return undefined
+  }
+
+  /** Sessions brought in from a harness's own record. */
+  imported(): Array<{ sessionId: string; imported: ImportedMeta }> {
+    return [...this.meta.entries()].flatMap(([sessionId, meta]) => (meta.imported ? [{ sessionId, imported: meta.imported }] : []))
   }
 
   /** Folder names owned by sessions in the Host metadata. */

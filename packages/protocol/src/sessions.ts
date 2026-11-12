@@ -162,6 +162,12 @@ export interface DriverTaskSummary {
   runOutcome?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
   /** Host-generated provenance; files remain shared with the chosen project. */
   forkOf?: { taskId: string; upToMessageId: string; title: string; turn: number; prefixLength: number; truncated?: true }
+  /**
+   * Host-recorded: the session was brought in from a session the harness `from` had before Latch (docs/HARNESSES.md#接入已有会话).
+   * `native`: bound to that session and continued by the same harness with its own record. `text`: rebuilt from the
+   * message text only (按文字重建，不是原样恢复); `prefixLength` characters of its first prompt are that text. Always private.
+   */
+  imported?: { from: string; mode: 'native' | 'text'; prefixLength?: number; truncated?: true }
   /** Skills snapshotted for the current or latest Standard run. */
   skills?: string[]
   /** While a run is live: what it is really doing. Never stored; absent on older Hosts and from drivers that do not report it. */
@@ -386,6 +392,8 @@ export interface Message {
   nativeFork?: true
   /** Host-only provenance for the first user message. */
   forkContext?: NonNullable<TaskSummary['forkOf']>
+  /** Replayed from the harness's own record when the session was brought in (`TaskSummary.imported`), not run in Latch. */
+  imported?: true
   toolName?: string
   state?: 'queued' | 'awaiting-approval' | 'running' | 'completed' | 'failed' | 'cancelled'
   /** Assistant reasoning that the model or agent actually reported; never synthesized. */

@@ -58,6 +58,7 @@ export const initializeResult = z.object({
       sessionCapabilities: z
         .object({
           resume: z.unknown().optional(),
+          list: z.unknown().optional(),
           delete: z.unknown().optional(),
           close: z.unknown().optional(),
           additionalDirectories: z.unknown().optional(),
@@ -93,6 +94,27 @@ export const initializeResult = z.object({
     .object({ steering: z.object({ supported: z.boolean().nullish() }).nullish().catch(undefined) })
     .nullish()
     .catch(undefined),
+})
+
+/** `session/list`: metadata only. Bounded per page; anything unreadable in a row drops that row, not the page. */
+export const sessionList = z.object({
+  sessions: z
+    .array(z.unknown())
+    .max(1000)
+    .transform(rows =>
+      rows.flatMap(row => {
+        const parsed = z
+          .object({
+            sessionId: z.string().min(1).max(512),
+            cwd: z.string().min(1).max(4096),
+            title: z.string().nullish().catch(undefined),
+            updatedAt: z.string().max(64).nullish().catch(undefined),
+          })
+          .safeParse(row)
+        return parsed.success ? [parsed.data] : []
+      }),
+    ),
+  nextCursor: z.string().min(1).max(4096).nullish().catch(undefined),
 })
 
 export const selectOption = z.object({ value: z.string(), name: z.string(), description: optionalText })

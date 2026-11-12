@@ -29,6 +29,8 @@ export const codexProfile: HarnessProfile = {
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
+  // codex-acp lists Codex's threads (metadata only) and replays one on session/load; Latch never reads Codex's own files.
+  historyImport: true,
   // codex-acp configures one provider, `openai`, whose only API type is `openai`: Codex's Responses protocol. Its models are
   // then those the gateway lists that Codex itself knows.
   gateway: { wires: ['responses'], experimental: true, knownOnly: true, via: 'providers', providerId: 'openai', apiType: 'openai' },

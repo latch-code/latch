@@ -4,7 +4,12 @@ import { AppError } from '@latch/sdk'
 export const FORK_CONTEXT_LIMIT = 200_000
 
 /** Keep a bounded suffix without retaining a second, unbounded transcript. */
-export function forkSeed(detail: TaskDetail, upToMessageId: string): { text: string; context: NonNullable<TaskSummary['forkOf']> } {
+export function forkSeed(
+  detail: TaskDetail,
+  upToMessageId: string,
+  /** What the record is introduced as; a fork names the session and the turn it forks after. */
+  heading: (title: string, turn: number) => string = (title, turn) => `以下是会话「${title}」到第 ${turn} 轮为止的记录`,
+): { text: string; context: NonNullable<TaskSummary['forkOf']> } {
   const end = detail.messages.findIndex(message => message.id === upToMessageId)
   if (end < 0) throw new AppError(400, 'fork-position', '找不到要分叉的位置，请重新打开原会话')
   const lastUser = detail.messages.findLastIndex(message => message.role === 'user' && !message.steered)
@@ -49,7 +54,7 @@ export function forkSeed(detail: TaskDetail, upToMessageId: string): { text: str
   if (/^[\uDC00-\uDFFF]/u.test(transcript)) transcript = transcript.slice(1)
   // The original prompt is immutable; renaming a source never changes a retried start's payload.
   const title = (detail.messages.find(message => message.role === 'user')?.text ?? detail.summary.id).replace(/\s+/gu, ' ').slice(0, 80)
-  const label = `以下是会话「${title}」到第 ${turn} 轮为止的记录`
+  const label = heading(title, turn)
   const text = `${label}\n${truncated ? '（较早的记录已截断，只保留最后 20 万字符。）\n' : ''}<会话记录>${transcript}\n</会话记录>\n\n请将以上内容作为背景，继续处理后面的请求。\n\n`
   return {
     text,
