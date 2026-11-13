@@ -140,8 +140,9 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
-  it('ignores an unsupported text delta header on a real verified native stream', async () => {
-    const steps = Array.from({ length: 3 }, () => {
+  it.each([undefined, 'delta-v0', 'delta-v1'])('negotiates native text frames without changing canonical replay: %s', async protocol => {
+    let currentTime = Date.now()
+    const steps = Array.from({ length: 5 }, () => {
       let release!: () => void
       const promise = new Promise<void>(resolve => {
         release = resolve
@@ -150,6 +151,7 @@ describe('native Host entry with existing authorization', () => {
     })
     const host = await startTestHost({
       native: { host: '127.0.0.1', port: 0 },
+      now: () => currentTime,
       plugins: [
         {
           id: 'native-delta-fixture',
@@ -167,6 +169,10 @@ describe('native Host entry with existing authorization', () => {
                 await steps[1]!.promise
                 yield { type: 'text', text: '追加🙂' }
                 await steps[2]!.promise
+                yield { type: 'text', text: '第三段' }
+                await steps[3]!.promise
+                yield { type: 'text', text: 'After scope change' }
+                await steps[4]!.promise
                 yield { type: 'finish', reason: 'stop' }
               },
             })
@@ -190,40 +196,97 @@ describe('native Host entry with existing authorization', () => {
       }),
       201,
     )
-    // Inject an unsupported wire header on the already authenticated connection; the public native client has no delta capability.
+    // Only this wire-level consumer opts in; the existing public Node and Swift clients still request complete frames.
     const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
-    const response = session.request({
-      ':method': 'GET',
-      ':path': `/link/api/events?sessionId=${started.sessionId}`,
-      'x-latch-state': 'delta-v1',
-    })
-    cleanup.push(() => response.close())
-    const frames: Array<Record<string, unknown>> = []
-    const decoder = new TextDecoder()
-    let pending = ''
-    response.on('data', (chunk: Buffer) => {
-      pending += decoder.decode(chunk, { stream: true })
-      let end: number
-      while ((end = pending.indexOf('\n\n')) >= 0) {
-        const frame = pending.slice(0, end)
-        pending = pending.slice(end + 2)
-        const data = frame
-          .split('\n')
-          .find(line => line.startsWith('data: '))
-          ?.slice(6)
-        if (data) frames.push(JSON.parse(data) as Record<string, unknown>)
-      }
-    })
-    const opened = new Promise<number>(resolve => response.once('response', headers => resolve(Number(headers[':status']))))
-    response.end()
-    expect(await opened).toBe(200)
+    const open = async (header: string | undefined, resume = '') => {
+      const response = session.request({
+        ':method': 'GET',
+        ':path': `/link/api/events?sessionId=${started.sessionId}${resume}`,
+        ...(header ? { 'x-latch-state': header } : {}),
+      })
+      cleanup.push(() => response.close())
+      const frames: Array<{ id: string | undefined; value: Record<string, unknown> }> = []
+      const decoder = new TextDecoder()
+      let pending = ''
+      response.on('data', (chunk: Buffer) => {
+        pending += decoder.decode(chunk, { stream: true })
+        let end: number
+        while ((end = pending.indexOf('\n\n')) >= 0) {
+          const frame = pending.slice(0, end)
+          pending = pending.slice(end + 2)
+          const lines = frame.split('\n')
+          const data = lines.find(line => line.startsWith('data: '))?.slice(6)
+          if (data)
+            frames.push({ id: lines.find(line => line.startsWith('id: '))?.slice(4), value: JSON.parse(data) as Record<string, unknown> })
+        }
+      })
+      const opened = new Promise<number>(resolve => response.once('response', headers => resolve(Number(headers[':status']))))
+      response.end()
+      expect(await opened).toBe(200)
+      return { response, frames, body: () => frames.filter(frame => ['task-state', 'task-delta'].includes(String(frame.value.type))) }
+    }
+    const selected = await open(protocol),
+      old = await open(undefined)
     steps[0]!.release()
-    await expect.poll(() => frames.filter(frame => frame.type === 'task-state').length).toBe(1)
+    await expect.poll(() => selected.body().length).toBe(1)
+    await expect.poll(() => old.body().length).toBe(1)
+    const first = selected.body()[0]!
+    expect(first.id).toBe(old.body()[0]!.id)
+    expect(first.value).toMatchObject({ type: 'task-state', detail: { liveText: '正文' } })
     steps[1]!.release()
-    await expect.poll(() => frames.filter(frame => frame.type === 'task-state').length).toBe(2)
-    expect(frames.filter(frame => frame.type === 'task-state').at(-1)).toMatchObject({ detail: { liveText: '正文追加🙂' } })
-    expect(frames.some(frame => frame.type === 'task-delta' || Object.hasOwn(frame, 'stream'))).toBe(false)
+    await expect.poll(() => selected.body().length).toBe(2)
+    await expect.poll(() => old.body().length).toBe(2)
+    expect(selected.body()[1]!.id).toBe(old.body()[1]!.id)
+    expect(old.body()[1]!.value).toMatchObject({ type: 'task-state', detail: { liveText: '正文追加🙂' } })
+    expect(old.body().some(frame => Object.hasOwn(frame.value, 'stream'))).toBe(false)
+    if (protocol === 'delta-v1') {
+      expect(first.value.stream).toMatchObject({ protocol: 'delta-v1', stateSeq: 1 })
+      expect(selected.body()[1]!.value).toMatchObject({
+        type: 'task-delta',
+        baseSeq: 1,
+        stream: { stateSeq: 2 },
+        text: { offset: 6, append: '追加🙂' },
+      })
+      const [epoch, sequence] = first.id!.split(':')
+      const resumed = await open(protocol, `&resumeEpoch=${epoch}&resumeAfter=${sequence}`)
+      await expect.poll(() => resumed.body().length).toBe(1)
+      expect(resumed.body()[0]).toMatchObject({
+        id: selected.body()[1]!.id,
+        value: { type: 'task-state', detail: { liveText: '正文追加🙂' }, stream: { stateSeq: 1 } },
+      })
+      expect(resumed.body()[0]!.value.stream).not.toEqual(first.value.stream)
+      steps[2]!.release()
+      await expect.poll(() => resumed.body().length).toBe(2)
+      await expect.poll(() => selected.body().length).toBe(3)
+      expect(resumed.body()[1]).toMatchObject({
+        id: selected.body()[2]!.id,
+        value: { type: 'task-delta', baseSeq: 1, text: { offset: 16, append: '第三段' } },
+      })
+      const owner = await desktopOf(host)
+      expect((await owner.request(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+      steps[3]!.release()
+      await expect.poll(() => selected.body().length).toBe(4)
+      // The public task remains readable, but a scope change cannot reuse the preceding reader baseline.
+      expect(selected.body()[3]!.value).toMatchObject({
+        type: 'task-state',
+        stream: { stateSeq: 4 },
+        detail: { liveText: '正文追加🙂第三段After scope change' },
+      })
+      const closed = new Promise<void>(resolve => selected.response.once('close', resolve))
+      currentTime += 600_001
+      steps[4]!.release()
+      await closed
+      expect(selected.body().length).toBe(4)
+      expect((await registered.client.request('GET', '/link/api/snapshot')).status).toBe(200)
+    } else {
+      expect(selected.body()[1]!.value).toMatchObject({ type: 'task-state', detail: { liveText: '正文追加🙂' } })
+      expect(selected.body().some(frame => Object.hasOwn(frame.value, 'stream'))).toBe(false)
+    }
     steps[2]!.release()
+    steps[3]!.release()
+    steps[4]!.release()
+    if (protocol !== 'delta-v1')
+      await expect.poll(() => selected.body().at(-1)?.value).toMatchObject({ type: 'task-state', detail: { summary: { status: 'idle' } } })
   })
 
   it('grants the fixed phone scopes and all data through exactly one confirmation', async () => {

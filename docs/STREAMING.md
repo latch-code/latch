@@ -98,7 +98,9 @@ Provider.stream             Standard Runtime             Host                   
 
 ### 协商后的正文追加
 
-浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话、非原生入口上接受；其他电脑的 Electron 页面省略该头，原生入口即使收到它也保持完整帧与现有 replay。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
+浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话且该头精确匹配时接受，原生入口也支持显式协商；当前 Node/Swift 客户端尚未发送该头，其他电脑的 Electron 页面也省略它，仍使用完整帧。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
+
+原生协商只改变授权完成后的逐读者编码。replay 仍保存有界的不可变完整事件；完整帧和追加帧的 SSE id 都取该事件原有的 canonical cursor，不用 revision 或订阅序号代替。新连接回放的第一份正文为完整帧，后续才可追加；未入日志的即时 checkpoint 保持 `resumeRequired`，并清掉追加基线。正文窗口、scope、积压和原生 padding 活跃状态先于编码检查，连接关闭仍清理活跃标记。原生完整帧超过原上限仍先记录 refresh，不因追加协议扩大帧或缓存上限。
 
 `task-delta` 只含实例、会话、runId、liveMessageId、revision、hostTime、stream、baseSeq；正文 `text` 与思考 `reasoning` 各为 `{ offset, append }`。offset 是上一份原文的 UTF-8 字节数；reasoning 为 null 表示前后都没有该字段，空字符串仍表示字段存在。片段必须是 Unicode 标量串，不把未配对 surrogate 替换成另一个字符再继续追加。每帧正文与思考片段合计至多 64 KiB，每个累计串至多 16 MiB，越界或无法验证时发完整状态。有限元数据包括 cursor、summary.updatedAt、detail.lastOutputAt，以及已存在 summary.live 的 lastEventAt/lastOutputAt；可选时间用 null 表示缺省。客户端严格拒绝追加帧中的未知字段。
 
@@ -110,7 +112,7 @@ Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延
 
 重复帧忽略；缺帧、错误订阅/run/message 身份或偏移、无法识别的操作触发修复；其他实例或会话的帧忽略。一个逻辑订阅最多修复一次：真正 abort fetch 并取消 reader，丢弃旧连接缓冲，立即建立完整状态连接，余下重连均不再协商追加。新连接的 onOpen 照常同步；换会话创建新的逻辑订阅。更换设备或权限代次时同步清掉影子、关闭旧流并使旧投影票据失效。读取位置、草稿、唯一 sender 与写请求编号都不参与这个传输优化。
 
-原生核心的 `NativeTaskStreamProjection` 只提供同一契约的纯值投影，尚未接到 `NativeWorkspace`、`PhoneModel` 或 Host 协商，原生仍传完整帧。它不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。候选和票据都不是正文 lease，也不证明消费者已经应用事件；它们不更新 fetched/detailRevisions，不确认原生游标。
+原生核心的 `NativeTaskStreamProjection` 只提供同一契约的纯值投影，尚未接到 `NativeWorkspace`、`PhoneModel` 或客户端协商，现有原生客户端仍接收完整帧。它不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。候选和票据都不是正文 lease，也不证明消费者已经应用事件；它们不更新 fetched/detailRevisions，不确认原生游标。
 
 Swift 的身份按 UTF-8 字节精确比较，长度按 UTF-16 单元与 Web 对齐。JSONDecoder 拒绝非法 UTF-8 与未配对 surrogate，不以替换字符继续追加。原生输入及重建候选仍受 `NativeJSON` 的 1MiB、深度、数组和对象宽度限制；候选经编码再读回确认这些约束，保留 O(history) 成本，不能称为常数 CPU。原生时钟只接受完整 ISO 时间，Web 的 `Date.parse` 还接受日期但没有时间的旧格式；共享向量明确这一区别，以及原生不能表示非法 surrogate 全量正文的边界。完整帧中的未知事实保持，追加帧的未知字段拒绝。
 

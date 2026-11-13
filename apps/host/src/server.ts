@@ -6036,21 +6036,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         forgetStream(res)
         return
       }
-      if (stream.delta && !stream.nativeOpening && event.type === 'task-state') {
-        const projected = stream.delta.encode(event)
-        // The stamp belongs only to this reader; neither the shared WeakMap nor native replay may retain it.
-        const frame = `id: ${event.revision}\nevent: ${projected.type}\ndata: ${JSON.stringify(projected)}\n\n`
-        write(res, stream, projected.type, frame, event.sessionId)
-        stream.lastSentRevision = event.revision
-        return
-      }
-      let frame = frames.get(event)
       if (stream.nativeOpening) {
         if (event.type === 'task-state') stream.nativeOpening.padding?.activity(res, ACTIVE_STATUSES.has(event.detail.summary.status))
         if (!stream.paddingObserved) {
           stream.paddingObserved = true
           res.once('close', () => stream.nativeOpening?.padding?.activity(res, false))
         }
+      }
+      const nativeCursor = stream.nativeOpening ? nativeReplay.cursorOf(event) : undefined
+      if (stream.delta && event.type === 'task-state' && (!stream.nativeOpening || nativeCursor !== undefined)) {
+        const projected = stream.delta.encode(event)
+        // The stamp belongs only to this reader; neither the shared WeakMap nor native replay may retain it.
+        const frame = `id: ${nativeCursor ?? event.revision}\nevent: ${projected.type}\ndata: ${JSON.stringify(projected)}\n\n`
+        write(res, stream, projected.type, frame, event.sessionId)
+        stream.lastSentRevision = event.revision
+        return
+      }
+      let frame = frames.get(event)
+      if (stream.nativeOpening) {
+        // An unretained checkpoint cannot become an acknowledged per-reader baseline.
+        if (nativeCursor === undefined) stream.delta?.clear()
         frame =
           nativeReplay.frame(event)
           ?? `id: ${nativeReplay.cursor()}\nevent: ${event.type}\ndata: ${JSON.stringify({ ...event, resumeRequired: true })}\n\n`
@@ -8491,7 +8496,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           lastSentRevision: nativeOpening && resume?.kind === 'events' ? 0 : revision,
           meter,
           scope: JSON.stringify([caller.device.dataScope, caller.device.scopes.toSorted()]),
-          ...(!nativeOpening && !isNativeListener(listener.listener) && sessionId && req.headers[TASK_DELTA_HEADER] === TASK_DELTA_PROTOCOL
+          ...(sessionId && req.headers[TASK_DELTA_HEADER] === TASK_DELTA_PROTOCOL
             ? { delta: new TaskDeltaStream(randomUUID(), deltaCache) }
             : {}),
         })

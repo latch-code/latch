@@ -24,6 +24,10 @@ export class NativeReplay {
   cursor(): string {
     return `${this.epoch}:${this.log.currentSequence()}`
   }
+  cursorOf(event: Event): string | undefined {
+    const entry = this.entries.get(event)
+    return entry ? `${this.epoch}:${entry.sequence}` : undefined
+  }
   frame(event: Event): string | undefined {
     return this.entries.get(event)?.frame
   }

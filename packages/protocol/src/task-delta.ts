@@ -1,4 +1,4 @@
-/** Fixed, non-identity capability header. Native transports do not negotiate this version. */
+/** Fixed, non-identity capability header. Every consumer must opt in; a complete frame acknowledges its baseline. */
 export const TASK_DELTA_HEADER = 'x-latch-state'
 export const TASK_DELTA_PROTOCOL = 'delta-v1'
 export const MAX_TASK_DELTA_BYTES = 65_536

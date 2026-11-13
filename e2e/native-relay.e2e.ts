@@ -15,6 +15,7 @@ import {
   verifyNativeRevocation,
   RelayClosed,
   RelayControl,
+  PaddedStream,
   type NativeHttpClient,
 } from '@latch/link-client'
 import { connect as connectTcp } from 'node:net'
@@ -165,14 +166,48 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
     JSON.stringify({ version: 1, generation: 0, discoveryKey: `lnd1.${randomBytes(32).toString('base64url')}`, profiles: [profile] }),
     { mode: 0o600 },
   )
+  const pieces = Array.from({ length: 3 }, () => {
+    let release!: () => void
+    const promise = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return { promise, release }
+  })
+  const activity = vi.spyOn(PaddedStream.prototype, 'activity')
   const host = await startTestHost({
     dataDir,
     workspaceRoot: join(directory, 'workspace'),
     native: { host: '127.0.0.1', port: 0 },
     nativeRelayCa: tls.cert,
     egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
+    plugins: [
+      {
+        id: 'padded-delta-fixture',
+        name: 'Padded stream fixture',
+        version: '1',
+        description: '',
+        activate(context) {
+          context.registerProvider({
+            id: 'padded-delta-fixture',
+            name: 'Padded stream fixture',
+            model: 'fixture',
+            async *stream() {
+              await pieces[0]!.promise
+              yield { type: 'text', text: 'First' }
+              await pieces[1]!.promise
+              yield { type: 'text', text: ' suffix' }
+              await pieces[2]!.promise
+              yield { type: 'finish', reason: 'stop' }
+            },
+          })
+        },
+      },
+    ],
   })
   cleanup.push(() => host.close())
+  cleanup.push(() => {
+    for (const piece of pieces) piece.release()
+  })
   const desktop = await host.enroll({ listener: 'unix' })
   expect(
     (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
@@ -344,6 +379,57 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   )
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(200)
   expect((await registered.request('POST', '/link/api/native/pairings', {})).status).toBe(403)
+  const streaming = ok<{ sessionId: string }>(
+    await registered.request('POST', '/link/api/tasks', {
+      prompt: 'Padded stream',
+      requestId: randomUUID(),
+      harnessId: 'standard',
+      mode: 'chat',
+      model: { providerId: 'padded-delta-fixture', model: 'fixture' },
+    }),
+    201,
+  )
+  const deltaSession = Reflect.get(registered, 'session') as ClientHttp2Session
+  const deltaResponse = deltaSession.request({
+    ':method': 'GET',
+    ':path': `/link/api/events?sessionId=${streaming.sessionId}`,
+    'x-latch-state': 'delta-v1',
+  })
+  cleanup.push(() => deltaResponse.close())
+  const deltaFrames: Array<{ type: string; detail?: { liveText: string }; text?: { offset: number; append: string } }> = []
+  let deltaPending = ''
+  deltaResponse.setEncoding('utf8')
+  deltaResponse.on('data', (chunk: string) => {
+    deltaPending += chunk
+    let end: number
+    while ((end = deltaPending.indexOf('\n\n')) >= 0) {
+      const frame = deltaPending.slice(0, end)
+      deltaPending = deltaPending.slice(end + 2)
+      const data = frame
+        .split('\n')
+        .find(line => line.startsWith('data: '))
+        ?.slice(6)
+      if (data) deltaFrames.push(JSON.parse(data) as (typeof deltaFrames)[number])
+    }
+  })
+  const deltaOpened = new Promise<number>(resolve => deltaResponse.once('response', headers => resolve(Number(headers[':status']))))
+  const activityStart = activity.mock.calls.length
+  deltaResponse.end()
+  expect(await deltaOpened).toBe(200)
+  pieces[0]!.release()
+  await expect.poll(() => deltaFrames.find(frame => frame.type === 'task-state')?.detail?.liveText).toBe('First')
+  const activeKey = activity.mock.calls.slice(activityStart).find(([, active]) => active)?.[0]
+  expect(activeKey).toBeDefined()
+  const activeCalls = () => activity.mock.calls.filter(([key, active]) => key === activeKey && active).length
+  const beforeAppend = activeCalls()
+  pieces[1]!.release()
+  await expect.poll(() => deltaFrames.find(frame => frame.type === 'task-delta')?.text).toEqual({ offset: 5, append: ' suffix' })
+  expect(activeCalls()).toBeGreaterThan(beforeAppend)
+  const deltaClosed = new Promise<void>(resolve => deltaResponse.once('close', resolve))
+  deltaResponse.close()
+  await deltaClosed
+  await expect.poll(() => activity.mock.calls.filter(([key]) => key === activeKey).at(-1)?.[1]).toBe(false)
+  pieces[2]!.release()
   host.presence.mode = 'approve'
   await writeFile(join(host.workspaceRoot, 'bulk.txt'), Buffer.alloc(2_097_152, 120))
   const task = await host.host.bridge.createTask({ prompt: 'bulk fixture', requestId: randomUUID(), mode: 'chat' })
