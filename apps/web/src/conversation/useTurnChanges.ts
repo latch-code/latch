@@ -103,7 +103,7 @@ export function useTurnChanges(
     }
   }, [enabled, active, sessionId, revision])
   const list = records?.sessionId === sessionId ? records.turns : undefined
-  const turnKeys = turns.map(turn => `${turn.key}:${turn.user?.createdAt ?? ''}`).join('\n')
+  const turnKeys = useMemo(() => turns.map(turn => `${turn.key}:${turn.user?.createdAt ?? ''}`).join('\n'), [turns])
   const stable = useRef(turns)
   stable.current = turns
   return useMemo(

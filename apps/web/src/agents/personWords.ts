@@ -1,6 +1,6 @@
 import type { Message, RunLive, TaskDetail } from '@latch/protocol'
 import type { PermissionView } from '../composer/permission.ts'
-import { livePhase, turnsOf } from '../conversation.ts'
+import { livePhase, turnsOf, type LivePhaseOptions } from '../conversation.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { toolKind } from '../icons.tsx'
 
@@ -63,7 +63,7 @@ export function toolWord(message: Pick<Message, 'tool' | 'toolName' | 'subagent'
  * it does; otherwise the reply streams (在回复), reasoning streams or the model is asked (在想), the Harness starts (在准备),
  * a stop settles (在停下), or it waits on the person (等你点头).
  */
-export function personStatus(detail: TaskDetail, opts: { cancelling: boolean; approvals: number; hostNow: number }): PersonWord {
+export function personStatus(detail: TaskDetail, opts: LivePhaseOptions): PersonWord {
   const phase = livePhase(detail, opts)
   switch (phase.kind) {
     case 'cancelling':
@@ -72,8 +72,11 @@ export function personStatus(detail: TaskDetail, opts: { cancelling: boolean; ap
     case 'question':
       return WAITS_ON_YOU
     case 'tool': {
-      const trailing = turnsOf(detail.messages).at(-1)
-      const call = trailing?.replies.findLast(message => message.role === 'tool' && message.state === 'running')
+      const call = opts.messageFacts
+        ? opts.messageFacts.trailing
+        : turnsOf(detail.messages)
+            .at(-1)
+            ?.replies.findLast(message => message.role === 'tool' && message.state === 'running')
       return running(call ? toolWord(call) : toolWord({ toolName: detail.activity?.toolName }))
     }
     case 'reply':

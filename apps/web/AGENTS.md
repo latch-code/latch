@@ -18,7 +18,7 @@ browser 环境：不用 Node 全局变量与模块；Host、core、testkit 只�
 不变量：
 
 - `src/core/` 只导入本目录的文件、`react` 与 `@latch/protocol`，不依赖布局组件（`.oxlintrc.json`）。
-- 只有 `useReadingPosition` 写入滚动位置（`jumpToLatest`、`reveal`）；消息与工具行带 `data-message-id`。改消息布局时检查上翻、重排、回到最新与切换会话（`test/reading-position.test.ts`）。
+- 仅 `useReadingPosition` 写入滚动位置（`jumpToLatest`、`reveal`）；消息与工具行带 `data-message-id`。改消息布局时检查上翻、重排、回到最新与切换会话（`test/reading-position.test.ts`）。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
 - 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全文案只来自 `src/core/securityCopy.ts`，按错误码选择，新增安全错误码时在此补充（`test/client-security.test.ts`）。
@@ -35,7 +35,7 @@ browser 环境：不用 Node 全局变量与模块；Host、core、testkit 只�
 
 仅消息内容淡入，滚动容器不透明度动画会丢命中。
 
-布局见 DESIGN/STREAMING；切换保留会话。Agent 设置复用原控件；ProfileLayer 单实例跨断点保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
+布局/缓存见 DESIGN/STREAMING；切换保留会话。Agent 设置复用原控件；ProfileLayer 单实例跨断点保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
 
 - 附件字节只经专用上传，未知提交保留原请求与引用（ATTACHMENTS.md）。
 

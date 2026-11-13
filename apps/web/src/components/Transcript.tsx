@@ -16,20 +16,18 @@ import {
   isLive,
   liveMessageId,
   outcomeWords,
-  renderedMessages,
+  projectTurns,
+  liveTurn,
   resendText,
   resendWarning,
   runEndLine,
   sameData,
   sideEffects,
-  stableTurns,
   toolRowId,
   turnBlocks,
-  settingSwitches,
   turnModel,
   turnRoute,
   turnOutcome,
-  turnsOf,
   turnTimes,
   ownTextStart,
   workFolds,
@@ -215,6 +213,27 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
 }
 
 const NONE: readonly never[] = []
+
+/** Only body-frame fields are omitted; a new detail or summary field remains part of the history key. */
+function historyDetail(detail: TaskDetail): Record<string, unknown> {
+  const { liveText: _text, liveReasoning: _reasoning, cursor: _cursor, sync: _sync, lastOutputAt: _output, ...rest } = detail
+  const { updatedAt: _updated, live, ...summary } = detail.summary
+  const { lastEventAt: _event, lastOutputAt: _liveOutput, ...phase } = live ?? {}
+  return { ...rest, summary: { ...summary, ...(live ? { live: phase } : {}) } }
+}
+
+const HISTORY_DATA = new Set(['detail', 'approvals', 'harness', 'login', 'speaker', 'changes', 'failureSteps', 'retry'])
+
+/** New props compare by identity unless they are one of the JSON values whose every field we already read. */
+function sameHistoryInputs(before: Record<string, unknown>, next: Record<string, unknown>): boolean {
+  const keys = Object.keys(before)
+  return (
+    keys.length === Object.keys(next).length
+    && keys.every(
+      key => Object.hasOwn(next, key) && (Object.is(before[key], next[key]) || (HISTORY_DATA.has(key) && sameData(before[key], next[key]))),
+    )
+  )
+}
 
 /** A line across the conversation where the session itself changed between two turns. */
 function TimelineDivider({ icon: Glyph, text }: { icon?: typeof Eraser; text: string }) {
@@ -546,33 +565,7 @@ const TurnView = memo(function TurnView({
  * the turn has settled, but prose never does; a footer follows the last row. The latest turn of a running session ends
  * with the status line instead.
  */
-export function Transcript({
-  login,
-  detail,
-  approvals,
-  harnessName,
-  speaker,
-  harness,
-  demo = false,
-  active = false,
-  cancelling = false,
-  coarse = false,
-  providerName,
-  fallbackElapsed,
-  frozenAt,
-  retry,
-  onFork,
-  onSource,
-  onCopyError,
-  onStop,
-  onStopSubagent,
-  onReveal,
-  changes,
-  onHandoff,
-  placed,
-  failureSteps,
-  onFailureStep,
-}: {
+interface TranscriptProps {
   detail: TaskDetail
   approvals: Approval[]
   /** This device's approval buttons; omitted, every offered option is shown. */
@@ -623,14 +616,46 @@ export function Transcript({
    * began before it, '' before every turn. Given the turns' keys and start times, it answers what goes where.
    */
   placed?: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => ReadonlyMap<string, ReactNode>
-}) {
-  const messages = renderedMessages(detail)
+}
+
+export function Transcript(props: TranscriptProps) {
+  const {
+    login,
+    detail,
+    approvals,
+    harnessName,
+    speaker,
+    harness,
+    demo = false,
+    active = false,
+    cancelling = false,
+    coarse = false,
+    providerName,
+    fallbackElapsed,
+    frozenAt,
+    retry,
+    onFork,
+    onSource,
+    onCopyError,
+    onStop,
+    onStopSubagent,
+    onReveal,
+    changes,
+    onHandoff,
+    placed,
+    failureSteps,
+    onFailureStep,
+  } = props
   // Kept from the previous render even if React discards it: a turn only ever stands in for one with the same data.
-  const lastTurns = useRef<Turn[]>([])
-  const turns = stableTurns(lastTurns.current, turnsOf(messages))
-  lastTurns.current = turns
-  const switches = useMemo(() => settingSwitches(turns), [turns])
-  const ids = new Set(messages.map(message => message.id))
+  const lastTurns = useRef<{ sessionId: string; turns: Turn[] }>({ sessionId: '', turns: [] })
+  const projection = useMemo(() => {
+    const previous = lastTurns.current.sessionId === detail.summary.id ? lastTurns.current.turns : []
+    const next = projectTurns(detail.messages, previous)
+    lastTurns.current = { sessionId: detail.summary.id, turns: next.turns }
+    return next
+  }, [detail.messages, detail.summary.id])
+  const tail = liveTurn(projection, detail)
+  const switches = projection.switches
   const liveId = isLive(detail) ? liveMessageId(detail) : undefined
   const forkFrom = useStableCallback((messageId: string) => onFork?.(messageId))
   const copyUpTo = useStableCallback((messageId: string) => {
@@ -657,10 +682,14 @@ export function Transcript({
     [failureSteps, failureStepTaken],
   )
   const handoff = useStableCallback((messageIds: string[]) => onHandoff?.(messageIds))
-  const inserts = placed?.(turns.map(turn => ({ key: turn.key, at: turnTimes(turn).startedAt })))
+  const leadKey = projection.turns.length ? undefined : tail?.key
+  const turnIndex = useMemo(() => (leadKey ? [{ key: leadKey, at: undefined }] : projection.index), [projection, leadKey])
+  // Legacy/plugin details may settle a synthetic reply before committing any message; keep its run-record target.
+  const recordTurns = useMemo<Turn[]>(() => (leadKey ? [{ key: leadKey, replies: [] }] : projection.turns), [projection, leadKey])
+  const inserts = useMemo(() => placed?.(turnIndex), [placed, turnIndex])
   // Stable, so the subagent rows under it do not draw again with every render of the page.
   const stopSubagent = useStableCallback((subagentId: string) => onStopSubagent!(subagentId))
-  const lastKey = turns.at(-1)?.key ?? ''
+  const lastKey = tail?.key ?? ''
   // The latest turn before the last change the page saw happen ('' for none): a different latest turn arrived live.
   const previousLast = useLivePrevious(lastKey)
   const { id: sessionId, cwd, folders, updatedAt } = detail.summary
@@ -674,7 +703,7 @@ export function Transcript({
     active,
     updatedAt,
   })
-  const records = useTurnChanges(sessionId, turns, {
+  const records = useTurnChanges(sessionId, recordTurns, {
     enabled: changes?.enabled === true,
     revision: changesRevision,
     active,
@@ -700,6 +729,7 @@ export function Transcript({
   const engine = demo ? '演示' : undefined
   const statusProps: StatusLineProps = {
     detail,
+    messageFacts: projection.messageFacts,
     harness: speaker?.name ?? engine ?? harnessName,
     ...(speaker ? { person: true } : {}),
     cancelling,
@@ -710,6 +740,109 @@ export function Transcript({
     ...(onReveal ? { onView: onReveal } : {}),
     onError: changesError,
   }
+  const renderTurn = (turn: Turn, index: number, latest: boolean) => {
+    const trailingLive = latest && active
+    const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
+    const resend =
+      latest && !trailingLive && retry && turn.user
+        ? {
+            warning: resendWarning(sideEffects(turn)),
+            onResend: () => {
+              retry.onResend(resendText(turn.user!))
+            },
+          }
+        : undefined
+    const rowIds = turn.replies.filter(message => message.role === 'tool').map(message => message.id)
+    const ownApprovals = approvals.length ? approvals.filter(approval => rowIds.includes(toolRowId(approval) ?? '')) : NONE
+    const ownQuestions = detail.questions?.length
+      ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
+      : NONE
+    const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
+    const stamped = turnModel(turn)
+    const route = trailingLive ? undefined : turnRoute(turn)
+    const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
+    const said = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
+    // A helper has begun on it, not a Harness.
+    const delivery = speaker && said === 'Harness 已开始' ? `${speaker.name} 已开始` : said
+    const record = records.get(turn.key)
+    return (
+      <Fragment key={turn.key}>
+        <TurnView
+          key={turn.key}
+          turn={turn}
+          context={{
+            sessionId,
+            approvals: ownApprovals,
+            questions: ownQuestions,
+            ...(streaming ? { streamingId: liveId } : {}),
+            ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
+            coarse,
+            frozen: frozen && trailingLive,
+            person: speaker !== undefined,
+          }}
+          {...(engine ? { engine } : {})}
+          harnessName={harnessName}
+          {...(speaker ? { speaker } : {})}
+          login={login}
+          harness={harness}
+          model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
+          provider={providerId ? providerName?.(providerId) : undefined}
+          {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
+          latest={latest}
+          trailingLive={trailingLive}
+          outcome={outcome}
+          arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+          {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
+          {...(trailingLive ? { status: statusProps } : {})}
+          {...(delivery ? { delivery } : {})}
+          {...(latest ? { summary: detail.summary } : {})}
+          {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
+          retry={resend}
+          reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
+          onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
+          onCopyUpTo={!trailingLive ? copyUpTo : undefined}
+          {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
+          {...(onFork ? { onContinue: continueRun } : {})}
+          {...(steps ? { onFailureStep: steps } : {})}
+          {...(record ? { changes: record } : {})}
+          sessionActive={active}
+          changesRevision={cardsRevision}
+          changesEnabled={changes?.enabled === true}
+          onChangesError={changesError}
+          {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
+        />
+        {inserts?.get(turn.key)}
+      </Fragment>
+    )
+  }
+  // Keep the same flat keyed siblings when a former live tail becomes history: its DOM and local state stay put.
+  const historyInputs = {
+    ...props,
+    detail: historyDetail(detail),
+    fallbackElapsed: undefined,
+    onFork: !!onFork,
+    onSource: !!onSource,
+    onCopyError: !!onCopyError,
+    onStop: !!onStop,
+    onStopSubagent: !!onStopSubagent,
+    onReveal: !!onReveal,
+    onHandoff: !!onHandoff,
+    onFailureStep: !!onFailureStep,
+    retry: retry ? { ...retry, onResend: true } : undefined,
+    projection,
+    currentLiveId: liveId,
+    records,
+    inserts,
+    cardsRevision,
+    steps,
+  }
+  const history = useRef<{ inputs: Record<string, unknown>; elements: ReactNode[] } | undefined>(undefined)
+  if (!history.current || !sameHistoryInputs(history.current.inputs, historyInputs)) {
+    history.current = { inputs: historyInputs, elements: projection.history.map((turn, index) => renderTurn(turn, index, false)) }
+  }
+  // React still reconciles a flat sibling list; this removes historical projections and prop comparisons, not all O(n) work.
+  const rows = tail ? [...history.current.elements, renderTurn(tail, projection.history.length, true)] : history.current.elements
+
   return (
     <FileSession.Provider value={fileSession}>
       <SubagentStop.Provider value={onStopSubagent ? stopSubagent : undefined}>
@@ -729,82 +862,7 @@ export function Transcript({
               </p>
             )}
             {inserts?.get('')}
-            {turns.map((turn, index) => {
-              const latest = index === turns.length - 1
-              const trailingLive = latest && active
-              const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
-              const resend =
-                latest && !trailingLive && retry && turn.user
-                  ? {
-                      warning: resendWarning(sideEffects(turn)),
-                      onResend: () => {
-                        retry.onResend(resendText(turn.user!))
-                      },
-                    }
-                  : undefined
-              const rowIds = turn.replies.filter(message => message.role === 'tool').map(message => message.id)
-              const ownApprovals = approvals.length ? approvals.filter(approval => rowIds.includes(toolRowId(approval) ?? '')) : NONE
-              const ownQuestions = detail.questions?.length
-                ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
-                : NONE
-              const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
-              const stamped = turnModel(turn)
-              const route = trailingLive ? undefined : turnRoute(turn)
-              const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
-              const said = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
-              // A helper has begun on it, not a Harness.
-              const delivery = speaker && said === 'Harness 已开始' ? `${speaker.name} 已开始` : said
-              const record = records.get(turn.key)
-              return (
-                <Fragment key={turn.key}>
-                  <TurnView
-                    key={turn.key}
-                    turn={turn}
-                    context={{
-                      sessionId,
-                      approvals: ownApprovals,
-                      questions: ownQuestions,
-                      ...(streaming ? { streamingId: liveId } : {}),
-                      ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
-                      coarse,
-                      frozen: frozen && trailingLive,
-                      person: speaker !== undefined,
-                    }}
-                    {...(engine ? { engine } : {})}
-                    harnessName={harnessName}
-                    {...(speaker ? { speaker } : {})}
-                    login={login}
-                    harness={harness}
-                    model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
-                    provider={providerId ? providerName?.(providerId) : undefined}
-                    {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
-                    latest={latest}
-                    trailingLive={trailingLive}
-                    outcome={outcome}
-                    arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-                    {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
-                    {...(trailingLive ? { status: statusProps } : {})}
-                    {...(delivery ? { delivery } : {})}
-                    {...(latest ? { summary: detail.summary } : {})}
-                    {...(latest && detail.plan?.length ? { plan: detail.plan } : {})}
-                    retry={resend}
-                    reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
-                    onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
-                    onCopyUpTo={!trailingLive ? copyUpTo : undefined}
-                    {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
-                    {...(onFork ? { onContinue: continueRun } : {})}
-                    {...(steps ? { onFailureStep: steps } : {})}
-                    {...(record ? { changes: record } : {})}
-                    sessionActive={active}
-                    changesRevision={cardsRevision}
-                    changesEnabled={changes?.enabled === true}
-                    onChangesError={changesError}
-                    {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
-                  />
-                  {inserts?.get(turn.key)}
-                </Fragment>
-              )
-            })}
+            {rows}
           </FileReferences>
         </TurnSummaryOptions.Provider>
       </SubagentStop.Provider>

@@ -100,6 +100,8 @@ const COUNT_RENDERS = () => {
 declare global {
   interface Window {
     renders: Record<string, number>
+    transcriptActions: string[]
+    placedTurnKeys: string[]
   }
 }
 
@@ -218,6 +220,281 @@ describe('streaming render', () => {
     // 200 lines arrived; the tail draws 17 of them, about ten spans each.
     expect(Math.max(...spans)).toBeLessThanOrEqual(17 * 12)
     expect(await live.locator('pre code').textContent()).not.toContain('line0 ')
+  })
+
+  it('does not revisit settled history fields when only the live tail grows', async () => {
+    await open()
+    const past = prose(300, 1)
+    const value = detail([...past, { id: 'user-live', role: 'user', text: '继续' }], {
+      running: true,
+      liveText: '正在回复',
+      liveId: 'reply-live',
+    })
+    await page.evaluate(({ value, count }) => window.watchHistory(value, count), { value, count: past.length })
+    const live = page.locator('[data-message-id="reply-live"]')
+    await expect.poll(() => live.textContent()).toContain('正在回复')
+    expect(await page.locator('[data-message-id]').count()).toBe(602)
+    const first = page.locator('[data-message-id="user-0"]')
+    await first.evaluate(element => element.setAttribute('data-owned-node', 'history'))
+    expect(await page.evaluate(() => window.takeHistoryReads())).toBeGreaterThan(0)
+    const counts: number[] = []
+    for (let frame = 1; frame <= 3; frame++) {
+      await page.evaluate(text => window.appendLive(text), ` 新片段${frame}`)
+      await expect.poll(() => live.textContent()).toContain(`新片段${frame}`)
+      counts.push(await page.evaluate(() => window.takeHistoryReads()))
+    }
+    expect(await first.getAttribute('data-owned-node')).toBe('history')
+    expect(await page.locator('[data-message-id]').count()).toBe(602)
+    expect(await page.locator('[data-message-id="reply-299"]').textContent()).toContain('word299x0')
+    expect(counts, 'settled history field reads in three actual DOM commits').toEqual([0, 0, 0])
+  })
+
+  it('keeps the old tail DOM, work expansion and text selection when a new turn makes it history', async () => {
+    await open()
+    const past = prose(2, 1)
+    const current: Message[] = [
+      ...past,
+      { id: 'user-tail', role: 'user', text: '尾轮问题' },
+      {
+        id: 'tool:tail',
+        role: 'tool',
+        text: 'done',
+        toolName: 'execute',
+        state: 'completed',
+        tool: { kind: 'execute', input: '{"command":"echo done"}' },
+      },
+      { id: 'reply-tail', role: 'assistant', text: '保留这段选择', state: 'completed' },
+    ]
+    await show(detail(current))
+    const turn = page.locator('[data-turn="user-tail"]')
+    const fold = turn.locator('button.work-fold')
+    await fold.click()
+    expect(await fold.getAttribute('aria-expanded')).toBe('true')
+    await page.locator('[data-message-id="reply-tail"]').evaluate(element => {
+      element.setAttribute('data-owned-node', 'tail')
+      const range = document.createRange()
+      range.selectNodeContents(element.querySelector('.message-content')!)
+      const selection = document.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+    })
+    const selected = await page.evaluate(() => document.getSelection()?.toString())
+    expect(selected).toContain('保留这段选择')
+    await show(
+      detail([...current, { id: 'next-user', role: 'user', text: '继续' }], { running: true, liveId: 'next-reply', liveText: '新轮回复' }),
+    )
+    await expect.poll(() => page.locator('[data-message-id="next-reply"]').textContent()).toContain('新轮回复')
+    expect(await page.locator('[data-message-id="reply-tail"]').getAttribute('data-owned-node')).toBe('tail')
+    expect(await fold.getAttribute('aria-expanded')).toBe('true')
+    expect(await page.evaluate(() => document.getSelection()?.toString())).toBe(selected)
+  })
+
+  it('invalidates shared history display and new props while actions read their latest callback', async () => {
+    await open()
+    const past = prose(2, 1)
+    const value = detail([...past, { id: 'user-live', role: 'user', text: '继续' }], {
+      running: true,
+      liveId: 'reply-live',
+      liveText: '新轮',
+    })
+    await page.evaluate(({ value, count }) => window.watchHistory(value, count), { value, count: past.length })
+    const first = page.locator('[data-turn="user-0"]')
+    await first.locator('.assistant-meta').waitFor()
+    await page.evaluate(() => {
+      window.transcriptActions = []
+      window.showTranscriptOptions({ harnessName: '更新的执行端', onFork: id => window.transcriptActions.push(`old:${id}`) })
+    })
+    await expect.poll(() => first.locator('.assistant-meta').textContent()).toContain('更新的执行端')
+    const fork = first.getByRole('button', { name: '从这里分叉', exact: true })
+    await fork.waitFor()
+    await page.evaluate(() =>
+      window.showTranscriptOptions({ harnessName: '更新的执行端', onFork: id => window.transcriptActions.push(`new:${id}`) }),
+    )
+    await first.hover()
+    await fork.click()
+    expect(await page.evaluate(() => window.transcriptActions)).toEqual(['new:reply-0'])
+    await page.evaluate(() => window.showTranscriptOptions({ harnessName: '更新的执行端', speaker: { name: '小雨', avatar: 'general' } }))
+    await expect.poll(() => first.locator('.assistant-meta').textContent()).toBe('小雨')
+    expect(await fork.count()).toBe(0)
+    expect(await first.locator('.assistant-meta-model').count()).toBe(0)
+    await page.evaluate(() => window.showTranscriptOptions({ harnessName: '更新的执行端' }))
+    await expect.poll(() => first.locator('.assistant-meta').textContent()).toContain('fixture')
+    await page.evaluate(() => window.takeHistoryReads())
+    const before = await page.evaluate(() => window.renders.Transcript ?? 0)
+    await page.evaluate(() => {
+      const next = { harnessName: '更新的执行端', futureDisplay: { revision: 1 } }
+      window.showTranscriptOptions(next)
+    })
+    await expect.poll(() => page.evaluate(() => window.renders.Transcript ?? 0)).toBeGreaterThan(before)
+    expect(await page.evaluate(() => window.takeHistoryReads())).toBeGreaterThan(0)
+    await page.evaluate(() =>
+      window.showTranscriptOptions({
+        harnessName: '更新的执行端',
+        coarse: true,
+        frozenAt: Date.now(),
+        changes: { enabled: false, undo: 'read-only', offline: true },
+      }),
+    )
+    await expect.poll(() => page.locator('.status-line').count()).toBe(0)
+    expect(await page.evaluate(() => window.takeHistoryReads())).toBeGreaterThan(0)
+    expect(await fork.count()).toBe(0)
+  })
+
+  it('updates historical approval and question rows without replacing the message list', async () => {
+    await open()
+    const messages: Message[] = [
+      { id: 'old-user', role: 'user', text: '先前问题' },
+      { id: 'tool:approval', role: 'tool', toolName: 'write_file', text: '', state: 'awaiting-approval' },
+      { id: 'tool:question', role: 'tool', toolName: 'ask_user', text: '等待选择', state: 'awaiting-approval' },
+      { id: 'next-user', role: 'user', text: '继续' },
+    ]
+    await show(detail(messages, { running: true, liveId: 'next-reply', liveText: '新轮' }))
+    const row = page.locator('[data-message-id="tool:approval"]')
+    await row.waitFor()
+    await page.evaluate(() =>
+      window.showTranscriptOptions({
+        approvals: [
+          {
+            id: 'approval',
+            sessionId: 'session-fixture',
+            toolCallId: 'approval',
+            toolName: 'write_file',
+            arguments: '{}',
+            requestedAt: '2026-10-31T00:00:00.000Z',
+            reason: '需要确认',
+            tool: { toolTitle: '更新的待批准工具' },
+          },
+        ],
+      }),
+    )
+    await expect.poll(() => row.textContent()).toContain('更新的待批准工具')
+    await page.evaluate(() => window.showTranscriptOptions({ approvals: [] }))
+    await expect.poll(() => row.textContent()).not.toContain('更新的待批准工具')
+    const question = page.locator('[data-message-id="tool:question"]')
+    expect(await question.count()).toBe(1)
+    await page.evaluate(() =>
+      window.patchDetail({
+        questions: [
+          {
+            id: 'question',
+            toolCallId: 'question',
+            prompt: '现在选择',
+            state: 'pending',
+            questions: [],
+          },
+        ],
+      }),
+    )
+    await expect.poll(() => question.count()).toBe(0)
+    await page.evaluate(() => window.patchDetail({ questions: [] }))
+    await expect.poll(() => question.count()).toBe(1)
+  })
+
+  it('refreshes historical file records and withdraws their actions when access changes', async () => {
+    await open()
+    let files = 1
+    let recordReads = 0
+    await page.route('**/api/tasks/**/changes/turns', route => {
+      recordReads++
+      return route.fulfill({ json: { turns: [{ turnId: 'old-run', startedAt: '2026-10-31T00:00:00.000Z', state: 'settled', files }] } })
+    })
+    await page.route('**/api/tasks/**/changes?**', route =>
+      route.fulfill({
+        json: {
+          scope: 'turn',
+          turnId: 'old-run',
+          files: Array.from({ length: files }, (_, index) => ({ root: 'root', path: `file-${index}.txt`, status: 'A', add: 1, del: 0 })),
+          totals: { files, add: files, del: 0 },
+          undo: { available: true },
+        },
+      }),
+    )
+    await page.evaluate(() => window.showTranscriptOptions({ changes: { enabled: true, undo: 'open', offline: false } }))
+    const messages: Message[] = [
+      { id: 'old-user', role: 'user', text: '先前问题', createdAt: '2026-10-31T00:00:00.000Z' },
+      { id: 'old-answer', role: 'assistant', text: '已有结果' },
+      { id: 'new-user', role: 'user', text: '新问题', createdAt: '2026-10-31T01:00:00.000Z' },
+      { id: 'new-answer', role: 'assistant', text: '新结果' },
+    ]
+    await show(detail(messages))
+    const card = page.locator('[data-turn="old-user"]').getByRole('region', { name: '这一轮改动的文件' })
+    await expect.poll(() => card.textContent()).toContain('改动了 1 个文件')
+    files = 2
+    await page.evaluate(() => window.refreshTurnRecords())
+    await expect.poll(() => recordReads).toBeGreaterThan(1)
+    await expect.poll(() => card.textContent()).toContain('改动了 2 个文件')
+    const undo = card.getByRole('button', { name: '撤销本轮', exact: true })
+    expect(await undo.count()).toBe(1)
+    await page.evaluate(() => window.showTranscriptOptions({ changes: { enabled: true, undo: 'read-only', offline: false } }))
+    await expect.poll(() => undo.count()).toBe(0)
+    // Read-only is explained at the composer; the historical card withdraws the action without inventing another reason.
+    await page.evaluate(() => window.showTranscriptOptions({ changes: { enabled: false, undo: 'read-only', offline: true } }))
+    await expect.poll(() => card.count()).toBe(0)
+  })
+
+  it('keeps a synthetic leading reply indexed for placed content and its final file record', async () => {
+    await open()
+    await page.route('**/api/tasks/**/changes/turns', route =>
+      route.fulfill({
+        json: {
+          turns: [
+            {
+              turnId: 'lead-run',
+              startedAt: '2026-10-31T00:00:00.000Z',
+              state: 'settled',
+              files: 1,
+            },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/tasks/**/changes?**', route =>
+      route.fulfill({
+        json: {
+          scope: 'turn',
+          turnId: 'lead-run',
+          files: [{ root: 'root', path: 'result.txt', status: 'A', add: 1, del: 0 }],
+          totals: { files: 1, add: 1, del: 0 },
+          undo: { available: true },
+        },
+      }),
+    )
+    await page.evaluate(() =>
+      window.showTranscriptOptions({
+        changes: { enabled: true, undo: 'open', offline: false },
+        placed: turns => {
+          window.placedTurnKeys = turns.map(turn => turn.key)
+          return new Map()
+        },
+      }),
+    )
+    const initial = detail([], { liveId: 'lead-reply', liveText: '未提交的末段' })
+    initial.summary.runId = 'lead-run'
+    await show(initial)
+    const row = page.locator('[data-message-id="lead-reply"]')
+    await row.waitFor()
+    expect(await page.evaluate(() => window.placedTurnKeys)).toEqual(['lead:lead-reply'])
+    await row.evaluate(element => element.setAttribute('data-owned-node', 'lead'))
+    await expect.poll(() => page.getByRole('region', { name: '这一轮改动的文件' }).textContent()).toContain('改动了 1 个文件')
+    await show({ ...initial, messages: [{ id: 'lead-reply', role: 'assistant', text: '未提交的末段', state: 'completed' }], liveText: '' })
+    await expect.poll(() => row.getAttribute('data-owned-node')).toBe('lead')
+    expect(await page.evaluate(() => window.placedTurnKeys)).toEqual(['lead:lead-reply'])
+  })
+
+  it('rechecks a committed historical live ID when text appears and is cleared', async () => {
+    await open()
+    const past = prose(2, 1)
+    const value = detail([...past, { id: 'current-user', role: 'user', text: '继续' }], { running: true, liveId: 'reply-0' })
+    await page.evaluate(({ value, count }) => window.watchHistory(value, count), { value, count: past.length })
+    const row = page.locator('[data-message-id="reply-0"]')
+    await row.waitFor()
+    expect(await row.getAttribute('class')).not.toContain('is-live')
+    await page.evaluate(() => window.patchDetail({ liveText: 'legacy live fragment' }))
+    await expect.poll(() => row.getAttribute('class')).toContain('is-live')
+    await page.evaluate(() => window.patchDetail({ liveText: '' }))
+    await expect.poll(() => row.getAttribute('class')).not.toContain('is-live')
+    expect(await row.textContent()).toContain('word0x0')
+    expect(await page.locator('[data-message-id="reply-0"]').count()).toBe(1)
   })
 
   it('copies the current raw Markdown during streaming and retains the same reply and copy control when it settles', async () => {

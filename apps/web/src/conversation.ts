@@ -86,6 +86,33 @@ export function stableTurns(previous: readonly Turn[], next: readonly Turn[]): T
   })
 }
 
+/** The immutable committed history. A body-only frame can reuse this whole projection. */
+export function projectTurns(messages: Message[], previous: readonly Turn[] = []) {
+  const turns = stableTurns(previous, turnsOf(messages))
+  return {
+    turns,
+    history: turns.slice(0, -1),
+    ids: new Set(messages.map(message => message.id)),
+    switches: settingSwitches(turns),
+    index: turns.map(turn => ({ key: turn.key, at: turnTimes(turn).startedAt })),
+    messageFacts: runMessageFacts(messages, turns),
+  }
+}
+
+/** Only the last turn owns the synthetic reply; a committed ID always wins, just as in renderedMessages. */
+export function liveTurn(projection: ReturnType<typeof projectTurns>, detail: TaskDetail): Turn | undefined {
+  const last = projection.turns.at(-1)
+  const id = liveMessageId(detail)
+  if (!isLive(detail) || projection.ids.has(id)) return last
+  const message: Message = {
+    id,
+    role: 'assistant',
+    text: detail.liveText,
+    ...(detail.liveReasoning ? { reasoning: detail.liveReasoning } : {}),
+  }
+  return last ? { ...last, replies: [...last.replies, message] } : { key: `lead:${id}`, replies: [message] }
+}
+
 /** How a settled turn ended. */
 export type TurnOutcome = 'completed' | 'failed' | 'stopped' | 'interrupted'
 
@@ -742,19 +769,38 @@ export type LivePhase =
   | { kind: 'starting'; slow: boolean }
   | { kind: 'model' }
 
+export interface RunMessageFacts {
+  running: Message | undefined
+  trailing: Message | undefined
+}
+
+/** Read once per immutable message list; a late running row in old history is distinct from the latest turn's tool. */
+function runMessageFacts(messages: Message[], turns = turnsOf(messages)): RunMessageFacts {
+  return {
+    running: messages.findLast(message => message.role === 'tool' && message.state === 'running'),
+    trailing: turns.at(-1)?.replies.findLast(message => message.role === 'tool' && message.state === 'running'),
+  }
+}
+
+export interface LivePhaseOptions {
+  cancelling: boolean
+  approvals: number
+  hostNow: number
+  messageFacts?: RunMessageFacts
+}
+
 /**
  * What the run is doing, in this order: stopping, waiting for you, running a tool (a running row of the latest turn
  * says so before the driver's own phase does), writing the reply, reasoning, starting an agent, or waiting for the
  * model.
  */
-export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; approvals: number; hostNow: number }): LivePhase {
+export function livePhase(detail: TaskDetail, opts: LivePhaseOptions): LivePhase {
   const activity = detail.activity
   if (opts.cancelling || activity?.phase === 'cancelling') return { kind: 'cancelling' }
   if (detail.questions?.length) return { kind: 'question' }
   if (opts.approvals > 0 || detail.summary.status === 'waiting-approval' || activity?.phase === 'approval') return { kind: 'approval' }
-  const running = detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
-  const trailing = turnsOf(detail.messages).at(-1)
-  if (running && trailing?.replies.includes(running)) return { kind: 'tool', text: toolText(running) }
+  const { trailing } = opts.messageFacts ?? runMessageFacts(detail.messages)
+  if (trailing) return { kind: 'tool', text: toolText(trailing) }
   if (activity?.phase === 'tool') return { kind: 'tool', text: activity.toolName ? `正在执行 ${activity.toolName}` : '正在执行工具' }
   if (detail.liveText) return { kind: 'reply' }
   if (detail.liveReasoning) return { kind: 'thinking' }
@@ -820,10 +866,7 @@ export type RunStatus = {
 
 const minutesText = (ms: number) => `${Math.max(1, Math.floor(ms / 60_000))} 分钟`
 
-export function runStatus(
-  detail: TaskDetail,
-  opts: { cancelling: boolean; approvals: number; hostNow: number; harness: string; fallbackElapsed?: number },
-): RunStatus {
+export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness: string; fallbackElapsed?: number }): RunStatus {
   const phase = livePhase(detail, opts)
   if (phase.kind === 'cancelling') return { tone: 'plain', text: PHASE_WORDS.cancelling }
   if (phase.kind === 'approval' || phase.kind === 'question') return { tone: 'quiet', text: PHASE_WORDS[phase.kind] }
@@ -856,7 +899,9 @@ export function runStatus(
     return { tone: 'amber', text: `${minutesText(opts.hostNow - lastOutput)}没有新输出`, actions: ['stop'] }
   const elapsed = runElapsed(detail, opts.hostNow) ?? opts.fallbackElapsed
   const clock = elapsed === undefined ? undefined : runClock(elapsed)
-  const running = detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
+  const running = opts.messageFacts
+    ? opts.messageFacts.running
+    : detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
   // The row reads the command itself where the Host may only have the tool's title.
   const command =
     running && toolKind(running) === 'execute' ? toolLabel(running).object : live?.activity === 'command' ? live.commandName : undefined

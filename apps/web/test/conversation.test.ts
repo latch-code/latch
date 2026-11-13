@@ -6,6 +6,8 @@ import type { Turn } from '../src/conversation.ts'
 import {
   sameData,
   stableTurns,
+  projectTurns,
+  liveTurn,
   livePhase,
   outcomeWords,
   phaseText,
@@ -955,6 +957,81 @@ describe('stable turns', () => {
     expect(sameData({ a: undefined }, { b: undefined })).toBe(false)
     expect(sameData({ a: 1 }, { a: 1, b: 2 })).toBe(false)
     expect(sameData(null, {})).toBe(false)
+  })
+
+  it('reprojects same-ID history rewrites and future message fields, preserving only equal turns', () => {
+    const messages = [user('u1'), reply('a1', 'before'), user('u2')]
+    const first = projectTurns(messages)
+    const rewritten = projectTurns([messages[0]!, reply('a1', 'after'), messages[2]!], first.turns)
+    expect(rewritten.turns[0]).not.toBe(first.turns[0])
+    expect(rewritten.turns[0]!.replies[0]!.text).toBe('after')
+    expect(rewritten.turns[1]).toBe(first.turns[1])
+    const futureMessage = { ...messages[1]!, future: { revision: 2 } }
+    const future = projectTurns([messages[0]!, futureMessage, messages[2]!], first.turns)
+    expect(future.turns[0]).not.toBe(first.turns[0])
+    expect(future.turns[0]!.replies[0]).toHaveProperty('future.revision', 2)
+    const inserted = projectTurns([reply('lead', 'earlier'), ...messages], first.turns)
+    expect(inserted.turns.map(turn => turn.key)).toEqual(['lead:lead', 'u1', 'u2'])
+    expect(inserted.turns[1]).toBe(first.turns[0])
+  })
+
+  it('adds only the live tail, preserves steering and never duplicates a committed live ID', () => {
+    const messages = [user('u1'), reply('a1', 'past'), user('u2'), user('steer', { steered: true })]
+    const projection = projectTurns(messages)
+    const tail = liveTurn(projection, detail(messages, { liveMessageId: 'a2', liveText: 'new', liveReasoning: 'thinking' }, 'running'))!
+    expect(projection.history.map(turn => turn.key)).toEqual(['u1'])
+    expect(tail.replies.map(message => message.id)).toEqual(['steer', 'a2'])
+    expect(tail.replies[1]).toMatchObject({ text: 'new', reasoning: 'thinking' })
+    expect(projection.turns[1]!.replies).toHaveLength(1)
+    expect(liveTurn(projection, detail(messages, { liveMessageId: 'a1', liveText: 'duplicate' }))).toBe(projection.turns[1])
+    const empty = projectTurns([])
+    expect(liveTurn(empty, detail([], { liveMessageId: 'only', liveText: 'lead' }))).toMatchObject({
+      key: 'lead:only',
+      replies: [{ id: 'only', text: 'lead' }],
+    })
+    expect(liveTurn(empty, detail([]))).toBeUndefined()
+  })
+
+  it('clears running facts on same-ID settlement and distinguishes an old running row from the current turn', () => {
+    const command = tool('tool:old', { state: 'running', tool: { kind: 'execute', input: '{"command":"old-command"}' } })
+    const messages = [user('u1'), command, user('u2')]
+    const projection = projectTurns(messages)
+    expect(projection.messageFacts).toEqual({ running: command, trailing: undefined })
+    const current = detail(messages, { liveText: 'answer' }, 'running')
+    const opts = { cancelling: false, approvals: 0, hostNow: T0, harness: 'Test', messageFacts: projection.messageFacts }
+    expect(livePhase(current, opts)).toEqual({ kind: 'reply' })
+    expect(runStatus(current, opts).text).toContain('old-command')
+    const settled = projectTurns([messages[0]!, { ...command, state: 'completed' }, messages[2]!], projection.turns)
+    expect(settled.messageFacts).toEqual({ running: undefined, trailing: undefined })
+    expect(projectTurns([], projection.turns).messageFacts).toEqual({ running: undefined, trailing: undefined })
+    const nextMessages = [user('u2'), { ...command, tool: { kind: 'execute' as const, input: '{"command":"new-command"}' } }]
+    const regenerated = projectTurns(nextMessages, settled.turns)
+    expect(regenerated.messageFacts.trailing).toBe(regenerated.messageFacts.running)
+    expect(livePhase(detail(nextMessages), { ...opts, messageFacts: regenerated.messageFacts })).toEqual({
+      kind: 'tool',
+      text: '运行 new-command',
+    })
+  })
+
+  it('keeps time, silence, cancellation and new reasoning live while message facts remain stable', () => {
+    const messages = [user('u')]
+    const messageFacts = projectTurns(messages).messageFacts
+    const current = detail(messages, { runStartedAt: at(0) }, 'running')
+    const opts = { cancelling: false, approvals: 0, hostNow: T0 + 1_000, harness: 'Test', messageFacts }
+    expect(runStatus(current, opts).clock).toBe('0:01')
+    expect(runStatus(current, { ...opts, hostNow: T0 + 9_000 }).clock).toBe('0:09')
+    expect(livePhase({ ...current, liveReasoning: 'new thought' }, opts)).toEqual({ kind: 'thinking' })
+    expect(livePhase({ ...current, liveText: 'answer' }, opts)).toEqual({ kind: 'reply' })
+    expect(livePhase(current, { ...opts, approvals: 1 })).toEqual({ kind: 'approval' })
+    expect(livePhase(current, { ...opts, cancelling: true })).toEqual({ kind: 'cancelling' })
+    const silent = {
+      ...current,
+      summary: {
+        ...current.summary,
+        live: { runId: 'new-run', activity: 'model' as const, since: at(0), lastEventAt: at(0), silent: true as const },
+      },
+    }
+    expect(runStatus(silent, { ...opts, hostNow: T0 + 121_000 })).toMatchObject({ tone: 'amber', text: '等模型回应 · 2 分钟没有新内容' })
   })
 })
 

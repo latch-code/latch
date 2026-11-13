@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
 import { Button, ICON_STROKE, Icon, AlertGlyph, WarningGlyph } from '@latch/ui'
-import { runEndLine, runStatus, type RunStatus } from '../conversation.ts'
+import { runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
@@ -37,11 +37,7 @@ function useHeldStatus(status: RunStatus): RunStatus {
  * The same line as a helper says it: the plain line's words from the event that runs (在想, 在跑命令, 在用 …), silence as
  * 没有动静, and the rest (a request it does not support, a stop) as they are.
  */
-export function personRunStatus(
-  status: RunStatus,
-  detail: TaskDetail,
-  opts: { cancelling: boolean; approvals: number; hostNow: number },
-): RunStatus {
+export function personRunStatus(status: RunStatus, detail: TaskDetail, opts: LivePhaseOptions): RunStatus {
   if (status.tone === 'plain' || status.tone === 'quiet') return { ...status, text: personStatus(detail, opts).words }
   const live = detail.summary.live
   if (live?.silent) return { ...status, text: silentWords(live, opts.hostNow) }
@@ -55,6 +51,7 @@ export interface StatusLineProps {
   person?: boolean
   cancelling: boolean
   approvals: number
+  messageFacts?: RunMessageFacts
   fallbackElapsed?: number
   /** The connection is down: nothing is known to move, so the line says when it last knew. */
   frozenAt?: number
@@ -73,6 +70,7 @@ export function StatusLine({
   person = false,
   cancelling,
   approvals,
+  messageFacts,
   fallbackElapsed,
   frozenAt,
   onStop,
@@ -86,9 +84,12 @@ export function StatusLine({
     approvals,
     hostNow: now,
     harness,
+    ...(messageFacts ? { messageFacts } : {}),
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
   })
-  const status = useHeldStatus(person ? personRunStatus(said, detail, { cancelling, approvals, hostNow: now }) : said)
+  const status = useHeldStatus(
+    person ? personRunStatus(said, detail, { cancelling, approvals, hostNow: now, ...(messageFacts ? { messageFacts } : {}) }) : said,
+  )
   const [waiting, setWaiting] = useState(false)
   // Offline, the banner says so and the sidebar row has 上次确认: nothing about the run is claimed here meanwhile.
   if (frozenAt !== undefined) return null
