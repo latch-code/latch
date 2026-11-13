@@ -1,8 +1,9 @@
 import { _electron, type ElectronApplication } from '@playwright/test'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { expect, it } from 'vitest'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -12,6 +13,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
+import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/desktop-workbench'
 it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
@@ -57,6 +59,29 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       const folder = join(host.root, 'desktop-project')
       await mkdir(folder)
       await writeFile(join(folder, 'settings.ts'), 'export const keep = false\n')
+      const git = (...args: string[]) =>
+        execFileSync(
+          'git',
+          [
+            '-c',
+            'core.hooksPath=/dev/null',
+            '-c',
+            'commit.gpgsign=false',
+            '-c',
+            'user.name=Fixture',
+            '-c',
+            'user.email=fixture@example.invalid',
+            ...args,
+          ],
+          {
+            cwd: folder,
+            env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+            stdio: 'pipe',
+          },
+        )
+      git('init', '--template=', '--initial-branch=main')
+      git('add', 'settings.ts')
+      git('commit', '-m', 'Initial fixture')
       const added = await owner.addFolders({ name: '桌面项目', paths: [folder] })
       const { workspace } = (await added.json()) as { workspace: WorkspaceInfo }
       await owner.confirmedJson('agents', {
@@ -118,6 +143,13 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('准备桌面阅读记录')
       await home.getByRole('button', { name: '发送', exact: true }).click()
       await expect.poll(async () => (await host.host.bridge.listTasks())[0]?.status).toBe('idle')
+      const completed = (await host.host.bridge.listTasks())[0]
+      await expect
+        .poll(async () => (await host.host.bridge.detail(completed.id)).messages.some(message => message.outputsPending), {
+          timeout: 10_000,
+        })
+        .toBe(false)
+      await writeFile(join(folder, 'release.md'), '# 发布说明\n\n保留设置。\n')
       const input = page.locator('.workspace textarea').first()
       await input.fill('原会话草稿')
       const sender = await input.elementHandle(),
@@ -128,6 +160,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBeLessThan(bottom)
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
       const reading = await transcript.evaluate(element => element.scrollTop)
+      let waiting = ''
       for (const prompt of ['等待批准配置', '准备发布记录']) {
         const started = await owner.json<{ sessionId: string }>('tasks', {
           method: 'POST',
@@ -141,9 +174,14 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         await expect
           .poll(async () => (await owner.json<TaskDetail>(`tasks/${started.sessionId}`)).summary.status)
           .toBe(prompt === '等待批准配置' ? 'waiting-approval' : 'running')
+        if (prompt === '等待批准配置') waiting = started.sessionId
       }
       await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
       await home.locator('.approval-panel').waitFor()
+      const delivery = home.locator('[data-group="delivery"]')
+      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('目录未提交 1 个文件')
+      expect(await delivery.locator('.work-delivery').count()).toBe(1)
+      expect(await delivery.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
       const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
       await draft.fill('首页独立草稿')
       await home
@@ -179,6 +217,33 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
       expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
       expect(await host.host.bridge.listTasks()).toHaveLength(3)
+      for (const theme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: theme })
+        for (const [layout, title] of [
+          ['overview', '总览'],
+          ['triage', '分拣台'],
+        ] as const) {
+          await page.getByRole('button', { name: '布局', exact: true }).filter({ visible: true }).first().click()
+          await page.getByRole('menuitemradio', { name: title, exact: true }).click()
+          await settleShell(page)
+          await noHorizontalOverflow(page)
+          expect(await delivery.textContent()).toContain('目录未提交 1 个文件')
+          await page.screenshot({ path: `${OUT}/${layout}-home-1440-${theme}.png`, animations: 'disabled' })
+        }
+      }
+      // The actual home decision changes the file and continues that session without consuming either draft.
+      const allow = home.locator('.approval-panel').getByRole('button', { name: '允许', exact: true })
+      await expect.poll(() => allow.isEnabled()).toBe(true)
+      await allow.click()
+      await expect.poll(async () => (await host.host.bridge.detail(waiting)).summary.status).toBe('idle')
+      expect(await readFile(join(folder, 'settings.ts'), 'utf8')).toBe('export const keep = true\n')
+      expect(await draft.inputValue()).toBe('首页独立草稿')
+      expect(await home.getByRole('button', { name: 'desktop.txt', exact: true }).isEnabled()).toBe(true)
+      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('目录未提交 2 个文件')
+      await delivery.getByRole('button', { name: '查看改动', exact: true }).click()
+      await page.locator('.delivery-panel').getByText('release.md', { exact: true }).waitFor()
+      await page.locator('.delivery-panel').getByText('settings.ts', { exact: true }).waitFor()
+      await page.screenshot({ path: `${OUT}/delivery-after-home-approval.png`, animations: 'disabled' })
       await writeFile(`${OUT}/frames.json`, JSON.stringify({ entry: 'latch://app/link/', metrics }, null, 2))
       const video = page.video()
       await app.close()

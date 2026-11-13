@@ -16,6 +16,8 @@ export interface WorkbenchRepository extends Pick<
 export interface WorkbenchDeliveryEntry {
   sessionId: string
   observedAt: string
+  /** The Host verified a stable, readable directory with no direct .git entry; no repository state or error accompanies it. */
+  notApplicable?: 'not-repository'
   state?: WorkbenchRepository
   /** Only an already bound pull request, without discussion or a suggested PR title. */
   pr?: Pick<GitPrState, 'pr' | 'checks'>

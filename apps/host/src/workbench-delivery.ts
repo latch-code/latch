@@ -1,5 +1,6 @@
 import type { GitDeliveryState, GitPrState, WorkbenchDelivery, WorkbenchDeliveryEntry, WorkbenchRepository } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
+import { isOrdinaryWorkbenchFolder } from './workbench-git-eligibility.ts'
 
 interface Source {
   now(): number
@@ -11,6 +12,8 @@ interface Observed<T> {
   value: T
   at: string
 }
+
+type RepositoryRead = { state: WorkbenchRepository } | { notApplicable: 'not-repository' }
 
 export interface WorkbenchDeliveryTarget {
   sessionId: string
@@ -37,19 +40,29 @@ export function workbenchReadFailure(error: unknown): NonNullable<WorkbenchDeliv
 
 /** Bounded reads for visible workbench cards. Completed reads are not cached; no background repository polling. */
 export class WorkbenchDeliveryReader {
-  private readonly states = new Map<string, Promise<Observed<WorkbenchRepository>>>()
+  private readonly states = new Map<string, Promise<Observed<RepositoryRead>>>()
   private readonly prs = new Map<string, Promise<Observed<Pick<GitPrState, 'pr' | 'checks'>>>>()
 
   constructor(private readonly source: Source) {}
 
   async read(targets: WorkbenchDeliveryTarget[]): Promise<WorkbenchDelivery> {
     const entries: WorkbenchDeliveryEntry[] = new Array(targets.length)
-    const batchStates = new Map<string, Promise<Observed<WorkbenchRepository>>>()
+    const batchStates = new Map<string, Promise<Observed<RepositoryRead>>>()
     let next = 0
     const state = (folder: string) => {
       let pending = batchStates.get(folder)
       if (!pending) {
-        pending = this.coalesce(this.states, folder, async () => ({ value: repository(await this.source.state(folder)), at: this.stamp() }))
+        pending = this.coalesce(this.states, folder, async () => {
+          let value: RepositoryRead
+          try {
+            value = { state: repository(await this.source.state(folder)) }
+          } catch (error) {
+            if (!(error instanceof AppError) || error.code !== 'git-not-repository' || !(await isOrdinaryWorkbenchFolder(folder)))
+              throw error
+            value = { notApplicable: 'not-repository' }
+          }
+          return { value, at: this.stamp() }
+        })
         batchStates.set(folder, pending)
       }
       return pending
@@ -63,7 +76,8 @@ export class WorkbenchDeliveryReader {
         else {
           try {
             const observed = await state(target.folder)
-            entry.state = observed.value
+            if ('state' in observed.value) entry.state = observed.value.state
+            else entry.notApplicable = observed.value.notApplicable
             entry.observedAt = observed.at
           } catch (error) {
             entry.error = workbenchReadFailure(error)

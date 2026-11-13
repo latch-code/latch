@@ -196,6 +196,8 @@ export function WorkOverview({
         ? '这台电脑未提供交付状态'
         : (evidence?.error ?? (!evidence?.ready ? (evidence?.loading ? '正在读取交付状态…' : '尚未读取交付状态') : undefined))
   const deliveryPartial = [...(evidence?.entries.values() ?? [])].some(entry => entry.error || entry.prError)
+  const deliveryNotApplicable = [...(evidence?.entries.values() ?? [])].some(entry => entry.notApplicable === 'not-repository')
+  const hasRepository = [...(evidence?.entries.values() ?? [])].some(entry => entry.state)
   const unobserved = snapshot.tasks.filter(task => !task.archived && spaceOf(task) === 'code' && !evidence?.entries.has(task.id)).length
   const counted = (id: WorkGroupId) => id !== 'delivery' || (!deliveryNotice && !deliveryPartial && unobserved === 0)
   if (!compact && !snapshot.tasks.some(task => !task.archived && spaceOf(task) === 'code'))
@@ -259,16 +261,24 @@ export function WorkOverview({
               <EmptyState
                 className="work-overview-empty"
                 action={
-                  group.id === 'delivery' && !compact && deliveryPartial && connected && evidence ? (
+                  group.id === 'delivery' && !compact && (deliveryPartial || deliveryNotApplicable) && connected && evidence ? (
                     <Button variant="ghost" size="xs" onClick={evidence.refresh}>
-                      重试
+                      {deliveryPartial ? '重试' : '刷新'}
                     </Button>
                   ) : undefined
                 }
                 title={
                   group.id === 'delivery'
                     ? (deliveryNotice
-                      ?? (deliveryPartial ? '部分目录暂时无法读取' : unobserved ? '已查看的会话没有待交付改动' : group.empty))
+                      ?? (deliveryPartial
+                        ? '部分目录暂时无法读取'
+                        : deliveryNotApplicable && !hasRepository
+                          ? '已查看的目录不支持 Git 交付'
+                          : deliveryNotApplicable
+                            ? '已查看的 Git 仓库没有待交付改动'
+                            : unobserved
+                              ? '已查看的会话没有待交付改动'
+                              : group.empty))
                     : group.empty
                 }
               />
@@ -368,6 +378,9 @@ export function WorkOverview({
             )}
             {group.id === 'delivery' && group.tasks.length > 0 && deliveryNotice && (
               <p className="work-overview-connection">{deliveryNotice}</p>
+            )}
+            {group.id === 'delivery' && group.tasks.length > 0 && !compact && deliveryNotApplicable && !deliveryNotice && (
+              <p className="work-overview-connection">部分目录不支持 Git 交付</p>
             )}
             {group.id === 'delivery' && !compact && !deliveryNotice && unobserved > 0 && (
               <p className="work-overview-connection">

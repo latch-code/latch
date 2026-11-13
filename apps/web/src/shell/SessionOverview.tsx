@@ -144,6 +144,8 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
           <>
             {evidence.error || entry?.error ? (
               <InlineNotice tone="warn">{evidence.error ?? entry?.error?.message}</InlineNotice>
+            ) : entry?.notApplicable === 'not-repository' ? (
+              <p>这个目录不支持 Git 交付</p>
             ) : state ? (
               <>
                 {state.branch && (
@@ -187,9 +189,15 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
             )}
             {checks && <p>{checks}</p>}
             {entry?.prError && <InlineNotice tone="warn">{entry.prError.message}</InlineNotice>}
-            <Button size="sm" onClick={() => shell.showSurface({ kind: 'delivery' })}>
-              {state ? next : '查看交付'}
-            </Button>
+            {entry?.notApplicable === 'not-repository' ? (
+              <Button size="sm" variant="ghost" disabled={!connected} onClick={evidence.refresh}>
+                刷新
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => shell.showSurface({ kind: 'delivery' })}>
+                {state ? next : '查看交付'}
+              </Button>
+            )}
             {!connected && entry && (
               <p>上次状态 {new Date(entry.observedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p>
             )}
