@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 const FOLDER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+const AGENT_ID = /^(?:general|agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const FOLDER_LIMIT = 8
 // A click can reopen the window: its message then arrives before the page has subscribed, and waits for the first subscriber.
@@ -546,6 +547,10 @@ if (!REMOTE)
           const folder = optionalId(folderId, FOLDER_ID)
           if (typeof projectId !== 'string' || !PROJECT_ID.test(projectId) || folder === undefined) return Promise.resolve(INVALID)
           return ipcRenderer.invoke('latch:folders:reveal', { projectId, folderId: folder })
+        },
+        revealAgentHome: agentId => {
+          if (typeof agentId !== 'string' || !AGENT_ID.test(agentId)) return Promise.resolve(INVALID)
+          return ipcRenderer.invoke('latch:folders:reveal', { agentId })
         },
         /** 存为项目: the folder the Host made for this session becomes a new project's primary folder. */
         saveSessionFolder: sessionId => {

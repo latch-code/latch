@@ -27,18 +27,21 @@ export function McpSection({
   builtin,
   access,
   disabled,
+  assignable = true,
 }: {
   agentId: string
   harness: HarnessInfo | undefined
   builtin: boolean
   access: Pick<DeviceAccess, 'local' | 'admin' | 'scopes'>
   disabled: boolean
+  /** 通用 receives servers scoped to every session; it is not a custom Agent scope. */
+  assignable?: boolean
 }) {
   const [data, setData] = useState<McpServersResponse | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const canRead = access.scopes.has('view')
-  const canAttach = access.local && access.admin
+  const canAttach = assignable && access.local && access.admin
   const load = useCallback(async () => {
     try {
       setData(await api<McpServersResponse>('mcp/servers'))

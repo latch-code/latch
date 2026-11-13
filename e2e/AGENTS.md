@@ -1,6 +1,6 @@
 # @latch/e2e
 
-Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 Host。布局切换见 `workbench-layout.e2e.ts`。
+Vitest 驱动浏览器、Electron 与原生；`startTestHost` 启动临时 Host。布局见 `workbench-layout.e2e.ts`。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -10,7 +10,7 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
-`workbench-keyboard.e2e.ts` 以真实临时 Host 的待处理请求和文件验证三宽键盘循环、数字跳会话、焦点及草稿保留，并在 Chromium 与 WebKit 中检查 Alt / 浮层与 Alt Shift 1–4 的控件键不离开页面；截图写入 `test-results/workbench-keyboard/`。
+`workbench-keyboard.e2e.ts` 在临时 Host、Chromium/WebKit 验证三宽键盘、浮层、焦点和草稿；截图在 `test-results/workbench-keyboard/`。
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 
@@ -24,6 +24,7 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 
 `stream-performance.e2e.ts`：`LATCH_STREAM_BENCH=1`，[说明](../docs/TESTING.md)
 
+
 node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire、Playwright、Vite 只写 devDependencies；Vitest 使用根项目的版本，本项目不重复声明。
 
 不变量：
@@ -35,3 +36,5 @@ node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire�
 - 视觉截图每次运行结果相同：时钟、名称、内容与项目路径固定，画面中没有随机值；改截取的状态或稳定措施前读 [docs/TESTING.md](../docs/TESTING.md#视觉截图)「视觉截图」。
 
 改动前先读 [docs/TESTING.md](../docs/TESTING.md#浏览器-e2e)「浏览器 e2e」、「视觉截图」与「Electron e2e」。
+
+`helper-home.e2e.ts`：假 ACP，家/默认项/人工任务，三宽深浅与权限失败；跨断点同表单/焦点/未知请求（CUSTOM-AGENTS）。

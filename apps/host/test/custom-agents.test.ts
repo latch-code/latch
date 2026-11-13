@@ -176,6 +176,49 @@ test('a start keeps its first selection even if the agent changes since', async 
   })
 })
 
+test('keeps the start configuration through definition changes and a restart', async () => {
+  const { store, open: reopen } = await fixture()
+  const model = { providerId: 'service', model: 'model', effort: 'high' }
+  const { id } = (await store.create({ ...definition(), model, engineOptions: { model: 'large', effort: 'high' } }, actor)).value
+  const rid = randomUUID()
+  const config = [
+    { configId: 'model', value: 'large' },
+    { configId: 'effort', value: 'high' },
+  ]
+  const first = await store.reserveStart(id, rid, () => ({ harnessId: 'standard', mode: 'agent', config }), actor)
+  const before = store.definitionHash(id)
+  await store.patch(id, { requestId: randomUUID(), baseRevision: 1, engineOptions: { model: 'small' } }, actor)
+  expect(store.definitionHash(id)).not.toBe(before)
+  await store.close()
+  const again = await reopen()
+  stores.push(again)
+  expect(again.get(id).model).toEqual(model)
+  expect(again.recordedStart(id, actor.actor.deviceId!, rid)).toEqual(first)
+  expect(await again.reserveStart(id, rid, () => ({ harnessId: 'standard', mode: 'agent', config: [] }), actor)).toEqual({
+    harnessId: 'standard',
+    mode: 'agent',
+    config,
+  })
+})
+
+test('records only a matching Host-allocated home, audits before publication and keeps it on restart', async () => {
+  const { store, audit, open: reopen } = await fixture()
+  const { id } = (await store.create(definition(), actor)).value
+  await expect(store.recordHome(id, 'helpers/general', actor)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+  audit.append.mockRejectedValueOnce(new Error('audit unavailable'))
+  await expect(store.recordHome(id, `helpers/${id}`, actor)).rejects.toThrow('audit unavailable')
+  expect(store.get(id).home).toBeUndefined()
+  await store.recordHome(id, `helpers/${id}`, actor)
+  const count = audit.append.mock.calls.length
+  await store.recordHome(id, `helpers/${id}`, actor)
+  expect(audit.append.mock.calls).toHaveLength(count)
+  expect(JSON.stringify(audit.append.mock.calls)).not.toContain(`helpers/${id}`)
+  await store.close()
+  const again = await reopen()
+  stores.push(again)
+  expect(again.get(id).home).toBe(`helpers/${id}`)
+})
+
 test('the Harness is fixed once created: another is refused, its own passes, and a retry answers from its receipt', async () => {
   const { store, audit } = await fixture()
   const { id } = (await store.create(definition(), actor)).value

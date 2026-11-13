@@ -20,6 +20,14 @@ export interface AgentAvatar {
 
 export const GENERAL_AGENT_ID = 'general'
 
+/** The Host's verified home hint, visible only to devices allowed to read this Agent's private data. */
+export interface AgentHome {
+  owner: string
+  path: string
+  available: boolean
+  reason?: string
+}
+
 /** 名称、图标、说明、指令、技能、Harness 与模型 of one of 我的 Agent. */
 export interface CustomAgentConfig {
   name: string
@@ -32,7 +40,7 @@ export interface CustomAgentConfig {
   model?: ModelRef
   /**
    * External engines' own defaults (their model, 思考 and 权限), as `configId` to value. Saved here and offered to the
-   * client that starts the session, which sets them through the session's config route, under that route's checks.
+   * Host, which applies them through the Harness's start configuration and verifies them before its first prompt.
    */
   engineOptions?: Record<string, string>
   /** What you wrote. The built-in engine gets it as a system prompt; external engines get it in the first-turn block. */
@@ -53,6 +61,8 @@ export interface AgentNotifications {
 }
 export interface CustomAgent extends CustomAgentConfig {
   id: string
+  /** Host-allocated path relative to its start directory. Clients cannot choose or change it. */
+  home?: string
   avatar: AgentAvatar
   notifications?: AgentNotifications
   /**
@@ -97,6 +107,8 @@ export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools'
  */
 export interface GeneralAgent {
   id: typeof GENERAL_AGENT_ID
+  /** The Host's fixed home for new Standard Agent topics; existing topics keep their original directory. */
+  home?: string
   instructions: string
   /** Absent until you choose: such sessions load every enabled skill. An array, empty included, is exactly those. */
   skills?: string[]

@@ -31,6 +31,7 @@ interface Options {
   /** The revision each plugin runs at, and whether those revisions can be trusted across a restart. */
   revisions(ids: string[]): { revisions: Record<string, string>; hashed: unknown; persistent: boolean }
   projectUsable(projectId: string): boolean
+  automationAllowed(harnessId: string): boolean
   /** What a run's folders depend on: the policy, the start directory and the project's folders. */
   environment(projectId: string | undefined): unknown
 }
@@ -66,7 +67,7 @@ export class AgentPlans {
       sessionCount: tasks.filter(task => task.agent?.customAgentId === agent.id).length,
       available: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      canAutomate: unavailableReason === undefined,
+      canAutomate: unavailableReason === undefined && this.options.automationAllowed(agent.harnessId),
     }
   }
 
@@ -80,11 +81,16 @@ export class AgentPlans {
     const own = harnessId === agent.harnessId
     const model = chosen.model ?? (own ? agent.model : undefined)
     const workspaceId = chosen.workspaceId ?? agent.defaultProjectId
+    const config =
+      own && this.options.harness(harnessId)?.capabilities.models.owner !== 'latch'
+        ? Object.entries(agent.engineOptions ?? {}).map(([configId, value]) => ({ configId, value }))
+        : []
     return {
       harnessId,
       mode: chosen.mode ?? (own ? agent.mode : 'agent'),
       ...(model ? { model } : {}),
       ...(workspaceId ? { workspaceId } : {}),
+      ...(config.length ? { config } : {}),
     }
   }
 
@@ -129,17 +135,18 @@ export class AgentPlans {
     }
   }
 
-  /** What an unattended run needs. A question nobody answers ends as any unanswered approval does. */
-  automation(config: AutomationConfig): AutomationPlan {
+  /** Only a scheduled dispatch is unattended; an explicit manual run keeps its caller's normal session authority. */
+  automation(config: AutomationConfig, trigger: 'schedule' | 'manual' = 'schedule'): AutomationPlan {
     const agent = config.customAgentId ? this.options.agents.get(config.customAgentId) : undefined
+    const workspaceId = config.projectId
     const harnessId = agent?.harnessId ?? STANDARD
     const harness = this.options.harness(harnessId)
     if (!harness || harness.status !== 'ready')
       throw new AppError(409, 'agent-unavailable', '这个 Harness 暂时不可用，请检查电脑上的配置。')
-    if (config.projectId && !this.options.projectUsable(config.projectId))
+    if (workspaceId && !this.options.projectUsable(workspaceId))
       throw new AppError(409, 'workspace-unavailable', '找不到所选项目，或它暂不可用。')
     const hostModel = harness.capabilities.models.owner === 'latch'
-    const model = hostModel ? (config.model ?? agent?.model ?? this.options.defaultModel()) : undefined
+    const model = config.model ?? agent?.model ?? (hostModel ? this.options.defaultModel() : undefined)
     if (hostModel && (!model || !this.options.modelAvailable(model))) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
     const provider = model ? this.options.providerOwner(model.providerId) : undefined
     if (hostModel && !provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
@@ -163,6 +170,7 @@ export class AgentPlans {
     const context = agent ? this.build(agent, harnessId) : this.generalContext(harnessId)
     const definition = this.options.agents.definitionHash(owner)
     const mode = agent?.mode ?? 'agent'
+    const choices = !hostModel ? Object.entries(agent?.engineOptions ?? {}).map(([configId, value]) => ({ configId, value })) : []
     return {
       basis: sha256Hex(
         canonicalJson({
@@ -172,17 +180,18 @@ export class AgentPlans {
           ...(model ? { model } : {}),
           tools: agent?.tools ?? null,
           revisions: snapshot.hashed,
-          environment: this.options.environment(config.projectId),
+          environment: this.options.environment(workspaceId),
         }),
       ),
       persistent: snapshot.persistent,
       harnessId,
       mode,
+      ...(choices.length ? { config: choices } : {}),
       ...(model ? { model } : {}),
       agentContext: {
         ...(context ?? { instructions: '', revision: definition }),
         expectedRevisions: snapshot.revisions,
-        unattended: true,
+        ...(trigger === 'schedule' ? { unattended: true } : {}),
       },
     }
   }

@@ -5,7 +5,7 @@ import { AppError } from '@latch/sdk'
 import type { GitPrBinding, TaskSummary } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
-import { SESSION_FOLDER_NAME } from './session-folders.ts'
+import { HELPER_HOME_NAME, SESSION_FOLDER_NAME } from './session-folders.ts'
 import { PR_URL } from './git-pr.ts'
 import { BRANCH_NAME } from './worktrees.ts'
 
@@ -160,7 +160,7 @@ const sessionEntrySchema = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
     .optional(),
-  sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+  sessionFolder: z.union([z.string().regex(SESSION_FOLDER_NAME), z.string().regex(HELPER_HOME_NAME)]).optional(),
   worktree: z
     .strictObject({
       path: z.string().min(2).max(4096).startsWith('/'),

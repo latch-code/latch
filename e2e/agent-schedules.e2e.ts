@@ -4,12 +4,31 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import type { AppSnapshot, AutomationDetail, AutomationList, CustomAgentList, TaskDetail, WorkspaceInfo } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import type { TestDevice } from '@latch/testkit'
+import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 
 const OUT = 'test-results/agent-schedules'
+
+const scheduled: HarnessPlugin = {
+  id: 'schedule-fixture',
+  name: 'Schedule fixture',
+  version: '1',
+  description: '',
+  activate(context) {
+    context.registerProvider({
+      id: 'schedule-fixture',
+      name: 'Schedule fixture',
+      model: 'fixture',
+      async *stream({ messages }) {
+        yield { type: 'text', text: `echo: ${messages.findLast(message => message.role === 'user')?.content ?? ''}` }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+  },
+}
 
 /** A browser with the full data scope, which Agents need; `scopes` narrows what it may do. */
 async function agentBrowser(page: Page, host: TestHost, owner: TestDevice, name: string, scopes?: string[]) {
@@ -67,31 +86,34 @@ async function newTopic(page: Page) {
   return page.getByRole('textbox', { name: '给资料助手发消息', exact: true })
 }
 
+async function openCarry(page: Page) {
+  await page.locator('.agent-delegate').getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('menuitem', { name: '带入上次成果…', exact: true }).click()
+}
+
 it('creates, runs, pauses and resumes a schedule, shows a missed time, and carries an earlier result into a new topic', async () => {
   await mkdir(OUT, { recursive: true })
   // The Host's clock, moved forward to pass a scheduled time while the Host is "asleep".
   let shift = 0
-  const host = await startTestHost({ now: () => Date.now() + shift })
+  const host = await startTestHost({ now: () => Date.now() + shift, plugins: [scheduled] })
   const browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.confirmedJson('agents', {
-      method: 'POST',
-      body: {
-        id: 'fake-agent',
-        name: 'Fake Agent',
-        command: process.execPath,
-        args: [FAKE_ACP_AGENT],
-        env: { FAKE_ACP_LOG: join(host.root, 'acp.log') },
-      },
-    })
     const folder = join(host.root, 'notes')
     await mkdir(folder)
     expect((await owner.addFolders({ paths: [folder], name: 'notes' })).status).toBeLessThan(300)
     const project = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.name === 'notes')!
     await owner.json('custom-agents', {
       method: 'POST',
-      body: { requestId: randomUUID(), name: '资料助手', description: '查资料', harnessId: 'fake-agent', defaultProjectId: project.id },
+      body: {
+        requestId: randomUUID(),
+        name: '资料助手',
+        description: '查资料',
+        harnessId: 'standard',
+        mode: 'agent',
+        model: { providerId: 'schedule-fixture', model: 'fixture' },
+        defaultProjectId: project.id,
+      },
     })
     const agent = (await owner.json<CustomAgentList>('custom-agents')).agents[0]!
     const automations = async () => (await owner.json<AutomationList>('automations')).automations
@@ -113,8 +135,8 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await form.getByLabel('名称').fill('汇率周报')
     await form.getByLabel('几点').fill(time)
     await form.getByLabel('每次的输入').fill('整理本周汇率')
-    // The Agent's default project is filled in, shown and changeable; saving is the choice.
-    await form.getByRole('button', { name: /^项目.*notes/u }).waitFor()
+    // A schedule starts at home even when topics use a default project; choosing notes is explicit.
+    await form.getByRole('button', { name: /^项目.*家/u }).waitFor()
     await form.getByRole('button', { name: /^项目/u }).click()
     await choice(page, /notes/u).click()
     await page.screenshot({ path: `${OUT}/form-1440.png` })
@@ -216,7 +238,7 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await page.getByRole('menuitemradio', { name: /汇率周报/u }).waitFor()
     await page.keyboard.press('Escape')
     await newTopic(page)
-    await page.getByRole('button', { name: '带入上次成果', exact: true }).click()
+    await openCarry(page)
     const dialog = page.getByRole('dialog', { name: '带入上次成果' })
     await dialog.getByRole('checkbox', { name: first!.title }).check()
     await dialog.getByRole('checkbox', { name: '最后的回复' }).waitFor()
@@ -256,7 +278,7 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await narrow.getByRole('button', { name: '取消', exact: true }).click()
     await narrow.getByRole('button', { name: '完成', exact: true }).click()
     await newTopic(narrow)
-    await narrow.getByRole('button', { name: '带入上次成果', exact: true }).click()
+    await openCarry(narrow)
     const sheet = narrow.getByRole('dialog', { name: '带入上次成果' })
     await sheet.getByRole('checkbox').first().check()
     await sheet.getByRole('checkbox', { name: '最后的回复' }).waitFor()
@@ -285,7 +307,9 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
       if (width < 768) await view.getByRole('button', { name: '完成', exact: true }).click()
       else await view.getByRole('button', { name: '关闭资料', exact: true }).click()
       await newTopic(view)
-      await view.getByRole('button', { name: '带入上次成果', exact: true }).waitFor()
+      await view.locator('.agent-delegate').getByRole('button', { name: '更多', exact: true }).click()
+      expect(await view.getByRole('menuitem', { name: '带入上次成果…', exact: true }).isEnabled()).toBe(true)
+      await view.keyboard.press('Escape')
       await noHorizontalOverflow(view)
       await view.screenshot({ path: `${OUT}/delegate-${width}-${scheme}.png` })
       await sized.close()

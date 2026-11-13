@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AgentComputer,
+  AgentHome,
   AppSnapshot,
   CustomAgentDetail,
   CustomAgentList,
@@ -42,6 +43,7 @@ function useAgentRead<T>(snapshot: Pick<AppSnapshot, 'device'>, path: string | n
     let retry: ReturnType<typeof setTimeout> | undefined
     api<T>(path, { signal: controller.signal })
       .then(value => {
+        if (controller.signal.aborted) return
         shown.current = value
         setRead({ state: 'ready', value })
       })
@@ -119,6 +121,18 @@ export function useAgentComputer(
 
 export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>) {
   return useAgentRead<CustomAgentList>(snapshot, 'custom-agents', agentsVersion(snapshot))
+}
+
+export function useAgentHome(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks'>, owner: string) {
+  const assigned = snapshot.customAgents?.find(agent => agent.id === owner)?.home
+  const topics = snapshot.tasks.filter(task => (task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : undefined)) === owner)
+  const result = useAgentRead<AgentHome>(
+    snapshot,
+    `custom-agents/${encodeURIComponent(owner)}/home`,
+    `${snapshot.device.id}:${assigned ?? ''}:${topics.map(topic => topic.id).join(',')}`,
+  )
+  const value = readsAgents(snapshot) && 'value' in result.read ? result.read.value : undefined
+  return { ...result, value: value?.owner === owner ? value : undefined }
 }
 
 export type AgentDetailValue = { kind: 'custom'; detail: CustomAgentDetail } | { kind: 'general'; detail: GeneralAgentDetail }

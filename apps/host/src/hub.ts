@@ -32,6 +32,7 @@ import {
 import { notSentConfig } from './config-requests.ts'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
 import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts } from './session-meta.ts'
+import { SESSION_FOLDER_NAME } from './session-folders.ts'
 import { BranchReader } from './branch-reader.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
 import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
@@ -833,6 +834,11 @@ export class HarnessHub implements Bridge {
     return this.meta.sessionFolders()
   }
 
+  /** The Host-allocated relative folder name, never a path supplied by a driver. */
+  sessionFolderOf(sessionId: string): string | undefined {
+    return this.meta.get(sessionId)?.sessionFolder
+  }
+
   /** The plugin page that started the session, from the Host's own records. */
   originOf(sessionId: string): PageOrigin | undefined {
     const origin = this.meta.get(sessionId)?.origin
@@ -1268,7 +1274,7 @@ export class HarnessHub implements Bridge {
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
       ...(meta?.generalChat && !agent ? { generalChat: true as const } : {}),
       ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
-      ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
+      ...(meta?.sessionFolder && SESSION_FOLDER_NAME.test(meta.sessionFolder) ? { sessionFolder: true as const } : {}),
       ...(meta?.worktree
         ? {
             worktree: {

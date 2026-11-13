@@ -41,17 +41,16 @@ const automation = (extra: Partial<Automation> = {}): Automation => ({
 const run = (state: AutomationRun['state'], at = '2026-11-10T01:00:00.000Z'): AutomationRun => ({ at, state, trigger: 'schedule' })
 
 describe('the 定时 form', () => {
-  it('needs a name, a time, a work location chosen by hand and an input', () => {
+  it('needs a name, a time, an available work location and an input', () => {
     expect(scheduleProblem(NEW_SCHEDULE)).toBe('先填名称')
     expect(scheduleProblem({ ...NEW_SCHEDULE, name: '周报', time: '9' })).toBe('先填时间')
-    expect(scheduleProblem({ ...NEW_SCHEDULE, name: '周报' })).toBe('先选工作位置')
+    expect(scheduleProblem({ ...NEW_SCHEDULE, name: '周报', location: undefined })).toBe('先选工作位置')
     expect(scheduleProblem({ ...NEW_SCHEDULE, name: '周报', location: 'default' })).toBe('先写每次的输入')
     expect(scheduleProblem({ ...NEW_SCHEDULE, name: '周报', location: 'default', prompt: '写周报' })).toBeUndefined()
   })
 
-  it('starts in the Agent’s default project, and empty without one', () => {
-    expect(newScheduleDraft('notes').location).toBe('notes')
-    expect(newScheduleDraft(undefined).location).toBeUndefined()
+  it('starts at home until the person chooses a project', () => {
+    expect(newScheduleDraft().location).toBe('default')
   })
 
   it('creates for the Agent, in a project or in each run’s own folder', () => {
@@ -118,7 +117,7 @@ describe('a schedule on the page', () => {
   it('names where it works and its input in a line', () => {
     const catalog = { workspaces: [{ id: 'notes', name: 'notes', path: '/w/notes' }] } as never
     expect(scheduleWhere(catalog, { projectId: 'notes' })).toBe('notes')
-    expect(scheduleWhere(catalog, {})).toBe('每次新的文件夹')
+    expect(scheduleWhere(catalog, {})).toBe('家')
     expect(inputLine('\n  整理本周汇率\n写成一页')).toBe('整理本周汇率')
     expect(inputLine('长'.repeat(80), 10)).toBe(`${'长'.repeat(9)}…`)
   })
@@ -143,6 +142,16 @@ describe('a schedule on the page', () => {
   it('treats an automation changed elsewhere as a conflict to reload', () => {
     expect(writeOutcome(new ApiError(409, 'automation-changed', '这项记录已更新'))).toEqual({ kind: 'conflict', message: '这项记录已更新' })
     expect(writeOutcome(new ApiError(403, 'automation-owner', '这台设备不能开启这个定时任务。')).kind).toBe('refused')
+  })
+
+  it('allows manual starts without claiming that an available native Agent may run in the background', () => {
+    const input = { offline: false, canRun: true, agent: { available: true, canAutomate: false } }
+    expect(scheduleBlock(input)).toBeDefined()
+    expect(scheduleBlock({ ...input, trigger: 'manual' })).toBeUndefined()
+    expect(scheduleBlock({ ...input, canRun: false, trigger: 'manual' })).toMatch(/只能查看/u)
+    expect(
+      scheduleBlock({ ...input, agent: { ...input.agent, available: false, unavailableReason: 'Harness 不可用' }, trigger: 'manual' }),
+    ).toBe('Harness 不可用')
   })
 })
 

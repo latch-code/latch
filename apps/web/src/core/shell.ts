@@ -25,6 +25,7 @@ export interface ShellFolders {
   pick: (workspaceId?: string, replaceFolderId?: string) => Promise<FolderResult>
   drop: { (files: readonly File[]): Promise<FolderResult>; (workspaceId: string, files: readonly File[]): Promise<FolderResult> }
   reveal: (workspaceId: string, folderId?: string) => Promise<RevealResult>
+  revealAgentHome?: (agentId: string) => Promise<RevealResult>
   saveSessionFolder?: (sessionId: string) => Promise<FolderResult>
 }
 

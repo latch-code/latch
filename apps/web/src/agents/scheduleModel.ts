@@ -12,7 +12,7 @@ import type {
 } from '@latch/protocol'
 import { worksIn } from './model.ts'
 
-/** What the 定时 form edits. `location` is a project ID, `default` for each run's own folder, unset until chosen. */
+/** What the 定时 form edits. `location` is a project ID, or `default` for the owner's fixed home. */
 export interface ScheduleDraft {
   name: string
   kind: AutomationSchedule['kind']
@@ -24,11 +24,19 @@ export interface ScheduleDraft {
   notify: boolean
 }
 
-export const NEW_SCHEDULE: ScheduleDraft = { name: '', kind: 'daily', day: 1, time: '09:00', prompt: '', notify: false }
+export const NEW_SCHEDULE: ScheduleDraft = {
+  name: '',
+  kind: 'daily',
+  day: 1,
+  time: '09:00',
+  location: 'default',
+  prompt: '',
+  notify: false,
+}
 
-/** A new schedule's form: in the Agent's default project when it has one, shown and changeable before saving. */
-export function newScheduleDraft(defaultProjectId: string | undefined): ScheduleDraft {
-  return defaultProjectId ? { ...NEW_SCHEDULE, location: defaultProjectId } : NEW_SCHEDULE
+/** New schedules start at home; a project is an explicit choice in this form. */
+export function newScheduleDraft(): ScheduleDraft {
+  return { ...NEW_SCHEDULE }
 }
 
 export function scheduleDraftOf(automation: Pick<Automation, 'name' | 'schedule' | 'projectId' | 'prompt' | 'notify'>): ScheduleDraft {
@@ -50,7 +58,7 @@ export function scheduleOf(draft: Pick<ScheduleDraft, 'kind' | 'day' | 'time'>):
 
 const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u
 
-/** Why the form cannot be saved yet, in a few words; undefined when it can. Without a default project the location is chosen by hand. */
+/** Why the form cannot be saved yet, in a few words; undefined when it can. */
 export function scheduleProblem(draft: ScheduleDraft): string | undefined {
   if (!draft.name.trim()) return '先填名称'
   if (!TIME.test(draft.time)) return '先填时间'
@@ -137,7 +145,7 @@ export function missedRuns(runs: readonly AutomationRun[]): AutomationRun[] {
 
 /** Where the runs work: a project, or each run's own folder in the start directory. */
 export function scheduleWhere(catalog: HostCatalog | undefined, automation: Pick<AutomationConfig, 'projectId'>): string {
-  return automation.projectId ? worksIn(catalog, automation.projectId) : '每次新的文件夹'
+  return automation.projectId ? worksIn(catalog, automation.projectId) : '家'
 }
 
 /** The first line of what each run receives. */
@@ -160,15 +168,17 @@ export function automationsVersion(automations: readonly AutomationSummary[]): s
     .join('|')
 }
 
-/** Why this device cannot add or run schedules now, in the words the page shows; undefined when it can. */
+/** Background grants and explicit manual runs share device checks, but only the former need unattended capability. */
 export function scheduleBlock(input: {
   offline: boolean
   canRun: boolean
-  agent?: { canAutomate: boolean; unavailableReason?: string } | undefined
+  agent?: { available?: boolean; canAutomate: boolean; unavailableReason?: string } | undefined
+  trigger?: 'schedule' | 'manual'
 }): string | undefined {
   if (input.offline) return 'Mac 不在线，恢复后再改'
   if (!input.canRun) return '这台设备只能查看定时任务：它没有开始会话的权限。'
-  if (input.agent && !input.agent.canAutomate) return input.agent.unavailableReason ?? '这个 Agent 现在不能用于定时任务。'
+  if (input.agent?.available === false || input.agent?.unavailableReason) return input.agent.unavailableReason ?? '这个 Agent 现在不可用。'
+  if (input.trigger !== 'manual' && input.agent && !input.agent.canAutomate) return '这个 Agent 不能后台运行，可保存后点「立即运行」。'
   return undefined
 }
 

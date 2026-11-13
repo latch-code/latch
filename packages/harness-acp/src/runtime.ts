@@ -4457,16 +4457,15 @@ export class AgentRuntime implements Bridge {
 
   /**
    * A fresh token of the Host's tool gateway for the session's browser tools on this process, revoking the one before it;
-   * none for a harness that takes no MCP servers, for a session without a project (of 我的 Agent, or a conversation with
-   * 通用), when the Host has no gateway, or when the Host declines (no browser provider registered now): the next open,
+   * none for a harness that takes no MCP servers, when the Host has no gateway, or when the Host declines (no browser
+   * provider registered now): the next open,
    * resume, load or fork asks again. The Host checks the session again on every call.
    */
   private openTools(taskId: string, live: Live): ToolGatewayLease | undefined {
     live.tools?.close()
     delete live.tools
     const gateway = this.options.toolGateway
-    const task = this.task(taskId)
-    if (!gateway || !this.takesMcpServers() || task.acp.proposals || task.summary.agent || task.summary.agentPrivate) return undefined
+    if (!gateway || !this.takesMcpServers()) return undefined
     let lease: ToolGatewayLease | undefined
     try {
       lease = gateway.open({ sessionId: taskId, describe: (tool, args) => this.describeToolCall(taskId, tool, args) })

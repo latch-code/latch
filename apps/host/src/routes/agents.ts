@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type {
   AgentComputer,
+  AgentHome,
   ChangedFile,
   CustomAgentDetail,
   CustomAgentList,
@@ -33,13 +34,14 @@ export interface AgentRouteDeps {
   detail: (sessionId: string) => Promise<TaskDetail>
   sessionFiles: (sessionId: string) => Promise<ChangedFile[] | undefined>
   computer: () => HostComputer
+  home: (owner: string) => Promise<AgentHome>
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo)?)?)?$/u
 const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
 /** Read-only views of an owner's own records: result cards waiting for a topic, 动态, 资料库 and 电脑. */
-const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library|computer)$/u
+const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library|computer|home)$/u
 
 /** 我的 Agent and 通用. `/link/api/agents` keeps meaning engine definitions. */
 export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): RouteModule {
@@ -88,6 +90,12 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           which = view[2]!
         // Each answers only for an owner that exists, and only to a device that may read Agents (the access above).
         agents.memories(owner)
+        if (which === 'home') {
+          const hint = await deps.home(owner)
+          actor.authorize()
+          json(res, hint)
+          return true
+        }
         const params = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
         const automations = deps.automations()
         if (which === 'results') {

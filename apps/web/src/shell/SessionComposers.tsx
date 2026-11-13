@@ -40,6 +40,7 @@ import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, modelWords, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
+import { helperPermissionBlocked } from '../agents/personWords.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -301,6 +302,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
   // helper's settings, and what the permission means for safety stays in its frame (TopicFrame), not here.
   const speaker = selectedId !== null ? speakerOf(shell.snapshot, summary) : undefined
   const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
+  const permissionBlocked = selectedId !== null && helperPermissionBlocked(current)
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
   const status = (() => {
     if (selectedId === null) {
@@ -539,9 +541,19 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       pendingNote={
         pendingQueued === 'waiting' ? '队列里有同样的一条在等待' : pendingQueued === 'parked' ? '队列里有同样的一条已暂停' : undefined
       }
-      canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined) && !sideBlocked}
+      canSend={
+        gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined) && !sideBlocked && !permissionBlocked
+      }
       blockReason={block?.message ?? sessionBlock ?? sideBlocked}
-      readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : undefined}
+      readOnly={
+        gate.kind === 'read-only'
+          ? gate.text
+          : gate.kind === 'stopped'
+            ? placeholder
+            : permissionBlocked
+              ? '权限没确认，修改默认选项后开新话题'
+              : undefined
+      }
       {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
       {...(answer ? { answer } : {})}
       drawers={drawers}

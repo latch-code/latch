@@ -208,7 +208,7 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await place(page, '我的 Agent').click()
     await page.locator('.topbar .agent-frame').waitFor()
 
-    // The profile beside a topic: 记忆 to add and change, and the schedule's switch, each the Host's.
+    // Native tasks can be saved closed; the profile must not offer a background grant above the Host's ceiling.
     const automation = await owner.json<{ id: string }>('automations', {
       method: 'POST',
       body: {
@@ -218,14 +218,14 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
         prompt: '汇总本周汇率',
         schedule: { kind: 'weekly', day: 1, time: '09:00' },
         notify: false,
+        enabled: false,
       },
     })
     await page.locator('.topbar').getByRole('button', { name: '资料助手 的资料', exact: true }).click()
     const panel = page.getByRole('region', { name: '资料助手 的资料', exact: true })
     const toggle = panel.getByRole('switch', { name: '每周汇率 开启' })
-    await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('true')
-    await toggle.click()
     await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false')
+    expect(await toggle.isDisabled()).toBe(true)
     expect((await owner.json<AppSnapshot>('snapshot')).automations?.find(item => item.id === automation.id)?.enabled).toBe(false)
     await panel.getByRole('radio', { name: '记忆', exact: true }).click()
     await panel.getByText('还没有记忆').waitFor()
@@ -441,7 +441,7 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
   }
 })
 
-it('delegates from an Agent with no default project into the start folder', async () => {
+it('delegates from an Agent with no default project into its fixed home', async () => {
   const host = await startTestHost({ plugins: [fixture] })
   const browser = await chromium.launch(browserLaunchOptions())
   try {
@@ -475,7 +475,7 @@ it('delegates from an Agent with no default project into the start folder', asyn
     // The Host fills in where it works after the row first appears: wait for the whole of it.
     await expect
       .poll(async () => (await delegated())[0], { timeout: 15_000 })
-      .toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: host.workspaceRoot })
+      .toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: join(host.workspaceRoot, 'helpers', agent.id) })
     await page.locator('.topbar .agent-frame').waitFor()
     expect(await page.getByText(/没有开始/u).count()).toBe(0)
     await context.close()

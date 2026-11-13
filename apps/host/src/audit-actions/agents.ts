@@ -3,6 +3,7 @@ import { hex64, opaqueId } from './fields.ts'
 
 /** Engine definitions and their probes; 我的 Agent and 通用; 定时任务. */
 export const AGENT_ACTIONS = {
+  'agent.home.assigned': z.strictObject({ homeHash: hex64 }),
   'agent.changed': z.strictObject({
     kind: z.enum(['agent', 'general', 'memory', 'proposal']),
     operation: z.enum(['create', 'update', 'delete']),

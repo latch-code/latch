@@ -247,6 +247,8 @@ Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` �
 
 ### 启动目录
 
+我的 Agent 与通用的新话题另用同一分配器管理固定家：`helpers/<Agent ID>`，显式 `--workspace` 也建立。内部仍是 `workspaceId: 'default'`，Host 持有私有 `sessionFolder` 名称与真实 cwd，不加入公共项目目录。家按 owner 共用、绑定原根及目录身份，删除不删文件，也不能存成公共项目；普通 Code 的日期文件夹规则不变。见 [家与工具](CUSTOM-AGENTS.md#家与工具)。
+
 `classifyDefaultWorkspace` 对启动目录给出三项判断：
 
 - 位于数据目录内（旧的 `<数据目录>/workspace` 布局）：只能用于内置 Harness，ACP 返回 409 `workspace-inside-data`。
@@ -346,7 +348,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `history-imports.json` | 接入已有会话的回执：请求 ID、来源 Harness 与它的会话 ID、方式与 Latch 会话 ID；目录与标题只在完成之前保存（见 [HARNESSES.md](HARNESSES.md#接入已有会话)） |
 | `review-notes/<会话 ID 的 SHA-256>.json` | 会话的行级反馈、未定的发送与回执（0600，目录 0700，见 [CHANGES.md](CHANGES.md#行级反馈)） |
 | `plugin-data/<pluginId>/gen-<n>/data.json`、`plugin-data/<pluginId>/diagnostics.json` | 插件页面的文档与回执（每个数据版本一代，保留最近 3 代）、页面诊断（0600，目录 0700，见 [APP-PAGES.md](APP-PAGES.md)） |
-| `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希（0600） |
+| `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希；Agent 固定家的 owner、根/父/叶目录身份（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
 | `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`，以及 `skills/<会话 ID 的 SHA-256 前 32 位>/`（0700）：技能服务读取的 `skills.json`，和 `propose_memory`、`propose_schedule` 追加的 `proposals.jsonl`（0600，一行一条，有行数与大小上限，ACP 驱动读后交给 Host 建提议，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)） |

@@ -107,6 +107,7 @@ function ScheduleForm({
   access,
   base,
   editing,
+  manualOnly,
   proposal,
   writes,
   writeKey,
@@ -120,6 +121,7 @@ function ScheduleForm({
   access: DeviceAccess
   base: ScheduleDraft
   editing: boolean
+  manualOnly: boolean
   /** Filled in from the Agent's proposal: its input is what the Agent wrote, read whole before saving. */
   proposal?: { external: boolean } | undefined
   writes: AgentWrites
@@ -192,6 +194,7 @@ function ScheduleForm({
         <span className="agent-schedule-label">工作位置</span>
         <ProjectPicker
           catalog={catalog}
+          defaultLocation={{ label: '家', description: '这个 Agent 共用的工作文件夹' }}
           harness={harness}
           access={access}
           value={draft.location}
@@ -241,7 +244,7 @@ function ScheduleForm({
           variant="primary"
           disabled={locked || problem !== undefined}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}>
-          {editing ? '保存' : '创建'}
+          {editing ? '保存' : manualOnly ? '保存为关闭' : '创建'}
         </Button>
       </div>
     </form>
@@ -307,6 +310,7 @@ function ScheduleCard({
   read,
   writes,
   block,
+  runBlock,
   canRun,
   expanded,
   onExpand,
@@ -321,8 +325,9 @@ function ScheduleCard({
   automation: AutomationSummary
   read: DetailRead
   writes: AgentWrites
-  /** Why it cannot be turned on or run now; pausing and deleting stay open to a device that may run. */
+  /** Why a background grant cannot be enabled; manual execution is checked separately. */
   block: string | undefined
+  runBlock: string | undefined
   canRun: boolean
   expanded: boolean
   onExpand: (open: boolean) => void
@@ -420,7 +425,7 @@ function ScheduleCard({
               {automation.state === 'paused' ? '重新开启' : '继续'}
             </Button>
           )}
-          <Button icon={Play} disabled={locked || running || block !== undefined} onClick={onRun}>
+          <Button icon={Play} disabled={locked || running || runBlock !== undefined} onClick={onRun}>
             立即运行
           </Button>
         </div>
@@ -515,6 +520,7 @@ export function SchedulesTab({
   const details = useAutomationDetails(automations ?? [])
   const canRun = access.scopes.has('run')
   const block = scheduleBlock({ offline, canRun, agent })
+  const runBlock = scheduleBlock({ offline, canRun, agent, trigger: 'manual' })
   const harness = catalog?.harnesses.find(item => item.id === (agent?.harnessId ?? catalog.defaults.harnessId))
   const reload = () => {
     writes.clear()
@@ -531,6 +537,7 @@ export function SchedulesTab({
         })
       : await writes.run('automation:new', 'automations', 'POST', {
           ...scheduleCreate(draft, agentId),
+          ...(block !== undefined ? { enabled: false } : {}),
           ...(form?.proposalId ? { proposalId: form.proposalId } : {}),
         })
     if (done !== undefined) setForm(null)
@@ -541,7 +548,9 @@ export function SchedulesTab({
     <div className="agent-schedules">
       <div className="agent-memory-bar">
         {block ? (
-          <Hint label={canRun && !offline ? '现在不能新建或运行' : offline ? 'Mac 不在线' : '只能查看'}>{block}</Hint>
+          <Hint label={runBlock ? (canRun && !offline ? '现在不能新建或运行' : offline ? 'Mac 不在线' : '只能查看') : '仅手动运行'}>
+            {block}
+          </Hint>
         ) : (
           <Hint label="按时开新会话">
             每次运行用这个 Agent 现在的定义开一个新会话，在选定的工作位置做保存的事；没有人看着时也在每个审批处停下。
@@ -551,10 +560,10 @@ export function SchedulesTab({
         {canRun && !form && (
           <Button
             icon={PlusGlyph}
-            disabled={block !== undefined || writes.saving || writes.held || !catalog}
+            disabled={runBlock !== undefined || writes.saving || writes.held || !catalog}
             onClick={() => {
               writes.clear()
-              setForm({ base: newScheduleDraft(agent?.defaultProjectId) })
+              setForm({ base: newScheduleDraft() })
             }}>
             新建定时
           </Button>
@@ -568,10 +577,11 @@ export function SchedulesTab({
           access={access}
           base={form.base}
           editing={form.automation !== undefined}
+          manualOnly={block !== undefined}
           proposal={form.proposalId ? { external: form.external === true } : undefined}
           writes={writes}
           writeKey={writeKey}
-          disabled={offline || (!form.automation && block !== undefined)}
+          disabled={offline || (!form.automation && runBlock !== undefined)}
           onSave={draft => void save(draft)}
           onCancel={() => {
             writes.clear()
@@ -595,6 +605,7 @@ export function SchedulesTab({
               read={details.read(automation.id)}
               writes={writes}
               block={block}
+              runBlock={runBlock}
               canRun={canRun}
               expanded={isExpanded(automation.id)}
               onExpand={open => {

@@ -2298,6 +2298,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         detail: id => hub!.detail(id),
         sessionFiles: id => changeRoutes.sessionFiles(id),
         computer: () => computer,
+        home: async owner => {
+          const record = owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.get(owner)
+          const path = join(workspaceRoot, 'helpers', owner)
+          if (!record.home) return { owner, path, available: false, reason: '第一次开始话题时建立' }
+          try {
+            if (record.home !== `helpers/${owner}` || !(await ownFolders.verify(path))) throw workspaceChanged()
+            await assertHelperHome(path)
+            return { owner, path: await realpath(path), available: true }
+          } catch {
+            return { owner, path, available: false, reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查' }
+          }
+        },
       },
       automations: {
         automations: () => automations,
@@ -2669,6 +2681,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       },
       projectUsable: id => savedProject(id) !== undefined,
+      automationAllowed: id => {
+        const level = hub!.levelOf(id)
+        return !!level && levelAtMost(level, policy.get().unattended.maxLevel)
+      },
       environment: projectId => ({
         policy: policy.hash(),
         workspace: canonicalWorkspace,
@@ -2687,17 +2703,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function assertWritable(id: string): void {
       if (hub!.personalOf(id)) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
     }
-    /** Whether this device's authority can still stand behind a run that starts while nobody is looking. */
-    function authorizeAutomation(deviceId: string, definition: AutomationConfig): void {
+    /** Manual runs need the caller's current authority; background grants also need the unattended ceiling and activity. */
+    function authorizeAutomation(deviceId: string, definition: AutomationConfig, trigger: 'schedule' | 'manual'): void {
       const device = devices.get(deviceId),
         current = policy.get()
+      const harnessId = definition.customAgentId ? customAgents.get(definition.customAgentId).harnessId : 'standard'
+      const level = hub!.levelOf(harnessId)
       if (
         !device
         || !devices.standsBehind(deviceId)
         || device.dataScope !== 'all'
         || !device.scopes.includes('run')
-        || !levelAtMost('L1', current.unattended.maxLevel)
-        || now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000
+        || (trigger === 'schedule'
+          && (!level
+            || !levelAtMost(level, current.unattended.maxLevel)
+            || now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000))
       )
         throw new AppError(403, 'automation-owner', '这台设备不能开启这个定时任务。')
     }
@@ -2705,7 +2725,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dataDir,
       audit,
       now,
-      plan: definition => agentPlans.automation(definition),
+      plan: (definition, trigger) => agentPlans.automation(definition, trigger),
       authorize: authorizeAutomation,
       changed: () => refresh(),
       detail: id => hub!.detail(id),
@@ -2748,6 +2768,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const chosen = projectId ? savedProject(projectId) : undefined
         if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
         if (chosen) await assertWorkspaceUsable(chosen)
+        const harness = hub!.info(plan.harnessId)
+        if (!harness) throw new AppError(409, 'harness-unavailable', '这个 Harness 暂时不可用。')
+        const modelRoute = plan.model && harness.capabilities.models.owner !== 'latch' ? modelRouteFor(harness, plan.model) : undefined
         const task: HubCreateInput = {
           requestId,
           prompt,
@@ -2755,24 +2778,39 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           workspaceId: projectId ?? 'default',
           mode: plan.mode,
           ...(plan.model ? { model: plan.model } : {}),
+          ...(modelRoute ? { modelRoute } : {}),
+          ...(plan.config?.length ? { config: plan.config } : {}),
           automationId,
           initialTitle: title,
           ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
         }
         const folders = chosen?.folders.map(({ id, path }) => ({ id, path }))
-        const own = !chosen && makeOwnFolders && plan.mode === 'agent' ? await ownFolders.allocate(requestId) : undefined
+        const own = !chosen
+          ? await prepareHelperHome(plan.agentContext?.agent?.customAgentId ?? GENERAL_AGENT_ID, {
+              actor: { listener: 'host', via: 'startup' },
+              authorize,
+            })
+          : undefined
         const cwd = chosen?.folders[0].path ?? own?.path
+        const configAudited = plan.config?.length ? { configHash: sha256Hex(canonicalJson(plan.config)) } : {}
+        const routeAudited = modelRoute ? { providerId: modelRoute.providerId, routeHash: sha256Hex(canonicalJson(modelRoute)) } : {}
         /** A run nobody started by hand is still on record as a start, with what it runs. */
         const onRecord = async (): Promise<Pick<HubCreateInput, 'expectedLaunchHash'>> => {
           if (hub!.levelOf(plan.harnessId) !== 'L3') return {}
           const root = await realpath(cwd ?? workspaceRoot)
-          const preview = await hub!.launchPreviewOf(plan.harnessId, root, folders ? { workspaceId: projectId!, folders } : undefined)
+          const preview = await hub!.launchPreviewOf(
+            plan.harnessId,
+            root,
+            folders ? { workspaceId: projectId!, folders } : undefined,
+            modelRoute,
+            plan.config,
+          )
           const launchHash = preview?.launchHash ?? sha256Hex(canonicalJson({ harnessId: plan.harnessId, automationId }))
           await audited({
             action: 'task.l3.start-requested',
             actor: { listener: 'host', via: 'startup' },
             stepup: 'none',
-            detail: { harnessId: plan.harnessId, launchHash, promptHash: sha256Hex(prompt) },
+            detail: { harnessId: plan.harnessId, launchHash, promptHash: sha256Hex(prompt), ...configAudited, ...routeAudited },
           })
           return { expectedLaunchHash: launchHash }
         }
@@ -2782,7 +2820,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             authorize()
             return hub!.createTask({ ...task, ...started, cwd: chosen.folders[0].path, folders: folders! })
           }
-          if (own) return createInOwnFolder({ ...task, ...started, cwd: own.path, sessionFolder: own.name }, requestId, authorize)
+          if (own) {
+            await assertHelperHome(own.path)
+            if (!(await ownFolders.verify(own.path))) throw workspaceChanged()
+            authorize()
+            return hub!.createTask({ ...task, ...started, cwd: own.path, sessionFolder: own.name })
+          }
           authorize()
           return hub!.createTask({ ...task, ...started })
         })()
@@ -2798,6 +2841,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               harnessId: plan.harnessId,
               launchHash: started.expectedLaunchHash,
               promptHash: sha256Hex(prompt),
+              ...configAudited,
+              ...routeAudited,
               ...(mcpSetHash ? { mcpSetHash } : {}),
             },
           }).catch(() => {})
@@ -3683,8 +3728,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       context: { sessionId: string; callId: string; approvalId?: string; signal: AbortSignal; waitForUser?: () => () => void },
     ): Promise<BrokerOutcome> {
       const summary = (await hub!.detail(context.sessionId)).summary
-      if (summary.personal || summary.agent || summary.mode === 'chat' || summary.archived)
+      if (summary.personal || summary.mode === 'chat' || summary.archived) return { ok: false, error: 'no-project', dispatched: false }
+      try {
+        await assertSessionWorkspace(context.sessionId)
+      } catch {
         return { ok: false, error: 'no-project', dispatched: false }
+      }
       const approved = browserRisks.get(context.sessionId)
       browserRisks.delete(context.sessionId)
       const now = classifyStandardCall({
@@ -3732,6 +3781,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         .catch(() => undefined)
       const refusal = gatewayRefusal(summary, summary && hub!.trustOf(summary.harnessId), context.turn)
       if (refusal || !summary) return failed({ ok: false, error: refusal ?? 'no-project', dispatched: false })
+      try {
+        await assertSessionWorkspace(sessionId)
+      } catch {
+        return failed({ ok: false, error: 'no-project', dispatched: false })
+      }
       const { risk } = classifyStandardCall({
         pluginId: BROWSER_PLUGIN,
         toolName: tool,
@@ -5060,6 +5114,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function assertSessionWorkspace(sessionId: string): Promise<void> {
       const task = await sessionTask(sessionId)
       if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
+      const helperOwner = task?.agent?.customAgentId ?? (task?.generalChat ? GENERAL_AGENT_ID : undefined)
+      // A driver's first turn can reach a tool before createTask has returned and the Host's folder marker is durable.
+      const helper =
+        task?.cwd
+        && (hub!.sessionFolderOf(sessionId)?.startsWith('helpers/')
+          || (helperOwner
+            && (!task.workspaceId || task.workspaceId === 'default')
+            && basename(task.cwd) === helperOwner
+            && basename(dirname(task.cwd)) === 'helpers'))
+      if (helper && task?.cwd) {
+        if (!(await ownFolders.verify(task.cwd))) throw workspaceChanged()
+        await assertHelperHome(task.cwd)
+      }
       // A worktree session needs its project, and the worktree still Latch's and this session's, where it started.
       const worktree = task && hub!.worktreeOf(task.id)
       if (task && worktree) {
@@ -5128,8 +5195,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return ['default', ...config.settings().workspaces.map(item => item.id)]
     }
 
+    /** Evaluated inside the settings write too: an allocation can finish while a folder picker or audit is awaiting. */
+    function assertNoHelperProject(paths: readonly string[]): void {
+      for (const name of ownFolders.helperNames()) {
+        const home = join(canonicalWorkspace, name)
+        if (paths.some(path => isInsidePath(path, home) || isInsidePath(home, path)))
+          throw new AppError(409, 'helper-home-overlap', 'Agent 的家保留为它自己的工作位置，不能登记成项目。')
+      }
+    }
+
     /** Granting: the project is on record before it is saved, and a failed save marks the record as never committed. */
     async function saveNewProject(caller: DeviceCaller, record: WorkspaceRecord, via: FolderVia): Promise<WorkspaceInfo> {
+      const paths = await Promise.all(record.folders.map(folder => canonicalPath(folder.path)))
+      assertNoHelperProject(paths)
       const seq = await audited({
         action: 'workspace.added',
         actor: actorOf(caller),
@@ -5144,6 +5222,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       try {
         await writeSettings(caller, draft => {
+          assertNoHelperProject(paths)
           draft.workspaces.push(record)
         })
       } catch (error) {
@@ -5203,6 +5282,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         guard: workspaceGuard,
       })
       if (plan.added.length === 0) throw foldersRefused(plan.refused)
+      const paths = await Promise.all(plan.folders.map(folder => canonicalPath(folder.path)))
+      assertNoHelperProject(paths)
       const seqs: number[] = []
       const failed = () => {
         for (const seq of seqs) auditFailed(seq, caller)
@@ -5224,6 +5305,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (seq !== undefined) seqs.push(seq)
         }
         await writeSettings(caller, draft => {
+          assertNoHelperProject(paths)
           const target = draft.workspaces.find(item => item.id === record.id)
           if (!target) throw new AppError(404, 'workspace-not-found', '找不到该项目')
           target.folders = plan.folders
@@ -6338,6 +6420,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /** The private home never becomes a public project. Its policy is checked both when allocated and on every new turn. */
+    async function assertHelperHome(path: string): Promise<void> {
+      const root = await checkFolderCandidate(workspaceRoot, workspaceGuard, { added: true, readable: true })
+      if (!root.ok) throw root.error
+      const candidate = join(canonicalWorkspace, 'helpers', basename(path))
+      for (const project of config.settings().workspaces) {
+        for (const folder of project.folders) {
+          const registered = await canonicalPath(folder.path).catch(() => folder.path)
+          if (isInsidePath(candidate, registered) || isInsidePath(registered, candidate))
+            throw new AppError(409, 'helper-home-overlap', 'Agent 的家与已登记的项目重叠，请在这台 Mac 上检查工作文件夹。')
+        }
+      }
+    }
+
+    async function prepareHelperHome(owner: string, actor: { actor: AuditActor; authorize(): void }) {
+      const folder = await ownFolders.helperHome(owner, async path => {
+        actor.authorize()
+        await assertHelperHome(path)
+        actor.authorize()
+      })
+      await customAgents.recordHome(owner, folder.name, actor)
+      actor.authorize()
+      if (!(await ownFolders.verify(folder.path))) throw workspaceChanged()
+      return folder
+    }
+
     /**
      * A page draft's skeleton in a session's new folder, before its first input: the manifest, the SDK's declarations
      * and the guide. A retried start finds them there and leaves them as they are.
@@ -6381,6 +6489,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      assertGeneralStartCompatible(input)
       const agentHarness =
         input.customAgentId && input.customAgentId !== GENERAL_AGENT_ID
           ? customAgents.list().find(agent => agent.id === input.customAgentId)?.harnessId
@@ -6392,7 +6501,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await bindUnconfirmedHarness(
         req,
         caller as DeviceCaller,
-        recorded?.harnessId ?? agentHarness ?? input.harnessId ?? config.settings().defaults.harnessId,
+        recorded?.harnessId
+          ?? agentHarness
+          ?? (input.customAgentId === GENERAL_AGENT_ID ? 'standard' : (input.harnessId ?? config.settings().defaults.harnessId)),
       )
       const started = await startSession(caller, input, res)
       // A new topic of 我的 Agent keeps the result cards that waited for one.
@@ -6410,6 +6521,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             )
           : undefined
       json(res, { ...started, ...(refused ? { memoryRefused: refused } : {}) }, 201)
+    }
+
+    // Old General starts had no Host selection receipt. Native and Standard chat requests cannot be replayed through
+    // the new Standard Agent/home path: rejection or a payload conflict would incorrectly clear their unknown outcome.
+    function assertGeneralStartCompatible(input: Pick<z.infer<typeof createTaskSchema>, 'customAgentId' | 'harnessId' | 'mode'>): void {
+      if (
+        input.customAgentId === GENERAL_AGENT_ID
+        && ((input.harnessId !== undefined && input.harnessId !== 'standard') || input.mode === 'chat')
+      )
+        throw new AppError(503, 'general-start-unconfirmed', '这次旧版通用启动尚未确认。请核对已有话题，或放弃这次提交后再开始。')
     }
 
     /**
@@ -6443,17 +6564,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       let made: Worktree | undefined
       let startedIn = false
       recheck(caller, 'run')
-      // A conversation with 通用 names no Agent: 通用 applies as to any session, and only the place it is listed differs.
+      // New topics of 通用 use Standard Agent; ordinary Code sessions still choose their own Harness and context.
       const generalChat = input.customAgentId === GENERAL_AGENT_ID
       const customAgentId = generalChat ? undefined : input.customAgentId
       if (generalChat) {
-        agentAccess(caller, true)
+        const actor = agentAccess(caller, true)
+        assertGeneralStartCompatible(input)
         if (input.forkOf || input.worktree || input.appDraft || (input.workspaceId !== undefined && input.workspaceId !== 'default'))
           throw new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
+        if (input.config?.length) throw new AppError(400, 'config-unsupported', '通用不使用外部 Harness 的设置。')
+        const chosen = await customAgents.reserveStart(
+          GENERAL_AGENT_ID,
+          input.requestId,
+          () => ({
+            harnessId: 'standard',
+            mode: 'agent',
+            workspaceId: 'default',
+            ...(input.model ? { model: input.model } : {}),
+          }),
+          actor,
+        )
+        input = { ...input, ...chosen }
       }
       // A custom Agent's start fixes its project before it queues: the journal keeps one answer per request, so the
       // project's queue is known before entering it. The project itself is checked again inside.
       if (customAgentId) {
+        if (input.config?.length) throw new AppError(400, 'config-unsupported', '请在这个 Agent 的设置里修改默认选项。')
         const actor = agentAccess(caller, true)
         const saved = customAgents.get(customAgentId)
         const { harnessId, workspaceId, mode, model } = input
@@ -6527,7 +6663,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.model) assertModel(input.model)
         // A harness with its own models takes a service only through the gateway, by the Host's own reckoning of the pair.
         const modelRoute = input.model && harness.capabilities.models.owner !== 'latch' ? modelRouteFor(harness, input.model) : undefined
-        if (input.config?.length && (harness.capabilities.models.owner === 'latch' || customAgentId))
+        if (input.config?.length && harness.capabilities.models.owner === 'latch')
           throw new AppError(400, 'config-unsupported', `${harness.capabilities.display.label} 不能在开始前这样设置`)
         const workspaceId = input.workspaceId ?? 'default'
         const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
@@ -6545,9 +6681,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // its own there; 只对话 sessions read and write no files and never get one.
         const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
         const forkFolder =
-          !chosen && fork?.source.workspaceId === 'default' && fork.source.sessionFolder && mode === 'agent' ? fork.source.cwd : undefined
+          !chosen && !customAgentId && fork?.source.workspaceId === 'default' && fork.source.sessionFolder && mode === 'agent'
+            ? fork.source.cwd
+            : undefined
         if (forkFolder && !(await ownFolders.verify(forkFolder))) throw workspaceChanged()
-        const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder
+        const helperHome =
+          !chosen && (customAgentId || generalChat)
+            ? await prepareHelperHome(customAgentId ?? GENERAL_AGENT_ID, agentAccess(caller, true))
+            : undefined
+        const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder && !helperHome
         if (input.appDraft) {
           // The page pipeline is this Mac's: the desktop's admin device with all data, as for the plugin assets.
           requireScope(caller, 'admin')
@@ -6573,7 +6715,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ? harness.projectFolders?.access === 'all'
             ? chosen.folders
             : [{ id: 'default', path: chosen.folders[0].path }]
-          : [{ id: 'default', path: forkFolder ?? workspaceRoot }]
+          : [{ id: 'default', path: helperHome?.path ?? forkFolder ?? workspaceRoot }]
         const fileRefs = await checkedFileMentions(input.fileRefs, mentionRoots, guardedPaths, home)
         recheck(caller, 'run')
         const attachments = await promptAttachments(
@@ -6590,6 +6732,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const acceptCreate = async (operation: () => Promise<{ sessionId: string }>) => {
           if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId)
           try {
+            if (helperHome) {
+              await assertHelperHome(helperHome.path)
+              if (!(await ownFolders.verify(helperHome.path))) throw workspaceChanged()
+            }
             checkStart()
             return await operation()
           } catch (cause) {
@@ -6663,11 +6809,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               }
             : chosen
               ? { cwd: chosen.folders[0].path }
-              : forkFolder
-                ? { cwd: forkFolder, sessionFolder: basename(forkFolder) }
-                : input.workspaceId === 'default'
-                  ? { cwd: workspaceRoot }
-                  : {}),
+              : helperHome
+                ? { cwd: helperHome.path, sessionFolder: helperHome.name }
+                : forkFolder
+                  ? { cwd: forkFolder, sessionFolder: hub!.sessionFolderOf(fork!.source.id) ?? basename(forkFolder) }
+                  : input.workspaceId === 'default'
+                    ? { cwd: workspaceRoot }
+                    : {}),
         }
         const checkStart = () => {
           recheck(caller, 'run')
@@ -6708,7 +6856,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             )
           }
           const folders =
-            task.cwd === undefined || forkFolder || made ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
+            task.cwd === undefined || helperHome || forkFolder || made
+              ? undefined
+              : chosen
+                ? chosen.folders
+                : [{ id: 'default', path: workspaceRoot }]
           checkStart()
           return await respondCreated(
             await acceptCreate(() =>
@@ -6723,10 +6875,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
         if (own && input.appDraft) await writeAppDraft(own.path, own.name)
         // A worktree's project configuration is read there, now that it exists: it is what the session will run with.
-        const cwd = await realpath(made?.path ?? own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
+        const cwd = await realpath(made?.path ?? helperHome?.path ?? own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
         // As for L1; the audit below counts the ones the driver says it passes to the agent.
         const folders =
-          task.cwd === undefined || own || forkFolder || made
+          task.cwd === undefined || helperHome || own || forkFolder || made
             ? undefined
             : chosen
               ? chosen.folders.map(({ id, path }) => ({ id, path }))

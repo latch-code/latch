@@ -690,6 +690,31 @@ describe('desktop shell folders: showing in Finder', () => {
     expect(await created.revealFolder({ projectId: 'site', folderId: null })).toEqual({ status: 'shown' })
     expect(shown).toEqual(['/Users/me/site'])
   })
+
+  it('reveals an Agent home only by its owner ID and the Host-verified real directory', async () => {
+    const host = fakeHost()
+    const path = '/Users/me/work/helpers/general'
+    const route = 'GET /link/api/custom-agents/general/home'
+    host.answer.set(route, { status: 200, json: { owner: 'general', path, available: true } })
+    let now = 1000
+    let real = path
+    const { created, shown } = actions({ now: () => now, inspect: async () => ({ real, directory: true }) }, host)
+    expect(await created.revealFolder({ agentId: 'general' })).toEqual({ status: 'shown' })
+    expect(shown).toEqual([path])
+    expect(host.requests).toEqual([{ method: 'GET', path: '/link/api/custom-agents/general/home' }])
+    expect(await created.revealFolder({ agentId: 'general', path: '/tmp/other' })).toEqual({ status: 'failed', code: 'invalid' })
+    expect(await created.revealFolder({ agentId: '../general' })).toEqual({ status: 'failed', code: 'invalid' })
+    now += 1000
+    real = '/Users/me/elsewhere'
+    expect(await created.revealFolder({ agentId: 'general' })).toEqual({ status: 'failed', code: 'missing' })
+    now += 1000
+    host.answer.set(route, { status: 200, json: { owner: 'general', path, available: false } })
+    expect(await created.revealFolder({ agentId: 'general' })).toEqual({ status: 'failed', code: 'helper-home-unavailable' })
+    now += 1000
+    host.answer.set(route, { status: 403, json: { error: 'agent-scope-required' } })
+    expect(await created.revealFolder({ agentId: 'general' })).toEqual({ status: 'failed', code: 'agent-scope-required' })
+    expect(shown).toEqual([path])
+  })
 })
 
 /** Reversible stand-in for Electron's safeStorage. */

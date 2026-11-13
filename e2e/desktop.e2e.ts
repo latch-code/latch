@@ -38,6 +38,7 @@ interface PageShell {
     pick(projectId?: string | null, replaceFolderId?: string | null): Promise<unknown>
     drop(projectOrFiles: unknown, files?: unknown): Promise<unknown>
     reveal(projectId: unknown, folderId?: string | null): Promise<unknown>
+    revealAgentHome(agentId: unknown): Promise<unknown>
     saveSessionFolder(sessionId: unknown): Promise<unknown>
   }
 }
@@ -357,7 +358,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         devMode: true,
         platform: 'darwin',
         previews: { protocolVersion: 1, htmlScripts: true },
-        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'saveSessionFolder'],
+        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder'],
         openInBrowser: 'function',
         copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
@@ -1166,6 +1167,60 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await reveal('../etc')).toEqual({ status: 'failed', code: 'invalid' })
       expect(await reveal(42)).toEqual({ status: 'failed', code: 'invalid' })
       expect((await folderRecord()).shown).toEqual([await realpath(picked), await realpath(pickedDocs)])
+
+      // A helper home is revealed by its owner ID only; it never becomes a public project through this bridge.
+      const homeAgent = await helper.json<{ id: string }>('custom-agents', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: '家的桌面入口',
+          harnessId: 'standard',
+          mode: 'agent',
+          model: { providerId: 'demo', model: 'demo' },
+          instructions: '',
+          skills: [],
+        },
+      })
+      const homeTask = await helper.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          customAgentId: homeAgent.id,
+          prompt: '你好',
+        },
+      })
+      await waitFor(async () => (await host.bridge.detail(homeTask.sessionId)).summary.status === 'idle')
+      const homeInfo = await helper.json<{ path: string; available: boolean }>(`custom-agents/${homeAgent.id}/home`)
+      expect(homeInfo.available).toBe(true)
+      await new Promise(done => setTimeout(done, 600))
+      await closeSettings(computer)
+      await page.keyboard.press('Meta+Shift+Digit2')
+      await page
+        .getByRole('navigation', { name: '我的 Agent', exact: true })
+        .getByRole('button', { name: /家的桌面入口/u })
+        .first()
+        .click()
+      await page.getByRole('button', { name: '家的桌面入口 的资料', exact: true }).filter({ visible: true }).click()
+      const homeProfile = page.getByRole('region', { name: '家的桌面入口 的资料', exact: true })
+      await homeProfile.getByRole('button', { name: '设置', exact: true }).click()
+      await homeProfile.getByRole('button', { name: '在访达中显示', exact: true }).click()
+      await waitFor(async () => (await folderRecord()).shown.length === 3)
+      expect((await folderRecord()).shown.at(-1)).toBe(await realpath(homeInfo.path))
+      await page.screenshot({ path: 'test-results/native-desktop-agent-home.png', animations: 'disabled' })
+      await homeProfile.getByRole('button', { name: '关闭资料', exact: true }).click()
+      await page.keyboard.press('Meta+Shift+Digit1')
+      await openSettings(page)
+      await openSection(computer, '项目')
+      await new Promise(done => setTimeout(done, 600))
+      expect(
+        await page.evaluate(async id => {
+          const shell: PageShell = Reflect.get(globalThis, 'latchShell')
+          return [await shell.folders.revealAgentHome('../home'), await shell.folders.saveSessionFolder(id)]
+        }, homeTask.sessionId),
+      ).toEqual([
+        { status: 'failed', code: 'invalid' },
+        { status: 'failed', code: 'session-folder-none' },
+      ])
 
       // The page cannot reach the add routes itself, however it spells them.
       const direct = await page.evaluate(

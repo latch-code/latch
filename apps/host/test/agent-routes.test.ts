@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -65,6 +65,321 @@ async function fixture(options: Parameters<typeof startTestHost>[0] = {}) {
 }
 const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string) =>
   expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+
+test('keeps the Agent home private and stable across topics and a Host restart, without changing ordinary Code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-helper-home-'))
+  let active: TestHost | undefined
+  try {
+    const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin([])], sessionFolders: false }
+    const first = await startTestHost(options)
+    active = first
+    const owner = await first.enroll({ listener: 'unix' })
+    const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ mode: 'agent' }) })
+    const expected = join(options.workspaceRoot, 'helpers', agent.id)
+    expect(await owner.json(`custom-agents/${agent.id}/home`)).toMatchObject({ path: expected, available: false })
+    await expect(stat(expected)).rejects.toMatchObject({ code: 'ENOENT' })
+    const input = { customAgentId: agent.id, prompt: 'First topic', requestId: randomUUID() }
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: input })
+    await settled(owner, sessionId)
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary).toMatchObject({
+      cwd: expected,
+      workspaceId: 'default',
+    })
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.sessionFolder).toBeUndefined()
+    expect((await stat(expected)).mode & 0o777).toBe(0o700)
+    expect(await owner.json(`custom-agents/${agent.id}/home`)).toMatchObject({ available: true })
+    await writeFile(join(expected, 'kept.txt'), 'between topics')
+    const resolved = await owner.json<{ files: Array<{ status: string; file?: { handle: string } }> }>(`tasks/${sessionId}/files/resolve`, {
+      method: 'POST',
+      body: { paths: ['kept.txt'] },
+    })
+    expect(resolved.files[0]?.status).toBe('ok')
+    const handle = resolved.files[0]!.file!.handle
+    expect(await (await owner.request(`files/${handle}`)).text()).toBe('between topics')
+    const publicProject = await owner.addFolders({ paths: [expected], name: 'must stay private' })
+    expect(publicProject.status).toBe(409)
+    expect(await publicProject.json()).toMatchObject({ error: 'helper-home-overlap' })
+    expect((await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).agent).toMatchObject({ home: `helpers/${agent.id}` })
+    expect((await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.some(project => project.path === expected)).toBe(
+      false,
+    )
+    const work = await first.enroll({ listener: 'loopback-tcp' })
+    await owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    expect((await work.request(`custom-agents/${agent.id}`)).status).toBe(403)
+    expect((await work.request(`custom-agents/${agent.id}/home`)).status).toBe(403)
+    expect((await work.request(`tasks/${sessionId}/files/resolve`, { method: 'POST', body: { paths: ['kept.txt'] } })).status).toBe(403)
+    expect((await work.request(`files/${handle}`)).status).toBe(403)
+    expect(JSON.stringify(await work.json<AppSnapshot>('snapshot'))).not.toContain(agent.id)
+    await first.close()
+    const next = await startTestHost(options)
+    active = next
+    const device = await next.enroll({ listener: 'unix' })
+    await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'Continue', requestId: randomUUID() } })
+    await settled(device, sessionId)
+    const topic = await device.json<{ sessionId: string }>('tasks', { method: 'POST', body: { ...input, requestId: randomUUID() } })
+    await settled(device, topic.sessionId)
+    expect((await device.json<TaskDetail>(`tasks/${topic.sessionId}`)).summary.cwd).toBe(expected)
+    const code = await device.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'Code', model, mode: 'agent', requestId: randomUUID() },
+    })
+    await settled(device, code.sessionId)
+    expect((await device.json<TaskDetail>(`tasks/${code.sessionId}`)).summary.cwd).toBe(options.workspaceRoot)
+    await device.json(`custom-agents/${agent.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
+    expect(await readFile(join(expected, 'kept.txt'), 'utf8')).toBe('between topics')
+  } finally {
+    await active?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('starts new 通用 topics on Standard Agent in its fixed home and refuses another Harness', async () => {
+  const { host, owner } = await fixture()
+  const body = { customAgentId: 'general', prompt: 'Hello', mode: 'agent', model, requestId: randomUUID() }
+  const started = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body })
+  await settled(owner, started.sessionId)
+  expect((await owner.json<TaskDetail>(`tasks/${started.sessionId}`)).summary).toMatchObject({
+    generalChat: true,
+    agentPrivate: true,
+    harnessId: 'standard',
+    mode: 'agent',
+    cwd: join(host.workspaceRoot, 'helpers', 'general'),
+  })
+  expect((await owner.json<TaskDetail>(`tasks/${started.sessionId}`)).summary.sessionFolder).toBeUndefined()
+  expect((await owner.json<GeneralAgentDetail>('custom-agents/general')).general).toMatchObject({ home: 'helpers/general' })
+  const legacy = { ...body, requestId: randomUUID(), harnessId: 'other' }
+  for (let retry = 0; retry < 2; retry++) {
+    const refused = await owner.request('tasks', { method: 'POST', body: legacy })
+    expect(refused.status).toBe(503)
+    expect(await refused.json()).toMatchObject({ error: 'general-start-unconfirmed' })
+  }
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).toEqual([started.sessionId])
+})
+
+test('preserves an actual legacy Standard General chat receipt without upgrading it or allocating a home', async () => {
+  const { host, owner, seen } = await fixture()
+  const legacy = {
+    requestId: randomUUID(),
+    prompt: 'Legacy General chat',
+    harnessId: 'standard',
+    mode: 'chat' as const,
+    workspaceId: 'default',
+    model,
+  }
+  // The previous Host recorded this exact Standard receipt, but had no CustomAgents start selection for General.
+  const old = await host.host.bridge.createTask({
+    ...legacy,
+    cwd: host.workspaceRoot,
+    generalChat: true,
+    agentContext: { instructions: '', revision: '1'.repeat(64), proposals: true },
+  })
+  await settled(owner, old.sessionId)
+  const before = await owner.json<TaskDetail>(`tasks/${old.sessionId}`)
+  expect(before.summary.mode).toBe('chat')
+  await expect(stat(join(host.workspaceRoot, 'helpers', 'general'))).rejects.toMatchObject({ code: 'ENOENT' })
+  for (let retry = 0; retry < 2; retry++) {
+    const reply = await owner.request('tasks', { method: 'POST', body: { ...legacy, customAgentId: 'general' } })
+    expect(reply.status).toBe(503)
+    expect(await reply.json()).toMatchObject({ error: 'general-start-unconfirmed' })
+  }
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).toEqual([old.sessionId])
+  expect(await owner.json<TaskDetail>(`tasks/${old.sessionId}`)).toEqual(before)
+  expect(seen).toHaveLength(1)
+  await expect(stat(join(host.workspaceRoot, 'helpers', 'general'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test.each(['custom', 'general'])('writes only in the %s home after the original R1 approval', async kind => {
+  const writes: HarnessPlugin = {
+    id: 'home-writer',
+    name: 'Home writer',
+    version: '1',
+    description: '',
+    activate(context) {
+      context.registerProvider({
+        id: 'home-writer',
+        name: 'Home writer',
+        model: 'fixture',
+        async *stream({ messages }) {
+          if (messages.some(message => message.role === 'tool')) {
+            yield { type: 'text', text: 'Saved notes.md' }
+            yield { type: 'finish', reason: 'stop' }
+          } else {
+            yield {
+              type: 'tool-call',
+              call: { id: 'write-home', name: 'write_file', arguments: { path: 'notes.md', content: 'Private home note' } },
+            }
+            yield { type: 'finish', reason: 'tool-calls' }
+          }
+        },
+      })
+    },
+  }
+  const { host, owner } = await fixture({ plugins: [writes] })
+  const model = { providerId: 'home-writer', model: 'fixture' }
+  const agentId =
+    kind === 'general'
+      ? 'general'
+      : (
+          await owner.json<CustomAgent>('custom-agents', {
+            method: 'POST',
+            body: definition({ mode: 'agent', model }),
+          })
+        ).id
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+    method: 'POST',
+    body: {
+      customAgentId: agentId,
+      prompt: 'Write the note',
+      model,
+      requestId: randomUUID(),
+    },
+  })
+  await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).approvals.length).toBe(1)
+  const approval = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).approvals[0]!
+  expect(approval).toMatchObject({ toolName: 'write_file', risk: 'R1' })
+  const file = join(host.workspaceRoot, 'helpers', agentId, 'notes.md')
+  await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' })
+  await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })
+  await settled(owner, sessionId)
+  expect(await readFile(file, 'utf8')).toBe('Private home note')
+  await expect(stat(join(host.workspaceRoot, 'notes.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('refuses a client-chosen home, a registered project collision and a replaced home before another prompt', async () => {
+  const { host, owner, seen } = await fixture()
+  const malicious = await owner.request('custom-agents', { method: 'POST', body: { ...definition(), home: 'helpers/general' } })
+  expect(malicious.status).toBe(400)
+  const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ mode: 'agent' }) })
+  const changed = await owner.request(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: agent.revision, home: 'helpers/general' },
+  })
+  expect(changed.status).toBe(400)
+  const path = join(host.workspaceRoot, 'helpers', agent.id)
+  await mkdir(path, { recursive: true, mode: 0o700 })
+  await writeFile(join(path, 'project.txt'), 'existing project')
+  expect((await owner.addFolders({ paths: [path], name: 'existing' })).status).toBeLessThan(300)
+  const denied = await owner.request('tasks', { method: 'POST', body: { customAgentId: agent.id, prompt: 'No', requestId: randomUUID() } })
+  expect(denied.status).toBe(409)
+  expect(await denied.json()).toMatchObject({ error: 'helper-home-overlap' })
+  expect(await readFile(join(path, 'project.txt'), 'utf8')).toBe('existing project')
+  expect(seen).toHaveLength(0)
+  const next = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ mode: 'agent' }) })
+  const started = await owner.json<{ sessionId: string }>('tasks', {
+    method: 'POST',
+    body: { customAgentId: next.id, prompt: 'Yes', requestId: randomUUID() },
+  })
+  await settled(owner, started.sessionId)
+  const home = join(host.workspaceRoot, 'helpers', next.id)
+  await rename(home, join(host.root, 'kept-home'))
+  await mkdir(home, { mode: 0o700 })
+  const followup = await owner.request(`tasks/${started.sessionId}/prompt`, {
+    method: 'POST',
+    body: { prompt: 'No replacement', requestId: randomUUID() },
+  })
+  expect(followup.status).toBe(409)
+  expect(await followup.json()).toMatchObject({ error: 'workspace-changed' })
+  expect(seen).toHaveLength(1)
+})
+
+test('applies the Agent defaults through the existing start-config path before its first prompt and replays the same start', async () => {
+  const { host, owner } = await fixture()
+  const log = join(host.root, 'helper-options.jsonl')
+  expect(
+    (
+      await owner.confirmed('agents', {
+        method: 'POST',
+        body: {
+          id: 'helper-options',
+          name: 'Helper options',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_LOG: log, FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'build,plan', FAKE_ACP_EFFORT_BY_MODEL: '1' },
+        },
+      })
+    ).status,
+  ).toBe(201)
+  const agent = await owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: definition({
+      harnessId: 'helper-options',
+      mode: 'agent',
+      model: undefined,
+      engineOptions: { model: 'large', effort: 'max', mode: 'plan' },
+    }),
+  })
+  const input = { customAgentId: agent.id, prompt: 'echo configured', requestId: randomUUID() }
+  const started = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: input })
+  await settled(owner, started.sessionId)
+  const detail = await owner.json<TaskDetail>(`tasks/${started.sessionId}`)
+  expect(detail.config?.map(item => [item.id, item.currentValue])).toEqual(
+    expect.arrayContaining([
+      ['model', 'large'],
+      ['effort', 'max'],
+      ['mode', 'plan'],
+    ]),
+  )
+  const calls = (await readFile(log, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line) as { event: string; method?: string; params?: { configId?: string; value?: string } })
+    .filter(item => item.event === 'recv')
+  const beforePrompt = calls.slice(
+    0,
+    calls.findIndex(item => item.method === 'session/prompt'),
+  )
+  expect(
+    beforePrompt.filter(item => item.method === 'session/set_config_option').map(item => [item.params?.configId, item.params?.value]),
+  ).toEqual([
+    ['model', 'large'],
+    ['effort', 'max'],
+    ['mode', 'plan'],
+  ])
+  await owner.json(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: agent.revision, engineOptions: { model: 'small', effort: 'low', mode: 'build' } },
+  })
+  expect(await owner.json('tasks', { method: 'POST', body: input })).toEqual(started)
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
+  expect((await owner.json<TaskDetail>(`tasks/${started.sessionId}`)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
+})
+
+test('does not send the first helper prompt or later input when the saved permission cannot be read back', async () => {
+  const { host, owner } = await fixture()
+  const log = join(host.root, 'helper-sticky-mode.jsonl')
+  await owner.confirmedJson('agents', {
+    method: 'POST',
+    body: {
+      id: 'sticky-helper',
+      name: 'Sticky helper',
+      command: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      env: { FAKE_ACP_LOG: log, FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'build,plan', FAKE_ACP_STICKY_MODE: '1' },
+    },
+  })
+  const agent = await owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: definition({
+      harnessId: 'sticky-helper',
+      mode: 'agent',
+      model: undefined,
+      engineOptions: { mode: 'plan' },
+    }),
+  })
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+    method: 'POST',
+    body: {
+      customAgentId: agent.id,
+      prompt: 'Must not send',
+      requestId: randomUUID(),
+    },
+  })
+  await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('failed')
+  const again = await owner.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'Still no', requestId: randomUUID() } })
+  expect(again.status).toBe(409)
+  expect(await again.json()).toMatchObject({ error: 'permission-unverified' })
+  expect(await readFile(log, 'utf8')).not.toContain('session/prompt')
+})
 
 test('announces the domain and starts a private session on an agent', async () => {
   const { owner, seen } = await fixture()
@@ -148,6 +463,114 @@ test('adding an engine changes nothing a live 通用 automation receives', async
   await expect
     .poll(async () => (await owner.json<AutomationDetail>(`automations/${id}`)).automation.lastRun?.state, { timeout: 8000 })
     .toBe('completed')
+})
+
+test('uses the actual Agent Harness level for the unattended ceiling before accepting a native schedule', async () => {
+  const { host, owner } = await fixture()
+  const log = join(host.root, 'unattended.jsonl')
+  await owner.confirmedJson('agents', {
+    method: 'POST',
+    body: {
+      id: 'native-schedule',
+      name: 'Native schedule',
+      command: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      env: { FAKE_ACP_LOG: log },
+    },
+  })
+  const agent = await owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: definition({ harnessId: 'native-schedule', model: undefined, mode: 'agent' }),
+  })
+  const response = await owner.request('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      customAgentId: agent.id,
+      name: 'Never widen unattended',
+      prompt: 'Do not send',
+      schedule: { kind: 'daily', time: '09:00' },
+      notify: false,
+    },
+  })
+  expect(response.status).toBe(403)
+  expect(await response.json()).toMatchObject({ error: 'automation-owner' })
+  expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.id === agent.id)?.canAutomate).toBe(false)
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
+  expect(await readFile(log, 'utf8').catch(() => '')).not.toContain('session/prompt')
+})
+
+test('saves a native task closed and permits only an explicit manual run, without granting background execution', async () => {
+  const { host, owner } = await fixture()
+  await owner.confirmedJson('agents', {
+    method: 'POST',
+    body: {
+      id: 'manual-only',
+      name: 'Manual only',
+      command: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'build,plan' },
+    },
+  })
+  const agent = await owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: definition({
+      harnessId: 'manual-only',
+      model: undefined,
+      mode: 'agent',
+      engineOptions: { model: 'large', effort: 'high', mode: 'plan' },
+    }),
+  })
+  const saved = await owner.json<Automation>('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      customAgentId: agent.id,
+      name: 'Only when asked',
+      prompt: 'echo manual',
+      schedule: { kind: 'daily', time: '09:00' },
+      notify: false,
+      enabled: false,
+    },
+  })
+  expect(saved).toMatchObject({ enabled: false, state: 'off' })
+  expect(saved.nextRunAt).toBeUndefined()
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
+  const enabled = await owner.request(`automations/${saved.id}/enabled`, {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      baseRevision: saved.revision,
+      enabled: true,
+    },
+  })
+  expect(enabled.status).toBe(403)
+  const run = { requestId: randomUUID() }
+  await owner.json(`automations/${saved.id}/run`, { method: 'POST', body: run })
+  await expect
+    .poll(async () => (await owner.json<AutomationDetail>(`automations/${saved.id}`)).automation.lastRun?.state, { timeout: 8000 })
+    .toBe('completed')
+  const after = (await owner.json<AutomationDetail>(`automations/${saved.id}`)).automation
+  expect(after).toMatchObject({ enabled: false, state: 'off', lastRun: { trigger: 'manual' } })
+  expect(after.nextRunAt).toBeUndefined()
+  const performed = await owner.json<TaskDetail>(`tasks/${after.lastRun!.sessionId}`)
+  expect(performed.summary.cwd).toBe(join(host.workspaceRoot, 'helpers', agent.id))
+  expect(performed.config?.map(option => [option.id, option.currentValue])).toEqual(
+    expect.arrayContaining([
+      ['model', 'large'],
+      ['effort', 'high'],
+      ['mode', 'plan'],
+    ]),
+  )
+  await owner.json(`automations/${saved.id}/run`, { method: 'POST', body: run })
+  await new Promise(resolve => setTimeout(resolve, 650))
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
+  expect((await owner.json<AutomationDetail>(`automations/${saved.id}`)).automation.enabled).toBe(false)
+  const limited = await host.enroll({ listener: 'unix', name: 'No manual run' })
+  await owner.json(`devices/${limited.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
+  const denied = await limited.request(`automations/${saved.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+  expect(denied.status).toBe(403)
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
 })
 
 test('editing 通用 over and over never pauses its automations, with the real check running', async () => {
@@ -268,6 +691,10 @@ test('a run of an automation on 通用 is private, since it shows the saved prom
     .poll(async () => (await owner.json<AutomationDetail>(`automations/${automation.id}`)).automation.lastRun?.sessionId, { timeout: 8000 })
     .toBeTruthy()
   const sessionId = (await owner.json<AutomationDetail>(`automations/${automation.id}`)).automation.lastRun!.sessionId!
+  expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary).toMatchObject({
+    cwd: join(host.workspaceRoot, 'helpers', 'general'),
+  })
+  expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.sessionFolder).toBeUndefined()
   expect((await work.request(`tasks/${sessionId}`)).status).toBe(403)
   expect((await work.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).not.toContain(sessionId)
 })
@@ -313,7 +740,7 @@ test("a conversation with 通用 is 我的 Agent's and private even while 通用
   })().catch(() => {})
   try {
     // 通用 is empty: nothing private reaches the model, yet the conversation is as private as an Agent's.
-    const body = { prompt: 'Hello', mode: 'chat', model, customAgentId: 'general' }
+    const body = { prompt: 'Hello', mode: 'agent', model, customAgentId: 'general' }
     const requestId = randomUUID()
     const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: { ...body, requestId } })
     await settled(owner, sessionId)
@@ -453,20 +880,31 @@ test('an automation runs on the built-in engine from any allowed device, and its
   expect(seen[0]?.[1]?.content).toContain('AGENT INSTRUCTIONS')
 })
 
-test('an automation may use a Harness, on record, and 立即运行 goes through the route', async () => {
+test('keeps L3 manual starts on record, refuses unattended L3 and runs 通用 through the schedule route', async () => {
   const { host, owner } = await fixture()
   const defined = await owner.confirmed('agents', {
     method: 'POST',
-    body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    body: {
+      id: 'fake-engine',
+      name: 'Fake',
+      command: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'build,plan' },
+    },
   })
   expect(defined.status).toBe(201)
   const agent = await owner.json<CustomAgent>('custom-agents', {
     method: 'POST',
-    body: definition({ harnessId: 'fake-engine', mode: 'agent', model: undefined, skills: [] }),
+    body: definition({
+      harnessId: 'fake-engine',
+      mode: 'agent',
+      model: undefined,
+      skills: [],
+      engineOptions: { model: 'large', effort: 'high', mode: 'plan' },
+    }),
   })
   const asked = host.presence.requests.length
-  // Enabling one with a Harness takes no prompt, like starting one by hand.
-  const onHarness = await owner.json<Automation>('automations', {
+  const onHarness = await owner.request('automations', {
     method: 'POST',
     body: {
       requestId: randomUUID(),
@@ -477,11 +915,26 @@ test('an automation may use a Harness, on record, and 立即运行 goes through 
       notify: false,
     },
   })
-  expect(onHarness).toMatchObject({ enabled: true, state: 'ready' })
-  await owner.json(`automations/${onHarness.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
-  await expect
-    .poll(async () => (await owner.json<AutomationDetail>(`automations/${onHarness.id}`)).automation.lastRun?.state, { timeout: 8000 })
-    .toBe('completed')
+  expect(onHarness.status).toBe(403)
+  expect(await onHarness.json()).toMatchObject({ error: 'automation-owner' })
+  const manual = await owner.json<{ sessionId: string }>('tasks', {
+    method: 'POST',
+    body: {
+      customAgentId: agent.id,
+      prompt: 'Manual start',
+      requestId: randomUUID(),
+    },
+  })
+  await settled(owner, manual.sessionId)
+  const performed = await owner.json<TaskDetail>(`tasks/${manual.sessionId}`)
+  expect(performed.summary.cwd).toBe(join(host.workspaceRoot, 'helpers', agent.id))
+  expect(performed.config?.map(option => [option.id, option.currentValue])).toEqual(
+    expect.arrayContaining([
+      ['model', 'large'],
+      ['effort', 'high'],
+      ['mode', 'plan'],
+    ]),
+  )
   expect(host.presence.requests).toHaveLength(asked)
   const records = (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
     .trim()
@@ -489,7 +942,7 @@ test('an automation may use a Harness, on record, and 立即运行 goes through 
     .map(line => JSON.parse(line) as { action: string; stepup?: string; detail: Record<string, unknown> })
   expect(records.find(record => record.action === 'task.l3.started')).toMatchObject({
     stepup: 'none',
-    detail: { harnessId: 'fake-engine', promptHash: expect.any(String) },
+    detail: { harnessId: 'fake-engine', promptHash: expect.any(String), configHash: expect.any(String) },
   })
   const general = await owner.json<Automation>('automations', {
     method: 'POST',
@@ -507,7 +960,7 @@ test('an automation may use a Harness, on record, and 立即运行 goes through 
     .poll(async () => (await owner.json<AutomationDetail>(`automations/${general.id}`)).automation.lastRun?.state, { timeout: 8000 })
     .toBe('completed')
   const list = await owner.json<{ automations: Automation[] }>('automations')
-  expect(list.automations.map(item => item.id).sort()).toEqual([general.id, onHarness.id].sort())
+  expect(list.automations.map(item => item.id)).toEqual([general.id])
   await owner.json(`automations/${general.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
   expect((await owner.request(`automations/${general.id}`)).status).toBe(404)
 })
@@ -727,10 +1180,14 @@ test.each([{ sessionFolders: false }, { sessionFolders: true }])(
       await settled(owner, sessionId)
       return (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary
     }
-    expect(await delegate(loose, 'default')).toMatchObject({ workspaceId: 'default', agent: { customAgentId: loose.id } })
-    expect(await delegate(placed, notes.id)).toMatchObject({ workspaceId: notes.id })
+    expect(await delegate(loose, 'default')).toMatchObject({
+      workspaceId: 'default',
+      agent: { customAgentId: loose.id },
+      cwd: join(host.workspaceRoot, 'helpers', loose.id),
+    })
+    expect(await delegate(placed, notes.id)).toMatchObject({ workspaceId: notes.id, cwd: notes.path })
     // 起始文件夹 picked for this session over the Agent's default project.
-    expect(await delegate(placed, 'default')).toMatchObject({ workspaceId: 'default' })
+    expect(await delegate(placed, 'default')).toMatchObject({ workspaceId: 'default', cwd: join(host.workspaceRoot, 'helpers', placed.id) })
     // A project picked for this session that is gone is that pick's problem, not the Agent's.
     const gone = await owner.request('tasks', {
       method: 'POST',

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as wait } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { AutomationConfig, TaskDetail } from '@latch/protocol'
+import type { AutomationConfig, AutomationRun, TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { Automations, automationSummary, type AutomationPlan } from '../src/automations.ts'
 import { CustomAgents, type AgentActor } from '../src/custom-agents.ts'
@@ -41,6 +41,8 @@ async function fixture() {
     basis: '1'.repeat(64),
     planFailure: undefined as Error | undefined,
     ownerFailure: undefined as Error | undefined,
+    onAuthorize: undefined as ((trigger: AutomationRun['trigger']) => void) | undefined,
+    triggers: [] as AutomationRun['trigger'][],
     onPlan: undefined as (() => void) | undefined,
     audit: { append: vi.fn(async () => undefined as never) },
     start: vi.fn(async (_input: Parameters<Parameters<typeof Automations.open>[0]['start']>[0]): Promise<{ sessionId: string }> => ({
@@ -55,12 +57,14 @@ async function fixture() {
         audit: f.audit,
         now: () => f.clock,
         timeZone: () => f.zone,
-        plan: (): AutomationPlan => {
+        plan: (_config, trigger): AutomationPlan => {
+          f.triggers.push(trigger)
           f.onPlan?.()
           if (f.planFailure) throw f.planFailure
           return { basis: f.basis, persistent: true, harnessId: 'standard', mode: 'agent', model: { providerId: 'p', model: 'm' } }
         },
-        authorize: () => {
+        authorize: (_device, _config, trigger) => {
+          f.onAuthorize?.(trigger)
           if (f.ownerFailure) throw f.ownerFailure
         },
         start: f.start,
@@ -81,6 +85,56 @@ test('is on once saved, keeps the prompt out of its summary, and audits no text'
   expect(value).toMatchObject({ enabled: true, state: 'ready', nextRunAt: '2026-11-02T09:00:00.000Z' })
   expect(automationSummary(value)).not.toHaveProperty('prompt')
   expect(JSON.stringify(audit.append.mock.calls)).not.toContain('检查依赖')
+})
+
+test('a manual run keeps an unanswered approval beyond the unattended expiry', async () => {
+  const { f, service, detail, cancel } = await fixture()
+  const { value } = await service.create({ ...definition(), enabled: false }, actor)
+  detail.mockImplementation(async id => summary(id, { status: 'waiting-approval' }))
+  await service.runNow(value.id, { requestId: randomUUID() }, actor)
+  f.clock += 3_600_001
+  await service.tick()
+  expect(service.get(value.id).lastRun).toMatchObject({ trigger: 'manual', state: 'waiting' })
+  expect(cancel).not.toHaveBeenCalled()
+})
+
+test('closed tasks receive no grant, survive restart and never dispatch as a background task', async () => {
+  const { f, service, start, dataDir } = await fixture()
+  const { value } = await service.create({ ...definition(), enabled: false }, actor)
+  expect(f.triggers).toEqual(['manual'])
+  const stored = JSON.parse(await readFile(join(dataDir, 'automations.json'), 'utf8')) as { rows: Array<{ grant?: unknown }> }
+  expect(stored.rows[0]!.grant).toBeUndefined()
+  await service.close()
+  f.clock += 2 * 86400000
+  const again = await f.open()
+  services.push(again)
+  await again.tick()
+  expect(again.get(value.id)).toMatchObject({ enabled: false, state: 'off' })
+  expect(again.get(value.id).nextRunAt).toBeUndefined()
+  expect(start).not.toHaveBeenCalled()
+  await again.runNow(value.id, { requestId: randomUUID() }, actor)
+  await again.tick()
+  expect(again.get(value.id)).toMatchObject({ enabled: false, state: 'off', lastRun: { trigger: 'manual', state: 'completed' } })
+  expect(f.triggers).toEqual(['manual', 'manual'])
+})
+
+test('restored background grants recheck the ceiling while an explicit manual run retains its separate authority', async () => {
+  const { f, service, start } = await fixture()
+  const { value } = await service.create(definition(), actor)
+  await service.close()
+  f.onAuthorize = trigger => {
+    if (trigger === 'schedule') throw new AppError(403, 'automation-owner', 'Background level refused')
+  }
+  const again = await f.open()
+  services.push(again)
+  await again.tick()
+  expect(again.get(value.id)).toMatchObject({ enabled: false, state: 'paused', pause: { reason: 'owner-unavailable' } })
+  expect(start).not.toHaveBeenCalled()
+  await again.runNow(value.id, { requestId: randomUUID() }, actor)
+  expect(start).toHaveBeenCalledTimes(1)
+  expect(f.triggers.at(-1)).toBe('manual')
+  await again.tick()
+  expect(again.get(value.id).enabled).toBe(false)
 })
 
 test('runs at its time as a session, once, and then waits for the next day', async () => {

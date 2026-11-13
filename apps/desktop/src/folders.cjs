@@ -12,6 +12,7 @@ const APP_PREFIX = 'latch://app/link/'
 /** As the preload checks them: project IDs the Host hands out, and folder IDs inside a project. */
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 const FOLDER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+const AGENT_ID = /^(?:general|agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
 /** Session IDs as the Host hands them out (`task-<uuid>` for Latch 内置 and ACP agents). */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const PATH_BYTES_LIMIT = 4096
@@ -94,6 +95,8 @@ function parseDropInput(input) {
 
 /** `latch:folders:reveal`: a project and one of its folders by ID; `folderId: null` is the primary folder. */
 function parseRevealInput(input) {
+  if (hasOnlyKeys(input, ['agentId']))
+    return typeof input.agentId === 'string' && AGENT_ID.test(input.agentId) ? { agentId: input.agentId } : undefined
   if (!hasOnlyKeys(input, ['projectId', 'folderId'])) return undefined
   const projectId = optionalId(input.projectId, PROJECT_ID)
   const folderId = optionalId(input.folderId, FOLDER_ID)
@@ -421,6 +424,18 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
       revealing = true
       lastReveal = now()
       try {
+        if (parsed.agentId) {
+          const result = await request('GET', `/link/api/custom-agents/${encodeURIComponent(parsed.agentId)}/home`)
+          if (result.status !== 200) return hostFailure(result)
+          if (result.json?.owner !== parsed.agentId || result.json.available !== true)
+            return { status: 'failed', code: 'helper-home-unavailable' }
+          const path = result.json.path
+          if (!isPathShaped(path)) return { status: 'failed', code: 'invalid' }
+          const found = await inspect(path).catch(() => undefined)
+          if (!found?.directory || found.real !== path) return { status: 'failed', code: 'missing' }
+          show(found.real)
+          return { status: 'shown' }
+        }
         const result = await request('GET', '/link/api/workspaces')
         if (result.status !== 200 || !Array.isArray(result.json?.workspaces)) return hostFailure(result)
         const workspace = result.json.workspaces.find(item => isPlainObject(item) && item.id === parsed.projectId)

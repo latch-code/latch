@@ -146,8 +146,8 @@ export interface DriverTaskSummary {
   /** Host-read, display-only Git branch or detached HEAD label; omitted when metadata cannot be verified. */
   branch?: string
   /**
-   * The Host made `cwd` for this session alone, inside its default start directory (`workspaceId` is `default`): an
-   * Agent session outside a saved project. The desktop can save it as a project's primary folder.
+   * The Host made `cwd` for this session alone, inside its default start directory (`workspaceId` is `default`). The
+   * desktop may save it as a project's primary folder. Shared private helper homes do not expose this flag.
    */
   sessionFolder?: true
   /**

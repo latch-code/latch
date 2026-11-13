@@ -119,14 +119,25 @@ export interface PermissionNoteValue {
  * and a mode Latch has no word for by its own name, neutral. Asking first, the default, says nothing. `detail` goes
  * behind ⓘ, names no Harness, and says that Latch does not isolate it either.
  */
-export function permissionNote(view: PermissionView | undefined): PermissionNoteValue | undefined {
-  if (!view) return undefined
-  if (view.amber && view.label === MODE_COPY.unverifiable)
+/** The Host expected a verifiable mode, but its current report does not establish it. Unreadable native modes alone are not a lock. */
+export function helperPermissionBlocked(detail: TaskDetail | null | undefined): boolean {
+  if (!detail || (!detail.summary.agent && !detail.summary.generalChat) || detail.summary.mode === 'chat') return false
+  const expected = detail.permission?.expectedMode
+  return (
+    detail.permission?.readback === 'mode'
+    && expected !== undefined
+    && detail.config?.find(option => option.category === 'mode')?.currentValue !== expected
+  )
+}
+
+export function permissionNote(view: PermissionView | undefined, unconfirmed = false): PermissionNoteValue | undefined {
+  if (unconfirmed || (view?.amber && view.label === MODE_COPY.unverifiable))
     return {
       words: '权限没确认',
       detail: `${MODE_COPY.unverifiableLine}：Latch 说不准它动手前会不会问你。Latch 也不隔离它。`,
       tone: 'warn',
     }
+  if (!view) return undefined
   if (view.amber) return { words: '不先问你', detail: '它动手前不问你。Latch 也不隔离它。', tone: 'warn' }
   const unnamed = view.rows?.find(row => row.current && !row.tier)
   if (unnamed)
