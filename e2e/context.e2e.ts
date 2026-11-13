@@ -93,7 +93,7 @@ describe('a new context in a session', () => {
       // /clear chooses it and empties the input; 保留上下文 takes it back without a request.
       await input(page).fill('/clear')
       await page
-        .getByRole('group', { name: '这个会话' })
+        .getByRole('listbox', { name: '命令与提示模板', exact: true })
         .getByRole('option', { name: /\/clear/ })
         .waitFor()
       await input(page).press('Enter')
@@ -167,7 +167,7 @@ describe('a new context in a session', () => {
     await idle(sessionId)
     await input(page).fill('/clear')
     await page
-      .getByRole('group', { name: '这个会话' })
+      .getByRole('listbox', { name: '命令与提示模板', exact: true })
       .getByRole('option', { name: /\/clear/ })
       .waitFor()
     await input(page).press('Enter')
@@ -201,7 +201,7 @@ describe('a new context in a session', () => {
     await transcript.getByText(`echo: ${title}`).waitFor()
     await input(page).fill('/clear')
     await page
-      .getByRole('group', { name: '这个会话' })
+      .getByRole('listbox', { name: '命令与提示模板', exact: true })
       .getByRole('option', { name: /\/clear/ })
       .waitFor()
     await input(page).press('Enter')

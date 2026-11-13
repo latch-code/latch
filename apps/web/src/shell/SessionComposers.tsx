@@ -506,8 +506,9 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         ? {}
         : {
             onOpenPending: () => {
-              choose(pendingHome)
-              if (phone && pendingHome === null) setNewSheet(true)
+              choose(pendingHome, () => {
+                if (phone && pendingHome === null) setNewSheet(true)
+              })
             },
           })}
       sending={submission.sending}

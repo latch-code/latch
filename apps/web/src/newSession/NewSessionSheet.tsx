@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Presentation } from 'lucide-react'
 import { pairRoute, type AppSnapshot, type SessionConfigOption, type WorkspaceInfo, type WorktreeStart } from '@latch/protocol'
 import { Badge, Button, Hint, ICON_STROKE, MOTION, Sheet, usePresence, ValuePicker, ChevronDownGlyph, ChevronUpGlyph } from '@latch/ui'
@@ -108,6 +108,14 @@ export function NewSessionSheet({
     | undefined
 }) {
   const { present } = usePresence(open, MOTION.sheet)
+  const seenProjectRequest = useRef(projectAsk?.request)
+  const [projectRequest, setProjectRequest] = useState(0)
+  useEffect(() => {
+    if (!open || !present || seenProjectRequest.current === projectAsk?.request) return
+    seenProjectRequest.current = projectAsk?.request
+    // The picker must mount before receiving the request that opens its list.
+    setProjectRequest(request => request + 1)
+  }, [open, present, projectAsk?.request])
   const [typing, setTyping] = useState(false)
   useEffect(() => {
     if (!open || !present) return undefined
@@ -232,7 +240,7 @@ export function NewSessionSheet({
             onChange={workspaceId => onChoice({ workspaceId, projectSkipped: workspaceId === 'default' })}
             onManage={onManageWorkspaces}
             onCreate={onCreateProject}
-            openRequest={projectAsk?.request}
+            openRequest={projectRequest}
             notice={projectAsk?.notice}
             onClosed={projectAsk?.clearNotice}
           />

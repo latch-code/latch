@@ -53,7 +53,8 @@ export default defineConfig({
         extends: true,
         // The dependency scan starts from the test files, so everything they import is prebundled before the first
         // test and Vite never reloads the page in the middle of a run.
-        optimizeDeps: { entries: ['packages/ui/test/**/*.test.{ts,tsx}'] },
+        // This direct import belongs to the UI workspace, not the repository root's dependencies.
+        optimizeDeps: { entries: ['packages/ui/test/**/*.test.{ts,tsx}'], include: ['./packages/ui/node_modules/react-dom'] },
         test: {
           name: '@latch/ui',
           include: ['packages/ui/test/**/*.test.{ts,tsx}'],

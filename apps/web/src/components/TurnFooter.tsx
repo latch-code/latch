@@ -114,13 +114,14 @@ export interface TurnRetry {
 }
 
 /**
- * A settled turn's footer, after its last row: the facts and 复制, 重试 and 从这里分叉. It overlays the gap under the turn,
+ * A turn's footer, after its last row: live prose can be copied; settled turns also show facts, retry and fork. It overlays the gap under the turn,
  * so it takes no room of its own; it rests hidden on desktop and fades in while the pointer or focus is in the turn, and
  * stays on the newest turn of a touch screen or after a tap on the turn. Copy takes the whole turn's prose; 重试 sends
  * the same prompt again as a new turn and never replays a tool.
  */
 export function TurnFooter({
   turn,
+  live = false,
   outcome = 'completed',
   pinned = false,
   context,
@@ -129,6 +130,7 @@ export function TurnFooter({
   actions,
 }: {
   turn: Turn
+  live?: boolean
   outcome?: TurnOutcome
   /** The turn shows its 「已工作 …」 fold, which says how long it worked. */
   worked?: boolean
@@ -140,16 +142,19 @@ export function TurnFooter({
   actions?: { onFork?: () => void; onCopy: () => void; onHandoff?: () => void }
 }) {
   const text = turnText(turn)
+  if (live && !text) return null
   return (
     <div className="turn-footer" data-pinned={pinned ? '' : undefined}>
       <div className="turn-footer-row">
-        <span className="turn-facts">
-          <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} />
-        </span>
+        {!live && (
+          <span className="turn-facts">
+            <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} />
+          </span>
+        )}
         {text && <CopyButton text={text} label="复制" size="xs" />}
-        {onRetry && <IconButton icon={RotateCcw} size="xs" label="重试" className="turn-retry" onClick={onRetry} />}
-        {actions?.onFork && <IconButton icon={GitFork} size="xs" label="从这里分叉" onClick={actions.onFork} />}
-        {actions && (
+        {!live && onRetry && <IconButton icon={RotateCcw} size="xs" label="重试" className="turn-retry" onClick={onRetry} />}
+        {!live && actions?.onFork && <IconButton icon={GitFork} size="xs" label="从这里分叉" onClick={actions.onFork} />}
+        {!live && actions && (
           <Menu
             label="这一轮的操作"
             placement="top-end"

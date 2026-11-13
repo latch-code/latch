@@ -633,13 +633,14 @@ describe('turn footers', () => {
       }),
     )
 
-  it('gives a settled turn one footer with its usage summed, and a running one the status line instead', () => {
+  it('keeps copying available during a turn and adds settled facts only after it finishes', () => {
     const settled = render(false)
     expect(settled.match(/class="turn-footer[ "]/g)).toHaveLength(2)
     expect(textsOf(settled, 'turn-facts').join(' ')).toContain('输入 300 tokens')
     expect(textsOf(settled, 'turn-facts').join(' ')).toContain('输出 30 tokens')
     const running = render(true)
-    expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(1)
+    expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(2)
+    expect(textsOf(running, 'turn-facts')).toHaveLength(1)
     expect(running).toContain('class="status-line is-plain"')
     expect(running).toContain('运行中')
   })

@@ -1,5 +1,5 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -220,7 +220,7 @@ describe('streaming render', () => {
     expect(await live.locator('pre code').textContent()).not.toContain('line0 ')
   })
 
-  it('keeps the live reply identity and copies its original Markdown after display completion ends', async () => {
+  it('copies the current raw Markdown during streaming and retains the same reply and copy control when it settles', async () => {
     await open(390)
     const user: Message = { id: 'user-copy', role: 'user', text: '写一个重点' }
     const text = '说明：**未闭合重点'
@@ -228,15 +228,40 @@ describe('streaming render', () => {
     const reply = page.locator('[data-message-id="reply-copy"]')
     await reply.locator('strong').waitFor()
     await reply.evaluate(element => element.setAttribute('data-owned-node', 'reply'))
-    await show(detail([user, { id: 'reply-copy', role: 'assistant', text }], { cursor: 2 }))
-    await expect.poll(() => reply.locator('.message-content').getAttribute('aria-busy')).toBe(null)
-    expect(await reply.getAttribute('data-owned-node')).toBe('reply')
-    expect(await reply.innerText()).toContain('**未闭合重点')
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
     const copy = page.locator('.turn-footer').getByRole('button', { name: '复制', exact: true })
+    expect(await copy.count()).toBe(1)
+    expect(await page.locator('.turn-footer .turn-facts').count()).toBe(0)
+    expect(await page.locator('.turn-footer button:not(.ui-copy-button)').count()).toBe(0)
     await reply.click()
     await copy.click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(text)
+    await copy.evaluate(element => element.setAttribute('data-owned-node', 'copy'))
+    const next = text + '继续到达'
+    await show(detail([user], { running: true, liveText: next, liveId: 'reply-copy', cursor: 2 }))
+    await reply.getByText('未闭合重点继续到达', { exact: true }).waitFor()
+    await copy.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(next)
+    expect(await copy.getAttribute('data-owned-node')).toBe('copy')
+    await mkdir('test-results/stream-copy', { recursive: true })
+    for (const width of [320, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await reply.hover()
+        await copy.click({ trial: true })
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+        await page.screenshot({ path: `test-results/stream-copy/live-${width}-${colorScheme}.png`, animations: 'disabled' })
+      }
+    }
+    await show(detail([user, { id: 'reply-copy', role: 'assistant', text: next }], { cursor: 3 }))
+    await expect.poll(() => reply.locator('.message-content').getAttribute('aria-busy')).toBe(null)
+    expect(await reply.getAttribute('data-owned-node')).toBe('reply')
+    expect(await reply.innerText()).toContain('**未闭合重点')
+    expect(await copy.getAttribute('data-owned-node')).toBe('copy')
+    await reply.click()
+    await copy.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(next)
   })
 
   it('does not rerender completed Markdown blocks while only the live tail changes', async () => {

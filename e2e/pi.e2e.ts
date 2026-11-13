@@ -1,8 +1,9 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -58,6 +59,38 @@ describe('pi over its own RPC mode', () => {
     await host?.close()
     await rm(directory, { recursive: true, force: true })
   })
+  afterEach(async context => {
+    try {
+      const snapshot = await owner.json<AppSnapshot>('snapshot')
+      if (context.task.result?.state === 'fail') {
+        const pictures = browser
+          .contexts()
+          .flatMap(browserContext => browserContext.pages())
+          .map(async (page, index) => {
+            if (await page.locator('.app-shell').count())
+              await page.screenshot({ path: `${OUTPUT}/failure-${index}.png`, animations: 'disabled' })
+          })
+        // Diagnostic files must not prevent cancelling a fixture-owned run when the assertion failed.
+        await Promise.allSettled([
+          ...pictures,
+          writeFile(
+            `${OUTPUT}/failure-state.json`,
+            JSON.stringify(
+              { test: context.task.name, tasks: snapshot.tasks.map(task => ({ id: task.id, status: task.status, runId: task.runId })) },
+              null,
+              2,
+            ),
+          ),
+        ])
+      }
+      // A failed UI assertion must not leave this fixture's L3 run blocking the next browser's enrollment.
+      const active = snapshot.tasks.filter(task => task.status === 'running' || task.status === 'waiting-approval')
+      for (const task of active)
+        await owner.json(`tasks/${task.id}/cancel`, { method: 'POST', body: { requestId: randomUUID(), runId: task.runId } })
+    } finally {
+      await Promise.all(browser.contexts().map(context => context.close()))
+    }
+  })
 
   const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
     const context = await browser.newContext({
@@ -73,51 +106,88 @@ describe('pi over its own RPC mode', () => {
     return page
   }
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
-  const draft = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true })
-  const composer = (page: Page) => page.getByRole('textbox', { name: '继续对话', exact: true })
+  const draft = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true }).filter({ visible: true })
+  const composer = (page: Page) => page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
   const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+  const modelAction = (page: Page, name: string) =>
+    page.getByRole('menuitem', { name, exact: true }).or(page.getByRole('button', { name, exact: true }))
   const received = async () =>
     (await readFile(log, 'utf8').catch(() => ''))
       .split('\n')
       .filter(Boolean)
-      .map(line => JSON.parse(line) as { event: string; type?: string; argv?: string[]; message?: string; cwd?: string })
+      .map(line => JSON.parse(line) as { event: string; type?: string; argv?: string[]; message?: string; cwd?: string; command?: string })
   const reply = (page: Page, text: string) => page.locator('.transcript').getByText(text, { exact: true }).first()
   const latest = async () => {
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks.toSorted((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
     return owner.json<TaskDetail>(`tasks/${tasks.at(-1)!.id}`)
   }
+  const newDraft = async (page: Page) => {
+    const options = page.getByRole('button', { name: '新会话选项', exact: true })
+    const create = page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true })
+    if (await options.isVisible()) await options.click()
+    else if (await create.count()) await create.click()
+    await draft(page).waitFor()
+  }
   const start = async (page: Page, text: string) => {
+    const before = (await owner.json<AppSnapshot>('snapshot')).tasks.length
     await draft(page).fill(text)
     await draft(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
-    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+    const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
     if (
       await elsewhere.waitFor({ timeout: 3_000 }).then(
         () => true,
-        () => false,
+        error => {
+          if (error instanceof Error && error.name === 'TimeoutError') return false
+          throw error
+        },
       )
     ) {
       await elsewhere.click()
+      expect(await draft(page).inputValue()).toBe(text)
+      expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(before)
       await draft(page).press('Meta+Enter')
     }
+    await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, { timeout: 20_000 }).toBe(before + 1)
+  }
+  const allowCommand = async (page: Page, command: string) => {
+    const executed = async () => (await received()).filter(entry => entry.event === 'executed' && entry.command === command).length
+    const before = await executed()
+    await expect.poll(async () => (await latest()).approvals.length).toBe(1)
+    const approval = (await latest()).approvals[0]!
+    expect(approval.arguments).toContain(command)
+    expect(await executed()).toBe(before)
+    await page.locator(`[data-approval-id="${approval.id}"]`).getByRole('button', { name: '允许', exact: true }).click()
+    await expect.poll(executed).toBe(before + 1)
   }
 
   it('starts pi only when sent to or asked for its list, then runs, stops and keeps the session after a reload', async () => {
     const page = await open(1440, 'light')
     await expect.poll(() => chip(page, 'Harness').innerText()).toContain('pi')
     await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
-    await expect.poll(() => chip(page, '权限').innerText()).toContain('由 pi 决定')
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
     // Selecting pi loads nothing: its list is read only when a person asks.
     await chip(page, '模型').click()
-    await page.getByText('读取 pi 的模型列表', { exact: true }).waitFor()
+    const readModels = page.getByRole('menuitem', { name: '读取 pi 的模型列表', exact: true })
+    await readModels.waitFor()
     await shot(page, 'draft-menu-1440-light')
     expect(await received()).toEqual([])
-    await page.getByText('读取 pi 的模型列表', { exact: true }).click()
-    await page.getByText('Claude Sonnet 4.5', { exact: true }).first().waitFor()
+    await readModels.click()
+    await page.getByRole('menuitemradio', { name: /Claude Sonnet 4\.5/u }).waitFor()
     const read = await received()
     expect(read.filter(entry => entry.event === 'start')).toHaveLength(1)
-    expect(read.find(entry => entry.event === 'start')!.argv).toEqual(['--mode', 'rpc'])
-    expect(read.some(entry => entry.type === 'prompt')).toBe(false)
+    expect(read.find(entry => entry.event === 'start')!.argv).toEqual([
+      '-e',
+      expect.stringMatching(/\/latch-permission\.ts$/u),
+      '--mode',
+      'rpc',
+    ])
+    // Reading may query the private permission extension; none of these commands is a model prompt.
+    expect(
+      read
+        .filter(entry => entry.type === 'prompt')
+        .every(entry => /^\/latch-permission(?: (?:plan|ask|rule|never))?$/u.test(entry.message ?? '')),
+    ).toBe(true)
     await shot(page, 'listed-1440-light')
     await page.keyboard.press('Escape')
 
@@ -127,17 +197,20 @@ describe('pi over its own RPC mode', () => {
     await expect.poll(() => chip(page, '思考').innerText()).toContain('中')
     const first = await latest()
     expect(first.summary.status).toBe('idle')
+    expect(first.permission).toMatchObject({ expectedMode: 'ask', readback: 'mode', approvals: 'prompts' })
     expect(first.messages.filter(message => message.role === 'assistant').map(message => message.reasoning)).toEqual(['Thinking about it.'])
     expect(first.usageReport?.contextSize).toBe(200000)
     await shot(page, 'reply-1440-light')
 
     await composer(page).fill('run the tests')
     await composer(page).press('Meta+Enter')
+    await allowCommand(page, 'npm test')
     await reply(page, 'echo: run the tests').waitFor({ timeout: 20_000 })
     await expect.poll(async () => (await latest()).messages.find(message => message.role === 'tool')?.state).toBe('completed')
 
     await composer(page).fill('sleep a while')
     await composer(page).press('Meta+Enter')
+    await allowCommand(page, 'sleep 600')
     await expect.poll(async () => (await latest()).messages.filter(message => message.role === 'tool').length).toBe(2)
     await page.getByRole('button', { name: '停止', exact: true }).click()
     await expect.poll(async () => (await latest()).summary.status, { timeout: 20_000 }).toBe('cancelled')
@@ -148,7 +221,7 @@ describe('pi over its own RPC mode', () => {
     const abort = types.indexOf('abort')
     expect(abort).toBeGreaterThan(-1)
     expect(types.slice(types.lastIndexOf('prompt', abort), abort)).toContain('clear_queue')
-    await page.locator('.sidebar-body').getByText('已停止', { exact: true }).waitFor()
+    await page.getByText('已停止', { exact: true }).filter({ visible: true }).waitFor()
     await shot(page, 'stopped-1440-light')
 
     await page.reload()
@@ -162,14 +235,10 @@ describe('pi over its own RPC mode', () => {
 
   it('adds text to a running turn, and fails a turn with what the model service said', async () => {
     const page = await open(390, 'dark')
-    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-      if (await button.isVisible()) {
-        await button.click()
-        break
-      }
-    }
+    // Sending from Home with no project opens the real choices sheet and preserves the draft.
     await draft(page).waitFor()
     await start(page, 'build it slowly')
+    await allowCommand(page, 'npm run build')
     await expect.poll(async () => (await latest()).messages.some(message => message.role === 'tool')).toBe(true)
     await composer(page).fill('also update the README')
     await page.getByRole('button', { name: '追加到本轮', exact: true }).click()
@@ -194,16 +263,10 @@ describe('pi over its own RPC mode', () => {
   })
   it("compacts with pi's own /compact between turns, and refuses it while a turn runs", async () => {
     const page = await open(1440, 'light')
-    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-      if (await button.isVisible()) {
-        await button.click()
-        break
-      }
-    }
-    await draft(page).waitFor()
+    await newDraft(page)
     await start(page, 'say hello first')
     await reply(page, 'echo: say hello first').waitFor({ timeout: 20_000 })
-    const menu = page.locator('.slash-commands')
+    const menu = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
     await composer(page).fill('/comp')
     await menu.getByRole('option', { name: /^\/compact/u }).waitFor()
     await shot(page, 'compact-menu-1440-light')
@@ -226,12 +289,13 @@ describe('pi over its own RPC mode', () => {
 
     await composer(page).fill('sleep a while')
     await composer(page).press('Meta+Enter')
+    await allowCommand(page, 'sleep 600')
     await expect
       .poll(async () => (await latest()).messages.some(message => message.role === 'tool' && message.state === 'running'))
       .toBe(true)
-    // pi stops what it is doing to compact, so the command is not offered meanwhile, and refused when typed.
+    // pi stops what it is doing to compact, so the visible command is disabled meanwhile, and refused when typed.
     await composer(page).fill('/')
-    await expect.poll(() => menu.getByRole('option', { name: /^\/compact/u }).count()).toBe(0)
+    await expect.poll(() => menu.getByRole('option', { name: /^\/compact/u }).getAttribute('aria-disabled')).toBe('true')
     await composer(page).fill('/compact')
     await composer(page).press('Meta+Enter')
     const refusal = page.getByText('/compact 不能排队或追加，请等本轮结束后发送。', { exact: true })
@@ -251,13 +315,7 @@ describe('pi over its own RPC mode', () => {
 
   it("forks a pi session from a turn in pi's own record, and sends the person's words alone", async () => {
     const page = await open(1440, 'light')
-    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-      if (await button.isVisible()) {
-        await button.click()
-        break
-      }
-    }
-    await draft(page).waitFor()
+    await newDraft(page)
     await start(page, 'first idea')
     await reply(page, 'echo: first idea').waitFor({ timeout: 20_000 })
     await composer(page).fill('second idea')
@@ -266,7 +324,7 @@ describe('pi over its own RPC mode', () => {
     await expect.poll(async () => (await latest()).summary.status).toBe('idle')
     const turn = page.locator('.turn-reply').first()
     await turn.hover()
-    await turn.getByRole('button', { name: '从这里分叉', exact: true }).click({ force: true })
+    await turn.getByRole('button', { name: '从这里分叉', exact: true }).click()
     // How pi forks is said once the fork runs, in the session; the notice only names the source.
     await page.locator('.fork-notice').getByText('从「', { exact: false }).waitFor()
     await draft(page).fill('recall what came before')
@@ -312,13 +370,7 @@ describe('pi over its own RPC mode', () => {
     const refusal = 'pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。'
     try {
       const page = await open(1440, 'dark')
-      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-        if (await button.isVisible()) {
-          await button.click()
-          break
-        }
-      }
-      await draft(page).waitFor()
+      await newDraft(page)
       await start(page, 'hello from an old pi')
       await expect.poll(async () => (await latest()).summary.status, { timeout: 20_000 }).toBe('failed')
       await page.locator('.transcript').getByText(refusal).first().waitFor()
@@ -361,12 +413,7 @@ describe('pi over its own RPC mode', () => {
     expect(created.status).toBe(201)
     for (const width of [1440, 390] as const) {
       const page = await open(width, 'dark')
-      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-        if (await button.isVisible()) {
-          await button.click()
-          break
-        }
-      }
+      await newDraft(page)
       if (width === 390) {
         const sheet = page.locator('.new-session-sheet')
         await sheet.waitFor()
@@ -374,7 +421,9 @@ describe('pi over its own RPC mode', () => {
       } else await chip(page, '模型').click()
       // The menu's group, not the status line under the input, which names the same thing.
       const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
-      await inMenu('刷新模型列表').waitFor()
+      const readModels = modelAction(page, '读取 pi 的模型列表')
+      if (await readModels.isVisible()) await readModels.click()
+      await modelAction(page, '刷新模型列表').waitFor()
       // Latch forwards pi to no service, so no service is listed or folded into a row of ones it cannot use.
       for (const gone of ['pi 自己的模型', '服务用不了', 'Relay']) expect(await inMenu(gone).count()).toBe(0)
       // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.

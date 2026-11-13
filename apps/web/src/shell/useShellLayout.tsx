@@ -188,6 +188,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const [infoPage, setInfoPage] = useState(false)
   /** Phones: the new-session sheet over the session list. */
   const [newSheet, setNewSheet] = useState(false)
+  const seenProjectRequest = useRef(session.projectAsk.request)
+  useEffect(() => {
+    if (seenProjectRequest.current === session.projectAsk.request) return
+    seenProjectRequest.current = session.projectAsk.request
+    if (phone && session.inputId === null) setNewSheet(true)
+  }, [phone, session.inputId, session.projectAsk.request])
   /** Phones: the search row under the list's header. */
   const [phoneSearching, setPhoneSearching] = useState(false)
   /** Phones: the open session slides back to the list; it is let go once the slide ends. */

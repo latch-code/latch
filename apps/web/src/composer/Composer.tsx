@@ -62,7 +62,8 @@ function sizeComposerInput(element: HTMLTextAreaElement | null) {
   const from = element.style.height
   element.style.transition = 'none'
   element.style.height = 'auto'
-  const next = `${Math.min(element.scrollHeight + 2, MAX_TEXTAREA)}px`
+  const border = element.offsetHeight - element.clientHeight
+  const next = `${Math.min(element.scrollHeight + border, MAX_TEXTAREA)}px`
   element.style.height = from
   if (from && from !== next) element.getBoundingClientRect()
   element.style.removeProperty('transition')

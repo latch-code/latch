@@ -244,7 +244,7 @@ Codex 直连使用服务的模型列表，可以选择原生目录之外的模�
 - **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度，与 ACP 路线同样的选项 ID；开始前读取用同一个程序的 `codex app-server`，不开 thread。
 - **Codex 自己的 MCP 服务器。** 只读，只经 app-server 报告：Latch 从不读写 `~/.codex/config.toml`，不调用 `mcpServer/oauth/login`，不碰 Codex 的令牌。thread 开始或恢复后，wire 发一次 `mcpServerStatus/list`（带 `threadId`、`detail: toolsAndAuthOnly`，复用 thread 已有的连接，不启动新东西；最多 4 页、200 个），再跟随 `mcpServer/startupStatus/updated`（`starting`、`ready`、`failed`、`cancelled`；`failureReason: reauthenticationRequired` 是「需要登录」）；每次变化作为 Latch 自己的会话更新 `_latch_mcp_status` 交给运行时，运行时把它记为这个 Harness 的最近报告（`HarnessInfo.ownMcp`，只在内存里，换了定义就作废），不进会话文字。线程配置里 Latch 自己的服务器（`latch-skills`、`latch-browser`、各 `latch-mcp` 桥）按名字排除。「读取」（`POST /link/api/agents/:id/mcp`，`run`，与开始会话同一道门；审计 `agent.mcp.requested` 与 `agent.mcp.read`）在 Host 临时目录下新建的空文件夹里启动 `codex app-server`，不开 thread，发不带 `threadId` 的 `mcpServerStatus/list`（整个读取、各页合计最多 60 秒），然后停止进程；可能启动它配置的服务器，所以只在人按下时读，从不定时。Codex 0.167 不带 thread 时只列出配置里的名字，不给 `runtimeStatus`，也不列插件在 thread 里加上的服务器：这时报告标 `namesOnly`（状态都是 `unknown`，不带工具数），设置页只列名字，ⓘ「开一个会话后才有状态」；已有会话的报告时，只有名字的读取不覆盖它。每个服务器只留名字（不可见字符被写出来）、状态、工具数与 `httpOrigin` 的源；Codex 报告需要登录、且名字只有字母、数字、`-` 与 `_`、不以 `-` 开头时，给出可复制的 `codex mcp login <名字>`。见 [MCP.md](MCP.md#harness-自己的-mcp)。
 - **接入已有会话。** `thread/list` 列出，`thread/resume` 载入后 `thread/read`（`includeTurns`）重放说过的话、回复与工具调用；Latch 从不读 Codex 自己的文件夹。
-- **尚未实现。** 经 Latch 使用模型服务（这条路线没有 `providers/set`，模型菜单收起的那一行写「尚未实现」）；分叉沿用文字记录，不用 Codex 的 `thread/fork`。
+- **模型服务与分叉。** 经 Latch 的 Responses 服务使用自定义 provider，见[模型网关](MODEL-GATEWAY.md)；分叉仍沿用文字记录，尚未使用 Codex 的 `thread/fork`。
 
 ## pi 的 RPC 模式
 

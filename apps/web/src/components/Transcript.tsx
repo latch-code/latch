@@ -482,44 +482,43 @@ const TurnView = memo(function TurnView({
               </div>
             </Collapse>
           )}
-          {!trailingLive && (
-            <TurnFooter
-              key={turn.key}
-              turn={turn}
-              outcome={outcome}
-              pinned={tapped || (latest && rowContext.coarse)}
-              context={reportedContext}
-              worked={hasWork}
-              {...(onRetry ? { onRetry } : {})}
-              actions={
-                end && onCopyUpTo
-                  ? {
-                      ...(onForkFrom
-                        ? {
-                            onFork: () => {
-                              onForkFrom(end.id)
-                            },
-                          }
-                        : {}),
-                      onCopy: () => {
-                        onCopyUpTo(end.id)
-                      },
-                      ...(onHandoff && turn.replies.some(message => message.role === 'assistant' && message.text.trim())
-                        ? {
-                            onHandoff: () => {
-                              onHandoff(
-                                turn.replies
-                                  .filter(message => message.role === 'assistant' && message.text.trim())
-                                  .map(message => message.id),
-                              )
-                            },
-                          }
-                        : {}),
-                    }
-                  : undefined
-              }
-            />
-          )}
+          <TurnFooter
+            key={turn.key}
+            turn={turn}
+            live={trailingLive}
+            outcome={outcome}
+            pinned={tapped || (latest && rowContext.coarse)}
+            context={reportedContext}
+            worked={hasWork}
+            {...(onRetry ? { onRetry } : {})}
+            actions={
+              end && onCopyUpTo
+                ? {
+                    ...(onForkFrom
+                      ? {
+                          onFork: () => {
+                            onForkFrom(end.id)
+                          },
+                        }
+                      : {}),
+                    onCopy: () => {
+                      onCopyUpTo(end.id)
+                    },
+                    ...(onHandoff && turn.replies.some(message => message.role === 'assistant' && message.text.trim())
+                      ? {
+                          onHandoff: () => {
+                            onHandoff(
+                              turn.replies
+                                .filter(message => message.role === 'assistant' && message.text.trim())
+                                .map(message => message.id),
+                            )
+                          },
+                        }
+                      : {}),
+                  }
+                : undefined
+            }
+          />
         </div>
       )}
     </div>

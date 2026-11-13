@@ -112,10 +112,13 @@ describe('session search and workbench navigation', () => {
         const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }),
           page = await context.newPage()
         await enrollBrowser(page, host, { name: `模板 ${width}` })
-        if (width === 390) await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+        if (width === 390) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('/review')
-        await page.getByRole('option', { name: '/review · 检查改动 提示模板 · 全部会话', exact: true }).click()
+        await page
+          .getByRole('listbox', { name: '命令与提示模板', exact: true })
+          .getByRole('option', { name: /\/review/u })
+          .click()
         expect(await input.inputValue()).toBe('阅读改动，并解释结果。')
         expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
         await context.close()
