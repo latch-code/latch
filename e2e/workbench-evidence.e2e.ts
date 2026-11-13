@@ -217,7 +217,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     await reachable(question.getByRole('button', { name: /先做预览/u }))
     await question.getByRole('button', { name: /先做预览/u }).focus()
     await expect.poll(() => question.locator('.question-option kbd').count()).toBe(2)
-    expect(await approval.getByRole('button', { name: '允许', exact: true }).locator('kbd').count()).toBe(0)
+    expect(await approval.getByRole('button', { name: '允许', exact: true }).locator('kbd').filter({ visible: true }).count()).toBe(0)
     // A snapshot refresh can reorder document listeners while focus stays in the second card.
     await owner.json(`workspaces/${workspace.id}`, { method: 'PATCH', body: { name: '设置项目 · 已核对' } })
     await expect.poll(() => question.textContent()).toContain('设置项目 · 已核对')

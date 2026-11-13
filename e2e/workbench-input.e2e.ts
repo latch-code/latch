@@ -127,6 +127,7 @@ it.each([
       expect(await draft.inputValue()).toBe('只属于首页的新任务')
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       await page.setViewportSize({ width: 390, height: 844 })
+      await home.locator('.workbench-phone-heading').waitFor()
       await page.keyboard.press('Alt+n')
       const newSheet = page.getByRole('dialog', { name: '新会话', exact: true })
       await newSheet.waitFor()
