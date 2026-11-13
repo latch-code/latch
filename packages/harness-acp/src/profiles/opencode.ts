@@ -101,7 +101,7 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 3,
+  version: 4,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {

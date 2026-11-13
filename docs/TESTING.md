@@ -31,6 +31,8 @@ sources:
 `e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或 Agent 会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属；再刷新两次，核对会话与新会话的文字都还在，其他设备删除、本页删除与移除这台设备后浏览器存储里不再有对应草稿。按会话隔离、私有清理、数量与字符上限、存储失败退回内存、多窗口合并与退出后不再写入由 `apps/web/test/session-drafts.test.ts` 覆盖。
 连接插件的定向回归包括 `tests/transport-registry.test.ts`、`packages/link-client/test/transport.test.ts`、`carrier-vector.test.ts` 与 Host 的 `native.test.ts`；`e2e/native-relay.e2e.ts` 另把官方 relay 通过注册 driver 真实消费。MessagePort 示例会实际加载并运行。它们是纯 Node/Go 与本机消息测试，不等同真实飞书、手机 connector、OS 通知或真机验收。
 
+`packages/harness-acp/test/acp.test.ts` 的 `ACP session configuration` 在启动指纹或项目目录准备暂停时启动核对，再放行修改：修改须立即以 `config-check-running` 拒绝，不等核对结束后再写；同值请求同样拒绝，假 Agent 不收到配置 RPC。
+
 系统性测试统一使用 Vitest；Playwright 只在 Vitest 内作为真实浏览器与 Electron 的驱动。测试只使用临时目录、端口 0（或临时选出的空闲端口）、本地假模型服务、假 ACP Agent 与测试用的本机确认后端：不读取用户密钥，不调用付费模型，不启动真实 Agent CLI，不使用默认数据目录、`.runtime*/` 或端口 4317，也不停止或重启用户正在运行的 Host。
 
 构建与原生链路测试需要已修补的 Go 1.26.10 或 1.27.3 及其后续安全补丁；宿主机已有的旧 Go 不能替代此要求。可用 `LATCH_RELAY_GO=/absolute/path/to/go` 指定经过核对的编译器。CI 的共同 setup 固定 `actions/setup-go` 的完整提交、明确使用 Go 1.26.10，并关闭模块缓存；没有 go.mod，也不在构建时下载 Go 模块。action 的 v7.0.0 发布于 2026-07-16，固定提交已与官方标签核对。

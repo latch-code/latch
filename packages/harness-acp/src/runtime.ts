@@ -2319,6 +2319,7 @@ export class AgentRuntime implements Bridge {
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
+    this.assertNotChecking(sessionId)
     const mode = this.isModeOption(task, option)
     if (option.currentValue === value) {
       const replaced = forgetStartChoice(task, configId)
@@ -2334,6 +2335,8 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(sessionId)
     if (run && !run.sent) throw new AppError(409, 'task-running', '会话正在启动，请稍后再修改设置')
     await this.assertWorkspace(task)
+    // Preparation can yield to a config check; reserve the write only while its process is still free.
+    this.assertNotChecking(sessionId)
     this.enter(this.holds, sessionId)
     try {
       options.authorize?.()

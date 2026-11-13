@@ -2106,9 +2106,16 @@ describe('ACP permission mode', () => {
   it("fingerprints a preset's launch with its profile's version", async () => {
     const fixture = await preset('opencode', { FAKE_ACP_VERSION: '1.4.2', FAKE_ACP_CONFIG: 'legacy' })
     const preview = await (await fixture.open()).launchPreview!({ cwd: fixture.workspace })
-    const definition = { resolvedCommand: process.execPath, args: [FAKE_ACP_AGENT], definitionEnv: fixture.record.env }
-    expect(profileFor('opencode')!.version).toBe(3)
-    expect(preview.definitionHash).toBe(launchHash({ ...definition, presetId: 'opencode', profileVersion: 3, ...launchExtras('opencode') }))
+    const definition = {
+      resolvedCommand: process.execPath,
+      args: [FAKE_ACP_AGENT],
+      definitionEnv: fixture.record.env,
+      presetId: 'opencode',
+      profileVersion: profileFor('opencode')!.version,
+      ...launchExtras('opencode'),
+    }
+    expect(preview.definitionHash).toBe(launchHash(definition))
+    expect(preview.definitionHash).not.toBe(launchHash({ ...definition, profileVersion: definition.profileVersion - 1 }))
     // A check of the definition starts only the process a session would.
     const probed = await agentProbePreview(fixture.record, { dataDir: fixture.dataDir, cwd: fixture.workspace })
     expect(probed.launchHash).toBe(preview.launchHash)
@@ -3390,6 +3397,79 @@ describe('ACP sessions across processes', () => {
 })
 
 describe('ACP session configuration', () => {
+  const deferred = () => {
+    let resolve!: () => void
+    const promise = new Promise<void>(finish => {
+      resolve = finish
+    })
+    return { promise, resolve }
+  }
+
+  it.each([
+    ['assertLaunch', 'large'],
+    ['assertWorkspace', 'large'],
+    ['assertLaunch', 'small'],
+  ] as const)('refuses %s preparation of %s that finishes while config is being checked', async (preparation, value) => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
+    await settled(bridge, sessionId)
+    const prepared = deferred(),
+      continueWrite = deferred(),
+      resuming = deferred(),
+      continueRead = deferred()
+    // Pause only the asynchronous preparation: both operations still use the real session and fake Agent protocol.
+    const runtime = bridge as unknown as Record<typeof preparation, (...args: unknown[]) => Promise<unknown>>
+    const prepare = runtime[preparation].bind(runtime)
+    const preparationSpy = vi.spyOn(runtime, preparation).mockImplementationOnce(async (...args) => {
+      const result = await prepare(...args)
+      prepared.resolve()
+      await continueWrite.promise
+      return result
+    })
+    const request = AcpWire.prototype.request
+    const requestSpy = vi.spyOn(AcpWire.prototype, 'request').mockImplementation(async function (this: AcpWire, ...args) {
+      if (args[0] === 'session/resume') {
+        resuming.resolve()
+        await continueRead.promise
+      }
+      return request.apply(this, args)
+    })
+    let outcome: unknown
+    const writing = bridge.setConfig!(sessionId, 'model', value).then(
+      () => {
+        outcome = { applied: true }
+      },
+      (error: unknown) => {
+        outcome = error
+      },
+    )
+    let reading: ReturnType<NonNullable<Bridge['readConfig']>> | undefined
+    try {
+      await prepared.promise
+      reading = bridge.readConfig!(sessionId, 'model', 'small')
+      await resuming.promise
+      continueWrite.resolve()
+      await expect
+        .poll(() => outcome, { timeout: 1_000 })
+        .toMatchObject({
+          status: 409,
+          code: 'config-check-running',
+          details: { configOutcome: 'not-sent' },
+        })
+      continueRead.resolve()
+      await expect(reading).resolves.toEqual({ kind: 'read', currentValue: 'small', asked: true })
+      expect(received(await fixture.log(), 'session/set_config_option')).toHaveLength(0)
+      expect((await bridge.detail(sessionId)).config?.find(option => option.id === 'model')?.currentValue).toBe('small')
+    } finally {
+      continueWrite.resolve()
+      continueRead.resolve()
+      await Promise.allSettled([writing, reading])
+      preparationSpy.mockRestore()
+      requestSpy.mockRestore()
+    }
+  })
+
   it('folds legacy models and modes into config and routes changes to set_model and set_mode', async () => {
     const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' })
     const bridge = await fixture.open()
