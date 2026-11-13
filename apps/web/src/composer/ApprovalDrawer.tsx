@@ -181,7 +181,7 @@ function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; e
   useEffect(() => {
     const read = () => {
       const active = document.activeElement
-      const inCard = card.current?.contains(active) === true && takesKeysAt(active)
+      const inCard = card.current?.contains(active) === true && cardTakesKeys(card.current, active) && takesKeysAt(active)
       const escapeRefuses = escapeRefusesAt(active)
       const numeric =
         cardTakesKeys(card.current, active)
@@ -395,6 +395,7 @@ function ApprovalPanel({
   })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     if (running || !armed || event.defaultPrevented) return
+    if (!cardTakesKeys(card.current, event.target)) return
     if (!takesKeysAt(event.target)) return
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && shortcut && allow) {
       event.preventDefault()

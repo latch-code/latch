@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
@@ -56,6 +57,7 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
+  const homeOptions = useRef<HTMLButtonElement>(null)
   const {
     phoneSession,
     phoneReview,
@@ -164,6 +166,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const overview = route.entry === 'sessions' && route.overview === true
   const allSessions = route.entry === 'sessions' && route.allSessions === true
   const covered = overview || allSessions
+  const newInputSheetOpen = phone && newSheet && shell.inputId === null
   const triage = shell.preferences.workbenchLayout === 'triage'
   const homeShell = { ...shell, ...shell.homeComposerState }
   const evidence = useWorkbenchDelivery(
@@ -484,7 +487,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               )}
             </LiveChanges>
             {overview && (
-              <section className="workbench-home" aria-label={triage ? '分拣台' : '总览'}>
+              <section
+                className="workbench-home"
+                aria-label={triage ? '分拣台' : '总览'}
+                aria-hidden={newInputSheetOpen || undefined}
+                inert={newInputSheetOpen || undefined}>
                 {phone && (
                   <header className="workbench-phone-heading">
                     {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
@@ -515,7 +522,13 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <ConnectionBanners shell={shell} />
                 <div className="workbench-home-composer">
                   {phone && (
-                    <IconButton className="workbench-home-options" label="新会话选项" icon={PlusGlyph} onClick={() => setNewSheet(true)} />
+                    <IconButton
+                      ref={homeOptions}
+                      className="workbench-home-options"
+                      label="新会话选项"
+                      icon={PlusGlyph}
+                      onClick={() => setNewSheet(true)}
+                    />
                   )}
                   <SessionComposer shell={shell} home />
                 </div>
@@ -571,10 +584,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {phone && (
               <NewSessionSheet
                 focusComposer={submission.fork ? sheetComposerRef : undefined}
-                open={newSheet && shell.inputId === null}
+                open={newInputSheetOpen}
                 onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
                 onClose={() => {
                   setNewSheet(false)
+                  if (overview) requestAnimationFrame(() => homeOptions.current?.focus({ preventScroll: true }))
                 }}
                 snapshot={snapshot}
                 access={access}

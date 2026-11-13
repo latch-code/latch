@@ -6,6 +6,9 @@ const ARMING_MS = 320
 /** A document-level key must never act on a conversation covered by another page. */
 export function cardTakesKeys(card: HTMLElement | null, target?: EventTarget | null): boolean {
   if (card === null || card.closest('[inert]') || !card.checkVisibility({ visibilityProperty: true })) return false
+  // Native modal inertness is implicit and does not add an inert attribute to the retained page.
+  const active = target instanceof Element ? target : document.activeElement
+  if (document.querySelector('dialog:modal') && !active?.closest('dialog:modal')?.contains(card)) return false
   // A workbench's first card can offer page keys, but another card with focus owns its own choices.
   return !(target instanceof Element && target.closest('.work-decision, .approval-panel, .question-card') && !card.contains(target))
 }
