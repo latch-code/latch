@@ -70,6 +70,7 @@ it.each([
       await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
       await page.reload()
       await connected(page)
+      await expect.poll(() => page.locator('.workbench-home textarea').evaluate(element => element === document.activeElement)).toBe(true)
       let releaseDetail!: () => void
       const detailGate = new Promise<void>(resolve => {
         releaseDetail = resolve
@@ -85,6 +86,10 @@ it.each([
       await page.locator('.transcript').getByText('工作记录已保留。', { exact: true }).first().waitFor()
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
       await page.unroute(`**/link/api/tasks/${sessionId}`)
+      await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+      await page.locator('.titlebar').getByRole('button', { name: '新建会话', exact: true }).click({ trial: true })
+      await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+      expect(await input.inputValue()).toBe('只属于原会话的草稿')
       await page
         .locator('.workspace')
         .getByLabel('选择附件', { exact: true })

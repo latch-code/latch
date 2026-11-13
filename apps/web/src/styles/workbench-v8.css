@@ -931,6 +931,9 @@
   .app-shell[data-workbench-layout='overview'] :is(.workspace, .workbench-home) {
     grid-row: 1 / 3;
   }
+  .app-shell[data-workbench-layout='overview'][data-sidebar='collapsed'] :is(.workspace, .workbench-home) {
+    grid-row: 2 / 3;
+  }
   .app-shell[data-workbench-layout='overview'] .workspace .topbar {
     padding-right: 96px;
   }
