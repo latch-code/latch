@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { access, lstat, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
 import { GitDelivery } from '../src/git-delivery.ts'
@@ -14,9 +14,22 @@ vi.mock('node:fs/promises', async original => {
 })
 const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
 const cleanups: Array<() => Promise<unknown>> = []
+const externalAncestors = new Set<string>()
 beforeEach(() => {
+  externalAncestors.clear()
+  const snapshots = new Map<string, Awaited<ReturnType<typeof actual.lstat>>>()
   vi.mocked(access).mockReset().mockImplementation(actual.access)
-  vi.mocked(lstat).mockReset().mockImplementation(actual.lstat)
+  vi.mocked(lstat)
+    .mockReset()
+    .mockImplementation(async (path, options) => {
+      const info = await actual.lstat(path, options)
+      if (!externalAncestors.has(String(path))) return info
+      // Parallel workers share the system temp ancestors. Only the owned tree participates in ordinary fixture races.
+      const key = `${String(path)}:${options?.bigint === true}`
+      const snapshot = snapshots.get(key) ?? info
+      snapshots.set(key, snapshot)
+      return snapshot
+    })
 })
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup()
@@ -24,6 +37,10 @@ afterEach(async () => {
 
 async function fixture() {
   const root = await actual.realpath(await mkdtemp(join(tmpdir(), 'latch-workbench-git-')))
+  for (let path = dirname(root); ; path = dirname(path)) {
+    externalAncestors.add(path)
+    if (path === dirname(path)) break
+  }
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const folder = join(root, 'project')
   await mkdir(folder)
@@ -75,6 +92,26 @@ describe('workbench Git eligibility', () => {
     expect(f.pr).not.toHaveBeenCalled()
     f.state.mockRejectedValueOnce(new AppError(503, 'git-failed', 'private failure'))
     expect((await f.read()).entries[0]?.error?.code).toBe('git-failed')
+  })
+
+  it('keeps a real shared-ancestor change unknown instead of declaring the directory inapplicable', async () => {
+    const f = await fixture()
+    let changed = false
+    // This case deliberately observes the real shared ancestors, unlike the stable positive fixture.
+    vi.mocked(lstat).mockImplementation(async (path, options) => {
+      try {
+        return await actual.lstat(path, options)
+      } catch (error) {
+        if (String(path) === join(f.folder, '.git') && !changed) {
+          changed = true
+          const sibling = await mkdtemp(join(dirname(f.root), 'latch-workbench-sibling-'))
+          cleanups.push(() => rm(sibling, { recursive: true, force: true }))
+        }
+        throw error
+      }
+    })
+    expect((await f.read()).entries[0]?.error?.code).toBe('git-not-repository')
+    expect(changed).toBe(true)
   })
 
   it.each(['directory', 'file', 'symlink'] as const)('keeps an existing .git %s as a read error', async kind => {
