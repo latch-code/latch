@@ -43,7 +43,7 @@ describe('session workflow routes', () => {
     const settled = async (id: string) => expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
     const talk = await owner.json<{ sessionId: string }>('tasks', {
       method: 'POST',
-      body: { prompt: '私下 zxqvwk 话题', mode: 'chat', customAgentId: 'general', requestId: randomUUID() },
+      body: { prompt: '私下 zxqvwk 话题', mode: 'agent', customAgentId: 'general', requestId: randomUUID() },
     })
     const plain = await owner.json<{ sessionId: string }>('tasks', {
       method: 'POST',
