@@ -21,7 +21,7 @@ it.each([
   { name: 'webkit', engine: webkit },
 ])(
   '$name keeps the conversation, files, attachments and independent home draft through a new submission with an unknown result',
-  async ({ engine }) => {
+  async ({ engine, name }) => {
     let calls = 0
     const plugin: HarnessPlugin = {
       id: 'home-input',
@@ -171,8 +171,8 @@ it.each([
         await palette.waitFor({ state: 'hidden' })
         expect(await draft.inputValue()).toBe('只属于首页的新任务')
         await navigation.getByRole('button', { name: '全部会话', exact: true }).click()
-        const history = page.getByRole('region', { name: '全部会话', exact: true })
-        await history.locator('.workbench-session-row').filter({ hasText: '原会话' }).click()
+        const history = page.locator('.phone-list:not([inert])')
+        await history.locator(`[data-task-id="${sessionId}"]`).click()
         await page.locator('.workspace .topbar').getByRole('button', { name: '返回会话列表', exact: true }).click()
         await history.getByRole('button', { name: '返回总览', exact: true }).click()
         expect(await draft.inputValue()).toBe('只属于首页的新任务')
@@ -216,7 +216,7 @@ it.each([
       await choose(page, '原会话')
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
       await mkdir('test-results/workbench-input', { recursive: true })
-      await page.screenshot({ path: 'test-results/workbench-input/restored-session.png', animations: 'disabled' })
+      await page.screenshot({ path: `test-results/workbench-input/restored-session-${name}.png`, animations: 'disabled' })
     } finally {
       await context.close()
       await browser.close()
