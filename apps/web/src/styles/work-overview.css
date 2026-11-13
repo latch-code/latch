@@ -56,7 +56,7 @@
   grid-row: span 2;
 }
 
-.work-overview[data-layout='overview'] .work-overview-group[data-group='recent'] {
+.work-overview[data-layout='overview'] .work-overview-group[data-group='delivery'] {
   grid-column: 2;
 }
 
@@ -236,7 +236,7 @@
   }
 
   .work-overview[data-layout='overview'] .work-overview-group[data-group='attention'],
-  .work-overview[data-layout='overview'] .work-overview-group[data-group='recent'] {
+  .work-overview[data-layout='overview'] .work-overview-group[data-group='delivery'] {
     grid-column: 1;
     grid-row: auto;
   }

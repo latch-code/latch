@@ -32,7 +32,7 @@ import {
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
-import { SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
+import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
 import { Collapse, ICON_STROKE, IconButton, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
 import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
@@ -144,6 +144,7 @@ const SessionItem = memo(function SessionItem({
             onSelect(task.id)
           }}>
           <span className="session-line">
+            <SessionRowGlyph status={status} />
             {task.pinned && (
               <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />
             )}
@@ -371,6 +372,10 @@ export function Sidebar({
   onManageComputers,
   spaces,
   agents,
+  overview,
+  onSchedules,
+  computer,
+  projectTree = false,
 }: ProjectNavigationActions & {
   /** Opens 设置 › 电脑 (the computer menu's 管理电脑…). */
   onManageComputers?: () => void
@@ -380,6 +385,10 @@ export function Sidebar({
   spaces?: SpacesProps | undefined
   /** 我的 Agent's primary (委托…) and list, drawn in its place. */
   agents?: { primary: import('react').ReactNode; list: import('react').ReactNode } | undefined
+  overview?: { active: boolean; open: () => void }
+  onSchedules?: () => void
+  computer?: import('react').ReactNode
+  projectTree?: boolean
   snapshot: AppSnapshot
   archiveBatch?: import('react').ReactNode
   /** The line that offers to take back an archive, while it can. */
@@ -421,6 +430,9 @@ export function Sidebar({
         drawer={drawer}
         onClose={onClose}
         onManageComputers={onManageComputers}
+        overview={overview}
+        onSchedules={onSchedules}
+        computerAtFoot={computer !== undefined}
       />
       {inAgents ? (
         agents.list
@@ -428,6 +440,7 @@ export function Sidebar({
         <>
           {archiveBatch}
           <CodeList
+            projectTree={projectTree}
             snapshot={snapshot}
             selectedId={selectedId}
             isUnread={isUnread}
@@ -455,6 +468,7 @@ export function Sidebar({
           </button>
         </div>
       )}
+      {computer && <div className="sidebar-work-computer">{computer}</div>}
       <NavFoot
         apps={apps}
         settings={onSettings}
@@ -482,6 +496,7 @@ function CodeList({
   sessionMenu,
   now,
   space,
+  projectTree,
 }: ProjectNavigationActions & {
   snapshot: AppSnapshot
   selectedId: string | null
@@ -496,6 +511,7 @@ function CodeList({
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
   space: Space | undefined
+  projectTree: boolean
 }) {
   const list = useRef<HTMLElement>(null)
   const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
@@ -509,7 +525,7 @@ function CodeList({
   const others = archived ? [] : otherWaiting(computers, hostView(snapshot)?.hostId)
   const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
-    ...(archived ? {} : { waitingFrom: own }),
+    ...(archived || projectTree ? {} : { waitingFrom: own }),
   })
   const groups: SessionGroup[] =
     others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: '等你处理', tasks: [] }, ...grouped] : grouped

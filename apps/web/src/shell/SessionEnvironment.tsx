@@ -130,11 +130,9 @@ function SessionUsage({
     <>
       {tokens && (
         <CrumbRow label="用量">
-          <Tooltip content={`${tokens.lines[0]}；${tokens.lines[1]}${tokens.reporter ? `，由 ${tokens.reporter} 报告` : ''}`}>
-            <span tabIndex={0}>
-              输入 {tokenAmount(tokens.usage.inputTokens)} · 输出 {tokenAmount(tokens.usage.outputTokens)}
-            </span>
-          </Tooltip>
+          <span>
+            输入 {tokenAmount(tokens.usage.inputTokens)} · 输出 {tokenAmount(tokens.usage.outputTokens)}
+          </span>
         </CrumbRow>
       )}
       {cost && (

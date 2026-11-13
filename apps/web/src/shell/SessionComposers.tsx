@@ -2,7 +2,7 @@ import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conver
 import type { ReactNode } from 'react'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
-import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
+import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, LaptopGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import {
   draftConfig,
@@ -159,7 +159,12 @@ function ComposerControl({ name, children }: { name: 'harness' | 'model' | 'thin
 }
 
 /** The input of the open session, or of the new-session page. */
-export function SessionComposer({ shell }: { shell: ShellState }) {
+export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
+  const shell = home
+    ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
+    : base.inputTarget === 'new'
+      ? { ...base, submission: { ...base.submission, draft: base.sessionInput.draft }, attachmentDraft: base.sessionInput.attachments }
+      : base
   const {
     chosenHarness,
     current,
@@ -394,6 +399,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       )}
       {asked && (
         <QuestionDrawer
+          presentation="conversation"
           state={asked}
           asker={harnessInfo ? harnessName(harnessInfo) : 'Harness'}
           canAnswer={questionActions.canAnswer}
@@ -405,6 +411,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       )}
       {approvals.length > 0 && (
         <ApprovalDrawer
+          presentation="conversation"
           approvals={approvals}
           messages={current?.messages ?? []}
           index={approvalIndex}
@@ -515,7 +522,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       )}
       variant={selectedId === null ? 'new' : 'session'}
       label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? '新会话消息' : '继续对话'}
-      placeholder={phone ? phoneWords(words) : words}
+      placeholder={home ? '想让 Agent 做什么？' : phone ? phoneWords(words) : words}
       draft={submission.draft}
       onDraft={setSubmissionDraft}
       pending={submission.pending}
@@ -553,7 +560,30 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       {...(answer ? { answer } : {})}
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
-      status={status}
+      status={home ? undefined : status}
+      locationPosition={base.preferences.workbenchLayout === 'triage' ? 'toolbar' : 'top'}
+      location={
+        home ? (
+          <div className="home-composer-location">
+            <NewSessionTitle shell={base} />
+            {worktreeOffer?.branch && <BranchSegment branch={worktreeOffer.branch} base={!!submission.worktree} />}
+            {worktreeOffer && (
+              <FolderControl
+                project={worktreeOffer}
+                worktree={submission.worktree}
+                onWorktree={submission.setWorktree}
+                disabled={newChoicesLocked}
+                branch={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.branch}
+                starts
+              />
+            )}
+            <span className="home-composer-computer">
+              <Icon icon={LaptopGlyph} size={14} />
+              {computerName(base.snapshot.hostName)}
+            </span>
+          </div>
+        ) : undefined
+      }
       below={
         selectedId === null && catalog ? (
           <>

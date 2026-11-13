@@ -100,8 +100,6 @@ const TOKENS: Record<string, [string, string]> = {
   '--track': ['rgba(18, 18, 28, 0.11)', 'rgba(255, 255, 255, 0.11)'],
   '--meter': ['#45454e', '#b6b6bf'],
   '--band': ['rgba(18, 18, 28, 0.025)', 'rgba(0, 0, 0, 0.2)'],
-  '--particle': ['#5d6b86', '#e8e8ee'],
-  '--particle-accent': ['#2461e0', '#e8e8ee'],
   '--accent': ['#2461e0', '#2f6be6'],
   '--accent-hover': ['#1d55cc', '#2a62d6'],
   '--accent-ink': ['#1d52c4', '#6b9bfa'],
@@ -337,14 +335,19 @@ describe('design tokens', () => {
     }
   })
 
-  it('draws the field behind the panel in white in the dark theme and in slate with the execute blue in the light one', () => {
-    const { light, dark } = themes()
-    // Light: every seventh point is the execute blue, and the field is a little stronger so it reads on white.
-    expect(light.get('--particle-accent')).toBe(light.get('--accent'))
-    expect(Number(light.get('--particle-strength'))).toBeGreaterThan(Number(dark.get('--particle-strength')))
-    // Dark: every point is white, the seventh too.
-    expect(dark.get('--particle-accent')).toBe(dark.get('--particle'))
-    expect(luminance(colour(dark.get('--particle')))).toBeGreaterThan(0.75)
+  it('keeps both workbench surfaces and the charcoal frame readable in either theme', () => {
+    for (const [theme, values] of Object.entries(themes())) {
+      const get = (token: string) => colour(values.get(token))
+      for (const layout of ['a', 'b'])
+        for (const background of ['canvas', 'raised', 'sunken'])
+          for (const text of ['ink', 'ink-2', 'muted']) {
+            const foreground = `--work-${layout}-${text}`,
+              surface = `--work-${layout}-${background}`
+            expect(contrast(get(foreground), get(surface)), `${theme} ${foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5)
+          }
+      for (const text of ['ink', 'ink-2', 'muted'])
+        expect(contrast(get(`--work-frame-${text}`), get('--work-frame')), `${theme} frame ${text}`).toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   it('locks every themed token inside security surfaces to the value of its theme', () => {
@@ -421,7 +424,9 @@ describe('design tokens', () => {
       '--r-4': '4px',
       '--r-6': '6px',
       '--r-8': '8px',
+      '--r-9': '9px',
       '--r-12': '12px',
+      '--r-14': '14px',
       '--r-16': '16px',
       '--r-full': '999px',
     })

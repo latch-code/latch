@@ -1,0 +1,193 @@
+import type { TaskSummary } from '@latch/protocol'
+import { useState } from 'react'
+import { Button, ChevronRightGlyph, FolderGlyph, Icon, InlineNotice, Skeleton, StatusWord } from '@latch/ui'
+import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
+import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
+import { VisibleText } from '../components/VisibleText.tsx'
+import { HarnessTile } from '../components/BrandTile.tsx'
+import { harnessName } from '../composerChoice.ts'
+import { composerGate } from '../core/permissions.ts'
+import { projectOf } from '../sessions.ts'
+import { workStatus } from './workOverview.ts'
+import { hostNow } from '../core/hostClock.ts'
+import { useWorkbenchSession } from './useWorkbenchEvidence.ts'
+import type { ShellState } from './useShellLayout.tsx'
+import { failureAction } from '../conversation/failureAction.ts'
+
+/** The same requests and decision controller as the conversation, presented where the person finds their work. */
+export function WorkbenchDecision({
+  task,
+  shell,
+  emphasis = false,
+  expanded = true,
+  onExpand,
+  firstKeys = false,
+}: {
+  task: TaskSummary
+  shell: ShellState
+  emphasis?: boolean
+  expanded?: boolean
+  onExpand?: () => void
+  firstKeys?: boolean
+}) {
+  const enabled = shell.connection === 'connected' && shell.access.scopes.has('view')
+  const scope = `${shell.snapshot.device.id}:${shell.snapshot.device.dataScope}:${shell.snapshot.device.scopes.join(',')}`
+  const read = useWorkbenchSession(task, scope, enabled && (expanded || !!task.pendingQuestions))
+  const detail = read.detail
+  const harness = shell.catalog?.harnesses.find(item => item.id === task.harnessId)
+  const project = projectOf(task, shell.catalog?.workspaces ?? [])
+  const gate = composerGate({ summary: detail?.summary ?? task, permission: detail?.permission, access: shell.access, stopped: false })
+  const canAnswer = enabled && gate.kind === 'open'
+  const asked = useQuestionDrawer(detail?.questions?.[0], task.id, {
+    deviceId: shell.snapshot.device.id,
+    canAnswer,
+    onChanged: async () => {
+      await shell.refresh()
+      read.retry()
+    },
+  })
+  const status = workStatus(task, { connected: enabled, now: hostNow() })
+  const [index, setIndex] = useState(0)
+  const approval = detail?.approvals[0]
+  const failure = detail?.messages.findLast(message => message.role === 'system' && message.state === 'failed')
+  const retryable =
+    enabled
+    && canAnswer
+    && detail
+    && status.tone === 'failed'
+    && !task.runEnd?.unknownResultCount
+    && failureAction(failure?.errorCode) === 'retry'
+    && shell.submission.pending === null
+    && !shell.submission.sending
+  const context = (
+    <div className="work-decision-context">
+      <span>
+        <Icon icon={FolderGlyph} size={12} />
+        <VisibleText text={project?.name ?? '无项目'} />
+      </span>
+      <Button variant="ghost" size="xs" className="work-decision-session" onClick={() => shell.choose(task.id)}>
+        <VisibleText text={task.title || '未命名会话'} />
+      </Button>
+      {harness && (
+        <span className="work-decision-harness">
+          <HarnessTile harness={harness} size={14} />
+          {harnessName(harness)}
+        </span>
+      )}
+    </div>
+  )
+  const unknown = detail?.approvals.some(item => shell.statuses.get(item.id)?.uncertain)
+    ? '决定结果未知'
+    : asked?.draft.pending
+      ? '回答结果未知'
+      : undefined
+  return (
+    <article
+      ref={read.element}
+      className="work-decision"
+      data-work-session={task.id}
+      data-expanded={expanded ? '' : undefined}
+      data-kind={approval ? 'approval' : asked ? 'question' : status.tone}>
+      {!expanded && asked ? (
+        <QuestionDrawer
+          presentation="workbench"
+          compact
+          context={context}
+          state={asked}
+          asker={harness ? harnessName(harness) : 'Agent'}
+          canAnswer={canAnswer}
+          disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
+          onOther={() => shell.choose(task.id)}
+        />
+      ) : !expanded ? (
+        <Button variant="ghost" className="work-decision-compact" aria-expanded={false} onClick={onExpand}>
+          <span className="work-decision-compact-title">
+            <VisibleText text={task.title || '未命名会话'} />
+          </span>
+          <span className="work-decision-compact-meta">
+            <Icon icon={FolderGlyph} size={12} />
+            <VisibleText text={project?.name ?? '无项目'} />
+            <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
+          </span>
+          <Icon icon={ChevronRightGlyph} size={14} />
+        </Button>
+      ) : approval ? (
+        <ApprovalDrawer
+          presentation="workbench"
+          emphasis={emphasis}
+          context={context}
+          numberKeys={firstKeys}
+          approvals={detail.approvals}
+          messages={detail.messages}
+          index={index}
+          onIndex={setIndex}
+          gateFor={approval =>
+            enabled ? shell.gateFor(approval) : { ...shell.gateFor(approval), options: [], hint: '连接恢复后可以处理' }
+          }
+          busy={shell.approvalBusy}
+          statuses={shell.statuses}
+          onDecide={shell.onDecide}
+        />
+      ) : asked ? (
+        <QuestionDrawer
+          presentation="workbench"
+          context={context}
+          firstKeys={firstKeys}
+          state={asked}
+          asker={harness ? harnessName(harness) : 'Agent'}
+          canAnswer={canAnswer}
+          disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
+          onOther={() => shell.choose(task.id)}
+        />
+      ) : (
+        <div className="work-decision-result">
+          <strong data-tone={status.tone}>{status.words}</strong>
+          {context}
+          {read.error ? (
+            <InlineNotice
+              tone="error"
+              action={
+                <Button variant="ghost" size="xs" onClick={read.retry}>
+                  重试
+                </Button>
+              }>
+              {read.error}
+            </InlineNotice>
+          ) : !detail && enabled ? (
+            <div className="work-decision-placeholder" aria-label={read.loading ? '正在读取请求' : undefined}>
+              {read.loading && (
+                <>
+                  <Skeleton width="80%" height={16} />
+                  <Skeleton width="60%" height={16} />
+                </>
+              )}
+            </div>
+          ) : (
+            <p>
+              <VisibleText
+                text={
+                  detail?.messages.findLast(message => message.role === 'system')?.text
+                  ?? (task.runEnd?.unknownResultCount
+                    ? '执行结果尚未确认'
+                    : task.status === 'failed' || task.runOutcome === 'failed'
+                      ? '本轮失败，打开会话查看原因'
+                      : status.words)
+                }
+              />
+            </p>
+          )}
+          <div className="work-decision-result-actions">
+            <Button size="sm" variant="ghost" onClick={() => shell.choose(task.id)}>
+              {task.runEnd?.unknownResultCount ? '核对结果' : '查看会话'}
+            </Button>
+            {retryable && (
+              <Button size="sm" onClick={() => shell.retryFromWorkbench(detail)}>
+                重试
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
+  )
+}

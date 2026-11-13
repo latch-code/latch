@@ -31,6 +31,7 @@ import {
   TerminalGlyph,
   GlobeGlyph,
   CloseGlyph,
+  OverviewGlyph,
 } from '@latch/ui'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
@@ -53,6 +54,7 @@ export type PanelSurface =
   | { kind: 'plugin'; id: string }
 
 function surfaceOf(value: string): PanelSurface {
+  if (value === 'overview') return { kind: 'launcher' }
   if (value === 'changes' || value === 'files' || value === 'delivery' || value === 'terminal' || value === 'browser')
     return { kind: value }
   if (value.startsWith('file:')) return { kind: 'file', id: value.slice(5) }
@@ -101,7 +103,9 @@ export function SessionPanels({
   browserOpen = false,
   launcherNote,
   launcherTakesFocus,
+  overview,
 }: {
+  overview?: ReactNode
   launcherTakesFocus?(): boolean
   /** Under the launcher's rows: a phone's only home for what the title row's popover holds elsewhere. */
   launcherNote?: ReactNode
@@ -200,6 +204,7 @@ export function SessionPanels({
       : undefined
   const launcher = !activeFile && !showingChanges && !showingDelivery && !showingTerminal && !showingBrowser && !showingFiles && !active
   const tabs: Array<PanelTab<string>> = [
+    ...(overview ? [{ value: 'overview', label: '概要', icon: OverviewGlyph, controls: id }] : []),
     ...(changes
       ? [
           {
@@ -242,7 +247,9 @@ export function SessionPanels({
               ? 'files'
               : active
                 ? `plugin:${active.id}`
-                : ''
+                : overview
+                  ? 'overview'
+                  : ''
   return (
     <div className="session-panels">
       <PanelTabs
@@ -304,9 +311,9 @@ export function SessionPanels({
       <div
         className="session-panel-body"
         hidden={showingChanges || showingDelivery || showingTerminal || showingBrowser || showingFiles}
-        role={launcher ? undefined : 'tabpanel'}
+        role={launcher && !overview ? undefined : 'tabpanel'}
         id={id}
-        aria-label={launcher ? undefined : (activeFile?.file?.name ?? active?.title)}>
+        aria-label={launcher ? (overview ? '会话概要' : undefined) : (activeFile?.file?.name ?? active?.title)}>
         {activeFile?.target.view === 'changes' ? (
           <FileHistoryPreview
             history={history}
@@ -346,6 +353,8 @@ export function SessionPanels({
           </section>
         ) : active && summary ? (
           <PluginPanel key={active.id} panel={active} summary={summary} />
+        ) : overview ? (
+          overview
         ) : (
           <PanelLauncher
             {...(changes ? { changes: true } : {})}

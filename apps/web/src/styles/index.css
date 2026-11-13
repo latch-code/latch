@@ -9,7 +9,6 @@
 @import '@latch/ui/ui.css';
 @import './ui.css' layer(ui);
 @import './layout.css' layer(app);
-@import './particles.css' layer(app);
 @import './sidebar.css' layer(app);
 @import './messages.css' layer(app);
 @import './panels.css' layer(app);
@@ -41,6 +40,8 @@
 @import './layout-choice.css' layer(app);
 @import './work-overview.css' layer(app);
 @import './workbench.css' layer(app);
+@import './workbench-v8.css' layer(app);
+@import './workbench-sessions.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);
 @import './security-approval.css' layer(security);

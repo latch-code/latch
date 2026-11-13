@@ -2,10 +2,10 @@ import type { ReactNode } from 'react'
 import { GitFork, RotateCcw } from 'lucide-react'
 import { modelIdKey, type RoutedModel } from '@latch/protocol'
 import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type TurnOutcome, type TurnRoute } from '../conversation.ts'
-import { exactTokens, formatDuration, formatTokens, tokenAmount, tokenLines, tokenParts } from '../format.ts'
+import { formatDuration, formatTokens, tokenAmount, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
-import { IconButton, Tooltip, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
+import { IconButton, Tooltip, Hint, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -60,8 +60,7 @@ function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome:
   const usage = stepUsage ?? route?.usage
   const routedUsage = !stepUsage && route?.usage ? route : undefined
   const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
-  const [inputLine, outputLine] = usage ? tokenLines(usage) : []
-  const tip = (line: string) => (routedUsage ? <Lines lines={[line, ...routedSource(routedUsage), ...requests]} /> : line)
+  const incomplete = routedUsage && (routedUsage.unmeasured > 0 || routedUsage.open > 0)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
   return (
     <>
@@ -74,21 +73,24 @@ function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome:
       {spent && <span className={worked ? 'turn-fact turn-fact-worked' : 'turn-fact'}>{spent}</span>}
       {/* A phone drops the unit, which 输入 and 输出 already imply, so the pair fits beside the buttons. */}
       {usage && (
-        <Fact tip={tip(inputLine!)}>
+        <Fact>
           {`输入 ${formatTokens(usage.inputTokens)}`}
           <span className="turn-fact-unit"> tokens</span>
         </Fact>
       )}
       {usage && (
-        <Fact tip={tip(outputLine!)} className="turn-fact-last">
+        <Fact className="turn-fact-last">
           {`输出 ${formatTokens(usage.outputTokens)}`}
           <span className="turn-fact-unit"> tokens</span>
         </Fact>
       )}
-      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
-      {!usage && context !== undefined && (
-        <Fact tip={`由 Harness 报告：${exactTokens(context)} tokens`}>上下文 {tokenAmount(context)}</Fact>
+      {incomplete && (
+        <Hint label="用量不完整">
+          <Lines lines={[...routedSource(routedUsage), ...requests]} />
+        </Hint>
       )}
+      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
+      {!usage && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}
     </>
   )
 }

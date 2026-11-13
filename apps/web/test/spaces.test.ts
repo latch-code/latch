@@ -125,8 +125,8 @@ describe('the two places', () => {
     expect(initialRoute('device-1', true, true, false)).toEqual({ entry: 'agents' })
     // A restored session keeps its own place; a phone starts on its list; without 我的 Agent there is only Code.
     expect(initialRoute('device-1', true, true, true)).toEqual({ entry: 'sessions' })
-    expect(initialRoute('device-1', true, false, false)).toEqual({ entry: 'sessions' })
-    expect(initialRoute('device-1', false, true, false)).toEqual({ entry: 'sessions' })
+    expect(initialRoute('device-1', true, false, false)).toEqual({ entry: 'sessions', overview: true })
+    expect(initialRoute('device-1', false, true, false)).toEqual({ entry: 'sessions', overview: true })
     stored.set(key, 'something else')
     expect(readSpace(key)).toBe('code')
   })
@@ -197,6 +197,9 @@ describe('going between the places', () => {
     expect(move('code', { kind: 'session', id: 'c1' }, 'a2')).toEqual({ route: { entry: 'sessions' }, choose: 'c1' })
     // Code keeps an open session of its own under a page.
     expect(move('code', undefined, 'c1')).toEqual({ route: { entry: 'sessions' } })
+    // A Code page covers its reading session; returning to the place restores that page without changing the sender's target.
+    expect(move('code', { kind: 'overview' }, 'c1')).toEqual({ route: { entry: 'sessions', overview: true } })
+    expect(move('code', { kind: 'all-sessions' }, 'c1')).toEqual({ route: { entry: 'sessions', allSessions: true } })
     // Archived since, or never left: home, the new-session page or the list (or the page it was left on).
     expect(move('agents', { kind: 'session', id: 'a3' }, 'c1')).toEqual({ route: { entry: 'agents' } })
     expect(move('code', undefined, 'a2')).toEqual({ route: { entry: 'sessions' }, choose: null })

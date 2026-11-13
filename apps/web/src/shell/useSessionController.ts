@@ -68,6 +68,7 @@ import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { deliveredSubmission, queuedTwin, sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
 import { rebuiltFrom } from '../history/model.ts'
+import { failureAction } from '../conversation/failureAction.ts'
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
@@ -94,17 +95,21 @@ const without = <T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> => {
 export function useSessionController({
   harness,
   snapshot,
+  inputTarget = 'session',
   onBeforeSelect,
   onForegroundSent,
 }: {
   harness: Harness
   snapshot: AppSnapshot
+  /** The home edits a new draft while the selected conversation stays mounted and subscribed. */
+  inputTarget?: 'session' | 'new'
   /** Runs as the selection changes, for what the shell keeps per open session. */
   onBeforeSelect: (id: string | null) => void
   /** A message went out from this page and its session is now the open one. */
   onForegroundSent: () => void
 }) {
   const { selectedId, detail, select, refresh } = harness
+  const inputId = inputTarget === 'new' ? null : selectedId
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
   const [initialDrafts] = useState(() => {
     // Only this device's drafts stay on this origin: another device's could otherwise open here.
@@ -112,7 +117,8 @@ export function useSessionController({
     return new SessionDrafts(browserDraftStorage(location.origin, snapshot.device.id))
   })
   const sessionDrafts = useRef(initialDrafts)
-  const draftSessionId = useRef(selectedId)
+  const draftSessionId = useRef(inputId)
+  const restoringDraft = useRef<string | undefined>(undefined)
   const draftDevice = useRef(snapshot.device.id)
   const privateDraftId = useRef<string | null>(null)
   const current = detail?.summary.id === selectedId && (!privateSession(detail.summary) || privateVisible) ? detail : null
@@ -203,7 +209,7 @@ export function useSessionController({
   const submission = useSubmission({
     snapshot,
     access,
-    selectedId,
+    selectedId: inputId,
     select,
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft, memoryRefused }) => {
@@ -255,16 +261,18 @@ export function useSessionController({
   sessionDrafts.current.allowPrivate(privateVisible)
   // What was being written before the page loaded: the composer's own text (an unconfirmed submission's) comes first.
   useLayoutEffect(() => {
-    const text = sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible)
+    const text = sessionDrafts.current.read(inputId ?? NEW_SESSION_DRAFT, privateVisible)
     if (text) submission.setDraft(previous => (previous.trim() ? previous : text))
   }, [])
   // The open composer's text is kept for the next load, as it changes; a private session's only where it may be seen.
   useEffect(() => {
-    if (draftSessionId.current !== selectedId) return
-    const hidden = selectedId !== null && (summary === undefined || privateSession(summary) || privateDraftId.current === selectedId)
+    if (draftSessionId.current !== inputId) return
+    if (restoringDraft.current !== undefined && submission.draft !== restoringDraft.current) return
+    restoringDraft.current = undefined
+    const hidden = inputId !== null && (summary === undefined || privateSession(summary) || privateDraftId.current === inputId)
     if (hidden && !privateVisible) return
-    sessionDrafts.current.keep(selectedId ?? NEW_SESSION_DRAFT, submission.draft, hidden)
-  }, [submission.draft, selectedId])
+    sessionDrafts.current.keep(inputId ?? NEW_SESSION_DRAFT, submission.draft, hidden)
+  }, [submission.draft, inputId])
   useEffect(() => {
     const drafts = sessionDrafts.current
     const leave = () => drafts.flush()
@@ -281,14 +289,20 @@ export function useSessionController({
     const listed = listedSessions(snapshot, privateVisible)
     if (listed) sessionDrafts.current.retain(listed)
   }, [snapshot.tasks, snapshot.tasksComplete, privateVisible])
-  // A remote deletion clears selection without going through choose; never transfer that session's text to a new task.
+  // Changing the input target never changes the reading selection. Each target restores only its own draft.
   useLayoutEffect(() => {
-    if (draftSessionId.current === selectedId) return
-    if (draftSessionId.current !== null) sessionDrafts.current.remove(draftSessionId.current)
-    draftSessionId.current = selectedId
-    // The new session's own text comes back, never the removed session's.
-    submission.setDraft(sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible))
-  }, [selectedId])
+    if (draftSessionId.current === inputId) return
+    const previous = draftSessionId.current
+    const task = snapshot.tasks.find(item => item.id === previous)
+    if (previous === null || task)
+      sessionDrafts.current.save(previous ?? NEW_SESSION_DRAFT, submission.draft, previous !== null && privateSession(task))
+    else sessionDrafts.current.remove(previous)
+    draftSessionId.current = inputId
+    const restored = sessionDrafts.current.read(inputId ?? NEW_SESSION_DRAFT, privateVisible)
+    restoringDraft.current = restored
+    submission.setDraft(restored)
+    submission.setError('')
+  }, [inputId])
   useLayoutEffect(() => {
     if (draftDevice.current !== snapshot.device.id) {
       sessionDrafts.current.clear()
@@ -301,14 +315,17 @@ export function useSessionController({
       submission.setDraft('')
     } else if (!privateVisible) {
       sessionDrafts.current.clearPrivate()
-      if (privateDraftId.current !== null && privateDraftId.current === selectedId) submission.setDraft('')
+      if (privateDraftId.current !== null && privateDraftId.current === inputId) submission.setDraft('')
     }
   }, [snapshot.device.id, privateVisible, access.scopes.has('view')])
   const choice = submission.choice
-  const [fileMentions, setFileMentions] = useState<FileMention[]>([])
+  const [sessionMentions, setSessionMentions] = useState<FileMention[]>([])
+  const [newMentions, setNewMentions] = useState<FileMention[]>([])
+  const fileMentions = inputId === null ? newMentions : sessionMentions
+  const setFileMentions = inputId === null ? setNewMentions : setSessionMentions
   const released = useRef<((text: string) => void) | null>(null)
   const attachHarness = selectedId === null ? findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId) : harnessInfo
-  const attachmentDraft = useAttachments({
+  const sessionAttachments = useAttachments({
     // A Harness that just started, or was just tested, may take files now: read again without a reload.
     revision: JSON.stringify([attachHarness?.status, attachHarness?.attachmentsReported ?? null]),
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
@@ -330,27 +347,44 @@ export function useSessionController({
         }
       : {}),
   })
+  const draftHarness = findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId)
+  const newAttachments = useAttachments({
+    revision: JSON.stringify([draftHarness?.status, draftHarness?.attachmentsReported ?? null]),
+    enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
+    selection: {
+      harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? '',
+      workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId,
+      ...(choice.model ? { model: choice.model } : {}),
+    },
+    locked: submission.sending || submission.pending !== null,
+  })
+  const attachmentDraft = inputId === null ? newAttachments : sessionAttachments
   released.current = attachmentDraft.markReleased
-  const quoteSnapshots = useRef(new Map<string, { etag: string; marker: string }>())
-  const mentionScope = selectedId ?? `${choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
+  const sessionQuotes = useRef(new Map<string, { etag: string; marker: string }>())
+  const newQuotes = useRef(new Map<string, { etag: string; marker: string }>())
+  const quoteSnapshots = inputId === null ? newQuotes : sessionQuotes
+  const mentionScope = `${choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
   useLayoutEffect(() => {
-    if (submission.pending === null) setFileMentions([])
+    if (submission.pending === null) setNewMentions([])
   }, [mentionScope])
+  useLayoutEffect(() => {
+    if (submission.pending === null) setSessionMentions([])
+  }, [selectedId, snapshot.device.dataScope])
   const setSubmissionDraft = (text: string) => {
     submission.setDraft(text)
     setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
   }
-  const mentionHarness = selectedId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
+  const mentionHarness = inputId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
   const mentionable =
     catalog?.features?.fileMentions === true
-    && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
+    && (inputId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
     && mentionHarness?.capabilities.tools.fileMentions === true
   // @ would find files, but this device may not list them: the input and the @ menu say so instead of staying silent.
   const mentionsHidden = mentionable && snapshot.device.dataScope !== 'all'
   const mentionChoice = {
     enabled: mentionable && !mentionsHidden,
     ...(mentionsHidden ? { hidden: true as const } : {}),
-    ...(selectedId ? { sessionId: selectedId } : {}),
+    ...(inputId ? { sessionId: inputId } : {}),
     ...(choice.workspaceId && choice.workspaceId !== 'default' ? { workspaceId: choice.workspaceId } : {}),
     harnessId: mentionHarness?.id ?? '',
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
@@ -365,21 +399,21 @@ export function useSessionController({
   }
   // A setting picked a moment before sending goes first, or the session would refuse it and run the turn on the old one.
   const settingsLanded = async () => {
-    if (selectedId !== null) await configFlights.current.get(selectedId)
+    if (inputId !== null) await configFlights.current.get(inputId)
   }
   const sendDraft = async () => {
-    if (selectedId === null && !submission.fork && needsProject(catalog, choice)) {
+    if (inputId === null && !submission.fork && needsProject(catalog, choice)) {
       askProject()
       return
     }
-    if (active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
+    if (inputId !== null && active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
       submission.setError(`${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`)
       return
     }
     await settingsLanded()
     const ids = await attachmentDraft.wait()
-    if (ids && selectedId !== null) clearUnverified(selectedId)
-    const followUp = !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
+    if (ids && inputId !== null) clearUnverified(inputId)
+    const followUp = inputId === null || !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
     if (ids && (await submission.submit(undefined, undefined, followUp, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])
@@ -409,9 +443,14 @@ export function useSessionController({
       if (!listedRetries.current.has(held.requestId)) {
         listedRetries.current.add(held.requestId)
         await settingsLanded()
-        if ((await submission.submit(held)) && held.sessionId === selectedId && fromInput(held)) {
-          attachmentDraft.clear()
-          setFileMentions([])
+        if ((await submission.submit(held)) && fromInput(held)) {
+          if (held.sessionId === undefined) {
+            newAttachments.clear()
+            setNewMentions([])
+          } else if (held.sessionId === selectedId) {
+            sessionAttachments.clear()
+            setSessionMentions([])
+          }
         }
         return
       }
@@ -420,9 +459,12 @@ export function useSessionController({
     if (!submission.delivered(held)) return
     // A prompt sent again never was the input: what is being written stays, here and as the session's draft.
     if (fromInput(held)) {
-      if (held.sessionId === selectedId) {
-        attachmentDraft.clear()
-        setFileMentions([])
+      if (held.sessionId === undefined) {
+        newAttachments.clear()
+        setNewMentions([])
+      } else if (held.sessionId === selectedId) {
+        sessionAttachments.clear()
+        setSessionMentions([])
       } else if (held.sessionId !== undefined && sessionDrafts.current.read(held.sessionId, privateVisible).trim() === held.prompt.trim())
         // The text waiting as that session's draft is what was just delivered, as a sent message takes it away.
         sessionDrafts.current.remove(held.sessionId)
@@ -543,27 +585,34 @@ export function useSessionController({
     })
   }, [snapshot])
 
-  const choose = useStableCallback((id: string | null): void => {
+  const [queuedRetry, setQueuedRetry] = useState<{ id: string; runId?: string; updatedAt: string; prompt: string } | null>(null)
+  const consumedRetry = useRef<typeof queuedRetry>(null)
+  const choose = useStableCallback((id: string | null, afterSelect?: () => void): void => {
     // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
-    if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id))) return
+    if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id, afterSelect))) return
     const handed = id === null ? undefined : takeHandedDraft(id)
-    if (handed && id === selectedId) submission.setDraft(previous => joinDraft(previous, handed))
-    if (id !== selectedId || id === null) {
-      if (selectedId !== null) {
-        const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === selectedId
-        if (!privateVisible && hidden) sessionDrafts.current.remove(selectedId)
-        else if (!sessionDrafts.current.save(selectedId, submission.draft, hidden)) {
+    if (handed && id === inputId) submission.setDraft(previous => joinDraft(previous, handed))
+    if (id !== inputId || id === null) {
+      if (inputId !== null) {
+        const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === inputId
+        if (!privateVisible && hidden) sessionDrafts.current.remove(inputId)
+        else if (!sessionDrafts.current.save(inputId, submission.draft, hidden)) {
           setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
           return
         }
-      } else if (id !== null) sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)
+      } else if (id !== null && !sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)) {
+        setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+        return
+      }
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
-      if (selectedId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
+      if (inputId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
       submission.setDraft(joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed))
       draftSessionId.current = id
     }
+    setQueuedRetry(null)
     onBeforeSelect(id)
     select(id)
+    afterSelect?.()
     submission.setError('')
     setActionError(previous => (previous?.sessionId === id ? previous : null))
   })
@@ -1130,14 +1179,17 @@ export function useSessionController({
   }, [selectedId])
   const shownApproval = approvals[Math.min(approvalIndex, approvals.length - 1)]
   const earlierDraft = useEarlierDraft(
-    useMemo(() => [...approvals.map(item => item.id), ...(current?.questions ?? []).map(item => item.id)], [approvals, current?.questions]),
+    useMemo(
+      () => (inputTarget === 'new' ? [] : [...approvals.map(item => item.id), ...(current?.questions ?? []).map(item => item.id)]),
+      [approvals, current?.questions, inputTarget],
+    ),
     submission.draft,
   )
   // While an approval waits, what is typed goes back with the rejection, where the Host takes a note.
   const rejection = useRejectionNote({
     selectedId,
     approval: shownApproval,
-    mayType: selectedId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null && !earlierDraft.held,
+    mayType: inputId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null && !earlierDraft.held,
     harnessTakesNote: harnessInfo?.capabilities.permission.rejectionNote === true,
     draft: submission.draft,
     clearDraft: () => {
@@ -1205,6 +1257,33 @@ export function useSessionController({
           },
         }
       : undefined
+  const retryFromWorkbench = (detail: TaskDetail) => {
+    const prompt = detail.messages.findLast(message => message.role === 'user' && !message.steered)?.text
+    const failure = detail.messages.findLast(message => message.role === 'system' && message.state === 'failed')
+    if (!prompt || failureAction(failure?.errorCode) !== 'retry' || (detail.summary.runEnd?.unknownResultCount ?? 0) > 0) return
+    const { id, runId, updatedAt } = detail.summary
+    // Selecting still passes the unsaved-editor and draft guards; the one sender acts only after its target arrives.
+    choose(id, () => setQueuedRetry({ id, ...(runId ? { runId } : {}), updatedAt, prompt }))
+  }
+  useEffect(() => {
+    if (!queuedRetry || consumedRetry.current === queuedRetry || inputId !== queuedRetry.id || current?.summary.id !== queuedRetry.id)
+      return
+    consumedRetry.current = queuedRetry
+    setQueuedRetry(null)
+    const task = current.summary
+    if (
+      !retry
+      || harness.connection !== 'connected'
+      || task.runId !== queuedRetry.runId
+      || task.updatedAt !== queuedRetry.updatedAt
+      || (task.status !== 'failed' && task.runOutcome !== 'failed')
+      || (task.runEnd?.unknownResultCount ?? 0) > 0
+    ) {
+      setToast({ text: '会话状态已变化，请查看最新状态后重试。', tone: 'error' })
+      return
+    }
+    void resend(queuedRetry.prompt)
+  }, [queuedRetry, inputId, current, retry, harness.connection])
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
   const startWords = mode === 'chat' ? '写下问题或想法…' : mentionsHidden ? `${NO_PROJECT_FILES}，/ 命令` : '@ 文件，/ 命令'
   // A topic of a conversation in 我的 Agent says whom the message goes to.
@@ -1229,6 +1308,58 @@ export function useSessionController({
                   : startWords
 
   return {
+    parkInputDraft: () => {
+      const hidden = inputId !== null && (summary === undefined || privateSession(summary) || privateDraftId.current === inputId)
+      if (hidden && !privateVisible) {
+        sessionDrafts.current.remove(inputId!)
+        return true
+      }
+      if (sessionDrafts.current.save(inputId ?? NEW_SESSION_DRAFT, submission.draft, hidden)) return true
+      setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+      return false
+    },
+    inputId,
+    inputTarget,
+    sessionInput: {
+      draft: inputTarget === 'new' ? sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible) : submission.draft,
+      attachments: sessionAttachments,
+    },
+    homeComposerState: {
+      selectedId: null,
+      current: null,
+      summary: undefined,
+      active: false,
+      steer: false,
+      clearable: false,
+      run: undefined,
+      noteComposer: undefined,
+      harnessInfo: undefined,
+      currentModel: undefined,
+      effectiveModel: undefined,
+      approvals: [],
+      block: startBlock(snapshot, choice),
+      chosenHarness: draftHarness,
+      chosenScopeCaption:
+        choice.mode === 'chat'
+          ? undefined
+          : projectScopeCaption(
+              catalog?.workspaces.find(item => item.id === choice.workspaceId),
+              draftHarness,
+            ),
+      codeRootChoice:
+        (!access.legacy && draftHarness?.level === 'L3') || choice.mode === 'chat'
+          ? undefined
+          : codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId }),
+      gate:
+        access.legacy || access.scopes.has('run')
+          ? { kind: 'open' as const }
+          : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限', reason: undefined },
+      sessionBlock: undefined,
+      pendingQueued: null,
+      placeholder: mentionsHidden ? `想让 Agent 做什么？  ${NO_PROJECT_FILES}，/ 命令` : '想让 Agent 做什么？  @ 文件，/ 命令',
+      newChoicesLocked:
+        submission.pending !== null || submission.sending || newAttachments.preparing || !(access.legacy || access.scopes.has('run')),
+    },
     privateVisible,
     sessionDrafts,
     draftSessionId,
@@ -1379,6 +1510,7 @@ export function useSessionController({
     fallbackElapsed,
     providerName,
     retry,
+    retryFromWorkbench,
     placeholder,
   }
 }

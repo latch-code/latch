@@ -104,7 +104,11 @@ export function AgentFrame({
   onProfile,
   actions,
   phone = false,
+  duty,
+  layout = 'overview',
 }: {
+  duty?: string
+  layout?: 'overview' | 'triage'
   name: string
   avatar: AgentAvatarValue | 'general'
   state: AvatarState
@@ -118,13 +122,18 @@ export function AgentFrame({
   phone?: boolean
 }) {
   return (
-    <div className="agent-frame" data-phone={phone ? '' : undefined}>
+    <div className="agent-frame" data-phone={phone ? '' : undefined} data-layout={layout}>
       <button type="button" className="agent-frame-who" aria-label={`${name} 的资料`} aria-expanded={profileOpen} onClick={onProfile}>
-        <AgentAvatar avatar={avatar} size={phone ? 28 : 24} state={state} />
+        <AgentAvatar avatar={avatar} size={phone ? 28 : layout === 'triage' ? 52 : 40} state={state} />
         <span className="agent-frame-text">
           <span className="agent-frame-name">
             <VisibleText text={name} />
           </span>
+          {!phone && duty && (
+            <span className="agent-frame-duty">
+              <VisibleText text={duty} />
+            </span>
+          )}
           {/* A phone has room for one line under the name: the state, whole, while there is one, else the topic. */}
           {phone && word ? (
             <span className="agent-frame-state">{word}</span>

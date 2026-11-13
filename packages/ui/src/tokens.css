@@ -30,6 +30,57 @@
 
 @layer tokens {
   :root {
+    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+    --work-a-canvas: #f6f6f3;
+    --work-a-raised: #fefefd;
+    --work-a-sunken: #efefeb;
+    --work-a-ink: #17171a;
+    --work-a-ink-2: #3a3a3c;
+    --work-a-muted: #67676a;
+    --work-a-faint: #77777a;
+    --work-a-line: rgba(22, 22, 26, 0.08);
+    --work-a-line-strong: rgba(22, 22, 26, 0.14);
+    --work-b-canvas: #eceef1;
+    --work-b-raised: #fbfcfd;
+    --work-b-sunken: #e3e6ea;
+    --work-b-ink: #111419;
+    --work-b-ink-2: #343a42;
+    --work-b-muted: #5d6570;
+    --work-b-faint: #737a84;
+    --work-b-line: rgba(16, 20, 26, 0.085);
+    --work-b-line-strong: rgba(16, 20, 26, 0.15);
+    --work-frame: #eaeae5;
+    --work-frame-raised: #dfdfd9;
+    --work-frame-ink: #17171a;
+    --work-frame-ink-2: #3a3a3c;
+    --work-frame-muted: #67676a;
+    --work-frame-line: rgba(22, 22, 26, 0.09);
+    --work-frame-hover: rgba(22, 22, 26, 0.05);
+    --work-frame-selected: #fdfdfb;
+    --work-running: #2c5ad6;
+    --work-card-shadow: 0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2);
+    --fs-work-ui: 13.5px;
+    --lh-work-ui: 20px;
+    --fs-work-caption: 12px;
+    --lh-work-caption: 18px;
+    --fs-work-section: 18px;
+    --lh-work-section: 26px;
+    --fs-work-lane: 20px;
+    --lh-work-lane: 28px;
+    --fs-work-title: 26px;
+    --lh-work-title: 34px;
+    --fs-work-wide-title: 30px;
+    --lh-work-wide-title: 38px;
+    --fs-work-input: 17px;
+    --lh-work-input: 26px;
+    --fs-work-card: 16px;
+    --lh-work-card: 23px;
+    --ls-work-title: -0.02em;
+    --r-9: 9px;
+    --r-14: 14px;
+    --sp-14: 14px;
+    --sp-28: 28px;
+
     color-scheme: light;
 
     --font:
@@ -113,9 +164,6 @@
     --band: rgba(18, 18, 28, 0.025);
     /* The field behind the work panel (ParticleField in apps/web): slate points, every seventh in the execute blue, and
      * the whole field a little stronger so it reads on white; in the dark theme every point is white. Decoration only. */
-    --particle: #5d6b86;
-    --particle-accent: #2461e0;
-    --particle-strength: 1.25;
 
     /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
      * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
@@ -232,7 +280,7 @@
     --r-full: 999px;
 
     /* Motion: short, calm and physical; it confirms a cause and its effect, and never idles, with two exceptions: the
-     * quiet field of points behind the work panel (--particle*) and the faces of 我的 Agent (--agent-*), which blink and
+     * faces of 我的 Agent (--agent-*), which blink and
      * glance now and then; both still under reduced motion. micro: hover and press
      * fills, icon swaps and cross-fades of status words and tab content. enter: menus, popovers and tooltips (scale
      * .98 → 1 and a fade), rows and messages arriving (a fade and a 4px rise). panel: side panels, collapsing columns
@@ -329,6 +377,36 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
+      /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+      --work-a-canvas: #17181b;
+      --work-a-raised: #1e1f23;
+      --work-a-sunken: #121315;
+      --work-a-ink: #edebe6;
+      --work-a-ink-2: #c9c7c1;
+      --work-a-muted: #a3a19b;
+      --work-a-faint: #908e89;
+      --work-a-line: rgba(237, 235, 230, 0.075);
+      --work-a-line-strong: rgba(237, 235, 230, 0.13);
+      --work-b-canvas: #0e1013;
+      --work-b-raised: #15181c;
+      --work-b-sunken: #0b0d10;
+      --work-b-ink: #e6e9ee;
+      --work-b-ink-2: #c1c7cf;
+      --work-b-muted: #9ba3ae;
+      --work-b-faint: #8b939e;
+      --work-b-line: rgba(214, 224, 238, 0.08);
+      --work-b-line-strong: rgba(214, 224, 238, 0.14);
+      --work-frame: #0f1012;
+      --work-frame-raised: #17181b;
+      --work-frame-ink: #edebe6;
+      --work-frame-ink-2: #c9c7c1;
+      --work-frame-muted: #a19f99;
+      --work-frame-line: rgba(237, 235, 230, 0.07);
+      --work-frame-hover: rgba(237, 235, 230, 0.05);
+      --work-frame-selected: rgba(237, 235, 230, 0.085);
+      --work-running: #86a8ff;
+      --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
+
       color-scheme: dark;
       --ink: #ececef;
       --ink-2: #c9c9d0;
@@ -378,9 +456,6 @@
       --track: rgba(255, 255, 255, 0.11);
       --meter: #b6b6bf;
       --band: rgba(0, 0, 0, 0.2);
-      --particle: #e8e8ee;
-      --particle-accent: #e8e8ee;
-      --particle-strength: 1;
       --accent: #2f6be6;
       --accent-hover: #2a62d6;
       --accent-ink: #6b9bfa;
@@ -421,6 +496,36 @@
   }
 
   :root[data-theme='dark'] {
+    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+    --work-a-canvas: #17181b;
+    --work-a-raised: #1e1f23;
+    --work-a-sunken: #121315;
+    --work-a-ink: #edebe6;
+    --work-a-ink-2: #c9c7c1;
+    --work-a-muted: #a3a19b;
+    --work-a-faint: #908e89;
+    --work-a-line: rgba(237, 235, 230, 0.075);
+    --work-a-line-strong: rgba(237, 235, 230, 0.13);
+    --work-b-canvas: #0e1013;
+    --work-b-raised: #15181c;
+    --work-b-sunken: #0b0d10;
+    --work-b-ink: #e6e9ee;
+    --work-b-ink-2: #c1c7cf;
+    --work-b-muted: #9ba3ae;
+    --work-b-faint: #8b939e;
+    --work-b-line: rgba(214, 224, 238, 0.08);
+    --work-b-line-strong: rgba(214, 224, 238, 0.14);
+    --work-frame: #0f1012;
+    --work-frame-raised: #17181b;
+    --work-frame-ink: #edebe6;
+    --work-frame-ink-2: #c9c7c1;
+    --work-frame-muted: #a19f99;
+    --work-frame-line: rgba(237, 235, 230, 0.07);
+    --work-frame-hover: rgba(237, 235, 230, 0.05);
+    --work-frame-selected: rgba(237, 235, 230, 0.085);
+    --work-running: #86a8ff;
+    --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
+
     color-scheme: dark;
     --ink: #ececef;
     --ink-2: #c9c9d0;
@@ -470,9 +575,6 @@
     --track: rgba(255, 255, 255, 0.11);
     --meter: #b6b6bf;
     --band: rgba(0, 0, 0, 0.2);
-    --particle: #e8e8ee;
-    --particle-accent: #e8e8ee;
-    --particle-strength: 1;
     --accent: #2f6be6;
     --accent-hover: #2a62d6;
     --accent-ink: #6b9bfa;
@@ -519,6 +621,58 @@
    * match); layout, motion and the contextual --surface stay free.
    */
   :where([data-secure], [data-secure] *) {
+    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+    --work-a-canvas: #f6f6f3 !important;
+    --work-a-raised: #fefefd !important;
+    --work-a-sunken: #efefeb !important;
+    --work-a-ink: #17171a !important;
+    --work-a-ink-2: #3a3a3c !important;
+    --work-a-muted: #67676a !important;
+    --work-a-faint: #77777a !important;
+    --work-a-line: rgba(22, 22, 26, 0.08) !important;
+    --work-a-line-strong: rgba(22, 22, 26, 0.14) !important;
+    --work-b-canvas: #eceef1 !important;
+    --work-b-raised: #fbfcfd !important;
+    --work-b-sunken: #e3e6ea !important;
+    --work-b-ink: #111419 !important;
+    --work-b-ink-2: #343a42 !important;
+    --work-b-muted: #5d6570 !important;
+    --work-b-faint: #737a84 !important;
+    --work-b-line: rgba(16, 20, 26, 0.085) !important;
+    --work-b-line-strong: rgba(16, 20, 26, 0.15) !important;
+    --work-frame: #eaeae5 !important;
+    --work-frame-raised: #dfdfd9 !important;
+    --work-frame-ink: #17171a !important;
+    --work-frame-ink-2: #3a3a3c !important;
+    --work-frame-muted: #67676a !important;
+    --work-frame-line: rgba(22, 22, 26, 0.09) !important;
+    --work-frame-hover: rgba(22, 22, 26, 0.05) !important;
+    --work-frame-selected: #fdfdfb !important;
+    --work-running: #2c5ad6 !important;
+    --work-card-shadow:
+      0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2) !important;
+    --fs-work-ui: 13.5px !important;
+    --lh-work-ui: 20px !important;
+    --fs-work-caption: 12px !important;
+    --lh-work-caption: 18px !important;
+    --fs-work-section: 18px !important;
+    --lh-work-section: 26px !important;
+    --fs-work-lane: 20px !important;
+    --lh-work-lane: 28px !important;
+    --fs-work-title: 26px !important;
+    --lh-work-title: 34px !important;
+    --fs-work-wide-title: 30px !important;
+    --lh-work-wide-title: 38px !important;
+    --fs-work-input: 17px !important;
+    --lh-work-input: 26px !important;
+    --fs-work-card: 16px !important;
+    --lh-work-card: 23px !important;
+    --ls-work-title: -0.02em !important;
+    --r-9: 9px !important;
+    --r-14: 14px !important;
+    --sp-14: 14px !important;
+    --sp-28: 28px !important;
+
     --font:
       -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif !important;
     --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
@@ -570,9 +724,6 @@
     --track: rgba(18, 18, 28, 0.11) !important;
     --meter: #45454e !important;
     --band: rgba(18, 18, 28, 0.025) !important;
-    --particle: #5d6b86 !important;
-    --particle-accent: #2461e0 !important;
-    --particle-strength: 1.25 !important;
     --accent: #2461e0 !important;
     --accent-hover: #1d55cc !important;
     --accent-ink: #1d52c4 !important;
@@ -688,6 +839,36 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
+      /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+      --work-a-canvas: #17181b !important;
+      --work-a-raised: #1e1f23 !important;
+      --work-a-sunken: #121315 !important;
+      --work-a-ink: #edebe6 !important;
+      --work-a-ink-2: #c9c7c1 !important;
+      --work-a-muted: #a3a19b !important;
+      --work-a-faint: #908e89 !important;
+      --work-a-line: rgba(237, 235, 230, 0.075) !important;
+      --work-a-line-strong: rgba(237, 235, 230, 0.13) !important;
+      --work-b-canvas: #0e1013 !important;
+      --work-b-raised: #15181c !important;
+      --work-b-sunken: #0b0d10 !important;
+      --work-b-ink: #e6e9ee !important;
+      --work-b-ink-2: #c1c7cf !important;
+      --work-b-muted: #9ba3ae !important;
+      --work-b-faint: #8b939e !important;
+      --work-b-line: rgba(214, 224, 238, 0.08) !important;
+      --work-b-line-strong: rgba(214, 224, 238, 0.14) !important;
+      --work-frame: #0f1012 !important;
+      --work-frame-raised: #17181b !important;
+      --work-frame-ink: #edebe6 !important;
+      --work-frame-ink-2: #c9c7c1 !important;
+      --work-frame-muted: #a19f99 !important;
+      --work-frame-line: rgba(237, 235, 230, 0.07) !important;
+      --work-frame-hover: rgba(237, 235, 230, 0.05) !important;
+      --work-frame-selected: rgba(237, 235, 230, 0.085) !important;
+      --work-running: #86a8ff !important;
+      --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
+
       --ink: #ececef !important;
       --ink-2: #c9c9d0 !important;
       --muted: #a3a3ad !important;
@@ -736,9 +917,6 @@
       --track: rgba(255, 255, 255, 0.11) !important;
       --meter: #b6b6bf !important;
       --band: rgba(0, 0, 0, 0.2) !important;
-      --particle: #e8e8ee !important;
-      --particle-accent: #e8e8ee !important;
-      --particle-strength: 1 !important;
       --accent: #2f6be6 !important;
       --accent-hover: #2a62d6 !important;
       --accent-ink: #6b9bfa !important;
@@ -779,6 +957,36 @@
   }
 
   :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
+    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
+    --work-a-canvas: #17181b !important;
+    --work-a-raised: #1e1f23 !important;
+    --work-a-sunken: #121315 !important;
+    --work-a-ink: #edebe6 !important;
+    --work-a-ink-2: #c9c7c1 !important;
+    --work-a-muted: #a3a19b !important;
+    --work-a-faint: #908e89 !important;
+    --work-a-line: rgba(237, 235, 230, 0.075) !important;
+    --work-a-line-strong: rgba(237, 235, 230, 0.13) !important;
+    --work-b-canvas: #0e1013 !important;
+    --work-b-raised: #15181c !important;
+    --work-b-sunken: #0b0d10 !important;
+    --work-b-ink: #e6e9ee !important;
+    --work-b-ink-2: #c1c7cf !important;
+    --work-b-muted: #9ba3ae !important;
+    --work-b-faint: #8b939e !important;
+    --work-b-line: rgba(214, 224, 238, 0.08) !important;
+    --work-b-line-strong: rgba(214, 224, 238, 0.14) !important;
+    --work-frame: #0f1012 !important;
+    --work-frame-raised: #17181b !important;
+    --work-frame-ink: #edebe6 !important;
+    --work-frame-ink-2: #c9c7c1 !important;
+    --work-frame-muted: #a19f99 !important;
+    --work-frame-line: rgba(237, 235, 230, 0.07) !important;
+    --work-frame-hover: rgba(237, 235, 230, 0.05) !important;
+    --work-frame-selected: rgba(237, 235, 230, 0.085) !important;
+    --work-running: #86a8ff !important;
+    --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
+
     --ink: #ececef !important;
     --ink-2: #c9c9d0 !important;
     --muted: #a3a3ad !important;
@@ -827,9 +1035,6 @@
     --track: rgba(255, 255, 255, 0.11) !important;
     --meter: #b6b6bf !important;
     --band: rgba(0, 0, 0, 0.2) !important;
-    --particle: #e8e8ee !important;
-    --particle-accent: #e8e8ee !important;
-    --particle-strength: 1 !important;
     --accent: #2f6be6 !important;
     --accent-hover: #2a62d6 !important;
     --accent-ink: #6b9bfa !important;

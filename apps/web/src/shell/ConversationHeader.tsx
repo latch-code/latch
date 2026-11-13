@@ -24,6 +24,9 @@ import {
   TerminalGlyph,
   PanelRightGlyph,
   EditGlyph,
+  BranchGlyph,
+  LaptopGlyph,
+  Icon,
 } from '@latch/ui'
 import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -38,6 +41,7 @@ import type { ShellState } from './useShellLayout.tsx'
 import { topicOwner } from '../agents/chat.ts'
 import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
+import { computerName } from '../core/securityCopy.ts'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
 function sessionPill(summary: TaskSummary, cancelling: boolean) {
@@ -211,6 +215,12 @@ function ProjectCrumb({
           /
         </span>
       )}
+      {!worktree && summary.branch && (
+        <span className="topbar-session-branch">
+          <Icon icon={BranchGlyph} size={14} />
+          <VisibleText text={summary.branch} />
+        </span>
+      )}
     </span>
   )
 }
@@ -370,6 +380,7 @@ export function SessionHeader({
   summary,
   harness,
   project,
+  computer,
   usage,
   cancelling,
   demo,
@@ -405,6 +416,7 @@ export function SessionHeader({
   harness?: Pick<HarnessInfo, 'capabilities' | 'status'> | undefined
   /** The basename of the session's working directory. */
   project?: string
+  computer?: string
   /** What the engine last reported about its context. */
   usage?: { contextUsed?: number; contextSize?: number } | undefined
   cancelling: boolean
@@ -480,6 +492,12 @@ export function SessionHeader({
         )}
         {summary && !frame && onRename && (
           <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />
+        )}
+        {summary && !frame && computer && (
+          <span className="topbar-computer">
+            <Icon icon={LaptopGlyph} size={14} />
+            {computer}
+          </span>
         )}
         {summary && !frame && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>
@@ -596,6 +614,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       summary={summary}
       harness={topHarness}
       project={project}
+      computer={computerName(snapshot.hostName)}
       usage={current?.usageReport}
       cancelling={selectedId !== null && stopping.has(selectedId)}
       demo={demo}

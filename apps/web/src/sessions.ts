@@ -286,6 +286,7 @@ export function listedSessions(
     folded,
     space,
     expanded = false,
+    projectTree = false,
   }: {
     filter: SessionFilter
     search: string
@@ -293,13 +294,14 @@ export function listedSessions(
     space?: Space
     /** 我的 Agent: 最近委托 shows every delegation (全部). */
     expanded?: boolean
+    projectTree?: boolean
   },
 ): TaskSummary[] {
   if (space === 'agents') return delegationRows(tasks, { filter, expanded }).rows
   return groupSessions(
     filterSessions(tasks, filter, search, space),
     workspaces,
-    filter !== 'archived' && !search ? { waitingFrom: inSpace(tasks, space) } : {},
+    filter !== 'archived' && !search && !projectTree ? { waitingFrom: inSpace(tasks, space) } : {},
   )
     .filter(group => !folded.has(group.id))
     .flatMap(group => group.tasks)

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Button, ScheduleGlyph } from '@latch/ui'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
@@ -6,7 +7,7 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentFrame, TopicMenu } from './AgentFrame.tsx'
 import { agentTopics } from './chat.ts'
 import { askDelegateFocus } from './delegateFocus.ts'
-import { ACTIVITY_WORDS, agentActivity, sessionAgent } from './model.ts'
+import { ACTIVITY_WORDS, agentActivity, dutyLine, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord } from './parts.tsx'
 
 /**
@@ -36,6 +37,7 @@ export function TopicFrame({
   const state = agentActivity(snapshot, found ?? { id: owner, available: true })
   const offline = connection === 'offline'
   const gone = !general && snapshot.customAgents !== undefined && !found
+  const schedules = snapshot.automations?.filter(item => (general ? !item.customAgentId : item.customAgentId === owner)) ?? []
   const canStart = offline
     ? 'Mac 不在线'
     : !access.scopes.has('run')
@@ -48,6 +50,8 @@ export function TopicFrame({
   return (
     <AgentFrame
       name={name}
+      layout={shell.preferences.workbenchLayout}
+      duty={found ? dutyLine(found) : general ? '没选别的 Agent 的会话都带上它' : undefined}
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
       word={frozen === null && ACTIVITY_WORDS[state] ? <ActivityWord state={state} /> : null}
@@ -59,6 +63,15 @@ export function TopicFrame({
       }}
       actions={
         <>
+          {!phone && shell.catalog?.features?.automations && (
+            <Button variant="ghost" size="sm" icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: owner, tab: 'schedules' })}>
+              {schedules.length === 1
+                ? scheduleWords(schedules[0].schedule)
+                : schedules.length
+                  ? `${schedules.length} 个定时任务`
+                  : '定时任务'}
+            </Button>
+          )}
           <TopicMenu
             topics={agentTopics(snapshot.tasks, owner)}
             current={current}

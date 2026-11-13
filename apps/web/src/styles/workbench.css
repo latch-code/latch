@@ -50,14 +50,14 @@
   margin: 0 var(--shell-inset) var(--shell-inset) 0;
   border-radius: var(--r-12);
 }
-.app-shell[data-overview] :is(.workspace, .inspector-column, .inspector-resize) {
+.app-shell:is([data-overview], [data-all-sessions]) :is(.workspace, .inspector-column, .inspector-resize) {
   visibility: hidden;
 }
 .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
   grid-column: 1 / -1;
   margin-left: var(--shell-inset);
 }
-.app-shell[data-workbench-layout='triage'][data-overview] :is(.sidebar, .sidebar-resize) {
+.app-shell[data-workbench-layout='triage']:is([data-overview], [data-all-sessions]) :is(.sidebar, .sidebar-resize) {
   visibility: hidden;
 }
 .app-shell[data-workbench-layout='triage'] .workspace-view > .topbar {
@@ -80,7 +80,7 @@
   .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
     margin: 0;
   }
-  .app-shell[data-overview] .phone-list {
+  .app-shell:is([data-overview], [data-all-sessions]) .phone-list {
     visibility: hidden;
   }
   .app-shell[data-overview]:has(> .workspace) .phone-tabs {

@@ -46,7 +46,7 @@ const defaults: Preferences = {
   theme: 'system',
   workbenchLayout: 'overview',
   sendKey: 'enter',
-  rightPanel: { open: false },
+  rightPanel: { open: true },
   sidebar: { collapsed: false },
   foldedShelves: [],
 }
@@ -80,7 +80,7 @@ export function parsePreferences(raw: string | null): Preferences {
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       workbenchLayout: item.workbenchLayout === 'triage' ? 'triage' : 'overview',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
-      rightPanel: parseRightPanelPreference(item.rightPanel),
+      rightPanel: item.rightPanel === undefined ? { open: item.workbenchLayout !== 'triage' } : parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),
       ...(typeof item.dockHeight === 'number' && Number.isInteger(item.dockHeight) && item.dockHeight >= 140 && item.dockHeight <= 680
         ? { dockHeight: item.dockHeight }

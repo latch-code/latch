@@ -24,6 +24,8 @@ export interface ShellRoute {
   entry: ShellEntry
   /** Code's overview covers the conversation without changing its selected session. */
   overview?: boolean
+  /** The project-grouped Code list covers, but never replaces, the reading session. */
+  allSessions?: boolean
   /** The chosen section of 设置; absent, a wide window shows the first one and a phone shows the list. */
   section?: SettingsSection
   /** The project a 项目 section opens on. */

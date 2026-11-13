@@ -5,16 +5,39 @@ function LayoutPreview({ layout }: { layout: WorkbenchLayout }) {
   return (
     <span className="layout-preview" data-layout={layout} aria-hidden="true">
       <span className="layout-preview-rail">
-        <span />
-        <span />
-        <span />
+        <b>Latch</b>
+        <span>Code</span>
+        <span className="layout-preview-current">总览</span>
+        <i />
+        <i />
       </span>
       <span className="layout-preview-content">
-        <span className="layout-preview-title" />
+        <span className="layout-preview-input">
+          想让 Agent 做什么？
+          <i />
+          <i />
+        </span>
         <span className="layout-preview-lines">
-          <span />
-          <span />
-          <span />
+          <span className="layout-preview-attention">
+            <b>等你处理</b>
+            <span className="layout-preview-card">
+              <i />
+              <i />
+              <span>
+                <i />
+                <i />
+              </span>
+            </span>
+          </span>
+          <span>
+            <b>进行中</b>
+            <i />
+            <i />
+          </span>
+          <span>
+            <b>可交付</b>
+            <i />
+          </span>
         </span>
       </span>
     </span>

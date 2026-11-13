@@ -18,6 +18,99 @@
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
+
+/* The overview uses the same protected evidence and controls, laid out as one decision card. */
+.approval-panel[data-presentation] {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: var(--r-14) !important;
+  padding: var(--sp-16) var(--sp-20) !important;
+  box-shadow:
+    var(--work-card-shadow),
+    inset 0 0 0 1px var(--amber-line) !important;
+}
+.approval-panel[data-presentation][data-risky] {
+  box-shadow:
+    var(--work-card-shadow),
+    inset 0 0 0 1px var(--red-line) !important;
+}
+.approval-panel[data-presentation] .approval-row {
+  display: contents !important;
+}
+.approval-panel[data-presentation] .approval-what {
+  order: 0;
+}
+.approval-panel[data-presentation] .approval-title {
+  flex-wrap: wrap;
+  font-size: var(--fs-work-card) !important;
+  line-height: var(--lh-work-card) !important;
+  font-weight: 600;
+}
+@media (max-width: 767.98px) {
+  .approval-panel[data-presentation] .workbench-tool-name {
+    flex-basis: 100%;
+    text-align: right;
+  }
+  .approval-panel[data-presentation] .approval-object {
+    overflow-wrap: break-word;
+  }
+}
+.approval-panel[data-presentation] .workbench-tool-name {
+  margin-left: auto;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.approval-panel[data-presentation] .approval-meta {
+  display: flex !important;
+  flex-wrap: wrap;
+}
+.approval-panel[data-presentation] .approval-meta > .approval-reason-hint {
+  margin-left: auto;
+}
+.approval-panel[data-presentation] .approval-buttons > .ui-button {
+  border-radius: var(--r-9) !important;
+}
+.app-shell[data-workbench-layout='overview'] .approval-panel[data-presentation] {
+  background: var(--work-a-raised) !important;
+}
+.app-shell[data-workbench-layout='triage'] .approval-panel[data-presentation] {
+  background: var(--work-b-raised) !important;
+}
+.approval-panel[data-presentation] .approval-meta > .work-decision-context {
+  flex: 1;
+  margin: var(--sp-4) 0 0;
+}
+.approval-panel[data-presentation] .approval-preview .diff-hunk-header {
+  display: none !important;
+}
+.approval-panel[data-presentation][data-single-file] .approval-preview .diff-file-header {
+  display: none !important;
+}
+.approval-panel[data-presentation] .approval-preview .diff-file {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.approval-panel[data-presentation] .approval-object {
+  font-size: var(--fs-work-card) !important;
+  line-height: var(--lh-work-card) !important;
+}
+.approval-panel[data-presentation] .approval-notes {
+  order: 1;
+}
+.approval-panel[data-presentation] .approval-preview {
+  order: 2;
+}
+.approval-panel[data-presentation] .approval-buttons {
+  order: 3;
+  justify-content: end;
+  margin-top: var(--sp-4);
+}
+.approval-panel[data-presentation] :is(.approval-uncertain, .approval-failure) {
+  order: 4;
+}
 .approval-row {
   display: flex !important;
   align-items: center;

@@ -8,6 +8,7 @@ import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { spaceOf } from '../sessions.ts'
 import { canDelegate } from '../agents/model.ts'
 
 /**
@@ -106,6 +107,10 @@ export function Overlays({ shell }: { shell: ShellState }) {
     composerRef,
     access,
   } = shell
+  const shownApprovalToast =
+    approvalToast && !(route.overview && snapshot.tasks.some(task => task.id === approvalToast.sessionId && spaceOf(task) === 'code'))
+      ? approvalToast
+      : null
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
@@ -193,15 +198,15 @@ export function Overlays({ shell }: { shell: ShellState }) {
           }}
         />
       )}
-      {(approvalToast || toast) && <ToastClearance />}
-      {approvalToast && (
+      {(shownApprovalToast || toast) && <ToastClearance />}
+      {shownApprovalToast && (
         <Toast className="toast" duration={null}>
           <span>另一个会话等你处理</span>
           <Button
             variant="ghost"
             onClick={() => {
-              choose(approvalToast.sessionId)
-              const target = snapshot.approvals.find(item => item.id === approvalToast.id)
+              choose(shownApprovalToast.sessionId)
+              const target = snapshot.approvals.find(item => item.id === shownApprovalToast.id)
               if (target) reading.show(target.sessionId, toolRowId(target))
               setApprovalToast(null)
             }}>
@@ -209,7 +214,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
           </Button>
         </Toast>
       )}
-      {!approvalToast && toast && (
+      {!shownApprovalToast && toast && (
         <Toast className="toast" tone={toast.tone === 'error' ? 'error' : 'neutral'} duration={null}>
           {toast.text}
         </Toast>

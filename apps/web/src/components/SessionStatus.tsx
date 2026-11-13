@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, RunLive } from '@latch/protocol'
-import { StatusSlot, type SlotStatus } from '@latch/ui'
+import {
+  AlertGlyph,
+  CheckGlyph,
+  Icon,
+  MessageGlyph,
+  StatusGlyph,
+  StatusSlot,
+  WaitingGlyph,
+  WarningGlyph,
+  UnknownGlyph,
+  type SlotStatus,
+} from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
@@ -35,6 +46,33 @@ const SLOT: Record<RowStatus['kind'], SlotStatus> = {
 }
 
 const statusKey = (status: RowStatus) => (status.kind === 'ended' ? `ended:${status.word}:${status.unknown}` : status.kind)
+
+/** The compact project tree uses a complete glyph; the row's accessible words still name the exact state. */
+export function SessionRowGlyph({ status }: { status: RowStatus }) {
+  const running = status.kind === 'running' || status.kind === 'stopping'
+  const waiting = status.kind === 'waiting' || status.kind === 'silent' || (status.kind === 'ended' && status.unknown > 0)
+  const glyph =
+    status.kind === 'failed'
+      ? AlertGlyph
+      : status.kind === 'waiting'
+        ? WaitingGlyph
+        : status.kind === 'ended' && status.unknown > 0
+          ? UnknownGlyph
+          : waiting
+            ? WarningGlyph
+            : status.kind === 'unread'
+              ? CheckGlyph
+              : MessageGlyph
+  return (
+    <span
+      className="session-row-glyph"
+      data-tone={running ? 'running' : waiting ? 'waiting' : status.kind === 'failed' ? 'failed' : 'neutral'}>
+      <StatusGlyph running={running} state={statusKey(status)}>
+        <Icon icon={glyph} size={12} />
+      </StatusGlyph>
+    </span>
+  )
+}
 
 /**
  * A session row's status slot. The words come from what the Host last said and change at most once a second. In

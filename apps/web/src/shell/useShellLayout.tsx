@@ -9,7 +9,17 @@ import { quoteDraft, type FileQuote } from '../preview/quote.ts'
 import { fileContextKey } from '../preview/fileContext.ts'
 import { useAutoOpenOutputs } from '../hooks/useAutoOpenOutputs.ts'
 import type { ContextFileOpenTarget, FileContext } from '@latch/protocol'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+  type RefObject,
+} from 'react'
 import type { SearchHit } from '@latch/protocol'
 import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from '../breakpoints.ts'
@@ -23,7 +33,6 @@ import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
-  SIDEBAR_DEFAULT,
   SIDEBAR_SNAP_MS,
   changesPanelWidth,
   clampRightPanel,
@@ -59,7 +68,7 @@ import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
-import { MOTION, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
+import { EASING, MOTION, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController } from './useSessionController.ts'
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
@@ -94,9 +103,24 @@ function focusNextFrame(target: RefObject<HTMLElement | null>) {
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
+  const viewport = useViewport()
+  const phone = viewport === 'phone'
+  const [route, updateRoute] = useState<ShellRoute>(() =>
+    initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
+  )
+  const routeRef = useRef(route)
+  routeRef.current = route
+  const parkInput = useRef<() => boolean>(() => true)
+  const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
+    const target = typeof next === 'function' ? next(routeRef.current) : next
+    if (!!target.overview !== !!routeRef.current.overview && !parkInput.current()) return
+    routeRef.current = target
+    updateRoute(target)
+  }, [])
   const session = useSessionController({
     harness,
     snapshot,
+    inputTarget: route.overview ? 'new' : 'session',
     onBeforeSelect: id => {
       clearTimeout(popTimer.current)
       setPopping(false)
@@ -104,9 +128,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       drawer.setOpen(false)
       setInfoPage(false)
       setFileExpanded(false)
-      if (id !== null) setRoute({ entry: 'sessions' })
+      if (id !== null) updateRoute({ entry: 'sessions' })
     },
     onForegroundSent: () => {
+      updateRoute({ entry: 'sessions' })
       setFilter('all')
       setSearch('')
       setNewSheet(false)
@@ -114,6 +139,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       setPushed(true)
     },
   })
+  parkInput.current = session.parkInputDraft
   const {
     openNotified,
     archivedLast,
@@ -148,10 +174,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   } = session
 
   const conversationEpoch = `${harness.resyncs}:${selectedId ?? ''}`
-  const viewport = useViewport()
   const coarse = useCoarsePointer()
   const preferences = usePreferences()
-  const phone = viewport === 'phone'
   const drawerMode = usesDrawer(viewport)
   // From 1024px the sidebar can be dragged wider or narrower, or shut.
   const sidebarColumn = viewport === 'laptop' || viewport === 'desktop'
@@ -175,9 +199,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const titlebar = useRef<HTMLDivElement>(null)
   /** The current entry, its section, and where a page puts its title. */
   // A wide window opens where this device was last; a session the page restores keeps its own place.
-  const [route, setRoute] = useState<ShellRoute>(() =>
-    initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
-  )
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
   const sidebarShut = sidebarColumn && (sidebarDrag !== null ? sidebarDrag.collapsed : preferences.sidebar.collapsed)
@@ -208,6 +229,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const setupTrigger = useRef<HTMLButtonElement>(null)
   /** The input of the phone's new-session sheet, apart from the open session's. */
   const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
+  const homeComposerRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (route.overview) focusNextFrame(homeComposerRef)
+  }, [route.overview])
   const searchRef = useRef<HTMLInputElement>(null)
   const [commandMode, setCommandMode] = useState<PaletteLevel>('root')
   const [commandOpen, setCommandOpen] = useState(false)
@@ -235,7 +260,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setToast({ text, tone: 'error' })
   })
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
-  const conversationVisible = route.entry === 'sessions' && !route.overview
+  const conversationVisible = route.entry === 'sessions' && !route.overview && !route.allSessions
   const wasConversationVisible = useRef(conversationVisible)
   useLayoutEffect(() => {
     if (conversationVisible && !wasConversationVisible.current) conversationShown()
@@ -355,7 +380,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setChangesTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
-  const storedSidebar = preferences.sidebar.width ?? SIDEBAR_DEFAULT
+  const storedSidebar = preferences.sidebar.width ?? (preferences.workbenchLayout === 'triage' ? 300 : 264)
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
   const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0
@@ -364,7 +389,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     preferences.rightPanel.width
     ?? (showingChanges
       ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
-      : undefined)
+      : !filesVisible && !deliveryOpen && !terminalOpen && !browserOpen && pluginPanel === undefined
+        ? 400
+        : undefined)
   const placed = placeRightPanel({
     windowWidth,
     ...(panelWidth !== undefined ? { width: panelWidth } : {}),
@@ -526,8 +553,17 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     drawer.setOpen(false)
     setRoute({ entry: 'sessions', overview: true })
   }
+  const openAllSessions = () => {
+    setNewSheet(false)
+    drawer.setOpen(false)
+    setRoute({ entry: 'sessions', allSessions: true })
+  }
   /** Code and 我的 Agent: which one the shell is in, and the way to the other. */
-  const { space, goSpace, waits } = useSpaces({
+  const {
+    space,
+    goSpace: moveSpace,
+    waits,
+  } = useSpaces({
     snapshot,
     agents: entries.includes('agents'),
     route,
@@ -540,6 +576,46 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       drawer.setOpen(false)
     },
   })
+  const goSpace = (target: 'code' | 'agents') => {
+    const before = document.activeElement
+    const fromSwitch = before instanceof HTMLElement && before.closest('.space-switch, .space-buttons, .phone-tabs')
+    moveSpace(target)
+    if (!fromSwitch) return
+    requestAnimationFrame(() => {
+      if (document.activeElement !== before && document.activeElement !== document.body) return
+      const control = [
+        ...document.querySelectorAll<HTMLElement>(
+          '.space-switch [aria-checked="true"], .space-buttons [aria-pressed="true"], .phone-tabs [aria-current="page"]',
+        ),
+      ].find(element => element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]'))
+      control?.focus({ preventScroll: true })
+    })
+  }
+  const workbenchView = `${preferences.workbenchLayout}:${space}`
+  const shownWorkbench = useRef(workbenchView)
+  useLayoutEffect(() => {
+    if (shownWorkbench.current === workbenchView) return
+    shownWorkbench.current = workbenchView
+    const frame = appShell.current
+    if (!frame || !matchMedia('(prefers-reduced-motion: no-preference)').matches) return
+    const target = frame.querySelector<HTMLElement>(
+      route.entry === 'agents'
+        ? '.agents-page'
+        : route.overview
+          ? '.workbench-home'
+          : route.allSessions
+            ? '.workbench-sessions'
+            : '.workspace-view',
+    )
+    if (!target) return
+    frame.dataset.layoutChanging = ''
+    const animation = target.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.micro, easing: EASING.micro })
+    void animation.finished
+      .catch(() => {})
+      .then(() => {
+        if (shownWorkbench.current === workbenchView) delete frame.dataset.layoutChanging
+      })
+  }, [workbenchView, route.entry, route.overview, route.allSessions])
   /**
    * A place chosen by its key or the menu bar: once it is drawn, focus lands on its primary (新会话 or 委托…) where that is
    * in sight, else on the place's own button, so it never drops to the page.
@@ -654,6 +730,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       && selectedId !== null
       && route.entry === 'sessions'
       && !route.overview
+      && !route.allSessions
       && !document.querySelector('dialog[open]')
     ) {
       event.preventDefault()
@@ -717,7 +794,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** A project or 不选项目 from the list: the person was on their way to sending, so the input takes the keys again. */
   const chooseProject = (workspaceId: string) => {
     submission.updateChoice({ workspaceId, projectSkipped: workspaceId === 'default' })
-    requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+    requestAnimationFrame(() => (route.overview ? homeComposerRef : phone ? sheetComposerRef : composerRef).current?.focus())
   }
   const folders = shellFolders()
   const pickProject =
@@ -755,11 +832,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         void pickProject(true)
       }
     : undefined
-  const newChoicesLocked = submission.pending !== null || submission.sending || attachmentDraft.preparing || gate.kind !== 'open'
+  const newChoicesLocked =
+    submission.pending !== null
+    || submission.sending
+    || attachmentDraft.preparing
+    || (route.overview ? session.homeComposerState.gate : gate).kind !== 'open'
   const sheetCanStart =
-    selectedId === null
-    && gate.kind === 'open'
-    && block === null
+    session.inputId === null
+    && (route.overview ? session.homeComposerState.gate : gate).kind === 'open'
+    && (route.overview ? session.homeComposerState.block : block) === null
     && !newChoicesLocked
     && (submission.draft.trim().length > 0 || attachmentDraft.items.length > 0)
   // The open column stands beside the conversation, which keeps its minimum width between the two.
@@ -902,7 +983,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       (action === 'files' && only?.classList.contains('new-session-sheet'))
       || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
     if (dialogs.length && !passes) return
-    if ((route.entry !== 'sessions' || route.overview) && !shortcutWorksOnPage(action)) return
+    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action)) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
@@ -912,7 +993,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       }
       if (action.kind === 'session') {
         const folded = readFolded(shelvesKey(snapshot.device.id))
-        const target = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded, ...listSpace })[action.index - 1]
+        const target = listedSessions(snapshot.tasks, catalog?.workspaces, {
+          filter,
+          search,
+          folded,
+          projectTree: preferences.workbenchLayout === 'overview',
+          ...listSpace,
+        })[action.index - 1]
         if (target && target.id !== selectedId) choose(target.id)
         return
       }
@@ -945,7 +1032,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     if (action === 'compose') {
       event.preventDefault()
-      if (phone && selectedId === null) {
+      if (route.overview) homeComposerRef.current?.focus()
+      else if (phone && selectedId === null) {
         setNewSheet(true)
         requestAnimationFrame(() => sheetComposerRef.current?.focus())
       } else if (pageMode && infoPage) {
@@ -997,7 +1085,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     const folded = readFolded(shelvesKey(snapshot.device.id))
-    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded, ...listSpace })
+    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, {
+      filter,
+      search,
+      folded,
+      projectTree: preferences.workbenchLayout === 'overview',
+      ...listSpace,
+    })
     const target = steppedSession(ordered, selectedId, action === 'next' ? 1 : -1)
     if (target) choose(target.id)
   })
@@ -1300,6 +1394,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   })
   useBackLayer(pageMode && infoPage, closeInfoPage)
   useBackLayer(phone && route.overview === true, () => setRoute({ entry: 'sessions' }))
+  useBackLayer(phone && route.allSessions === true, openOverview)
   // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
   // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
   // still open, stays where it is.
@@ -1318,6 +1413,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     entries,
     goEntry,
     openOverview,
+    openAllSessions,
     space,
     goSpace,
     waits,
@@ -1368,6 +1464,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     main,
     setupTrigger,
     sheetComposerRef,
+    homeComposerRef,
     searchRef,
     commandMode,
     setCommandMode,

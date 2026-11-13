@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
 import { Button, InlineNotice, Kbd, Tooltip } from '@latch/ui'
 import { api, inlineError, MessageError } from '../core/api.ts'
@@ -189,7 +189,15 @@ export function QuestionDrawer({
   disabledReason,
   canAnswer,
   onOther,
+  presentation,
+  context,
+  compact = false,
+  firstKeys = false,
 }: {
+  presentation?: 'workbench' | 'conversation'
+  context?: ReactNode
+  compact?: boolean
+  firstKeys?: boolean
   state: QuestionDrawerState
   asker: string
   disabledReason?: string | undefined
@@ -206,6 +214,7 @@ export function QuestionDrawer({
     if (locked || !armed) return undefined
     const keydown = (event: KeyboardEvent) => {
       if (!canAnswer || !cardTakesKeys(card.current)) return
+      if (presentation === 'workbench' && !firstKeys && !card.current?.contains(document.activeElement)) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || event.repeat) return
       if (
         event.target instanceof Element
@@ -221,52 +230,61 @@ export function QuestionDrawer({
     return () => {
       document.removeEventListener('keydown', keydown)
     }
-  }, [locked, armed, canAnswer, options, state])
+  }, [locked, armed, canAnswer, options, state, presentation, firstKeys])
   const last = draft.step === question.questions.length - 1
   return (
-    <section ref={card} className="composer-drawer question-card" data-arming={armed ? undefined : ''} aria-label="Harness 提问">
+    <section
+      ref={card}
+      className="composer-drawer question-card"
+      data-presentation={presentation}
+      data-compact={compact ? '' : undefined}
+      data-arming={armed ? undefined : ''}
+      aria-label="Harness 提问">
       <div className="question-heading">
-        <span>{asker} 想问你</span>
+        <span>{presentation ? <VisibleText text={current.label} /> : <>{asker} 想问你</>}</span>
         {question.questions.length > 1 && (
           <span className="question-count">
             {draft.step + 1}/{question.questions.length}
           </span>
         )}
       </div>
+      {context}
       {question.prompt !== current.label && (
         <p className="question-prompt">
           <VisibleText text={question.prompt} />
         </p>
       )}
-      <p className="question-label">
+      <p className="question-label" hidden={!!presentation && !current.multiple}>
         <VisibleText text={current.label} />
         {current.multiple && <span className="question-hint">可多选</span>}
       </p>
-      <div className="question-options" role="group" aria-label={escapeHiddenCharacters(current.label)}>
-        {options.map((option, index) => (
-          <Tooltip key={option.id} content={option.description ? escapeHiddenCharacters(option.description) : undefined}>
-            <button
-              type="button"
-              className="question-option"
-              disabled={locked}
-              aria-disabled={armed ? undefined : true}
-              aria-pressed={answer.optionIds.includes(option.id)}
-              onClick={() => {
-                if (armed) state.choose(option.id)
-              }}>
-              {index < 9 && <Kbd>{index + 1}</Kbd>}
-              <VisibleText text={option.label} />
-            </button>
-          </Tooltip>
-        ))}
-        <button type="button" className="question-option question-other" disabled={locked} onClick={onOther}>
-          其他…
-        </button>
-      </div>
+      {canAnswer && (
+        <div className="question-options" role="group" aria-label={escapeHiddenCharacters(current.label)}>
+          {options.map((option, index) => (
+            <Tooltip key={option.id} content={option.description ? escapeHiddenCharacters(option.description) : undefined}>
+              <button
+                type="button"
+                className="question-option"
+                disabled={locked}
+                aria-disabled={armed ? undefined : true}
+                aria-pressed={answer.optionIds.includes(option.id)}
+                onClick={() => {
+                  if (armed) state.choose(option.id)
+                }}>
+                {index < 9 && (!presentation || presentation === 'conversation' || firstKeys) && <Kbd>{index + 1}</Kbd>}
+                <VisibleText text={option.label} />
+              </button>
+            </Tooltip>
+          ))}
+          <button type="button" className="question-option question-other" disabled={locked} onClick={onOther}>
+            其他…
+          </button>
+        </div>
+      )}
       {!canAnswer && <InlineNotice>{disabledReason ?? '此设备没有回答权限。'}</InlineNotice>}
       {question.state === 'answering' && !draft.pending && <InlineNotice>已在别处回答</InlineNotice>}
       {state.error && <InlineNotice tone="error">{state.error}</InlineNotice>}
-      {(current.multiple || draft.step > 0 || draft.pending) && (
+      {canAnswer && (current.multiple || draft.step > 0 || draft.pending) && (
         <div className="question-actions">
           {draft.step > 0 && !draft.pending && (
             <Button size="sm" disabled={state.busy} onClick={state.back}>

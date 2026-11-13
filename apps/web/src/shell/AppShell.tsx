@@ -1,5 +1,4 @@
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
-import { useState } from 'react'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
 import { SIDEBAR_MIN } from './panelLayout.ts'
@@ -11,7 +10,18 @@ import { worktreeProject } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
-import { Button, IconButton, LiveChanges, LayerHistory, ResizeHandle, Scrim, ChevronLeftGlyph } from '@latch/ui'
+import {
+  Button,
+  IconButton,
+  LiveChanges,
+  LayerHistory,
+  ResizeHandle,
+  Scrim,
+  ChevronLeftGlyph,
+  PlusGlyph,
+  SearchGlyph,
+  SettingsGlyph,
+} from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
 import { PhoneReview } from '../phone-review/PhoneReview.tsx'
@@ -22,20 +32,21 @@ import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { ProfileSheet } from '../agents/AgentProfile.tsx'
 import { AppsPage } from '../plugin-pages/AppsPage.tsx'
 import { AgentsSpaceList } from '../agents/AgentsSpaceList.tsx'
-import { ShellDelegate, shellSpaces } from './SpaceNav.tsx'
+import { ShellDelegate, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
 import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
-import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
+import { SendingBubble, SessionComposer, SetupNotices, SheetComposer } from './SessionComposers.tsx'
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
-import { ParticleField } from './ParticleField.tsx'
-import { LayoutDashboard } from 'lucide-react'
+import { OverviewGlyph } from '@latch/ui'
 import { WorkOverview } from './WorkOverview.tsx'
-import { LayoutMenu, WorkbenchNav } from './WorkbenchNav.tsx'
+import { LayoutMenu, TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
+import { WorkbenchSessions } from './WorkbenchSessions.tsx'
+import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 
@@ -44,7 +55,6 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
-  const [projectList, setProjectList] = useState(false)
   const {
     phoneSession,
     phoneReview,
@@ -151,7 +161,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const sideForks = useSideQuestionForks()
   const listed = withoutSideForks(snapshot, sideForks, selectedId)
   const overview = route.entry === 'sessions' && route.overview === true
+  const allSessions = route.entry === 'sessions' && route.allSessions === true
+  const covered = overview || allSessions
   const triage = shell.preferences.workbenchLayout === 'triage'
+  const homeShell = { ...shell, ...shell.homeComposerState }
+  const evidence = useWorkbenchDelivery(
+    listed,
+    connection,
+    overview
+      || (triage && !phone && !drawerMode && !sidebarCollapsed && !allSessions && route.entry === 'sessions' && shell.space === 'code'),
+  )
   const work = {
     snapshot: listed,
     layout: shell.preferences.workbenchLayout,
@@ -163,6 +182,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     isUnread: unread,
     cancelling: stopping,
     selectedId,
+    evidence,
+    shell,
   }
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
@@ -176,6 +197,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             data-entry={route.entry}
             data-workbench-layout={shell.preferences.workbenchLayout}
             data-overview={overview ? '' : undefined}
+            data-all-sessions={allSessions ? '' : undefined}
             data-folding={folding ? '' : undefined}
             data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
             data-inspector={columnOpen ? (placement?.kind === 'sheet' ? 'sheet' : 'open') : undefined}
@@ -186,8 +208,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               '--inspector-width': columnOpen && placement?.kind === 'column' ? `${inspectorWidth}px` : '0px',
               '--inspector-open-width': `${inspectorWidth}px`,
             }}>
-            {!phone && !overview && !triage && <ParticleField />}
             {!phone && (triage ? <WorkbenchNav shell={shell} /> : <TitleBar shell={shell} />)}
+            {!triage && viewport === 'tablet' && <TabletRail shell={shell} />}
             <Scrim
               open={drawerMode && drawer.open}
               label="关闭会话列表"
@@ -206,11 +228,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   (phoneSession && !popping)
                   || (phoneReview.present && !phoneReview.leaving)
                   || route.entry !== 'sessions'
-                  || overview
+                  || covered
                   || undefined
                 }>
                 <div className="phone-overview-link">
-                  <Button variant="ghost" icon={LayoutDashboard} onClick={shell.openOverview}>
+                  <Button variant="ghost" icon={OverviewGlyph} onClick={shell.openOverview}>
                     总览
                   </Button>
                   <LayoutMenu value={shell.preferences.workbenchLayout} />
@@ -257,21 +279,22 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 role={drawerMode && drawer.open ? 'dialog' : undefined}
                 aria-modal={drawerMode && drawer.open ? true : undefined}
                 tabIndex={-1}>
-                {triage && shell.space === 'code' && !drawerMode && !projectList ? (
+                {triage && shell.space === 'code' && !drawerMode ? (
                   <div className="triage-sidebar">
                     <WorkOverview {...work} compact />
-                    <Button variant="ghost" onClick={() => setProjectList(true)}>
+                    <Button variant="ghost" onClick={shell.openAllSessions}>
                       全部会话与项目
                     </Button>
                   </div>
                 ) : (
                   <>
-                    {triage && projectList && (
-                      <Button variant="ghost" onClick={() => setProjectList(false)}>
-                        按状态查看
-                      </Button>
-                    )}
                     <Sidebar
+                      projectTree={!triage}
+                      overview={{ active: overview, open: shell.openOverview }}
+                      onSchedules={
+                        catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
+                      }
+                      computer={<WorkbenchComputer shell={shell} />}
                       snapshot={listed}
                       archiveBatch={archiveBatch}
                       archiveUndo={archiveUndo}
@@ -347,7 +370,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {(!phone || phoneSession) && (
                 <main
                   ref={main}
-                  inert={route.entry !== 'sessions' || overview || undefined}
+                  inert={route.entry !== 'sessions' || covered || undefined}
                   onDragEnter={event => {
                     if (
                       catalog?.features?.attachments === true
@@ -382,7 +405,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   )}
                   {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
-                    {(phone || triage) && <ConversationHeader shell={shell} />}
+                    <ConversationHeader shell={shell} />
                     {/* The conversation's paper: on phones it rises under the header on the ground. */}
                     <ConversationView shell={shell} />
                   </div>
@@ -438,7 +461,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <aside
                   className="inspector-column"
                   aria-label="侧边面板"
-                  inert={!columnOpen || route.entry !== 'sessions' || overview || undefined}>
+                  inert={!columnOpen || route.entry !== 'sessions' || covered || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
                       <RightPanel shell={shell} />
@@ -462,17 +485,26 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {overview && (
               <section className="workbench-home" aria-label={triage ? '分拣台' : '总览'}>
                 {phone && (
-                  <div className="phone-overview-link">
-                    <Button variant="ghost" icon={ChevronLeftGlyph} onClick={() => goEntry('sessions')}>
-                      返回会话
-                    </Button>
+                  <header className="workbench-phone-heading">
+                    {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
+                    {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
+                    {triage && entries.includes('settings') && (
+                      <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
+                    )}
                     <LayoutMenu value={shell.preferences.workbenchLayout} />
-                  </div>
+                  </header>
                 )}
                 <ConnectionBanners shell={shell} />
+                <div className="workbench-home-composer">
+                  {phone && (
+                    <IconButton className="workbench-home-options" label="新会话选项" icon={PlusGlyph} onClick={() => setNewSheet(true)} />
+                  )}
+                  <SessionComposer shell={shell} home />
+                </div>
                 <WorkOverview {...work} />
               </section>
             )}
+            {allSessions && <WorkbenchSessions shell={shell} snapshot={listed} />}
             {route.entry === 'agents' && <AgentsPage shell={shell} />}
             {route.entry === 'apps' && <AppsPage shell={shell} />}
             {route.entry === 'settings' && (
@@ -521,7 +553,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {phone && (
               <NewSessionSheet
                 focusComposer={submission.fork ? sheetComposerRef : undefined}
-                open={newSheet && selectedId === null}
+                open={newSheet && (selectedId === null || overview)}
                 onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
                 onClose={() => {
                   setNewSheet(false)
@@ -551,10 +583,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 composer={
                   <>
                     <SendingBubble shell={shell} />
-                    <SheetComposer shell={shell} />
+                    <SheetComposer shell={overview ? homeShell : shell} />
                   </>
                 }
-                setup={<SetupNotices shell={shell} />}
+                setup={<SetupNotices shell={overview ? homeShell : shell} />}
                 history={
                   submission.fork ? undefined : (
                     <HistoryImportEntry

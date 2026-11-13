@@ -37,7 +37,7 @@ async function openHome(page: Page): Promise<void> {
     await backToPhoneSessions(page)
     await page.locator('.phone-list .phone-overview-link').getByRole('button', { name: '总览', exact: true }).click()
   } else {
-    await page.locator('.titlebar').getByRole('button', { name: '总览', exact: true }).click()
+    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
   }
   await page.locator('.workbench-home').waitFor({ state: 'visible' })
   await settleShell(page)
@@ -190,11 +190,17 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       await openHome(page)
       await sameComposer()
       const home = page.locator('.workbench-home')
+      const homeInput = home.getByRole('textbox', { name: '新会话消息', exact: true })
+      await homeInput.fill('首页自己的新任务草稿')
+      await sameComposer()
+      await layoutMenu(page, 'overview')
+      expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
+      await layoutMenu(page, 'triage')
       expect(await home.locator('[data-group="attention"]').textContent()).toContain(waiting.summary.title)
       expect(await home.locator('[data-group="attention"]').textContent()).toContain(failed.summary.title)
       expect(await home.locator('[data-group="running"]').textContent()).toContain(running.summary.title)
-      expect(await home.locator('[data-group="recent"]').textContent()).toContain(recent.summary.title)
-      await home.locator(`[data-work-session="${recent.summary.id}"]`).click()
+      expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain(recent.summary.title)
+      await choose(page, recent.summary.title)
       await sameComposer()
       await layoutMenu(page, 'overview')
       await sameComposer()
@@ -273,14 +279,11 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             expect(await home.locator(`[data-work-session="${failed.summary.id}"]`).textContent()).toContain('失败')
             await noHorizontalOverflow(page, home)
             await capture(page, layout, width, theme)
-            const recentRow = home.locator(`[data-work-session="${recent.summary.id}"]`)
-            if (!(await recentRow.isVisible())) {
-              await home.getByRole('button', { name: '最近会话 1', exact: true }).click()
-            }
-            await reachable(recentRow)
-            expect(await recentRow.textContent()).toContain(recent.summary.title)
+            expect(await home.locator(`[data-work-session="${recent.summary.id}"]`).count()).toBe(0)
             if (width < 768 && layout === 'triage') {
-              await capture(page, 'triage-recent', width, theme)
+              await home.getByRole('button', { name: '可交付', exact: true }).click()
+              expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('没有待交付的改动')
+              await capture(page, 'triage-delivery-empty', width, theme)
               await home.getByRole('button', { name: '等你处理 2', exact: true }).click()
             }
             if (width === 768 && theme === 'light' && layout === 'triage') {
@@ -291,6 +294,15 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               )
               await capture(page, 'triage-drawer', width, theme)
               await page.keyboard.press('Escape')
+              await openHome(page)
+            }
+            if (width === 1440) {
+              await choose(page, waiting.summary.title)
+              const shell = page.locator('.app-shell')
+              if ((layout === 'overview') !== ((await shell.getAttribute('data-inspector')) === 'open'))
+                await page.keyboard.press('Alt+Shift+b')
+              await expect.poll(() => shell.getAttribute('data-inspector')).toBe(layout === 'overview' ? 'open' : null)
+              await capture(page, `${layout}-session`, width, theme)
               await openHome(page)
             }
           }

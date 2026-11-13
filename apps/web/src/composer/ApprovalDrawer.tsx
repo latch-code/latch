@@ -176,14 +176,22 @@ export function approvalKeyCaps(input: {
  * Where focus is, for the key caps: a cap is drawn only on a button its key presses at this moment. Read again whenever
  * focus moves or text is typed, from the same tests the key handlers use, so a cap and its key cannot disagree.
  */
-function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; escapeRefuses: boolean } {
-  const [places, setPlaces] = useState({ inCard: false, escapeRefuses: false })
+function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; escapeRefuses: boolean; numeric: boolean } {
+  const [places, setPlaces] = useState({ inCard: false, escapeRefuses: false, numeric: false })
   useEffect(() => {
     const read = () => {
       const active = document.activeElement
       const inCard = card.current?.contains(active) === true && takesKeysAt(active)
       const escapeRefuses = escapeRefusesAt(active)
-      setPlaces(places => (places.inCard === inCard && places.escapeRefuses === escapeRefuses ? places : { inCard, escapeRefuses }))
+      const numeric = !(
+        active instanceof Element
+        && active.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
+      )
+      setPlaces(places =>
+        places.inCard === inCard && places.escapeRefuses === escapeRefuses && places.numeric === numeric
+          ? places
+          : { inCard, escapeRefuses, numeric },
+      )
     }
     read()
     const events = ['focusin', 'focusout', 'input', 'toggle'] as const
@@ -196,6 +204,11 @@ function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; e
 }
 
 export interface ApprovalDrawerProps {
+  /** Independent workbench cards show their evidence and only take keys while focused. */
+  presentation?: 'workbench' | 'conversation'
+  emphasis?: boolean
+  numberKeys?: boolean
+  context?: ReactNode
   approvals: readonly Approval[]
   /** The tool rows of the transcript, for the words of what a request does. */
   messages: readonly Message[]
@@ -231,6 +244,10 @@ export function ApprovalDrawer({
   onDecide,
   rejectLabel,
   onStop,
+  presentation,
+  emphasis = true,
+  numberKeys = false,
+  context,
 }: ApprovalDrawerProps) {
   const approval = approvals[Math.min(index, approvals.length - 1)]
   if (!approval) return null
@@ -249,6 +266,10 @@ export function ApprovalDrawer({
       onDecide={onDecide}
       rejectLabel={rejectLabel}
       onStop={onStop}
+      presentation={presentation}
+      emphasis={emphasis}
+      numberKeys={numberKeys}
+      context={context}
     />
   )
 }
@@ -265,7 +286,15 @@ function ApprovalPanel({
   onDecide,
   rejectLabel,
   onStop,
+  presentation,
+  emphasis,
+  numberKeys,
+  context,
 }: {
+  presentation?: 'workbench' | 'conversation'
+  emphasis: boolean
+  numberKeys: boolean
+  context?: ReactNode
   approval: Approval
   message: Message | null
   position: number
@@ -288,6 +317,12 @@ function ApprovalPanel({
   const action = toolHeading(tool, toolName)
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
   const hidden = approvalHidesText(approval, action, diffs)
+  const quietReason =
+    presentation
+    && approval.risk === 'R1'
+    && !approval.advisory
+    && !hidden
+    && approval.reason === '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。'
   // Against a previous file nobody could read, a count of removed lines would be made up.
   const stat = diffs.some(diff => ['unavailable', 'unknown'].includes(previousState(diff))) ? undefined : diffStat(tool)
   const running = busy !== undefined
@@ -301,14 +336,16 @@ function ApprovalPanel({
   const risky = gate.kind === 'R2'
   // A high-risk request's sentence is the Host's own; it stands beside the red reason, word for word.
   const riskSentence = risky && approval.reason && approval.reason !== action ? approval.reason : undefined
-  const [open, setOpen] = useState(() =>
-    opensUnfolded({
-      hidden,
-      risky: risky || approval.risk === 'R2',
-      advisory: approval.advisory === true,
-      diffs: diffs.length,
-      hasDetail,
-    }),
+  const [open, setOpen] = useState(
+    () =>
+      presentation !== undefined
+      || opensUnfolded({
+        hidden,
+        risky: risky || approval.risk === 'R2',
+        advisory: approval.advisory === true,
+        diffs: diffs.length,
+        hasDetail,
+      }),
   )
   const { reject, allow, more } = approvalChoices(gate.options)
   const choose = (option: ApprovalOption) => {
@@ -317,10 +354,29 @@ function ApprovalPanel({
   // A risky request's allow is still the drawer's one clear action; hidden characters take that away.
   const primary = allow !== undefined && !hidden && uncertain === undefined
   const shortcut = primary && allowsByKey(gate, allow)
+  const numbered = numberKeys && shortcut && armed && !running
+  useEffect(() => {
+    if (!numbered) return
+    const keydown = (event: globalThis.KeyboardEvent) => {
+      if (!cardTakesKeys(card.current) || event.defaultPrevented || event.repeat || event.isComposing) return
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+      if (
+        event.target instanceof Element
+        && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
+      )
+        return
+      const option = event.key === '1' ? reject : event.key === '2' ? allow : undefined
+      if (!option) return
+      event.preventDefault()
+      choose(option)
+    }
+    document.addEventListener('keydown', keydown)
+    return () => document.removeEventListener('keydown', keydown)
+  }, [numbered, reject, allow, approval, gate, onDecide])
   // Content that may read as something else, or a choice in doubt, keeps the broadest choices out of reach.
   const offerMore = !hidden && uncertain === undefined
   // ⌘⏎ allows only while the card is ready, and Esc refuses only then.
-  const escapes = armed && !running && reject !== undefined
+  const escapes = armed && !running && reject !== undefined && (presentation !== 'workbench' || places.inCard)
   useEscapeRefuses(escapes, card, () => {
     if (reject) choose(reject)
   })
@@ -382,7 +438,7 @@ function ApprovalPanel({
     return (
       <Button
         key={option.id}
-        variant={variant}
+        variant={variant === 'primary' && !emphasis ? 'outline' : variant}
         size={phone ? 'lg' : 'md'}
         keys={keys}
         data-keys-idle={keys && !live ? '' : undefined}
@@ -400,6 +456,8 @@ function ApprovalPanel({
     <section
       className="composer-drawer approval-panel"
       data-secure=""
+      data-presentation={presentation}
+      data-single-file={diffs.length === 1 && action.endsWith(diffs[0]!.path) ? '' : undefined}
       data-risky={risky ? '' : undefined}
       data-approval-id={approval.id}
       data-risk={approval.advisory ? 'advisory' : approval.risk}
@@ -420,9 +478,20 @@ function ApprovalPanel({
                 {stat.del > 0 && <span className="stat-del"> −{stat.del}</span>}
               </span>
             )}
+            {presentation && toolName && toolName !== action && (
+              <code className="workbench-tool-name">
+                <VisibleText text={toolName} />
+              </code>
+            )}
           </div>
           <div className="approval-meta">
-            {toolName && toolName !== action && (
+            {context}
+            {quietReason && (
+              <Hint className="approval-reason-hint" label="操作说明" lead={<span />}>
+                {approval.reason}
+              </Hint>
+            )}
+            {!presentation && toolName && toolName !== action && (
               <code className="tool-card-name">
                 <VisibleText text={toolName} />
               </code>
@@ -471,8 +540,22 @@ function ApprovalPanel({
         </div>
         <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
           {moreMenu}
-          {reject && button(reject, 'outline', rejectLabel ?? optionLabel(reject, gate), room.reject, caps.reject !== undefined)}
-          {allow && button(allow, primary ? 'primary' : 'outline', optionLabel(allow, gate), room.allow, caps.allow !== undefined)}
+          {reject
+            && button(
+              reject,
+              'outline',
+              rejectLabel ?? optionLabel(reject, gate),
+              numbered && !phone ? ['1'] : room.reject,
+              numbered ? places.numeric : caps.reject !== undefined,
+            )}
+          {allow
+            && button(
+              allow,
+              primary ? 'primary' : 'outline',
+              optionLabel(allow, gate),
+              numbered && !phone ? ['2'] : room.allow,
+              numbered ? places.numeric : caps.allow !== undefined,
+            )}
         </div>
       </div>
       {(risky || gate.note || hidden || previousNotes.length > 0 || gate.hint) && (
@@ -513,7 +596,7 @@ function ApprovalPanel({
       {hasPreview && (
         <div className="approval-preview" id={previewId} data-open={open ? '' : undefined}>
           <div className="approval-preview-inner" inert={!open}>
-            {approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
+            {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
               <p className="approval-reason">
                 <VisibleText text={approval.reason} />
               </p>

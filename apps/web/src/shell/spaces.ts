@@ -48,7 +48,11 @@ export function placeWaits(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>, a
 }
 
 /** Where a place was left: a session, or (for 我的 Agent) one of its pages. */
-export type Left = { kind: 'session'; id: string } | { kind: 'page'; myAgent?: MyAgentTarget | undefined }
+export type Left =
+  | { kind: 'session'; id: string }
+  | { kind: 'page'; myAgent?: MyAgentTarget | undefined }
+  | { kind: 'overview' }
+  | { kind: 'all-sessions' }
 
 /**
  * Going to a place: back to the session it was left on while that session is still its own and not archived (Code also
@@ -72,6 +76,8 @@ export function spaceMove({
     left?.kind === 'session' ? tasks.find(task => task.id === left.id && spaceOf(task) === target && !task.archived) : undefined
   const opening = (id: string | null) => (id === selectedId ? {} : { choose: id })
   if (target === 'code') {
+    if (left?.kind === 'overview') return { route: { entry: 'sessions', overview: true } }
+    if (left?.kind === 'all-sessions') return { route: { entry: 'sessions', allSessions: true } }
     const here = selected && spaceOf(selected) === 'code' ? selected.id : undefined
     return { route: { entry: 'sessions' }, ...opening(here ?? session?.id ?? null) }
   }
@@ -81,7 +87,9 @@ export function spaceMove({
 
 /** On a cold start a wide window opens the place this device was last in; 我的 Agent opens on its list. */
 export function initialRoute(deviceId: string, agents: boolean, wide: boolean, restoring: boolean): ShellRoute {
-  return agents && wide && !restoring && readSpace(spaceKey(deviceId)) === 'agents' ? { entry: 'agents' } : { entry: 'sessions' }
+  return agents && wide && !restoring && readSpace(spaceKey(deviceId)) === 'agents'
+    ? { entry: 'agents' }
+    : { entry: 'sessions', ...(!restoring ? { overview: true } : {}) }
 }
 
 /**
@@ -111,7 +119,14 @@ export function useSpaces({
 }) {
   const key = spaceKey(snapshot.device.id)
   const [remembered, setRemembered] = useState<Space>(() => readSpace(key))
-  const space = currentSpace({ agents, entry: route.entry, selectedId, selected, remembered, overview: route.overview })
+  const space = currentSpace({
+    agents,
+    entry: route.entry,
+    selectedId,
+    selected,
+    remembered,
+    overview: route.overview || route.allSessions,
+  })
   // The place shown is the one to keep while a shared page or an unlisted session is open.
   if (agents && space !== remembered) setRemembered(space)
   useEffect(() => {
@@ -119,11 +134,15 @@ export function useSpaces({
   }, [agents, key, space])
   const left = useRef<Record<Space, Left | undefined>>({ code: undefined, agents: undefined })
   useEffect(() => {
-    if (!agents || route.overview) return
+    if (!agents) return
+    if (route.overview || route.allSessions) {
+      left.current.code = { kind: route.overview ? 'overview' : 'all-sessions' }
+      return
+    }
     if (route.entry === 'sessions' && selectedId !== null) left.current[space] = { kind: 'session', id: selectedId }
     else if (route.entry === 'sessions' && space === 'code') left.current.code = undefined
     else if (route.entry === 'agents') left.current.agents = { kind: 'page', myAgent: route.myAgent }
-  }, [agents, space, route.entry, route.myAgent, route.overview, selectedId])
+  }, [agents, space, route.entry, route.myAgent, route.overview, route.allSessions, selectedId])
   const goSpace = (target: Space) => {
     if (target === 'agents' && !agents) return
     leave()

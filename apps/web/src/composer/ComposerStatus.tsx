@@ -1,11 +1,11 @@
 import { Fragment, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { FolderGit2 } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, ProviderSummary, TaskSummary } from '@latch/protocol'
-import { ICON_STROKE, Meter, Tooltip, FolderGlyph, BranchGlyph } from '@latch/ui'
+import { ICON_STROKE, Meter, Tooltip, Popover, IconButton, InfoGlyph, FolderGlyph, BranchGlyph } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
-import { exactTokens, formatTokens } from '../format.ts'
+import { formatTokens } from '../format.ts'
 import { ROUTE_NOTE, routeService } from './ModelControl.tsx'
 import { costClause, type SessionTotals } from './sessionTotals.ts'
 
@@ -139,6 +139,22 @@ function breakable(text: string): ReactNode {
 /** Least needed first: what a narrow line lets go of, in turn, before anything overflows. */
 const DROPS = 4
 
+/** The row's width stays fixed while a necessary qualification opens above it. */
+function StatusNote({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="composer-status-note">
+      <span className="composer-status-value">{label}</span>
+      <Popover
+        label="用量说明"
+        side="top"
+        width={280}
+        trigger={props => <IconButton {...props} size="xs" label="用量说明" icon={InfoGlyph} />}>
+        <p className="composer-status-note-body">{children}</p>
+      </Popover>
+    </span>
+  )
+}
+
 /**
  * The composer's last row: on the left where the session works and which way its model goes; on the right what it has
  * used, each number only when it was reported, and with who reported it when that is not Latch. A narrow line lets go
@@ -214,46 +230,35 @@ export function ComposerStatus({
         <StatusSegment kind="context">
           <span className="composer-status-key">上下文</span>
           {context.size === undefined ? (
-            <Tooltip content={`由 ${totals.by} 报告：已用 ${exactTokens(context.used)} tokens，没有报告总量`}>
-              <span className="composer-status-value" tabIndex={0}>
-                {formatTokens(context.used)}
-              </span>
-            </Tooltip>
+            <StatusNote label={formatTokens(context.used)}>{totals.by} 未报告上下文总量。</StatusNote>
           ) : (
-            <Tooltip
-              content={`上下文已用 ${context.percent}% · ${exactTokens(context.used)} / ${exactTokens(context.size)} tokens，由 ${totals.by} 报告`}>
-              <span className="composer-status-meter" tabIndex={0}>
-                <span className="composer-status-value">
-                  {formatTokens(context.used)} / {formatTokens(context.size)}
-                </span>
-                <Meter
-                  value={context.used}
-                  max={context.size}
-                  label="上下文"
-                  valueText={`${formatTokens(context.used)} / ${formatTokens(context.size)}`}
-                />
+            <span className="composer-status-meter">
+              <span className="composer-status-value">
+                {formatTokens(context.used)} / {formatTokens(context.size)}
               </span>
-            </Tooltip>
+              <Meter
+                value={context.used}
+                max={context.size}
+                label="上下文"
+                valueText={`${formatTokens(context.used)} / ${formatTokens(context.size)}`}
+              />
+            </span>
           )}
         </StatusSegment>
       )}
       {show.tokens && tokens && (
         <StatusSegment kind="tokens">
-          <Tooltip content={`${tokens.lines[0]}；${tokens.lines[1]}${tokens.reporter ? `，由 ${tokens.reporter} 报告` : ''}`}>
-            <span className="composer-status-pair" tabIndex={0}>
-              <span className="composer-status-key">输入</span>
-              <span className="composer-status-value">{formatTokens(tokens.usage.inputTokens)}</span>
-              <span className="composer-status-key">输出</span>
-              <span className="composer-status-value">{formatTokens(tokens.usage.outputTokens)}</span>
-              {tokens.reporter && <span className="composer-status-by">由 {tokens.reporter} 报告</span>}
-            </span>
-          </Tooltip>
+          <span className="composer-status-pair">
+            <span className="composer-status-key">输入</span>
+            <span className="composer-status-value">{formatTokens(tokens.usage.inputTokens)}</span>
+            <span className="composer-status-key">输出</span>
+            <span className="composer-status-value">{formatTokens(tokens.usage.outputTokens)}</span>
+          </span>
         </StatusSegment>
       )}
       {show.cost && cost && (
         <StatusSegment kind="cost">
-          <span className="composer-status-value">{cost.text}</span>
-          <span className="composer-status-by">{costClause(cost.reporter)}</span>
+          <StatusNote label={cost.text}>{costClause(cost.reporter)}</StatusNote>
         </StatusSegment>
       )}
       {show.time && time && (

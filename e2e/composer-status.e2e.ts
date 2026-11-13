@@ -158,7 +158,7 @@ describe('the composer status line', () => {
         expect(Object.fromEntries(segments)).toMatchObject({
           route: 'Fake Agent',
           context: '上下文 10 / 100',
-          tokens: '输入 10 输出 20 由 Fake Agent 报告',
+          tokens: '输入 10 输出 20',
         })
         expect(Object.fromEntries(segments).time).toMatch(/1 轮$/u)
         const meter = segment(page, 'context').getByRole('meter', { name: '上下文' })
@@ -193,6 +193,8 @@ describe('the composer status line', () => {
       },
     })
     try {
+      await page.locator('.inspector-column').getByRole('button', { name: '关闭', exact: true }).click()
+      await page.locator('.workspace').evaluate(element => (element as HTMLElement).style.setProperty('--content-width', '1200px'))
       // In a column wide enough, every segment; the cost always with who reported it and that it is not a bill.
       const resizeColumn = (width: number | null) =>
         page.locator('form.composer').evaluate(async (form, px) => {
@@ -212,10 +214,13 @@ describe('the composer status line', () => {
           branch: BRANCH,
           route: 'OpenAI · 经 Latch',
           context: '上下文 84k / 272k',
-          cost: 'US$0.21 由 Fake Agent 报告，不是账单',
+          cost: 'US$0.21',
         })
+      await segment(page, 'cost').getByRole('button', { name: '用量说明', exact: true }).click()
+      await page.getByText('由 Fake Agent 报告，不是账单', { exact: true }).locator('visible=true').waitFor()
+      await page.keyboard.press('Escape')
       // What gave way is the start of the order: 用时, then the tokens.
-      expect((await shown(page)).map(([kind]) => kind)).toEqual(['folder', 'branch', 'route', 'context', 'cost'])
+      expect((await shown(page)).map(([kind]) => kind)).toEqual(['folder', 'branch', 'route', 'context', 'tokens', 'cost', 'time'])
       await shot(page, 'a-statusline-cost-wide--1440--light')
       await resizeColumn(null)
       // The branch is cut in the line and whole in its tooltip.
@@ -283,7 +288,7 @@ describe('the composer status line', () => {
       try {
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.waitFor()
-        expect(await input.getAttribute('placeholder')).toBe('@ 文件，/ 命令')
+        expect(await input.getAttribute('placeholder')).toBe('想让 Agent 做什么？')
         await page
           .getByRole('button', { name: /^Harness：/u })
           .first()
@@ -293,7 +298,12 @@ describe('the composer status line', () => {
           .first()
           .click()
         // No project: the title offers one, and the line says only which way the model goes.
-        await expect.poll(() => shown(page)).toEqual([['route', 'Fake Agent']])
+        expect(await status(page).locator('visible=true').count()).toBe(0)
+        expect(
+          await page
+            .locator('form.composer [data-seg="context"], form.composer [data-seg="tokens"], form.composer [data-seg="cost"]')
+            .count(),
+        ).toBe(0)
         await shot(page, `a-new-no-project--${width}--${theme}`)
         // The title is the project; the line has its folder choice and its branch.
         await page
@@ -304,23 +314,20 @@ describe('the composer status line', () => {
           .getByRole('menuitemradio', { name: /latch-demo/u })
           .first()
           .click()
-        await expect.poll(() => page.locator('.new-session-title').innerText()).toBe('latch-demo')
-        await expect
-          .poll(() => shown(page))
-          .toEqual([
-            ['folder', '当前文件夹'],
-            ['branch', 'main'],
-            ['route', 'Fake Agent'],
-          ])
+        await expect.poll(() => page.locator('.workbench-home .project-inline').innerText()).toContain('latch-demo')
+        const location = page.locator('.home-composer-location')
+        await expect.poll(() => location.innerText()).toContain('main')
+        expect(await location.innerText()).toContain('当前文件夹')
         // The folder choice is whole in the line: its arrow comes after its words.
-        const [words, arrow] = await segment(page, 'folder')
+        const [words, arrow] = await location
+          .locator('[data-seg="folder"]')
           .locator('.ui-value-picker')
           .evaluate(picker => [
             picker.querySelector('.ui-value-picker-text[data-shown]')!.getBoundingClientRect().right,
             picker.querySelector('.ui-value-picker-chevron')!.getBoundingClientRect().left,
           ])
         expect(arrow).toBeGreaterThanOrEqual(words!)
-        await noHorizontalOverflow(page, status(page))
+        await noHorizontalOverflow(page, location)
         await shot(page, `a-new--${width}--${theme}`)
       } finally {
         await context.close()
@@ -328,7 +335,7 @@ describe('the composer status line', () => {
     }
   })
 
-  it('joins a waiting approval to the composer with one joint, the line still the last row', async () => {
+  it('places the shared decision card above the composer, with the status line still its last row', async () => {
     // Connecting a device needs the Mac's confirmation, which an external Harness's waiting session holds back: connect first.
     const pages = [
       { width: 1440, theme: 'light' as const, ...(await open(1440, 'light')) },
@@ -351,11 +358,11 @@ describe('the composer status line', () => {
           card.evaluate(item => item.getBoundingClientRect().toJSON() as DOMRect),
           page.locator('form.composer').evaluate(item => item.getBoundingClientRect().toJSON() as DOMRect),
         ])
-        // As wide as the composer, 3px above it, and the card's lower corners and the composer's upper ones small.
+        // The card keeps its own edge, rather than the retired drawer/composer joint.
         expect(Math.round(drawer.width)).toBe(Math.round(form.width))
-        expect(Math.round(form.top - drawer.bottom)).toBe(3)
+        expect(Math.round(form.top - drawer.bottom)).toBeGreaterThanOrEqual(7)
         expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('4px')
-        expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('4px')
+        expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('14px')
         // A phone has only the context, which this Harness has not reported yet: no line at all.
         if (width > 390) expect(await status(page).evaluate(row => row === row.parentElement?.lastElementChild)).toBe(true)
         else expect(await status(page).count()).toBe(0)

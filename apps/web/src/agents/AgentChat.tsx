@@ -1,5 +1,4 @@
 import { useCallback, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
@@ -22,7 +21,7 @@ import { useAgentWrites } from './useAgentWrites.ts'
  * starts the topic. On wide windows the profile stands beside it; on phones it is a sheet the shell draws.
  */
 export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: string; onBack: () => void }) {
-  const { snapshot, phone, titleSlot, connection } = shell
+  const { snapshot, phone, connection } = shell
   const offline = connection === 'offline'
   const general = owner === GENERAL_AGENT_ID
   const agent = general ? undefined : snapshot.customAgents?.find(item => item.id === owner)
@@ -46,14 +45,11 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const frame = !locked && !missing && <TopicFrame shell={shell} owner={owner} current={null} title="新话题" />
   return (
     <div className="agent-chat" data-profile={shell.profileShown && !phone ? '' : undefined}>
-      {!phone && titleSlot && frame && createPortal(<div className="agent-chat-title">{frame}</div>, titleSlot)}
       <div className="agent-chat-main">
-        {phone && (
-          <header className="topbar topbar-frame" data-phone="">
-            <IconButton size="lg" className="topbar-back" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />
-            {frame}
-          </header>
-        )}
+        <header className="topbar topbar-frame" data-phone={phone ? '' : undefined}>
+          {phone && <IconButton size="lg" className="topbar-back" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
+          {frame}
+        </header>
         <div className="agent-chat-body">
           {locked ? (
             <LockedAgents />

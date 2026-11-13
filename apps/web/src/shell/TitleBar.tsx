@@ -1,9 +1,9 @@
-import { ArrowLeft, LayoutDashboard } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { LayoutMenu } from './WorkbenchNav.tsx'
-import { Count, IconButton, useLivePrevious, InboxGlyph, PanelLeftGlyph, NewSessionGlyph } from '@latch/ui'
+import { OverviewGlyph, Count, IconButton, useLivePrevious, InboxGlyph, PanelLeftGlyph, NewSessionGlyph } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
-import { ConversationHeader } from './ConversationHeader.tsx'
+import { BrandMark } from '../components/ui.tsx'
 import { ShellDelegate, SpaceButtons, shellSpaces } from './SpaceNav.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -73,7 +73,12 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             />
           )
         )}
-        {!shut && (sidebarColumn || !sessions) && <span className="titlebar-wordmark">Latch</span>}
+        {!shut && (sidebarColumn || !sessions) && (
+          <span className="titlebar-wordmark">
+            <BrandMark size={20} />
+            Latch
+          </span>
+        )}
         {shut && (
           <>
             {placed && <SpaceButtons {...spaces} />}
@@ -101,15 +106,13 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           </>
         )}
       </div>
-      {sessions && !route.overview ? (
-        <ConversationHeader shell={shell} />
-      ) : (
+      {(!sessions || route.overview) && (
         <header ref={setTitleSlot} className="topbar titlebar-page">
           {route.overview && <IconButton label="返回会话" icon={ArrowLeft} onClick={() => goEntry('sessions')} />}
         </header>
       )}
       <div className="titlebar-views">
-        <IconButton label="总览" icon={LayoutDashboard} pressed={route.overview === true} onClick={shell.openOverview} />
+        {shut && !route.overview && <IconButton label="总览" icon={OverviewGlyph} onClick={shell.openOverview} />}
         <LayoutMenu value={shell.preferences.workbenchLayout} />
       </div>
     </div>

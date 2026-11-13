@@ -636,8 +636,8 @@ describe('turn footers', () => {
   it('gives a settled turn one footer with its usage summed, and a running one the status line instead', () => {
     const settled = render(false)
     expect(settled.match(/class="turn-footer[ "]/g)).toHaveLength(2)
-    expect(settled).toContain('>输入 300 tokens</span>')
-    expect(settled).toContain('>输出 30 tokens</span>')
+    expect(textsOf(settled, 'turn-facts').join(' ')).toContain('输入 300 tokens')
+    expect(textsOf(settled, 'turn-facts').join(' ')).toContain('输出 30 tokens')
     const running = render(true)
     expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(1)
     expect(running).toContain('class="status-line is-plain"')
@@ -655,7 +655,7 @@ describe('turn footers', () => {
     const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], harnessName: 'Agent' }))
     expect(html.match(/class="turn-footer[ "]/g)).toHaveLength(1)
     expect(html.match(/aria-label="复制"/g)).toHaveLength(2)
-    expect(html).toContain('>输入 300 tokens</span>')
+    expect(textsOf(html, 'turn-facts').join(' ')).toContain('输入 300 tokens')
   })
 })
 

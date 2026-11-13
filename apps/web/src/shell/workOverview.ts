@@ -1,7 +1,7 @@
 import type { TaskSummary } from '@latch/protocol'
 import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou } from '../sessions.ts'
 
-export type WorkGroupId = 'attention' | 'running' | 'recent'
+export type WorkGroupId = 'attention' | 'running' | 'delivery'
 
 export interface WorkGroup {
   id: WorkGroupId
@@ -11,11 +11,15 @@ export interface WorkGroup {
 }
 
 /** A navigation projection of the Host's summaries, never an assertion that a change is ready to deliver. */
-export function workGroups(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string> = new Set()): WorkGroup[] {
+export function workGroups(
+  tasks: readonly TaskSummary[],
+  cancelling: ReadonlySet<string> = new Set(),
+  delivery: ReadonlySet<string> = new Set(),
+): WorkGroup[] {
   const groups: Record<WorkGroupId, WorkGroup> = {
     attention: { id: 'attention', label: '等你处理', empty: '没有等你处理的会话', tasks: [] },
     running: { id: 'running', label: '进行中', empty: '没有进行中的会话', tasks: [] },
-    recent: { id: 'recent', label: '最近会话', empty: '还没有最近会话', tasks: [] },
+    delivery: { id: 'delivery', label: '可交付', empty: '没有待交付的改动', tasks: [] },
   }
   const visible = tasks
     .filter(task => !task.archived && spaceOf(task) === 'code')
@@ -25,9 +29,13 @@ export function workGroups(tasks: readonly TaskSummary[], cancelling: ReadonlySe
     const live = task.status === 'running' || task.status === 'waiting-approval'
     const attention = status.kind !== 'stopping' && waitsOnYou(task)
     const unsettled = !live && (status.kind === 'failed' || (task.runEnd?.unknownResultCount ?? 0) > 0)
-    groups[attention || unsettled ? 'attention' : live ? 'running' : 'recent'].tasks.push(task)
+    if (attention || unsettled) groups.attention.tasks.push(task)
+    else if (live) groups.running.tasks.push(task)
+    else if (delivery.has(task.id)) groups.delivery.tasks.push(task)
   }
-  return [groups.attention, groups.running, groups.recent]
+  const priority = (task: TaskSummary) => (task.status === 'waiting-approval' && !task.pendingQuestions ? 0 : waitsOnYou(task) ? 1 : 2)
+  groups.attention.tasks.sort((a, b) => priority(a) - priority(b))
+  return [groups.attention, groups.running, groups.delivery]
 }
 
 export interface WorkStatus {

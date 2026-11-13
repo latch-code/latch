@@ -103,6 +103,8 @@ export function Composer({
   stepBack = false,
   below,
   status,
+  location,
+  locationPosition = 'top',
   inline = false,
   confirmation,
   queueable = false,
@@ -178,6 +180,9 @@ export function Composer({
   below?: ReactNode
   /** The frame's last row: where the session works, which way its model goes and what it has used (`ComposerStatus`). */
   status?: ReactNode
+  /** The workbench's project and execution location, inside the same input frame. */
+  location?: ReactNode
+  locationPosition?: 'top' | 'toolbar'
   /**
    * Phone session: the toolbar takes two rows inside the frame, Harness and 模型 on the first, 「+」, 思考, 权限 and
    * send on the second, so neither the Harness's name nor the model is cut.
@@ -483,6 +488,7 @@ export function Composer({
           </div>
         )}
         <RunBar run={run} />
+        {locationPosition === 'top' && location}
         <ConfigUnknownBar state={configUnknown} />
         {queueTray}
         {!locked && mentions.menu}
@@ -494,6 +500,7 @@ export function Composer({
         {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
         {variant !== 'sheet' && (
           <div className="composer-toolbar" data-rows={inline ? 'two' : undefined}>
+            {locationPosition === 'toolbar' && location}
             <div className="composer-controls">
               {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
               {controls}

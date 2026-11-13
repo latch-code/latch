@@ -13,6 +13,7 @@ import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
 import { SessionFacts, SessionFolders, frozenFolders, liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { SessionOverview } from './SessionOverview.tsx'
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell }: { shell: ShellState }) {
@@ -110,6 +111,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
   return (
     <SessionPanels
       key={contextKey}
+      {...(summary && shell.space === 'code' ? { overview: <SessionOverview shell={shell} summary={summary} /> } : {})}
       {...(summary && canViewChanges
         ? {
             changes: (

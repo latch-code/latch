@@ -1,3 +1,4 @@
+import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
 import type { ReactNode } from 'react'
 import { FolderPlus, Send } from 'lucide-react'
 import { GENERAL_AGENT_ID, type AppSnapshot } from '@latch/protocol'
@@ -52,7 +53,7 @@ const WAITS_TITLE: Record<Space, string> = { code: 'Code 里有等你处理的�
  * Code | 我的 Agent across the top of the sidebar: two places, not a filter. Choosing one changes the primary action, the
  * list and the home page with it. The place you are not in carries an amber dot while something waits there.
  */
-function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
+export function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
   const option = (value: Space) => {
     const dot = waits[value] && value !== space
     return {
@@ -241,6 +242,9 @@ export function NavTop({
   onClose,
   onManageComputers,
   className,
+  overview,
+  onSchedules,
+  computerAtFoot = false,
 }: {
   snapshot: AppSnapshot
   /** Absent where the Host has no 我的 Agent: there is only Code, and no switch. */
@@ -251,6 +255,9 @@ export function NavTop({
   onClose?: (() => void) | undefined
   onManageComputers?: (() => void) | undefined
   className?: string
+  overview?: { active: boolean; open: () => void }
+  onSchedules?: () => void
+  computerAtFoot?: boolean
 }) {
   const computers = useComputers()
   const several = computers !== undefined && computers.computers.length > 1
@@ -258,21 +265,27 @@ export function NavTop({
   const remote = !deviceAccess(snapshot, currentShell()).local
   return (
     <div className={className ? `sidebar-top ${className}` : 'sidebar-top'}>
-      {several ? (
-        <ComputerMenu snapshot={snapshot} view={computers} onManage={onManageComputers} />
-      ) : (
-        remote && (
-          <p className="sidebar-host" title={computerName(snapshot.hostName)}>
-            <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
-          </p>
-        )
-      )}
+      {!computerAtFoot
+        && (several ? (
+          <ComputerMenu snapshot={snapshot} view={computers} onManage={onManageComputers} />
+        ) : (
+          remote && (
+            <p className="sidebar-host" title={computerName(snapshot.hostName)}>
+              <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+              <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
+            </p>
+          )
+        ))}
       {spaces && (
         <div className="sidebar-nav-line">
           <SpaceSwitch {...spaces} />
           {drawer && onClose && <IconButton label="关闭会话列表" icon={CloseGlyph} onClick={onClose} />}
         </div>
+      )}
+      {overview && (
+        <Button variant="ghost" className="sidebar-nav-row" icon={OverviewGlyph} aria-pressed={overview.active} onClick={overview.open}>
+          总览
+        </Button>
       )}
       <div className="sidebar-nav-line">
         {primary}
@@ -282,6 +295,11 @@ export function NavTop({
         <SearchGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         <span>搜索</span>
       </Button>
+      {onSchedules && (
+        <Button variant="ghost" className="sidebar-nav-row" icon={ScheduleGlyph} onClick={onSchedules}>
+          定时任务
+        </Button>
+      )}
     </div>
   )
 }

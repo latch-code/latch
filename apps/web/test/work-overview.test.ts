@@ -90,7 +90,7 @@ describe('work overview', () => {
     ).toEqual([
       ['attention', []],
       ['running', []],
-      ['recent', ['new', 'old']],
+      ['delivery', []],
     ])
     expect(workStatus(task('old'), { connected: true, now }).words).toBe('会话记录')
     expect(workStatus(task('new', { runOutcome: 'completed' }), { connected: true, now }).words).toBe('本轮已结束')
@@ -110,9 +110,9 @@ describe('work overview', () => {
       task('cancelled', { status: 'cancelled' }),
     ]
     expect(ids(tasks)).toEqual([
-      ['attention', ['approval', 'failed', 'question', 'silent', 'unknown']],
+      ['attention', ['approval', 'question', 'silent', 'failed', 'unknown']],
       ['running', ['running']],
-      ['recent', ['cancelled']],
+      ['delivery', []],
     ])
     expect(workStatus(tasks[1], { connected: true, now })).toEqual({ tone: 'waiting', words: '2 个问题' })
     expect(workStatus(tasks[4], { connected: true, now })).toEqual({ tone: 'warn', words: '1 条结果未知' })
@@ -124,7 +124,7 @@ describe('work overview', () => {
     expect(ids([pending, stopping], new Set(['pending']))).toEqual([
       ['attention', []],
       ['running', ['pending', 'stopping']],
-      ['recent', []],
+      ['delivery', []],
     ])
     expect(workStatus(stopping, { connected: true, now })).toEqual({ tone: 'running', words: '正在停止' })
     expect(workStatus(pending, { connected: true, now, stopping: true }).words).toBe('正在停止')

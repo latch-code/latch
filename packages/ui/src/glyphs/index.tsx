@@ -642,8 +642,73 @@ export const HarnessGlyph = defineGlyph(
   { plane: <Plane d={CUBE} />, cut: <Slit d={CUBE_EDGES} /> },
 )
 
+/** Workbench navigation and evidence, on the same 16 grid. */
+export const OverviewGlyph = defineGlyph(
+  'overview',
+  <>
+    <Dot x={2} y={3.25} w={2.75} h={2.75} />
+    <path d="M7 4.625 H14 M2 8.25 H4.75 M7 8.25 H14 M2 11.875 H4.75 M7 11.875 H11.5" />
+  </>,
+)
+const WAITING_FLAG = 'M3.5 2.75 H12.75 L10.5 6.125 L12.75 9.5 H3.5'
+export const WaitingGlyph = defineGlyph(
+  'waiting',
+  <>
+    <path d="M3.5 14.25 V1.75" />
+    <path d={WAITING_FLAG} />
+  </>,
+  {
+    plane: (
+      <>
+        <path d="M3.5 14.25 V1.75" />
+        <path d={`${WAITING_FLAG} Z`} fill="currentColor" />
+      </>
+    ),
+  },
+)
+const PR_BRANCH = (
+  <>
+    <circle cx="4.5" cy="3.75" r="1.5" />
+    <path d="M4.5 5.25 V10.75" />
+    <circle cx="4.5" cy="12.25" r="1.5" />
+    <path d="M11.5 10.5 V6.25 A1.5 1.5 0 0 0 10 4.75 H6.75 M8.5 3 L6.75 4.75 L8.5 6.5" />
+    <Dot x={10.25} y={10.75} w={2.5} h={2.5} />
+  </>
+)
+export const PullRequestGlyph = defineGlyph('pull-request', PR_BRANCH)
+export const UnknownGlyph = defineGlyph(
+  'unknown',
+  <>
+    <circle cx="8" cy="8" r="5.75" />
+    <path d="M6.25 6.5 A1.75 1.75 0 1 1 8.75 8.1 C8.2 8.4 8 8.75 8 9.5" />
+    <Dot x={7.25} y={10.5} w={1.5} h={1.5} />
+  </>,
+)
+const CLOCK_EARS = 'M2 4.25 L4.25 2 M14 4.25 L11.75 2'
+export const ScheduleGlyph = defineGlyph(
+  'schedule',
+  <>
+    <circle cx="8" cy="8.75" r="5" />
+    <path d={`M8 6.25 V8.75 H10.25 ${CLOCK_EARS}`} />
+  </>,
+  {
+    plane: (
+      <>
+        <circle cx="8" cy="8.75" r="5" fill="currentColor" />
+        <path d={CLOCK_EARS} />
+      </>
+    ),
+    cut: <Slit d="M8 6.25 V8.75 H10.25" />,
+  },
+)
+
 /** Every Latch glyph by its name, for the gallery's sheet and the tests. */
 export const LATCH_GLYPHS = {
+  overview: OverviewGlyph,
+  waiting: WaitingGlyph,
+  'pull-request': PullRequestGlyph,
+  schedule: ScheduleGlyph,
+  unknown: UnknownGlyph,
   alert: AlertGlyph,
   warning: WarningGlyph,
   info: InfoGlyph,

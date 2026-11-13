@@ -196,7 +196,7 @@ describe('page stylesheets', () => {
     // nested radius, a primitive's own radius property and the app icon's ring, which follows its own artwork's corner.
     const allowed = (value: string) => {
       // A value per corner, each a step of the scale or 0, or one value that follows from the scale.
-      const steps = value.replace(/var\(--r-(?:2|4|6|8|12|16|full)\)/gu, 'R')
+      const steps = value.replace(/var\(--r-(?:2|4|6|8|9|12|14|16|full)\)/gu, 'R')
       return (
         /^(?:(?:R|0)(?: |$))+$/u.test(steps)
         || /^(?:inherit|50%|20%|var\(--[\w-]+-radius\)|round\(calc\(.*\* 0\.225\), 1px\)|calc\(.*\))$/u.test(value)
