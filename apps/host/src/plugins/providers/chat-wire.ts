@@ -152,6 +152,12 @@ const chunkSchema = z.object({
 
 type ChatUsage = Omit<Extract<ModelDelta, { type: 'usage' }>, 'type'>
 
+/** The tokens a Chat Completions `usage` field reports, or undefined when it is missing or in another shape. */
+export function chatUsage(value: unknown): ChatUsage | undefined {
+  const usage = usageSchema.safeParse(value)
+  return usage.success ? readChatUsage(usage.data) : undefined
+}
+
 function readChatUsage(usage: z.infer<typeof usageSchema>): ChatUsage {
   const cached = usage.prompt_tokens_details?.cached_tokens
   const reasoning = usage.completion_tokens_details?.reasoning_tokens

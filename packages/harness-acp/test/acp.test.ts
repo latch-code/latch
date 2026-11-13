@@ -2311,7 +2311,7 @@ describe('ACP permission mode', () => {
         args: [FAKE_ACP_AGENT],
         definitionEnv: fixture.record.env,
         presetId: 'gemini',
-        profileVersion: 3,
+        profileVersion: 4,
         ...launchExtras('gemini'),
       }),
     )
@@ -5787,13 +5787,13 @@ describe('sessions on a model service through the gateway', () => {
 
   /** Stands in for the Host's gateway: the fake service itself, with a token that only it is told to expect. */
   function gateway(models: FakeModels) {
-    const leases: Array<{ sessionId: string; token: string; closed: boolean }> = []
+    const leases: Array<{ sessionId: string; token: string; closed: boolean; closes: number }> = []
     let usable = true
     /** Requests of the next turn taken still under way, as the gateway counts them when a turn ends before its replies. */
     let open = 0
     const access: ModelGateway = {
       open({ sessionId, route }) {
-        const lease = { sessionId, token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`, closed: false }
+        const lease = { sessionId, token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`, closed: false, closes: 0 }
         leases.push(lease)
         const mine = () => models.requests.filter(request => request.key === lease.token)
         let taken = 0
@@ -5814,6 +5814,7 @@ describe('sessions on a model service through the gateway', () => {
           models: ['fake-model', 'fake-model-large'],
           active: () => usable && !lease.closed,
           close: () => {
+            lease.closes++
             lease.closed = true
           },
         }
@@ -5846,6 +5847,28 @@ describe('sessions on a model service through the gateway', () => {
   }
 
   const envOf = (log: LogEntry[]) => log.filter(entry => entry.event === 'env').map(entry => entry.env as Record<string, string>)
+
+  it('revokes a newly prepared gateway credential exactly once when all process slots are busy', async () => {
+    const { fixture, stub, route } = await routed(
+      'gemini',
+      GEMINI,
+      { providerId: 'svc', model: 'fake-model', wire: 'gemini' },
+      { maxProcesses: 1 },
+    )
+    const bridge = await fixture.open()
+    const first = await bridge.createTask({ prompt: 'hang', requestId: rid(), modelRoute: route })
+    await vi.waitFor(async () => expect(promptPid(await fixture.log(), 'hang')).toBeGreaterThan(0))
+    expect((await bridge.detail(first.sessionId)).summary.status).toBe('running')
+    const second = await bridge.createTask({ prompt: 'model must not start', requestId: rid(), modelRoute: route })
+    const refused = await settled(bridge, second.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('会话过多')
+    expect(stub.leases).toHaveLength(2)
+    expect(stub.leases.map(lease => ({ closed: lease.closed, closes: lease.closes }))).toEqual([
+      { closed: false, closes: 0 },
+      { closed: true, closes: 1 },
+    ])
+  })
 
   it('applies Gemini thinking in a private launch file before its first request and after an idle restart, without inventing a read-back', async () => {
     const models = await startFakeModels({ replies: [{ text: 'done' }] })

@@ -18,7 +18,7 @@ Host 的监听、授权、配置与插件组合根。
 
 - 请求上下文只取 `ListenerContext`，不读取代理请求头（`test/server.test.ts`）。
 - 先审计再执行：授予或执行权限的操作先写审计，写入失败就不执行；撤销、拒绝、取消、删除、移除权限与收紧策略从不因审计失败受阻，响应改带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
-- 出站只经注入的 `fetch`：内置模型协议只发往预置或已确认的地址并经出站策略；密钥只发往保存时绑定的源与路径（`test/providers.test.ts`）。
+- 出站只经注入的 `fetch` 与出站策略，限预置或已确认地址；密钥限绑定的源与路径（[网关](../../docs/MODEL-GATEWAY.md)、`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
 - 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则见 [ARCHITECTURE](../../docs/ARCHITECTURE.md#路径与项目目录)。

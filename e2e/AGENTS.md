@@ -18,6 +18,8 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 
+`codex-model-gateway.e2e.ts` 真验须授权（[说明](../docs/TESTING.md)）。
+
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
 
 运行环境 node；依赖都写在 devDependencies：host、protocol、sdk、testkit 与原生全链的 relay、link-client、link-wire；Playwright、vite 用于界面与原语总览。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。

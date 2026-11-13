@@ -6,6 +6,7 @@ import type {
   HarnessCapabilities,
   HarnessInfo,
   ModelRef,
+  ModelCapabilities,
   RiskLevel,
   RoutedTurn,
   ToolKind,
@@ -90,6 +91,8 @@ export interface ModelGatewayLease {
   takeTurn(): RoutedTurn
   /** The service's models this token may use: the gateway refuses any other. */
   models: readonly string[]
+  /** Capabilities declared in the saved service settings; absent means unknown, never inferred from model IDs. */
+  modelCapabilities?: Readonly<Record<string, ModelCapabilities>>
   /** False once the token stops working: closed, or the service's settings changed since it was issued. */
   active(): boolean
   /** Revokes the token. Idempotent. */

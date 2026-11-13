@@ -70,6 +70,22 @@ const ask = (base: string, token: string, body: unknown, headers: Record<string,
   })
 
 describe('model gateway', () => {
+  it('carries only declared capabilities under the same normalized model IDs, without sharing service state', async () => {
+    const fake = await models()
+    const service = responses(fake, {
+      kind: 'gemini',
+      baseURL: fake.origin,
+      models: ['models/fake-model', 'without-capabilities'],
+      modelCapabilities: { 'models/fake-model': { vision: true }, unlisted: { vision: false } },
+    })
+    const { server } = await gateway({ svc: service })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake, 'gemini') })
+    expect(lease.models).toEqual(['fake-model', 'without-capabilities'])
+    expect(lease.modelCapabilities).toEqual({ 'fake-model': { vision: true } })
+    lease.modelCapabilities!['fake-model']!.vision = false
+    expect(service.modelCapabilities!['models/fake-model']!.vision).toBe(true)
+  })
+
   it("forwards a harness's request with the service's key, never its own credential, and streams the reply back", async () => {
     const fake = await models({ replies: [{ text: 'through Latch' }] })
     const { server } = await gateway({ svc: responses(fake) })
@@ -151,6 +167,191 @@ describe('model gateway', () => {
     expect(lease.requests()).toBe(3)
   })
 
+  it('opens to each protocol only its own paths, and lists the models in its own shape', async () => {
+    const fake = await models()
+    const { server } = await gateway({
+      responses: responses(fake),
+      chat: responses(fake, { kind: 'openai-compatible' }),
+      anthropic: responses(fake, { kind: 'anthropic', baseURL: fake.origin }),
+    })
+    const open = (providerId: string, wire: 'responses' | 'chat-completions' | 'anthropic-messages') =>
+      server.open({ sessionId: 'task-1', route: { ...route(fake), providerId, wire } })
+    const leases = {
+      responses: open('responses', 'responses'),
+      chat: open('chat', 'chat-completions'),
+      anthropic: open('anthropic', 'anthropic-messages'),
+    }
+    expect(leases.chat.baseURL).toMatch(/\/v1$/u)
+    expect(leases.anthropic.baseURL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
+    const port = new URL(leases.chat.baseURL).port
+    const post = (token: string, path: string) =>
+      raw(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'fake-model', input: 'hi', messages: [{ role: 'user', content: 'hi' }] }),
+      })
+    const paths = [
+      '/v1/responses',
+      '/v1/chat/completions',
+      '/v1/messages',
+      '/v1/messages/count_tokens',
+      '/v1beta/models/fake-model:generateContent',
+    ]
+    const statuses = async (token: string) => Promise.all(paths.map(async path => (await post(token, path)).status))
+    expect(await statuses(leases.responses.token)).toEqual([200, 404, 404, 404, 404])
+    expect(await statuses(leases.chat.token)).toEqual([404, 200, 404, 404, 404])
+    // A token count passes to an Anthropic service only, uncounted as a reply.
+    expect(await statuses(leases.anthropic.token)).toEqual([404, 404, 200, 200, 404])
+    expect(fake.requests.map(request => request.path)).toEqual([
+      '/v1/responses',
+      '/v1/chat/completions',
+      '/v1/messages',
+      '/v1/messages/count_tokens',
+    ])
+    expect(leases.anthropic.takeTurn()).toMatchObject({ requests: 5, models: [{ model: 'fake-model', requests: 1 }] })
+
+    const list = async (lease: { baseURL: string; token: string }, headers: Record<string, string>) =>
+      (await fetch(`http://127.0.0.1:${port}/v1/models`, { headers })).json()
+    expect(await list(leases.chat, { authorization: `Bearer ${leases.chat.token}` })).toEqual({
+      object: 'list',
+      data: [{ id: 'fake-model', object: 'model', owned_by: 'latch' }],
+    })
+    expect(await list(leases.anthropic, { 'x-api-key': leases.anthropic.token })).toEqual({
+      data: [{ type: 'model', id: 'fake-model', display_name: 'fake-model' }],
+      has_more: false,
+      first_id: 'fake-model',
+      last_id: 'fake-model',
+    })
+    // An Anthropic client reads Anthropic's error shape.
+    const wrong = await post(leases.anthropic.token, '/v1/chat/completions')
+    expect(JSON.parse(wrong.text)).toEqual({ type: 'error', error: { type: 'not_found_error', message: 'Latch 只转发模型请求' } })
+  })
+
+  it("forwards only each protocol's own headers, Anthropic's when passed through, and the service's request IDs", async () => {
+    const fake = await models()
+    const { server } = await gateway({
+      chat: responses(fake, { kind: 'openai-compatible' }),
+      anthropic: responses(fake, { kind: 'anthropic', baseURL: fake.origin }),
+    })
+    const chat = server.open({ sessionId: 'task-1', route: { ...route(fake), providerId: 'chat', wire: 'chat-completions' } })
+    const anthropic = server.open({ sessionId: 'task-1', route: { ...route(fake), providerId: 'anthropic', wire: 'anthropic-messages' } })
+    const extra = {
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'tools-2024',
+      'openai-beta': 'x',
+      'x-stainless-os': 'MacOS',
+      cookie: 'a=1',
+    }
+    const first = await fetch(`${chat.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${chat.token}`, 'content-type': 'application/json', accept: 'text/event-stream', ...extra },
+      body: JSON.stringify({ model: 'fake-model', messages: [], stream: true }),
+    })
+    expect(first.headers.get('x-request-id')).toBe('req_fake')
+    await first.text()
+    await (
+      await fetch(`${anthropic.baseURL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'x-api-key': anthropic.token, 'content-type': 'application/json', ...extra },
+        body: JSON.stringify({ model: 'fake-model', messages: [], max_tokens: 10 }),
+      })
+    ).text()
+    const [toChat, toAnthropic] = fake.requests
+    expect(
+      toChat!.headerNames.filter(
+        name =>
+          !['connection', 'content-length', 'host', 'user-agent', 'accept-encoding', 'accept-language', 'sec-fetch-mode'].includes(name),
+      ),
+    ).toEqual(['accept', 'authorization', 'content-type', 'openai-beta'])
+    expect(toChat!.key).toBe(KEY)
+    expect(toAnthropic!.headerNames).toEqual(expect.arrayContaining(['anthropic-beta', 'anthropic-version', 'x-api-key']))
+    expect(toAnthropic!.headerNames).not.toEqual(expect.arrayContaining(['openai-beta']))
+    for (const request of fake.requests) {
+      expect(request.headerNames).not.toContain('cookie')
+      expect(request.headerNames).not.toContain('x-stainless-os')
+    }
+    expect(toAnthropic!.key).toBe(KEY)
+  })
+
+  it('refuses a request a page sends, a token not its own unread and unlogged, and a body over 32 MiB', async () => {
+    const fake = await models()
+    const { server, logs } = await gateway({ svc: responses(fake) })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    const body = JSON.stringify({ model: 'fake-model', input: 'hi' })
+    const auth = { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' }
+    const page: Array<Record<string, string>> = [
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-dest': 'empty' },
+      { 'sec-fetch-user': '?1' },
+      { 'sec-fetch-mode': 'navigate' },
+      { 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site' },
+      { origin: 'null' },
+    ]
+    for (const headers of page)
+      expect((await raw(`${lease.baseURL}/responses`, { method: 'POST', headers: { ...auth, ...headers }, body })).status).toBe(403)
+    expect(fake.requests).toEqual([])
+    // Node's own fetch says `Sec-Fetch-Mode: cors` and nothing more: a program, not a page.
+    expect((await raw(`${lease.baseURL}/responses`, { method: 'POST', headers: { ...auth, 'sec-fetch-mode': 'cors' }, body })).status).toBe(
+      200,
+    )
+    fake.requests.length = 0
+    // Another program's login, as Claude Code would send its subscription token: refused, never sent on or logged.
+    const foreign = 'sk-ant-oat01-another-programs-login-0123456789'
+    const foreignHeaders: Array<Record<string, string>> = [
+      { authorization: `Bearer ${foreign}` },
+      { 'x-api-key': foreign },
+      { 'x-goog-api-key': foreign },
+    ]
+    for (const headers of foreignHeaders) {
+      const refused = await raw(`${lease.baseURL}/responses`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body,
+      })
+      expect(refused.status).toBe(401)
+      expect(refused.text).not.toContain(foreign)
+    }
+    const large = await fetch(`${lease.baseURL}/responses`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ model: 'fake-model', input: 'x'.repeat(32 * 1024 * 1024) }),
+    }).catch(() => undefined)
+    if (large) expect(large.status).toBe(413)
+    expect(fake.requests).toEqual([])
+    expect(logs.join('\n')).not.toContain(foreign)
+    expect(logs.join('\n')).not.toContain(lease.token)
+  })
+
+  it('reads Chat Completions and Anthropic usage, asking a streamed Chat reply for it', async () => {
+    const fake = await models({
+      replies: [{ text: 'chat says' }, { text: 'plain' }, { text: 'anthropic says', reasoning: 'hmm' }, { text: 'doc' }],
+    })
+    const { server } = await gateway({
+      chat: responses(fake, { kind: 'openai-compatible' }),
+      anthropic: responses(fake, { kind: 'anthropic', baseURL: fake.origin }),
+    })
+    const chat = server.open({ sessionId: 'task-1', route: { ...route(fake), providerId: 'chat', wire: 'chat-completions' } })
+    const anthropic = server.open({ sessionId: 'task-1', route: { ...route(fake), providerId: 'anthropic', wire: 'anthropic-messages' } })
+    const send = async (url: string, headers: Record<string, string>, body: unknown) =>
+      (await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })).text()
+    const bearer = { authorization: `Bearer ${chat.token}` }
+    expect(await send(`${chat.baseURL}/chat/completions`, bearer, { model: 'fake-model', messages: [], stream: true })).toContain('says')
+    expect(await send(`${chat.baseURL}/chat/completions`, bearer, { model: 'fake-model', messages: [] })).toContain('plain')
+    expect(fake.requests[0]!.body).toMatchObject({ stream_options: { include_usage: true } })
+    expect(fake.requests[1]!.body).not.toHaveProperty('stream_options')
+    expect(chat.takeTurn()).toEqual({
+      requests: 2,
+      models: [{ model: 'fake-model', used: 'fake-model', requests: 2, measured: 2, usage: { inputTokens: 20, outputTokens: 10 } }],
+    })
+    const key = { 'x-api-key': anthropic.token }
+    expect(await send(`${anthropic.baseURL}/v1/messages`, key, { model: 'fake-model', messages: [], stream: true })).toContain('says')
+    expect(await send(`${anthropic.baseURL}/v1/messages`, key, { model: 'fake-model', messages: [] })).toContain('doc')
+    expect(anthropic.takeTurn()).toEqual({
+      requests: 2,
+      models: [{ model: 'fake-model', used: 'fake-model', requests: 2, measured: 2, usage: { inputTokens: 20, outputTokens: 10 } }],
+    })
+  })
+
   it('stops a token when its process ends, when the service changes, and refuses to open one it cannot use', async () => {
     const fake = await models()
     const services: Record<string, GatewayService> = { svc: responses(fake) }
@@ -193,7 +394,7 @@ describe('model gateway', () => {
         response.end()
         return
       }
-      response.writeHead(401, { 'content-type': 'application/json' })
+      response.writeHead(401, { 'content-type': 'application/json', 'request-id': KEY })
       response.end(JSON.stringify({ error: { message: `Incorrect API key provided: ${KEY}`, type: 'invalid_request_error' } }))
     })
     await new Promise<void>(resolve => echoing.listen(0, '127.0.0.1', resolve))
@@ -207,6 +408,7 @@ describe('model gateway', () => {
     const lease = server.open({ sessionId: 'task-1', route: route(fake) })
     const failed = await ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hi' })
     expect(failed.status).toBe(401)
+    expect(failed.headers.get('request-id')).toBe('[redacted]')
     const text = await failed.text()
     expect(text).not.toContain(KEY)
     expect(JSON.parse(text)).toEqual({ error: { message: 'Incorrect API key provided: [redacted]', type: 'invalid_request_error' } })
@@ -215,6 +417,91 @@ describe('model gateway', () => {
     const redirected = await ask(moved.baseURL, moved.token, { model: 'fake-model', input: 'hi' })
     expect(redirected.status).toBe(502)
     expect(await redirected.text()).not.toContain(KEY)
+  })
+
+  it.each(['process closed', 'service changed'] as const)('refuses a body completed after its %s', async change => {
+    const fake = await models()
+    const services: Record<string, GatewayService> = { svc: responses(fake) }
+    const { server } = await gateway(services)
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    let sent!: ReturnType<typeof httpRequest>
+    const answer = new Promise<number>((resolve, reject) => {
+      sent = httpRequest(
+        `${lease.baseURL}/responses`,
+        { method: 'POST', headers: { authorization: `Bearer ${lease.token}` } },
+        response => {
+          response.resume()
+          response.on('end', () => resolve(response.statusCode!))
+        },
+      )
+      sent.on('error', reject)
+      sent.write('{"model":"fake-model",')
+    })
+    await vi.waitFor(() => expect(lease.requests()).toBe(1))
+    if (change === 'process closed') lease.close()
+    else services.svc = { ...services.svc!, fingerprint: 'new settings' }
+    sent.end('"input":"never forward"}')
+    expect(await answer).toBe(401)
+    expect(fake.requests).toEqual([])
+  })
+
+  it.each(['application/json', 'text/event-stream'])(
+    'redacts echoed credentials in a successful %s response across byte boundaries',
+    async contentType => {
+      const fake = { origin: 'http://127.0.0.1:9999' } as FakeModels
+      const key = 'opaque-credential-A9_+/quoted"tail'
+      const forms = [key, JSON.stringify(key).slice(1, -1), encodeURIComponent(key)]
+      const payload = JSON.stringify({ type: 'error', error: { message: `失败：${key} ${encodeURIComponent(key)}` } })
+      const text = contentType === 'text/event-stream' ? `event: error\ndata: ${payload}\n\n` : payload
+      const bytes = new TextEncoder().encode(text)
+      const { server } = await gateway(
+        { svc: responses(fake, { apiKey: key }) },
+        () => async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                for (const byte of bytes) controller.enqueue(new Uint8Array([byte]))
+                controller.close()
+              },
+            }),
+            { headers: { 'content-type': contentType } },
+          ),
+      )
+      const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+      const response = await ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hi', stream: true })
+      expect(response.status).toBe(200)
+      const received = await response.text()
+      for (const form of forms) expect(received).not.toContain(form)
+      expect(received).toContain('失败：')
+      expect(received).toContain('[redacted]')
+      expect(JSON.parse(contentType === 'text/event-stream' ? received.split('data: ')[1]!.trim() : received)).toMatchObject({
+        type: 'error',
+      })
+    },
+  )
+
+  it.each([
+    { name: 'ordinary Unicode', text: 'data: {"text":"🌱 你好 / quoted\\\""}\n\n', expected: 'data: {"text":"🌱 你好 / quoted\\\""}\n\n' },
+    { name: 'a truncated key at EOF', text: 'data: {"error":"opaque-cred', expected: 'data: {"error":"[redacted]' },
+  ])('preserves $name without buffering the whole reply', async ({ text, expected }) => {
+    const fake = { origin: 'http://127.0.0.1:9999' } as FakeModels
+    const bytes = new TextEncoder().encode(text)
+    const { server } = await gateway(
+      { svc: responses(fake, { apiKey: 'opaque-credential-for-stream' }) },
+      () => async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              for (const byte of bytes) controller.enqueue(new Uint8Array([byte]))
+              controller.close()
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    )
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    const response = await ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hi', stream: true })
+    expect(await response.text()).toBe(expected)
   })
 
   it('counts per turn the models asked for, what the service said answered and the tokens it reported, never the text', async () => {

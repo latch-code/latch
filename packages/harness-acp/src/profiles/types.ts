@@ -1,4 +1,4 @@
-import type { ModeTier, ModelWire, SessionConfigOption } from '@latch/protocol'
+import type { ModeTier, ModelCapabilities, ModelWire, SessionConfigOption } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type { WireKind } from '../wires/index.ts'
 
@@ -140,17 +140,34 @@ type ProfileFolders =
     }
   | { readonly via: 'args'; readonly flag: '--include-directories'; readonly maxExtra: number }
 
-/** A process's way to the Host's gateway, as a profile hands it to the harness. Never logged. */
-interface GatewayAccess {
+/** Where a launch puts what points the harness at the Host's gateway: the gateway's address, and its private files. */
+export interface GatewayPlace {
+  /** The base URL of the route's protocol on the Host's loopback gateway. */
   baseURL: string
-  token: string
+  /** The selected per-session launch setting, when the profile implements one. */
+  thinking?: { model: string; value: string }
+  /** The service's model IDs and the owner's declared capabilities, without prices or inferred limits. */
+  models: ReadonlyArray<{ id: string; capabilities?: ModelCapabilities }>
+  /** The path a file of `files` is written to, in the session's private directory. */
+  file(name: string): string
+}
+
+/** What one launch of a session on a route gets, besides the token. None of it may hold the token. */
+export interface GatewayLaunch {
+  /** Variables, by the names `envNames` lists: addresses and paths. */
+  env?: Record<string, string>
+  /** Arguments after the definition's: addresses, paths and variable names only. */
+  args?: string[]
+  /** File name to content: written 0600 and replaced by rename before every spawn; names variables, never holds a value. */
+  files?: Record<string, string>
 }
 
 /**
  * How the harness is pointed at the Host's gateway for a session on a model service, so that it sends that service's
  * protocol to Latch with a token instead of using its own login. `providers`: ACP `providers/set`, the token in a header,
- * only when the agent advertises `providers` and lists this provider ID with this API type. `env`: variables that name
- * the gateway and carry the token, applied last; the profile's `materialize` writes whatever else selects that route.
+ * only when the agent advertises `providers` and lists this provider ID with this API type (codex-acp only). `launch`:
+ * one delivery at spawn: variables, an argument template and private files, written by `deliver`; the token goes in
+ * the environment only, as `tokenEnv`, set by the runtime and never seen by `deliver`.
  */
 type ProfileGateway = {
   /** The protocols it speaks to a model service, as `HarnessCapabilities.models.wires`. */
@@ -159,13 +176,25 @@ type ProfileGateway = {
   readonly experimental?: true
   /** It uses only the service's models it knows itself, as `HarnessCapabilities.models.knownOnly`. */
   readonly knownOnly?: true
+  /**
+   * The oldest version of the preset's own command that works through the gateway, read the way `minimumVersion` is; a
+   * session on a route refuses to start with an older one.
+   */
+  readonly minimumVersion?: NonNullable<HarnessProfile['minimumVersion']>
 } & (
   | { readonly via: 'providers'; readonly providerId: string; readonly apiType: string }
   | {
-      readonly via: 'env'
-      /** The variable names `env` sets, for the launch fingerprint and preview; values never enter either. */
+      readonly via: 'launch'
+      /**
+       * The variable that carries the token: `LMG_TOKEN` wherever the harness lets Latch name it, else the one the
+       * harness reads. Never `LATCH_*`, which every agent environment drops.
+       */
+      readonly tokenEnv: string
+      /** The other variables `deliver` sets, for the launch fingerprint and preview; values never enter either. */
       readonly envNames: readonly string[]
-      env(access: GatewayAccess, route: ModelRoute): Record<string, string>
+      /** Versions of what `deliver` puts in the arguments and the files, in the launch fingerprint; bump on a change. */
+      readonly templates: { readonly args?: number; readonly files?: number }
+      deliver(place: GatewayPlace, route: ModelRoute): GatewayLaunch
     }
 )
 

@@ -17,6 +17,10 @@ sources:
 ---
 # Latch 测试指南
 
+模型网关的机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。`model-gateway.test.ts` 覆盖四协议入口、头白名单、进程凭据、上游错误脱敏、流式用量与下游取消；`codex-gateway.test.ts` 通过假原生 Codex 真实调用 Host 网关，检查服务独有模型、失败不回退及重启恢复。`codex-environment.test.ts` 检查有效命令环境规则在新建与恢复前读取并保留，未知规则拒绝开线程。
+
+`e2e/codex-model-gateway.e2e.ts` 默认用假 app-server，验证菜单模型选择与恢复。只有所有者明确授权的验收才设置 `LATCH_CODEX_GATEWAY_BINARY` 使用真实 Codex 并执行夹具提供的无害诊断工具；仍用临时 HOME/CODEX_HOME、临时 Host 与本地假模型，不读取原登录文件，也不把它称为真实 BYOK 成功。
+
 预览引用边界由 `apps/web/test/preview-quotes.test.ts` 覆盖，真实的 Office 页/选区、表格选区与更新后的冻结偏好由 `e2e/preview-renderers.e2e.ts` 验证；`file-tree.e2e.ts` 验证三种宽度的真实文件摘录只追加草稿且不发请求，`file-preview.e2e.ts` 检查文件自动更新后保留阅读行。
 
 `e2e/workflows.e2e.ts` 覆盖外观切换时保留草稿、输入聚焦与上一条消息、Host 分支投影、可操作首次引导及通知首次选择；通知 UI 使用有限壳夹具，真实主进程状态和 preload 过滤由 `apps/desktop/test/notifications.test.ts` 验证，Electron 用例核对实际公开接口。`e2e/file-tree.e2e.ts` 同时验证没有标签时的文件快捷键。

@@ -106,9 +106,13 @@ function readRetry(update: SessionUpdate): RetryReport | undefined {
   return match ? { kind: 'attempt', attempt: Number(match[1]), of: Number(match[2]), reason: serviceReason(match[3]!) } : undefined
 }
 
+/** `gemini --version` prints the version alone. */
+const readGeminiVersion = (output: string) => /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/u.exec(output)?.[1]
+
 export const geminiProfile: HarnessProfile = {
   presetId: 'gemini',
-  version: 3,
+  // 4: gateway delivery preserves the session's thinking setting and requires Gemini CLI 0.44.0.
+  version: 4,
   launchThinking: geminiThinkingOption,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
@@ -134,29 +138,37 @@ export const geminiProfile: HarnessProfile = {
   // Workspace settings, commands and extensions; `.gemini/.env` is looked up from the session directory upwards.
   projectConfigPaths: ['.gemini'],
   readRetry,
+  // Its `gateway` login reads `GEMINI_API_KEY` from 0.44.0 on; 0.33.0 to 0.43.0 send a placeholder key instead.
   gateway: {
     wires: ['gemini'],
-    via: 'env',
-    envNames: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY'],
-    env: access => ({ GOOGLE_GEMINI_BASE_URL: access.baseURL, GEMINI_API_KEY: access.token }),
+    minimumVersion: { args: ['--version'], read: readGeminiVersion, minimum: '0.44.0', upgrade: 'npm i -g @google/gemini-cli@latest' },
+    via: 'launch',
+    tokenEnv: 'GEMINI_API_KEY',
+    envNames: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_CLI_SYSTEM_SETTINGS_PATH'],
+    templates: { files: 1 },
+    // The session's own settings, since they name its model; they replace the shared file's path given below.
+    deliver: (place, route) => {
+      const base = routed(route.model)
+      const thinking = geminiThinkingSettings(place.thinking)
+      const settings = { ...base, ...thinking, modelConfigs: { ...base.modelConfigs, ...(thinking.modelConfigs as object | undefined) } }
+      return {
+        env: { GOOGLE_GEMINI_BASE_URL: place.baseURL, GEMINI_CLI_SYSTEM_SETTINGS_PATH: place.file(FILE) },
+        files: { [FILE]: `${JSON.stringify(settings, null, 2)}\n` },
+      }
+    },
   },
   /**
    * Rewrites the file before every spawn (0600, replaced by rename so a planted symlink is replaced, not followed). A
    * session on a gateway route gets its own, in its private directory, since it names the session's model.
    */
-  async materialize({ dataDir, route, session }) {
-    const gateway = route ? routed(route.route.model) : undefined
-    const base = gateway ?? SYSTEM_SETTINGS
+  async materialize({ dataDir, route, session }): Promise<Record<string, string>> {
+    if (route) return {}
     const thinking = geminiThinkingSettings(session?.thinking)
     const settings = {
-      ...base,
+      ...SYSTEM_SETTINGS,
       ...thinking,
-      ...(gateway ? { modelConfigs: { ...gateway.modelConfigs, ...(thinking.modelConfigs as object | undefined) } } : {}),
     }
-    const path = await writeSettings(
-      route ? join(route.directory, 'gateway') : session ? join(session.directory, 'gemini') : dataDir,
-      settings,
-    )
+    const path = await writeSettings(session ? join(session.directory, 'gemini') : dataDir, settings)
     return { GEMINI_CLI_SYSTEM_SETTINGS_PATH: path }
   },
 }

@@ -26,14 +26,14 @@ const MAX_CONTENT_BLOCKS = 4096
 const MAX_LIST_PAGES = 10
 
 /** Accepts both `https://api.anthropic.com` and a base that already ends in `/v1`. */
-function anthropicEndpoint(baseURL: string, path: '/messages' | '/models'): string {
+export function anthropicEndpoint(baseURL: string, path: '/messages' | '/messages/count_tokens' | '/models'): string {
   const url = parseBaseURL(baseURL)
   const prefix = url.pathname.replace(/\/+$/u, '')
   url.pathname = `${/\/v1$/u.test(prefix) ? prefix : `${prefix}/v1`}${path}`
   return url.toString()
 }
 
-function anthropicHeaders(apiKey: string): Record<string, string> {
+export function anthropicHeaders(apiKey: string): Record<string, string> {
   return { 'anthropic-version': ANTHROPIC_VERSION, ...(apiKey ? { 'x-api-key': apiKey } : {}) }
 }
 
@@ -242,7 +242,8 @@ function terminal(reason: string): 'stop' | 'tool-calls' {
  * Usage as the stream reports it. `message_delta` counts are cumulative, so later values replace earlier ones; input counts
  * the cached tokens too, and the parts say how many were read from and written to the cache.
  */
-class AnthropicUsage {
+/** A Messages reply's usage as it accumulates over `message_start` and `message_delta`; the gateway reads it too. */
+export class AnthropicUsage {
   private input = 0
   private cacheWrite = 0
   private cacheRead = 0
@@ -250,7 +251,10 @@ class AnthropicUsage {
   private reported = false
   private cacheReported = false
 
-  record(value: z.infer<typeof usageSchema> | null | undefined): void {
+  /** One `usage` object of the reply; anything not in its shape is ignored. */
+  record(input: unknown): void {
+    const parsed = usageSchema.nullable().optional().safeParse(input)
+    const value = parsed.success ? parsed.data : undefined
     if (!value) return
     if (value.input_tokens != null) this.input = value.input_tokens
     if (value.cache_creation_input_tokens != null) this.cacheWrite = value.cache_creation_input_tokens

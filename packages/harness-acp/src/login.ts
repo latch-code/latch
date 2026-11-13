@@ -226,8 +226,13 @@ export async function readProgramVersion(record: AgentRecord, options: RunOption
  * follows: only once the start script has let the Host run the person's programs, never through a shell. Undefined: not
  * allowed, failed, timed out or printed none.
  */
-export async function readOwnVersion(record: AgentRecord, path: string, options: RunOptions = {}): Promise<string | undefined> {
-  const gate = selectProfile(record).profile?.minimumVersion
+export async function readOwnVersion(
+  record: AgentRecord,
+  path: string,
+  options: RunOptions = {},
+  own?: { readonly args: readonly string[]; read(output: string): string | undefined },
+): Promise<string | undefined> {
+  const gate = own ?? selectProfile(record).profile?.minimumVersion
   if (!gate || !locate) return undefined
   const result = await runProgram(record, path, gate.args, options)
   // Standard output only: a notice on standard error (an update available, a deprecation) may name other versions.

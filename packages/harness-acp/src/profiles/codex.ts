@@ -1,4 +1,4 @@
-import type { ExtensionRequest, HarnessProfile, ProjectedChild, SessionUpdate, ToolDenial } from './types.ts'
+import type { ExtensionRequest, GatewayPlace, HarnessProfile, ProjectedChild, SessionUpdate, ToolDenial } from './types.ts'
 
 /**
  * The four modes, as the adapter route names them, and what each sends to Codex with every turn and thread: its approval
@@ -92,14 +92,39 @@ const DECLINED: Readonly<Record<string, ExtensionRequest>> = {
   },
 }
 
+/** The provider ID a session on a route runs on: Latch's own, since Codex refuses to override its built-in ones. */
+export const CODEX_GATEWAY_PROVIDER = 'latch'
+const readVersion = (output: string) => /\bcodex-cli (\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/u.exec(output)?.[1]
+
+/**
+ * Through the gateway: a model provider of Latch's own, chosen for the whole process at launch, since Codex 0.167
+ * refuses a turn on a thread whose provider is not the process's (`modelProviderMismatch`). The token is read from the
+ * variable `env_key` names; neither it nor any header value is ever an argument. One retry: the gateway's own answer is
+ * what Codex should act on. Before opening a thread, the wire preserves the effective command environment filters
+ * and adds the token's exclusion through that thread's config, without overwriting the person's config files.
+ */
+function codexGatewayArgs(place: GatewayPlace): string[] {
+  const provider = `model_providers.${CODEX_GATEWAY_PROVIDER}`
+  return [
+    `model_provider="${CODEX_GATEWAY_PROVIDER}"`,
+    `${provider}.name="Latch"`,
+    `${provider}.base_url=${JSON.stringify(place.baseURL)}`,
+    `${provider}.wire_api="responses"`,
+    `${provider}.env_key="LMG_TOKEN"`,
+    `${provider}.supports_websockets=false`,
+    `${provider}.request_max_retries=1`,
+  ].flatMap(setting => ['-c', setting])
+}
+
 /**
  * Codex over its own app-server (`wires/codex.ts`). The modes and what each says are the ACP route's, and the wire sends
  * each mode's approval policy, sandbox and reviewer with every turn. Definitions on the adapter keep `codex-acp.ts`.
  */
 export const codexProfile: HarnessProfile = {
   presetId: 'codex',
-  // 2: Codex's reviews and refusals reach the session, the wire's own refusals are said and recorded.
-  version: 2,
+  // 2: Codex's reviews and refusals reach the session, the wire's own refusals are said and recorded. 3: sessions on a
+  // Responses service through the gateway.
+  version: 3,
   wire: 'codex',
   permission: {
     approvals: 'prompts',
@@ -126,6 +151,21 @@ export const codexProfile: HarnessProfile = {
   historyImport: true,
   // `model/list` opens no thread: no turn, no model call, no hooks or MCP servers, so a draft reads it by itself.
   catalogueRead: { codexModels: ['app-server'] },
+  // Its models on a route are the service's, which the wire offers instead of `model/list`'s built-in presets.
+  gateway: {
+    wires: ['responses'],
+    via: 'launch',
+    tokenEnv: 'LMG_TOKEN',
+    envNames: [],
+    templates: { args: 1 },
+    minimumVersion: {
+      args: ['--version'],
+      read: readVersion,
+      minimum: '0.167.0',
+      upgrade: 'npm i -g @openai/codex@latest',
+    },
+    deliver: place => ({ args: codexGatewayArgs(place) }),
+  },
   readProjectedChild: projectedChild,
   readDenial: denial,
   extensions: { requests: DECLINED },
@@ -133,7 +173,7 @@ export const codexProfile: HarnessProfile = {
   // app-server from the same version (its model-manifest.json). Older ones use the adapter, when it is installed.
   minimumVersion: {
     args: ['--version'],
-    read: output => /\bcodex-cli (\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/u.exec(output)?.[1],
+    read: readVersion,
     minimum: '0.156.0',
     upgrade: 'npm i -g @openai/codex@latest',
   },
