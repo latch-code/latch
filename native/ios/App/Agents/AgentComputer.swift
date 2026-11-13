@@ -76,7 +76,7 @@ struct ComputerSection: View {
     private func missedRow(_ group: PhoneMissedGroup) -> some View {
         let key = "run:" + group.automationId
         let held = PhoneResults.heldRun(model.pending, automationId: group.automationId)
-        let block = PhoneScheduleWrite.blocker(agent: agent, connected: model.connected, canRun: model.canRun)
+        let block = PhoneScheduleWrite.blocker(agent: agent, connected: model.connected, canRun: model.canRun, manual: true)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {

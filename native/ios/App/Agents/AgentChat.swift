@@ -166,7 +166,7 @@ struct AgentChat: View {
 
 /**
  * A new topic: the Agent's face, name and duty, and an input whose first message starts its session with `customAgentId`
- * (通用's `general`) on the Agent's Harness, model and project, each changeable for this one. A start whose result is
+ * (通用's `general`) on the Agent's fixed Harness, with a model and project chosen for this topic. A start whose result is
  * unknown keeps its request: 重试同一请求, or 放弃这次提交 to have the text back.
  */
 private struct NewTopicView: View {
@@ -261,7 +261,7 @@ private struct NewTopicView: View {
             field
         }.padding(.bottom, 8).padding(.top, 4)
     }
-    /** This one topic's project (not for 通用), Harness and model, from the Agent's own. */
+    /** This topic's project (not for General) and model; the Harness remains the owner's. */
     private var picks: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -269,19 +269,6 @@ private struct NewTopicView: View {
                     Menu {
                         ForEach(PhoneStart.projects(catalog)) { project in Button { choice.workspaceId = project.id } label: { check(project.name, on: project.id == choice.workspaceId) } }
                     } label: { chip { Image(systemName: "folder").font(.system(size: 12)); Text(PhoneAgents.worksIn(catalog, projectId: choice.workspaceId)) } }
-                }
-                // An Agent's Harness is fixed once it is created (the Host refuses another); only 通用 picks one here.
-                if general {
-                Menu {
-                    ForEach(PhoneAgents.harnesses(catalog)) { engine in
-                        Button { choice.harnessId = engine.id; if general { choice.model = PhoneStart.defaultModel(catalog, harnessId: engine.id) } } label: { check(engine.name, on: engine.id == choice.harnessId) }
-                    }
-                } label: {
-                    chip {
-                        if choice.harnessId != nil { EngineTile(mark: PhoneStart.mark(harness), size: 14); Text(PhoneStart.engineName(harness)) }
-                        else { Text("先选 Harness") }
-                    }
-                }
                 }
                 if PhoneStart.usesServices(harness) {
                     Menu {

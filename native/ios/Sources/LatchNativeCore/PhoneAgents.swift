@@ -220,7 +220,7 @@ public enum PhoneAgents {
         return catalog["providers"].array.contains { $0["id"].string == model["providerId"].string } ? name : name + "（服务已移除）"
     }
     public static func worksIn(_ catalog: NativeJSON, projectId: String?) -> String {
-        guard let projectId, projectId != "default" else { return catalog["sessionFolders"].bool ? "各自的文件夹" : "默认文件夹" }
+        guard let projectId, projectId != "default" else { return "家" }
         return catalog["workspaces"].array.first { $0["id"].string == projectId }?["name"].string ?? "项目已移除"
     }
     /** Ready Harnesses that can receive an Agent's instructions. */

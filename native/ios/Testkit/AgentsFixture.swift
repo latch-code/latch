@@ -56,6 +56,11 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "topicWords": snapshot["tasks"].array.map { PhoneAgentChat.topicWords($0, frozen: false) ?? "" },
         "placeholder": PhoneAgentChat.placeholder("代码审阅"),
         "generalChoice": { let choice = PhoneAgentChat.generalChoice(catalog); return [choice.harnessId ?? "", choice.workspaceId ?? "", choice.model?.model ?? ""] }(),
+        "generalDefaults": value["generalCatalogs"].array.map { alternate -> [String: Any] in
+            let choice = PhoneAgentChat.generalChoice(alternate)
+            return ["harness": choice.harnessId ?? "", "block": PhoneAgentChat.generalBlocker(alternate, choice: choice, connected: true, canRun: true) ?? "",
+                "fields": (try? fieldValue(.object(PhoneAgentChat.generalFields(alternate, choice: choice, prompt: "你好")))) ?? NSNull()]
+        },
         "generalFields": PhoneAgents.harnesses(catalog).map { harness -> Any in
             let choice = PhoneStartChoice(harnessId: harness.id, workspaceId: "latch", model: PhoneStart.models(catalog).first)
             return (try? fieldValue(.object(PhoneAgentChat.generalFields(catalog, choice: choice, prompt: "你好")))) ?? NSNull()
@@ -100,6 +105,11 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             PhoneScheduleWrite.blocker(agent: .null, connected: true, canRun: true) ?? "",
             PhoneScheduleWrite.blocker(agent: agents[1], connected: false, canRun: true) ?? "",
             PhoneScheduleWrite.blocker(agent: agents[1], connected: true, canRun: false) ?? "",
+        ],
+        "manualScheduleBlockers": [
+            PhoneScheduleWrite.blocker(agent: agents[0], connected: true, canRun: true, manual: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: agents[2], connected: true, canRun: true, manual: true) ?? "",
+            PhoneScheduleWrite.blocker(agent: agents[0], connected: true, canRun: false, manual: true) ?? "",
         ],
         "pendingKinds": [
             write { try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x")]) },

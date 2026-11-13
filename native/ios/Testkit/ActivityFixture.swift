@@ -70,6 +70,7 @@ func phoneAgentActivityFixture(_ input: [String: Any]) throws -> [String: Any] {
         "inputLine": schedule.map { PhoneScheduleProposals.inputLine($0.content) } ?? "",
         "locations": PhoneScheduleProposals.locations(snapshot["catalog"], harness: .null).map(\.id),
         "location": PhoneScheduleProposals.location(agent, catalog: snapshot["catalog"]) ?? NSNull(),
+        "homeLocation": PhoneScheduleProposals.location(.null, catalog: snapshot["catalog"]) ?? NSNull(),
         "formBlockers": schedule.map { proposal in
             [PhoneScheduleProposals.blocker(proposal, location: nil, catalog: snapshot["catalog"], agent: agent, connected: true, canRun: true) ?? "",
              PhoneScheduleProposals.blocker(proposal, location: "gone", catalog: snapshot["catalog"], agent: agent, connected: true, canRun: true) ?? "",
@@ -79,7 +80,8 @@ func phoneAgentActivityFixture(_ input: [String: Any]) throws -> [String: Any] {
         "creates": schedule.map { proposal in
             [write { try PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: "app", notify: true) },
              write { try PhoneScheduleProposals.create(owner: PhoneAgents.generalId, proposal: proposal, location: "default", notify: false) },
-             write { try PhoneScheduleProposals.create(owner: owner, proposal: proposals.first { $0.schedule == nil }!, location: "default", notify: false) }]
+             write { try PhoneScheduleProposals.create(owner: owner, proposal: proposals.first { $0.schedule == nil }!, location: "default", notify: false) },
+             write { try PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: "default", notify: false, enabled: false) }]
         } ?? [],
         "heldCreate": schedule.map { proposal in
             let created = try? PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: "default", notify: false)
@@ -245,7 +247,7 @@ private func writeCases(_ value: NativeJSON, proposals: [PhoneProposal], owner: 
         }
         guard let proposal = proposals.first(where: { $0.schedule != nil }), PhoneProposals.pending(proposals).isEmpty,
               PhoneScheduleProposals.line(proposal) == "早间精选 · 工作日 08:30", proposal.sessionId == topic else { throw NativeFailure.invalidRecord }
-        let create = try PhoneScheduleProposals.create(owner: agentId, proposal: proposal, location: "default", notify: false)
+        let create = try PhoneScheduleProposals.create(owner: agentId, proposal: proposal, location: "default", notify: false, enabled: false)
         guard PhonePending.kind(create) == .scheduleCreate else { throw NativeFailure.invalidRecord }
         // The first try never reaches the Host (the test's listener answers 503): unknown, kept with its request.
         var unknown = false
@@ -260,7 +262,7 @@ private func writeCases(_ value: NativeJSON, proposals: [PhoneProposal], owner: 
               try await workspace.snapshot()["automations"].array.filter({ $0["customAgentId"].string == agentId }).count == 2 else { throw NativeFailure.invalidRecord }
         // Another request saving it again is refused 409 agent-proposal-decided; the Host's state shows it saved, so a
         // retry that hears this counts as done and 核对并放下 says so.
-        let again = try PhoneScheduleProposals.create(owner: agentId, proposal: proposal, location: "default", notify: false)
+        let again = try PhoneScheduleProposals.create(owner: agentId, proposal: proposal, location: "default", notify: false, enabled: false)
         var refusal: NativeHostRefusal?
         do { _ = try await workspace.submit(again, explain: true, retryAnswered: PhoneAgentWrites.retryAnswered(again)) } catch { refusal = error as? NativeHostRefusal }
         guard let refusal, refusal.status == 409, refusal.code == "agent-proposal-decided", PhoneAgentWrites.retryAnswered(again)(refusal),

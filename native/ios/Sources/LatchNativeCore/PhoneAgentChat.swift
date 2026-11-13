@@ -39,24 +39,16 @@ public enum PhoneAgentChat {
         case .frozen, .read: nil
         }
     }
-    /** 通用's first picks: the Host's default Harness where it can take 通用, else the first that can; no project. */
+    /** New General topics use Standard Agent, independently of the Code defaults. */
     public static func generalChoice(_ catalog: NativeJSON) -> PhoneStartChoice {
-        let harnesses = PhoneAgents.harnesses(catalog)
-        let harnessId = harnesses.first { $0.id == catalog["defaults"]["harnessId"].string }?.id ?? harnesses.first?.id
-        return PhoneStartChoice(harnessId: harnessId, workspaceId: nil, model: PhoneStart.defaultModel(catalog, harnessId: harnessId))
+        PhoneStartChoice(harnessId: "standard", workspaceId: nil, model: PhoneStart.defaultModel(catalog, harnessId: "standard"))
     }
-    /** The mode of a conversation with 通用: only talk where the Harness has it, else its first mode. */
-    public static func generalMode(_ harness: NativeJSON) -> String {
-        let modes = harness["modes"].array.compactMap(\.string)
-        return modes.contains("chat") ? "chat" : modes.first ?? "chat"
-    }
-    /** A new topic with 通用: no project, on the Harness and model picked for it, marked as 我的 Agent's by `general`. */
+    /** New requests only; an old pending write retains its original body and request ID. */
     public static func generalFields(_ catalog: NativeJSON, choice: PhoneStartChoice, prompt: String) throws -> [String: NativeJSON] {
-        guard let harnessId = choice.harnessId, PhoneAgents.harnesses(catalog).contains(where: { $0.id == harnessId }) else { throw NativeFailure.invalidRecord }
-        let harness = PhoneStart.harness(catalog, harnessId)
+        guard choice.harnessId == "standard", PhoneAgents.harnesses(catalog).contains(where: { $0.id == "standard" }) else { throw NativeFailure.invalidRecord }
         var result: [String: NativeJSON] = ["prompt": .string(prompt), "customAgentId": .string(PhoneAgents.generalId),
-            "harnessId": .string(harnessId), "mode": .string(generalMode(harness)), "workspaceId": .string("default")]
-        if PhoneStart.usesServices(harness), let model = choice.model {
+            "harnessId": .string("standard"), "mode": .string("agent"), "workspaceId": .string("default")]
+        if let model = choice.model {
             result["model"] = .object(["providerId": .string(model.providerId), "model": .string(model.model)])
         }
         return result
@@ -65,8 +57,8 @@ public enum PhoneAgentChat {
     public static func generalBlocker(_ catalog: NativeJSON, choice: PhoneStartChoice, connected: Bool, canRun: Bool) -> String? {
         if !connected { return "Mac 不在线，恢复后再发" }
         if !canRun { return "这台设备不能开始会话" }
-        guard let id = choice.harnessId, PhoneAgents.harnesses(catalog).contains(where: { $0.id == id }) else { return "先选 Harness" }
-        if PhoneStart.usesServices(PhoneStart.harness(catalog, id)) && choice.model == nil { return "还没有模型服务。在 Mac 上的 Latch 里添加。" }
+        guard choice.harnessId == "standard", PhoneAgents.harnesses(catalog).contains(where: { $0.id == "standard" }) else { return "Latch 内置暂不可用" }
+        if choice.model == nil { return "还没有模型服务。在 Mac 上的 Latch 里添加。" }
         return nil
     }
     /** Counts of 技能 and 工具 for the profile, as the web's facts line has them. */
@@ -219,10 +211,12 @@ public enum PhoneScheduleWrite {
             fields: ["enabled": .bool(on), "baseRevision": .number(Double(revision))])
     }
     /** Why this device cannot turn a schedule on now, in the web's words; nil when it can. Turning one off is always allowed. */
-    public static func blocker(agent: NativeJSON, connected: Bool, canRun: Bool) -> String? {
+    public static func blocker(agent: NativeJSON, connected: Bool, canRun: Bool, manual: Bool = false) -> String? {
         if !connected { return "Mac 不在线，恢复后再改" }
         if !canRun { return "这台设备只能查看定时任务：它没有开始会话的权限。" }
-        if agent != .null && !agent["canAutomate"].bool { return agent["unavailableReason"].string ?? "这个 Agent 现在不能用于定时任务。" }
+        if agent != .null && !(manual ? agent["available"].bool : agent["canAutomate"].bool) {
+            return agent["unavailableReason"].string ?? (manual ? "这个 Agent 暂不可用。" : "这个 Agent 现在不能用于定时任务。")
+        }
         return nil
     }
     /** This device's unconfirmed switch of the schedule. */

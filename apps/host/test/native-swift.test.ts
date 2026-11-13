@@ -1672,6 +1672,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           requestId: randomUUID(),
           name: '早间精选',
           customAgentId: agent.id,
+          enabled: false,
           projectId: project.id,
           prompt: 'shell-edit',
           schedule: { kind: 'daily', time: '09:00' },
@@ -1723,7 +1724,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       expect(saved.status).toBe(201)
       const agent = await owner.json<{ id: string }>('custom-agents', {
         method: 'POST',
-        body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId: 'fake-agent' },
+        body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId: 'standard' },
       })
       const at = new Date(Date.now() + 10 * 60_000)
       const pad = (value: number) => String(value).padStart(2, '0')
@@ -3305,6 +3306,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const result = await invoke({
       operation: 'phoneAgents',
       snapshot,
+      generalCatalogs: [
+        { ...catalog, defaults: { harnessId: 'codex' } },
+        { ...catalog, harnesses: harnesses.filter(item => item.id !== 'standard') },
+        { ...catalog, harnesses: harnesses.map(item => (item.id === 'standard' ? { ...item, status: 'unavailable' } : item)) },
+      ],
       memoryOwner: review,
       memory,
       proposals: { proposals },
@@ -3400,6 +3406,22 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['ready', 'closed'],
       ['ready', 'closed'],
     ])
+    expect(result.generalDefaults).toEqual([
+      {
+        harness: 'standard',
+        block: '',
+        fields: {
+          prompt: '你好',
+          customAgentId: 'general',
+          harnessId: 'standard',
+          mode: 'agent',
+          workspaceId: 'default',
+          model: { providerId: 'svc', model: 'm1' },
+        },
+      },
+      { harness: 'standard', block: 'Latch 内置暂不可用', fields: null },
+      { harness: 'standard', block: 'Latch 内置暂不可用', fields: null },
+    ])
     expect(result.entries).toEqual([
       {
         id: 'general',
@@ -3431,7 +3453,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         general: false,
         duty: '汇总依赖',
         runs: 'Latch · m2',
-        place: '各自的文件夹',
+        place: '家',
         available: true,
         reason: null,
         avatar: ['round', 'dot', 'neutral'],
@@ -3493,13 +3515,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         prompt: '你好',
         customAgentId: 'general',
         harnessId: 'standard',
-        mode: 'chat',
+        mode: 'agent',
         workspaceId: 'default',
         model: { providerId: 'svc', model: 'm1' },
       },
-      { prompt: '你好', customAgentId: 'general', harnessId: 'codex', mode: 'agent', workspaceId: 'default' },
+      null,
     ])
-    expect(result.generalBlockers).toEqual(['', '先选 Harness', 'Mac 不在线，恢复后再发'])
+    expect(result.generalBlockers).toEqual(['', 'Latch 内置暂不可用', 'Mac 不在线，恢复后再发'])
     expect(result.kits).toEqual(['2 个技能 · 全部插件', '全部已启用的技能 · 全部插件', '全部已启用的技能 · 全部插件'])
     expect(result.owners).toEqual(['代码审阅', '代码审阅', '代码审阅', '', '已删除的 Agent', '通用', '代码审阅'])
     // Outside a window nothing of an Agent shows, and closing one takes the lists and proposal counts out of memory.
@@ -3562,6 +3584,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       'Mac 不在线，恢复后再改',
       '这台设备只能查看定时任务：它没有开始会话的权限。',
     ])
+    expect(result.manualScheduleBlockers).toEqual(['', '没有安装。', '这台设备只能查看定时任务：它没有开始会话的权限。'])
     expect(result.automations).toEqual([[], ['依赖检查', '周报'], []])
     expect(result.generalAutomations).toEqual(['早报'])
     expect(result.schedules).toEqual(['工作日 09:00 · 已开启 · 完成', '每周五 17:30 · 已暂停 · 没有运行', '每天 08:00 · 已关闭 · 没有运行'])
@@ -3878,6 +3901,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.inputLine).toBe('整理今天的 AI 新闻')
     expect(result.locations).toEqual(['app', 'off', 'default'])
     expect(result.location).toBe('app')
+    expect(result.homeLocation).toBe('default')
     expect(result.formBlockers).toEqual(['先选工作位置', '这个项目已不可用。', '', 'Mac 不在线，恢复后再改'])
     const creates = result.creates as Array<{ body: Record<string, unknown> } | string>
     expect(creates[0]).toMatchObject({
@@ -3898,6 +3922,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect((creates[1] as { body: Record<string, unknown> }).body).not.toHaveProperty('customAgentId')
     expect((creates[1] as { body: Record<string, unknown> }).body).not.toHaveProperty('projectId')
     expect(creates[2]).toBe('refused')
+    expect(creates[3]).toMatchObject({ body: { enabled: false, customAgentId: owner } })
+    expect((creates[3] as { body: Record<string, unknown> }).body).not.toHaveProperty('projectId')
     expect(result.heldCreate).toEqual([true, true])
     // 动态: words and states only, never a memory's or a proposal's text; each row leads where it happened.
     expect(result.activity).toEqual([
@@ -3952,12 +3978,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       words: ['记忆提议的结果待确认', '定时提议的结果待确认', '提议的结果待确认', '定时任务的保存结果待确认', '立即运行结果待确认'],
       owners: [owner, owner, ''],
     })
-    // Each run's own folder only where the Host makes one; a project with more folders than the Harness takes is not offered.
+    // The owner's home stays available independently of Code's folder setting; project restrictions remain visible.
     expect(result.locations2).toEqual([
       [
         ['app', '', false],
         ['multi', 'Codex 最多使用 2 个文件夹', false],
         ['code', '', true],
+        ['default', '', false],
       ],
       [
         ['app', '', false],

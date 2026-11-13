@@ -1,6 +1,6 @@
 # Latch iOS
 
-`Sources/LatchNativeCore` 是 iOS/macOS 共享的有界线格式、系统密码学、传输、验证窗口、工作台与加密资料库。`App` 与 `Latch.xcodeproj` 是 iPhone/iPad 应用，SwiftUI 组合平台页面，UIKit/TextKit 2 承载对话与输入。`Testkit` 是只由 Vitest 驱动的隔离夹具，不进入应用产品。
+`Sources/LatchNativeCore` 提供 iOS/macOS 协议、密码学、传输、验证窗口与资料库。`App` 和 `Latch.xcodeproj` 是 SwiftUI 应用，UIKit/TextKit 2 承载对话与输入。`Testkit` 只由 Vitest 驱动，不进产品。
 
 - Host 是设备、权限、会话与执行结果的唯一权威；地址、Bonjour 与中继不是身份。
 - 先验证敲门的服务端 HMAC，再发设备证书；TLS 1.3、固定 SNI/ALPN、禁恢复，根证明通过前不交付业务数据。内层身份不从网络学习或替换。
@@ -24,4 +24,5 @@
 
 - `LatchScreens` 只编模拟器：截图场景与 `-LatchLive 1` 的软件密钥（`ios-live.e2e.ts`）在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts`、`check:boundaries` 核对）。
 - 预览取消关闭自有Task，晚回不展示。
+- 助手规则见 docs/CUSTOM-AGENTS.md；旧待确认请求不改 body 或 requestId。
 - 目录只为固定节点/公钥恢复公网地址；提示不授予正文或替换身份。

@@ -154,14 +154,14 @@ public enum PhoneScheduleProposals {
         let line = prompt.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         return line.count > max ? String(line.prefix(max - 1)) + "…" : line
     }
-    /** Where the schedule's runs work: the Agent's default project, else unset until chosen; `default` is each run's own folder. */
+    /** A chosen project takes priority; otherwise the owner keeps its fixed home across runs. */
     public static func location(_ agent: NativeJSON, catalog: NativeJSON) -> String? {
-        let id = agent["defaultProjectId"].string
+        let id = agent["defaultProjectId"].string ?? "default"
         return locations(catalog, harness: harness(catalog, agent: agent)).first { $0.id == id && $0.unavailable == nil }?.id
     }
     /**
      * The places a schedule can work in, as the web's project picker offers them: the projects, each with why the Harness
-     * cannot use it (more folders than it takes) and the 程序目录内 mark, then each run's own folder where the Host makes one.
+     * cannot use it (more folders than it takes) and the 程序目录内 mark, then the owner's home.
      */
     public static func locations(_ catalog: NativeJSON, harness: NativeJSON) -> [PhoneScheduleLocation] {
         let limit = harness["projectFolders"]["access"].string == "all" ? harness["projectFolders"]["max"].integer : nil
@@ -172,16 +172,15 @@ public enum PhoneScheduleProposals {
             let reason = project["unavailable"].string ?? (limit.map { folders > Int($0) ? "\(label) 最多使用 \($0) 个文件夹" : nil } ?? nil)
             return PhoneScheduleLocation(id: id, name: PhoneConversation.visible(project["name"].string ?? id), unavailable: reason, codeRoot: project["codeRoot"].bool)
         }
-        let start = catalog["sessionFolders"].bool && catalog["workspaces"].array.contains { $0["id"].string == "default" }
-        return projects + (start ? [PhoneScheduleLocation(id: "default", name: "每次新的文件夹", unavailable: nil, codeRoot: false)] : [])
+        return projects + [PhoneScheduleLocation(id: "default", name: "家", unavailable: nil, codeRoot: false)]
     }
-    /** The Harness a schedule of this owner runs on: the Agent's own, 通用's the Host's default. */
+    /** A custom Agent retains its Harness; General always runs Standard Agent. */
     public static func harness(_ catalog: NativeJSON, agent: NativeJSON) -> NativeJSON {
-        PhoneStart.harness(catalog, agent["harnessId"].string ?? catalog["defaults"]["harnessId"].string)
+        PhoneStart.harness(catalog, agent["harnessId"].string ?? "standard")
     }
     /** Why the form cannot be saved now; nil when it can. */
     public static func blocker(_ proposal: PhoneProposal, location: String?, catalog: NativeJSON, agent: NativeJSON, connected: Bool, canRun: Bool) -> String? {
-        if let block = PhoneScheduleWrite.blocker(agent: agent, connected: connected, canRun: canRun) { return block }
+        if let block = PhoneScheduleWrite.blocker(agent: agent, connected: connected, canRun: canRun, manual: true) { return block }
         guard proposal.state == .pending else { return proposal.state == .saved ? "已保存" : "不要了" }
         guard let location else { return "先选工作位置" }
         guard let place = locations(catalog, harness: harness(catalog, agent: agent)).first(where: { $0.id == location }) else { return "这个项目已不可用。" }
@@ -191,13 +190,14 @@ public enum PhoneScheduleProposals {
      * The schedule as the proposal has it, through the same create the editor uses: `proposalId` makes the Host check it
      * is this owner's open schedule proposal and mark it saved; a retry sends the same request.
      */
-    public static func create(owner: String, proposal: PhoneProposal, location: String, notify: Bool) throws -> NativePendingWrite {
+    public static func create(owner: String, proposal: PhoneProposal, location: String, notify: Bool, enabled: Bool = true) throws -> NativePendingWrite {
         guard PhoneAgents.validId(owner), PhoneProposals.validId(proposal.id), let schedule = proposal.schedule else { throw NativeFailure.invalidRecord }
         let prompt = proposal.prompt.trimmingCharacters(in: .whitespacesAndNewlines), name = schedule.rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !name.isEmpty else { throw NativeFailure.invalidRecord }
         var fields: [String: NativeJSON] = ["name": .string(name), "prompt": .string(prompt), "schedule": schedule.plan, "notify": .bool(notify),
             "proposalId": .string(proposal.id)]
         if owner != PhoneAgents.generalId { fields["customAgentId"] = .string(owner) }
+        if !enabled { fields["enabled"] = .bool(false) }
         if location != "default" {
             guard LinkBytes.matches(location, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord }
             fields["projectId"] = .string(location)

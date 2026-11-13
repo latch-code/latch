@@ -240,6 +240,7 @@ struct ScheduleProposalForm: View {
     private var agent: NativeJSON { owner == PhoneAgents.generalId ? .null : model.snapshot["customAgents"].array.first { $0["id"].string == owner } ?? .null }
     private var held: NativePendingWrite? { PhoneScheduleProposals.held(model.pending, proposalId: proposal.id) }
     private var places: [PhoneScheduleLocation] { PhoneScheduleProposals.locations(catalog, harness: PhoneScheduleProposals.harness(catalog, agent: agent)) }
+    private var enabled: Bool { agent == .null || agent["canAutomate"].bool }
     private var blocker: String? {
         if held != nil { return nil }
         if !model.pending.isEmpty { return "上一项提交结果待确认" }
@@ -270,6 +271,7 @@ struct ScheduleProposalForm: View {
                         Label(PhoneScheduleLocation.codeRootNotice, systemImage: "exclamationmark.triangle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     }
                     Toggle("结果出来时通知我", isOn: $notify).tint(PhoneTheme.accent)
+                    if !enabled { Text("保存为已关闭，可手动运行").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 }
                 .disabled(held != nil || saving)
                 Section {
@@ -306,7 +308,7 @@ struct ScheduleProposalForm: View {
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { dismiss() } }
     }
     private func save() {
-        guard let location, let write = try? PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: location, notify: notify) else { return }
+        guard let location, let write = try? PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: location, notify: notify, enabled: enabled) else { return }
         send(write)
     }
     private func send(_ write: NativePendingWrite) {
