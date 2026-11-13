@@ -183,10 +183,12 @@ function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; e
       const active = document.activeElement
       const inCard = card.current?.contains(active) === true && takesKeysAt(active)
       const escapeRefuses = escapeRefusesAt(active)
-      const numeric = !(
-        active instanceof Element
-        && active.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
-      )
+      const numeric =
+        cardTakesKeys(card.current, active)
+        && !(
+          active instanceof Element
+          && active.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
+        )
       setPlaces(places =>
         places.inCard === inCard && places.escapeRefuses === escapeRefuses && places.numeric === numeric
           ? places
@@ -358,7 +360,7 @@ function ApprovalPanel({
   useEffect(() => {
     if (!numbered) return
     const keydown = (event: globalThis.KeyboardEvent) => {
-      if (!cardTakesKeys(card.current) || event.defaultPrevented || event.repeat || event.isComposing) return
+      if (!cardTakesKeys(card.current, event.target) || event.defaultPrevented || event.repeat || event.isComposing) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
       if (
         event.target instanceof Element
@@ -486,11 +488,6 @@ function ApprovalPanel({
           </div>
           <div className="approval-meta">
             {context}
-            {quietReason && (
-              <Hint className="approval-reason-hint" label="操作说明" lead={<span />}>
-                {approval.reason}
-              </Hint>
-            )}
             {!presentation && toolName && toolName !== action && (
               <code className="tool-card-name">
                 <VisibleText text={toolName} />

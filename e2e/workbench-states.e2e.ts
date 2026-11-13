@@ -20,6 +20,8 @@ async function shot(page: Page, name: string, width: number, theme: 'light' | 'd
   await page.emulateMedia({ colorScheme: theme })
   await page.evaluate(() => document.fonts.ready)
   await settleShell(page)
+  if (!name.includes('loading'))
+    await expect.poll(() => page.locator('.approval-panel[data-arming], .question-card[data-arming]').count()).toBe(0)
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${OUT}/${name}--${theme}--${width}.png`, animations: 'disabled', caret: 'hide' })
 }

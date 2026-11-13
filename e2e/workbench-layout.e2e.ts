@@ -67,6 +67,7 @@ async function capture(page: Page, surface: string, width: number, theme: 'light
   await page.mouse.move(0, 0)
   await page.evaluate(() => document.fonts.ready)
   await settleShell(page)
+  await expect.poll(() => page.locator('.approval-panel[data-arming], .question-card[data-arming]').count()).toBe(0)
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${OUTPUT}/${surface}--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
 }
@@ -277,8 +278,8 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             const home = page.locator('.workbench-home')
             await reachable(home.locator(`[data-work-session="${waiting.summary.id}"]`))
             expect(await home.locator(`[data-work-session="${failed.summary.id}"]`).textContent()).toContain('失败')
-            await noHorizontalOverflow(page, home)
             await capture(page, layout, width, theme)
+            await noHorizontalOverflow(page, home)
             expect(await home.locator(`[data-work-session="${recent.summary.id}"]`).count()).toBe(0)
             if (width < 768 && layout === 'triage') {
               await home.getByRole('button', { name: '可交付', exact: true }).click()
@@ -302,6 +303,11 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               if ((layout === 'overview') !== ((await shell.getAttribute('data-inspector')) === 'open'))
                 await page.keyboard.press('Alt+Shift+b')
               await expect.poll(() => shell.getAttribute('data-inspector')).toBe(layout === 'overview' ? 'open' : null)
+              if (layout === 'overview') {
+                const changes = page.locator('.session-overview-section').first()
+                expect(await changes.textContent()).toContain('这台设备不能读取项目改动')
+                expect(await changes.locator('.ui-count').count()).toBe(0)
+              }
               await capture(page, `${layout}-session`, width, theme)
               await openHome(page)
             }

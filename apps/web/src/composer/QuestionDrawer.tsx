@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
 import { Button, InlineNotice, Kbd, Tooltip } from '@latch/ui'
 import { api, inlineError, MessageError } from '../core/api.ts'
@@ -50,6 +50,58 @@ function readDraft(key: string, question: AgentQuestion): Draft {
   return emptyDraft(question)
 }
 
+interface SharedAnswer {
+  draft: Draft
+  busy: boolean
+  error: string
+}
+interface AnswerStore {
+  get(): SharedAnswer
+  update(value: SharedAnswer): void
+  subscribe(listener: () => void): () => void
+}
+const answersByQuestion = new Map<string, AnswerStore>()
+function answerStore(key: string, question: AgentQuestion): AnswerStore {
+  const previous = answersByQuestion.get(key)
+  if (previous) return previous
+  let value: SharedAnswer = { draft: readDraft(key, question), busy: false, error: '' }
+  const listeners = new Set<() => void>()
+  // Home and the retained conversation share a write. Once neither renders it, only its durable draft remains.
+  const release = () =>
+    queueMicrotask(() => {
+      if (!listeners.size && !value.busy && answersByQuestion.get(key) === store) answersByQuestion.delete(key)
+    })
+  const store: AnswerStore = {
+    get: () => value,
+    update: next => {
+      value = next
+      for (const listener of listeners) listener()
+      release()
+    },
+    subscribe: listener => {
+      listeners.add(listener)
+      answersByQuestion.set(key, store)
+      return () => {
+        listeners.delete(listener)
+        release()
+      }
+    },
+  }
+  answersByQuestion.set(key, store)
+  return store
+}
+const noAnswer = { get: () => undefined, subscribe: () => () => {} }
+function numberKeysAt(card: HTMLElement | null, target: EventTarget | null, pageKeys: boolean): boolean {
+  return (
+    cardTakesKeys(card, target)
+    && (pageKeys || card?.contains(target instanceof Node ? target : null) === true)
+    && !(
+      target instanceof Element
+      && target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
+    )
+  )
+}
+
 /** What the drawer needs and what the composer's text does while a question waits. */
 export interface QuestionDrawerState {
   question: AgentQuestion
@@ -73,11 +125,11 @@ export function useQuestionDrawer(
   actions: QuestionActions,
 ): QuestionDrawerState | undefined {
   const storageKey = question && `latch.questions.${location.origin}.${actions.deviceId}.${sessionId}.${question.id}`
-  const [held, setHeld] = useState<{ key: string; draft: Draft } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  if (!question || !storageKey) return undefined
-  const draft = held?.key === storageKey ? held.draft : readDraft(storageKey, question)
+  const store = useMemo(() => (question && storageKey ? answerStore(storageKey, question) : undefined), [question?.id, storageKey])
+  const shared = useSyncExternalStore(store?.subscribe ?? noAnswer.subscribe, store?.get ?? noAnswer.get, noAnswer.get)
+  if (!question || !storageKey || !store || !shared) return undefined
+  const { draft, busy, error } = shared
+  const update = (changes: Partial<SharedAnswer>) => store.update({ ...store.get(), ...changes })
   const answers = (value: Draft, index: number) => {
     const answer = value.answers[index]!
     return (
@@ -87,17 +139,20 @@ export function useQuestionDrawer(
   }
   const locked = busy || !!draft.pending || question.state === 'answering' || !actions.canAnswer
   const save = (value: Draft) => {
-    setHeld({ key: storageKey, draft: value })
+    const latest = store.get()
+    if (latest.busy || latest.draft.pending || latest.draft !== draft) return
+    update({ draft: value })
     try {
       localStorage.setItem(storageKey, JSON.stringify(value))
-      setError('')
+      update({ error: '' })
     } catch {
-      setError('本设备无法保存回答草稿，请允许站点存储后重试。')
+      update({ error: '本设备无法保存回答草稿，请允许站点存储后重试。' })
     }
   }
   const send = async (value: Draft) => {
-    if (busy || !actions.canAnswer) return
-    const submission = value.pending ?? {
+    const latest = store.get()
+    if (latest.busy || !actions.canAnswer || latest.draft !== draft) return
+    const submission = latest.draft.pending ?? {
       requestId: crypto.randomUUID(),
       answers: value.answers.map(answer => ({
         questionId: answer.questionId,
@@ -109,12 +164,10 @@ export function useQuestionDrawer(
     try {
       localStorage.setItem(storageKey, JSON.stringify(pending))
     } catch {
-      setError('本设备无法保存这次提交，请允许站点存储后重试。')
+      update({ error: '本设备无法保存这次提交，请允许站点存储后重试。' })
       return
     }
-    setHeld({ key: storageKey, draft: pending })
-    setBusy(true)
-    setError('')
+    update({ draft: pending, busy: true, error: '' })
     try {
       const receipt = await api<QuestionReceipt>(
         `tasks/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(question.id)}/answer`,
@@ -125,9 +178,9 @@ export function useQuestionDrawer(
       localStorage.removeItem(storageKey)
       await actions.onChanged()
     } catch (cause) {
-      setError(`${inlineError(cause)} · 这次回答还在，重试会沿用它。`)
+      update({ error: `${inlineError(cause)} · 这次回答还在，重试会沿用它。` })
     } finally {
-      setBusy(false)
+      update({ busy: false })
     }
   }
   /** One answer settled: the next question, or, after the last, the whole answer goes. */
@@ -210,17 +263,22 @@ export function QuestionDrawer({
   const options = current.options
   const armed = useArmed(`${question.id}:${draft.step}`)
   const card = useRef<HTMLElement>(null)
+  const pageKeys = presentation !== 'workbench' || firstKeys
+  const [numeric, setNumeric] = useState(false)
+  useEffect(() => {
+    const read = () => setNumeric(numberKeysAt(card.current, document.activeElement, pageKeys))
+    read()
+    const events = ['focusin', 'focusout', 'input', 'toggle'] as const
+    for (const name of events) document.addEventListener(name, read, true)
+    return () => {
+      for (const name of events) document.removeEventListener(name, read, true)
+    }
+  }, [armed, pageKeys])
   useEffect(() => {
     if (locked || !armed) return undefined
     const keydown = (event: KeyboardEvent) => {
-      if (!canAnswer || !cardTakesKeys(card.current)) return
-      if (presentation === 'workbench' && !firstKeys && !card.current?.contains(document.activeElement)) return
+      if (!canAnswer || !numberKeysAt(card.current, event.target, pageKeys)) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || event.repeat) return
-      if (
-        event.target instanceof Element
-        && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
-      )
-        return
       const option = /^[1-9]$/u.test(event.key) ? options[Number(event.key) - 1] : undefined
       if (!option) return
       event.preventDefault()
@@ -230,7 +288,7 @@ export function QuestionDrawer({
     return () => {
       document.removeEventListener('keydown', keydown)
     }
-  }, [locked, armed, canAnswer, options, state, presentation, firstKeys])
+  }, [locked, armed, canAnswer, options, state, pageKeys])
   const last = draft.step === question.questions.length - 1
   return (
     <section
@@ -271,7 +329,7 @@ export function QuestionDrawer({
                 onClick={() => {
                   if (armed) state.choose(option.id)
                 }}>
-                {index < 9 && (!presentation || presentation === 'conversation' || firstKeys) && <Kbd>{index + 1}</Kbd>}
+                {index < 9 && armed && !locked && numeric && <Kbd>{index + 1}</Kbd>}
                 <VisibleText text={option.label} />
               </button>
             </Tooltip>

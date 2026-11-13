@@ -110,19 +110,22 @@ function DeliveryRow({
       </Button>
       <div className="work-delivery-state">
         <span>
-          {checks ?? (state?.files ? `工作区未提交 ${state.files} 个文件` : state?.ahead ? `${state.ahead} 个提交未推送` : '查看交付状态')}
+          {checks ?? (state?.files ? `目录未提交 ${state.files} 个文件` : state?.ahead ? `${state.ahead} 个提交未推送` : '查看交付状态')}
         </span>
         <Button size="xs" onClick={onOpen}>
           {pr ? '查看 PR' : state?.files ? '查看改动' : '继续交付'}
         </Button>
       </div>
+      {checks && state && (state.files > 0 || state.ahead > 0) && (
+        <p className="work-delivery-changes">{state.files > 0 ? `目录未提交 ${state.files} 个文件` : `${state.ahead} 个提交未推送`}</p>
+      )}
       <div className="work-delivery-project">
         <Icon icon={FolderGlyph} size={12} />
         {escapeSecurityText(project?.name ?? '无项目')}
         {state?.branch && <span>{escapeSecurityText(state.branch)}</span>}
       </div>
       {entry.error && <p className="work-delivery-error">{entry.error.message}</p>}
-      {changing && <p className="work-delivery-live">其他会话正在改动这个工作区</p>}
+      {changing && <p className="work-delivery-live">其他会话正在改动这个目录</p>}
     </div>
   )
 }
@@ -254,7 +257,7 @@ export function WorkOverview({
                 title={
                   group.id === 'delivery'
                     ? (deliveryNotice
-                      ?? (deliveryPartial ? '部分工作区暂时无法读取' : unobserved ? '已查看的会话没有待交付改动' : group.empty))
+                      ?? (deliveryPartial ? '部分目录暂时无法读取' : unobserved ? '已查看的会话没有待交付改动' : group.empty))
                     : group.empty
                 }
               />
@@ -356,7 +359,7 @@ export function WorkOverview({
               && !evidence.error
               && [...evidence.entries.values()].some(entry => entry.error || entry.prError) && (
                 <p className="work-overview-connection">
-                  部分工作区暂时无法读取{' '}
+                  部分目录暂时无法读取{' '}
                   <Button
                     variant="ghost"
                     size="xs"

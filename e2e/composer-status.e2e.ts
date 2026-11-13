@@ -361,7 +361,7 @@ describe('the composer status line', () => {
         // The card keeps its own edge, rather than the retired drawer/composer joint.
         expect(Math.round(drawer.width)).toBe(Math.round(form.width))
         expect(Math.round(form.top - drawer.bottom)).toBeGreaterThanOrEqual(7)
-        expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('4px')
+        expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('14px')
         expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('14px')
         // A phone has only the context, which this Harness has not reported yet: no line at all.
         if (width > 390) expect(await status(page).evaluate(row => row === row.parentElement?.lastElementChild)).toBe(true)

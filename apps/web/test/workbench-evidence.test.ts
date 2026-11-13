@@ -71,6 +71,17 @@ describe('workbench delivery evidence', () => {
     expect(deliveryChecks(withChecks([{ name: 'test', state: 'fail' }]))).toBe('1 项检查失败')
   })
 
+  it('keeps the bound PR when another settled session in its working tree is more recent', () => {
+    const tasks = [task('bound', { cwd: '/project' }), task('recent', { cwd: '/project', updatedAt: '2026-11-13T02:00:00Z' })]
+    const entries = new Map([
+      ['bound', entry('bound', { pr: { pr, checks: [] } })],
+      ['recent', entry('recent')],
+    ])
+    expect([...deliverySessions(tasks, entries)]).toEqual(['bound'])
+    entries.set('bound', entry('bound', { prError: { code: 'gh-unreachable', message: '暂时无法读取 PR' } }))
+    expect([...deliverySessions(tasks, entries)]).toEqual(['bound'])
+  })
+
   it('keeps a bound PR read error distinct from an absent PR', () => {
     expect(deliveryChecks(entry('none'))).toBeUndefined()
     expect(deliveryChecks(entry('failed', { prError: { code: 'gh-unreachable', message: '暂时无法读取 PR' } }))).toBe('暂时无法读取 PR')

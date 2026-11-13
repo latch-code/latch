@@ -13,6 +13,7 @@ import { hostNow } from '../core/hostClock.ts'
 import { useWorkbenchSession } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
 import { failureAction } from '../conversation/failureAction.ts'
+import { toolHeading, toolRowId } from '../conversation.ts'
 
 /** The same requests and decision controller as the conversation, presented where the person finds their work. */
 export function WorkbenchDecision({
@@ -32,7 +33,7 @@ export function WorkbenchDecision({
 }) {
   const enabled = shell.connection === 'connected' && shell.access.scopes.has('view')
   const scope = `${shell.snapshot.device.id}:${shell.snapshot.device.dataScope}:${shell.snapshot.device.scopes.join(',')}`
-  const read = useWorkbenchSession(task, scope, enabled && (expanded || !!task.pendingQuestions))
+  const read = useWorkbenchSession(task, scope, enabled)
   const detail = read.detail
   const harness = shell.catalog?.harnesses.find(item => item.id === task.harnessId)
   const project = projectOf(task, shell.catalog?.workspaces ?? [])
@@ -49,6 +50,8 @@ export function WorkbenchDecision({
   const status = workStatus(task, { connected: enabled, now: hostNow() })
   const [index, setIndex] = useState(0)
   const approval = detail?.approvals[0]
+  const toolMessage = approval ? detail?.messages.find(message => message.id === toolRowId(approval)) : undefined
+  const action = approval ? toolHeading(toolMessage?.tool ?? approval.tool, toolMessage?.toolName ?? approval.toolName) : undefined
   const failure = detail?.messages.findLast(message => message.role === 'system' && message.state === 'failed')
   const retryable =
     enabled
@@ -100,17 +103,24 @@ export function WorkbenchDecision({
           onOther={() => shell.choose(task.id)}
         />
       ) : !expanded ? (
-        <Button variant="ghost" className="work-decision-compact" aria-expanded={false} onClick={onExpand}>
-          <span className="work-decision-compact-title">
-            <VisibleText text={task.title || '未命名会话'} />
-          </span>
-          <span className="work-decision-compact-meta">
-            <Icon icon={FolderGlyph} size={12} />
-            <VisibleText text={project?.name ?? '无项目'} />
-            <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
-          </span>
-          <Icon icon={ChevronRightGlyph} size={14} />
-        </Button>
+        <div className="work-decision-compact-row">
+          <Button variant="ghost" className="work-decision-compact" aria-expanded={false} onClick={onExpand}>
+            <span className="work-decision-compact-title">
+              <VisibleText text={action ?? (task.title || '未命名会话')} />
+            </span>
+            <span className="work-decision-compact-meta">
+              <Icon icon={FolderGlyph} size={12} />
+              <VisibleText text={project?.name ?? '无项目'} />
+              <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
+            </span>
+            {!retryable && <Icon icon={ChevronRightGlyph} size={14} />}
+          </Button>
+          {retryable && (
+            <Button size="sm" onClick={() => shell.retryFromWorkbench(detail)}>
+              重试
+            </Button>
+          )}
+        </div>
       ) : approval ? (
         <ApprovalDrawer
           presentation="workbench"

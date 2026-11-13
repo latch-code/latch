@@ -66,7 +66,7 @@ describe('the composer status line', () => {
     expect(markup).not.toContain('报告')
   })
 
-  it('names the external Harness that reported the tokens, and never shows its cost without saying it is not a bill', () => {
+  it('keeps tokens quiet, names the Harness in the route, and retains the cost provenance', () => {
     const owner = summary({ usage, harnessId: 'opencode' })
     const totals = sessionTotals({
       summary: owner,
@@ -80,7 +80,7 @@ describe('the composer status line', () => {
     expect(segments(markup)).toEqual([
       ['route', 'OpenCode'],
       ['context', '上下文 41k / 256k'],
-      ['tokens', '输入 212k 输出 9.4k 由 OpenCode 报告'],
+      ['tokens', '输入 212k 输出 9.4k'],
       ['cost', 'US$0.21 由 OpenCode 报告，不是账单'],
       ['time', '6 分 12 秒 · 2 轮'],
     ])
@@ -121,7 +121,8 @@ describe('the composer status line', () => {
       harness: codex,
     })
     const markup = line({ totals })
-    expect(segments(markup)).toContainEqual(['context', '上下文 74.2k'])
+    expect(segments(markup)).toContainEqual(['context', '上下文 74.2k Codex 未报告上下文总量。'])
+    expect(markup).toContain('aria-label="用量说明"')
     expect(markup).not.toContain('role="meter"')
   })
 
