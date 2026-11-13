@@ -394,6 +394,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `helper-home.e2e.ts` 通过临时 Host 与假 ACP 的正常创建、资料设置和新话题入口核对固定家、模型/思考/权限的真实读回，未确认权限时不发送；截图覆盖三宽深浅。跨桌面与手机检查同一表单 DOM、未保存默认项、活动焦点、未知写入同一 requestId 与关闭后的焦点归还，避免只检查重新入场后的画面。
 
+`helper-live.e2e.ts` 默认跳过；只有所有者明确授权、设置 `LATCH_HELPER_LIVE=1` 和对应 `LATCH_PI_GATEWAY_BINARY`、`LATCH_CODEX_GATEWAY_BINARY` 或 `LATCH_OPENCODE_GATEWAY_BINARY` 才启动真实 CLI。它使用临时 HOME/XDG、临时 Host 与本地脚本化 Chat 服务，经正常页面创建帮手、资料选择服务、实际审批，在 0700 的家写 `notes.md`，用 CLI 自有命令工具读取受控本地网页标题；停止只验证模型请求期间的 Host 取消回执，恢复固定原话题并核对上游收到原工具历史。三宽深浅截图与分项证据写入 `test-results/helper-live/`。测试不读取用户 CLI 登录存储，不验证真实模型或 BYOK，也没有桌面浏览器 provider；命令读取网页不计为 `latch-browser` MCP 调用，提议与其他 MCP 能力另行验证。
+
 `workbench-layout.e2e.ts` 验证总览与分拣台的共用会话、草稿与布局偏好，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 
 `workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。
