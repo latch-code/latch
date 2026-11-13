@@ -2,13 +2,15 @@
 // model routes only, never part of the API's listeners, so a token holder can never act as a device. A harness gets a
 // token, never the service's key; the key goes only to the service, through the same outbound fetch the built-in harness
 // uses. A token is bound to two protocols: the one the harness speaks (its entry, which decides the paths it may use and
-// the shape of every answer) and the one the service speaks (upstream). Today they are always the same: requests pass
-// through as they came, with only the key and the protocol's own headers changed.
+// the shape of every answer) and the one the service speaks (upstream). Same-protocol requests pass through; only
+// explicitly implemented cross-protocol pairs enter the bounded gateway IR.
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
   PROVIDER_WIRES,
+  canTranslate,
+  type GatewayLoss,
   type ModelCapabilities,
   type ModelWire,
   type ProviderKind,
@@ -24,6 +26,11 @@ import { anthropicEndpoint, anthropicHeaders } from './plugins/providers/anthrop
 import { chatEndpoint, chatHeaders } from './plugins/providers/chat-wire.ts'
 import { geminiEndpoint, geminiHeaders } from './plugins/providers/gemini-wire.ts'
 import type { FetchLike } from './plugins/providers/http.ts'
+import { ReasoningSeals } from './model-gateway/reasoning.ts'
+import { decodeResponses, ResponsesOutput } from './model-gateway/in/responses.ts'
+import { decodeChat, decodeChatReply, encodeChat } from './model-gateway/out/chat.ts'
+import type { GatewayRequest, GatewayDelta } from './model-gateway/ir.ts'
+import type { ToolNames } from './model-gateway/tools.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
 export interface GatewayService {
@@ -64,6 +71,7 @@ interface Tally {
   models: Map<string, RoutedModel>
   /** Forwarded requests whose result is not counted yet. */
   open: Set<OpenRequest>
+  dropped: Set<GatewayLoss>
 }
 
 /** A forwarded request until its result is counted: its reply, once the service answers, is read as it passes. */
@@ -101,7 +109,7 @@ const GEMINI_METHODS = new Set(['generateContent', 'streamGenerateContent', 'cou
 
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
 const bareModel = (model: string) => model.replace(/^models\//u, '')
-const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set() })
+const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set(), dropped: new Set() })
 
 /** Adds a reply's tokens; a part stays only while every reply added reported it, so it never claims tokens it does not cover. */
 function addUsage(total: TokenUsage | undefined, usage: TokenUsage): TokenUsage {
@@ -188,6 +196,14 @@ function withoutKey(text: string, apiKey: string): string {
   return redactKnownSecrets(output)
 }
 
+/** Scrub strings before another JSON layer escapes them, especially the JSON string inside function.arguments. */
+function safeJson(value: unknown, apiKey: string): string {
+  return withoutKey(
+    JSON.stringify(value, (_key, field: unknown) => (typeof field === 'string' ? withoutKey(field, apiKey) : field)),
+    apiKey,
+  )
+}
+
 /** A successful JSON or SSE response may carry errors too; keep only a possible key prefix between UTF-8 chunks. */
 function replyRedactor(apiKey: string) {
   const decoder = new TextDecoder()
@@ -269,7 +285,10 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
   const path = url.pathname
   if (entry !== 'gemini' && method === 'GET' && path === '/v1/models') return { list: true }
   if (method !== 'POST' && entry !== 'gemini') return undefined
-  if (entry === 'responses') return path === '/v1/responses' ? { upstream: base => chatEndpoint(base, '/responses') } : undefined
+  if (entry === 'responses')
+    return path === '/v1/responses'
+      ? { upstream: base => chatEndpoint(base, upstream === 'chat-completions' ? '/chat/completions' : '/responses') }
+      : undefined
   if (entry === 'chat-completions')
     return path === '/v1/chat/completions' ? { upstream: base => chatEndpoint(base, '/chat/completions') } : undefined
   if (entry === 'anthropic-messages') {
@@ -345,6 +364,7 @@ function withUsage(entry: ModelWire, body: Record<string, unknown>): Buffer | un
 
 export class ModelGatewayServer implements ModelGateway {
   private readonly bindings = new Map<string, Binding>()
+  private readonly reasoning = new ReasoningSeals()
   private server?: Server
   private port?: number
 
@@ -389,9 +409,11 @@ export class ModelGatewayServer implements ModelGateway {
     const service = this.deps.service(route.providerId)
     if (!service)
       throw new AppError(409, 'model-route-unavailable', '这个会话开始时用的模型服务现在不能用：它被删除或停用了，或地址还没确认。')
-    // Passed through as it came: the harness speaks the service's own protocol.
-    if (PROVIDER_WIRES[service.kind] !== route.wire || originOf(service.baseURL) !== route.origin)
+    const upstream = route.upstream ?? route.wire
+    if (PROVIDER_WIRES[service.kind] !== upstream || originOf(service.baseURL) !== route.origin)
       throw new AppError(409, 'model-route-changed', '这个会话开始时用的模型服务换了协议或地址，不能再经 Latch 用它。请新开一个会话。')
+    if (route.wire !== upstream && !canTranslate(route.wire, upstream))
+      throw new AppError(400, 'model-route-unsupported', '这两个协议之间的转换尚未实现')
     const models = new Set(service.models.map(bareModel))
     if (!models.has(bareModel(route.model)))
       throw new AppError(409, 'model-unavailable', `模型服务里已经没有「${route.model}」，这个会话不能再经 Latch 用它。`)
@@ -418,7 +440,7 @@ export class ModelGatewayServer implements ModelGateway {
       token,
       requests: () => binding.count,
       takeTurn: (): RoutedTurn => {
-        const { requests, models, open } = binding.turn
+        const { requests, models, open, dropped } = binding.turn
         binding.turn = newTally()
         // Copies: a reply still under way settles into the counts just taken, which nobody reads again, never into what
         // the caller keeps.
@@ -436,7 +458,7 @@ export class ModelGatewayServer implements ModelGateway {
             if (facts?.model) copy.used = usedModel(facts.model, request.apiKey)
           }
         }
-        return { requests, models: [...copies.values()] }
+        return { requests, models: [...copies.values()], ...(dropped.size ? { dropped: [...dropped] } : {}) }
       },
       models: [...models],
       ...(service.modelCapabilities
@@ -505,6 +527,7 @@ export class ModelGatewayServer implements ModelGateway {
       return refuse(res, 413, 'body-too-large', error instanceof Error ? error.message : '请求内容过大', shape)
     }
     let model = target.model
+    let fields: Record<string, unknown> = {}
     if (model === undefined) {
       let parsed: unknown
       try {
@@ -512,7 +535,7 @@ export class ModelGatewayServer implements ModelGateway {
       } catch {
         return refuse(res, 400, 'invalid-json', '请求不是有效的 JSON', shape)
       }
-      const fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+      fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
       model = typeof fields.model === 'string' ? bareModel(fields.model) : undefined
       body = withUsage(binding.entry, fields) ?? body
     }
@@ -521,6 +544,30 @@ export class ModelGatewayServer implements ModelGateway {
     if (!model || !binding.models.has(model)) {
       failed(entry)
       return refuse(res, 403, 'gateway-model', `模型「${(model ?? '').slice(0, 64)}」不在这个会话的模型服务里，Latch 没有转发`, shape)
+    }
+    let translated: { request: GatewayRequest; tools: ToolNames } | undefined
+    if (binding.entry !== binding.upstream) {
+      try {
+        const scope = { providerId: binding.providerId, model }
+        const converted = decodeResponses(fields, value => this.reasoning.open(scope, value))
+        const allowed = service.modelCapabilities?.[model]?.thinking
+        if (converted.effort && !allowed?.includes(converted.effort))
+          throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
+        const encoded = encodeChat(converted)
+        body = Buffer.from(JSON.stringify(encoded.body))
+        if (body.length > MAX_BODY_BYTES) throw new AppError(413, 'body-too-large', '转换后的请求内容过大，Latch 没有转发')
+        translated = { request: converted, tools: encoded.tools }
+        for (const loss of converted.dropped) tally.dropped.add(loss)
+      } catch (error) {
+        failed(entry)
+        return refuse(
+          res,
+          400,
+          'gateway-translation-input',
+          error instanceof AppError ? error.message : '请求不能转换为这个服务的协议',
+          shape,
+        )
+      }
     }
     // The body may have arrived over many awaits: a closed process or a changed service must not send its old key.
     service = this.current(hash, binding)
@@ -531,7 +578,7 @@ export class ModelGatewayServer implements ModelGateway {
     const request: OpenRequest | undefined = entry ? { tally, entry, apiKey: service.apiKey } : undefined
     if (request) tally.open.add(request)
     try {
-      await this.forward(req, res, binding, service, target.upstream(service.baseURL), body, request)
+      await this.forward(req, res, binding, service, target.upstream(service.baseURL), body, request, translated)
     } finally {
       finish(request)
     }
@@ -545,13 +592,14 @@ export class ModelGatewayServer implements ModelGateway {
     upstream: string,
     body: Buffer,
     request: OpenRequest | undefined,
+    translated?: { request: GatewayRequest; tools: ToolNames },
   ): Promise<void> {
     const wire = binding.upstream
     const shape = binding.entry === 'anthropic-messages' ? 'anthropic' : 'openai'
     const headers: Record<string, string> = { 'content-type': 'application/json', ...authHeaders(wire, service.apiKey) }
     // Named protocol headers only, never a credential: what the harness says of its protocol replaces Latch's default.
     const passed = binding.entry === binding.upstream && wire === 'anthropic-messages'
-    for (const name of [...FORWARDED_HEADERS[binding.entry], ...(passed ? ANTHROPIC_HEADERS : [])]) {
+    for (const name of [...(translated ? ['accept'] : FORWARDED_HEADERS[binding.entry]), ...(passed ? ANTHROPIC_HEADERS : [])]) {
       const value = req.headers[name]
       if (typeof value === 'string') headers[name] = value
     }
@@ -583,8 +631,34 @@ export class ModelGatewayServer implements ModelGateway {
     if (!response.ok) {
       finish(request)
       const text = response.body ? await errorText(response.body) : ''
-      res.writeHead(response.status, returned)
-      res.end(withoutKey(text, service.apiKey))
+      const safe = withoutKey(text, service.apiKey)
+      if (translated) {
+        const status = response.status >= 500 ? 503 : response.status
+        const code = /context_length_exceeded|maximum context|context window|prompt is too long/iu.test(safe)
+          ? 'context_length_exceeded'
+          : status === 429
+            ? 'rate_limit_exceeded'
+            : status === 503
+              ? 'server_is_overloaded'
+              : 'gateway-upstream'
+        res.writeHead(status, { ...returned, 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: {
+              type: status < 500 ? 'invalid_request_error' : 'server_error',
+              code,
+              message: safe.slice(0, 1000) || '模型服务拒绝了请求',
+            },
+          }),
+        )
+      } else {
+        res.writeHead(response.status, returned)
+        res.end(safe)
+      }
+      return
+    }
+    if (translated) {
+      await this.translateReply(response, res, binding, service, request, translated, returned, controller.signal)
       return
     }
     res.writeHead(response.status, returned)
@@ -619,6 +693,113 @@ export class ModelGatewayServer implements ModelGateway {
       finish(request, complete || facts.ended ? facts : undefined)
       await reader.cancel().catch(() => {})
       res.end(redactor.end())
+    }
+  }
+
+  private async translateReply(
+    response: Response,
+    res: ServerResponse,
+    binding: Binding,
+    service: GatewayService,
+    request: OpenRequest | undefined,
+    translated: { request: GatewayRequest; tools: ToolNames },
+    returned: Record<string, string>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { request: input, tools } = translated
+    const safe = (text: string) => withoutKey(text, service.apiKey)
+    const scope = { providerId: binding.providerId, model: input.model }
+    const output = new ResponsesOutput(input, tools, text => this.reasoning.seal(scope, safe(text)), safe)
+    const reply = replyReader(binding.upstream, response.headers.get('content-type'))
+    if (request) request.reply = reply
+    const write = async (events: ReturnType<ResponsesOutput['start']>) => {
+      for (const event of events) {
+        if (res.destroyed || signal.aborted) return
+        if (event.type === 'response.completed' || event.type === 'response.incomplete') finish(request, reply.facts())
+        const frame = `event: ${event.type}\ndata: ${safeJson(event, service.apiKey)}\n\n`
+        if (!res.write(frame)) await new Promise<void>(resolve => res.once('drain', resolve).once('close', resolve))
+      }
+    }
+    try {
+      if (!response.body) throw new AppError(502, 'gateway-upstream', '模型服务没有回复正文')
+      const body = response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            reply.feed(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      if (input.stream) {
+        if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+          await body.cancel()
+          throw new AppError(502, 'gateway-upstream', '模型服务没有返回事件流')
+        }
+        res.writeHead(200, { ...returned, 'content-type': 'text/event-stream; charset=utf-8' })
+        await write(output.start())
+        // Decode before redaction so a key split across two logical deltas cannot evade the rolling scrubber.
+        const scrubbers = { text: replyRedactor(service.apiKey), reasoning: replyRedactor(service.apiKey) }
+        const encoder = new TextEncoder()
+        for await (const delta of decodeChat(body, signal)) {
+          if (delta.type === 'loss') {
+            request?.tally.dropped.add(delta.loss)
+            continue
+          }
+          if (delta.type === 'text' || delta.type === 'reasoning') {
+            const text = scrubbers[delta.type].feed(encoder.encode(delta.text))
+            if (text) await write(output.push({ ...delta, text }))
+          } else {
+            if (delta.type === 'finish')
+              for (const type of ['text', 'reasoning'] as const) {
+                const text = scrubbers[type].end()
+                if (text) await write(output.push({ type, text }))
+              }
+            await write(output.push(delta))
+          }
+        }
+        await write(output.finish())
+        finish(request, reply.end())
+        res.end()
+      } else {
+        const reader = body.getReader()
+        let text = ''
+        const decoder = new TextDecoder('utf-8', { fatal: true })
+        try {
+          for (;;) {
+            signal.throwIfAborted()
+            const next = await reader.read()
+            if (next.done) break
+            text += decoder.decode(next.value, { stream: true })
+            if (text.length > 8 * 1024 * 1024) throw new AppError(502, 'gateway-upstream', '模型回复过大')
+          }
+          text += decoder.decode()
+        } finally {
+          await reader.cancel().catch(() => {})
+        }
+        const deltas: GatewayDelta[] = decodeChatReply(JSON.parse(text))
+        for (const delta of deltas) {
+          if (delta.type === 'loss') request?.tally.dropped.add(delta.loss)
+          else output.push(delta)
+        }
+        output.finish()
+        finish(request, reply.end())
+        res.writeHead(200, { ...returned, 'content-type': 'application/json; charset=utf-8' })
+        res.end(safeJson(output.result(), service.apiKey))
+      }
+    } catch (error) {
+      finish(request)
+      if (res.destroyed || signal.aborted) return
+      const message = error instanceof AppError ? safe(error.message) : '模型回复未完整转换，本轮没有确认完成'
+      if (res.headersSent) {
+        await write(output.fail(message, error instanceof AppError ? error.code : 'gateway-upstream'))
+        res.end()
+      } else
+        refuse(
+          res,
+          error instanceof AppError ? error.status : 502,
+          error instanceof AppError ? error.code : 'gateway-translation-output',
+          message,
+        )
     }
   }
 }

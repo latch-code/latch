@@ -536,14 +536,26 @@ function routedOptions(
   })
 }
 
-/** The Host's route as a driver keeps it: only its four fields, each bounded. */
+/** The Host's route as a driver keeps it: only routing fields, each bounded. */
 function checkedRoute(route: unknown): ModelRoute | undefined {
   if (route === undefined) return undefined
-  const { providerId, model, wire, origin } = (route ?? {}) as Record<string, unknown>
+  const { providerId, model, wire, upstream, origin } = (route ?? {}) as Record<string, unknown>
   const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max
-  if (!text(providerId, 128) || !text(model, 200) || !WIRES.has(wire) || !text(origin, 300))
+  if (
+    !text(providerId, 128)
+    || !text(model, 200)
+    || !WIRES.has(wire)
+    || (upstream !== undefined && !WIRES.has(upstream))
+    || !text(origin, 300)
+  )
     throw new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
-  return { providerId, model, wire: wire as ModelRoute['wire'], origin }
+  return {
+    providerId,
+    model,
+    wire: wire as ModelRoute['wire'],
+    origin,
+    ...(upstream !== undefined ? { upstream: upstream as ModelRoute['wire'] } : {}),
+  }
 }
 
 /** A fork's position, as a creation's payload names it. */
@@ -3359,7 +3371,12 @@ export class AgentRuntime implements Bridge {
     const gateway = this.selection.profile?.gateway
     if (!gateway?.wires.includes(route.wire))
       throw new AppError(400, 'model-route-unsupported', `${this.agent.name} 不能经 Latch 使用这个模型服务`)
-    const base = { providerId: route.providerId, origin: route.origin, wire: route.wire }
+    const base = {
+      providerId: route.providerId,
+      origin: route.origin,
+      wire: route.wire,
+      ...(route.upstream ? { upstream: route.upstream } : {}),
+    }
     if (gateway.via === 'providers') return { ...base, via: 'providers', names: [gateway.providerId, gateway.apiType] }
     return { ...base, via: 'launch', names: [gateway.tokenEnv, ...gateway.envNames].sort(), templates: { ...gateway.templates } }
   }

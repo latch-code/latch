@@ -18,6 +18,8 @@ sources:
 ---
 # Latch 插件开发
 
+`ModelRoute.wire` 是 Harness 使用的入口协议；可选 `upstream` 是服务协议，旧的同协议记录不带它。Host 与网关只接受已实现的转换对，启动指纹纳入这一区别。`RoutedTurn.dropped` 只含实际转换损耗的闭合枚举。
+
 Harness 的 `ModelGatewayLease.modelCapabilities` 是已保存服务对模型的 vision/thinking 声明，缺失时保持未知，不按模型名猜；它不含价格或上下文容量。网关协议与租约规则见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
 **插件**由用户围绕一项工作设计、创建和启停。一个自定义插件可以同时提供技能、工具、React 界面、模型 Provider 与完整 Harness，也可以只包含其中几项。文件放在一个插件包目录中，Host 内部以一个 Cordis fiber 管理它的贡献与资源。功能由这些贡献和 Host 模块共同实现，不需要为每项功能发明一个注册类别。

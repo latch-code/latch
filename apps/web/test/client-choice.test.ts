@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_PRESETS,
   pairRoute,
+  GATEWAY_LOSSES,
   type AppSnapshot,
   type HarnessInfo,
   type HostCatalog,
@@ -629,7 +630,7 @@ describe('a model service for a Harness with its own models', () => {
   })
   const codex = services.harnesses[1]!
 
-  it('routes a pair by protocol: forwarded when the Harness speaks it, a translation Latch lacks otherwise', () => {
+  it('prefers the same protocol, advertises only implemented translations and refuses other pairs', () => {
     expect(pairRoute(codex.capabilities)).toEqual({ kind: 'own' })
     expect(pairRoute(codex.capabilities, { kind: 'openai-responses' })).toEqual({
       kind: 'passthrough',
@@ -638,7 +639,14 @@ describe('a model service for a Harness with its own models', () => {
     })
     expect(pairRoute(codex.capabilities, { kind: 'openai-compatible' })).toEqual({
       kind: 'translate',
-      from: 'chat-completions',
+      wire: 'responses',
+      upstream: 'chat-completions',
+      experimental: true,
+      losses: GATEWAY_LOSSES,
+    })
+    expect(pairRoute(codex.capabilities, { kind: 'anthropic' })).toEqual({
+      kind: 'incompatible',
+      from: 'anthropic-messages',
       speaks: ['responses'],
     })
     expect(pairRoute(codex.capabilities, { kind: 'demo' })).toEqual({ kind: 'unavailable', reason: 'not-a-service' })
@@ -651,8 +659,11 @@ describe('a model service for a Harness with its own models', () => {
     expect(picked).toEqual({ effort: 'high', '~service': 'openai\u0000gpt-5.5-mini' })
     expect(servicePick(services, codex, picked)).toEqual({ providerId: 'openai', model: 'gpt-5.5-mini' })
     expect(withServicePick(picked, undefined)).toEqual({ effort: 'high' })
-    // A service it does not speak, a model the service does not list, the demo model and the built-in Harness are no pick.
-    expect(servicePick(services, codex, { '~service': 'deepseek\u0000deepseek-chat' })).toBeUndefined()
+    expect(servicePick(services, codex, { '~service': 'deepseek\u0000deepseek-chat' })).toEqual({
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    })
+    // A model the service does not list, the demo model and the built-in Harness are no pick.
     expect(servicePick(services, codex, { '~service': 'openai\u0000gone' })).toBeUndefined()
     expect(servicePick(services, codex, { '~service': 'demo\u0000demo' })).toBeUndefined()
     expect(servicePick(services, services.harnesses[0], { '~service': 'openai\u0000gpt-5.5' })).toBeUndefined()
@@ -661,7 +672,9 @@ describe('a model service for a Harness with its own models', () => {
       harnessId: 'codex',
       config: { '~service': 'openai\u0000gpt-5.5-mini' },
     })
-    expect(resolveChoice(services, { harnessId: 'codex', config: { '~service': 'deepseek\u0000deepseek-chat' } }).config).toBeUndefined()
+    expect(resolveChoice(services, { harnessId: 'codex', config: { '~service': 'deepseek\u0000deepseek-chat' } }).config).toEqual({
+      '~service': 'deepseek\u0000deepseek-chat',
+    })
     // Another Harness never inherits it: the pick stays with Codex's own.
     const away = resolveChoice(services, { harnessId: 'standard', otherPicks: { codex: picked! } })
     expect(away.config).toBeUndefined()

@@ -23,12 +23,14 @@ export interface ProjectFolder {
 
 /**
  * A model service a harness's requests go to through the Host's gateway, as the Host derives it from its own records: the
- * service, the model chosen, the protocol both speak and the service's `scheme://host:port`. Never a key or a token.
+ * service, the model chosen, the entry/upstream protocols and the service's `scheme://host:port`. Never a key or a token.
  */
 export interface ModelRoute {
   providerId: string
   model: string
   wire: ModelWire
+  /** Absent on existing same-protocol routes; then equal to wire. */
+  upstream?: ModelWire
   origin: string
 }
 

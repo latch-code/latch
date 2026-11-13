@@ -4,6 +4,7 @@ import {
   modelIdKey,
   pairRoute,
   WIRE_NAMES,
+  GATEWAY_LOSS_NAMES,
   type AgentPresetSettings,
   type AgentSettings,
   type HarnessInfo,
@@ -471,14 +472,31 @@ export function serviceRef(value: string): ModelRef | undefined {
 function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string | undefined {
   const name = harnessName(harness)
   const route = pairRoute(harness.capabilities, provider)
-  if (route.kind === 'passthrough') return undefined
-  if (route.kind === 'translate')
+  if (route.kind === 'passthrough' || route.kind === 'translate') return undefined
+  if (route.kind === 'incompatible')
     return MODEL_MENU_COPY.wrongProtocol(
       name,
       route.speaks.map(wire => WIRE_NAMES[wire]),
       WIRE_NAMES[route.from],
     )
   return MODEL_MENU_COPY.notRouted(name)
+}
+
+/** Shared by the composer menu and the phone's new-session sheet; unsupported pairs never appear as usable. */
+export function translationBrief(catalog: HostCatalog, harness: HarnessInfo | undefined, providerId?: string): Brief | undefined {
+  const translated = harness
+    ? catalog.providers.flatMap(provider => {
+        if (providerId && providerId !== provider.id) return []
+        const route = pairRoute(harness.capabilities, provider)
+        return route.kind === 'translate' ? [{ name: provider.name, losses: route.losses }] : []
+      })
+    : []
+  return translated.length
+    ? {
+        label: '协议转换 · 实验性',
+        detail: `${translated.map(item => item.name).join('、')} 使用协议转换。略去或受限：${[...new Set(translated.flatMap(item => item.losses))].map(loss => GATEWAY_LOSS_NAMES[loss]).join('、')}。文件与服务端会话状态不能转换。`,
+      }
+    : undefined
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
@@ -583,7 +601,8 @@ export function ownModelGroups(
       })
       continue
     }
-    const experimental = harness?.capabilities.models.experimental ? '实验性 · ' : ''
+    const route = pairRoute(harness.capabilities, provider)
+    const experimental = route.kind === 'translate' || harness.capabilities.models.experimental ? '实验性 · ' : ''
     groups.push({
       id: `~service-${provider.id}`,
       label: `${provider.name} · ${experimental}经 Latch`,
@@ -1016,6 +1035,7 @@ function HarnessModelPicker({
     computer,
   )
   const unusable = unusableServices(catalog, harness, computer, session)
+  const translationNote = translationBrief(catalog, harness, picked?.providerId ?? session?.route?.providerId)
   const routeLine = session?.route
     ? routeNote(catalog, name, session.route, computer)
     : groups.some(group => group.id.startsWith('~service-'))
@@ -1053,6 +1073,7 @@ function HarnessModelPicker({
       footer={
         <div className="model-footer">
           <UnusableServices services={unusable} />
+          {translationNote && <BriefHint brief={translationNote} className="model-note" />}
           {note && <p className="model-note">{note}</p>}
           {others.map(option => (
             <ConfigRow
