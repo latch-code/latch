@@ -2,7 +2,8 @@ import { useState, useSyncExternalStore } from 'react'
 import { TextCursorInput } from 'lucide-react'
 import type { HarnessInfo } from '@latch/protocol'
 import { Button, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, inlineError } from '../core/api.ts'
+import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
 import { dateTime } from '../format.ts'
@@ -80,7 +81,8 @@ export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise
 
 /**
  * The model menu's rows about where the list comes from: when it was read and by what, reading it now, a read that
- * failed with the Harness's reason, and typing an ID it does not list.
+ * failed with the Harness's reason, reading it again, and typing an ID it does not list. A preset on offer is read once
+ * its definition is saved, which this Mac confirms first: nothing runs a program this Mac has not confirmed.
  */
 export function CatalogueRows({
   harness,
@@ -97,22 +99,35 @@ export function CatalogueRows({
   onRead?: (() => void | Promise<void>) | undefined
 }) {
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
   const name = harnessName(harness)
   const read = harness.catalogueRead
-  const canRun = access.scopes.has('run') && harness.status === 'ready' && harness.offer === undefined
+  const ready = access.scopes.has('run') && harness.status === 'ready'
+  const canRun = ready && harness.offer === undefined
   const running = useReading(harness)
   const catalogue = harness.catalogue
   const run = async () => {
-    if (running) return
+    if (running || saving) return
     setError('')
     try {
+      if (harness.offer) {
+        setSaving(true)
+        try {
+          await saveOfferedPreset(harness.offer.presetId)
+        } finally {
+          setSaving(false)
+        }
+      }
       await readHarnessCatalogue(harness, false)
       await onRead?.()
     } catch (cause) {
-      setError(errorMessage(cause))
+      // A confirmation that did not go through says so on its own card.
+      setError(inlineError(cause))
+      await onRead?.()
     }
   }
   const failed = error || (read?.last && !read.last.ok ? (read.last.message ?? '没有读到。') : '')
+  const label = failed ? '重新读取' : catalogue ? '刷新模型列表' : `读取 ${name} 的模型列表`
   return (
     <>
       {catalogue && (
@@ -127,14 +142,14 @@ export function CatalogueRows({
           <VisibleText text={failed} />
         </p>
       )}
-      {read && canRun && !running && (
+      {((read && canRun) || (harness.offer && ready)) && !running && (
         <MenuFooterLink
           icon={RefreshGlyph}
           chevron={false}
           onClick={() => {
             void run()
           }}>
-          {catalogue || failed ? '重新读取' : `读取 ${name} 的模型列表`}
+          {label}
         </MenuFooterLink>
       )}
       {hasModels && canRun && (

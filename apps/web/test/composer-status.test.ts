@@ -78,7 +78,7 @@ describe('the composer status line', () => {
     })
     const markup = line({ route: statusRoute(catalog, opencode, {}), totals })
     expect(segments(markup)).toEqual([
-      ['route', 'OpenCode 自己的模型'],
+      ['route', 'OpenCode'],
       ['context', '上下文 41k / 256k'],
       ['tokens', '输入 212k 输出 9.4k 由 OpenCode 报告'],
       ['cost', 'US$0.21 由 OpenCode 报告，不是账单'],
@@ -98,9 +98,10 @@ describe('the composer status line', () => {
       text: 'OpenAI · 已停用',
       note: '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。',
     })
-    // A draft says the service it picked, or the Harness's own models.
+    // A draft says the service it picked, or the Harness with the real name of its own model, as its menu does.
     expect(statusRoute(catalog, codex, { picked: { providerId: 'openai', model: 'gpt-5.5' } })?.text).toBe('OpenAI · 经 Latch')
-    expect(statusRoute(catalog, codex, {})?.text).toBe('Codex 自己的模型')
+    expect(statusRoute(catalog, codex, { model: 'GPT-5.5' })?.text).toBe('Codex · GPT-5.5')
+    expect(statusRoute(catalog, codex, {})?.text).toBe('Codex')
     expect(statusRoute(catalog, undefined, {})).toBeUndefined()
   })
 
@@ -109,7 +110,7 @@ describe('the composer status line', () => {
     const running = detail({ messages: [{ id: 'u1', role: 'user', text: '一', createdAt: at(1) }] }, owner)
     const totals = sessionTotals({ summary: owner, detail: running, harness: codex })
     expect(totals).toEqual({ by: 'Codex' })
-    expect(segments(line({ route: statusRoute(catalog, codex, {}), totals }))).toEqual([['route', 'Codex 自己的模型']])
+    expect(segments(line({ route: statusRoute(catalog, codex, {}), totals }))).toEqual([['route', 'Codex']])
   })
 
   it('writes the context without a meter when the Harness reported no window size', () => {

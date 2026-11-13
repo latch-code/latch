@@ -58,6 +58,9 @@ export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
   version: 1,
   ownModelsOnly: true,
+  // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, so its lists are read only on
+  // request, as pi's are.
+  catalogueRead: { when: 'request' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

@@ -4,6 +4,8 @@ import type { HarnessProfile } from './types.ts'
 export const dshProfile: HarnessProfile = {
   presetId: 'dsh',
   version: 1,
+  // An empty session runs no turn and calls no model.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     // DeepSeek Harness takes any non-empty DSH_TELEMETRY_DISABLED as off.

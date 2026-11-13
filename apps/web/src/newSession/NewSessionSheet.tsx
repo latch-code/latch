@@ -17,6 +17,8 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { agentConfigValues, DEFAULT_LEVEL, DEFAULT_MODEL } from '../composer/modelReasoning.ts'
 import {
+  defaultModelOf,
+  defaultTag,
   onComputer,
   OWN_MODEL,
   ownModelGroups,
@@ -191,6 +193,7 @@ export function NewSessionSheet({
         value: item.value,
         label: escapeHiddenCharacters(item.name),
         ...(item.description ? { description: escapeHiddenCharacters(item.description) } : {}),
+        ...(option.category === 'model' ? defaultTag(item.value, defaultModelOf(harness)) : {}),
       }))}
       {...(footer ? { footer } : {})}
       {...(footer && option.category === 'model' ? { onOpenChange: opened, ...typedPanel(option.id) } : {})}
@@ -290,7 +293,11 @@ export function NewSessionSheet({
                   catalog,
                   harness,
                   modelOption
-                    ? agentConfigValues(modelOption).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))
+                    ? agentConfigValues(modelOption).map(item => ({
+                        value: item.value,
+                        label: escapeHiddenCharacters(item.name),
+                        ...defaultTag(item.value, defaultModelOf(harness)),
+                      }))
                     : [{ value: OWN_MODEL, label: DEFAULT_MODEL }],
                   undefined,
                   computer,
@@ -343,7 +350,7 @@ export function NewSessionSheet({
             </>
           ) : (
             harness
-            && (harness.catalogueRead ? (
+            && (harness.catalogueRead || harness.offer ? (
               <>
                 <ValuePicker
                   variant="row"

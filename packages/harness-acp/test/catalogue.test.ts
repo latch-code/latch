@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionConfigOption } from '@latch/protocol'
-import { shownCatalogue, startCatalogue, withModelOptions } from '../src/catalogue.ts'
+import { catalogueReadOf, shownCatalogue, startCatalogue, withModelOptions } from '../src/catalogue.ts'
+import { FALLBACK_PROFILES, HARNESS_PROFILES } from '../src/profiles/index.ts'
 
 const hash = 'a'.repeat(64)
 const select = (id: string, category: string, values: string[], name = (value: string) => value): SessionConfigOption => ({
@@ -45,5 +46,34 @@ describe('the catalogue a phone receives with every snapshot', () => {
     expect(shown.perModel[0]!.model).toBe('m31')
     const huge = Array.from({ length: 200 }, (_, index) => `${'n'.repeat(200)}${index}`)
     expect(shownCatalogue(built([select('model', 'model', huge, value => value), select('other', 'model_config', huge)]))).toBeUndefined()
+  })
+})
+
+describe("when a draft reads a Harness's lists by itself", () => {
+  it("reads by selection only where the read runs no turn, no model call and none of the person's own hooks", () => {
+    const rule = (presetId: string) => catalogueReadOf(HARNESS_PROFILES.get(presetId))
+    // Codex's model/list opens no thread, on its own app-server and through the adapter's; it reports no modes.
+    expect(rule('codex')).toEqual({ when: 'select', modes: false })
+    expect(catalogueReadOf(FALLBACK_PROFILES.get('codex'))).toEqual({ when: 'select', modes: false })
+    // An empty ACP session: no prompt, so no turn and no model call.
+    for (const presetId of ['dsh', 'cursor', 'gemini', 'goose', 'qwen', 'opencode'])
+      expect(rule(presetId)).toEqual({ when: 'select', modes: true })
+    // Starting these runs the person's own session hooks and extensions, so only a person asks.
+    expect(rule('pi')).toEqual({ when: 'request', modes: true })
+    expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
+    // A command with no profile was confirmed as the program to run, and its empty session runs no turn either.
+    expect(catalogueReadOf(undefined)).toEqual({ when: 'select', modes: true })
+    // Every preset decides; none is left to the default.
+    expect([...HARNESS_PROFILES.keys()].sort()).toEqual([
+      'claude-agent',
+      'codex',
+      'cursor',
+      'dsh',
+      'gemini',
+      'goose',
+      'opencode',
+      'pi',
+      'qwen',
+    ])
   })
 })

@@ -1046,18 +1046,26 @@ export class AgentRuntime implements Bridge {
   /**
    * Reads what a new session would offer without running a turn, and keeps it as the catalogue. Never on a timer: a
    * draft's selection asks with `auto`, which reads only a `select` harness that nothing is known of for this definition,
-   * once; a person asks without it. A failure is kept as the last read, so a selection does not try again.
+   * once, and only one it may launch now; a person asks without it, which replaces the list. A failure is kept as the last
+   * read, so a selection does not try again.
    */
   readCatalogue(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }> {
     if (this.reading) return this.reading
     const reading = (async () => {
       await this.ready()
       this.assertOpen()
-      const { definitionHash } = this.currentLaunch()
       if (options.auto) {
         const read = this.catalogueRead()
         if (read?.when !== 'select' || read.last || this.catalogue()) return { ran: false }
+        // A selection never runs a definition this Mac has not confirmed, or one whose command now names another
+        // program; a person who asks is told why.
+        try {
+          this.currentLaunch()
+        } catch {
+          return { ran: false }
+        }
       }
+      const { definitionHash } = this.currentLaunch()
       await options.before?.()
       this.readingNow = true
       this.notify()

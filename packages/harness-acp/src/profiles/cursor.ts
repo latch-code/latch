@@ -53,6 +53,8 @@ export const cursorProfile: HarnessProfile = {
   presetId: 'cursor',
   version: 1,
   ownModelsOnly: true,
+  // An empty session runs no turn and calls no model.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

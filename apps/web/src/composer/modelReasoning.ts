@@ -136,6 +136,12 @@ export function agentConfigValues(option: SessionConfigOption): SessionConfigOpt
   })
 }
 
+/** The name of the model a Harness reported among its options, as its model menu shows it. */
+export function ownModelName(config: readonly SessionConfigOption[] | undefined): string | undefined {
+  const option = config?.find(item => item.category === 'model')
+  return option ? agentConfigLabel(option) : undefined
+}
+
 export function agentConfigLabel(option: SessionConfigOption): string {
   return option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue
 }

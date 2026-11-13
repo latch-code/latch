@@ -3,8 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { AppSnapshot, TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protocol'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
@@ -76,6 +76,13 @@ describe("choosing a Harness's own options before the first message", () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
+    // Saved on this Mac first: a page elsewhere is offered no preset, and nothing reads a definition not confirmed here.
+    const preset = AGENT_PRESETS.find(item => item.id === 'codex')!
+    const saved = await owner.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: preset.command, args: preset.args, env: {} },
+    })
+    expect(saved.status).toBe(201)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -593,8 +600,20 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       commandDirectories: () => [bin],
     })
     const owner = await host.enroll({ listener: 'unix' })
-    const offered = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.filter(harness => harness.offer)
-    expect(offered.map(harness => [harness.id, harness.catalogueRead])).toEqual([['gemini', { when: 'select', modes: true }]])
+    const saved = await owner.confirmed('agents', {
+      method: 'POST',
+      body: {
+        id: 'gemini',
+        name: 'Gemini CLI',
+        presetId: 'gemini',
+        command: 'gemini',
+        args: ['--acp', '--approval-mode', 'default'],
+        env: {},
+      },
+    })
+    expect(saved.status).toBe(201)
+    const gemini = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'gemini')
+    expect(gemini?.catalogueRead).toEqual({ when: 'select', modes: true })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -645,6 +664,148 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       expect(await sent()).toHaveLength(1)
       await rule.click()
       await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
+      await noHorizontalOverflow(page)
+    } finally {
+      await context.close()
+    }
+  })
+})
+
+/** Codex over its own app-server, saved on this Mac: its model/list says the models a draft offers. */
+describe("choosing one of Codex's own models in a draft", () => {
+  let directory: string
+  let log: string
+  let host: TestHost
+  let browser: Browser
+
+  beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'latch-e2e-codex-models-'))
+    log = join(directory, 'codex.log')
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'codex'),
+      [
+        '#!/bin/sh',
+        `export FAKE_ACP_LOG='${log}' FAKE_CODEX_STATE='${join(directory, 'threads.json')}'`,
+        `exec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"`,
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'codex'), 0o755)
+    host = await startTestHost({ demo: false, sessionFolders: true, commandDirectories: () => [bin] })
+    const owner = await host.enroll({ listener: 'unix' })
+    const saved = await owner.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: join(bin, 'codex'), args: [], env: {} },
+    })
+    expect(saved.status).toBe(201)
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(OUTPUT, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const lines = async () =>
+    (await readFile(log, 'utf8').catch(() => ''))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as { event: string; method?: string | null; params?: Record<string, unknown> })
+  const received = async (method: string) => (await lines()).filter(line => line.event === 'recv' && line.method === method)
+  const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+  const row = (page: Page, name: RegExp) =>
+    page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+
+  it('reads its list when its menu opens, lists the real names with the default marked, and starts on the one picked', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    try {
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      await connected(page)
+      // The draft starts on Codex, the one Harness saved; opening its model menu reads model/list once, with no thread.
+      expect(await chip(page, 'Harness').getAttribute('aria-label')).toBe('Harness：Codex')
+      expect(await received('model/list')).toEqual([])
+      await chip(page, '模型').click()
+      await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toContain('GPT Fake')
+      expect(await received('model/list')).toHaveLength(1)
+      expect(await received('thread/start')).toEqual([])
+      const menu = page.locator('.ui-menu, [role="menu"], [role="listbox"]').filter({ hasText: 'GPT Fake Mini' }).first()
+      await menu.waitFor()
+      await row(page, /^GPT Fake Mini/u).waitFor()
+      await row(page, /^GPT Fake 默认/u).waitFor()
+      expect(await menu.getByText('Codex', { exact: true }).count()).toBe(1)
+      for (const gone of ['Codex 自己的模型', '默认模型', '服务用不了']) expect(await menu.getByText(gone).count()).toBe(0)
+      await menu.getByText('刷新模型列表', { exact: true }).waitFor()
+      await page.screenshot({ path: `${OUTPUT}/codex-models-1440-light.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.screenshot({ path: `${OUTPUT}/codex-models-1440-dark.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'light' })
+
+      // 刷新模型列表 reads again; the list stays.
+      await menu.getByText('刷新模型列表', { exact: true }).click()
+      await expect.poll(async () => (await received('model/list')).length, { timeout: 15_000 }).toBe(2)
+      await row(page, /^GPT Fake Mini/u).click()
+      await expect.poll(() => chip(page, '模型').innerText()).toContain('GPT Fake Mini')
+      // 思考 offers exactly the levels Codex listed for that model.
+      await chip(page, '思考').click()
+      await row(page, /^Medium/u).waitFor()
+      expect(await row(page, /^High/u).count()).toBe(0)
+      await page.keyboard.press('Escape')
+
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.fill('第一轮')
+      await input.press('Meta+Enter')
+      const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+      if (
+        await elsewhere.waitFor({ timeout: 3_000 }).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        await elsewhere.click()
+        await input.press('Meta+Enter')
+      }
+      await page.locator('.transcript').getByText('echo: 第一轮', { exact: true }).first().waitFor({ timeout: 20_000 })
+      const started = await received('thread/start')
+      const turns = await received('turn/start')
+      expect(started.at(-1)?.params?.model ?? turns.at(-1)?.params?.model).toBe('gpt-fake-mini')
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('lists the same on a phone', async () => {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      locale: 'zh-CN',
+      reducedMotion: 'reduce',
+      isMobile: true,
+      hasTouch: true,
+    })
+    try {
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      await connected(page)
+      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
+        if (await button.isVisible()) {
+          await button.click()
+          break
+        }
+      }
+      const sheet = page.locator('.new-session-sheet')
+      await sheet.waitFor()
+      await sheet.getByRole('button', { name: /^Harness/u }).click()
+      await row(page, /^Codex/u).click()
+      await sheet.getByRole('button', { name: /^模型/u }).click()
+      await row(page, /^GPT Fake Mini/u).waitFor()
+      await row(page, /^GPT Fake 默认/u).waitFor()
+      await page.screenshot({ path: `${OUTPUT}/codex-models-390-light.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.screenshot({ path: `${OUTPUT}/codex-models-390-dark.png`, animations: 'disabled' })
       await noHorizontalOverflow(page)
     } finally {
       await context.close()

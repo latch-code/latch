@@ -147,14 +147,14 @@ describe('the composer status line', () => {
       try {
         await segment(page, 'context').waitFor()
         const segments = await shown(page)
-        // A tablet's column is narrower: 用时 gives way first.
-        expect(segments.map(([kind]) => kind)).toEqual(['folder', 'route', 'context', 'tokens', ...(width > 768 ? ['time'] : [])])
+        // The route is the Harness's name alone here, so even a tablet's narrower column keeps 用时.
+        expect(segments.map(([kind]) => kind)).toEqual(['folder', 'route', 'context', 'tokens', 'time'])
         expect(Object.fromEntries(segments)).toMatchObject({
-          route: 'Fake Agent 自己的模型',
+          route: 'Fake Agent',
           context: '上下文 10 / 100',
           tokens: '输入 10 输出 20 由 Fake Agent 报告',
         })
-        if (width > 768) expect(Object.fromEntries(segments).time).toMatch(/1 轮$/u)
+        expect(Object.fromEntries(segments).time).toMatch(/1 轮$/u)
         const meter = segment(page, 'context').getByRole('meter', { name: '上下文' })
         expect(await meter.getAttribute('aria-valuetext')).toBe('10 / 100')
         expect(await meter.locator('.ui-meter-cell[data-on]').count()).toBe(1)
@@ -282,7 +282,7 @@ describe('the composer status line', () => {
           .first()
           .click()
         // No project: the title offers one, and the line says only which way the model goes.
-        await expect.poll(() => shown(page)).toEqual([['route', 'Fake Agent 自己的模型']])
+        await expect.poll(() => shown(page)).toEqual([['route', 'Fake Agent']])
         await shot(page, `a-new-no-project--${width}--${theme}`)
         // The title is the project; the line has its folder choice and its branch.
         await page
@@ -299,7 +299,7 @@ describe('the composer status line', () => {
           .toEqual([
             ['folder', '当前文件夹'],
             ['branch', 'main'],
-            ['route', 'Fake Agent 自己的模型'],
+            ['route', 'Fake Agent'],
           ])
         // The folder choice is whole in the line: its arrow comes after its words.
         const [words, arrow] = await segment(page, 'folder')

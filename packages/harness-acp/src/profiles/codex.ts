@@ -124,6 +124,7 @@ export const codexProfile: HarnessProfile = {
   projectConfigPaths: ['.codex'],
   // Threads are listed and read through `thread/list` and `thread/read`; Latch never reads Codex's own files.
   historyImport: true,
+  // `model/list` opens no thread: no turn, no model call, no hooks or MCP servers, so a draft reads it by itself.
   catalogueRead: { codexModels: ['app-server'] },
   readProjectedChild: projectedChild,
   readDenial: denial,

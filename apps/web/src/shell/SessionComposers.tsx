@@ -27,7 +27,7 @@ import {
 } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
-import { composerOptions, modelWords } from '../composer/modelReasoning.ts'
+import { composerOptions, modelWords, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
@@ -320,7 +320,10 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           {project.branch && <BranchSegment branch={project.branch} />}
         </>
       ) : undefined
-      const route = statusRoute(catalog, chosenHarness, { picked: servicePick(catalog, chosenHarness, choice.config) })
+      const route = statusRoute(catalog, chosenHarness, {
+        picked: servicePick(catalog, chosenHarness, choice.config),
+        model: ownModelName(draftConfig(chosenHarness, choice.config)?.config),
+      })
       return <ComposerStatus place={place} route={route} phone={phone} />
     }
     if (!summary || summary.personal) return null
@@ -340,7 +343,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     return (
       <ComposerStatus
         place={folder || worktree || summary.branch ? place : undefined}
-        route={statusRoute(catalog, harnessInfo, { route: summary.modelRoute })}
+        route={statusRoute(catalog, harnessInfo, { route: summary.modelRoute, model: ownModelName(current?.config) })}
         totals={sessionTotals({ summary, detail: current, harness: harnessInfo })}
         phone={phone}
       />

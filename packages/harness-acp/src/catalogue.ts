@@ -20,6 +20,7 @@ export const MAX_START_CHOICES = MAX_OPTIONS
 export function catalogueReadOf(profile: Pick<HarnessProfile, 'catalogueRead'> | undefined): Pick<CatalogueRead, 'when' | 'modes'> {
   const configured = profile?.catalogueRead
   if (configured && 'codexModels' in configured) return { when: 'select', modes: false }
+  // A command without a profile was confirmed on this Mac as the program to run; its empty session runs no turn.
   return { when: configured?.when ?? 'select', modes: true }
 }
 

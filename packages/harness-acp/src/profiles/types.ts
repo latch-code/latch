@@ -236,12 +236,13 @@ export interface HarnessProfile {
     readonly upgrade: string
   }
   /**
-   * How a draft's lists are read before a session. Absent: an empty session in a private folder, once, when a draft
-   * first selects the harness with nothing known. `request`: the same, only when a person asks, because the process loads
-   * more than the harness when it starts. `codexModels`: Codex's own `model/list` through the adapter's bundled CLI, with
-   * these arguments after the definition's, which opens no session or thread.
+   * How a draft's lists are read before a session, decided per preset (docs/HARNESSES.md「什么时候读」). A draft reads by
+   * itself (`select`) only where the read runs no turn, calls no model and starts none of the person's own session hooks
+   * or extensions; otherwise only when a person asks (`request`). Both open an empty session in a private folder, once.
+   * `codexModels`: Codex's own `model/list` with these arguments after the definition's, which opens no session or
+   * thread, so a draft reads it by itself.
    */
-  readonly catalogueRead?: { readonly when: 'request' } | { readonly codexModels: readonly string[] }
+  readonly catalogueRead: { readonly when: 'select' | 'request' } | { readonly codexModels: readonly string[] }
   /**
    * Rewrites one `session/update` into what ACP says before Latch reads it, where this harness says the same thing its own
    * way. Returns the update to read; it never adds what the harness did not send.

@@ -16,6 +16,7 @@ import {
 import { PermissionList } from '../src/composer/PermissionList.tsx'
 import { controlKeyCaps, controlKeyText } from '../src/composer/modelReasoning.ts'
 import { forkedChoice, forkSource } from '../src/forkChoice.ts'
+import { draftConfig } from '../src/composerChoice.ts'
 
 const service = (id: string, name: string, kind: ProviderSummary['kind']): ProviderSummary => ({
   id,
@@ -50,29 +51,26 @@ afterEach(() => {
 })
 
 describe('the services a Harness cannot use, folded into one row', () => {
-  it('gives each the reason in the words decided for it: a protocol Codex does not speak is not 尚未实现', () => {
+  it('gives each the reason in the words decided for it: which protocols Codex speaks, and which the service does', () => {
     const info = codex()
     const off = unusableServices(catalogOf(info), info)
     expect(off.map(item => [item.name, item.reason])).toEqual([
-      ['DeepSeek', 'Codex 不说这个服务的协议'],
-      ['Ollama 本地', 'Codex 不说这个服务的协议'],
+      ['DeepSeek', 'Codex 只说 Responses，这个服务是 Chat Completions'],
+      ['Ollama 本地', 'Codex 只说 Responses，这个服务是 Chat Completions'],
     ])
-    // The one it can use is listed with its models, not folded.
+    // The one it can use is listed with its models, not folded; the Harness's own models are under its name.
     const groups = ownModelGroups(catalogOf(info), info, [{ value: 'own', label: 'gpt-5.5' }])
-    expect(groups.map(group => group.label)).toEqual(['Codex 自己的模型', 'OpenAI · 实验性 · 经 Latch'])
+    expect(groups.map(group => group.label)).toEqual(['Codex', 'OpenAI · 实验性 · 经 Latch'])
     expect(JSON.stringify(groups)).not.toContain('尚未实现')
   })
 
-  it('says of a Harness Latch does not forward yet that it is not done, since a step builds it', () => {
-    const info = opencode()
-    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('转发 OpenCode 的请求尚未实现'))
-    expect(ownModelGroups(catalogOf(info), info, []).map(group => group.id)).toEqual(['~own'])
-  })
-
-  it('says of a Harness that uses only its own models that it does not, never that it is unfinished', () => {
-    const info = testHarness('claude-agent', { label: 'Claude Agent' })
-    info.capabilities.models = { ...info.capabilities.models, wires: [], ownOnly: true }
-    expect(unusableServices(catalogOf(info), info).map(item => item.reason)).toEqual(Array(3).fill('Claude Agent 只用自己的模型'))
+  it('has no such row for a Harness Latch forwards to no service: it uses its own models, and nothing else applies', () => {
+    const own = testHarness('claude-agent', { label: 'Claude Agent' })
+    own.capabilities.models = { ...own.capabilities.models, wires: [], ownOnly: true }
+    for (const info of [opencode(), own]) {
+      expect(unusableServices(catalogOf(info), info)).toEqual([])
+      expect(ownModelGroups(catalogOf(info), info, []).map(group => group.id)).toEqual(['~own'])
+    }
   })
 
   it('keeps the rule that a session stays on the service it started with, with its reason', () => {
@@ -127,6 +125,101 @@ describe('the services a Harness cannot use, folded into one row', () => {
     expect(html.indexOf('2 个服务用不了')).toBeGreaterThan(html.indexOf('经 Latch'))
     // What 「经 Latch」 means, and whose key it uses, stays one press away under a short label.
     expect(html).toMatch(/<span class="ui-hint-label">经 Latch 转发<\/span><button[^>]*aria-label="说明"/u)
+  })
+})
+
+/** Codex direct, as its app-server's model/list reads: Latch forwards it to no service. */
+const codexDirect = (extra: Partial<HarnessInfo> = {}): HarnessInfo => ({
+  ...testHarness('codex', { label: 'Codex' }),
+  catalogueRead: { when: 'select', modes: false },
+  ...extra,
+})
+const efforts = (values: string[]): SessionConfigOption => ({
+  id: 'reasoning_effort',
+  name: 'Reasoning effort',
+  category: 'thought_level',
+  currentValue: values[0]!,
+  options: values.map(value => ({ value, name: value.charAt(0).toUpperCase() + value.slice(1) })),
+})
+const codexList: NonNullable<HarnessInfo['catalogue']> = {
+  options: [
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      currentValue: 'gpt-5.5',
+      options: [
+        { value: 'gpt-5.5', name: 'GPT-5.5' },
+        { value: 'gpt-5.5-mini', name: 'GPT-5.5 mini' },
+      ],
+    },
+    efforts(['medium', 'high']),
+  ],
+  perModel: [
+    { model: 'gpt-5.5', options: [efforts(['medium', 'high'])] },
+    { model: 'gpt-5.5-mini', options: [efforts(['low', 'medium'])] },
+  ],
+  reportedAt: '2026-11-13T00:00:00.000Z',
+  source: 'check',
+}
+const draftMenu = (info: HarnessInfo, config?: Record<string, string>) =>
+  renderToStaticMarkup(
+    createElement(DraftModelControl, {
+      catalog: catalogOf(info),
+      choice: { harnessId: 'codex', mode: 'agent', workspaceId: 'default', ...(config ? { config } : {}) },
+      onChoice() {},
+      access: { legacy: false, local: true, admin: true, scopes: new Set(['view', 'run', 'admin'] as const) },
+      disabled: false,
+    }),
+  )
+
+describe("a draft's model menu for a Harness with its own models", () => {
+  it('lists them by their real names under the Harness, the default marked beside its name, with 刷新模型列表', () => {
+    const html = draftMenu(codexDirect({ catalogue: codexList }))
+    expect(html).toContain('GPT-5.5 mini')
+    expect(html).toMatch(/GPT-5\.5<\/span>[^]*?默认/u)
+    expect(html).not.toMatch(/GPT-5\.5 mini<\/span>[^<]*<[^>]*>默认/u)
+    expect(html.match(/>默认</gu)).toHaveLength(1)
+    expect(html).toContain('>Codex<')
+    for (const gone of ['自己的模型', '默认模型', '服务用不了']) expect(html).not.toContain(gone)
+    expect(html).toContain('刷新模型列表')
+    expect(html).toContain('读取于 ')
+  })
+
+  it('says 默认模型 only while the Harness reported nothing, and offers to read it', () => {
+    const html = draftMenu(codexDirect())
+    expect(html).toContain('默认模型')
+    expect(html).toContain('读取 Codex 的模型列表')
+    expect(html).not.toContain('发第一条消息后可以换')
+  })
+
+  it('says why the last read failed, with 重新读取', () => {
+    const html = draftMenu(
+      codexDirect({ catalogueRead: { when: 'select', modes: false, last: { at: 'now', ok: false, message: 'Codex 还没登录。' } } }),
+    )
+    expect(html).toContain('没有读到：')
+    expect(html).toContain('Codex 还没登录。')
+    expect(html).toContain('重新读取')
+    expect(html).not.toContain('刷新模型列表')
+  })
+
+  it('offers a preset not saved yet the same read, which saves it on this Mac first', () => {
+    const offered = codexDirect({ offer: { presetId: 'codex' } })
+    delete offered.catalogueRead
+    const html = draftMenu(offered)
+    expect(html).toContain('读取 Codex 的模型列表')
+    expect(html).not.toContain('发第一条消息后可以换')
+    expect(html).not.toContain('填写模型 ID')
+  })
+
+  it('offers exactly the thinking levels the Harness reported for the model picked', () => {
+    const info = codexDirect({ catalogue: codexList })
+    const thinking = (config?: Record<string, string>) =>
+      draftConfig(info, config)
+        ?.config.find(option => option.category === 'thought_level')
+        ?.options.map(item => item.value)
+    expect(thinking()).toEqual(['medium', 'high'])
+    expect(thinking({ model: 'gpt-5.5-mini' })).toEqual(['low', 'medium'])
   })
 })
 

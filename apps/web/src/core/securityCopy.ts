@@ -827,12 +827,10 @@ export const MODE_COPY = {
  */
 export const MODEL_MENU_COPY = {
   unusable: (count: number) => `${count} 个服务用不了`,
-  /** The Harness speaks a protocol the service does not. */
-  wrongProtocol: (agent: string) => `${agent} 不说这个服务的协议`,
-  /** A Harness that Latch cannot route to a service yet. */
+  /** The Harness speaks a protocol the service does not: which ones each speaks. */
+  wrongProtocol: (agent: string, speaks: readonly string[], service: string) => `${agent} 只说 ${speaks.join('、')}，这个服务是 ${service}`,
+  /** A Harness or service Latch does not forward between: no Harness chosen yet, or a plugin's own provider. */
   notRouted: (agent: string) => `转发 ${agent} 的请求尚未实现`,
-  /** Claude Agent, Cursor, a custom command or a plugin's source: it uses its own models only. */
-  ownModelsOnly: (agent: string) => `${agent} 只用自己的模型`,
   missingKey: '没有密钥 · 在设置 › 模型里添加',
   unconfirmed: (computer = 'Mac') => `地址还没确认 · 在 ${computer} 上确认`,
 } as const

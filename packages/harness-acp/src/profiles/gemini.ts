@@ -108,6 +108,8 @@ function readRetry(update: SessionUpdate): RetryReport | undefined {
 export const geminiProfile: HarnessProfile = {
   presetId: 'gemini',
   version: 2,
+  // An empty session runs no turn and calls no model.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

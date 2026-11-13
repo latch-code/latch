@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AGENT_PRESETS, type AppSnapshot, type ModelRef, type FileMention, type WorktreeStart } from '@latch/protocol'
+import { type AppSnapshot, type ModelRef, type FileMention, type WorktreeStart } from '@latch/protocol'
 import {
   api,
   fromInput,
@@ -27,6 +27,7 @@ import {
 } from '../composerChoice.ts'
 import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import { withConfirmation } from '../core/confirmations.ts'
+import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import {
   abandonSubmission,
@@ -281,26 +282,14 @@ export function useSubmission({
    */
   const saveOfferedHarness = async (): Promise<boolean> => {
     const presetId = catalog?.harnesses.find(item => item.id === choice.harnessId)?.offer?.presetId
-    const preset = AGENT_PRESETS.find(item => item.id === presetId)
-    if (!preset) return true
+    if (presetId === undefined) return true
     sendingRef.current = true
     setSending(true)
     setError('')
     try {
-      const body = {
-        id: preset.id,
-        name: preset.name,
-        presetId: preset.id,
-        command: preset.command,
-        args: preset.args,
-        env: {},
-        enabled: true,
-      }
-      // Saving a Harness definition is confirmed on this Mac; the composer's card shows it.
-      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
+      await saveOfferedPreset(presetId)
       return true
     } catch (cause) {
-      if (cause instanceof ApiError && cause.code === 'agent-exists') return true
       refuse(cause)
       return false
     } finally {

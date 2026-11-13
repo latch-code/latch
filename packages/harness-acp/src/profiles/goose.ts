@@ -3,6 +3,8 @@ import type { HarnessProfile } from './types.ts'
 export const gooseProfile: HarnessProfile = {
   presetId: 'goose',
   version: 1,
+  // An empty session runs no turn and calls no model.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: { GOOSE_MODE: 'approve' },

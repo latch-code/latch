@@ -342,7 +342,7 @@ describe('pi over its own RPC mode', () => {
     }
   })
 
-  it("lists a saved service on a phone's new session as on the desktop, with why pi cannot use it", async () => {
+  it("lists no saved service under pi on a phone's new session or the desktop: pi uses only its own models", async () => {
     const created = await owner.confirmed('providers', {
       method: 'POST',
       body: {
@@ -356,7 +356,6 @@ describe('pi over its own RPC mode', () => {
       },
     })
     expect(created.status).toBe(201)
-    const reason = '转发 pi 的请求尚未实现'
     for (const width of [1440, 390] as const) {
       const page = await open(width, 'dark')
       for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
@@ -372,10 +371,9 @@ describe('pi over its own RPC mode', () => {
       } else await chip(page, '模型').click()
       // The menu's group, not the status line under the input, which names the same thing.
       const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
-      await inMenu('pi 自己的模型').waitFor()
-      // The services pi cannot use fold into one row; opening it says why.
-      await inMenu('1 个服务用不了').click()
-      await inMenu(reason).waitFor()
+      await inMenu('读取 pi 的模型列表').waitFor()
+      // Latch forwards pi to no service, so no service is listed or folded into a row of ones it cannot use.
+      for (const gone of ['pi 自己的模型', '服务用不了', 'Relay']) expect(await inMenu(gone).count()).toBe(0)
       // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.
       expect(await page.getByText(/「经 Latch」/u).count()).toBe(0)
       await noHorizontalOverflow(page)

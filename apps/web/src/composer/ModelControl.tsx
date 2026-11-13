@@ -14,6 +14,7 @@ import {
   type TaskSummary,
 } from '@latch/protocol'
 import {
+  Badge,
   Icon,
   IconButton,
   MenuFooterLink,
@@ -414,6 +415,8 @@ export function unusableServices(
       name: provider.name,
       reason: heldReason(provider.reason, computer),
     }))
+  // A Harness Latch forwards to no service uses only its own models: there is nothing it could use instead.
+  if (harness && harness.capabilities.models.wires.length === 0 && !session?.route) return []
   return catalog.providers.flatMap(provider => {
     if (provider.kind === 'demo' || provider.id === session?.route?.providerId) return []
     const reason = harness ? serviceReason(harness, provider) : MODEL_MENU_COPY.notRouted('Harness')
@@ -469,8 +472,13 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
   const name = harnessName(harness)
   const route = pairRoute(harness.capabilities, provider)
   if (route.kind === 'passthrough') return undefined
-  if (route.kind === 'translate') return MODEL_MENU_COPY.wrongProtocol(name)
-  return harness.capabilities.models.ownOnly ? MODEL_MENU_COPY.ownModelsOnly(name) : MODEL_MENU_COPY.notRouted(name)
+  if (route.kind === 'translate')
+    return MODEL_MENU_COPY.wrongProtocol(
+      name,
+      route.speaks.map(wire => WIRE_NAMES[wire]),
+      WIRE_NAMES[route.from],
+    )
+  return MODEL_MENU_COPY.notRouted(name)
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
@@ -555,11 +563,12 @@ export function ownModelGroups(
   const routed = session?.route ? routeService(catalog, session.route, computer) : undefined
   const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
   // On a route, the Host offers only the service's models, the ones the gateway forwards.
-  const ownLabel = routed ? `${routed.name} · ${routed.unusable?.words ?? '经 Latch'}` : `${name} 自己的模型`
+  const ownLabel = routed ? `${routed.name} · ${routed.unusable?.words ?? '经 Latch'}` : name
   const ownOptions = routed?.unusable
     ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed.unusable!.words}` }))
     : own
-  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, options: ownOptions }]
+  const ownMedia = !routed && harness ? { media: <HarnessTile harness={harness} size={16} /> } : {}
+  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, ...ownMedia, options: ownOptions }]
   const disabled: Array<PickerGroup<string>['options'][number]> = []
   for (const provider of services) {
     // Without a Harness nothing can be forwarded; `unusableServices` says so.
@@ -589,6 +598,18 @@ export function ownModelGroups(
   if (disabled.length) groups.push({ id: '~services', label: '模型服务', options: disabled })
   return groups
 }
+
+/**
+ * The model a new session of this Harness starts on when nothing is picked, as its own list says: the current value its
+ * last session or read reported. Undefined while it reported none.
+ */
+export function defaultModelOf(harness: Pick<HarnessInfo, 'catalogue'> | undefined): string | undefined {
+  return harness?.catalogue?.options.find(option => option.category === 'model')?.currentValue
+}
+
+/** 「默认」 beside the real name of the model a new session starts on. */
+export const defaultTag = (value: string, defaultModel: string | undefined) =>
+  defaultModel !== undefined && value === defaultModel ? { tag: <Badge>默认</Badge> } : {}
 
 /** The model menu's title, with the keys that open it where they are drawn. */
 const modelHeader = () => {
@@ -704,7 +725,7 @@ export function DraftModelControl({
             ? null
             : known
               ? (unreportedModelNote(name, true, known.config) ?? null)
-              : harness.catalogueRead
+              : harness.catalogueRead || harness.offer
                 ? null
                 : unreportedModelNote(name, false, [])
         }
@@ -712,6 +733,7 @@ export function DraftModelControl({
         rows={rows}
         panel={panel}
         reading={readingNow}
+        defaultModel={defaultModelOf(harness)}
         onOpenChange={opened}
         manage={manage}
         computer={computer}
@@ -932,8 +954,11 @@ function HarnessModelPicker({
   onOpenChange,
   service,
   computer,
+  defaultModel,
 }: AgentConfigState & {
   computer?: string | undefined
+  /** For a draft: the model a new session starts on, marked 「默认」. */
+  defaultModel?: string | undefined
   catalog: HostCatalog
   harness: HarnessInfo | undefined
   config: readonly SessionConfigOption[]
@@ -972,6 +997,7 @@ function HarnessModelPicker({
       value: item.value,
       label: escapeHiddenCharacters(item.name),
       ...(item.description ? { description: escapeHiddenCharacters(item.description) } : {}),
+      ...(option.category === 'model' ? defaultTag(item.value, defaultModel) : {}),
       ...(blocked
         ? { disabledReason: feedback?.kind === 'unknown' ? '上次切换的结果未知，请先刷新当前设置。' : '正在切换，请稍后。' }
         : {}),

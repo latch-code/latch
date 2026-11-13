@@ -3,6 +3,8 @@ import type { HarnessProfile } from './types.ts'
 export const qwenProfile: HarnessProfile = {
   presetId: 'qwen',
   version: 1,
+  // An empty session runs no turn and calls no model.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

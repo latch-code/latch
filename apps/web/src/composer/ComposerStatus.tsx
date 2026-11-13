@@ -9,7 +9,7 @@ import { exactTokens, formatTokens } from '../format.ts'
 import { ROUTE_NOTE, routeService } from './ModelControl.tsx'
 import { costClause, type SessionTotals } from './sessionTotals.ts'
 
-/** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch」 or 「Codex 自己的模型」. */
+/** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch」, or the Harness and its model, 「Codex · GPT-5.5」. */
 export interface StatusRoute {
   text: string
   /** The menu's sentence about it, for the tooltip. */
@@ -24,7 +24,12 @@ export interface StatusRoute {
 export function statusRoute(
   catalog: HostCatalog | undefined,
   harness: Pick<HarnessInfo, 'capabilities'> | undefined,
-  input: { route?: TaskSummary['modelRoute'] | undefined; picked?: ModelRef | undefined },
+  input: {
+    route?: TaskSummary['modelRoute'] | undefined
+    picked?: ModelRef | undefined
+    /** The name of the Harness's own model it reported for this session or draft; absent while it reported none. */
+    model?: string | undefined
+  },
 ): StatusRoute | undefined {
   if (!harness || harness.capabilities.models.owner !== 'harness') return undefined
   const name = harnessName(harness)
@@ -39,7 +44,7 @@ export function statusRoute(
   }
   const provider = input.picked ? findProvider(catalog, input.picked.providerId) : undefined
   if (provider) return { text: `${provider.name} · 经 Latch`, note: ROUTE_NOTE(name).detail, provider }
-  return { text: `${name} 自己的模型` }
+  return { text: input.model ? `${name} · ${input.model}` : name }
 }
 
 /** One segment of the status line, named for the order in which a narrow line lets segments go. */
