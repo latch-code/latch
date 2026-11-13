@@ -64,6 +64,39 @@ function guard(inactive: boolean, onClick: ((event: MouseEvent<HTMLButtonElement
   }
 }
 
+interface ButtonWidth {
+  value: number
+  held: boolean
+  block: boolean
+  minimum: string
+}
+
+/** Use the same box as min-width; a content-box override must not grow its padding on every observation. */
+function measuredWidth(element: HTMLElement, entry?: ResizeObserverEntry): number {
+  const style = getComputedStyle(element)
+  const extra =
+    Number.parseFloat(style.paddingLeft)
+    + Number.parseFloat(style.paddingRight)
+    + Number.parseFloat(style.borderLeftWidth)
+    + Number.parseFloat(style.borderRightWidth)
+  if (!entry) return element.offsetWidth - (style.boxSizing === 'border-box' ? 0 : extra)
+  if (style.boxSizing !== 'border-box') return entry.contentRect.width
+  const box = entry.borderBoxSize[0]
+  return box ? (style.writingMode.startsWith('horizontal') ? box.inlineSize : box.blockSize) : entry.contentRect.width + extra
+}
+
+function holdWidth(element: HTMLElement, state: ButtonWidth): void {
+  let minimum = state.minimum
+  // A block already holds its container's width, including when that container gets narrower while it runs.
+  if (state.held && !state.block && state.value > 0) {
+    const held = `${state.value}px`
+    const combined = minimum ? `max(${minimum}, ${held})` : held
+    // Intrinsic keywords cannot be combined with a length. Preserve the caller's constraint in that case.
+    if (!minimum || CSS.supports('min-width', combined)) minimum = combined
+  }
+  if (element.style.minWidth !== minimum) element.style.minWidth = minimum
+}
+
 /**
  * A text button. Pressing scales it to .97 for a moment (not a button that opens a menu). Keep to two visible buttons
  * per card, dialog footer or panel header (the quieter one first, the primary last); a third action goes into a ⋯
@@ -95,18 +128,44 @@ export function Button({
 }: ButtonProps) {
   const capped = keys !== undefined && keys.length > 0
   const own = useRef<HTMLButtonElement>(null)
-  const width = useRef(0)
+  const width = useRef<ButtonWidth>({ value: 0, held: false, block, minimum: '' })
   // While it runs the button keeps at least the width it had before: the running label may be wider, never narrower.
   const held = loading || pending || done
   useLayoutEffect(() => {
     const element = own.current
+    if (!element) return undefined
+    const state = width.current
+    state.value = measuredWidth(element)
+    const observer = new ResizeObserver(entries => {
+      const entry = entries.find(item => item.target === element)
+      if (!entry) return
+      const next = measuredWidth(element, entry)
+      // Hiding is not a new natural width; keep the last visible size until it is shown again.
+      if (next <= 0) return
+      if (!state.held) state.value = next
+      else if (next > state.value) {
+        state.value = next
+        holdWidth(element, state)
+      }
+    })
+    observer.observe(element, { box: 'border-box' })
+    return () => observer.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    const element = own.current
     if (!element) return
-    if (held) element.style.minWidth = `${width.current}px`
-    else {
-      element.style.removeProperty('min-width')
-      width.current = element.offsetWidth
+    const state = width.current
+    const released = state.held && !held
+    state.held = held
+    state.block = block
+    state.minimum = typeof style?.minWidth === 'number' ? `${style.minWidth}px` : (style?.minWidth ?? '')
+    holdWidth(element, state)
+    // Releasing the held minimum is an actual size change, not a reason to measure on every parent commit.
+    if (released) {
+      const next = measuredWidth(element)
+      if (next > 0) state.value = next
     }
-  })
+  }, [held, block, style?.minWidth])
   // Words alone keep their place under the spinner, so a button without a glyph does not grow when it waits.
   const over = pending && !loading && !icon
   const glyph = loading || (pending && icon) ? <Spinner size={GLYPH[size]} /> : icon ? <Icon icon={icon} size={GLYPH[size]} /> : null
