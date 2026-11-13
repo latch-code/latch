@@ -65,12 +65,12 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
         .getByRole('button', { name: /^模型：/u })
         .filter({ visible: true })
         .first()
+    const modelSurface = page.getByRole('menu', { name: '模型', exact: true }).or(page.getByRole('dialog', { name: '模型', exact: true }))
     const modelRow = (name: string) =>
-      page
+      modelSurface
         .getByRole('menuitemradio', { name, exact: true })
-        .or(page.getByRole('option', { name, exact: true }))
-        .or(page.getByRole('radio', { name, exact: true }))
-        .first()
+        .or(modelSurface.getByRole('option', { name, exact: true }))
+        .or(modelSurface.getByRole('radio', { name, exact: true }))
     try {
       const added = await owner.confirmed('providers', {
         method: 'POST',
@@ -106,19 +106,18 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       await chip().click()
       await modelRow(names[0]!).waitFor()
       if (wire === 'chat-completions') {
-        await page.getByText('协议转换 · 实验性', { exact: true }).waitFor()
+        await modelSurface.getByText('协议转换 · 实验性', { exact: true }).waitFor()
         await page.keyboard.press('Escape')
         for (const width of [320, 390, 768, 1440]) {
           for (const colorScheme of ['light', 'dark'] as const) {
             await page.setViewportSize({ width, height: 1000 })
             await page.emulateMedia({ colorScheme })
             await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-            if (!(await chip().isVisible()))
-              await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+            if (!(await chip().isVisible())) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
             await chip().click()
             await modelRow(names[0]!).waitFor()
             await modelRow(names[0]!).scrollIntoViewIfNeeded()
-            const conversionNote = page.locator('.ui-hint').filter({ has: page.getByText('协议转换 · 实验性', { exact: true }) })
+            const conversionNote = modelSurface.locator('.ui-hint').filter({ has: page.getByText('协议转换 · 实验性', { exact: true }) })
             await conversionNote.scrollIntoViewIfNeeded()
             await noHorizontalOverflow(page)
             await page.screenshot({ path: `${output}/menu-${width}-${colorScheme}.png`, animations: 'disabled' })
