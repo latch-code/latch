@@ -83,6 +83,19 @@ describe('the services a Harness cannot use, folded into one row', () => {
     ])
   })
 
+  it('offers Claude Chat translation beside native Anthropic without claiming the other protocols work', () => {
+    const info = testHarness('claude-agent', { label: 'Claude Agent' })
+    info.capabilities.models = { ...info.capabilities.models, wires: ['anthropic-messages'] }
+    const catalog = catalogOf(info)
+    expect(ownModelGroups(catalog, info, []).map(group => group.label)).toEqual([
+      'Claude Agent',
+      'DeepSeek · 实验性 · 经 Latch',
+      'Ollama 本地 · 实验性 · 经 Latch',
+      'Anthropic · 经 Latch',
+    ])
+    expect(unusableServices(catalog, info).map(item => item.name)).toEqual(['OpenAI', 'Gemini'])
+  })
+
   it('has no such row for a Harness Latch forwards to no service: it uses its own models, and nothing else applies', () => {
     const own = testHarness('claude-agent', { label: 'Claude Agent' })
     own.capabilities.models = { ...own.capabilities.models, wires: [], ownOnly: true }

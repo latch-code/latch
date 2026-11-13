@@ -5,6 +5,12 @@ export interface NamedTool extends GatewayTool {
   wireName: string
 }
 
+/** Changing an executable identity during redaction could merge calls or name a tool the client never declared. */
+export function safeToolIdentity(id: string, tool: ToolIdentity, redact: (text: string) => string): void {
+  for (const value of [id, tool.name, ...(tool.namespace ? [tool.namespace] : [])])
+    if (redact(value) !== value) throw invalidReply('工具调用标识包含敏感内容，不能安全转换')
+}
+
 /** Names are deterministic across history and requests; namespace and custom/function identity cannot collide. */
 export class ToolNames {
   readonly all: NamedTool[] = []

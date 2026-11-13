@@ -34,6 +34,7 @@ export interface GatewayRequest {
   maxOutput?: number
   temperature?: number
   topP?: number
+  stop?: string[]
   format?: Record<string, unknown>
   dropped: GatewayLoss[]
 }

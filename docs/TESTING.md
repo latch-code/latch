@@ -27,7 +27,7 @@ sources:
 
 `e2e/codex-model-gateway.e2e.ts` 默认用假 app-server，验证菜单模型选择与恢复。只有所有者明确授权的验收才设置 `LATCH_CODEX_GATEWAY_BINARY` 使用真实 Codex 并执行夹具提供的无害诊断工具；仍用临时 HOME/CODEX_HOME、临时 Host 与本地假模型，不读取原登录文件，也不把它称为真实 BYOK 成功。
 
-`apps/host/test/claude-gateway.live.test.ts` 默认显式跳过，仅在所有者授权后设置 `LATCH_CLAUDE_GATEWAY_BINARY`。它使用临时 HOME/XDG、CLAUDE_CONFIG_DIR、Host 与本地假 Anthropic 服务，执行真实 Bash、SessionStart hook 与 stdio MCP，核对路由覆盖陷阱、凭据不进入子进程或私有文件。还核对同服务任意 ID 切换、Host 恢复、取消与服务拒绝。`e2e/claude-model-gateway.e2e.ts` 用同一 opt-in 变量在三宽、深色的真实菜单选择与恢复。版本门用例另验证适配器入口未变但内置 CLI 降级或版本未知时仍拒绝。
+`apps/host/test/claude-gateway.live.test.ts` 默认显式跳过，仅在所有者授权后设置 `LATCH_CLAUDE_GATEWAY_BINARY`。它使用临时 HOME/XDG、CLAUDE_CONFIG_DIR、Host 与本地假 Anthropic 或 Chat 服务，执行真实 Bash、SessionStart hook 与 stdio MCP，核对路由覆盖陷阱、凭据不进入子进程或私有文件。还核对同服务任意 ID 切换、Host 恢复、取消与服务拒绝。`e2e/claude-model-gateway.e2e.ts` 用同一 opt-in 变量在三宽、深色的真实菜单选择与恢复，同协议与实验性 Chat 转换分别检查。版本门用例另验证适配器入口未变但内置 CLI 降级或版本未知时仍拒绝。
 
 `e2e/harness-model-gateway.e2e.ts` 默认用假 OpenCode/dsh/pi，走三宽模型与思考菜单、深色、Host 重启恢复；只在所有者明确授权后分别设置 `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY`，才使用真实 CLI。`apps/host/test/{opencode,dsh,pi}-gateway.live.test.ts` 默认显式跳过，使用同名变量独立核对四协议、实际工具、凭据不进入工具环境、模型切换、恢复、停止与上游拒绝；Pi 另检查预算拒绝、官方目录、原生压缩及请求钩子失配零出站；dsh 区分精确 Gemini 型号与不支持离散档位的别名，`dsh-gateway-auxiliary.live.test.ts` 另验证真实子 Agent 与自动压缩也走所选服务。全部使用临时 HOME/XDG、临时 Host/项目与本地假模型，不读取用户 CLI 登录文件；真实 CLI、真实图片编码与实际参数都不能代替真实 BYOK 或本人系统确认。
 

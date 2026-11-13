@@ -13,7 +13,8 @@ import {
   type GatewayDelta,
   type GatewayUsage,
 } from '../ir.ts'
-import type { ToolNames } from '../tools.ts'
+import { safeToolIdentity, type ToolNames } from '../tools.ts'
+import { checkedArguments } from '../json.ts'
 
 const requestSchema = z
   .object({
@@ -210,33 +211,6 @@ interface PendingCall {
 }
 const MAX_OUTPUT = 8 * 1024 * 1024
 
-function validateArguments(value: unknown, redact: (text: string) => string, depth = 0): void {
-  if (depth > 64) throw invalidReply('工具参数嵌套过深')
-  if (typeof value === 'number' && !Number.isFinite(value)) throw invalidReply('工具参数包含不可表示的数值')
-  if (Array.isArray(value)) {
-    for (const item of value) validateArguments(item, redact, depth + 1)
-    return
-  }
-  const fields = object(value)
-  if (!fields) return
-  const keys = new Set<string>()
-  for (const [key, item] of Object.entries(fields)) {
-    const safe = redact(key)
-    if (keys.has(safe)) throw invalidReply('脱敏后的工具参数名称冲突')
-    keys.add(safe)
-    validateArguments(item, redact, depth + 1)
-  }
-}
-
-/** The source was parsed first. Rewrite only changed string tokens so large integers, decimals and -0 stay exact. */
-function redactArguments(source: string, redact: (text: string) => string): string {
-  return source.replace(/"(?:[^"\\]|\\.)*"/gu, token => {
-    const value = JSON.parse(token) as string
-    const safe = redact(value)
-    return safe === value ? token : JSON.stringify(safe)
-  })
-}
-
 /** One response, retaining complete bounded items because Codex consumes output_item.done, not argument deltas. */
 export class ResponsesOutput {
   private readonly id = `resp_${randomUUID()}`
@@ -389,26 +363,17 @@ export class ResponsesOutput {
       if (!call.id || ids.has(call.id)) throw invalidReply('工具调用没有唯一 ID')
       ids.add(call.id)
       const tool = this.tools.called(call.name)
-      let args: unknown
-      try {
-        args = JSON.parse(call.arguments)
-      } catch {
-        throw invalidReply('工具参数不是完整 JSON')
-      }
-      const fields = object(args)
-      if (!fields) throw invalidReply('工具参数不是 JSON 对象')
+      safeToolIdentity(call.id, tool, this.redact)
+      const { fields, json } = checkedArguments(call.arguments, this.redact)
       if (tool.kind === 'custom' && (typeof fields.content !== 'string' || Object.keys(fields).length !== 1))
         throw invalidReply('自定义工具必须只返回 content 文字')
-      validateArguments(fields, this.redact)
       const item = this.items[call.output]!
       Object.assign(item, {
         type: tool.kind === 'custom' ? 'custom_tool_call' : 'function_call',
         call_id: call.id,
         name: tool.name,
         ...(tool.namespace ? { namespace: tool.namespace } : {}),
-        ...(tool.kind === 'custom'
-          ? { input: this.redact(fields.content as string) }
-          : { arguments: redactArguments(call.arguments, this.redact) }),
+        ...(tool.kind === 'custom' ? { input: this.redact(fields.content as string) } : { arguments: json }),
         status: 'completed',
       })
     }

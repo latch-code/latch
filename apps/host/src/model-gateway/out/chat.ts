@@ -96,6 +96,7 @@ export function encodeChat(request: GatewayRequest): { body: Record<string, unkn
       ...(request.maxOutput !== undefined ? { max_tokens: request.maxOutput } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(request.topP !== undefined ? { top_p: request.topP } : {}),
+      ...(request.stop?.length ? { stop: request.stop } : {}),
       ...(format ? { response_format: format } : {}),
       ...(request.parallel !== undefined ? { parallel_tool_calls: request.parallel } : {}),
       ...(request.choice !== undefined
