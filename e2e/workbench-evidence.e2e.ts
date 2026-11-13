@@ -188,6 +188,12 @@ it('finds real evidence on the home, decides there, and continues the original s
         const frame = page.locator('.app-shell')
         if ((layout === 'overview') !== ((await frame.getAttribute('data-inspector')) === 'open')) await page.keyboard.press('Alt+Shift+b')
         await expect.poll(() => page.locator('.workspace .approval-panel[data-arming]').count()).toBe(0)
+        if (layout === 'triage') {
+          const queueRow = page.locator(`.triage-sidebar [data-work-session="${sessions[1]}"]`)
+          expect(await queueRow.locator('.session-row-glyph[data-tone="waiting"]').isVisible()).toBe(true)
+          expect(await queueRow.locator('time').isVisible()).toBe(true)
+          expect(await page.locator('.triage-sidebar [data-group="delivery"]').textContent()).toContain('#1 保留未填写的配置')
+        }
         await settleShell(page)
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${OUT}/${layout}-session--1440--${theme}.png`, animations: 'disabled' })
