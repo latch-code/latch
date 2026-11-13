@@ -46,7 +46,7 @@ Chat 的 `reasoning_content` 以 `latch1.` 封装在 Responses 的 `encrypted_co
 
 CLI 使用这条转换时启用官方 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`，不把服务端工具搜索、context management 等尚未转换的功能发送给 Chat。其他来源仍按收到的内容严格检查，不能通过略去执行型历史条目继续。转换不表示模型是 Claude，也不按 Chat 协议猜测模型厂商。
 
-回复按 Anthropic SSE 的 message/content-block 顺序发送文字和思考。思考的 signature 使用同服务、同模型的 `latch1.` 来源封装；外来或重启前的 signature 不重放。封装不是加密，所以显式 `thinking.display: omitted` 请求在出站前拒绝，不能只藏文字却仍在 signature 里返回明文。全部工具身份与参数都验证后才发布任何可执行的 tool_use 块；输出截断、过滤、畸形调用或断流不发布未完成工具。脱敏会改变工具 ID 或名称时整组拒绝，避免把不同调用变成同一身份；此规则也适用于 Responses 输出。
+回复按 Anthropic SSE 的 message/content-block 顺序发送文字和思考。思考的 signature 使用同服务、同模型的 `latch1.` 来源封装；外来或重启前的 signature 不重放。封装不是加密，所以显式 `thinking.display: omitted` 请求在出站前拒绝，不能只藏文字却仍在 signature 里返回明文。两种转换输出都在发布前核对本次工具约束：none 不得调用、指定工具按名称/命名空间/function或custom身份精确匹配、parallel=false 至多一个调用；正常完成却未满足 required 或指定工具时拒绝，截断/过滤仍保持原本的不完整状态。全部工具身份与参数都验证后才发布任何可执行的 tool_use 块；输出截断、过滤、畸形调用或断流不发布未完成工具。脱敏会改变工具 ID 或名称时整组拒绝，避免把不同调用变成同一身份；此规则也适用于 Responses 输出。
 
 工具参数的对象与 JSON 字符串互换时，用 Node 24 标准 JSON source/rawJSON 保留有限数值的原始词元，包括大整数、长小数和 -0；共用的参数检查仍限制嵌套、非有限数值与脱敏后的键冲突，只改动字符串词元。Anthropic 回复要求用量字段：message_start 的零值仅作流开始时的暂存，最终 message_delta 必须使用上游实际 usage；缺少 usage 时返回错误且不发布工具或 message_stop。Host 的用量始终取上游证据，不计暂存值。429 与 retry-after 保留，错误使用 Anthropic 形状；取消中止上游，不重试或回退。
 

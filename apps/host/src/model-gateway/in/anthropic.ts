@@ -13,7 +13,7 @@ import {
   type GatewayRequest,
   type GatewayUsage,
 } from '../ir.ts'
-import { safeToolIdentity, type ToolNames } from '../tools.ts'
+import { assertToolSelection, safeToolIdentity, type ToolNames } from '../tools.ts'
 
 const schema = z
   .object({
@@ -322,6 +322,12 @@ export class AnthropicOutput {
     if (!this.usage) throw invalidReply('模型服务未报告用量，不能完成 Anthropic 回复')
     if ((this.stop === 'tools') !== this.calls.size > 0 && this.stop !== 'length' && this.stop !== 'filter')
       throw invalidReply('工具调用与模型结束状态不一致')
+    assertToolSelection(
+      this.request,
+      this.tools,
+      [...this.calls.values()].map(call => call.name),
+      this.stop === 'length' || this.stop === 'filter',
+    )
     const ready: Array<{ block: Block; arguments: string }> = []
     const ids = new Set<string>()
     if (this.stop !== 'length' && this.stop !== 'filter')

@@ -4,13 +4,115 @@ import { encodeChat } from '../src/model-gateway/out/chat.ts'
 import { checkedArguments, exactJson } from '../src/model-gateway/json.ts'
 import { ReasoningSeals } from '../src/model-gateway/reasoning.ts'
 import { ModelGatewayServer, type GatewayService } from '../src/model-gateway.ts'
-import { ResponsesOutput } from '../src/model-gateway/in/responses.ts'
+import { decodeResponses, ResponsesOutput } from '../src/model-gateway/in/responses.ts'
 
 const base = (fields: Record<string, unknown> = {}) =>
   JSON.stringify({ model: 'alias', max_tokens: 1024, stream: true, messages: [{ role: 'user', content: 'hello' }], ...fields })
 const tool = { name: 'inspect', input_schema: { type: 'object', properties: {} } }
 const usage = { input: 12, output: 5, cacheRead: 3 }
 const scope = { providerId: 'service', model: 'alias' }
+
+describe.each([
+  ['Anthropic', AnthropicOutput],
+  ['Responses', ResponsesOutput],
+] as const)('%s output tool constraints', (_name, Output) => {
+  it('accepts one exact requested function while parallel calls are disabled', () => {
+    const request = decodeAnthropic(
+      base({ tools: [tool], tool_choice: { type: 'tool', name: 'inspect', disable_parallel_tool_use: true } }),
+    )
+    const output = new Output(request, encodeChat(request).tools, text => text)
+    output.push({ type: 'tool', index: 0, id: 'a', name: 'inspect', arguments: '{}' })
+    output.push({ type: 'usage', usage })
+    output.push({ type: 'finish', reason: 'tools' })
+    expect(() => output.finish()).not.toThrow()
+  })
+
+  it.each(['none', 'named', 'parallel', 'required', 'named-empty'] as const)('enforces the requested tool constraint: %s', scenario => {
+    const request = decodeAnthropic(base({ tools: [tool, { ...tool, name: 'other' }] }))
+    request.choice = scenario === 'none' ? 'none' : scenario === 'required' ? 'required' : { kind: 'function', name: 'inspect' }
+    if (scenario === 'parallel') request.parallel = false
+    const output = new Output(request, encodeChat(request).tools, text => text)
+    const count = scenario === 'required' || scenario === 'named-empty' ? 0 : scenario === 'parallel' ? 2 : 1
+    for (let i = 0; i < count; i++)
+      output.push({ type: 'tool', index: i, id: `call-${i}`, name: scenario === 'named' ? 'other' : 'inspect', arguments: '{}' })
+    output.push({ type: 'usage', usage })
+    output.push({ type: 'finish', reason: count ? 'tools' : 'stop' })
+    expect(() => output.finish()).toThrow()
+  })
+
+  it.each(['length', 'filter'] as const)('keeps required-tool truncation incomplete without releasing calls: %s', reason => {
+    const request = decodeAnthropic(base({ tools: [tool], tool_choice: { type: 'any' } }))
+    const output = new Output(request, encodeChat(request).tools, text => text)
+    output.push({ type: 'tool', index: 0, id: 'a', name: 'inspect', arguments: '{' })
+    output.push({ type: 'usage', usage })
+    output.push({ type: 'finish', reason })
+    const events = output.finish()
+    expect(JSON.stringify(events)).not.toContain('"type":"tool_use"')
+    expect(JSON.stringify(events)).not.toContain('"type":"function_call"')
+    if (Output === AnthropicOutput) expect(output.result().stop_reason).toBe(reason === 'length' ? 'max_tokens' : 'refusal')
+    else expect(output.result()).toMatchObject({ status: 'incomplete' })
+  })
+})
+
+it.each(['namespace', 'kind'] as const)('checks namespace and custom identity for named Responses choices: %s', mismatch => {
+  const request = decodeResponses({
+    model: 'alias',
+    input: 'apply once',
+    tools: [
+      {
+        type: 'namespace',
+        name: 'files',
+        tools: [
+          { type: 'function', name: 'patch', parameters: { type: 'object' } },
+          { type: 'custom', name: 'patch' },
+        ],
+      },
+      { type: 'namespace', name: 'other', tools: [{ type: 'custom', name: 'patch' }] },
+    ],
+    tool_choice: { type: 'custom', name: 'patch', namespace: 'files' },
+  })
+  const { tools } = encodeChat(request)
+  const chosen = {
+    kind: mismatch === 'kind' ? ('function' as const) : ('custom' as const),
+    name: 'patch',
+    namespace: mismatch === 'namespace' ? 'other' : 'files',
+  }
+  const output = new ResponsesOutput(request, tools, text => text)
+  output.push({
+    type: 'tool',
+    index: 0,
+    id: 'call',
+    name: tools.name(chosen),
+    arguments: chosen.kind === 'custom' ? '{"content":"patch"}' : '{}',
+  })
+  output.push({ type: 'usage', usage })
+  output.push({ type: 'finish', reason: 'tools' })
+  expect(() => output.finish()).toThrow()
+})
+
+it('accepts the exact namespaced custom tool requested by a Responses client', () => {
+  const request = decodeResponses({
+    model: 'alias',
+    input: 'apply once',
+    tools: [{ type: 'namespace', name: 'files', tools: [{ type: 'custom', name: 'patch' }] }],
+    tool_choice: { type: 'custom', name: 'patch', namespace: 'files' },
+  })
+  const { tools } = encodeChat(request)
+  const output = new ResponsesOutput(request, tools, text => text)
+  output.push({
+    type: 'tool',
+    index: 0,
+    id: 'a',
+    name: tools.name({ kind: 'custom', name: 'patch', namespace: 'files' }),
+    arguments: '{"content":"patch"}',
+  })
+  output.push({ type: 'usage', usage })
+  output.push({ type: 'finish', reason: 'tools' })
+  output.finish()
+  expect(output.result().output).toContainEqual(
+    expect.objectContaining({ type: 'custom_tool_call', namespace: 'files', name: 'patch', input: 'patch' }),
+  )
+})
 
 describe('Anthropic to Chat translation', () => {
   it('maps invalid client numbers and deeply nested tool input to HTTP 400 without contacting the service', async () => {

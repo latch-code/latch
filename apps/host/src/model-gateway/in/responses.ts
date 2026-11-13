@@ -13,7 +13,7 @@ import {
   type GatewayDelta,
   type GatewayUsage,
 } from '../ir.ts'
-import { safeToolIdentity, type ToolNames } from '../tools.ts'
+import { assertToolSelection, safeToolIdentity, type ToolNames } from '../tools.ts'
 import { checkedArguments } from '../json.ts'
 
 const requestSchema = z
@@ -350,6 +350,12 @@ export class ResponsesOutput {
     if ((this.stop === 'tools') !== this.calls.size > 0 && this.stop !== 'length' && this.stop !== 'filter')
       throw invalidReply('工具调用与模型结束状态不一致')
     const incomplete = this.stop === 'length' || this.stop === 'filter'
+    assertToolSelection(
+      this.request,
+      this.tools,
+      [...this.calls.values()].map(call => call.name),
+      incomplete,
+    )
     if (incomplete) {
       // A syntactically complete prefix is still not authorization to execute a truncated reply's tool calls.
       for (const call of this.calls.values()) this.omitted.add(this.items[call.output]!)
