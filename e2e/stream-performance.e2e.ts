@@ -9,10 +9,13 @@ import { chromium, type CDPSession, type Page } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { openSession } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 
 // Explicit performance run only: this uses long conversations and DevTools instrumentation, never a real model.
 const enabled = process.env.LATCH_STREAM_BENCH === '1'
+// Same built page and Host for both arms. Only the test's fixed capability advertisement changes.
+const transport = process.env.LATCH_STREAM_TRANSPORT === 'full' ? 'full' : 'delta'
 const label = process.env.LATCH_STREAM_LABEL ?? 'baseline'
 const output = join('test-results', 'stream-performance', /^[a-z0-9-]{1,48}$/u.test(label) ? label : 'baseline')
 const uiDir = resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web')
@@ -30,7 +33,7 @@ interface Probe {
   start: number
   end: number
   frames: number[]
-  parses: Array<{ at: number; ms: number; chars: number; live: number }>
+  parses: Array<{ at: number; ms: number; chars: number; live: number; type: 'task-state' | 'task-delta' }>
   longTasks: Array<{ at: number; ms: number }>
 }
 declare global {
@@ -70,17 +73,36 @@ function distribution(values: number[]) {
 }
 
 async function instrument(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript(transport => {
+    const fetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+      if (url.pathname !== '/link/api/events' || transport !== 'full') return fetch(input, init)
+      const headers = new Headers(init?.headers)
+      headers.delete('x-latch-state')
+      return fetch(input, { ...init, headers })
+    }
     const probe: Probe = { active: false, start: 0, end: 0, frames: [], parses: [], longTasks: [] }
     window.latchStreamProbe = probe
     const parse = JSON.parse.bind(JSON)
+    const lengths = new Map<string, number>()
     JSON.parse = (text, reviver) => {
       const start = performance.now()
       const result: unknown = parse(text, reviver)
       const elapsed = performance.now() - start
-      if (probe.active && result && typeof result === 'object' && 'type' in result && result.type === 'task-state') {
-        const event = result as { detail?: { liveText?: string } }
-        probe.parses.push({ at: start, ms: elapsed, chars: text.length, live: event.detail?.liveText?.length ?? 0 })
+      if (result && typeof result === 'object' && 'type' in result && (result.type === 'task-state' || result.type === 'task-delta')) {
+        const event = result as {
+          type: 'task-state' | 'task-delta'
+          sessionId: string
+          detail?: { liveText?: string }
+          text?: { append: string }
+          stream?: { subscriptionId: string }
+        }
+        const key = `${event.sessionId}:${event.stream?.subscriptionId ?? 'full'}`
+        const live =
+          event.type === 'task-state' ? (event.detail?.liveText?.length ?? 0) : (lengths.get(key) ?? 0) + (event.text?.append.length ?? 0)
+        lengths.set(key, live)
+        if (probe.active) probe.parses.push({ at: start, ms: elapsed, chars: text.length, live, type: event.type })
       }
       return result
     }
@@ -94,7 +116,7 @@ async function instrument(page: Page) {
       requestAnimationFrame(frame)
     }
     requestAnimationFrame(frame)
-  })
+  }, transport)
 }
 
 async function metrics(cdp: CDPSession) {
@@ -142,6 +164,8 @@ async function wireMeter(cdp: CDPSession) {
   let active = false,
     supported = true
   const frames: number[] = []
+  const full: number[] = [],
+    delta: number[] = []
   const streams = new Map<string, { decoder: StringDecoder; text: string }>()
   const accept = (id: string, data: string) => {
     const stream = streams.get(id)
@@ -153,7 +177,15 @@ async function wireMeter(cdp: CDPSession) {
       if (at < 0) break
       const frame = stream.text.slice(0, at + 2)
       stream.text = stream.text.slice(at + 2)
-      if (active && frame.slice(0, 200).includes('event: task-state\n')) frames.push(Buffer.byteLength(frame))
+      if (active) {
+        const head = frame.slice(0, 200)
+        const group = head.includes('event: task-state\n') ? full : head.includes('event: task-delta\n') ? delta : undefined
+        if (group) {
+          const bytes = Buffer.byteLength(frame)
+          frames.push(bytes)
+          group.push(bytes)
+        }
+      }
     }
   }
   cdp.on('Network.responseReceived', event => {
@@ -179,7 +211,7 @@ async function wireMeter(cdp: CDPSession) {
     },
     end: () => {
       active = false
-      return { supported, frames }
+      return { supported, frames, full, delta }
     },
   }
 }
@@ -241,7 +273,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
         await cdp.send('Performance.enable')
         const meter = await wireMeter(cdp)
         await enrollBrowser(page, host, { name: '流式性能', scopes: ['view', 'run'] })
-        await page.locator(`[data-task-id="${sessionId}"]`).filter({ visible: true }).first().click()
+        await openSession(page, sessionId)
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         await input.waitFor()
         await page.evaluate(() => document.fonts.ready)
@@ -301,6 +333,14 @@ describe.runIf(enabled)('stream performance baseline', () => {
           await writeFile(
             join(output, `${rounds}-turns-profile.json`),
             JSON.stringify({
+              timing: {
+                startTime: profile.startTime,
+                endTime: profile.endTime,
+                marker: trace.find(event => event.name === 'latch-stream-start')?.ts,
+                probeStart: probe.start,
+                lateStart: probe.parses.find(item => item.live >= 15_000)?.at,
+                lastLive: probe.parses.findLast(item => item.live > 0)?.at,
+              },
               nodes: profile.nodes.map(node => ({
                 id: node.id,
                 children: node.children,
@@ -316,8 +356,19 @@ describe.runIf(enabled)('stream performance baseline', () => {
         }
         const after = await metrics(cdp)
         const trafficAfter = await owner.json<Traffic>('traffic')
-        const first = trafficBefore.kinds['task-state']!,
-          last = trafficAfter.kinds['task-state']!
+        const perKind = (kind: string) => {
+          const first = trafficBefore.kinds[kind],
+            last = trafficAfter.kinds[kind]
+          return {
+            frames: (last?.count ?? 0) - (first?.count ?? 0),
+            bytes: (last?.bytes ?? 0) - (first?.bytes ?? 0),
+            histogram: (last?.histogram ?? []).map((value, i) => value - (first?.histogram[i] ?? 0)),
+          }
+        }
+        const fullTraffic = perKind('task-state'),
+          deltaTraffic = perKind('task-delta')
+        const frameCount = fullTraffic.frames + deltaTraffic.frames,
+          frameBytes = fullTraffic.bytes + deltaTraffic.bytes
         const scripts = scriptFrames(trace, probe)
         const lateStart = probe.parses.find(item => item.live >= 15_000)?.at ?? probe.end
         const lastLive = probe.parses.findLast(item => item.live > 0)?.at ?? probe.start
@@ -350,6 +401,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
         const report = {
           schema: 1,
           label,
+          transport,
           rounds,
           baseCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
           uiIndexSha256: createHash('sha256')
@@ -357,6 +409,13 @@ describe.runIf(enabled)('stream performance baseline', () => {
             .digest('hex'),
           sourceRendererSha256: createHash('sha256')
             .update(await readFile('apps/web/src/MessageContent.tsx'))
+            .digest('hex'),
+          sourceTransportSha256: createHash('sha256')
+            .update(await readFile('packages/protocol/src/task-delta.ts'))
+            .update(await readFile('apps/host/src/task-delta.ts'))
+            .update(await readFile('apps/web/src/core/taskStream.ts'))
+            .update(await readFile('apps/web/src/core/eventStream.ts'))
+            .update(await readFile('apps/web/src/core/useHarness.ts'))
             .digest('hex'),
           browser: browser.version(),
           platform: platform(),
@@ -375,14 +434,26 @@ describe.runIf(enabled)('stream performance baseline', () => {
           },
           durationMs,
           hostTraffic: {
-            frames: last.count - first.count,
-            bytes: last.bytes - first.bytes,
-            bytesPerFrame: (last.bytes - first.bytes) / Math.max(1, last.count - first.count),
-            histogram: last.histogram.map((value, i) => value - first.histogram[i]!),
-            framesPerSecond: ((last.count - first.count) / durationMs) * 1000,
+            frames: frameCount,
+            bytes: frameBytes,
+            bytesPerFrame: frameBytes / Math.max(1, frameCount),
+            histogram: fullTraffic.histogram.map((value, i) => value + (deltaTraffic.histogram[i] ?? 0)),
+            framesPerSecond: (frameCount / durationMs) * 1000,
+            full: fullTraffic,
+            delta: deltaTraffic,
             connectionsOpened: trafficAfter.connections.length - trafficBefore.connections.length,
           },
-          wire: { supported: wire.supported, bytes: distribution(wire.frames), samples: wire.frames },
+          wire: {
+            supported: wire.supported,
+            bytes: distribution(wire.frames),
+            samples: wire.frames,
+            full: distribution(wire.full),
+            delta: distribution(wire.delta),
+            firstFullFrameBytes: wire.full[0] ?? null,
+            finalFullFrameBytes: wire.full.at(-1) ?? null,
+            fullSamples: wire.full,
+            deltaSamples: wire.delta,
+          },
           jsonParseMs: distribution(probe.parses.map(item => item.ms)),
           parseSamples: probe.parses,
           scriptMsPerAnimationFrame: distribution(scripts.map(item => item.ms)),
@@ -407,6 +478,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
             after: afterScroll,
           },
           notes: [
+            'Both transport arms use the same built page and Host; full removes only the fixed capability header inside the test browser.',
             'JSON.parse is timed around the real parser; validation remains included in renderer script time.',
             'Script intervals are unioned on the timing-marker renderer thread and split at observed animation-frame callbacks; this includes probe overhead.',
             'Host bytes exclude HTTP/TLS overhead; the optional CDP stream meter records exact SSE text-frame sizes in the test process.',
@@ -419,6 +491,8 @@ describe.runIf(enabled)('stream performance baseline', () => {
         await mkdir(output, { recursive: true })
         await writeFile(join(output, `${rounds}-turns.json`), JSON.stringify(report, null, 2) + '\n')
         await page.screenshot({ path: join(output, `${rounds}-turns.png`) })
+        if (transport === 'full') expect(deltaTraffic.frames).toBe(0)
+        else expect(deltaTraffic.frames).toBeGreaterThan(0)
         if (process.env.LATCH_STREAM_ENFORCE_BUDGET === '1') expect(report.budget.passed).toBe(true)
       } finally {
         if (tracing) await (await context.newCDPSession(page)).send('Tracing.end').catch(() => {})

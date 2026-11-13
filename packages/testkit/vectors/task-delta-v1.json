@@ -1,0 +1,17 @@
+{
+  "version": "delta-v1",
+  "encoding": "UTF-8 scalar strings; unpaired UTF-16 surrogates are invalid",
+  "strings": [
+    { "text": "", "bytes": 0 },
+    { "text": "hello", "bytes": 5 },
+    { "text": "中文", "bytes": 6 },
+    { "text": "🙂", "bytes": 4 },
+    { "text": "é", "bytes": 3 },
+    { "text": "a\r\nb\nc", "bytes": 6 },
+    { "text": "👨‍👩‍👧‍👦", "bytes": 25 },
+    { "text": "\u0000", "bytes": 1 },
+    { "text": "\ud800", "bytes": null },
+    { "text": "\udfff", "bytes": null },
+    { "text": "before\ud800after", "bytes": null }
+  ]
+}

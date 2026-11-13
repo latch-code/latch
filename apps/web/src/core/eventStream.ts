@@ -4,6 +4,7 @@
  * renew or re-enroll, not "retry forever") and the request goes through the
  * Electron shell's proxy like every other API call.
  */
+import { TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
 
 export interface StreamEvent {
   event: string
@@ -94,6 +95,8 @@ export interface EventStreamOptions {
   maxDelayMs?: number
   /** No bytes for this long (the Host sends a heartbeat every 15 s) counts as a disconnect. */
   stallMs?: number
+  /** Fixed non-identity capability. No caller-supplied headers or credentials. */
+  taskDelta?: boolean
 }
 
 export interface EventStreamConnection {
@@ -101,6 +104,8 @@ export interface EventStreamConnection {
   readonly open: boolean
   /** Skip the remaining backoff, e.g. when the browser comes back online; also ends a suspension. */
   reconnect: () => void
+  /** Abort the reader once, discard its buffered frames, and immediately reconnect with the full-state protocol. */
+  repair: () => boolean
   /** Drop the connection and stay disconnected until reconnect(), e.g. while the browser is offline. */
   suspend: () => void
   /**
@@ -128,6 +133,10 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
   let immediateUsed = false
   /** The shortest wait between attempts the Host asked for; cleared once a stream opens. */
   let floorMs = 0
+  let delta = options.taskDelta === true
+  let repaired = false
+  let restartRequested = false
+  let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   const wait = (ms: number) =>
     new Promise<void>(resolve => {
@@ -146,10 +155,12 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
     const controller = new AbortController()
     request = controller
     let stall: ReturnType<typeof setTimeout> | undefined
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     const armStall = () => {
       clearTimeout(stall)
       stall = setTimeout(() => {
         controller.abort()
+        void reader?.cancel().catch(() => {})
       }, stallMs)
     }
     try {
@@ -157,7 +168,7 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       const response = await fetchImpl(url, {
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...(delta ? { [TASK_DELTA_HEADER]: TASK_DELTA_PROTOCOL } : {}) },
         signal: controller.signal,
       })
       if (response.status === 401) {
@@ -181,25 +192,26 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
         void response.body?.cancel().catch(() => {})
         return 'backoff'
       }
-      if (closed) {
+      if (closed || suspended || controller.signal.aborted) {
         void response.body.cancel().catch(() => {})
-        return 'stop'
+        return closed ? 'stop' : 'backoff'
       }
       open = true
       attempt = 0
       immediateUsed = false
       floorMs = 0
       handlers.onOpen()
-      const reader = response.body.getReader()
+      reader = response.body.getReader()
+      activeReader = reader
       const decoder = new TextDecoder()
       const parser = new EventStreamParser()
       armStall()
-      while (!closed && !suspended) {
+      while (!closed && !suspended && !controller.signal.aborted) {
         const { value, done } = await reader.read()
         if (done) break
         armStall()
         for (const event of parser.feed(decoder.decode(value, { stream: true }))) {
-          if (closed || suspended) break
+          if (closed || suspended || controller.signal.aborted) break
           handlers.onEvent(event)
         }
       }
@@ -209,6 +221,8 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
     } finally {
       clearTimeout(stall)
       controller.abort()
+      void reader?.cancel().catch(() => {})
+      if (activeReader === reader) activeReader = null
       if (request === controller) request = null
     }
   }
@@ -230,10 +244,12 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       }
       const result = await connectOnce()
       if (closed || result === 'stop') break
+      const restart = restartRequested
+      restartRequested = false
       open = false
       handlers.onError()
       if (suspended) continue
-      if (result === 'retry-now') continue
+      if (restart || result === 'retry-now') continue
       await wait(Math.max(floorMs, backoffDelay(attempt++, options.initialDelayMs, options.maxDelayMs)))
     }
     open = false
@@ -249,11 +265,25 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       attempt = 0
       if (wake) wake()
     },
+    repair: () => {
+      if (closed || repaired || suspended) return false
+      repaired = true
+      delta = false
+      open = false
+      attempt = 0
+      floorMs = 0
+      restartRequested = request !== null
+      request?.abort()
+      void activeReader?.cancel().catch(() => {})
+      wake?.()
+      return true
+    },
     suspend: () => {
       if (closed || suspended) return
       suspended = true
       open = false
       request?.abort()
+      void activeReader?.cancel().catch(() => {})
     },
     deferReconnect: delayMs => {
       if (closed) return
@@ -261,11 +291,13 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       attempt = 0
       open = false
       request?.abort()
+      void activeReader?.cancel().catch(() => {})
     },
     close: () => {
       closed = true
       open = false
       request?.abort()
+      void activeReader?.cancel().catch(() => {})
       wake?.()
     },
   }

@@ -5,6 +5,7 @@ export const TRAFFIC_BUCKETS: readonly number[] = [256, 1024, 4096, 16_384, 65_5
 /** Event-stream frames by event type, then the two responses a client resynchronises with. */
 export const TRAFFIC_KINDS = [
   'task-state',
+  'task-delta',
   'tasks-invalidated',
   'refresh',
   'host-state',
@@ -29,7 +30,7 @@ export interface TrafficCount {
 
 export interface SessionTraffic {
   sessionId: string
-  /** Event-stream frames naming this session (`task-state`, `tasks-invalidated`), over all connections. */
+  /** Event-stream frames naming this session (`task-state`, `task-delta`, `tasks-invalidated`), over all connections. */
   frames: number
   frameBytes: number
   /** Responses to `GET /tasks/:id`. */
@@ -83,6 +84,7 @@ export class TrafficMeter {
   private readonly since: number
   private readonly kinds: Record<TrafficKind, TrafficCount> = {
     'task-state': emptyCount(),
+    'task-delta': emptyCount(),
     'tasks-invalidated': emptyCount(),
     refresh: emptyCount(),
     'host-state': emptyCount(),

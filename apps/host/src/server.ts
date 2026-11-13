@@ -241,6 +241,8 @@ import type { HostInfo } from './host-state.ts'
 import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { HostComputer, KEEP_AWAKE_HOLD_MS, desktopReportSchema } from './computer.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
+import { TaskDeltaCache, TaskDeltaStream } from './task-delta.ts'
+import { TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
 import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
   checkProvider,
@@ -696,6 +698,8 @@ interface EventStream {
   sessionId?: string
   lastSentRevision: number
   meter: StreamMeter
+  delta?: TaskDeltaStream
+  scope: string
 }
 
 /** Where a saved key may be sent: an origin and the path under it. */
@@ -2031,6 +2035,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     let revision = 0
     const streams = new Map<ServerResponse, EventStream>()
+    const deltaCache = new TaskDeltaCache()
     const nativeReplay = new NativeReplay(instanceId)
     const pendingTasks = new Map<string, number>()
     const summaries = new Map<string, string>()
@@ -2282,7 +2287,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           for (const [stream, info] of streams)
             if (!streamAllowed(info)) {
               stream.end()
-              streams.delete(stream)
+              forgetStream(stream)
             }
           terminalRoutes.endDisallowedStreams()
         },
@@ -5982,22 +5987,37 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * not rotated out beyond the grace window, and the device not revoked. The client then reconnects with its current credential.
      */
     function streamAllowed(stream: EventStream): boolean {
-      return (
+      const device = devices.get(stream.deviceId)
+      const scope = JSON.stringify([device?.dataScope, device?.scopes.toSorted()])
+      if (stream.scope !== scope) {
+        stream.delta?.clear()
+        stream.scope = scope
+      }
+      const allowed =
         (!stream.nativeOpening || nativeRoutes.verifiedUntil(stream.nativeOpening) > now())
-        && devices.get(stream.deviceId)?.scopes.includes('view') === true
+        && device?.scopes.includes('view') === true
         && devices.streamAllowed(stream.deviceId, stream.credentialHash)
-      )
+      if (!allowed) stream.delta?.clear()
+      return allowed
+    }
+
+    function forgetStream(res: ServerResponse): void {
+      streams.get(res)?.delta?.clear()
+      streams.delete(res)
     }
 
     function send(res: ServerResponse, event: ChangeEvent | TaskStateEvent): void {
       const stream = streams.get(res)
       if (!stream || !streamAllowed(stream)) {
         res.end()
-        streams.delete(res)
+        forgetStream(res)
         return
       }
       const narrow = devices.get(stream.deviceId)?.dataScope !== 'all'
-      if (event.type === 'task-state' && privateSession(event.detail.summary) && narrow) return
+      if (event.type === 'task-state' && privateSession(event.detail.summary) && narrow) {
+        stream.delta?.clear()
+        return
+      }
       // Its list did not change, and even a hint without the ID would say when a private session moved: nothing goes.
       // The native cursor only orders frames, so the gap in sequence is fine.
       if (
@@ -6013,7 +6033,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // Disconnect lagging readers; this is not a hard per-frame or memory limit.
       if (res.writableLength > 262_144) {
         res.destroy()
-        streams.delete(res)
+        forgetStream(res)
+        return
+      }
+      if (stream.delta && !stream.nativeOpening && event.type === 'task-state') {
+        const projected = stream.delta.encode(event)
+        // The stamp belongs only to this reader; neither the shared WeakMap nor native replay may retain it.
+        const frame = `id: ${event.revision}\nevent: ${projected.type}\ndata: ${JSON.stringify(projected)}\n\n`
+        write(res, stream, projected.type, frame, event.sessionId)
+        stream.lastSentRevision = event.revision
         return
       }
       let frame = frames.get(event)
@@ -6045,7 +6073,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const stream = streams.get(res)
       if (!stream || !streamAllowed(stream)) {
         if (!res.writableEnded) res.end()
-        streams.delete(res)
+        forgetStream(res)
         return
       }
       write(res, stream, 'host-state', `event: host-state\ndata: ${JSON.stringify(event)}\n\n`)
@@ -6083,7 +6111,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function endStreams(event: HostStateEvent): Promise<void> {
       const open = [...streams.keys()]
       for (const res of open) sendHostState(res, event)
-      streams.clear()
+      for (const res of open) forgetStream(res)
       await Promise.all(
         open.map(
           res =>
@@ -6135,6 +6163,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             detail = await decoratedDetail(sessionId)
           } catch {
             // Deleted or unreadable: one refresh per batch lets clients resync from the snapshot.
+            for (const stream of streams.values()) if (stream.sessionId === sessionId) stream.delta?.clear()
             summaries.delete(sessionId)
             fallback = true
             continue
@@ -6191,7 +6220,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       for (const [res, stream] of streams) {
         if (!streamAllowed(stream)) {
           res.end()
-          streams.delete(res)
+          forgetStream(res)
         } else write(res, stream, 'heartbeat', stream.nativeOpening ? `id: ${nativeReplay.cursor()}\n: heartbeat\n\n` : ': heartbeat\n\n')
       }
     }, 15_000)
@@ -8461,6 +8490,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(sessionId ? { sessionId } : {}),
           lastSentRevision: nativeOpening && resume?.kind === 'events' ? 0 : revision,
           meter,
+          scope: JSON.stringify([caller.device.dataScope, caller.device.scopes.toSorted()]),
+          ...(!nativeOpening && !isNativeListener(listener.listener) && sessionId && req.headers[TASK_DELTA_HEADER] === TASK_DELTA_PROTOCOL
+            ? { delta: new TaskDeltaStream(randomUUID(), deltaCache) }
+            : {}),
         })
         if (resume?.kind === 'events') {
           for (const event of resume.events) send(res, event)
@@ -8469,7 +8502,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         } else
           send(res, { type: 'refresh', instanceId, revision, discoveryEpoch: discoveryEpoch(), directoryEpoch: relayDirectory.epoch() })
         req.on('close', () => {
-          streams.delete(res)
+          forgetStream(res)
           traffic.close(meter)
         })
         return

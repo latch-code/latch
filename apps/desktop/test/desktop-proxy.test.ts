@@ -1051,6 +1051,7 @@ describe('desktop shell policy', () => {
         'content-type': 'application/json',
         accept: 'text/event-stream',
         'x-latch-confirmation': 'cfm_1',
+        'x-latch-state': 'delta-v1',
       },
       'ldc1.dev_x.y',
     )
@@ -1058,6 +1059,7 @@ describe('desktop shell policy', () => {
       'content-type': 'application/json',
       accept: 'text/event-stream',
       'x-latch-confirmation': 'cfm_1',
+      'x-latch-state': 'delta-v1',
       authorization: 'Latch-Device ldc1.dev_x.y',
     })
     expect(proxy.forwardRequestHeaders({ authorization: 'Latch-Device x', accept: '*/*' })).toEqual({ accept: '*/*' })

@@ -8,7 +8,8 @@ import { connectEventStream, type EventStreamConnection } from './eventStream.ts
 import { connectionFailure, noticeOf, parseHostState, type ConnectionFailure, type HostNotice } from './hostState.ts'
 import { hostView } from './permissions.ts'
 import { observeHostTime } from './hostClock.ts'
-import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTicket } from './projection.ts'
+import { mergeTaskSnapshot, ProjectionGuard, type ProjectionTicket } from './projection.ts'
+import { TaskStreamProjection } from './taskStream.ts'
 import type { EnrollmentReason } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
 import { readStorage } from './storageKeys.ts'
@@ -16,6 +17,8 @@ import { forgetStoredDrafts } from './sessionDrafts.ts'
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 type SyncMode = 'list' | 'all'
+const streamAuthority = (snapshot: AppSnapshot) =>
+  JSON.stringify([snapshot.instanceId, snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes.toSorted()])
 
 /** Why the page needs (re-)enrollment, plus the old device name for the legacy re-confirmation page. */
 export interface AuthState {
@@ -80,7 +83,7 @@ export function useHarness() {
   /** Whether a queued synchronization re-establishes state instead of following a change; merged requests keep it. */
   const pendingResync = useRef(false)
   const request = useRef<AbortController | null>(null)
-  const activeStream = useRef<{ stream: EventStreamConnection; ticket: ProjectionTicket } | null>(null)
+  const activeStream = useRef<{ stream: EventStreamConnection; ticket: ProjectionTicket; clear: () => void } | null>(null)
   /** Renews and then reloads state; set once synchronize exists. */
   const retryRenewal = useRef<() => void>(() => {})
   /** `failure`: why the latest renewal attempt failed, when only re-enrollment fixes it; every snapshot clears it. */
@@ -169,6 +172,13 @@ export function useHarness() {
             observeHostTime(next.hostTime)
             if (!alive.current || !guard.current.current(ticket)) continue
             guard.current.bind(next.instanceId)
+            if (latestSnapshot.current && streamAuthority(latestSnapshot.current) !== streamAuthority(next)) {
+              // Revoke the old reader/shadow before React commits the new permission projection and runs effect cleanup.
+              guard.current.invalidate()
+              activeStream.current?.clear()
+              activeStream.current?.stream.close()
+              publishDetail(null)
+            }
             signedOut.current = false
             setAuth(null)
             setError('')
@@ -342,12 +352,14 @@ export function useHarness() {
     }
   }, [renewAfter])
 
-  const identity = snapshot === null ? null : `${snapshot.instanceId}:${snapshot.device.id}`
+  const identity = snapshot === null ? null : streamAuthority(snapshot)
   useEffect(() => {
     if (identity === null) return
     let disposed = false
+    let repairing = false
     let openGeneration = 0
     const ticket = guard.current.capture()
+    const shadow = ticket.sessionId === null ? null : new TaskStreamProjection(guard.current.instanceId!, ticket.sessionId)
     const query = ticket.sessionId === null ? '' : `?sessionId=${encodeURIComponent(ticket.sessionId)}`
     setConnection(navigator.onLine ? 'connecting' : 'offline')
     const syncConnection = () => {
@@ -390,41 +402,58 @@ export function useHarness() {
         /* Malformed events cannot replace browser state. */
       }
     }
-    const stream = connectEventStream(`/link/api/events${query}`, {
-      onOpen: syncConnection,
-      onEvent: message => {
-        if (disposed) return
-        if (message.event === 'task-state') {
-          const event = parseTaskState(message.data)
-          observeHostTime(event?.detail.sync?.hostTime)
-          if (!event || !guard.current.accept(ticket, event.detail, 'stream')) return
-          publishDetail(event.detail)
-          if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail), false)
-        } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
-        else if (message.event === 'host-state') hostState(message.data)
-        else if (message.event === 'app.data') publishAppData(message.data, guard.current.instanceId ?? undefined)
-        // A plugin's pages changed: the snapshot names the new revision and bundle, and open frames rebuild from it.
-        else if (message.event === 'app.updated' && publishAppUpdated(message.data, guard.current.instanceId ?? undefined))
-          void synchronize('all')
+    const stream = connectEventStream(
+      `/link/api/events${query}`,
+      {
+        onOpen: () => {
+          shadow?.reset()
+          repairing = false
+          syncConnection()
+        },
+        onEvent: message => {
+          if (disposed || repairing || !guard.current.current(ticket)) return
+          if (message.event === 'task-state' || message.event === 'task-delta') {
+            const result = shadow?.receive(message)
+            if (result?.kind === 'repair') {
+              if (stream.repair()) {
+                repairing = true
+                shadow?.reset()
+              }
+              return
+            }
+            if (result?.kind !== 'detail') return
+            observeHostTime(result.detail.sync?.hostTime)
+            if (!guard.current.accept(ticket, result.detail, 'stream')) return
+            publishDetail(result.detail)
+            if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, result.detail), false)
+          } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
+          else if (message.event === 'host-state') hostState(message.data)
+          else if (message.event === 'app.data') publishAppData(message.data, guard.current.instanceId ?? undefined)
+          // A plugin's pages changed: the snapshot names the new revision and bundle, and open frames rebuild from it.
+          else if (message.event === 'app.updated' && publishAppUpdated(message.data, guard.current.instanceId ?? undefined))
+            void synchronize('all')
+        },
+        onError: () => {
+          if (disposed) return
+          shadow?.reset()
+          openGeneration++
+          setConnection(navigator.onLine ? 'reconnecting' : 'offline')
+          // After an announced stop the Host is known to be away; the next attempt comes when it said to try again. Only a
+          // connection that failed waits like this: onUnauthorized clears the notice once the Host answers with a 401.
+          if (!repairing && navigator.onLine && noticeRef.current === null) void synchronize('all', true)
+        },
+        // Otherwise onError's snapshot decides between re-enrollment and a transient failure, after the backoff. A 401
+        // means the Host is answering again, so an announcement it made before no longer holds that snapshot back.
+        onUnauthorized: async code => {
+          if (disposed) return 'stop'
+          if (code === 'renewal-required' && (await renew())) return 'renewed'
+          if (!disposed && noticeRef.current !== null) publishNotice(null)
+          return 'retry'
+        },
       },
-      onError: () => {
-        if (disposed) return
-        openGeneration++
-        setConnection(navigator.onLine ? 'reconnecting' : 'offline')
-        // After an announced stop the Host is known to be away; the next attempt comes when it said to try again. Only a
-        // connection that failed waits like this: onUnauthorized clears the notice once the Host answers with a 401.
-        if (navigator.onLine && noticeRef.current === null) void synchronize('all', true)
-      },
-      // Otherwise onError's snapshot decides between re-enrollment and a transient failure, after the backoff. A 401
-      // means the Host is answering again, so an announcement it made before no longer holds that snapshot back.
-      onUnauthorized: async code => {
-        if (disposed) return 'stop'
-        if (code === 'renewal-required' && (await renew())) return 'renewed'
-        if (!disposed && noticeRef.current !== null) publishNotice(null)
-        return 'retry'
-      },
-    })
-    activeStream.current = { stream, ticket }
+      { taskDelta: ticket.sessionId !== null && currentShell()?.remote !== true },
+    )
+    activeStream.current = { stream, ticket, clear: () => shadow?.reset() }
     // Offline emulation and some networks keep an open response streaming; the authority is fetched again on reconnect.
     const offline = () => {
       openGeneration++
@@ -451,6 +480,7 @@ export function useHarness() {
     document.addEventListener('visibilitychange', visible)
     return () => {
       disposed = true
+      shadow?.reset()
       clearInterval(metadataTimer)
       openGeneration++
       stream.close()

@@ -1,4 +1,5 @@
 import { connect } from 'node:net'
+import type { ClientHttp2Session } from 'node:http2'
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -139,6 +140,92 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it('ignores an unsupported text delta header on a real verified native stream', async () => {
+    const steps = Array.from({ length: 3 }, () => {
+      let release!: () => void
+      const promise = new Promise<void>(resolve => {
+        release = resolve
+      })
+      return { promise, release }
+    })
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      plugins: [
+        {
+          id: 'native-delta-fixture',
+          name: 'Native delta fixture',
+          version: '1',
+          description: '',
+          activate(context) {
+            context.registerProvider({
+              id: 'native-delta-fixture',
+              name: 'Native delta fixture',
+              model: 'fixture',
+              async *stream() {
+                await steps[0]!.promise
+                yield { type: 'text', text: '正文' }
+                await steps[1]!.promise
+                yield { type: 'text', text: '追加🙂' }
+                await steps[2]!.promise
+                yield { type: 'finish', reason: 'stop' }
+              },
+            })
+          },
+        },
+      ],
+    })
+    cleanup.push(() => host.close())
+    cleanup.push(() => {
+      for (const step of steps) step.release()
+    })
+    const registered = await pair(host)
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    const started = body<{ sessionId: string }>(
+      await registered.client.request('POST', '/link/api/tasks', {
+        prompt: 'Native stream',
+        requestId: randomUUID(),
+        harnessId: 'standard',
+        mode: 'chat',
+        model: { providerId: 'native-delta-fixture', model: 'fixture' },
+      }),
+      201,
+    )
+    // Inject an unsupported wire header on the already authenticated connection; the public native client has no delta capability.
+    const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
+    const response = session.request({
+      ':method': 'GET',
+      ':path': `/link/api/events?sessionId=${started.sessionId}`,
+      'x-latch-state': 'delta-v1',
+    })
+    cleanup.push(() => response.close())
+    const frames: Array<Record<string, unknown>> = []
+    const decoder = new TextDecoder()
+    let pending = ''
+    response.on('data', (chunk: Buffer) => {
+      pending += decoder.decode(chunk, { stream: true })
+      let end: number
+      while ((end = pending.indexOf('\n\n')) >= 0) {
+        const frame = pending.slice(0, end)
+        pending = pending.slice(end + 2)
+        const data = frame
+          .split('\n')
+          .find(line => line.startsWith('data: '))
+          ?.slice(6)
+        if (data) frames.push(JSON.parse(data) as Record<string, unknown>)
+      }
+    })
+    const opened = new Promise<number>(resolve => response.once('response', headers => resolve(Number(headers[':status']))))
+    response.end()
+    expect(await opened).toBe(200)
+    steps[0]!.release()
+    await expect.poll(() => frames.filter(frame => frame.type === 'task-state').length).toBe(1)
+    steps[1]!.release()
+    await expect.poll(() => frames.filter(frame => frame.type === 'task-state').length).toBe(2)
+    expect(frames.filter(frame => frame.type === 'task-state').at(-1)).toMatchObject({ detail: { liveText: '正文追加🙂' } })
+    expect(frames.some(frame => frame.type === 'task-delta' || Object.hasOwn(frame, 'stream'))).toBe(false)
+    steps[2]!.release()
+  })
+
   it('grants the fixed phone scopes and all data through exactly one confirmation', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
