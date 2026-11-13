@@ -9,8 +9,35 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const env = process.env
+/** The real Latch dsh plugin with the public permission service supplied by this deterministic fixture. */
+const processModeHandlers = new Map()
+if (env.FAKE_ACP_PROCESS_MODE === '1') {
+  const patchAt = process.argv.indexOf('--patch')
+  if (patchAt >= 0) {
+    const entry = JSON.parse(readFileSync(process.argv[patchAt + 1], 'utf8'))[0].insert[0]
+    const plugin = await import(pathToFileURL(entry.name).href)
+    plugin.apply(
+      {
+        permissionPresets: {
+          set(session, mode) {
+            session.state.mode = mode
+            save()
+            log('process-mode-set', { sessionId: session.header.id, mode })
+          },
+          current: session => session.state.mode,
+        },
+        on: (name, handler) => processModeHandlers.set(name, handler),
+      },
+      entry.config,
+    )
+  }
+}
+function processCreated(sessionId, state) {
+  processModeHandlers.get('agent/created')?.({ agent: { session: { header: { id: sessionId }, state } } })
+}
 // Like an agent's own CLI: `login status` answers from the login file, `login` writes it. FAKE_ACP_LOGIN_FILE also makes a
 // session refuse while it is absent, and a process read its login once at start, as real agents do.
 if (env.FAKE_ACP_LOGIN_FILE && process.argv[2] === 'login') {
@@ -56,7 +83,11 @@ const exitDelay = Number(env.FAKE_ACP_EXIT_DELAY ?? 0)
 const slowSetup = Number(env.FAKE_ACP_SLOW_SETUP ?? 0)
 /** Comma list of modes; the legacy default is build,plan. With FAKE_ACP_CONFIG=options a `mode` option appears only when set. */
 const modes = (env.FAKE_ACP_MODES ?? 'build,plan').split(',').filter(Boolean)
-const initialMode = env.FAKE_ACP_INITIAL_MODE ?? modes[0]
+const cursorStartup = env.FAKE_CURSOR_STARTUP === '1'
+const cursorForce = cursorStartup && process.argv.includes('--force')
+const cursorMode = cursorStartup ? process.argv[process.argv.indexOf('--mode') + 1] : undefined
+const cursorStartedMode = cursorStartup ? (process.argv.includes('--mode') ? cursorMode : 'agent') : undefined
+const initialMode = cursorStartedMode ?? env.FAKE_ACP_INITIAL_MODE ?? modes[0]
 /** Ignores every request to change the mode, and says so. */
 const stickyMode = env.FAKE_ACP_STICKY_MODE === '1'
 /** Mode a session comes back in after session/resume or session/load. */
@@ -436,6 +467,7 @@ function configOptions(session, shape = 'full') {
 }
 
 function ownLevels(session) {
+  if (env.FAKE_ACP_NO_THINKING === '1') return []
   return [
     {
       id: effortId,
@@ -491,8 +523,8 @@ function reportMode(sessionId, session) {
 
 function restored(sessionId) {
   const session = existing(sessionId)
-  if (resumeMode) {
-    session.mode = resumeMode
+  if (resumeMode || cursorStartedMode) {
+    session.mode = resumeMode ?? cursorStartedMode
     save()
   }
   return session
@@ -580,6 +612,7 @@ async function handle(method, params) {
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
       sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: firstEffort() }
       touched.add(sessionId)
+      processCreated(sessionId, sessions[sessionId])
       save()
       return { sessionId, ...configState(sessions[sessionId]) }
     }
@@ -633,6 +666,7 @@ async function handle(method, params) {
       if (env.FAKE_ACP_RESUME_DELAY) await delay(Number(env.FAKE_ACP_RESUME_DELAY))
       const session = restored(params.sessionId)
       await mountMcp(params.sessionId, params.mcpServers ?? [], params.cwd)
+      processCreated(params.sessionId, session)
       return resumeSilent ? {} : configState(session)
     }
     case 'session/prompt':
@@ -677,6 +711,7 @@ async function handle(method, params) {
     case 'session/set_config_option': {
       const configAnswer = configAnswerOf()
       if (configAnswer === 'unsupported') throw rpcError(-32601, `Method not found: ${method}`)
+      if (configAnswer === 'exit-before-take') process.exit(3)
       if (configAnswer === 'silent-drop') return new Promise(() => {})
       const session = existing(params.sessionId)
       const mode = params.configId === 'mode'
@@ -915,11 +950,16 @@ async function callModel(session, input, model) {
   }
   if (env.GOOGLE_GEMINI_BASE_URL) {
     const name = model ?? session.model
+    const settings =
+      env.FAKE_GEMINI_SETTINGS === '1' && env.GEMINI_CLI_SYSTEM_SETTINGS_PATH
+        ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8'))
+        : undefined
+    const generationConfig = settings?.modelConfigs?.customAliases?.[name]?.modelConfig?.generateContentConfig
     const url = `${env.GOOGLE_GEMINI_BASE_URL.replace(/\/+$/u, '')}/v1beta/models/${encodeURIComponent(name)}:streamGenerateContent?alt=sse`
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'x-goog-api-key': env.GEMINI_API_KEY ?? '', 'content-type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: input }] }] }),
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: input }] }], ...(generationConfig ? { generationConfig } : {}) }),
     })
     return { status: response.status, text: await replyText(response), pick: geminiText }
   }
@@ -1300,6 +1340,34 @@ const scenarios = {
     tool({ toolCallId: 'call_1', status: 'in_progress' }, 'tool_call_update')
     tool({ toolCallId: 'call_1', status: 'completed', content: [text(`ran with ${result.outcome.optionId}`)] }, 'tool_call_update')
     say('allowed')
+    return END
+  },
+  // Cursor's documented startup flags: force never overrides an explicit deny. No shell is run by this fixture.
+  'cursor-command': async ({ session, argument, say, permission }) => {
+    if (['ask', 'plan'].includes(session.mode) || argument === 'deny') {
+      log('cursor-command', { executed: false })
+      say('rejected')
+      return END
+    }
+    const answer = cursorForce ? undefined : await permission({ toolCallId: 'cursor-command', title: 'Run command', kind: 'execute' })
+    const allowed = cursorForce || answer?.result.outcome.optionId === 'allow'
+    log('cursor-command', { executed: allowed })
+    say(allowed ? 'allowed' : 'rejected')
+    return END
+  },
+  // OpenCode's ordered permission rules from the actual process configuration; the marker stands in for the tool's effect.
+  'opencode-tool': async ({ session, argument, say, permission }) => {
+    const toolName = argument === 'command' ? 'bash' : 'edit'
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const rules = config.agent?.[session.mode]?.permission ?? config.permission ?? {}
+    let decision = 'ask'
+    for (const [name, value] of Object.entries(rules)) if (name === '*' || name === toolName) decision = value
+    if (decision === 'ask') {
+      const answer = await permission({ toolCallId: 'opencode-tool', title: toolName, kind: toolName === 'bash' ? 'execute' : 'edit' })
+      decision = answer.result.outcome.optionId === 'allow' ? 'allow' : 'deny'
+    }
+    if (decision === 'allow') writeFileSync(join(session.cwd, 'opencode-tool-ran'), toolName)
+    say(decision === 'allow' ? 'executed' : 'blocked')
     return END
   },
   // One edit that asks once per file: it writes a.txt after the first answer allows it, then asks again for b.txt and

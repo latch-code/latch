@@ -5,7 +5,7 @@
 // REPLAY_TRANSCRIPT names the NDJSON file, REPLAY_STATUS the JSON file it reports into (where it got to, the first
 // mismatch, and how each process was started), REPLAY_WORKSPACE what `<workspace>` stands for (default: its cwd).
 // A transcript can span processes: after a `runtime_exit` the next process carries on from there.
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 
 const env = process.env
 const transcriptPath = env.REPLAY_TRANSCRIPT
@@ -74,7 +74,8 @@ function fail(detail, actual) {
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
 
 function expand(value) {
-  if (typeof value === 'string') return value.replaceAll('<workspace>', workspace)
+  if (typeof value === 'string')
+    return value.replaceAll('<workspace>', workspace).replaceAll('<tmp>', env.TMPDIR ? realpathSync(env.TMPDIR) : '')
   if (Array.isArray(value)) return value.map(expand)
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)]))
   return value

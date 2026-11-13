@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ListChecks, Scale } from 'lucide-react'
 import {
   Button,
+  Hint,
   ChoiceList,
   Kbd,
   useLayerClose,
@@ -67,7 +68,6 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
           return {
             value: row.value,
             title: escapeHiddenCharacters(row.name),
-            ...(row.line ? { description: escapeHiddenCharacters(row.line) } : {}),
             media: (
               <Glyph
                 size={16}
@@ -84,7 +84,7 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
         reselect
         onValueChange={value => {
           close()
-          if (value !== current) onChoose(value)
+          onChoose(value)
         }}
       />
       {hidden.length > 0 && (
@@ -101,6 +101,18 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
         </Button>
       )}
       {view.note && <BriefHint brief={view.note} className="permission-list-note" />}
+      {rows.some(row => row.line) && (
+        <Hint className="permission-list-note" label="权限说明">
+          {rows
+            .filter(row => row.line)
+            .map((row, index) => (
+              <span key={row.value}>
+                {index > 0 && <br />}
+                <strong>{escapeHiddenCharacters(row.name)}</strong> · {escapeHiddenCharacters(row.line!)}
+              </span>
+            ))}
+        </Hint>
+      )}
     </div>
   )
 }

@@ -110,7 +110,7 @@ test("a fork of a pi session into pi forks pi's own record, and falls back to th
     .map(line => JSON.parse(line) as { event: string; argv?: string[] })
     .filter(item => item.event === 'start')
   expect(started.length).toBeGreaterThan(1)
-  expect(started.every(item => item.argv?.join(' ') === '--mode rpc')).toBe(true)
+  for (const item of started) expect(item.argv).toEqual(['-e', expect.stringMatching(/\/latch-permission\.ts$/u), '--mode', 'rpc'])
 })
 
 async function sessionFiles(directory: string): Promise<Map<string, string>> {

@@ -37,6 +37,7 @@ async function record(scenario: string, extra: Partial<RecordInput> = {}) {
       FAKE_ACP_STATE: join(root, 'agent-state.json'),
       FAKE_ACP_DUMP_ENV: '1',
       FAKE_ACP_CAPS: 'resume',
+      FAKE_ACP_PROCESS_MODE: '1',
       FAKE_MODEL: '{{MODEL_ORIGIN}}/v1',
     },
     keep: ['DSH_PERMISSION_MODE'],

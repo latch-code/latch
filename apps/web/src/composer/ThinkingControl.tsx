@@ -2,17 +2,16 @@ import { useEffect, useState, type ReactNode } from 'react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, InlineNotice, MenuFooterLink, ValuePicker, useLayerClose, type PickerOption } from '@latch/ui'
 import type { DeviceAccess } from '../core/permissions.ts'
-import type { Brief } from '../core/securityCopy.ts'
+import { MODE_COPY, type Brief } from '../core/securityCopy.ts'
 import { draftConfig, engineEntries, harnessName, servicePick, thinkingLevels, type ComposerChoice } from '../composerChoice.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { BriefHint } from './BriefHint.tsx'
-import { readOnSelect, readsOnSelect, useReading } from './harnessCatalogue.tsx'
+import { readHarnessCatalogue, readModelOnSelect, readOnSelect, readsModel, readsOnSelect, useReading } from './harnessCatalogue.tsx'
 import {
   agentConfigBlocked,
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
-  controlKeyText,
   BUILTIN_THINKING_NOTE,
   CONFIG_UNKNOWN_REASON,
   feedbackFor,
@@ -43,6 +42,7 @@ function ThinkingPicker({
   pendingLabel,
   disabled = false,
   disabledReason,
+  reselect = false,
   onChoose,
   onOpenChange,
 }: {
@@ -57,11 +57,11 @@ function ThinkingPicker({
   pendingLabel?: string
   disabled?: boolean
   disabledReason?: string | undefined
+  reselect?: boolean
   onChoose: (value: string) => void | Promise<void>
   onOpenChange?: ((open: boolean) => void) | undefined
 }) {
   const fixed = options.length <= 1
-  const keys = controlKeyText('thinking')
   const content =
     note || footer ? (
       <div className="model-footer">
@@ -73,7 +73,7 @@ function ThinkingPicker({
     <ValuePicker
       label="思考"
       value={value}
-      options={options}
+      options={options.map(option => ({ ...option, description: undefined }))}
       {...(valueText !== undefined ? { valueText } : {})}
       leading={
         <span className="thinking-label" aria-hidden="true">
@@ -81,11 +81,10 @@ function ThinkingPicker({
         </span>
       }
       className={fixed ? 'thinking-picker is-fixed' : 'thinking-picker'}
-      header={{ title: '思考', ...(keys ? { meta: keys } : {}) }}
+      header={{ title: '思考' }}
       menuChevron
       align="end"
-      // A Harness's own line under each of its levels needs the room; Latch's words do not.
-      width={options.some(option => option.description) ? 340 : 240}
+      width={240}
       // Never undefined: the picker would draw a single value as plain text that does not open.
       footer={content}
       pending={pending}
@@ -94,6 +93,7 @@ function ThinkingPicker({
       disabledReason={disabledReason}
       {...(onOpenChange ? { onOpenChange } : {})}
       onValueChange={onChoose}
+      reselect={reselect}
     />
   )
 }
@@ -165,6 +165,7 @@ function HarnessThinking({
   state,
   onRefresh,
   onChoose,
+  footer,
   reading = false,
   disabled = false,
   disabledReason,
@@ -173,6 +174,8 @@ function HarnessThinking({
   option: SessionConfigOption | undefined
   name?: string
   note: string | undefined
+  /** Rows after the note, such as reading what the picked model offers. */
+  footer?: ReactNode
   state: AgentConfigState
   onRefresh?: (() => void | Promise<void>) | undefined
   onChoose: (configId: string, value: string) => void | Promise<void>
@@ -185,7 +188,12 @@ function HarnessThinking({
   const blocked = agentConfigBlocked(state)
   const own = feedbackFor(feedback, [option?.id])
   const slow = useSlowWrite(option !== undefined && state.busy === option.id)
-  const notice = feedback && own && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />
+  const notice = ((feedback && own) || footer) && (
+    <>
+      {feedback && own && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
+      {footer}
+    </>
+  )
   if (!option)
     return (
       <ThinkingPicker
@@ -215,7 +223,8 @@ function HarnessThinking({
         ...(blocked ? { disabledReason: feedback?.kind === 'unknown' ? CONFIG_UNKNOWN_REASON : '正在切换，请稍后。' } : {}),
       }))}
       valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' && own ? `${label} · 结果未知` : label)}
-      note={note}
+      note={option.source === 'launch' ? MODE_COPY.launchSetting : note}
+      reselect={option.source === 'launch'}
       footer={notice}
       pending={reading || state.busy === option.id}
       pendingLabel={reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…'}
@@ -275,31 +284,59 @@ export function DraftThinkingControl({
   // A service's model reports its levels only once a session runs on it.
   const service = servicePick(catalog, harness, choice.config)
   const option = service ? undefined : known?.config.find(item => item.category === 'thought_level')
-  const note = service
-    ? THINKING_AFTER_START
-    : known
-      ? known.thinkingUnknown
-        ? THINKING_AFTER_START
-        : unreportedThinkingNote(name, true, known.config)
-      : harness.catalogueRead
-        ? undefined
-        : unreportedThinkingNote(name, false, [])
+  const picked = known?.config.find(item => item.category === 'model')?.currentValue
+  const unknown = !service && known?.thinkingUnknown === true && picked !== undefined
+  // What a model nothing is known of offers is read in an empty session: by itself where that loads none of the
+  // person's own code, on request otherwise.
+  const readable = unknown && readsModel(harness, access)
+  const bySelf = readable && harness.catalogueRead?.when === 'select'
+  const note = harness.capabilities.models.thinkingInModel
+    ? '在模型列表里选'
+    : service
+      ? THINKING_AFTER_START
+      : known
+        ? known.thinkingUnknown
+          ? reading
+            ? undefined
+            : THINKING_AFTER_START
+          : unreportedThinkingNote(name, true, known.config, harness.capabilities.models.thinkingPerModel === true)
+        : harness.catalogueRead
+          ? undefined
+          : unreportedThinkingNote(name, false, [])
   return (
-    <HarnessThinking
-      option={option}
-      note={note}
-      state={{ busy: null }}
-      reading={reading}
-      disabled={disabled}
-      // Opening the thinking of a Harness nothing is known of asks what it offers, as its model menu does.
-      onOpenChange={open => {
-        if (open && readsOnSelect(harness, access)) readOnSelect(harness, onRead)
-      }}
-      onChoose={(configId, value) => {
-        onChoice({ config: { ...choice.config, [configId]: value } })
-      }}
-    />
+    <>
+      {bySelf && <ReadPickedModel harness={harness} model={picked!} />}
+      <HarnessThinking
+        option={option}
+        note={note}
+        footer={
+          readable && !bySelf && !reading ? (
+            <MenuFooterLink chevron={false} closes onClick={() => void readHarnessCatalogue(harness, false, picked).catch(() => {})}>
+              读取这个模型的思考档位
+            </MenuFooterLink>
+          ) : undefined
+        }
+        state={{ busy: null }}
+        reading={reading}
+        disabled={disabled}
+        // Opening the thinking of a Harness nothing is known of asks what it offers, as its model menu does.
+        onOpenChange={open => {
+          if (open && readsOnSelect(harness, access)) readOnSelect(harness, onRead)
+        }}
+        onChoose={(configId, value) => {
+          onChoice({ config: { ...choice.config, [configId]: value } })
+        }}
+      />
+    </>
   )
+}
+
+/** Reads what the model a draft picked offers, once, as soon as it is picked. Draws nothing. */
+function ReadPickedModel({ harness, model }: { harness: HarnessInfo; model: string }) {
+  useEffect(() => {
+    readModelOnSelect(harness, model)
+  }, [harness, model])
+  return null
 }
 
 /**
@@ -349,7 +386,16 @@ export function SessionThinkingControl({
     <HarnessThinking
       option={option}
       name={harness ? harnessName(harness) : 'Harness'}
-      note={unreportedThinkingNote(harness ? harnessName(harness) : 'Harness', true, config)}
+      note={
+        harness?.capabilities.models.thinkingInModel
+          ? '在模型列表里选'
+          : unreportedThinkingNote(
+              harness ? harnessName(harness) : 'Harness',
+              true,
+              config,
+              harness?.capabilities.models.thinkingPerModel === true,
+            )
+      }
       state={{ busy, ...(feedback ? { feedback } : {}) }}
       onRefresh={onRefresh}
       onChoose={onConfig}

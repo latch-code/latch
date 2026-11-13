@@ -21,6 +21,8 @@ const refuse = reason => {
 if (!log || !env.RECORD_COMMAND || !env.RECORD_HOME || !env.RECORD_SANDBOX || !env.RECORD_PROFILE) refuse('missing RECORD_* settings')
 
 const [program, ...args] = JSON.parse(env.RECORD_COMMAND)
+// The driver appends its private startup files and protocol arguments to the wrapper, as it does to the real program.
+args.push(...process.argv.slice(2))
 const home = env.RECORD_HOME
 const keep = new Set(['PATH', 'LANG', 'TERM', 'TMPDIR', 'NODE_TLS_REJECT_UNAUTHORIZED', ...JSON.parse(env.RECORD_KEEP ?? '[]')])
 const child = {}

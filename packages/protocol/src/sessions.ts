@@ -537,6 +537,8 @@ export interface SessionConfigOption {
   name: string
   category?: string
   description?: string
+  /** A Host-owned startup setting, not an independent effective-value report from the Harness. */
+  source?: 'launch'
   currentValue: string
   options: Array<{ value: string; name: string; description?: string }>
 }
@@ -619,6 +621,8 @@ export type PermissionTier = 'plan' | 'ask' | 'rule' | 'model' | 'never'
 export interface ModeTier {
   tier: PermissionTier
   line: string
+  /** A documented mode whose own name distinguishes it from another mode in the same tier. */
+  name?: string
 }
 
 export interface SessionPermission {

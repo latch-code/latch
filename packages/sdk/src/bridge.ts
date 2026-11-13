@@ -287,9 +287,11 @@ export interface Bridge {
   /**
    * Optional. Reads the catalogue without running a turn; one read at a time, and a second call shares it. `auto`: only
    * when `catalogueRead().when` is `select` and nothing is known yet for this definition; `ran` is false otherwise.
-   * `before` runs once, just before a process starts, and its failure stops the read.
+   * `before` runs once, just before a process starts, and its failure stops the read. `model`: only what the harness
+   * offers for that model of its list, such as thinking, added to the catalogue; with `auto`, only for a model nothing
+   * is known of yet, and once per definition.
    */
-  readCatalogue?(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }>
+  readCatalogue?(options: { auto: boolean; model?: string; before?: () => Promise<void> }): Promise<{ ran: boolean }>
   /**
    * Optional. The harness's own MCP servers as it reports them over its protocol (`HarnessInfo.ownMcp`); undefined for a
    * harness that does not report them.
@@ -314,6 +316,8 @@ export interface Bridge {
     workspaceId?: string
     folders?: ReadonlyArray<ProjectFolder>
     modelRoute?: ModelRoute
+    /** Choices that affect process startup, included in the launch fingerprint. */
+    config?: ReadonlyArray<{ configId: string; value: string }>
   }): Promise<LaunchPreview>
   /**
    * Optional, with `HarnessDriver.historyImport`. The harness's own sessions, from a process in a private empty folder that

@@ -60,8 +60,8 @@ describe("choosing a Harness's own options before the first message", () => {
         join(bin, name),
         [
           '#!/bin/sh',
-          `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}' FAKE_ACP_MODELS_FILE='${models}'`,
-          'export FAKE_ACP_MODES=read-only,workspace-write,agent,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options',
+          `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}' FAKE_ACP_MODELS_FILE='${models}' FAKE_ACP_CONFIG_ANSWER_FILE='${join(directory, 'config-answer')}'`,
+          'export FAKE_ACP_MODES=read-only,workspace-write,agent,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options FAKE_ACP_CAPS=resume',
           `export FAKE_ACP_EFFORT_BY_MODEL=1 FAKE_ACP_EFFORT_ID=reasoning_effort FAKE_ACP_EFFORT_DESCRIPTIONS=1 FAKE_CODEX_MODELS='${CODEX_MODELS}'`,
           `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
         ].join('\n'),
@@ -164,24 +164,29 @@ describe("choosing a Harness's own options before the first message", () => {
       .toEqual(['harness', 'model', 'thinking', 'permission'])
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
     expect(await agent()).toEqual([])
-    // Codex's own model list says nothing of its modes, so 权限 reads nothing and says they come with the session.
+    // The known ladder is available before a read, even though Codex's model/list reports no modes.
     await chip(page, '权限').click()
-    // A short label; why stays behind its ⓘ.
-    const later = page.locator('.permission-list-note')
-    await later.getByText('发第一条消息后可以换', { exact: true }).waitFor()
-    await later.getByRole('button', { name: '说明', exact: true }).click()
-    await later.getByText('Codex 开始会话时才给出其他几项。', { exact: true }).waitFor()
+    await row(page, /先问你/u).waitFor()
+    await row(page, /由模型判断/u).waitFor()
+    await row(page, /不再询问/u).waitFor()
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await row(page, /按规则放行/u).click()
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
     expect(await agent()).toEqual([])
     // Opening the menu of a Harness nothing is known of reads its list: Codex's own model list, with no session.
     await chip(page, '模型').click()
-    await page.getByText(/^读取于 /u).waitFor()
+    await page.getByText('刷新模型列表', { exact: true }).waitFor()
     await row(page, /Large/u).waitFor()
     await shot(page, 'read-1440-light')
     expect((await agent()).filter(line => line.includes('"session/new"'))).toEqual([])
     expect((await agent()).filter(line => line.includes('"model/list"')).length).toBe(1)
     await page.keyboard.press('Escape')
+    // A late catalogue must keep the earlier draft choice.
+    await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
+    await chip(page, '权限').click()
+    await row(page, /先问你/u).click()
     // Opening it again reads nothing more.
     await chip(page, '模型').click()
     await page.keyboard.press('Escape')
@@ -195,7 +200,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
-    await page.getByText(/^来自上次会话 · /u).waitFor()
+    await page.getByText('刷新模型列表', { exact: true }).waitFor()
     expect(await page.getByText('发第一条消息后可以换', { exact: true }).count()).toBe(0)
     await shot(page, 'listed-1440-light')
     await row(page, /Large/u).click()
@@ -243,9 +248,10 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await chip(page, '思考').click()
-    // A session ran on Large, so its own levels are known now, each with its own words under it.
-    for (const level of ['low', 'high', 'max']) await page.getByText(LEVELS[level]!, { exact: true }).waitFor()
-    await shot(page, 'thinking-described-1440-light')
+    // Routine descriptions stay out of the list; every level remains reachable by its own name.
+    for (const level of ['Low', 'High', 'Max']) await row(page, new RegExp(`^${level}`, 'u')).waitFor()
+    for (const text of Object.values(LEVELS)) expect(await page.getByText(text, { exact: true }).count()).toBe(0)
+    await shot(page, 'thinking-compact-1440-light')
     await row(page, /^High/u).click()
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     expect(await chip(page, '模型').innerText()).toContain('Large')
@@ -406,6 +412,62 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(await page.getByText('结果未知', { exact: false }).count()).toBe(0)
     expect(await page.getByText('设置未能切换', { exact: false }).count()).toBe(0)
     await page.context().close()
+  })
+
+  it('reselects the current strict mode after an interrupted draft and never reapplies its wide mode', async () => {
+    const page = await open(1440, 'light')
+    const answer = join(directory, 'config-answer')
+    try {
+      await chip(page, '模型').click()
+      await row(page, /Small/u).waitFor()
+      await page.keyboard.press('Escape')
+      await chip(page, '思考').click()
+      await row(page, /^High/u).click()
+      await chip(page, '权限').click()
+      await row(page, /不再询问/u).click()
+      await writeFile(answer, 'exit-before-take')
+      await input(page).fill('中断的草稿')
+      await input(page).press('Meta+Enter')
+      const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+      if (
+        await elsewhere.waitFor({ timeout: 2_000 }).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        await elsewhere.click()
+        await input(page).press('Meta+Enter')
+      }
+      await expect.poll(async () => (await latest()).summary.status).toBe('failed')
+      const session = await latest()
+      expect(current(session, 'mode')).toBe('read-only')
+      await writeFile(answer, '')
+      await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
+      await chip(page, '权限').click()
+      const accepted = page.waitForResponse(
+        response => response.request().method() === 'POST' && /\/tasks\/[^/]+\/config$/u.test(response.url()),
+      )
+      await row(page, /先问你/u).click()
+      expect((await accepted).ok()).toBe(true)
+      const next = page.getByRole('textbox', { name: '继续对话', exact: true })
+      await next.fill('重选严格档后继续')
+      await next.press('Meta+Enter')
+      await page.locator('.transcript').getByText('echo: 重选严格档后继续', { exact: true }).waitFor()
+      const after = await owner.json<TaskDetail>(`tasks/${session.summary.id}`)
+      expect(current(after, 'mode')).toBe('read-only')
+      expect(after.permission?.expectedMode).toBe('read-only')
+      const modeWrites = (await readFile(log, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as { event: string; params?: { configId?: string; value?: string; sessionId?: string } })
+      // The attempted draft failed before any Agent mode write; this explicit strict choice must not revive it.
+      expect(
+        modeWrites.filter(item => item.event === 'recv' && item.params?.configId === 'mode' && item.params.value === 'agent-full-access'),
+      ).toHaveLength(0)
+    } finally {
+      await rm(answer, { force: true })
+      await page.context().close()
+    }
   })
 
   for (const theme of ['light', 'dark'] as const)
@@ -623,7 +685,7 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
     await rm(directory, { recursive: true, force: true })
   })
 
-  it('says it is reading, then offers the modes before the first message', async () => {
+  it('keeps the known modes selectable while reading and preserves a choice made before the list arrives', async () => {
     let releaseRead!: () => void
     const readReleased = new Promise<void>(resolve => {
       releaseRead = resolve
@@ -656,18 +718,20 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
         await route.continue()
       })
       await chip.click()
-      await page.locator('.permission-list-note').getByText('正在读取 Gemini CLI 的权限…', { exact: true }).waitFor()
-      await shot('permission-reading-1280-dark')
-      releaseRead()
       const rule = page
         .getByRole('menuitemradio', { name: /按规则放行/u })
         .or(page.getByRole('radio', { name: /按规则放行/u }))
         .first()
       await rule.waitFor({ timeout: 20_000 })
+      expect(await sent()).toHaveLength(0)
+      await shot('permission-reading-1280-dark')
+      await rule.click()
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
+      releaseRead()
+      await expect.poll(sent).toHaveLength(1)
       expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
       await shot('permission-read-1280-dark')
       expect(await sent()).toHaveLength(1)
-      await rule.click()
       await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
       await noHorizontalOverflow(page)
     } finally {

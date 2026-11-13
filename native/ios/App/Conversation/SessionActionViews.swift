@@ -195,6 +195,7 @@ struct ClearingDrawer: View {
 /** 权限, 模型 and 思考 the Harness reported for this session, each its own menu in the input box. */
 struct ConfigChips: View {
     @EnvironmentObject private var model: PhoneModel
+    @State private var settingNote: String?
     let controls: [PhoneConfigControl]
     let chip: (AnyView) -> AnyView
     var body: some View {
@@ -203,6 +204,9 @@ struct ConfigChips: View {
                 let main = control.rows.filter { !$0.more }, more = control.rows.filter(\.more)
                 Section(control.title) { ForEach(main) { row in rowButton(control, row) } }
                 if !more.isEmpty { Menu("更多") { ForEach(more) { row in rowButton(control, row) } } }
+                if let note = control.note, let detail = control.noteDetail {
+                    Section { Button(note, systemImage: "info.circle") { settingNote = detail } }
+                }
             } label: {
                 chip(AnyView(HStack(spacing: 6) {
                     if control.kind == .permission { Image(systemName: control.amber ? "exclamationmark.shield" : "shield").font(.system(size: 12)) }
@@ -212,11 +216,14 @@ struct ConfigChips: View {
                 }))
             }
             .disabled(model.busy || !model.pending.isEmpty || !model.connected)
-            .accessibilityLabel(control.title + " · " + control.label)
+            .accessibilityLabel([control.title, control.label, control.note].compactMap { $0 }.joined(separator: " · "))
         }
+        .alert("启动设置", isPresented: Binding(get: { settingNote != nil }, set: { if !$0 { settingNote = nil } })) {
+            Button("知道了", role: .cancel) { settingNote = nil }
+        } message: { Text(settingNote ?? "") }
     }
     private func rowButton(_ control: PhoneConfigControl, _ row: PhoneConfigRow) -> some View {
-        Button { if !row.current { Task { await model.setConfig(control.configId, value: row.value) } } } label: {
+        Button { if !row.current || control.kind == .permission || control.source == .launch { Task { await model.setConfig(control.configId, value: row.value) } } } label: {
             if row.current { Label { Text(row.name); if let line = row.line { Text(line) } } icon: { Image(systemName: "checkmark") } }
             else { Label { Text(row.name); if let line = row.line { Text(line) } } icon: { EmptyView() } }
         }

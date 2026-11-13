@@ -6,6 +6,10 @@ import type { HarnessProfile, ProjectedChild } from './types.ts'
  * so `task` stays off there; 2.x reads `task` as `subagent` and then the later `subagent` rule, so starting one asks,
  * and its requests reach the session that started it. 1.x has no `subagent` permission, so it ignores that key.
  */
+/** The agents Latch adds as OpenCode's own modes; OpenCode shows these IDs as their names. */
+const EDIT_AGENT = 'auto-edit'
+const YOLO_AGENT = 'yolo'
+
 const ASK_FIRST = {
   '*': 'ask',
   read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny' },
@@ -27,6 +31,21 @@ const CONFIG = JSON.stringify({
   agent: {
     build: { permission: ASK_FIRST },
     plan: { permission: { ...ASK_FIRST, edit: 'deny', bash: 'deny', subagent: 'deny' } },
+    // Two more primary agents with no prompt of their own, so they work like `build` under other rules. `mode` is named
+    // because 1.x makes an agent the configuration adds `all`, which a subagent could also be started as. Spreading
+    // ASK_FIRST keeps its order, so `'*'` is still the first rule and the narrower ones after it still apply.
+    [EDIT_AGENT]: {
+      mode: 'primary',
+      description: 'Edits files without asking; asks before commands and outside the folder (set by Latch)',
+      permission: { ...ASK_FIRST, edit: 'allow' },
+    },
+    // Everything runs unasked but `.env` reads. 1.x keeps `task` off as everywhere; in 2.x a subagent starts unasked
+    // and then works under its own agent and the global rules above, so its own calls still ask.
+    [YOLO_AGENT]: {
+      mode: 'primary',
+      description: 'Runs every tool without asking, except reading .env files (set by Latch)',
+      permission: { ...ASK_FIRST, '*': 'allow', external_directory: 'allow', subagent: 'allow' },
+    },
   },
 })
 
@@ -101,17 +120,21 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 4,
+  version: 5,
+  // It lists `effort` only for a model with variants (2.x `config-option.ts`).
+  thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: { OPENCODE_CONFIG_CONTENT: CONFIG },
     expectedMode: 'build',
-    modeLadder: ['plan', 'build'],
+    modeLadder: ['plan', 'build', EDIT_AGENT, YOLO_AGENT],
     modeTiers: {
       plan: { tier: 'plan', line: '只看和规划，不改文件' },
       build: { tier: 'ask', line: '读文件不问，其余问你' },
+      [EDIT_AGENT]: { tier: 'rule', line: '直接改文件，命令和目录外问你' },
+      [YOLO_AGENT]: { tier: 'never', line: '直接改文件和运行命令，.env 不读' },
     },
     readback: 'mode',
     // The configuration keys above are those of OpenCode 1.x, which 2.x still reads as the same ordered rules (`task` as
@@ -126,6 +149,7 @@ export const opencodeProfile: HarnessProfile = {
     notes: [
       '项目或用户的 OpenCode 配置（opencode.json、.opencode 目录中的配置与 Agent 定义）可以覆盖 Latch 设置的询问规则，此时 OpenCode 可能不经询问就执行命令或修改文件',
       'OpenCode 启动时会加载项目 .opencode 目录中的插件；在不信任的项目中使用会运行其中的代码',
+      '「直接改文件」「不再询问」是 Latch 加给 OpenCode 的 auto-edit、yolo 两个 Agent；OpenCode 2.x 的子 Agent 按它自己的 Agent 工作，在这两档里仍先问你',
       'OpenCode 2.x 的子 Agent 可以在后台运行，本轮结束或停止后仍可能继续；Latch 不能单独停止它，它之后的请求照常出现在这个会话里。在后来的一轮里被继续的子 Agent 例外：OpenCode 不转发它的请求，它要批准时这一轮会一直运行，只能停止',
     ],
   },

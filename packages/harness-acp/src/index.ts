@@ -139,8 +139,17 @@ function folderDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDri
 /** What a draft may say before the agent has started: the profile's facts, for an agent Latch has a profile for. */
 function permissionDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDriver, 'permission'> {
   if (!profile) return {}
-  const { approvals, readback, modeTiers } = profile.permission
-  return { permission: { approvals, readback, ...(modeTiers ? { modeTiers: structuredClone(modeTiers) } : {}) } }
+  const { approvals, readback, modeTiers, modeLadder, expectedMode } = profile.permission
+  // Only modes Latch has a word for are offered before a read: a ladder mode without one is the harness's own.
+  const modes = modeLadder?.filter(mode => modeTiers?.[mode])
+  return {
+    permission: {
+      approvals,
+      readback,
+      ...(modeTiers ? { modeTiers: structuredClone(modeTiers) } : {}),
+      ...(readback === 'mode' && expectedMode && modes?.includes(expectedMode) ? { modes, startMode: expectedMode } : {}),
+    },
+  }
 }
 
 const ACP_CAPABILITIES = {
@@ -164,6 +173,8 @@ function agentFacts(name: string, presetId: string | undefined, profile: Harness
       ...(gateway?.knownOnly ? { knownOnly: true as const } : {}),
       // A command without a profile is one Latch knows nothing of, so nothing points it at the gateway either.
       ...(!gateway && (!profile || profile.ownModelsOnly) ? { ownOnly: true as const } : {}),
+      ...(profile?.thinkingPerModel ? { thinkingPerModel: true as const } : {}),
+      ...(profile?.thinkingInModel ? { thinkingInModel: true as const } : {}),
     },
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },

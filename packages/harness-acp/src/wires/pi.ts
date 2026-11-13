@@ -10,6 +10,7 @@ import { AppError } from '@latch/sdk'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
+import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { ForkRefused, type AgentWire, type WireHandlers } from './types.ts'
 
 /** The oldest pi this wire works with: its turns end on `agent_settled`, `message_update` carries deltas and a stop clears the queue. */
@@ -38,6 +39,11 @@ const RESERVED = new Set([
 ])
 const MODEL = 'model'
 const THOUGHT_LEVEL = 'thought_level'
+const MODE = 'mode'
+/** The gate's levels as the mode option names them; the menu titles them by the profile's tiers. */
+const LEVEL_TITLES: Readonly<Record<string, string>> = { plan: '只看不改', ask: '先问你', rule: '直接改文件', never: '不再询问' }
+/** A person's message that would run the gate's command: only this wire sends it. */
+const GATE_INPUT = new RegExp(`^\\s*/${GATE_COMMAND}(?::[^\\s]+)?(?:\\s|$)`, 'u')
 const MAX_MODELS = 500
 /** Usage is read after each turn; a slow answer leaves the turn's usage unknown rather than holding the turn open. */
 const STATS_TIMEOUT_MS = 2_000
@@ -208,6 +214,24 @@ const TOOL_KINDS: Readonly<Record<string, string>> = {
   ls: 'search',
 }
 
+const gateAskShape = z.object({
+  [GATE_MARK]: z.literal(1),
+  toolCallId: text.min(1).max(256),
+  toolName: text.min(1).max(256),
+  input: z.unknown().optional(),
+})
+
+/** A confirmation the gate sent about a call, or undefined for one from another extension. */
+function gateAsk(message: unknown): z.infer<typeof gateAskShape> | undefined {
+  if (typeof message !== 'string' || !message.startsWith('{')) return undefined
+  try {
+    const parsed = gateAskShape.safeParse(JSON.parse(message))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A call named the way pi's own tools are: the tool, then what it was given. */
 function toolTitle(tool: string, args: unknown): string {
   const input = isRecord(args) ? args : {}
@@ -252,6 +276,16 @@ export class PiWire implements AgentWire {
   private models: PiModel[] = []
   private levels: string[] = []
   private current: { model?: PiModel; thinkingLevel?: string } = {}
+  /** Where the gate was written for this process, and the command pi lists for it; absent when it is not loaded. */
+  private readonly gatePath?: string
+  private gateCommand?: string
+  /** The level the gate last reported. */
+  private level?: string
+  /**
+   * Level changes this wire asked for, or a session it is opening (pi starts its extensions again on another session):
+   * the report that follows is not taken as the agent's own.
+   */
+  private asking = 0
   /** Records that came after an answer, kept until the code waiting on that answer has acted on it. */
   private held?: Array<Record<string, unknown>>
 
@@ -259,8 +293,14 @@ export class PiWire implements AgentWire {
     spec: SpawnSpec,
     private readonly handlers: WireHandlers,
   ) {
+    // In the process's own temporary directory, written afresh: every start loads the gate as Latch wrote it.
+    const tmp = spec.env.TMPDIR
+    if (tmp) this.gatePath = writeGate(tmp)
     this.process = AgentProcess.spawn(
-      { ...spec, args: piArgs(spec.args) },
+      {
+        ...spec,
+        args: this.gatePath ? [...piArgs(spec.args).slice(0, -PI_RPC_ARGS.length), '-e', this.gatePath, ...PI_RPC_ARGS] : piArgs(spec.args),
+      },
       { record: record => this.onRecord(record), closed: info => this.onClosed(info) },
     )
     this.exited = this.process.exited
@@ -391,6 +431,15 @@ export class PiWire implements AgentWire {
 
   /** The session pi started with (`resume` undefined), or the one in that file; then what it offers. */
   private async open(resume: string | undefined, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    this.asking++
+    try {
+      return await this.openSession(resume, params, timeoutMs, signal)
+    } finally {
+      this.asking--
+    }
+  }
+
+  private async openSession(resume: string | undefined, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     if (sessionParams.safeParse(params).data?.mcpServers?.length) throw new RpcError(RPC.invalidParams, 'pi takes no MCP servers')
     // One process runs one session; a second new one must not share the file of the first, or of a fork's source.
     if (resume === undefined && (this.sessionId || this.foreign)) {
@@ -419,7 +468,53 @@ export class PiWire implements AgentWire {
     this.sessionId = read.sessionFile
     this.current = { ...(read.model ? { model: read.model } : {}), ...(read.thinkingLevel ? { thinkingLevel: read.thinkingLevel } : {}) }
     await this.readLevels(timeoutMs, signal)
+    await this.readGate(timeoutMs, signal)
     return { sessionId: this.sessionId, configOptions: this.options() }
+  }
+
+  /**
+   * The gate's command as pi lists it, from the exact extension file this process
+   * received, and the level it holds now. Without
+   * it the session reports no mode, so the runtime refuses to send: a command pi does not know would go to the model
+   * as text.
+   */
+  private async readGate(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
+    if (!this.gatePath) return
+    const listed = await this.send({ type: 'get_commands' }, timeoutMs, signal).catch(() => undefined)
+    const commands = isRecord(listed) && Array.isArray(listed.commands) ? listed.commands : []
+    const own = commands.find(
+      item =>
+        isRecord(item)
+        && item.source === 'extension'
+        && typeof item.name === 'string'
+        && (item.name === GATE_COMMAND || item.name.startsWith(`${GATE_COMMAND}:`))
+        && isRecord(item.sourceInfo)
+        && typeof item.sourceInfo.path === 'string'
+        && item.sourceInfo.path === this.gatePath,
+    )
+    this.gateCommand = own && isRecord(own) ? (own.name as string) : undefined
+    if (!this.gateCommand) {
+      this.level = undefined
+      return
+    }
+    await this.runGate('', timeoutMs, signal)
+  }
+
+  /** The gate's command, with a level or none to have it report the one it holds; the report is read before returning. */
+  private async runGate(level: string, timeoutMs?: number, signal?: AbortSignal): Promise<void> {
+    if (!this.gateCommand) throw new RpcError(RPC.internal, 'The Latch extension is not loaded in pi')
+    this.asking++
+    try {
+      const answer = disposition.parse(
+        await this.send({ type: 'prompt', message: `/${this.gateCommand}${level ? ` ${level}` : ''}` }, timeoutMs, signal),
+      )
+      if (answer?.disposition !== 'handled') throw new RpcError(RPC.internal, 'pi did not run the Latch extension')
+      // What pi wrote after its answer is read after it.
+      await new Promise(resolve => setImmediate(resolve))
+      await new Promise(resolve => setImmediate(resolve))
+    } finally {
+      this.asking--
+    }
   }
 
   /**
@@ -503,6 +598,15 @@ export class PiWire implements AgentWire {
           description: entry.provider,
         })),
       })
+    if (this.level && this.gateCommand)
+      options.push({
+        type: 'select',
+        id: MODE,
+        category: 'mode',
+        name: '权限',
+        currentValue: this.level,
+        options: GATE_LEVELS.map(value => ({ value, name: LEVEL_TITLES[value] ?? value })),
+      })
     const level = this.current.thinkingLevel
     if (level && this.levels.length)
       options.push({
@@ -534,6 +638,11 @@ export class PiWire implements AgentWire {
       await this.send({ type: 'set_model', provider: value.slice(0, slash), modelId: value.slice(slash + 1) }, timeoutMs, signal)
     } else if (configId === THOUGHT_LEVEL) {
       await this.send({ type: 'set_thinking_level', level: value }, timeoutMs, signal)
+    } else if (configId === MODE) {
+      if (!(GATE_LEVELS as readonly string[]).includes(value)) throw new RpcError(RPC.invalidParams, 'Unknown mode')
+      // Read back from the gate's own report, not assumed.
+      await this.runGate(value, timeoutMs, signal)
+      return { configOptions: this.options() }
     } else throw new RpcError(RPC.invalidParams, 'Unknown option')
     // Read back rather than assumed: a model change can move the thinking level, and pi may not take a value.
     const read = readAs(state, await this.send({ type: 'get_state' }, timeoutMs, signal), 'get_state')
@@ -555,6 +664,8 @@ export class PiWire implements AgentWire {
         images.push({ type: 'image', data: block.data, mimeType: block.mimeType })
       else throw new RpcError(RPC.invalidParams, `pi takes no ${clip(block.type, 64)} content`)
     }
+    // The gate's level is the person's to choose in Latch, which sends its command itself; a message cannot.
+    if (texts.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
     // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
     if (this.listedFor !== this.sessionId) {
       this.listedFor = this.sessionId
@@ -601,6 +712,7 @@ export class PiWire implements AgentWire {
     const textOf = parsed.data.prompt.flatMap(block => (block.type === 'text' && block.text !== undefined ? [block.text] : []))
     // pi would abort the running turn to compact; it runs only between turns, never as text added to one.
     if (compactCommand(textOf.join('\n\n'))) throw new RpcError(RPC.invalidParams, '/compact runs only between turns')
+    if (textOf.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
     if (!this.turn || this.turn.cancelled || !this.running) return { outcome: 'promptRequired' }
     // pi queues it into the running turn, after the calls in flight and before the model's next request.
     await this.send({ type: 'steer', message: textOf.join('\n\n') }, timeoutMs, signal)
@@ -819,6 +931,15 @@ export class PiWire implements AgentWire {
     const method = event.method
     if (typeof id !== 'string' || typeof method !== 'string') return
     const answer = (reply: Record<string, unknown>) => this.process.write({ type: 'extension_ui_response', id, ...reply })
+    if (method === 'setStatus') {
+      if (event.statusKey !== GATE_COMMAND || !this.gateCommand) return
+      const level = typeof event.statusText === 'string' ? event.statusText : undefined
+      if (level === this.level) return
+      this.level = level !== undefined && (GATE_LEVELS as readonly string[]).includes(level) ? level : undefined
+      // A change Latch did not ask for is reported like any mode the agent changed itself; the runtime judges it.
+      if (this.asking === 0) this.update({ sessionUpdate: 'config_option_update', configOptions: this.options() })
+      return
+    }
     if (method === 'notify') {
       if (typeof event.message === 'string' && event.message)
         this.update({
@@ -830,6 +951,34 @@ export class PiWire implements AgentWire {
     }
     if (!this.sessionId) {
       if (method === 'confirm' || DIALOGS.has(method)) answer({ cancelled: true })
+      return
+    }
+    const gated = method === 'confirm' ? gateAsk(event.message) : undefined
+    if (gated) {
+      // The gate asks about a call pi has already reported: the ask goes on that call, which ends as pi runs or blocks it.
+      this.handlers
+        .request(
+          'session/request_permission',
+          {
+            sessionId: this.sessionId,
+            toolCall: {
+              toolCallId: gated.toolCallId,
+              title: toolTitle(gated.toolName, gated.input),
+              kind: TOOL_KINDS[gated.toolName] ?? 'other',
+              rawInput: gated.input,
+            },
+            options: CONFIRM_OPTIONS,
+          },
+          `ui-${id}`,
+        )
+        .then(
+          result => {
+            const outcome = isRecord(result) && isRecord(result.outcome) ? result.outcome : {}
+            const chosen = outcome.outcome === 'selected' ? outcome.optionId : undefined
+            answer(chosen === undefined ? { cancelled: true } : { confirmed: chosen === 'yes' })
+          },
+          () => answer({ cancelled: true }),
+        )
       return
     }
     if (method === 'confirm') {

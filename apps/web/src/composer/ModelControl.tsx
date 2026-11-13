@@ -60,7 +60,6 @@ import {
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
-  controlKeyText,
   CONFIG_UNKNOWN_REASON,
   DEFAULT_MODEL,
   feedbackFor,
@@ -240,7 +239,6 @@ export function DraftHarnessControl({
   /** The Host computer's name on a page that is not the Latch app on it; see `onComputer`. */
   computer?: string | undefined
 }) {
-  const keys = controlKeyText('harness')
   const [adding, setAdding] = useState(false)
   const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
@@ -257,11 +255,10 @@ export function DraftHarnessControl({
       options={entries.map(entry => ({
         value: entry.harness.id,
         label: entry.label,
-        description: onComputer(entry.line, computer),
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
-      header={{ title: '开始后不能换 Harness', ...(keys ? { meta: keys } : {}) }}
+      header={{ title: 'Harness' }}
       width={adding ? 360 : 340}
       leading={harness ? <HarnessTile harness={harness} size={16} /> : HarnessGlyph}
       className="harness-picker"
@@ -613,11 +610,8 @@ export function defaultModelOf(harness: Pick<HarnessInfo, 'catalogue'> | undefin
 export const defaultTag = (value: string, defaultModel: string | undefined) =>
   defaultModel !== undefined && value === defaultModel ? { tag: <Badge>默认</Badge> } : {}
 
-/** The model menu's title, with the keys that open it where they are drawn. */
-const modelHeader = () => {
-  const keys = controlKeyText('model')
-  return { title: '模型', ...(keys ? { meta: keys } : {}) }
-}
+/** The menu title stays short; shortcuts belong to the workbench's shortcut list. */
+const modelHeader = () => ({ title: '模型' })
 
 /** The model and thinking of a new session. A Harness with its own models tells Latch nothing before it starts, and this says so in place. */
 export function DraftModelControl({
@@ -998,7 +992,6 @@ function HarnessModelPicker({
     agentConfigValues(option).map(item => ({
       value: item.value,
       label: escapeHiddenCharacters(item.name),
-      ...(item.description ? { description: escapeHiddenCharacters(item.description) } : {}),
       ...(option.category === 'model' ? defaultTag(item.value, defaultModel) : {}),
       ...(blocked ? { disabledReason: feedback?.kind === 'unknown' ? CONFIG_UNKNOWN_REASON : '正在切换，请稍后。' } : {}),
     }))

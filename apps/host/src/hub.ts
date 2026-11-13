@@ -403,6 +403,7 @@ export class HarnessHub implements Bridge {
     cwd: string,
     project?: { workspaceId: string; folders: ReadonlyArray<ProjectFolder> },
     modelRoute?: ModelRoute,
+    config?: ReadonlyArray<{ configId: string; value: string }>,
   ): Promise<LaunchPreview | undefined> {
     const member = this.member(harnessId)
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 当前不可用`)
@@ -416,6 +417,7 @@ export class HarnessHub implements Bridge {
         ? { cwd, workspaceId: project.workspaceId, folders: project.folders }
         : { cwd }),
       ...(modelRoute ? { modelRoute } : {}),
+      ...(config ? { config } : {}),
     })
   }
 
@@ -1362,11 +1364,11 @@ export class HarnessHub implements Bridge {
   }
 
   /** Reads what a harness offers before a session; see `Bridge.readCatalogue`. */
-  async readHarnessCatalogue(id: string, auto: boolean, before: () => Promise<void>): Promise<{ ran: boolean }> {
+  async readHarnessCatalogue(id: string, auto: boolean, before: () => Promise<void>, model?: string): Promise<{ ran: boolean }> {
     const member = this.member(id)
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
     if (!member.bridge.readCatalogue) throw new AppError(409, 'catalogue-unsupported', '这个 Harness 不能在开始前读取可选项。')
-    return member.bridge.readCatalogue({ auto, before })
+    return member.bridge.readCatalogue({ auto, before, ...(model !== undefined ? { model } : {}) })
   }
 
   /** 读取 of a harness's own MCP servers; see `Bridge.readOwnMcp`. */

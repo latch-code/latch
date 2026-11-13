@@ -2047,6 +2047,43 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { status: 'running', detail: {}, queues: false },
       ],
       harness: { level: 'L3' },
+      launchConfigs: [
+        {
+          summary: { mode: 'agent', level: 'L3' },
+          config: [
+            { id: 'thinking', category: 'thought_level', source: 'launch', currentValue: 'high', options: [{ value: 'high', name: '高' }] },
+          ],
+        },
+        {
+          summary: { mode: 'agent', level: 'L3' },
+          permission: {
+            modeTiers: {
+              ask: { tier: 'plan', name: 'Ask' },
+              plan: { tier: 'plan', name: 'Plan' },
+              agent: { tier: 'ask', name: 'Agent' },
+              force: { tier: 'never', name: 'Agent --force' },
+            },
+          },
+          config: [
+            {
+              id: 'mode',
+              category: 'mode',
+              source: 'launch',
+              currentValue: 'force',
+              options: [
+                { value: 'ask', name: 'Ask native' },
+                { value: 'plan', name: 'Plan native' },
+                { value: 'agent', name: 'Agent native' },
+                { value: 'force', name: 'Force native' },
+              ],
+            },
+          ],
+        },
+        {
+          summary: { mode: 'agent', level: 'L3' },
+          config: [{ id: 'thinking', category: 'thought_level', currentValue: 'high', options: [{ value: 'high', name: '高' }] }],
+        },
+      ],
       config: {
         summary: { mode: 'agent', level: 'L3' },
         permission: {
@@ -2370,6 +2407,33 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { kind: 'thinking', id: 'effort', label: '高', amber: false, rows: ['高*'] },
     ])
     expect(result.chatControls).toEqual(['model', 'thinking'])
+    expect(result.launchControls).toEqual([
+      [
+        {
+          kind: 'thinking',
+          id: 'thinking',
+          label: '高',
+          amber: false,
+          rows: ['高*'],
+          source: 'launch',
+          note: '启动设置 · 未独立读回',
+          noteDetail: '这项设置通过进程启动参数应用；Agent 没有独立报告该参数的有效值。',
+        },
+      ],
+      [
+        {
+          kind: 'permission',
+          id: 'mode',
+          label: 'Agent --force',
+          amber: true,
+          rows: ['Ask+', 'Plan+', 'Agent', 'Agent --force*'],
+          source: 'launch',
+          note: '启动设置 · 未独立读回',
+          noteDetail: '这项设置通过进程启动参数应用；Agent 没有独立报告该参数的有效值。',
+        },
+      ],
+      [{ kind: 'thinking', id: 'thinking', label: '高', amber: false, rows: ['高*'] }],
+    ])
     expect(result.configWrites).toEqual([
       {
         method: 'POST',
@@ -2381,6 +2445,19 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       'refused',
       'refused',
       'refused',
+      {
+        method: 'POST',
+        path: '/link/api/tasks/ses_1/config',
+        body: { configId: 'mode', value: 'yolo', requestId: '<id>' },
+        words: '切换结果待确认',
+      },
+      'refused',
+      {
+        method: 'POST',
+        path: '/link/api/tasks/ses_1/config',
+        body: { configId: 'thinking', value: 'high', requestId: '<id>' },
+        words: '切换结果待确认',
+      },
     ])
     expect(result.menus).toEqual([
       [['重命名', '置顶'], ['清空上下文'], ['归档'], ['删除']],

@@ -1,5 +1,5 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
-import { fileMentionContext, modelIdKey, promptTitle, type FileMention } from '@latch/protocol'
+import { fileMentionContext, LADDER_MODE, modelIdKey, promptTitle, type FileMention } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
 import {
   clearTakenProposals,
@@ -238,6 +238,9 @@ interface Live {
    * except the replay of an earlier session being brought in (`capture`).
    */
   sessions: Map<string, string>
+  /** Reports from the process-local permission service, including sessions not yet bound by their ACP response. */
+  processModes?: Map<string, string>
+  launchMode?: string
   /** The `session/load` of an agent's earlier session, whose replay is kept while it runs. */
   capture?: Capture
   /** Subagent sessions the agent announced on a bound session, by their ACP session. */
@@ -370,12 +373,14 @@ interface Launch {
   command: string
   hash: string
   definitionHash: string
+  launchMode?: string
 }
 
 /** The launch on record for a session, stored with it when it started. */
 interface Confirmed {
   launchHash?: string
   definitionHash?: string
+  launchMode?: string
   /** The other folders the agent receives, which the launch covers. */
   folders?: LaunchFolders
   /** The gateway route the launch covers. */
@@ -541,10 +546,11 @@ function checkedFork(fork: unknown, prompt: string): NonNullable<AcpRecord['fork
 }
 
 /** A choice made in the session replaces what the draft chose for that option. True when there was one. */
-function forgetStartChoice(task: AcpTask, configId: string): boolean {
+function forgetStartChoice(task: AcpTask, configId: string, mode = false): boolean {
   const chosen = task.acp.startConfig
-  if (!chosen?.some(choice => choice.configId === configId)) return false
-  const left = chosen.filter(choice => choice.configId !== configId)
+  const matches = (choice: StartChoice) => choice.configId === configId || (mode && choice.configId === LADDER_MODE)
+  if (!chosen?.some(matches)) return false
+  const left = chosen.filter(choice => !matches(choice))
   if (left.length) task.acp.startConfig = left
   else delete task.acp.startConfig
   return true
@@ -619,6 +625,7 @@ function confirmedOf(acp: AcpRecord): Confirmed {
   return {
     launchHash: acp.launchHash,
     definitionHash: acp.definitionHash,
+    ...(acp.launchMode ? { launchMode: acp.launchMode } : {}),
     ...(folders ? { folders } : {}),
     ...(acp.route ? { route: acp.route } : {}),
   }
@@ -723,6 +730,9 @@ export class AgentRuntime implements Bridge {
   private readonly holds = new Map<string, number>()
   /** Sessions whose agent 核对 is reading: nothing else may reach their process meanwhile. */
   private readonly checking = new Set<string>()
+  /** A mode change owns this session through stop, resume and service read-back. */
+  private readonly processModeChanges = new Map<string, { value: string; authorize?: () => void }>()
+  private readonly launchThinkingChanges = new Map<string, { selected: { model: string; value: string }; authorize?: () => void }>()
   /** How many times each session's agent has reported its options, from a response or a notification. */
   private readonly configReports = new Map<string, number>()
   /** Tasks whose ACP session is being set up and first checked; mode reports then are its starting point, not drift. */
@@ -738,7 +748,10 @@ export class AgentRuntime implements Bridge {
   private definitionLookup?: { at: number; hash: string | undefined }
   /** The catalogue read in progress; every request while it runs shares it. */
   private reading?: Promise<{ ran: boolean }>
+  private readingModel?: string
   private readingNow = false
+  /** Models a read was asked for, by definition: a selection reads each once, even when that read failed. */
+  private readonly modelReads = new Set<string>()
   /** The harness's own MCP servers as it last reported them, for the definition it reported them under. Memory only. */
   private ownMcpState?: { definitionHash: string; last?: HarnessMcpReport; failed?: { at: string; message: string } }
   /** 读取 of the harness's own MCP servers in progress; a second request shares it. */
@@ -986,6 +999,7 @@ export class AgentRuntime implements Bridge {
     workspaceId?: string
     folders?: ReadonlyArray<ProjectFolder>
     modelRoute?: ModelRoute
+    config?: ReadonlyArray<{ configId: string; value: string }>
   }): Promise<LaunchPreview> {
     await this.ready()
     // The agent is given the registered path; configuration is looked up along it and along its real path.
@@ -993,7 +1007,7 @@ export class AgentRuntime implements Bridge {
     const cwd = await realpath(given)
     const passed = (await this.scopeOf(input, given))?.passed
     const project = await this.projectConfig(given, passed)
-    const launch = this.currentLaunch(project, passed, input.modelRoute)
+    const launch = this.currentLaunch(project, passed, input.modelRoute, this.startProcessMode(input.config))
     this.previews.delete(launch.hash)
     this.previews.set(launch.hash, { definitionHash: launch.definitionHash, folders: foldersKey(passed) })
     for (const [hash] of this.previews) {
@@ -1055,8 +1069,17 @@ export class AgentRuntime implements Bridge {
    * once, and only one it may launch now; a person asks without it, which replaces the list. A failure is kept as the last
    * read, so a selection does not try again.
    */
-  readCatalogue(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }> {
-    if (this.reading) return this.reading
+  readCatalogue(options: { auto: boolean; model?: string; before?: () => Promise<void> }): Promise<{ ran: boolean }> {
+    if (this.reading) {
+      if (this.readingModel === options.model) return this.reading
+      // A model picked while the initial list or another model is being read needs its own result, in sequence.
+      return this.reading.then(
+        () => this.readCatalogue(options),
+        () => this.readCatalogue(options),
+      )
+    }
+    this.readingModel = options.model
+    if (options.model !== undefined) return this.readModelOptions(options.model, options)
     const reading = (async () => {
       await this.ready()
       this.assertOpen()
@@ -1085,6 +1108,56 @@ export class AgentRuntime implements Bridge {
         this.state.catalogueRead = { definitionHash, at: this.now(), ok: !failure, ...(failure ? { message: failure } : {}) }
         this.mark()
         await this.flush()
+      }
+      return { ran: true }
+    })().finally(() => {
+      if (this.reading === reading) this.reading = undefined
+      this.readingNow = false
+      this.notify()
+    })
+    this.reading = reading
+    return reading
+  }
+
+  /**
+   * What the harness offers for one model of its list, such as thinking: the empty session of a read is switched to it,
+   * which runs no turn and calls no model, and its answer is kept with the catalogue's other models. Only an ACP harness
+   * whose list came from such a session; Codex's list already holds every model. With `auto`, only a `select` harness,
+   * for a model nothing is known of yet, once per definition, and only one it may launch now.
+   */
+  private readModelOptions(model: string, options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }> {
+    const reading = (async () => {
+      await this.ready()
+      this.assertOpen()
+      const stored = this.state.catalogue
+      const configured = this.selection.profile?.catalogueRead
+      const listed = this.catalogue()
+      const option = listed?.options.find(item => item.category === 'model')
+      if (!stored || !option || (configured && 'codexModels' in configured) || this.selection.profile?.wire === 'codex')
+        throw new AppError(409, 'catalogue-model-unsupported', `${this.agent.name} 不能在开始前读取这个模型的选项。`)
+      if (!option.options.some(item => item.value === model) && !this.state.customModels?.includes(model))
+        throw new AppError(400, 'catalogue-model-unknown', `${this.agent.name} 没有列出这个模型。`)
+      const tried = `${stored.definitionHash}\n${model}`
+      if (options.auto) {
+        if (catalogueReadOf(this.selection.profile).when !== 'select') return { ran: false }
+        if (model === option.currentValue || stored.perModel.some(entry => entry.model === model) || this.modelReads.has(tried))
+          return { ran: false }
+        try {
+          this.currentLaunch()
+        } catch {
+          return { ran: false }
+        }
+      }
+      this.modelReads.add(tried)
+      if (this.modelReads.size > 256) this.modelReads.delete(this.modelReads.values().next().value!)
+      const { definitionHash } = this.currentLaunch()
+      await options.before?.()
+      this.readingNow = true
+      this.notify()
+      try {
+        await this.readOnce(definitionHash, model)
+      } catch (error) {
+        throw this.publicError(error, undefined)
       }
       return { ran: true }
     })().finally(() => {
@@ -1541,7 +1614,7 @@ export class AgentRuntime implements Bridge {
   }
 
   /** One read in a private empty folder that is removed afterwards, with the process started for it. */
-  private async readOnce(definitionHash: string): Promise<void> {
+  private async readOnce(definitionHash: string, model?: string): Promise<void> {
     const key = `catalogue-${randomUUID()}`
     await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
     const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'catalogue-')))
@@ -1557,22 +1630,37 @@ export class AgentRuntime implements Bridge {
       const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
       this.enter(this.holds, key)
       let result: unknown
+      let switched: SessionConfigOption[] | undefined
       try {
         // No MCP servers and no prompt: the session exists only to say what it offers.
         result = await live.wire.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
         const sessionId = sessionState.safeParse(result).data?.sessionId
-        const end = live.capabilities.delete ? 'session/delete' : live.capabilities.close ? 'session/close' : undefined
-        if (sessionId && end) await live.wire.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
+        try {
+          if (model !== undefined) switched = await this.switchReadModel(live, sessionId, result, model)
+        } finally {
+          const end = live.capabilities.delete ? 'session/delete' : live.capabilities.close ? 'session/close' : undefined
+          if (sessionId && end) await live.wire.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
+        }
       } catch (error) {
         throw this.publicError(error, live)
       } finally {
         this.leave(this.holds, key)
       }
+      if (model !== undefined) {
+        const stored = this.state.catalogue
+        if (!switched || stored?.definitionHash !== launch.definitionHash) return
+        stored.perModel = withModelOptions(stored.perModel, this.withLaunchThinking(switched))
+        // What the model offers is known now, even when it offers nothing that follows it.
+        if (!stored.perModel.some(entry => entry.model === model)) return
+        this.mark()
+        await this.flush()
+        return
+      }
       const parsed = sessionState.safeParse(result)
       const folded = parsed.success ? foldConfig(parsed.data) : undefined
       if (!folded?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有报告可选的模型和设置。`)
       this.state.catalogue = startCatalogue(this.state.catalogue, {
-        options: folded.options,
+        options: this.withLaunchThinking(this.withProcessMode(live, parsed.data?.sessionId, folded.options)),
         isMode: option => option.category === 'mode' || (folded.source === 'legacy' && option.id === 'mode'),
         startMode: this.profile?.expectedMode,
         definitionHash: launch.definitionHash,
@@ -1585,6 +1673,32 @@ export class AgentRuntime implements Bridge {
       await this.discardProcess(key)
       await rm(cwd, { recursive: true, force: true }).catch(() => {})
     }
+  }
+
+  /**
+   * The empty session of a read switched to `model`, and the options the agent answers with; undefined when it did not
+   * switch. A legacy agent's `session/set_model` answers with nothing to read, so it is not asked.
+   */
+  private async switchReadModel(
+    live: Live,
+    sessionId: string | undefined,
+    created: unknown,
+    model: string,
+  ): Promise<SessionConfigOption[] | undefined> {
+    const parsed = sessionState.safeParse(created)
+    const folded = parsed.success ? foldConfig(parsed.data) : undefined
+    const option = folded?.source === 'legacy' ? undefined : folded?.options.find(item => item.category === 'model')
+    if (!sessionId || !option) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 不能在开始前换模型。`)
+    if (option.currentValue === model) return folded!.options
+    const answer = await live.wire.request(
+      'session/set_config_option',
+      { sessionId, configId: option.id, value: model },
+      this.readTimeout(),
+      this.lifetime.signal,
+    )
+    const options = configUpdate.safeParse(answer)
+    const now = options.success ? configFromOptions(options.data.configOptions) : undefined
+    return now?.find(item => item.category === 'model')?.currentValue === model ? now : undefined
   }
 
   /** Codex's list from its app-server, with the environment and program its sessions get. */
@@ -1724,7 +1838,7 @@ export class AgentRuntime implements Bridge {
       return { sessionId: receipt.taskId }
     }
     const route = checkedRoute(input.modelRoute)
-    const launch = this.currentLaunch(project, scope?.passed, route)
+    const launch = this.currentLaunch(project, scope?.passed, route, this.startProcessMode(config))
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
     const create = {
@@ -1836,6 +1950,7 @@ export class AgentRuntime implements Bridge {
         turnSeq: 1,
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
+        ...(launch.launchMode ? { launchMode: launch.launchMode } : {}),
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
@@ -1843,6 +1958,9 @@ export class AgentRuntime implements Bridge {
         ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
+        ...(this.startLaunchThinking(startConfig, route?.model)
+          ? { launchThinking: this.startLaunchThinking(startConfig, route?.model)! }
+          : {}),
         ...(route ? { route } : {}),
         ...(fork ? { fork } : {}),
       },
@@ -1890,6 +2008,7 @@ export class AgentRuntime implements Bridge {
         turnSeq: 0,
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
+        ...(launch.launchMode ? { launchMode: launch.launchMode } : {}),
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
@@ -1897,6 +2016,9 @@ export class AgentRuntime implements Bridge {
         ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
         ...(startConfig ? { startConfig } : {}),
+        ...(this.startLaunchThinking(startConfig, route?.model)
+          ? { launchThinking: this.startLaunchThinking(startConfig, route?.model)! }
+          : {}),
         ...(route ? { route } : {}),
         seed: create.seed,
       },
@@ -2321,8 +2443,19 @@ export class AgentRuntime implements Bridge {
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
     this.assertNotChecking(sessionId)
     const mode = this.isModeOption(task, option)
+    options.authorize?.()
+    if (mode && this.selection.profile?.processMode) {
+      await this.assertWorkspace(task)
+      this.assertNotChecking(sessionId)
+      return this.writeProcessMode(task, value, options, reach)
+    }
+    if (option.source === 'launch') {
+      await this.assertWorkspace(task)
+      this.assertNotChecking(sessionId)
+      return this.writeLaunchThinking(task, option, value, options, reach)
+    }
     if (option.currentValue === value) {
-      const replaced = forgetStartChoice(task, configId)
+      const replaced = forgetStartChoice(task, configId, mode)
       if ((mode && task.acp.expectedMode !== value) || replaced) {
         if (mode) task.acp.expectedMode = value
         this.touch(task)
@@ -2341,7 +2474,8 @@ export class AgentRuntime implements Bridge {
     try {
       options.authorize?.()
       // Before the session is opened, which would set the draft's choice for this option first, or refuse on it.
-      forgetStartChoice(task, configId)
+      await this.dropStartChoice(sessionId, configId, mode)
+      options.authorize?.()
       const binding = await this.attach(sessionId)
       const legacy = task.acp.configSource === 'legacy'
       const method = !legacy ? 'session/set_config_option' : option.category === 'model' ? 'session/set_model' : 'session/set_mode'
@@ -2398,6 +2532,13 @@ export class AgentRuntime implements Bridge {
   async readConfig(sessionId: string, configId: string, value: string): Promise<ConfigReading> {
     await this.ready()
     const task = this.task(sessionId)
+    // The private file records what Latch configured. It cannot prove the effective value of Gemini's own overrides.
+    if (task.config?.find(option => option.id === configId)?.source === 'launch') return { kind: 'unread' }
+    if (
+      this.selection.profile?.processMode?.unread
+      && task.config?.some(option => option.id === configId && this.isModeOption(task, option))
+    )
+      return { kind: 'unread' }
     const busy = (): ConfigReading | undefined => {
       const current = this.state.tasks[sessionId]
       if (!current || this.checking.has(sessionId) || this.busy(sessionId) || this.openApprovals(sessionId).length)
@@ -2434,6 +2575,8 @@ export class AgentRuntime implements Bridge {
       const current = this.state.tasks[sessionId]
       const option = current?.config?.find(item => item.id === configId)
       if (!current || !option) return { kind: 'unread' }
+      if (this.selection.profile?.processMode && this.isModeOption(current, option))
+        await this.rememberProcessMode(current, option.currentValue)
       const asked =
         option.currentValue === value || this.selection.profile?.configValueMatches?.(configId, value, option.currentValue) === true
       // The person chose this mode and the agent runs in it: the next turn keeps it instead of setting the old one back.
@@ -2454,7 +2597,134 @@ export class AgentRuntime implements Bridge {
   }
 
   private assertNotChecking(sessionId: string): void {
-    if (this.checking.has(sessionId)) throw new AppError(409, 'config-check-running', '正在核对设置，核对结束后再试。')
+    if (this.checking.has(sessionId) || this.processModeChanges.has(sessionId) || this.launchThinkingChanges.has(sessionId))
+      throw new AppError(409, 'config-check-running', '正在确认设置，结束后再试。')
+  }
+
+  /** The process setting is changed only while idle; the public service, not the environment, proves it took effect. */
+  private async writeProcessMode(task: AcpTask, value: string, options: SetConfigOptions, reach: { sent: boolean }): Promise<void> {
+    const id = task.summary.id
+    const live = this.lives.get(id)
+    if (
+      this.busy(id)
+      || task.summary.status === 'running'
+      || task.summary.status === 'waiting-approval'
+      || [...(live?.children.values() ?? [])].some(child => child.taskId === id && !child.ended)
+    )
+      throw new AppError(409, 'task-running', '会话空闲后才能切换这个权限档位。')
+    if (live?.initialized && !live.capabilities.resume && !live.capabilities.load)
+      throw new AppError(409, 'harness-session-lost', '这个 Harness 不能恢复会话，请在新会话中选择权限。')
+    this.processModeChanges.set(id, { value, ...(options.authorize ? { authorize: options.authorize } : {}) })
+    this.enter(this.holds, id)
+    try {
+      options.authorize?.()
+      await this.dropStartChoice(id, this.modeOption(task)?.id ?? LADDER_MODE, true)
+      options.authorize?.()
+      if (live) await live.wire.stop('stop', this.limits.stopGraceMs)
+      options.authorize?.()
+      reach.sent = true
+      const binding = await this.attach(id)
+      options.authorize?.()
+      const agentMode = this.selection.profile?.processMode?.agentMode
+      if (agentMode && this.modeOption(task)?.currentValue !== value) {
+        const option = this.modeOption(task)
+        if (option) await this.applyMode(id, binding, option, value, this.lifetime.signal)
+      }
+      if (this.modeOption(task)?.currentValue !== value) throw new AppError(503, 'config-outcome-unknown', '没有读到所选权限档位，请核对。')
+      task.acp.expectedMode = value
+      await this.rememberProcessMode(task, value)
+      this.notify(id)
+    } finally {
+      this.processModeChanges.delete(id)
+      this.leave(this.holds, id)
+      this.scheduleIdle(id)
+    }
+  }
+
+  private startProcessMode(config?: ReadonlyArray<{ configId: string; value: string }>): string | undefined {
+    if (!this.selection.profile?.processMode) return undefined
+    const chosen = config?.find(item => item.configId === LADDER_MODE || item.configId === 'mode')?.value ?? this.profile?.expectedMode
+    if (!chosen || !this.profile?.modeLadder?.includes(chosen)) throw new AppError(400, 'config-value-invalid', '权限档位不在可选范围内。')
+    return chosen
+  }
+
+  private startLaunchThinking(
+    config?: ReadonlyArray<{ configId: string; value: string }>,
+    routedModel?: string,
+  ): AcpRecord['launchThinking'] {
+    const declared = this.selection.profile?.launchThinking
+    if (!declared) return undefined
+    const known = this.state.catalogue?.options.find(option => option.category === 'model')
+    const model = routedModel ?? config?.find(item => item.configId === (known?.id ?? 'model'))?.value ?? known?.currentValue
+    const option = declared(model)
+    const picked = option && config?.find(item => item.configId === option.id)?.value
+    return model && picked && option.options.some(item => item.value === picked) ? { model, value: picked } : undefined
+  }
+
+  private withLaunchThinking(options: SessionConfigOption[], selected?: AcpRecord['launchThinking']): SessionConfigOption[] {
+    if (options.some(option => option.category === 'thought_level' && option.source !== 'launch')) return options
+    const remaining = options.filter(option => option.source !== 'launch')
+    const model = remaining.find(option => option.category === 'model')?.currentValue
+    const thinking = this.selection.profile?.launchThinking?.(model, selected)
+    return thinking ? [...remaining, thinking] : remaining
+  }
+
+  private async writeLaunchThinking(
+    task: AcpTask,
+    option: SessionConfigOption,
+    value: string,
+    options: SetConfigOptions,
+    reach: { sent: boolean },
+  ): Promise<void> {
+    const id = task.summary.id
+    const live = this.lives.get(id)
+    if (
+      this.busy(id)
+      || task.summary.status === 'running'
+      || task.summary.status === 'waiting-approval'
+      || [...(live?.children.values() ?? [])].some(child => child.taskId === id && !child.ended)
+    )
+      throw new AppError(409, 'task-running', '会话空闲后才能修改这个启动设置。')
+    if (live?.initialized && !live.capabilities.resume && !live.capabilities.load)
+      throw new AppError(409, 'harness-session-lost', '这个 Harness 不能恢复会话，请在新会话中选择思考。')
+    const model = task.config?.find(item => item.category === 'model')?.currentValue
+    if (!model || !this.selection.profile?.launchThinking?.(model)?.options.some(item => item.value === value))
+      throw new AppError(400, 'config-value-invalid', '这个模型不支持所选思考设置。')
+    const selected = { model, value }
+    this.launchThinkingChanges.set(id, { selected, ...(options.authorize ? { authorize: options.authorize } : {}) })
+    this.enter(this.holds, id)
+    try {
+      options.authorize?.()
+      await this.dropStartChoice(id, option.id)
+      options.authorize?.()
+      if (live) await live.wire.stop('stop', this.limits.stopGraceMs)
+      options.authorize?.()
+      reach.sent = true
+      const binding = await this.attach(id)
+      options.authorize?.()
+      await this.verifyMode(id, binding, this.lifetime.signal)
+      if (task.config?.find(item => item.id === option.id)?.currentValue !== value)
+        throw new AppError(503, 'config-outcome-unknown', '启动设置没有完成，请核对。')
+      task.acp.launchThinking = selected
+      this.touch(task)
+      this.mark()
+      await this.flush()
+      this.notify(id)
+    } finally {
+      this.launchThinkingChanges.delete(id)
+      this.leave(this.holds, id)
+      this.scheduleIdle(id)
+    }
+  }
+
+  private async rememberProcessMode(task: AcpTask, mode: string): Promise<void> {
+    const folders = storedFolders(task.acp)
+    const launch = this.currentLaunch(await this.projectConfig(task.acp.cwd, folders), folders, task.acp.route, mode)
+    task.acp.launchMode = mode
+    task.acp.launchHash = launch.hash
+    this.touch(task)
+    this.mark()
+    await this.flush()
   }
 
   private configReported(taskId: string): void {
@@ -2741,7 +3011,7 @@ export class AgentRuntime implements Bridge {
    * What a new process would launch now. The resolved path is part of the fingerprint, and so is the digest of
    * `project`; without project configuration both hashes are the definition's.
    */
-  private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders, route?: ModelRoute): Launch {
+  private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders, route?: ModelRoute, mode?: string): Launch {
     const command = resolveCommand(this.agent.command)
     if (!command)
       throw new AppError(
@@ -2763,16 +3033,18 @@ export class AgentRuntime implements Bridge {
     }
     const definitionHash = launchHash(definition)
     const routed = this.launchRoute(route)
+    const launchMode = this.selection.profile?.processMode ? (mode ?? this.profile?.expectedMode) : undefined
     const hash =
-      project?.digest || passed || routed
+      project?.digest || passed || routed || launchMode
         ? launchHash({
             ...definition,
             ...(project?.digest ? { projectConfig: project.digest } : {}),
             ...(passed ? { folders: passed } : {}),
             ...(routed ? { route: routed } : {}),
+            ...(launchMode ? { launchMode } : {}),
           })
         : definitionHash
-    return { command, hash, definitionHash }
+    return { command, hash, definitionHash, ...(launchMode ? { launchMode } : {}) }
   }
 
   /** A token for one process of the session `key`, kept so that nothing the process says repeats it. */
@@ -2875,7 +3147,32 @@ export class AgentRuntime implements Bridge {
   /** The options an agent reported, as its session offers them: on a route, only models its process's token may use. */
   private offered(task: AcpTask, options: SessionConfigOption[], lease = this.lives.get(task.summary.id)?.gateway): SessionConfigOption[] {
     const gateway = this.selection.profile?.gateway
-    return task.acp.route && gateway && lease ? routedOptions(options, lease.models, gateway.via) : options
+    const modes = this.withProcessMode(this.lives.get(task.summary.id), task.acp.acpSessionId, options)
+    return this.withLaunchThinking(
+      task.acp.route && gateway && lease ? routedOptions(modes, lease.models, gateway.via) : modes,
+      this.launchThinkingChanges.get(task.summary.id)?.selected ?? task.acp.launchThinking,
+    )
+  }
+
+  private withProcessMode(live: Live | undefined, sessionId: string | undefined, options: SessionConfigOption[]): SessionConfigOption[] {
+    if (!this.selection.profile?.processMode) return options
+    const fromMode = this.selection.profile.processMode.fromMode
+    if (fromMode)
+      return options.map(option => (option.category === 'mode' || option.id === 'mode' ? fromMode(option, live?.launchMode) : option))
+    const value = sessionId && live?.processModes?.get(sessionId)
+    const other = options.filter(option => option.category !== 'mode' && option.id !== 'mode')
+    return value
+      ? [
+          ...other,
+          {
+            id: 'mode',
+            name: '权限',
+            category: 'mode',
+            currentValue: value,
+            options: (this.profile?.modeLadder ?? []).map(mode => ({ value: mode, name: mode })),
+          },
+        ]
+      : other
   }
 
   /** The variables an `env` route sets, without their values, for what a launch shows. */
@@ -2906,7 +3203,12 @@ export class AgentRuntime implements Bridge {
   /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one on record. */
   private async assertLaunch(cwd: string, confirmed: Confirmed): Promise<Launch> {
     this.assertConfirmed(confirmed)
-    const launch = this.currentLaunch(await this.projectConfig(cwd, confirmed.folders), confirmed.folders, confirmed.route)
+    const launch = this.currentLaunch(
+      await this.projectConfig(cwd, confirmed.folders),
+      confirmed.folders,
+      confirmed.route,
+      confirmed.launchMode,
+    )
     if (launch.hash === confirmed.launchHash) return launch
     // A session confirmed before project configuration counted stored only the definition's fingerprint.
     throw launch.definitionHash === (confirmed.definitionHash ?? confirmed.launchHash) ? this.projectConfigChanged() : definitionChanged()
@@ -2939,7 +3241,12 @@ export class AgentRuntime implements Bridge {
     return {
       level: 'L3',
       enforcer: 'NONE',
-      readback: this.profile?.readback === 'mode' || task.acp.expectedMode !== undefined ? 'mode' : 'none',
+      readback:
+        this.modeOption(task)?.source === 'launch'
+          ? 'none'
+          : this.profile?.readback === 'mode' || task.acp.expectedMode !== undefined
+            ? 'mode'
+            : 'none',
       verifiedDefinition: this.selection.verified,
       approvals: this.profile?.approvals ?? 'prompts',
       ...(expected !== undefined ? { expectedMode: expected } : {}),
@@ -2988,10 +3295,13 @@ export class AgentRuntime implements Bridge {
     signal: AbortSignal,
   ): Promise<void> {
     const legacy = this.task(taskId).acp.configSource === 'legacy'
+    const agentValue = this.selection.profile?.processMode?.agentMode?.(value) ?? value
     await this.changeMode(taskId, [value, option.currentValue], async () => {
       const result = await binding.live.wire.request(
         legacy ? 'session/set_mode' : 'session/set_config_option',
-        legacy ? { sessionId: binding.acpSessionId, modeId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
+        legacy
+          ? { sessionId: binding.acpSessionId, modeId: agentValue }
+          : { sessionId: binding.acpSessionId, configId: option.id, value: agentValue },
         this.limits.requestTimeoutMs,
         signal,
       )
@@ -3662,11 +3972,22 @@ export class AgentRuntime implements Bridge {
     const materializedEnv = await this.selection.profile?.materialize?.({
       dataDir: this.options.dataDir,
       ...(route ? { route: { route, directory: sessionTmpDir } } : {}),
+      session: {
+        directory: sessionTmpDir,
+        thinking: this.launchThinkingChanges.get(key)?.selected ?? this.state.tasks[key]?.acp.launchThinking,
+      },
     })
+    const processMode = this.selection.profile?.processMode
+    const mode =
+      this.processModeChanges.get(key)?.value ?? (this.checking.has(key) ? undefined : (confirmed.launchMode ?? this.profile?.expectedMode))
+    const processSettings = await processMode?.prepare(sessionTmpDir, mode)
     this.assertOpen()
     // Checked again after the awaits: the command found on PATH or the project configuration may have changed meanwhile.
     const { command } = await this.assertLaunch(cwd, confirmed)
     this.assertOpen()
+    // A mode setter will run as this process opens its session; recheck after every preparation await, before spawn.
+    this.processModeChanges.get(key)?.authorize?.()
+    this.launchThinkingChanges.get(key)?.authorize?.()
     this.makeRoom()
     // Opened last, so that nothing before the spawn can fail while a token is out.
     const gateway = route ? this.openGateway(key, route) : undefined
@@ -3677,12 +3998,12 @@ export class AgentRuntime implements Bridge {
         this.selection.profile?.wire,
         {
           command,
-          args: [...this.agent.args, ...this.folderArgs(confirmed.folders)],
+          args: [...this.agent.args, ...this.folderArgs(confirmed.folders), ...(processSettings?.args ?? [])],
           cwd,
           env: agentEnvironment({
             resolvedCommand: command,
             profile: this.profile,
-            materializedEnv,
+            materializedEnv: { ...materializedEnv, ...processSettings?.env },
             definitionEnv: this.agent.env,
             sessionTmpDir,
             ...(gateway ? { gatewayEnv: this.gatewayEnv(gateway, route!) } : {}),
@@ -3725,6 +4046,8 @@ export class AgentRuntime implements Bridge {
       },
       authMethods: [],
       sessions: new Map(),
+      ...(processMode ? { processModes: new Map<string, string>() } : {}),
+      ...(mode ? { launchMode: mode } : {}),
       children: new Map(),
       lastUsed: Date.now(),
     }
@@ -3881,7 +4204,7 @@ export class AgentRuntime implements Bridge {
       const binding = await this.session(taskId, live, signal)
       // 核对 only reads: no start choice and no mode is set, and no turn can follow until it ends; the next turn's
       // binding sets and reads back the mode as always.
-      if (this.checking.has(taskId)) return binding
+      if (this.checking.has(taskId) || this.processModeChanges.has(taskId) || this.launchThinkingChanges.has(taskId)) return binding
       const unrouted = this.routeModel(taskId)
       const refused = unrouted ?? (await this.applyStart(taskId, binding, signal))
       await this.verifyMode(taskId, binding, signal)
@@ -4032,13 +4355,16 @@ export class AgentRuntime implements Bridge {
     // Opening a session is bounded more tightly than other requests: an agent that never answers is stopped and the
     // start refused, so the session fails with a reason instead of running until the general timeout.
     const setupMs = Math.min(this.limits.sessionSetupTimeoutMs, this.limits.requestTimeoutMs)
-    const setup = (method: string, params: unknown): Promise<unknown> =>
-      wire.request(method, params, setupMs, signal).catch(async (error: unknown) => {
+    const setup = (method: string, params: unknown): Promise<unknown> => {
+      this.processModeChanges.get(taskId)?.authorize?.()
+      this.launchThinkingChanges.get(taskId)?.authorize?.()
+      return wire.request(method, params, setupMs, signal).catch(async (error: unknown) => {
         if (!(error instanceof RequestTimeout)) throw error
         // The turn fails once the process is gone, as after an initialize that timed out: stdin closed, then signals.
         await wire.stop('stop', this.limits.stopGraceMs)
         throw this.handshakeTimeout(method, setupMs)
       })
+    }
     const task = this.task(taskId)
     const cwd = task.acp.cwd
     const current = task.acp.acpSessionId
@@ -4086,20 +4412,21 @@ export class AgentRuntime implements Bridge {
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
     const parsed = sessionState.safeParse(result)
     const folded = parsed.success ? foldConfig(parsed.data) : undefined
-    if (folded) {
+    if (folded || live.processModes?.has(acpSessionId)) {
       this.configReported(taskId)
-      target.config = this.offered(target, folded.options, live.gateway)
-      target.acp.configSource = folded.source
+      target.config = this.offered(target, folded?.options ?? [], live.gateway)
+      target.acp.configSource = folded?.source ?? 'options'
       this.applyModel(target)
       // What a session on a route offers is what the gateway's service has, not the harness's own list.
       if (!target.acp.route) {
-        if (!current) this.noteStartCatalogue(target, folded.options)
-        else this.noteModelOptions(target, folded.options)
+        if (!current) this.noteStartCatalogue(target, target.config)
+        else this.noteModelOptions(target, target.config)
       }
     }
     // A restored session can come back in another mode than the previous process last reported, so the recorded
     // mode is no evidence; unless this response reports one, the mode is set and read back before the next prompt.
-    if (folded?.options.some(item => this.isModeOption(target, item))) this.unconfirmed.delete(taskId)
+    if (target.config?.some(item => this.isModeOption(target, item)) && (folded || live.processModes?.has(acpSessionId)))
+      this.unconfirmed.delete(taskId)
     else if (current) this.unconfirmed.add(taskId)
     this.touch(target)
     this.mark()
@@ -4194,28 +4521,29 @@ export class AgentRuntime implements Bridge {
    * that model, then the mode, which `verifyMode` sets and reads back. Each answer is read back. A model or mode no longer
    * offered, or a model the agent does not take, refuses the turn: the refusal is returned once the rest of the draft is
    * set too, and the mode after it, so that nothing of the draft is left for later and the session shows what the next
-   * send runs on. Anything else no longer offered is left at the agent's default, and the session says so.
+   * send runs on. Any explicit choice that cannot be applied refuses this prompt, including thinking.
    */
   private async applyStart(taskId: string, binding: Binding, signal: AbortSignal): Promise<AppError | undefined> {
     const task = this.task(taskId)
     const chosen = task.acp.startConfig
     if (!chosen?.length) return undefined
     const name = this.agent.name
-    const live = (configId: string) => this.state.tasks[taskId]?.config?.find(item => item.id === configId)
+    // A draft that chose from the profile's ladder (`LADDER_MODE`) names the mode, not the option the agent reports it in.
+    const live = (configId: string) =>
+      configId === LADDER_MODE ? this.modeOption(this.task(taskId)) : this.state.tasks[taskId]?.config?.find(item => item.id === configId)
     const role = (choice: StartChoice): keyof typeof START_ORDER => {
       const option = live(choice.configId)
       const category = option ? (this.isModeOption(task, option) ? 'mode' : option.category) : choice.category
       return category === 'model' || category === 'mode' ? category : 'other'
     }
     const named = (choice: StartChoice) => clip(choice.label ?? choice.value, 64)
-    const left: string[] = []
     // The first refusal is the one the turn reports.
     let refused: AppError | undefined
     for (const choice of chosen.toSorted((a, b) => START_ORDER[role(a)] - START_ORDER[role(b)])) {
       const kind = role(choice)
       const option = live(choice.configId)
       if (!option || !(option.options.some(item => item.value === choice.value) || this.isCustomModel(task, option, choice.value))) {
-        if (kind === 'model' || kind === 'mode') await this.dropStartChoice(taskId, choice)
+        await this.dropStartChoice(taskId, choice.configId)
         if (kind === 'model')
           refused ??= new AppError(
             409,
@@ -4228,7 +4556,12 @@ export class AgentRuntime implements Bridge {
             'mode-unavailable',
             `${name} 现在没有「${named(choice)}」这个权限模式，这条消息没有发出。${this.nowUsing(taskId, this.modeOption(task), '权限')}`,
           )
-        else left.push(named(choice))
+        else
+          refused ??= new AppError(
+            409,
+            'config-option-unavailable',
+            `${name} 现在没有设置「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, option, '设置')}`,
+          )
         continue
       }
       if (kind === 'mode') {
@@ -4246,7 +4579,7 @@ export class AgentRuntime implements Bridge {
       const now = live(choice.configId)
       if (now?.currentValue === choice.value) continue
       if (kind === 'model') {
-        await this.dropStartChoice(taskId, choice)
+        await this.dropStartChoice(taskId, choice.configId)
         refused ??= new AppError(
           409,
           'model-unverified',
@@ -4254,16 +4587,15 @@ export class AgentRuntime implements Bridge {
         )
         continue
       }
-      left.push(named(choice))
+      await this.dropStartChoice(taskId, choice.configId)
+      refused ??= new AppError(
+        409,
+        'config-option-unverified',
+        `${name} 没有采用设置「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, now, '设置')}`,
+      )
     }
     const current = this.task(taskId)
     delete current.acp.startConfig
-    if (left.length)
-      current.messages.push({
-        id: randomUUID(),
-        role: 'system',
-        text: `${name} 这次没有提供${left.map(item => `「${item}」`).join('、')}，用它自己的默认值。`,
-      })
     this.touch(current)
     this.mark()
     this.notify(taskId)
@@ -4272,12 +4604,12 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
-   * A model or mode the agent no longer offers, or a model it does not take, refuses the turn once and is dropped at once,
+   * A choice the agent no longer offers or does not take refuses the turn once and is dropped at once,
    * so that it is not tried again even when setting the rest of the draft fails; the session then shows what it runs on.
    */
-  private async dropStartChoice(taskId: string, choice: StartChoice): Promise<void> {
+  private async dropStartChoice(taskId: string, configId: string, mode = false): Promise<void> {
     const task = this.task(taskId)
-    if (!forgetStartChoice(task, choice.configId)) return
+    if (!forgetStartChoice(task, configId, mode)) return
     this.touch(task)
     this.mark()
     this.notify(taskId)
@@ -4285,7 +4617,7 @@ export class AgentRuntime implements Bridge {
   }
 
   /** The sentence after a refused start: what the next send will use instead, and that it can be changed first. */
-  private nowUsing(taskId: string, option: SessionConfigOption | undefined, control: '模型' | '权限'): string {
+  private nowUsing(taskId: string, option: SessionConfigOption | undefined, control: '模型' | '权限' | '设置'): string {
     const value = control === '权限' ? (this.expectedMode(this.task(taskId)) ?? option?.currentValue) : option?.currentValue
     const shown = option?.options.find(item => item.value === value)?.name ?? value
     return shown === undefined ? `在${control}里换一个后重试。` : `再发送会用「${clip(shown, 64)}」，也可以先在${control}里换一个。`
@@ -4392,6 +4724,8 @@ export class AgentRuntime implements Bridge {
       || this.spawning.has(key)
       || this.holds.has(key)
       || this.checking.has(key)
+      || this.processModeChanges.has(key)
+      || this.launchThinkingChanges.has(key)
     )
       return true
     // A request that came after its turn waits on the person, and stopping the process would answer it.
@@ -4725,6 +5059,26 @@ export class AgentRuntime implements Bridge {
   }
 
   private onNotification(live: Live, method: string, params: unknown): void {
+    const processMode = this.selection.profile?.processMode?.read?.(method, params)
+    if (processMode) {
+      // A report is evidence only from this live process and for the session it actually opened.
+      if (this.lives.get(live.key) !== live || live.wire.stopping || !live.processModes) return
+      if (live.processModes.size >= 256 && !live.processModes.has(processMode.sessionId)) return
+      live.processModes.set(processMode.sessionId, processMode.mode)
+      const taskId = live.sessions.get(processMode.sessionId)
+      const task = taskId && this.state.tasks[taskId]
+      if (task) {
+        const before = this.modeOption(task)?.currentValue
+        task.config = this.withProcessMode(live, processMode.sessionId, task.config ?? [])
+        this.configReported(task.summary.id)
+        this.unconfirmed.delete(task.summary.id)
+        this.observeMode(task, before, processMode.mode)
+        this.touch(task)
+        this.mark()
+        this.notify(task.summary.id)
+      }
+      return
+    }
     if (method === 'session/update') return this.onUpdate(live, params)
     if (method === AUTH_STATUS_METHOD) {
       const report = reportedLogin(params)

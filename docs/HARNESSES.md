@@ -48,9 +48,9 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | 预设 | 命令 | 许可证 | 说明 |
 | --- | --- | --- | --- |
 | Codex | `codex app-server` | Apache-2.0 | `npm i -g @openai/codex`，0.156.0 或更高版本；不用适配器；没装 Codex 而装了 `codex-acp`（Apache-2.0）时经它运行它自带的 Codex；登录、模型与沙箱由 Codex 管理 |
-| pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本（与 1.5.0 核对过握手）；不用适配器；pi 执行工具前不请求审批，扩展要求确认时交给人 |
-| OpenCode | `opencode acp` | MIT | `npm i -g opencode-ai`；支持 1.x 与 2.x |
-| DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.1-rc.1 或更高（`acp` 配置自 0.1.2 起随包提供；0.2.1-rc.1 起它的 ACP 一轮等子 Agent 结束才结算、取消等真实停止，见 `@deepseek-ai/dsh-acp` 0.2.0-rc.2 与 0.2.1-rc.1 的 README；2026-11 的 latest 是 0.2.2-rc.1，参数不变）；它要求 Node.js 24.9 或更高；按完整消息回复 |
+| pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本（与 1.5.0 核对过握手）；不用适配器；Latch 的私有 pi 扩展提供四档权限，默认先问你 |
+| OpenCode | `opencode acp` | MIT | `npm i -g @opencode/cli`；当前安装包为 2.x，仍支持已有 1.x 与 2.x |
+| DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.2-rc.1 或更高（`acp` 配置自 0.1.2 起随包提供；0.2.1-rc.1 起它的 ACP 一轮等子 Agent 结束才结算、取消等真实停止，见 `@deepseek-ai/dsh-acp` 0.2.0-rc.2 与 0.2.1-rc.1 的 README；2026-11 的 latest 是 0.2.2-rc.1，参数不变）；它要求 Node.js 24.9 或更高；按完整消息回复 |
 | Gemini CLI | `gemini --acp --approval-mode default` | Apache-2.0 | `npm i -g @google/gemini-cli` |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` |
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
@@ -67,7 +67,7 @@ Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读�
 
 ### 版本门槛
 
-profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本，用 `<命令> --version` 读出：只读标准输出的第一行，整行是版本号（可带 `v`）才算，夹着更新提示等其他文字的不算。不经过 shell，不发提示，10 秒上限，程序退出后还占着输出的子进程被结束；与登录检查同一规则，只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序，也只读登录检查会运行的那个文件：定义的命令就是预设的命令名，或是指向同一文件的路径；其他命令（经 `node` 等运行时启动的、项目文件夹里的同名文件）不读，也不挡。现在有 DeepSeek Harness（0.2.1-rc.1，见上表）与 pi（0.84.4，RPC 的 `clear_queue` 检查仍保留给读不出版本的 pi）。
+profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本，用 `<命令> --version` 读出：只读标准输出的第一行，整行是版本号（可带 `v`）才算，夹着更新提示等其他文字的不算。不经过 shell，不发提示，10 秒上限，程序退出后还占着输出的子进程被结束；与登录检查同一规则，只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序，也只读登录检查会运行的那个文件：定义的命令就是预设的命令名，或是指向同一文件的路径；其他命令（经 `node` 等运行时启动的、项目文件夹里的同名文件）不读，也不挡。现在有 DeepSeek Harness（0.2.2-rc.1，权限服务桥经此版本核对，见上表）与 pi（0.84.4，RPC 的 `clear_queue` 检查仍保留给读不出版本的 pi）。
 
 - 只读已保存且启用的定义：Host 启动时、开始监听之前读一次（最多 5 秒），`GET /link/api/agents`（「重新检测」）清掉缓存后等新的结果（最多 5 秒）再回答；没添加过的预设与停用的定义不读，设置里这样的预设写「已找到」，ⓘ 后是「版本未读」（`CommandDetection.versionUnread`）。从新会话或「添加 Harness」选中一个预设时（即在这台 Mac 上确认它），保存它的定义之前读一次：太旧就以同一个 409 拒绝，不保存定义、不开会话，草稿留在输入框；这个结果保留下来，之后设置与「添加 Harness」写「需要升级」，「重新检测」也重读这样选过的预设。读到的结果按文件缓存（文件被替换或改动、「重新检测」时重读）；缓存说太旧时，新会话、已有会话的下一轮与进程启动前都再读一次（同一次读取共用），因为 Volta、asdf、mise 的 shim 在升级后还是同一个文件。读完发现变化时 Host 发一次 `refresh`，已打开的页面重新读取目录。
 - 低于门槛时：定义状态是 `unavailable`，文字是「<名称> 需要 <最低> 或更高版本（当前 <版本>）。升级：<命令>」；检测结果（`CommandDetection.outdated`）带 `need` 与 `upgrade`，设置写「需要升级」并给出升级命令与「重新检测」。只有读到的版本太旧时（不是没读过），定义与预设在目录里是 `unavailable`、带 `statusReason: 'outdated'`：新会话的 Harness 菜单把它列成灰色的「需要升级」，不能新选；草稿已经选了它（选中时才发现太旧）时选择不变，输入框上方就地写出原因与升级命令，不会自己换成另一个 Harness。Codex 同样。新会话、已有会话的下一轮（已在运行的进程也不再接收）与「测试启动」都在启动进程之前拒绝，同一个 409 `harness-version-unsupported` 与同一句话；「测试启动」在读版本之后、启动之前再查一次是否已取消；这不记为它的「上次运行异常」。读版本发生在启动前的项目配置复查之前，复查仍是启动前的最后一步。
@@ -93,15 +93,17 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 | Qwen Code | — | `default` | `plan`、`default`、`auto-edit`、`auto`、`yolo` | — | — | 可读回；恢复会话会恢复旧模式，Latch 每轮前重新设置 |
 | goose | `GOOSE_MODE=approve` | `approve` | `chat`、`approve`、`smart_approve`、`auto` | — | — | 可读回 |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` | `default` | `plan`、`default`、`autoEdit`、`yolo` | — | `proceed_always_and_save`、`ProceedAlwaysAndSave` | 可读回 |
-| DeepSeek Harness | `DSH_PERMISSION_MODE=read-only`、`DSH_TELEMETRY_DISABLED=1` | — | — | — | — | 无法读回权限模式 |
-| OpenCode | `OPENCODE_CONFIG_CONTENT`（见下） | `build` | `plan`、`build` | — | — | 可读回 |
-| pi | — | — | — | — | — | 无法读回；pi 执行工具前不请求审批，扩展要求确认时交给人 |
+| DeepSeek Harness | 私有 `--patch` 插件、`DSH_PERMISSION_MODE`、`DSH_TELEMETRY_DISABLED=1` | `read-only` | `read-only`、`workspace-write`、`danger-full-access` | — | — | 公共权限服务读回；空闲换档重启恢复 |
+| OpenCode | `OPENCODE_CONFIG_CONTENT`（见下） | `build` | `plan`、`build`、`auto-edit`、`yolo` | — | — | 可读回 |
+| pi | 私有 `-e` 扩展 | `ask` | `plan`、`ask`、`rule`、`never` | — | — | 扩展报告当前档位 |
 | Claude Agent | — | `default`（Manual） | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | — | — | 可读回；适配器新会话默认进 `auto`，Latch 每轮前设回预期模式 |
-| Cursor | — | `agent` | `ask`、`plan`、`agent` | — | `allow-always` | 可读回 |
+| Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | — | `allow-always` | ACP 报告前三档；force 只标启动设置 |
 
-- DeepSeek Harness：Latch 总是设置 `DSH_TELEMETRY_DISABLED=1`（它把任何非空值当作关闭遥测），定义里同名的变量会被这个值覆盖。会话仍是完全访问（L3），Latch 读不回它的权限模式，也不确认它自己的限制是否生效。
-- Gemini CLI：每次启动进程前，Host 把 `{"security":{"disableAlwaysAllow":true,"enablePermanentToolApproval":false}}` 写入 `<数据目录>/harnesses/<agent-id>/gemini-system-settings.json`，路径通过 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传给 Gemini CLI。这些键名尚未在 Gemini CLI 的正式版本上核对。
+- DeepSeek Harness：Latch 保持 `DSH_TELEMETRY_DISABLED=1`。每次启动在会话私有临时目录写入 0600 的 `--patch` 文件和插件，经公开 `permissionPresets.set/current` 设置与报告当前档位；不读写 dsh 自己的会话文件。报告同时绑定当前进程与 ACP session ID，未知组合拒绝发送。草稿选择计入启动指纹；会话空闲、没有后台子 Agent 时换档，结束旧进程、带选择启动新进程并恢复同一会话，真实读到目标值才完成。核对省略 setter，只报告服务当前值。`workspace-write` 直接允许工作目录及许可临时目录写入，扩大范围才询问。会话仍为 L3，模式不是 Latch 的 OS 隔离。
+- Gemini CLI：每次启动在会话自己的临时目录写 0600 系统设置文件，经 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传入；保留关闭永久审批的设置（这些审批键尚未在正式版本上实测）。已知精确模型可选思考：Gemini 3/3.1 的已核对文本模型按其支持的 level，2.5 按 budget，Pro 不提供关闭。选择只写该模型的 `modelConfigs.customAliases`，不借用其他模型的限制、不改人的文件。空闲换档重启恢复；默认不添加思考覆盖。ACP 未独立报告有效值，所以选项带 `source: launch`，界面写「启动设置 · 未独立读回」，核对返回 `unread`。系统设置高于用户与项目同名设置，但 CLI 的 model-config overrides（包括更精确条件与运行时覆盖）在 alias 之后生效，可能覆盖此选择；不能凭文件写入断言 Agent 已采用。原生 ACP 已有思考选项时优先用它。
 - OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置，`plan` 在这些规则之后再拒绝 `edit`（也管写入与补丁工具）和 `bash`，所以计划模式不改文件也不运行命令，它自己的计划文件也不写。子 Agent：规则先写 `task: 'deny'`，再写 `subagent: 'ask'`。1.x 只认 `task`，子 Agent 保持禁用，因为 1.x 的 ACP 不回答子会话的权限请求，子 Agent 会一直等下去；2.x 把 `task` 读作 `subagent`，后写的 `subagent: 'ask'` 生效，`build` 中启动子 Agent 先问你，子 Agent 的请求出现在启动它的会话里；在后来的一轮里被继续的子 Agent 例外，OpenCode 不转发它的请求（见「子 Agent」）。`plan` 另写 `subagent: 'deny'`，因为子 Agent 按它自己的 Agent（`general`、`explore`）加上这些全局规则工作，不受 `plan` 的拒绝约束。2.x 自带的 `explore` 本来放行命令与工作目录以外的路径，全局规则排在它自己的规则之后，所以它同样先问。2.x 默认不允许子 Agent 再启动子 Agent（`experimental.subagent_depth` 为 1）。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点，以及 2.x 的子 Agent 可以在一轮结束或停止后继续（见「子 Agent」）。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待，2.x 也可以把它作为子 Agent 启动（启动前先问你，请求里写着它的名字）。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
+- Cursor：保留官方 Ask、Plan、Agent 名称，最宽档用 `Agent --force`。前两档以 `--mode` 启动，Agent 不传 mode，force 只在明确选择时附加；空闲换档重启恢复并核对 ACP 模式。`--force` 不覆盖显式拒绝，ACP 不独立报告此标志，当前 force 档带 `source: launch`，不能把一次重启当成旧标志的只读核对。尚未做真实 Cursor 验收。
+- OpenCode 的新增主 Agent：`auto-edit` 沿用 build，只将文件编辑放行；`yolo` 直接允许工具。默认仍为 build，plan 的拒绝保留。这些主 Agent 由同一个 `OPENCODE_CONFIG_CONTENT` 声明，模式读回仍来自 OpenCode。
 - Claude Agent：五档按「权限菜单」的档位给出，Bypass 是不再询问，不预选任何更宽的一档。自动模式由 Claude 的分类器决定是否执行；计划模式在自动模式可用时，命令也可能由分类器决定（适配器默认开启 `useAutoModeDuringPlan`）。会话权限说明还写明：Claude 不需要批准的调用（工作目录内读取、只读命令）不出现在审批里，Claude Code 设置里的允许规则与 hooks 先于 Latch 生效，项目 `.mcp.json` 的服务器直接连接。版本规则要求 0.99 或之后的 0.x 适配器。
 - 人选的换档（`modeAnswers`）：Agent 用一次询问来换模式时，人的「仅此一次」回答就是选了那一档。Claude 的 ExitPlanMode 只留 `exit-plan-default`（回到 Manual，其余是会持久保存的选项），EnterPlanMode 是 `switch_mode` 调用上的 `allow-once`（进入 `plan`）。Latch 在把回答交给 Agent 之前把这一档记为预期模式，所以随后的换档不算漂移；没有人回答的换档仍按漂移处理。
 - 所有预设一律隐藏 `allow_always` 与 `reject_always` 类型的选项，这一点不可配置。
@@ -152,6 +154,8 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 - 这些文件夹只是 Agent 自己执行的范围，不是隔离。ACP 会话仍是完全访问（L3），Agent 可以访问 Host 用户能访问的任何路径。
 
 ## 启动指纹
+
+首轮设置未完成时，会话里的新选择取代对应草稿项；相同值也算重新选择，实际模式 ID 同时取代草稿的 `~mode`。新的选择在恢复会话或应用其他草稿项之前持久化，进程档位与私有思考设置遵守同一规则，之后不会重设旧草稿。
 
 开始会话不弹确认。启动指纹（`launchHash`）由解析出的命令路径、参数、定义的变量、预设（含 `inheritEnv` 的名字与 `programEnv` 找到的路径，见「进程与环境」）、计入的项目配置、交给 Agent 的其他文件夹与经 Latch 使用的模型服务（服务 ID、源、协议、交给 Agent 的方式与变量名，不含凭据，见「经 Latch 使用模型服务」）算出，不含项目配置、文件夹与模型服务的部分另记为 `definitionHash`。启动审计 `task.l3.start-requested` 记下 `launchHash`，`task.l3.started` 再记下 `definitionHash`，接收 Latch MCP 服务器的 Harness 另记 `mcpSetHash`（见 [MCP.md](MCP.md)）；两者随会话保存在 `acp.launchHash` 与 `acp.definitionHash`。之后按「项目配置」所列的时机重新计算：定义或解析出的命令变化时返回 409 `agent-definition-changed`，只有项目配置变化时返回 409 `project-config-changed`。已有会话随之停止接受输入，换新会话继续。
 
@@ -247,6 +251,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 
 - **版本与参数。** 需要 pi 0.84.4 或更高：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。pi 的 RPC 不报告版本，所以进程启动时 `get_state` 之后先发一次 `clear_queue`（刚启动的进程没有排队的内容）：pi 答「Unknown command」时它早于 0.84.4，会话与测试启动都拒绝并写「pi 的版本低于 0.84.4（它不认识 clear_queue），已拒绝启动。升级到 0.84.4 或更高版本后再试。」（409 `harness-version-unsupported`），不会开会话，也不会停在一轮永远不结束的运行里。pi 1.5 的 RPC 与 0.84.x 相同（公开 changelog 中 1.0 到 1.5 的不兼容改动都在扩展与界面，不在 RPC）：在临时 HOME 下对 1.5.0 做的不调用模型的握手里，`get_state`、`clear_queue`、`get_available_models`（没有登录时为空，按未登录处理）、`get_available_thinking_levels` 的形状不变；它在回答第一条命令前先发一条 `queue_update` 事件，`new_session` 的回答可能晚于其后发出的命令，wire 按 `id` 对应，忽略不认识的事件（假 pi 以 `FAKE_PI_SHAPE=1.5` 重现）。定义的参数不能有 `--mode`、`--print`/`-p`、`--session`、`--session-id`、`--no-session`、`--continue`/`-c`、`--resume`/`-r`、`--fork`、`--export`、`--list-models`、`--help`/`-h`、`--version`/`-v`，这些决定协议和会话，保存时就拒绝（400 `agent-args-reserved`）。
 - **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件，再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。pi 没有删除会话的命令，删除 Latch 的会话时留下 pi 自己的副本。pi 不接收 MCP 服务器。
+- **权限扩展。** 启动追加 Latch 私有 0600 `latch-permission.ts`（`-e`），profile 版本计入指纹。默认 ask：read/grep/find/ls 不问，其余调用先问；plan 拦截所有非读取，rule 直接允许 edit/write、其他先问，never 直接允许。wire 通过私有命令换档，并只接受 `get_commands` 报告的完整扩展路径与本次进程的状态回报；用户提示不能直接调用该控制命令。扩展拒绝或询问失败不执行调用。其他可信扩展仍可在工具回调之外运行代码，这不是隔离。
 - **模型与思考。** `get_available_models` 列出模型（值写作 `provider/model`），一个都没有说明 pi 还没有可用的登录或密钥，按未登录处理；`get_available_thinking_levels` 列出当前模型的思考深度，换模型后重读，读回 `get_state` 才算换好。列表只在人点「读取 pi 的模型列表」时读，因为 pi 启动时会加载这个人的扩展、运行会话钩子。
 - **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容写进会话：「pi 提示：停止前追加的内容还没送到 pi，已撤回」。
@@ -280,7 +285,7 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 
 ## 权限菜单
 
-有 profile 的预设给每个模式一个档位和一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽是「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`，Agent 自己的模型代人决定）与「不再询问」（`never`）；菜单的标题用档位词，下面一行是这个 Harness 在这一档实际怎么做：
+有 profile 的预设给每个模式一个档位和一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽是「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`，Agent 自己的模型代人决定）与「不再询问」（`never`）；菜单的标题用档位词（Cursor 保留官方名称），「权限说明」按需展开这个 Harness 在每一档实际怎么做：
 
 | 预设 | 只看不改 | 先问你 | 按规则放行 | 由模型判断 | 不再询问 |
 | --- | --- | --- | --- | --- | --- |
@@ -288,14 +293,17 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 | Qwen Code | `plan` | `default` | `auto-edit` | `auto`（用户自己的允许规则、只读工具与项目里的文件编辑先放行，`.git`、`package.json` 等会影响之后运行的文件除外；其余由它的分类器判断，判断不了时问） | `yolo` |
 | goose | `chat` | `approve` | — | `smart_approve`（工具声明或模型判断为只读的不问，其余问） | `auto` |
 | Gemini CLI | `plan` | `default` | `autoEdit` | — | `yolo` |
-| OpenCode | `plan`（Latch 的规则之后再拒绝 `edit` 与 `bash`：不改文件，不运行命令，其他工具先问） | `build` | — | — | — |
+| OpenCode | `plan`（不改文件、不运行命令） | `build` | `auto-edit` | — | `yolo` |
+| pi | `plan` | `ask` | `rule` | — | `never` |
+| DeepSeek Harness | `read-only` | — | `workspace-write` | — | `danger-full-access` |
+| Cursor | `ask`、`plan`（按官方名称） | `agent` | — | — | `agent-force`（启动参数） |
 | Claude Agent | `plan` | `default` | `acceptEdits` | `auto`（Claude 的分类器） | `bypassPermissions` |
 
-Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有模式的按 Agent 自己的名字与说明列出，没有模式的只写「不询问 · 由 pi 决定」或「权限无法确认」。Agent 报告了表里没有的模式时，菜单不列它，除非会话正处在这个模式，那时用 Agent 自己的名字显示。
+没有匹配预设的定义按 Agent 自己报告的模式与说明列出，没有报告时写「权限无法确认」。Agent 报告了表里没有的模式时，菜单不列它，除非会话正处在这个模式，那时用 Agent 自己的名字显示。
 
 - **三行。** 模式超过三个时，菜单只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余（只看不改、另一个中间档）收在「更多」里；当前的模式总是列出。「不再询问」的标题、说明与触发器是琥珀色，「由模型判断」不是。
 - **谁能选。** 任何有 `run` 的设备都能选任何一档，不弹确认，放宽写 `task.mode.widened`。
-- **默认。** 会话总从预设的预期模式（都是「先问你」那一档）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在。分叉的草稿用来源会话当时的模型、思考与模式，而不是这台设备记住的；模式是 Latch 让来源会话保持的那一档（`permission.expectedMode`，人选的），不是 Harness 报告的、它自己换到的那一档，所以设置被 Harness 自己改了之后的「在新会话中继续」仍从人选的档位开始，Latch 不知道人选的档位时从目标 Harness 的默认模式开始并写明。具体是：还是同一个 Harness 时照原样带上（经 Latch 转发到保存的服务的，带上那个服务与模型）；换了 Harness 时，模型与思考按同样的值带上，模式按档位找同一档，没有这一档时用比它严的最宽一档，比它严的也没有时用最严的一档；来源没有模式或档位对应不上时从 Harness 的默认模式开始，来源只对话、不读写文件而目标 Harness 没有这种方式时也是如此；档位对应不上、模式被 Harness 自己改过与来源只对话这三种情况在分叉说明里各写一行。草稿里写明哪些没有沿用（「没有沿用来源会话的模型「Large」：goose 在这里不能选。」「来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。」）；目标 Harness 的选项还没读到时（读取中、读取失败，或像 pi 那样要人去读），还不知道它有没有这些，草稿不说没有沿用，只写「来源会话的模型「Large」、思考「High」与权限「按规则放行」要等读到 goose 的选项后才能沿用。」，读到后换成上面的说明；预设写明没有可选权限的 Harness（pi）不在这句里提权限。人仍可以在草稿里改；分叉草稿里选的模型、思考与模式只用于这一份草稿，不写入设备记住的选项。
+- **默认。** 会话总从预设的预期模式（「先问你」或更严，dsh 默认只读）开始，Latch 自己从不选更宽的一档。设备记住人在草稿里为每个 Harness 选的模式与其他选项，下一个草稿照用，换到别的 Harness 再换回来也还在。分叉的草稿用来源会话当时的模型、思考与模式，而不是这台设备记住的；模式是 Latch 让来源会话保持的那一档（`permission.expectedMode`，人选的），不是 Harness 报告的、它自己换到的那一档，所以设置被 Harness 自己改了之后的「在新会话中继续」仍从人选的档位开始，Latch 不知道人选的档位时从目标 Harness 的默认模式开始并写明。具体是：还是同一个 Harness 时照原样带上（经 Latch 转发到保存的服务的，带上那个服务与模型）；换了 Harness 时，模型与思考按同样的值带上，模式按档位找同一档，没有这一档时用比它严的最宽一档，比它严的也没有时用最严的一档；来源没有模式或档位对应不上时从 Harness 的默认模式开始，来源只对话、不读写文件而目标 Harness 没有这种方式时也是如此；档位对应不上、模式被 Harness 自己改过与来源只对话这三种情况在分叉说明里各写一行。草稿里写明哪些没有沿用（「没有沿用来源会话的模型「Large」：goose 在这里不能选。」「来源会话的权限是「按规则放行」，goose 没有这一项，这里用更严的「先问你」。」）；目标 Harness 的选项还没读到时（读取中、读取失败，或像 pi 那样要人去读），还不知道它有没有这些，草稿不说没有沿用，只写「来源会话的模型「Large」、思考「High」与权限「按规则放行」要等读到 goose 的选项后才能沿用。」，读到后换成上面的说明；人仍可以在草稿里改；分叉草稿里选的模型、思考与模式只用于这一份草稿，不写入设备记住的选项。
 - **模型的判断。** Codex 报告自己的模型审阅一次请求（直连时 wire 把 `item/autoApprovalReview/started` 与 `completed` 换成同样的一行，见「Codex 的 app-server」；以下字段是 codex-acp 的）：ID 以 `guardian_assessment:` 开头、类别为 `think` 的工具调用，`rawOutput`/`rawInput` 带 `review.status`（`approved`、`denied`、`timedOut`、`aborted`）。这一行在时间线上写「Codex 的模型审阅」与「放行」「拦下」或「没有判断」（`ToolDetail.judged`），它的文字是 Agent 自己的、不可信的输出；它不是人的批准，没有决定记录，被拦下的在 Latch 里不能改为允许（codex-acp 没有改判的方法）。Claude Agent 只报告它拦下的调用：适配器把这次调用报为 `failed` 的 `tool_call_update`，内容是「Permission denied: <理由>」，`_meta.claudeCode.toolResponse` 带 `decisionReasonType` 与理由（`decisionReason`，没有时是 `message`）。来源是 `classifier`（它的自动模式询问的模型）时，这一行仍是那次调用本身，写「拦下」，下面一行「Claude Agent 的模型审阅：<理由>」；会话在「由模型判断」档时它带 `ToolDetail.judged`（`denied`）并记录。来源是 `rule` 或 `mode` 时写「拦下」与「被 Claude Agent 自己的规则或当前模式拦下：<理由>」，提示说模式拦下的在「权限」换一档后可以放行、规则拦下的要改 Claude Agent 自己的权限设置；在任何档都这样，不算模型的判断，不记录。两种都放在 `ToolDetail.blocked`（`by`、`source`、`reason`），不显示成失败；理由是 Agent 的不可信文字，Host 遮住像密钥的部分（与重试、压缩失败的原因一样）并限 1000 字，行下只显示第一行的前 120 字，没显示全的在展开这一行后的细节里完整显示（适配器之后发的失败结果会替换掉内容里的理由）。折叠的一轮写「模型拦下 N 次」「规则拦下 N 次」，不算失败的步骤。其他来源（钩子、安全检查等 Latch 叫不出名字的）照旧是一行失败；问过人的调用、已经开始运行的调用不算 Claude 自己拦下的。`classifier` 这个取值来自适配器注释对来源的称呼，它的测试里没有出现，也还没有在真实的自动模式下见过；取值不同时这些调用照旧是失败，不会被说成模型的判断。不报告判断的 Harness（Qwen Code `auto`、goose `smart_approve`）与不报告放行的 Claude Agent `auto`，在「由模型判断」档里没有问人就运行的调用写「没有问你」，不说是模型放行的，因为也可能是它自己的规则。
 - **记录。** 每个审阅结论、每个被模型拦下的调用（来源 `agent-report`）、每个这样没问就运行的调用写一条 `task.tool.judged`：`callHash`、`modeHash`、类别、结果（`approved`、`denied`、`timed-out`、`aborted`、`unknown`、`ran-unasked`）与来源（`agent-report` 或 `no-ask-seen`），只有哈希与枚举，不写 Agent 的文字。这是事后的记录，不是关口；写不进去时取消这一轮并写明「Latch 没能记下一次由 <Harness> 的模型代你决定的调用，已取消本轮。」。
 
@@ -323,17 +331,17 @@ Cursor、pi、DeepSeek Harness 与没有匹配预设的定义没有档位：有�
 ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new` 返回。所以 Harness 的选项来自它自己的会话，或者一次不发提示的读取：
 
 - **记录。** 每个新会话的 `session/new` 回答记为这个 Harness 的选项列表（`HarnessInfo.catalogue`：`options` 与会话的 `config` 同形状，`perModel` 是各模型下跟着模型变的选项，如思考深度，`reportedAt` 是时间，`source` 是 `session` 或 `check`）。会话之后报告的选项（换模型后、`config_option_update`）只更新 `perModel`。列表存在该 Harness 的 `acp.json`，按定义指纹（`definitionHash`）保存，同时记下启动指纹与 Agent 版本；定义一变就不再下发，读坏时丢弃，不影响会话。模式的当前值写成预设每次开始前设好的模式（如 Codex 的 `read-only`），不是 Agent 碰巧报告的那个。条目数、文字长度与总大小（64 KiB，超出时先丢最早见过的模型，再整份不下发）有上限，因为每份目录都带着它，手机整份读取，超过 1 MiB 就拒收。
-- **读取。** 还没有列表时，可以不开始会话就读一次（`HarnessInfo.catalogueRead`，`POST /link/api/agents/:id/catalogue { auto? }`）：在 Host 临时目录下新建的空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多等 20 秒。Codex 预设不开会话：用定义的命令加 `cli app-server`（codex-acp 用 `CODEX_PATH` 指向的 Codex，没有就用自带的），只发 `initialize`、`config/read` 与 `model/list`（按 `nextCursor` 翻页，最多 5 页），不开线程；结果写成 codex-acp 会话里同样的 `model` 与 `reasoning_effort` 选项，所以开始前的选择能直接用在随后的会话上，列表里原有的其他选项保留。它不报告模式，所以 `catalogueRead.modes` 是 `false`；开会话的读取和开始时一样报告模式，是 `true`。
+- **读取。** 还没有列表时，可以不开始会话就读一次（`HarnessInfo.catalogueRead`，`POST /link/api/agents/:id/catalogue { auto?, model? }`）：在 Host 临时目录下新建的空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多等 20 秒。Codex 预设不开会话：用定义的命令加 `cli app-server`（codex-acp 用 `CODEX_PATH` 指向的 Codex，没有就用自带的），只发 `initialize`、`config/read` 与 `model/list`（按 `nextCursor` 翻页，最多 5 页），不开线程；结果写成 codex-acp 会话里同样的 `model` 与 `reasoning_effort` 选项，所以开始前的选择能直接用在随后的会话上，列表里原有的其他选项保留。它不报告模式，所以 `catalogueRead.modes` 是 `false`；开会话的读取和开始时一样报告模式，是 `true`。
   - 什么时候读：新会话里选中这个 Harness，或打开它的模型菜单，或打开读取会报告模式的 Harness 的权限菜单（`catalogueRead.modes`；Codex 的模型列表不报告，所以打开它的权限菜单不读取），而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就不读，返回 `ran: false`）。从不按时间读，失败后也不再自动重读。
   - 哪些自动读：每个预设在 profile 里写明（`catalogueRead`）。只有读取不跑一轮、不调模型、也不运行人自己的会话钩子或扩展时才自动读：Codex（直连与 codex-acp）的 `model/list` 不开线程；DeepSeek Harness、Cursor、Gemini CLI、Goose、Qwen Code、OpenCode 与没有 profile 的自定义命令是不发提示的空会话。pi 与 Claude Agent 只在菜单里点「读取 <Harness> 的模型列表」时读，因为它们启动会话时会加载人的扩展或插件、运行会话开始的钩子。
   - 只读确认过的定义：自动读取遇到这台 Mac 没确认过的定义，或命令已解析到别的程序，直接不读（`ran: false`，不写审计、不启动）；人点读取时返回原因（409 `harness-unconfirmed` 等）。新会话里还没有定义的预设（`offer`）从不自动读；菜单里「读取 <Harness> 的模型列表」先保存它的定义（这台 Mac 上确认），再读取。
   - 菜单：读取中写「正在读取 <Harness> 的模型列表…」；失败写「没有读到：…」与「重新读取」；有列表时是「刷新模型列表」，读一次并替换列表；还没有列表时是「读取 <Harness> 的模型列表」。
-  - 谁能读：和开始会话同一道门，要 `run` 范围，Harness 可以开始（不可用时 409）；只读设备只看已有列表。同一定义同时只读一次，其他请求共用结果。启动进程之前写审计 `agent.catalogue.requested`（写不进就不启动），结束后写 `agent.catalogue.read`（只记成功与否）。
+  - 谁能读：和开始会话同一道门，要 `run` 范围，Harness 可以开始（不可用时 409）；只读设备只看已有列表。同一定义同时只读一次；同一模型请求共用结果，不同模型排队各读自己的结果。启动进程之前写审计 `agent.catalogue.requested`（写不进就不启动），结束后写 `agent.catalogue.read`（只记成功与否）。
   - 结果：成功时列表来源为 `check`；失败时保存 `last: { ok: false, message }`，消息经过脱敏，菜单写「没有读到：…」，如「OpenCode 还没登录。按它自己的方式登录后重试。」，不弹登录。定义一变，上次读取的结果也不再下发。
 - **自己填的模型 ID。** 菜单里「填写模型 ID…」把 Harness 没列出的模型 ID 存进这个 Harness 的 `acp.json`（`HarnessInfo.customModels`，`PUT /link/api/agents/:id/models { models }`，要 `run`，最多 32 个，每个最多 256 字符、不能换行，审计 `agent.models.changed` 只记个数），在模型列表里标「自己填写」，换定义也保留。只有列表里有模型选项时才能填，因为 ACP 只能经这个选项设置模型。开始时和会话里都原样发给 Agent；开始时 Agent 拒绝或没换过去，这一轮失败，文字和不再提供时一样说出下一次会用什么（「<名称> 没有换到模型「…」，这条消息没有发出。再发送会用「…」，也可以先在模型里换一个。」），之后的发送用会话显示的模型。
-- **显示。** 新会话的模型、思考与权限都从这份列表画，和会话里是同一个组件；菜单底部写「来自上次会话 · 时间」或「读取于 时间」。选了一个列表没说思考深度的模型时，思考写「默认」，菜单里说开始后才告诉 Latch。没有列表时模型写「默认模型」、思考写「默认」；能读取时菜单里是读取的入口，读取中写「正在读取…」，不能读取时写「开始后才报告」。Latch 没有权限 profile 的 Harness，权限在能读取时写「读取后可以选」，读取中写「正在读取…」，读到的列表没有模式或这台设备读不了时写「开始后可以选」。有 profile 的 Harness 开始前只有它开始时的那一档，菜单下方说其他档什么时候能换：读取会报告模式的，读取中写「正在读取 <Harness> 的权限…」，能读取时写「读取 <Harness> 的权限后可以换。」，上次没读到时写「没有读到 <Harness> 的权限。发第一条消息后可以换。」；Codex 等读取不报告模式的，或这台设备读不了时，写「发第一条消息后可以换：<Harness> 开始会话时才给出其他几项。」；上次会话或读取报告的选项里没有模式时不写这一句。设备按 Harness 记住模型、思考与模式的选择；没有选过时从开始前设好的模式开始，Latch 不替人选更宽的一档。
-- **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。每项都从 Agent 的回答读回。
-- **不再提供时。** 选的模型或模式 Agent 不再提供：这一轮失败，不发提示，文字说出它的名字和下一次会用什么（「Codex 现在没有模型「Large」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。」）。失败之前照常设好草稿里的其他选择，再设好并读回模式，没有哪一项留到下一次，所以会话显示的就是之后运行的。思考等其他选项不再提供或被拒绝：保持 Agent 的默认值，并在会话里加一条系统消息。会话里改了某一项，就取代开始前对这一项的选择。Agent 要先登录时，还没设好的选择留到登录后的那次发送；在那之前会话显示不出它们（尚未实现：会话详情不带还没设好的选择）。
+- **显示与换模型。** 新会话与会话里共用控件。已知权限预设在草稿就给出从严到宽的全部档位（`permission.modes/startMode`，暂用 `~mode` ID）；列表随后到达不能抹掉人的选择，开始时再匹配 Agent 实际模式 ID。草稿换模型后，在私有空会话切到该模型读取选项，绝不发提示；自动读取与需人请求的边界同上。OpenCode、dsh 明确按模型报告思考，没有时写「这个模型没有思考档位」；Cursor 写「在模型列表里选」。无法读取或失败保持实际未知，不把别的模型的档位搬过来。设备按 Harness 记住选择，默认从预设严格档开始。Harness、模型和思考列表主要显示名称、分组与勾选，不常驻普通描述、成功读取时间或快捷键；未知结果、不可用原因与启动设置边界仍直接显示。权限的档位说明按需展开。显式重选当前权限或启动设置仍交给 Host，取代未完成的旧草稿。
+- **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。原生选项从 Agent 的回答读回；Gemini 启动设置与 Cursor force 仅报告其启动配置完成，不冒充有效值独立读回。
+- **不再提供时。** 选的模型或模式 Agent 不再提供：这一轮失败，不发提示，文字说出它的名字和下一次会用什么（「Codex 现在没有模型「Large」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。」）。失败之前照常设好草稿里的其他选择，再设好并读回模式，没有哪一项留到下一次，所以会话显示的就是之后运行的。明确选择的思考等其他选项不再提供、被拒绝或没采用时同样拒绝本轮；说出下次会使用的值，不悄悄用默认值发送。会话里改了某一项，就取代开始前对这一项的选择。Agent 要先登录时，还没设好的选择留到登录后的那次发送；在那之前会话显示不出它们（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，值是 Agent 自己的文字，不原样记录）。开始前选更宽的模式和会话里一样不弹确认。
 
 会话选项修改的未知结果通过 Host 配置回执查询，不自动再次发送 `set_config_option`；Agent 超时或连接关闭无法证明没有执行。回执只有请求摘要与状态，不保存自定义选项原值。`SetConfigOptions.authorize` 在准备连接前和实际发送 RPC 前同步复查 Host 授权；详情见 [ARCHITECTURE.md](ARCHITECTURE.md#会话配置修改回执)。
@@ -495,7 +503,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 ## 测试
 
-`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。测试从不启动真实 Agent。
+`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
 
 ### 会话命令
 

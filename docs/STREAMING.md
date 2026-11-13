@@ -376,3 +376,5 @@ Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Messag
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
 
 文件列按 session 与 workspace/Harness 分开保留相对引用；切换上下文取消旧解析、目录读取与搜索，迟到结果不更新新上下文。项目预览不创建会话。目录与句柄见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+
+Harness 的进程级换档在空闲时结束旧进程、恢复同一外部会话；准备与恢复期间拒绝发送、追加和其他配置写入。dsh 以官方服务报告同会话的实际权限为证据；Gemini 启动设置与 Cursor force 只表示新进程的启动配置，界面明确标为未独立读回，未知结果仍沿原 requestId 保留。

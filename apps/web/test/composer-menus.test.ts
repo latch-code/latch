@@ -14,7 +14,7 @@ import {
   UnusableServices,
 } from '../src/composer/ModelControl.tsx'
 import { PermissionList } from '../src/composer/PermissionList.tsx'
-import { controlKeyCaps, controlKeyText } from '../src/composer/modelReasoning.ts'
+import { controlKeyCaps } from '../src/composer/modelReasoning.ts'
 import { forkedChoice, forkSource } from '../src/forkChoice.ts'
 import { draftConfig } from '../src/composerChoice.ts'
 
@@ -183,7 +183,7 @@ describe("a draft's model menu for a Harness with its own models", () => {
     expect(html).toContain('>Codex<')
     for (const gone of ['自己的模型', '默认模型', '服务用不了']) expect(html).not.toContain(gone)
     expect(html).toContain('刷新模型列表')
-    expect(html).toContain('读取于 ')
+    expect(html).not.toContain('读取于 ')
   })
 
   it('says 默认模型 only while the Harness reported nothing, and offers to read it', () => {
@@ -239,7 +239,6 @@ describe('the keys on the menu titles', () => {
     expect(controlKeyCaps('model')).toBeUndefined()
     vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })
     expect(controlKeyCaps('harness')).toEqual(['⌥', '⌘', '1'])
-    expect(controlKeyText('permission')).toBe('⌥⌘4')
     const html = renderToStaticMarkup(
       createElement(PermissionList, {
         view: { label: '先问你', line: '', icon: 'shield', amber: false },

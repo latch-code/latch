@@ -2182,7 +2182,7 @@ describe('full-access (L3) sessions', () => {
       FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
       FAKE_ACP_INITIAL_MODE: 'default',
     })
-    await define('dsh-fake', 'dsh', {})
+    await define('dsh-fake', 'dsh', { FAKE_ACP_PROCESS_MODE: '1' })
     const { harnesses } = (await desktop.json<AppSnapshot>('snapshot')).catalog!
     expect(
       Object.fromEntries(['codex-fake', 'gemini-fake', 'dsh-fake'].map(id => [id, harnesses.find(item => item.id === id)?.projectFolders])),
@@ -2360,7 +2360,7 @@ describe('full-access (L3) sessions', () => {
         presetId: 'dsh',
         command: 'dsh',
         args: ['--profile', 'acp'],
-        env: { FAKE_ACP_STATE: join(root, 'state.json') },
+        env: { FAKE_ACP_STATE: join(root, 'state.json'), FAKE_ACP_PROCESS_MODE: '1' },
       },
     })
     await first.close()

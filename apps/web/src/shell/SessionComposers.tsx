@@ -4,7 +4,16 @@ import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
 import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { draftConfig, harnessName, nothingInstalled, projectFor, sameModel, servicePick, worktreeProject } from '../composerChoice.ts'
+import {
+  draftConfig,
+  harnessName,
+  nothingInstalled,
+  projectFor,
+  sameModel,
+  servicePick,
+  withLadderMode,
+  worktreeProject,
+} from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
@@ -272,7 +281,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       ? draftPermission(
           chosenHarness,
           choice.mode,
-          draftConfig(chosenHarness, choice.config)?.config,
+          withLadderMode(chosenHarness, draftConfig(chosenHarness, choice.config)?.config, choice.config),
           draftRead(chosenHarness, access, draftReading),
         )
       : !summary

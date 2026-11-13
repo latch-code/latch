@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import type { HarnessProfile, RetryReport, SessionUpdate } from './types.ts'
+import { geminiThinkingOption, geminiThinkingSettings } from './gemini-thinking.ts'
 
 /** Turns off the "always allow" choices Gemini CLI would otherwise store. The key path has not been checked against a release yet. */
 const SYSTEM_SETTINGS = { security: { disableAlwaysAllow: true, enablePermanentToolApproval: false } }
@@ -107,7 +108,8 @@ function readRetry(update: SessionUpdate): RetryReport | undefined {
 
 export const geminiProfile: HarnessProfile = {
   presetId: 'gemini',
-  version: 2,
+  version: 3,
+  launchThinking: geminiThinkingOption,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {
@@ -142,10 +144,19 @@ export const geminiProfile: HarnessProfile = {
    * Rewrites the file before every spawn (0600, replaced by rename so a planted symlink is replaced, not followed). A
    * session on a gateway route gets its own, in its private directory, since it names the session's model.
    */
-  async materialize({ dataDir, route }) {
-    const path = route
-      ? await writeSettings(join(route.directory, 'gateway'), routed(route.route.model))
-      : await writeSettings(dataDir, SYSTEM_SETTINGS)
+  async materialize({ dataDir, route, session }) {
+    const gateway = route ? routed(route.route.model) : undefined
+    const base = gateway ?? SYSTEM_SETTINGS
+    const thinking = geminiThinkingSettings(session?.thinking)
+    const settings = {
+      ...base,
+      ...thinking,
+      ...(gateway ? { modelConfigs: { ...gateway.modelConfigs, ...(thinking.modelConfigs as object | undefined) } } : {}),
+    }
+    const path = await writeSettings(
+      route ? join(route.directory, 'gateway') : session ? join(session.directory, 'gemini') : dataDir,
+      settings,
+    )
     return { GEMINI_CLI_SYSTEM_SETTINGS_PATH: path }
   },
 }

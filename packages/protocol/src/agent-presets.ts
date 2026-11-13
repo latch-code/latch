@@ -111,7 +111,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     license: 'MIT',
     homepage: 'https://github.com/anomalyco/opencode',
     description: '模型与登录由 OpenCode 管理。',
-    install: 'npm i -g opencode-ai',
+    install: 'npm i -g @opencode/cli',
     login: { command: 'opencode', args: ['auth', 'login'] },
   },
   {

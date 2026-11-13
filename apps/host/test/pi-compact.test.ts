@@ -42,6 +42,12 @@ test("pi's /compact runs between turns, and is refused queued or added to a runn
   expect((await detail()).commands).toEqual([expect.objectContaining({ name: 'compact', idleOnly: true })])
 
   expect((await prompt({ prompt: 'build it slowly' })).status).toBe(200)
+  // pi now starts in ask: this command must be approved before it runs and can exercise compact's busy guard.
+  await expect.poll(async () => (await detail()).approvals.length).toBe(1)
+  const approval = (await detail()).approvals[0]!
+  expect(
+    (await owner.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })).status,
+  ).toBe(200)
   await expect
     .poll(async () => (await detail()).messages.some(message => message.role === 'tool' && message.state === 'running'))
     .toBe(true)

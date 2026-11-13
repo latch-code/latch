@@ -86,6 +86,69 @@ describe('ValuePicker placement', () => {
 })
 
 describe('value picker', () => {
+  it('reports a current value only when the caller explicitly enables reselect', async () => {
+    const picked = vi.fn()
+    const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={picked} />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await screen.getByRole('menuitemradio', { name: 'alpha-large' }).click()
+    expect(picked).not.toHaveBeenCalled()
+    await screen.rerender(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={picked} reselect />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await screen.getByRole('menuitemradio', { name: 'alpha-large' }).click()
+    expect(picked).toHaveBeenCalledExactlyOnceWith('alpha')
+    await expect.element(screen.getByRole('button', { name: '模型：alpha-large' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('repairs a removed focused option after a refresh and still closes on Escape', async () => {
+    const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={() => {}} />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await userEvent.keyboard('{ArrowDown}')
+    await expect.element(screen.getByRole('menuitemradio', { name: 'beta-mini' })).toHaveFocus()
+    await screen.rerender(
+      <ValuePicker
+        label="模型"
+        value="new"
+        options={[
+          { value: 'new', label: '新模型' },
+          { value: 'other', label: '其他模型' },
+        ]}
+        onValueChange={() => {}}
+      />,
+    )
+    await expect.element(screen.getByRole('menuitemradio', { name: '新模型' })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(screen.getByRole('button', { name: '模型：新模型' })).toHaveAttribute('aria-expanded', 'false')
+    await expect.element(screen.getByRole('button', { name: '模型：新模型' })).toHaveFocus()
+  })
+
+  it('leaves surviving option, search and outside focus alone when options refresh', async () => {
+    const picker = (extra = false) => (
+      <>
+        <ValuePicker
+          label="模型"
+          value="alpha"
+          options={extra ? [...MODELS, { value: 'new', label: '新模型' }] : MODELS}
+          searchable
+          onValueChange={() => {}}
+        />
+        <button type="button">其他控件</button>
+      </>
+    )
+    const screen = await render(picker())
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await userEvent.keyboard('{ArrowDown}')
+    const option = screen.getByRole('menuitemradio', { name: 'beta-mini' })
+    await expect.element(option).toHaveFocus()
+    await screen.rerender(picker(true))
+    await expect.element(option).toHaveFocus()
+    screen.getByRole('searchbox').element().focus()
+    await screen.rerender(picker())
+    await expect.element(screen.getByRole('searchbox')).toHaveFocus()
+    screen.getByRole('button', { name: '其他控件' }).element().focus()
+    await screen.rerender(picker(true))
+    await expect.element(screen.getByRole('button', { name: '其他控件' })).toHaveFocus()
+  })
+
   it('opens on Enter, Space or ↓ with focus on the current value, and Escape closes it back onto the trigger', async () => {
     const screen = await render(<Model />)
     const trigger = screen.getByRole('button', { name: '模型：alpha-large' })

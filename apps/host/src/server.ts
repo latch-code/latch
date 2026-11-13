@@ -6724,7 +6724,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
             : prompt,
         )
-        const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined, modelRoute)
+        const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined, modelRoute, input.config)
         // The folders the agent receives besides its working directory, for the audit.
         const passed = [
           ...new Set([
@@ -7794,24 +7794,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (catalogueMatch && method === 'POST') {
         requireScope(caller, 'run')
         const input = z
-          .object({ auto: z.boolean().optional() })
+          .object({ auto: z.boolean().optional(), model: z.string().min(1).max(256).optional() })
           .strict()
           .parse(await jsonBody(req))
         recheck(caller, 'run')
         const id = safeDecode(catalogueMatch[1]!)
         const harness = editableHarness(id)
         const auto = input.auto === true
-        const { ran } = await hub!.readHarnessCatalogue(id, auto, async () => {
-          if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
-          recheck(caller, 'run')
-          await audited({
-            action: 'agent.catalogue.requested',
-            actor: actorOf(caller),
-            target: id,
-            stepup: 'none',
-            detail: { agentId: id, auto },
-          })
-        })
+        const { ran } = await hub!.readHarnessCatalogue(
+          id,
+          auto,
+          async () => {
+            if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+            recheck(caller, 'run')
+            await audited({
+              action: 'agent.catalogue.requested',
+              actor: actorOf(caller),
+              target: id,
+              stepup: 'none',
+              detail: { agentId: id, auto },
+            })
+          },
+          input.model,
+        )
         const read = hub!.info(id)?.catalogueRead
         if (ran)
           await audited({

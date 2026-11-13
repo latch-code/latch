@@ -1,5 +1,5 @@
 /** What an agent offered at the start of its sessions, kept per definition so a draft can choose before it starts one. */
-import type { CatalogueRead, HarnessCatalogue, SessionConfigOption } from '@latch/protocol'
+import { LADDER_MODE, type CatalogueRead, type HarnessCatalogue, type SessionConfigOption } from '@latch/protocol'
 import { clip } from './mapping.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import type { AcpCatalogue, StartChoice } from './store.ts'
@@ -130,6 +130,7 @@ export function shownCatalogue(stored: AcpCatalogue): HarnessCatalogue | undefin
 /** A draft's choices as a session keeps them until they are set, with what the catalogue calls each. */
 export function startChoices(config: ReadonlyArray<{ configId: string; value: string }>, stored: AcpCatalogue | undefined): StartChoice[] {
   return config.map(({ configId, value }) => {
+    if (configId === LADDER_MODE) return { configId, value, category: 'mode' }
     const option = stored?.options.find(item => item.id === configId)
     const named =
       option?.options.find(item => item.value === value)

@@ -39,6 +39,30 @@ const event = (method: string, params?: Record<string, unknown>): ReplayEntry =>
   type: 'emit_inbound',
   frame: { kind: 'notification', method, ...(params ? { params } : {}) },
 })
+/** Latch's permission extension found among pi's commands and asked for its level, which it reports as a status. */
+function gateRead(level: string, args = ''): ReplayEntry[] {
+  return [
+    out('get_commands'),
+    answer('get_commands', {
+      commands: [
+        {
+          name: 'latch-permission',
+          source: 'extension',
+          sourceInfo: { path: '<tmp>/latch-permission.ts', source: 'cli', scope: 'temporary', origin: 'top-level' },
+        },
+      ],
+    }),
+    ...gateSet(level, args),
+  ]
+}
+/** The extension's command as the wire sends it, and the level it reports. */
+function gateSet(level: string, args = ''): ReplayEntry[] {
+  return [
+    out('prompt', { message: `/latch-permission${args ? ` ${args}` : ''}` }),
+    event('extension_ui_request', { id: `status-${level}`, method: 'setStatus', statusKey: 'latch-permission', statusText: level }),
+    answer('prompt', { disposition: 'handled' }),
+  ]
+}
 /** A pi process starting and opening the session it started with. */
 const opened: ReplayEntry[] = [
   out('get_state'),
@@ -51,6 +75,7 @@ const opened: ReplayEntry[] = [
   answer('get_available_models', { models: [MODEL] }),
   out('get_available_thinking_levels'),
   answer('get_available_thinking_levels', { levels: ['off', 'low', 'medium', 'high'] }),
+  ...gateRead('ask'),
 ]
 const stats: ReplayEntry[] = [out('get_session_stats'), answer('get_session_stats', { tokens: { input: 10, output: 2 }, cost: 0.001 })]
 
@@ -74,6 +99,39 @@ async function transcript(scenario: string, steps: ReplayHeader['steps'], entrie
 }
 
 describe('pi over its own RPC', () => {
+  it('does not trust a command with the gate basename from another extension path', async () => {
+    const entries = [
+      ...opened.slice(0, 10),
+      out('get_commands'),
+      answer('get_commands', {
+        commands: [{ name: 'latch-permission', source: 'extension', sourceInfo: { path: '/other/latch-permission.ts' } }],
+      }),
+    ]
+    const path = await transcript('wrong-gate', [{ step: 'prompt', text: 'Do nothing' }, { step: 'settle' }], entries)
+    const { detail, status } = await replayTranscript(path, cleanups)
+    expect(status?.failure).toBeUndefined()
+    expect(status?.cursor).toBe(status?.total)
+    expect(detail.summary.status).toBe('failed')
+    expect(
+      detail.messages
+        .filter(item => item.role === 'system')
+        .map(item => item.text)
+        .join(''),
+    ).toContain('无法确认')
+  })
+
+  it.each(['/latch-permission never', ' /latch-permission:2 never', '/latch-permission:custom never'])(
+    'refuses the internal permission command in user text: %s',
+    async text => {
+      const path = await transcript('user-gate-command', [{ step: 'prompt', text }, { step: 'settle' }], opened)
+      const { detail, status } = await replayTranscript(path, cleanups)
+      expect(status?.failure).toBeUndefined()
+      expect(status?.cursor).toBe(status?.total)
+      expect(detail.summary.status).toBe('failed')
+      expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe('ask')
+    },
+  )
+
   it('refuses a definition whose arguments set what the wire does, and shows the RPC arguments in a launch', async () => {
     const record = (args: string[]): AgentRecord => ({ id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args, env: {}, enabled: true })
     for (const args of [['--mode', 'json'], ['--mode=json'], ['-p'], ['--no-session'], ['--session', '/tmp/x.jsonl'], ['-c']])
@@ -91,7 +149,12 @@ describe('pi over its own RPC', () => {
     const paths = { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }
     const bridge = await openBridge(driver, paths, cleanups)
     const preview = await bridge.launchPreview!({ cwd: root })
-    expect(preview).toMatchObject({ command: join(bin, 'pi'), args: ['--mode', 'rpc'], approvals: 'none', verified: true })
+    expect(preview).toMatchObject({
+      command: join(bin, 'pi'),
+      args: ['-e', '<会话临时目录>/latch-permission.ts', '--mode', 'rpc'],
+      approvals: 'prompts',
+      verified: true,
+    })
     expect(driver.description).toContain('pi 的 RPC 模式')
     // pi receives the session's folder only, whatever the project holds.
     expect(driver.projectFolders).toBeUndefined()
@@ -182,7 +245,7 @@ describe('pi over its own RPC', () => {
     expect(played.failure).toBeUndefined()
     expect(played.cursor).toBe(played.total)
     expect(played.starts).toHaveLength(1)
-    expect(played.starts[0]!.argv).toEqual(['--mode', 'rpc'])
+    expect(played.starts[0]!.argv).toEqual(['-e', expect.stringMatching(/\/latch-permission\.ts$/u), '--mode', 'rpc'])
     expect(played.starts[0]!.cwd.startsWith(join(root, 'tmp', 'catalogue-'))).toBe(true)
     const catalogue = bridge.catalogue!()
     expect(catalogue?.options.find(option => option.category === 'model')?.options.map(option => option.value)).toEqual([
@@ -231,7 +294,7 @@ describe('pi over its own RPC', () => {
     expect(status).toMatchObject({ cursor: status?.total })
     expect(marks).toEqual([])
     expect(detail.summary.status).toBe('idle')
-    expect(detail.permission?.notes).toEqual(['pi 执行工具前不请求审批，只有扩展要求确认时才会问你'])
+    expect(detail.permission?.notes).toContain('pi 的其他扩展在 Latch 的询问之外运行，它们可以自己执行任何事')
     const notes = detail.messages.filter(message => message.role === 'system').map(message => message.text)
     expect(notes).toHaveLength(1)
     expect(notes[0]).toContain('pi 发来请求 extension_ui/select：Latch 不支持这个请求')
@@ -337,6 +400,7 @@ describe('pi over its own RPC', () => {
         answer('get_available_models', { models: [MODEL] }),
         out('get_available_thinking_levels'),
         answer('get_available_thinking_levels', { levels: ['off', 'low', 'medium', 'high'] }),
+        ...gateRead('ask'),
         ...turn('Again', 'two'),
       ],
     )
@@ -475,6 +539,7 @@ describe('pi over its own RPC', () => {
       answer('get_available_models', { models: [MODEL] }),
       out('get_available_thinking_levels'),
       answer('get_available_thinking_levels', { levels: ['off', 'low', 'medium', 'high'] }),
+      ...gateRead('ask'),
     ]
     /** The forking process: started, then what it does to open the fork, then the fork's first turn. */
     const forking = (fork: ReplayEntry[], sent: string): ReplayEntry[] => [

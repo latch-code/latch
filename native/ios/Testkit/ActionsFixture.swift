@@ -43,6 +43,14 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
     stopTrace.append(stops.requested.sorted())
     let startCatalog = value["startCatalog"]
     let search = PhoneSearch.results(value["search"])
+    func controls(_ detail: NativeJSON) -> [[String: Any]] {
+        PhoneSessionConfig.controls(detail, harness: value["harness"]).map { control -> [String: Any] in
+            var result: [String: Any] = ["kind": control.kind.rawValue, "id": control.configId, "label": control.label, "amber": control.amber,
+                "rows": control.rows.map { "\($0.name)\($0.current ? "*" : "")\($0.more ? "+" : "")" }]
+            if let source = control.source { result["source"] = source.rawValue; result["note"] = control.note; result["noteDetail"] = control.noteDetail }
+            return result
+        }
+    }
     return [
         "subagents": value["subagents"].array.map { entry -> Any in
             guard let row = PhoneSubagents.row(entry["message"], requested: entry["requested"].bool, canStop: entry["canStop"].bool) else { return NSNull() }
@@ -53,10 +61,8 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "readOnly": turns.last.map { actions($0, latest: true, canSend: false, canFork: false) } ?? NSNull(),
         "resend": value["resend"].array.map { PhoneTurnActions.resendText($0) },
         "followUp": value["followUps"].array.map { "\(PhoneFollowUp.of(detail: $0["detail"], status: $0["status"].string, queues: $0["queues"].bool))" },
-        "controls": PhoneSessionConfig.controls(config, harness: value["harness"]).map { control -> [String: Any] in
-            ["kind": control.kind.rawValue, "id": control.configId, "label": control.label, "amber": control.amber,
-             "rows": control.rows.map { "\($0.name)\($0.current ? "*" : "")\($0.more ? "+" : "")" }]
-        },
+        "controls": controls(config),
+        "launchControls": value["launchConfigs"].array.map(controls),
         "chatControls": PhoneSessionConfig.controls(.object(["config": config["config"], "summary": .object(["mode": .string("chat"), "level": .string("L3")])]), harness: value["harness"]).map(\.kind.rawValue),
         "configWrites": [
             write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "model", value: "large", detail: config) },
@@ -64,6 +70,9 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
             write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "model", value: "huge", detail: config) },
             write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "missing", value: "x", detail: config) },
             write { try PhoneSessionConfig.write(sessionId: "../x", configId: "model", value: "large", detail: config) },
+            write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "mode", value: "yolo", detail: config) },
+            write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "mode", value: "not-offered", detail: config) },
+            write { try PhoneSessionConfig.write(sessionId: "ses_1", configId: "thinking", value: "high", detail: value["launchConfigs"].array.first ?? .null) },
         ],
         "menus": value["menuTasks"].array.map { task in
             PhoneSessionMenu.sections(task, canRun: true, clear: (task["offered"].bool, task["clearing"].bool)).map { section in

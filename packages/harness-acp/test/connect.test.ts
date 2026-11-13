@@ -176,7 +176,7 @@ describe('a command older than its preset supports', () => {
     presetId: 'dsh',
     command: 'dsh',
     args: ['--profile', 'acp'],
-    env,
+    env: { FAKE_ACP_PROCESS_MODE: '1', ...env },
     enabled: true,
   })
 
@@ -186,9 +186,9 @@ describe('a command older than its preset supports', () => {
     const record = dsh({ FAKE_ACP_LOG: log })
     const driver = await activate(createAcpAgentPlugin(record, FAST))
     await recheckVersions([record], 5_000)
-    const text = '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
+    const text = '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
     expect(outdatedCommand(record, resolveCommand('dsh'))).toEqual({
-      need: '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）',
+      need: '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）',
       upgrade: 'npm i -g @deepseek-ai/dsh@latest',
     })
     expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: `DeepSeek Harness ${text}`, statusReason: 'outdated' })

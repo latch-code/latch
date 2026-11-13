@@ -90,10 +90,22 @@ export function unreportedModelNote(harness: string, started: boolean, config: r
   return config.some(option => option.category === 'model') ? undefined : `由 ${harness} 决定`
 }
 
-/** The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them. */
-export function unreportedThinkingNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
+/** A Harness that reports levels for every model that has them reported none for this one. */
+export const NO_THINKING_LEVELS = '这个模型没有思考档位'
+
+/**
+ * The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them. `perModel`:
+ * the Harness reports them for every model that has them (`models.thinkingPerModel`), so none means the model has none.
+ */
+export function unreportedThinkingNote(
+  harness: string,
+  started: boolean,
+  config: readonly SessionConfigOption[],
+  perModel = false,
+): string | undefined {
   if (!started) return AFTER_FIRST_SEND
-  return config.some(option => option.category === 'thought_level') ? undefined : `用 ${harness} 的默认值`
+  if (config.some(option => option.category === 'thought_level')) return undefined
+  return perModel && config.some(option => option.category === 'model') ? NO_THINKING_LEVELS : `用 ${harness} 的默认值`
 }
 
 /** A draft picked a model no session has run on yet, so what thinking it offers is not known. */
@@ -202,7 +214,9 @@ export function agentConfigChoice(
 ): { configId: string; value: string } | undefined {
   if (agentConfigBlocked(state)) return undefined
   const option = config.find(item => item.id === configId)
-  return option && option.currentValue !== value && option.options.some(item => item.value === value) ? { configId, value } : undefined
+  return option && (option.currentValue !== value || option.source === 'launch') && option.options.some(item => item.value === value)
+    ? { configId, value }
+    : undefined
 }
 
 /**
@@ -216,6 +230,3 @@ export function controlKeyCaps(control: ComposerControl): string[] | undefined {
   if (!first?.caps.length) return undefined
   return [...first.caps.slice(0, -1), String(COMPOSER_CONTROLS.indexOf(control) + 1)]
 }
-
-/** The same keys as a menu header's trailing text. */
-export const controlKeyText = (control: ComposerControl): string | undefined => controlKeyCaps(control)?.join('')

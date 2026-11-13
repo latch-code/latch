@@ -761,6 +761,10 @@ export const HOVER_REASONS = {
 
 /** The composer's 权限 chip and its rows with the agent as subject. */
 export const MODE_COPY = {
+  launchSetting: {
+    label: '启动设置 · 未独立读回',
+    detail: '通过启动参数或私有配置应用；Agent 不独立报告该参数的有效值。',
+  } satisfies Brief,
   menuTitle: '什么时候问你？',
   noFiles: '不读写文件',
   noFilesLine: '只回复文字',

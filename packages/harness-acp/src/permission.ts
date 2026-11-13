@@ -145,6 +145,8 @@ export function launchHash(input: {
   programs?: Record<string, string>
   /** A session on a gateway route: the service, its origin and protocol, and how the harness is pointed there. Never the token. */
   route?: LaunchRoute
+  /** A process-level permission choice; absent preserves fingerprints for other Harnesses. */
+  launchMode?: string
 }): string {
   return sha256Hex(
     canonicalJson({
@@ -160,6 +162,7 @@ export function launchHash(input: {
       ...(input.inheritEnv?.length ? { inheritEnv: [...input.inheritEnv].sort() } : {}),
       ...(input.programs && Object.keys(input.programs).length ? { programs: input.programs } : {}),
       ...(input.route ? { route: input.route } : {}),
+      ...(input.launchMode ? { launchMode: input.launchMode } : {}),
     }),
   )
 }

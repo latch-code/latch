@@ -10,7 +10,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = process.env.LATCH_ACCEPTANCE_DIR ?? 'test-results/harness-connect'
-const NEED = '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）'
+const NEED = '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）'
 const UPGRADE = 'npm i -g @deepseek-ai/dsh@latest'
 
 /**

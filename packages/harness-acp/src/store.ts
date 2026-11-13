@@ -42,6 +42,10 @@ export interface AcpRecord {
   definitionHash?: string
   /** Mode the owner chose through Latch; overrides the profile's expected mode. */
   expectedMode?: string
+  /** Process-level permission selection included in this session's launch fingerprint. */
+  launchMode?: string
+  /** A Host-owned per-model generation setting written into a private process configuration. */
+  launchThinking?: { model: string; value: string }
   /** The agent changed its own mode beyond the expected one; the session no longer accepts input. */
   drift?: { at: string; observed: string }
   /** Preset whose permission profile applied when the session was created. */
@@ -266,6 +270,7 @@ const configOption = z.object({
   name: z.string(),
   category: z.string().optional(),
   description: z.string().optional(),
+  source: z.literal('launch').optional(),
   currentValue: z.string(),
   options: z.array(z.object({ value: z.string(), name: z.string(), description: z.string().optional() })),
 })
@@ -363,6 +368,8 @@ const stateSchema = z.object({
           .regex(/^[0-9a-f]{64}$/)
           .optional(),
         expectedMode: z.string().optional(),
+        launchMode: z.string().optional(),
+        launchThinking: z.object({ model: z.string(), value: z.string() }).optional(),
         drift: z.object({ at: z.string(), observed: z.string() }).optional(),
         profilePresetId: z.string().optional(),
         folders: z.array(z.string()).optional(),

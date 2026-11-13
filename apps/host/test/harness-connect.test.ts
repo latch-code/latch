@@ -44,6 +44,7 @@ async function dshHost(version: string) {
       '#!/bin/sh',
       `if [ "$1" = --version ]; then cat '${versionFile}'; echo; exit 0; fi`,
       `printf x >> '${started}'`,
+      'export FAKE_ACP_PROCESS_MODE=1',
       `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
       '',
     ].join('\n'),
@@ -63,7 +64,7 @@ async function dshHost(version: string) {
   return { t, owner, path, versionFile, started }
 }
 
-const TOO_OLD = 'DeepSeek Harness 需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
+const TOO_OLD = 'DeepSeek Harness 需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
 
 describe('a saved DeepSeek Harness found too old', () => {
   it('refuses an existing session, and a test start, with the same code and words', async () => {
@@ -133,8 +134,8 @@ describe('a DeepSeek Harness older than its preset supports', () => {
     })
     cleanups.push(() => t.close())
     const owner = await t.enroll({ listener: 'unix' })
-    const text = '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
-    const outdated = { need: '需要 0.2.1-rc.1 或更高版本（当前 0.1.1-rc.2）', upgrade: 'npm i -g @deepseek-ai/dsh@latest' }
+    const text = '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）。升级：npm i -g @deepseek-ai/dsh@latest'
+    const outdated = { need: '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）', upgrade: 'npm i -g @deepseek-ai/dsh@latest' }
 
     // Before a definition exists nothing runs it, not even for its version: the draft's offer is all there is.
     const listed = await owner.json<{ presets: AgentPresetSettings[] }>('agents')

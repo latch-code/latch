@@ -53,7 +53,7 @@ function tierRows(
     return [
       {
         ...row,
-        ...(tier ? { name: MODE_COPY.tierTitles[tier.tier], tier: tier.tier } : {}),
+        ...(tier ? { name: tier.name ?? MODE_COPY.tierTitles[tier.tier], tier: tier.tier } : {}),
         icon,
         neverAsks: tier?.tier === 'never',
         line: tier?.line ?? row.description ?? '',
@@ -198,10 +198,13 @@ export function permissionView(input: {
     line: current?.line ?? '',
     icon: current?.icon ?? 'shield',
     amber: current?.neverAsks === true,
-    note: {
-      ...MODE_COPY.agentOwnSetting(harness.capabilities.display.label),
-      ...(harness.capabilities.display.mark ? { mark: harness.capabilities.display.mark } : {}),
-    },
+    note:
+      option.source === 'launch'
+        ? MODE_COPY.launchSetting
+        : {
+            ...MODE_COPY.agentOwnSetting(harness.capabilities.display.label),
+            ...(harness.capabilities.display.mark ? { mark: harness.capabilities.display.mark } : {}),
+          },
     option,
     rows,
   }

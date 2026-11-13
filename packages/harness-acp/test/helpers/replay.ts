@@ -55,7 +55,12 @@ export async function openBridge(
   await bridge.start()
   const create = bridge.createTask.bind(bridge)
   bridge.createTask = async input =>
-    create({ ...input, expectedLaunchHash: (await bridge.launchPreview!({ cwd: input.cwd ?? paths.workspace })).launchHash })
+    create({
+      ...input,
+      expectedLaunchHash: (
+        await bridge.launchPreview!({ cwd: input.cwd ?? paths.workspace, config: input.config, modelRoute: input.modelRoute })
+      ).launchHash,
+    })
   return bridge
 }
 

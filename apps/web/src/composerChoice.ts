@@ -1,5 +1,6 @@
 import {
   AGENT_PRESETS,
+  LADDER_MODE,
   MODEL_EFFORT,
   pairRoute,
   type AgentPreset,
@@ -101,26 +102,71 @@ export function draftConfig(
   )
   return {
     config,
-    thinkingUnknown: other && !reported?.some(option => option.category === 'thought_level'),
+    // A session or read on that model said what it offers, thinking or none.
+    thinkingUnknown: other && reported === undefined,
     reportedAt: catalogue.reportedAt,
     source: catalogue.source,
   }
 }
 
+/**
+ * The modes Latch knows a Harness has, as a draft offers them before anything it reported has a mode: a list it read
+ * without one, or none at all. The pick is kept as `LADDER_MODE`; the start sets it as whatever mode the agent reports.
+ */
+export function ladderMode(
+  harness: Pick<HarnessInfo, 'permission'> | undefined,
+  picks: Record<string, string> | undefined,
+): SessionConfigOption | undefined {
+  const declared = harness?.permission
+  const modes = declared?.modes
+  if (!modes?.length || !declared?.startMode) return undefined
+  const picked = picks?.[LADDER_MODE]
+  return {
+    id: LADDER_MODE,
+    name: '权限',
+    category: 'mode',
+    currentValue: picked !== undefined && modes.includes(picked) ? picked : declared.startMode,
+    options: modes.map(value => ({ value, name: value })),
+  }
+}
+
+/** The draft's options with the declared modes when what it knows has none. */
+export function withLadderMode(
+  harness: Pick<HarnessInfo, 'permission'> | undefined,
+  config: readonly SessionConfigOption[] | undefined,
+  picks: Record<string, string> | undefined,
+): SessionConfigOption[] | undefined {
+  const reported = config?.find(option => option.category === 'mode')
+  if (reported) {
+    const early = picks?.[LADDER_MODE]
+    return config!.map(option =>
+      option === reported && !offers(option, picks?.[option.id]) && offers(option, early) ? { ...option, currentValue: early! } : option,
+    )
+  }
+  const ladder = ladderMode(harness, picks)
+  return ladder ? [...(config ?? []), ladder] : config && [...config]
+}
+
 /** The picks a start carries: only what the person chose, and only what the list still offers. */
 export function startConfig(
-  harness: Pick<HarnessInfo, 'catalogue' | 'customModels'> | undefined,
+  harness: Pick<HarnessInfo, 'catalogue' | 'customModels' | 'permission'> | undefined,
   picks: Record<string, string> | undefined,
 ) {
-  const shown = draftConfig(harness, picks)?.config ?? []
-  return Object.entries(picks ?? {}).flatMap(([configId, value]) =>
-    offers(
+  const shown = withLadderMode(harness, draftConfig(harness, picks)?.config, picks) ?? []
+  const mode = shown.find(option => option.category === 'mode')
+  return Object.entries(picks ?? {}).flatMap(([configId, value]) => {
+    if (configId === LADDER_MODE && mode?.id !== LADDER_MODE) {
+      // A catalogue arriving after a choice must not replace it with the Harness's default.
+      if (mode && offers(mode, picks?.[mode.id])) return []
+      return offers(ladderMode(harness, picks), value) ? [{ configId, value }] : []
+    }
+    return offers(
       shown.find(option => option.id === configId),
       value,
     )
       ? [{ configId, value }]
-      : [],
-  )
+      : []
+  })
 }
 
 export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string => harness.capabilities.display.label

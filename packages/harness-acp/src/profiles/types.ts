@@ -1,4 +1,4 @@
-import type { ModeTier, ModelWire } from '@latch/protocol'
+import type { ModeTier, ModelWire, SessionConfigOption } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type { WireKind } from '../wires/index.ts'
 
@@ -174,6 +174,15 @@ export interface HarnessProfile {
   readonly presetId: string
   /** Part of the launch fingerprint; bump it when the profile's behaviour changes. */
   readonly version: number
+  /** A process-level mode. An official service may report it, or a launch flag augments the ACP-reported mode. */
+  readonly processMode?: {
+    prepare(directory: string, mode?: string): Promise<{ args: string[]; env: Record<string, string> }>
+    read?(method: string, params: unknown): { sessionId: string; mode: string } | undefined
+    /** A launch flag that ACP cannot report; a restart cannot independently verify the old flag. */
+    readonly unread?: true
+    fromMode?(option: SessionConfigOption, launchMode: string | undefined): SessionConfigOption
+    agentMode?(mode: string): string
+  }
   /** The protocol the harness speaks. Absent: ACP. */
   readonly wire?: WireKind
   /**
@@ -276,9 +285,21 @@ export interface HarnessProfile {
    */
   readonly ownModelsOnly?: true
   /**
+   * It reports thinking levels (`thought_level`) for every model that has them, checked in its source: a model without
+   * them has none. Shown to clients as `HarnessCapabilities.models.thinkingPerModel`; nothing that runs changes.
+   */
+  readonly thinkingPerModel?: true
+  readonly thinkingInModel?: true
+  /** A documented process setting, presented as configured rather than independently reported by the Agent. */
+  launchThinking?(model: string | undefined, selected?: { model: string; value: string }): SessionConfigOption | undefined
+  /**
    * Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. A process of
    * a session on a gateway route also gets the route and the session's private temporary directory, rewritten before every
    * spawn and removed with the session.
    */
-  materialize?(input: { dataDir: string; route?: { route: ModelRoute; directory: string } }): Promise<Record<string, string>>
+  materialize?(input: {
+    dataDir: string
+    route?: { route: ModelRoute; directory: string }
+    session?: { directory: string; thinking?: { model: string; value: string } }
+  }): Promise<Record<string, string>>
 }

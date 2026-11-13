@@ -170,12 +170,17 @@ public struct PhoneConfigRow: Equatable, Sendable, Identifiable {
 /** One of the session's own settings the Harness reported, as a control of the input box. */
 public struct PhoneConfigControl: Equatable, Sendable, Identifiable {
     public enum Kind: String, Sendable { case permission, model, thinking }
+    public enum Source: String, Sendable { case launch }
     public let kind: Kind
     public let configId: String
     public let label: String
     public let rows: [PhoneConfigRow]
     /** The current row never asks: shown in amber, with its words. */
     public let amber: Bool
+    /** The Host's startup intent is distinct from a value the Harness independently reported. */
+    public let source: Source?
+    public var note: String? { source == .launch ? "启动设置 · 未独立读回" : nil }
+    public var noteDetail: String? { source == .launch ? "这项设置通过进程启动参数应用；Agent 没有独立报告该参数的有效值。" : nil }
     public var id: String { kind.rawValue }
     public var title: String { switch kind { case .permission: "权限"; case .model: "模型"; case .thinking: "思考" } }
 }
@@ -205,7 +210,8 @@ public enum PhoneSessionConfig {
                     current: item["value"].string == current, more: false, neverAsks: false)
             }
             guard !rows.isEmpty else { continue }
-            result.append(PhoneConfigControl(kind: kind, configId: id, label: rows.first(where: \.current)?.name ?? current ?? "默认", rows: rows, amber: false))
+            result.append(PhoneConfigControl(kind: kind, configId: id, label: rows.first(where: \.current)?.name ?? current ?? "默认", rows: rows, amber: false,
+                source: option["source"].string.flatMap { PhoneConfigControl.Source(rawValue: $0) }))
         }
         return result
     }
@@ -220,7 +226,7 @@ public enum PhoneSessionConfig {
             guard let value = item["value"].string else { return nil }
             let tier = tiers[value]["tier"].string.flatMap { order[$0] == nil ? nil : $0 }
             if known && tier == nil && value != current { return nil }
-            let name = tier.flatMap { PhoneConversation.tierTitles[$0] } ?? item["name"].string ?? value
+            let name = tiers[value]["name"].string ?? tier.flatMap { PhoneConversation.tierTitles[$0] } ?? item["name"].string ?? value
             return (PhoneConfigRow(value: value, name: name, line: tiers[value]["line"].string ?? item["description"].string, current: value == current, more: false,
                 neverAsks: tier == "never"), tier)
         }
@@ -237,13 +243,15 @@ public enum PhoneSessionConfig {
                 more: !entry.row.current && !main.contains(entry.row.value), neverAsks: entry.row.neverAsks)
         }
         let now = shown.first(where: \.current)
-        return PhoneConfigControl(kind: .permission, configId: id, label: now?.name ?? current ?? "权限", rows: shown, amber: now?.neverAsks == true)
+        return PhoneConfigControl(kind: .permission, configId: id, label: now?.name ?? current ?? "权限", rows: shown, amber: now?.neverAsks == true,
+            source: option["source"].string.flatMap { PhoneConfigControl.Source(rawValue: $0) })
     }
-    /** The change, or nothing when it would change nothing or is not among the Harness's own options. */
+    /** Reasserting a mode or startup setting can replace a stale start choice; other identical settings stay local. */
     public static func write(sessionId: String, configId: String, value: String, detail: NativeJSON) throws -> NativePendingWrite {
         guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), !configId.isEmpty, configId.utf8.count <= 128, value.utf8.count <= 1024,
               let option = detail["config"].array.first(where: { $0["id"].string == configId }),
-              option["currentValue"].string != value, values(option).contains(where: { $0["value"].string == value }) else { throw NativeFailure.invalidRecord }
+              option["currentValue"].string != value || option["category"].string == "mode" || option["source"].string == "launch",
+              values(option).contains(where: { $0["value"].string == value }) else { throw NativeFailure.invalidRecord }
         return try NativePendingWrite(method: .post, path: "/link/api/tasks/\(sessionId)/config", fields: ["configId": .string(configId), "value": .string(value)])
     }
 }

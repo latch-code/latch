@@ -1,4 +1,5 @@
 import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
+import { AppError } from '@latch/sdk'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -8,7 +9,7 @@ import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, sym
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isReservedAgentEnvName, type DriverTaskDetail, type Message, type SessionConfigOption } from '@latch/protocol'
+import { isReservedAgentEnvName, LADDER_MODE, type DriverTaskDetail, type Message, type SessionConfigOption } from '@latch/protocol'
 import type {
   HarnessHostOptions,
   HarnessDriver,
@@ -209,6 +210,7 @@ async function setup(
                 ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
                 ...(input.folders ? { folders: input.folders } : {}),
                 ...(input.modelRoute ? { modelRoute: input.modelRoute } : {}),
+                ...(input.config ? { config: input.config } : {}),
               })
             ).launchHash,
           })
@@ -1615,7 +1617,7 @@ describe('ACP project folders', () => {
   it('never passes other folders to OpenCode, DeepSeek Harness or goose', async () => {
     for (const [presetId, env] of [
       ['opencode', { FAKE_ACP_CONFIG: 'legacy' }],
-      ['dsh', {}],
+      ['dsh', { FAKE_ACP_PROCESS_MODE: '1' }],
       ['goose', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' }],
     ] as const) {
       // Even when the agent advertises them, and when folders reach the driver anyway.
@@ -1627,11 +1629,12 @@ describe('ACP project folders', () => {
       expect(preview.folders, presetId).toBeUndefined()
       expect(preview.launchHash, presetId).toBe((await bridge.launchPreview!({ cwd: scope.folders[0]!.path })).launchHash)
       const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input })
-      const { summary } = await settled(bridge, sessionId)
-      expect(summary.status, presetId).toBe('idle')
+      const detail = await settled(bridge, sessionId)
+      const { summary } = detail
+      expect(summary.status, `${presetId}: ${systemText(detail)}`).toBe('idle')
       expect([summary.workspaceId, summary.folders, summary.folderAccess], presetId).toEqual([undefined, undefined, undefined])
       const log = await fixture.log()
-      expect(log.find(entry => entry.event === 'start')!.argv, presetId).toEqual([])
+      expect(log.find(entry => entry.event === 'start')!.argv, presetId).toEqual(presetId === 'dsh' ? ['--patch', expect.any(String)] : [])
       expect(received(log, 'session/new')[0]!.params, presetId).toEqual({ cwd: scope.folders[0]!.path, mcpServers: [] })
     }
   })
@@ -2059,13 +2062,13 @@ describe('ACP permission mode', () => {
         profile.presetId,
       ).toBe(true)
       const tiers = modeLadder!.filter(mode => modes.includes(mode)).map(mode => order.indexOf(modeTiers[mode]!.tier))
-      expect(tiers, profile.presetId).toEqual([...new Set(tiers)].toSorted((a, b) => a - b))
+      expect(tiers, profile.presetId).toEqual([...tiers].toSorted((a, b) => a - b))
       expect(
         modes.every(mode => modeTiers[mode]!.line.length > 0),
         profile.presetId,
       ).toBe(true)
-      // A session starts on the asking row, never a wider one.
-      expect(modeTiers[expectedMode!]?.tier, profile.presetId).toBe('ask')
+      // A profile may default to read-only; it never preselects a mode wider than asking.
+      expect(['plan', 'ask'], profile.presetId).toContain(modeTiers[expectedMode!]?.tier)
     }
     expect(FALLBACK_PROFILES.get('codex')!.permission.modeTiers?.agent?.line).toContain('它的模型判断')
   })
@@ -2101,6 +2104,47 @@ describe('ACP permission mode', () => {
     expect([decide('build', 'task', 'general'), decide('plan', 'task', 'general')]).toEqual(['deny', 'deny'])
     expect([decide('build', 'subagent', 'general', true), decide('plan', 'subagent', 'general', true)]).toEqual(['ask', 'deny'])
     expect([decide('plan', 'shell', 'ls', true), decide('plan', 'edit', 'a.txt', true)]).toEqual(['deny', 'deny'])
+  })
+
+  it('passes OpenCode rules that block plan, ask in build, permit edits only in auto-edit and commands in yolo', async () => {
+    const fixture = await preset(
+      'opencode',
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+        FAKE_ACP_INITIAL_MODE: 'build',
+        FAKE_ACP_VERSION: '2.2.6',
+      },
+      { idleMs: 60_000 },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'opencode-tool edit',
+      requestId: rid(),
+      config: [{ configId: '~mode', value: 'plan' }],
+    })
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('blocked')
+    const marker = join(fixture.workspace, 'opencode-tool-ran')
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    await bridge.setConfig!(sessionId, 'mode', 'build')
+    await bridge.prompt(sessionId, 'opencode-tool edit', rid())
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('blocked')
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    await bridge.setConfig!(sessionId, 'mode', 'auto-edit')
+    await bridge.prompt(sessionId, 'opencode-tool edit', rid())
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('executed')
+    expect(await readFile(marker, 'utf8')).toBe('edit')
+    await bridge.prompt(sessionId, 'opencode-tool command', rid())
+    const command = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    await bridge.decide(command.approvals[0]!.id, 'reject')
+    await settled(bridge, sessionId)
+    expect(await readFile(marker, 'utf8')).toBe('edit')
+    await bridge.setConfig!(sessionId, 'mode', 'yolo')
+    await bridge.prompt(sessionId, 'opencode-tool command', rid())
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('executed')
+    expect(await readFile(marker, 'utf8')).toBe('bash')
   })
 
   it("fingerprints a preset's launch with its profile's version", async () => {
@@ -2197,7 +2241,8 @@ describe('ACP permission mode', () => {
     expect(widened.permission?.expectedMode).toBe('yolo')
     expect(widened.config?.find(option => option.id === 'mode')?.currentValue).toBe('yolo')
     await bridge.prompt(sessionId, 'echo two', rid())
-    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const started = await settled(bridge, sessionId)
+    expect(started.summary.status, systemText(started)).toBe('idle')
     const log = await fixture.log()
     expect(received(log, 'session/set_config_option').map(entry => entry.params?.value)).toEqual(['plan', 'yolo'])
     expect(log.filter(entry => entry.event === 'prompt-mode').map(entry => entry.mode)).toEqual(['default', 'yolo'])
@@ -2266,7 +2311,7 @@ describe('ACP permission mode', () => {
         args: [FAKE_ACP_AGENT],
         definitionEnv: fixture.record.env,
         presetId: 'gemini',
-        profileVersion: 2,
+        profileVersion: 3,
         ...launchExtras('gemini'),
       }),
     )
@@ -2276,8 +2321,8 @@ describe('ACP permission mode', () => {
     expect(await pi.launchPreview!({ cwd: piFixture.workspace })).toMatchObject({
       presetId: 'pi',
       verified: false,
-      approvals: 'none',
-      readback: 'none',
+      approvals: 'prompts',
+      readback: 'mode',
     })
   })
 })
@@ -3397,6 +3442,78 @@ describe('ACP sessions across processes', () => {
 })
 
 describe('ACP session configuration', () => {
+  it('starts dsh in its chosen process mode, changes it only while idle, and checks without applying it again', async () => {
+    const fixture = await preset('dsh', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CAPS: 'resume,close' })
+    const bridge = await fixture.open()
+    const readonly = await bridge.launchPreview!({ cwd: fixture.workspace })
+    const writable = await bridge.launchPreview!({ cwd: fixture.workspace, config: [{ configId: LADDER_MODE, value: 'workspace-write' }] })
+    expect(writable.launchHash).not.toBe(readonly.launchHash)
+    expect(writable.definitionHash).toBe(readonly.definitionHash)
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo',
+      requestId: rid(),
+      config: [{ configId: LADDER_MODE, value: 'workspace-write' }],
+    })
+    await settled(bridge, sessionId)
+    const first = await bridge.detail(sessionId)
+    expect(first.permission?.expectedMode).toBe('workspace-write')
+    expect(first.config?.find(option => option.category === 'mode')?.currentValue).toBe('workspace-write')
+    await bridge.setConfig!(sessionId, 'mode', 'read-only')
+    expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('read-only')
+    const before = (await fixture.log()).filter(entry => entry.event === 'process-mode-set').length
+    expect(await bridge.readConfig!(sessionId, 'mode', 'read-only')).toEqual({ kind: 'read', currentValue: 'read-only', asked: true })
+    expect((await fixture.log()).filter(entry => entry.event === 'process-mode-set')).toHaveLength(before)
+    expect(received(await fixture.log(), 'session/set_config_option')).toHaveLength(0)
+    expect(received(await fixture.log(), 'session/set_mode')).toHaveLength(0)
+    await bridge.close()
+    const resumed = await fixture.open()
+    await resumed.prompt(sessionId, 'echo after restart', rid())
+    await settled(resumed, sessionId)
+    expect((await resumed.detail(sessionId)).permission?.expectedMode).toBe('read-only')
+  })
+
+  it('refuses a dsh prompt when its permission service does not report the selected mode', async () => {
+    const fixture = await preset('dsh', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
+    const result = await settled(bridge, sessionId)
+    expect(result.summary.status).toBe('failed')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+  })
+
+  it('reserves a process-mode restart against prompts, other writes and checks, and rechecks authorization before spawn', async () => {
+    const fixture = await preset(
+      'dsh',
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_PROCESS_MODE: '1',
+        FAKE_ACP_CAPS: 'resume',
+        FAKE_ACP_RESUME_DELAY: '150',
+      },
+      { idleMs: 60_000 },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
+    await settled(bridge, sessionId)
+    const changing = bridge.setConfig!(sessionId, 'mode', 'workspace-write')
+    await vi.waitFor(async () => expect(received(await fixture.log(), 'session/resume')).toHaveLength(1))
+    await expect(bridge.prompt(sessionId, 'must not run', rid())).rejects.toMatchObject({ code: 'config-check-running' })
+    await expect(bridge.setConfig!(sessionId, 'mode', 'read-only')).rejects.toMatchObject({ code: 'config-check-running' })
+    expect(await bridge.readConfig!(sessionId, 'mode', 'workspace-write')).toEqual({ kind: 'busy', reason: 'running' })
+    await changing
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    let checks = 0
+    await expect(
+      bridge.setConfig!(sessionId, 'mode', 'danger-full-access', {
+        authorize: () => {
+          if (++checks >= 4) throw new AppError(403, 'permission-denied', 'revoked')
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'permission-denied' })
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+    expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('workspace-write')
+  })
+
   const deferred = () => {
     let resolve!: () => void
     const promise = new Promise<void>(finish => {
@@ -3859,7 +3976,12 @@ describe('agent context', () => {
   })
 
   it('gives DeepSeek Harness the skills server, which it starts and lists before each session it opens or resumes', async () => {
-    const fixture = await preset('dsh', { FAKE_ACP_MCP: 'dsh', FAKE_ACP_CAPS: 'resume', FAKE_ACP_DUMP_ENV: '1' })
+    const fixture = await preset('dsh', {
+      FAKE_ACP_PROCESS_MODE: '1',
+      FAKE_ACP_MCP: 'dsh',
+      FAKE_ACP_CAPS: 'resume',
+      FAKE_ACP_DUMP_ENV: '1',
+    })
     expect(fixture.driver.skills).toBe('server')
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), agentContext: context({ skillBodies: skills }) })
@@ -4237,6 +4359,121 @@ describe('what a Harness offers before a session, and choosing it before the fir
     expect(detail.messages.filter(message => message.role === 'system')).toEqual([])
   })
 
+  it.each(['read-only', 'workspace-write'])(
+    'keeps the later %s choice instead of a wide draft after another start option times out',
+    async value => {
+      const answerDir = await mkdtemp(join(tmpdir(), 'latch-start-answer-'))
+      cleanups.push(() => rm(answerDir, { recursive: true, force: true }))
+      const answerFile = join(answerDir, 'answer')
+      await writeFile(answerFile, 'silent-drop')
+      const fixture = await preset(
+        'codex',
+        {
+          ...CODEX,
+          FAKE_ACP_INITIAL_MODE: 'read-only',
+          FAKE_ACP_CAPS: 'resume',
+          FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
+        },
+        { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
+      )
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({
+        prompt: 'echo first',
+        requestId: rid(),
+        config: [
+          { configId: 'effort', value: 'high' },
+          { configId: LADDER_MODE, value: 'agent-full-access' },
+        ],
+      })
+      expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+      expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+      await writeFile(answerFile, '')
+      await bridge.setConfig!(sessionId, 'mode', value)
+      await bridge.prompt(sessionId, 'echo retry', rid())
+      const next = await settled(bridge, sessionId)
+      expect(next.summary.status).toBe('idle')
+      expect(next.permission?.expectedMode).toBe(value)
+      expect(next.config?.find(item => item.category === 'mode')?.currentValue).toBe(value)
+      expect(set(await fixture.log()).some(([id, selected]) => id === 'mode' && selected === 'agent-full-access')).toBe(false)
+    },
+  )
+
+  it('keeps a later process mode instead of the draft after another start option times out', async () => {
+    const answerDir = await mkdtemp(join(tmpdir(), 'latch-start-process-answer-'))
+    cleanups.push(() => rm(answerDir, { recursive: true, force: true }))
+    const answerFile = join(answerDir, 'answer')
+    await writeFile(answerFile, 'silent-drop')
+    const fixture = await preset(
+      'dsh',
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_PROCESS_MODE: '1',
+        FAKE_ACP_CAPS: 'resume',
+        FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
+      },
+      { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo first',
+      requestId: rid(),
+      config: [
+        { configId: 'effort', value: 'high' },
+        { configId: LADDER_MODE, value: 'danger-full-access' },
+      ],
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    await writeFile(answerFile, '')
+    await bridge.setConfig!(sessionId, 'mode', 'read-only')
+    await bridge.close()
+    const resumed = await fixture.open()
+    await resumed.prompt(sessionId, 'echo retry', rid())
+    const next = await settled(resumed, sessionId)
+    expect(next.summary.status).toBe('idle')
+    expect(next.permission?.expectedMode).toBe('read-only')
+    expect(next.config?.find(item => item.category === 'mode')?.currentValue).toBe('read-only')
+  })
+
+  it('keeps later launch thinking instead of the draft after its model choice times out', async () => {
+    const answerDir = await mkdtemp(join(tmpdir(), 'latch-start-thinking-answer-'))
+    cleanups.push(() => rm(answerDir, { recursive: true, force: true }))
+    const answerFile = join(answerDir, 'answer')
+    await writeFile(answerFile, 'silent-drop')
+    const names = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview']
+    const fixture = await preset(
+      'gemini',
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
+        FAKE_ACP_INITIAL_MODE: 'default',
+        FAKE_ACP_MODELS: names.join(','),
+        FAKE_ACP_NO_THINKING: '1',
+        FAKE_ACP_CAPS: 'resume',
+        FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
+      },
+      { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo first',
+      requestId: rid(),
+      config: [
+        { configId: 'model', value: names[1]! },
+        { configId: '~gemini-thinking', value: 'low' },
+      ],
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    await writeFile(answerFile, '')
+    await bridge.setConfig!(sessionId, 'model', names[0]!)
+    await bridge.setConfig!(sessionId, '~gemini-thinking', 'high')
+    await bridge.close()
+    const resumed = await fixture.open()
+    await resumed.prompt(sessionId, 'echo retry', rid())
+    const next = await settled(resumed, sessionId)
+    expect(next.summary.status).toBe('idle')
+    expect(next.config?.find(item => item.id === '~gemini-thinking')?.currentValue).toBe('high')
+  })
+
   it('refuses the turn when the chosen model is gone, and the next send runs on the model the session shows', async () => {
     const fixture = await preset('codex', CODEX)
     const bridge = await fixture.open()
@@ -4318,14 +4555,23 @@ describe('what a Harness offers before a session, and choosing it before the fir
     expect(failed.config?.find(item => item.id === 'mode')?.currentValue).toBe('read-only')
   })
 
-  it('leaves thinking the agent no longer offers at its default, and says so in the session', async () => {
+  it('refuses the first prompt when the chosen thinking is no longer offered', async () => {
     const fixture = await preset('codex', { ...CODEX, FAKE_ACP_EFFORT_BY_MODEL: '0' })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'effort', value: 'max' }] })
     const detail = await settled(bridge, sessionId)
-    expect(detail.summary.status).toBe('idle')
-    expect(detail.messages.find(message => message.role === 'system')?.text).toBe('Fake 这次没有提供「max」，用它自己的默认值。')
+    expect(detail.summary.status).toBe('failed')
+    expect(detail.messages.find(message => message.role === 'system')?.text).toContain('这条消息没有发出')
     expect(set(await fixture.log()).filter(([id]) => id === 'effort')).toEqual([])
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+  })
+
+  it('refuses the first prompt when the Agent acknowledges but does not take the chosen thinking', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_IGNORE_CONFIG: 'effort' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), config: [{ configId: 'effort', value: 'high' }] })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
   })
 
   it('takes a choice into the request the way it takes the prompt', async () => {
@@ -4416,6 +4662,24 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
       when: 'select',
       modes: true,
     })
+  })
+
+  it('queues a different model behind the initial catalogue and shares only reads of the same model', async () => {
+    const fixture = await setup({ ...OPTIONS, FAKE_ACP_EFFORT_BY_MODEL: '1' })
+    const bridge = await fixture.open()
+    const first = bridge.readCatalogue!({ auto: true })
+    const large = bridge.readCatalogue!({ auto: true, model: 'large' })
+    const repeated = bridge.readCatalogue!({ auto: true, model: 'large' })
+    await Promise.all([first, large, repeated])
+    const catalogue = bridge.catalogue!()!
+    expect(catalogue.perModel.find(entry => entry.model === 'large')?.options[0]?.options.map(item => item.value)).toEqual([
+      'low',
+      'high',
+      'max',
+    ])
+    const log = await fixture.log()
+    expect(received(log, 'session/new')).toHaveLength(2)
+    expect(received(log, 'session/prompt')).toHaveLength(0)
   })
 
   it("lists Codex's models through the adapter's own app-server, with no session or thread", async () => {
@@ -5382,6 +5646,50 @@ describe('Claude Agent and Cursor presets', () => {
     expect(replies).toEqual([{ outcome: 'accepted' }, { outcome: 'rejected' }, { outcome: 'cancelled' }])
   })
 
+  it('starts Cursor force only when chosen, retains explicit denies, and removes the flag when switching to a read-only mode', async () => {
+    const fixture = await preset('cursor', { ...CURSOR, FAKE_ACP_CAPS: 'resume', FAKE_CURSOR_STARTUP: '1' }, { idleMs: 60_000 })
+    let bridge = await fixture.open()
+    const normal = await bridge.createTask({ prompt: 'cursor-command', requestId: rid() })
+    const waiting = await until(bridge, normal.sessionId, detail => detail.approvals.length === 1)
+    expect((await fixture.log()).filter(entry => entry.event === 'start').at(-1)?.argv).not.toContain('--force')
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    await settled(bridge, normal.sessionId)
+
+    const force = await bridge.createTask({
+      prompt: 'cursor-command',
+      requestId: rid(),
+      config: [{ configId: '~mode', value: 'agent-force' }],
+    })
+    let detail = await settled(bridge, force.sessionId)
+    expect(assistants(detail).at(-1)?.text).toBe('allowed')
+    expect(detail.config?.find(option => option.id === 'mode')).toMatchObject({ currentValue: 'agent-force', source: 'launch' })
+    expect(detail.permission?.readback).toBe('none')
+    expect(detail.approvals).toHaveLength(0)
+    expect((await fixture.log()).filter(entry => entry.event === 'start').at(-1)?.argv).toContain('--force')
+    expect(await bridge.readConfig!(force.sessionId, 'mode', 'agent-force')).toEqual({ kind: 'unread' })
+    await bridge.prompt(force.sessionId, 'cursor-command deny', rid())
+    expect(assistants(await settled(bridge, force.sessionId)).at(-1)?.text).toBe('rejected')
+    await bridge.close()
+    bridge = await fixture.open()
+    await bridge.prompt(force.sessionId, 'cursor-command restored', rid())
+    expect(assistants(await settled(bridge, force.sessionId)).at(-1)?.text).toBe('allowed')
+    await bridge.setConfig!(force.sessionId, 'mode', 'ask')
+    await bridge.prompt(force.sessionId, 'cursor-command read-only', rid())
+    detail = await settled(bridge, force.sessionId)
+    expect(assistants(detail).at(-1)?.text).toBe('rejected')
+    expect(detail.config?.find(option => option.id === 'mode')).toMatchObject({ currentValue: 'ask' })
+    expect(detail.permission?.readback).toBe('mode')
+    expect((await fixture.log()).filter(entry => entry.event === 'start').at(-1)?.argv).toEqual(expect.arrayContaining(['--mode', 'ask']))
+    expect((await fixture.log()).filter(entry => entry.event === 'start').at(-1)?.argv).not.toContain('--force')
+    expect((await fixture.log()).filter(entry => entry.event === 'cursor-command').map(entry => entry.executed)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      false,
+    ])
+  })
+
   it('says a Cursor question was skipped, shows it in the session, and turns its todos into the plan', async () => {
     const fixture = await preset('cursor', CURSOR)
     const bridge = await fixture.open()
@@ -5497,6 +5805,49 @@ describe('sessions on a model service through the gateway', () => {
   }
 
   const envOf = (log: LogEntry[]) => log.filter(entry => entry.event === 'env').map(entry => entry.env as Record<string, string>)
+
+  it('applies Gemini thinking in a private launch file before its first request and after an idle restart, without inventing a read-back', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'done' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const names = ['gemini-3.1-pro-preview', 'gemini-2.5-flash']
+    const access: ModelGateway = { open: input => ({ ...stub.access.open(input), models: names }) }
+    const fixture = await setup(
+      { ...GEMINI, FAKE_ACP_CAPS: 'resume', FAKE_ACP_NO_THINKING: '1', FAKE_GEMINI_SETTINGS: '1', FAKE_ACP_MODELS: names.join(',') },
+      { idleMs: 60_000 },
+      { presetId: 'gemini' },
+      { modelGateway: access },
+    )
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'model first',
+      requestId: rid(),
+      modelRoute: { providerId: 'fake', origin: models.origin, wire: 'gemini', model: names[0]! },
+      config: [{ configId: '~gemini-thinking', value: 'low' }],
+    })
+    const first = await settled(bridge, sessionId)
+    expect(first.config?.find(option => option.id === '~gemini-thinking')).toMatchObject({ source: 'launch', currentValue: 'low' })
+    expect(models.requests[0]?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } })
+    await bridge.setConfig!(sessionId, '~gemini-thinking', 'high')
+    await bridge.prompt(sessionId, 'model second', rid())
+    await settled(bridge, sessionId)
+    expect(models.requests.at(-1)?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH' } } })
+    expect(await bridge.readConfig!(sessionId, '~gemini-thinking', 'high')).toMatchObject({ kind: 'unread' })
+    await bridge.close()
+    bridge = await fixture.open()
+    await bridge.prompt(sessionId, 'model restored', rid())
+    await settled(bridge, sessionId)
+    expect(models.requests.at(-1)?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH' } } })
+    expect(
+      received(await fixture.log(), 'session/set_config_option').filter(entry => entry.params?.configId === '~gemini-thinking'),
+    ).toHaveLength(0)
+    await bridge.setConfig!(sessionId, 'model', names[1]!)
+    expect((await bridge.detail(sessionId)).config?.find(option => option.id === '~gemini-thinking')?.currentValue).toBe('default')
+    await bridge.prompt(sessionId, 'model another family', rid())
+    await settled(bridge, sessionId)
+    expect(models.requests.at(-1)?.body).not.toHaveProperty('generationConfig.thinkingConfig')
+    await expect(bridge.setConfig!(sessionId, '~gemini-thinking', 'high')).rejects.toMatchObject({ code: 'config-value-invalid' })
+  })
 
   it('points Gemini CLI at the gateway with a token in its environment, and its system settings at the route', async () => {
     const { fixture, models, stub, route } = await routed('gemini', GEMINI, {

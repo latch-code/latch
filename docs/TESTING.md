@@ -594,3 +594,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 
 专用bulk的原生H2回归使用便利SDK以外的真实HTTP/2请求头：同一已激活句柄、正确If-Match、≤1MiB Range与错误If-Range必须关闭且不交付正文，不能回退成200整文件；普通文件服务另保留If-Range匹配206、失配200的标准行为。
+
+Harness 选项回归：`acp.test.ts` 覆盖草稿严格应用、按模型读取排队、dsh 无 ACP config 时的官方服务报告、重启互斥与授权复查、Gemini 私有设置到假模型请求、Cursor force/显式拒绝/收紧；`pi-gate.test.ts` 执行实际扩展字节验证四档工具决策与拒绝。`dsh-mode.test.ts` 默认只跑假服务；所有者明确授权后可单独设置 `LATCH_DSH_BINARY` 运行安装程序的无提示创建、换档恢复和只读核对，临时 HOME，无模型调用。默认测试与 e2e 不启动真实 Agent。
+
+首轮草稿中断后的重选由 `acp.test.ts` 检查同值、不同值权限及进程/启动设置的持久化；`harness-options.e2e.ts` 检查网页明确重选严格档后下一轮不重新应用旧宽松档。`harness-launch-options.e2e.ts` 在手机、平板、桌面及深浅色显示 Gemini/Cursor 的启动设置来源并实际写入假 CLI 参数。`native-swift.test.ts` 的 session-actions 夹具覆盖 iOS 来源、官方档位名称与合法同值选择。

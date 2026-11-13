@@ -450,7 +450,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /mcp/servers`；`POST /mcp/servers`、`PATCH`/`DELETE /mcp/servers/:id`、`POST /mcp/servers/:id/test` | 读：`view`；写：`host.sock` 的 `admin`（停用任何 `admin` 设备） | Latch 的 MCP 服务器，值从不返回；新增与放宽要本机确认 `mcp.server.apply`，见 [MCP.md](./MCP.md) |
 | `GET /mcp/import?project=<ID>` | `host.sock` 的 `admin` | 从项目导入：读项目的 `.mcp.json` 作数据，什么都不运行，见 [MCP.md](./MCP.md#从项目导入) |
 | `POST /agents/:id/mcp` | `run` | 读取 Harness 自己的 MCP（现在只有 Codex 直连），结果在 `HarnessInfo.ownMcp`，见 [MCP.md](./MCP.md#harness-自己的-mcp) |
-| `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
+| `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto?, model? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
 | `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method? }`。见 [HARNESSES.md](./HARNESSES.md#登录) |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
@@ -578,6 +578,8 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 一条消息在多个 Agent 之间依次回答的规则在 `apps/host/src/agent-relay.ts`（`test/agent-relay.test.ts`），尚未接入任何路由：第一个回答之后最多转交 3 次，Agent 写的内容不能增加次数；一轮没有完成就不再交给下一个；任何一个 Agent 的说明、Harness、模式、模型或插件代码与收下消息时不同，下一个不开始；停止要等正在运行的那一轮真实结算后才确认。
 
 ## 会话配置修改回执
+
+`SessionConfigOption.source: launch` 表示 Host 已按选择启动进程，不是 Agent 有效值的独立报告；这类修改完成回执只证明启动设置已应用。Gemini 的私有思考设置、Cursor force 没有独立读回接口，核对保持 `unread`，不得由本地保存值结清未知结果。进程级换档与核对共用互斥范围：异步准备后及启动/恢复前再查设备授权，运行中或仍有子 Agent 时拒绝重启。
 
 `catalog.features.configReceipts` 表示 Host 支持配置修改的设备绑定回执。旧客户端可不传 `requestId`；新客户端为一次不可变的 `{configId,value}` 保留原编号，超时后只查询 `GET /tasks/:id/config-requests/:requestId`。结果为 `pending`、`applied`、`failed` 或 `unknown`；Agent 收到之前就被拒绝的修改记为 `failed`，例如这一轮还在启动时 ACP 会话回答的 409 `task-running`，页面可以直接说没有改；其他设备和没有回执的编号只看到 `unknown`。读取仍检查原设备、会话可见范围与当前手机正文窗口，不能读取另一台设备的结果。接口不返回原始配置内容。
 

@@ -353,8 +353,9 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | `remove?` | 可选。删除已结束会话的数据；运行中返回 409 `task-running` |
 | `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行。只在修改还没发给 Agent 时用 409 `task-running` 拒绝（如会话的这一轮还在启动），或在确定没改的错误上带 `details.configOutcome`（`ConfigRefusal`：`not-sent` 还没发出，`refused` Agent 用错误回答）：Host 把它们记为明确失败，其他错误在回执之后都记为结果未知 |
 | `readConfig?(sessionId, configId, value)` | 可选。从 Agent 本身读取一项的当前值（`ConfigReading`：`read` 带 `asked`，表示 Driver 认为这就是所选的 `value`；`busy` 带原因；`unread`），只在会话空闲时读，不用 Driver 自己记下的值，不改任何设置，读取期间拒绝这个会话的发送、追加与修改；先结束收到未回答修改的进程，使那次修改不会在读取之后落地。Host 用它核对结果未知的修改 |
+| `readCatalogue?({ auto, model? })` | 可选。不发提示读取开始前选项；提供 `model` 时读该模型的选项，同模型合并、不同模型串行。是否自动读取由能力声明决定，不能在需人请求的 Harness 上自动运行扩展或钩子 |
 | `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter` 或 `wider`。Host 只用它决定是否写放宽模式的审计 |
-| `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
+| `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders?, modelRoute?, config? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
 | `listExternalSessions?`、`loadExternalSession?`、`closeExternalSession?`、`adoptExternalSession?`、`agentSessionIds?` | 可选，与 `HarnessDriver.historyImport` 一起。接入这个 Harness 在 Latch 之前的会话：只列元数据、一次保留重放的加载、以 Host 选定的会话 ID 绑定原会话（删除时不删原会话），以及 Driver 自己的会话用过的 Harness 会话 ID（不列出供接入）；见 [HARNESSES.md](HARNESSES.md#接入已有会话) |
 
 会话 ID 与审批 ID 必须全局唯一（建议 UUID 或带前缀的 UUID），不超过 256 字符；Host 按 ID 把请求路由到对应 Driver，冲突时先挂载者胜出。
@@ -422,3 +423,5 @@ pnpm test:e2e
 Host 可在 `register(plugin,{revision})` 或 `replace(plugin,beforeCommit,{revision})` 传入已实际应用的完整来源与配置 SHA-256。`revisionSnapshot(ids)` 返回各插件的摘要与 `persistent`；没有完整摘要的旧模块使用当前 activation 的随机指纹，重启、替换或重新启用后改变，不把相同 semver 当作旧授权仍然有效。替换未提供新摘要时也不继承旧摘要。
 
 已保存的执行授权可通过 `registry.acquire(providerId,{pluginIds,expectedRevisions})` 同步复核，必须包含实际 Provider 归属和每个选中的插件。变更中、已停用、缺少修订或摘要变化都拒绝新租约。旧租约仍保留原代，直到真实运行结束再清理。`AgentExecutionContext.expectedRevisions` 仅由 Host 构造，Standard 在持久化新运行之前复核，指纹不包含私有记忆正文，也不进入公开消息。内容摘要描述已批准的来源，不构成 OS 隔离或第三方外部依赖完整性的保证。
+
+`SessionConfigOption.source: launch` 只表示由 Host 管理的启动设置，不能用持久化值作为 `readConfig` 的 Agent 读回。`models.thinkingPerModel` 表示原生列表完整报告各模型的思考能力，`models.thinkingInModel` 表示思考变体在模型 ID 中选择；没有证据不得声明。

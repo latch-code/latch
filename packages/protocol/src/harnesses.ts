@@ -87,6 +87,13 @@ export interface HarnessCapabilities {
      * instead of calling the forwarding unfinished.
      */
     ownOnly?: true
+    /**
+     * It reports thinking levels for every model that has them, so a model it reports none for has none, rather than
+     * leaving them to its own defaults.
+     */
+    thinkingPerModel?: true
+    /** This CLI encodes thinking variants in its model IDs, rather than a separate setting. */
+    thinkingInModel?: true
   }
   permission: {
     /** Who decides whether a tool call runs. Only the built-in harness can be `latch`. */
@@ -112,6 +119,12 @@ export interface HarnessCapabilities {
    */
   fork?: 'native'
 }
+
+/**
+ * A draft's pick from `HarnessInfo.permission.modes`, kept among its picks under this ID. Agents' option IDs never start
+ * with `~`; a start sets it as the mode the agent reports, whatever that option is called.
+ */
+export const LADDER_MODE = '~mode'
 
 /**
  * What a harness offered when a session of its current definition last started: model, thinking, mode and its other
@@ -185,7 +198,17 @@ export interface HarnessInfo {
    * mode back, and Latch's word for each of its modes. Absent: Latch has no profile for it and learns this only after it
    * starts.
    */
-  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none'; modeTiers?: Record<string, ModeTier> }
+  permission?: {
+    approvals: 'prompts' | 'none'
+    readback: 'mode' | 'none'
+    modeTiers?: Record<string, ModeTier>
+    /**
+     * The modes Latch knows this harness has, strictest first, and the one a session starts in: a draft may choose one
+     * before anything is read, as `LADDER_MODE`. A start the agent then does not offer it to fails before sending.
+     */
+    modes?: string[]
+    startMode?: string
+  }
   /** Absent: no session or read has told Latch what it offers, or its definition changed since. */
   catalogue?: HarnessCatalogue
   /** Absent: what it offers is known only once a session starts. */

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HarnessInfo } from '@latch/protocol'
 import { api } from '../src/core/api.ts'
-import { readOnSelect, readsOnPermission, readsOnSelect } from '../src/composer/harnessCatalogue.tsx'
+import { readModelOnSelect, readOnSelect, readsOnPermission, readsOnSelect } from '../src/composer/harnessCatalogue.tsx'
 
 vi.mock('../src/core/api.ts', async original => ({ ...(await original<typeof import('../src/core/api.ts')>()), api: vi.fn() }))
 
@@ -26,4 +26,19 @@ describe('reading a Harness by selection', () => {
     // Its definition changed and the Host has no read of the new one: opening 权限 reads it, as its note says.
     expect(readsOnPermission(unread, access)).toBe(true)
   })
+})
+
+it('reads a model again after the Host replaces the catalogue for a changed definition', async () => {
+  vi.mocked(api).mockClear().mockResolvedValue({ ran: true })
+  const first = {
+    ...harness({ when: 'select', modes: true }),
+    id: 'per-model-agent',
+    catalogue: { options: [], perModel: [], reportedAt: '2026-11-13T00:00:00Z', source: 'check' as const },
+  }
+  readModelOnSelect(first, 'large')
+  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1))
+  readModelOnSelect(first, 'large')
+  expect(api).toHaveBeenCalledTimes(1)
+  readModelOnSelect({ ...first, catalogue: { ...first.catalogue, reportedAt: '2026-11-13T01:00:00Z' } }, 'large')
+  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(2))
 })

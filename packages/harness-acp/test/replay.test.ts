@@ -186,8 +186,9 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     const asked = tools(detail).find(message => message.tool?.decision)
     expect(asked).toMatchObject({ state: 'completed', tool: { decision: { outcome: 'allowed' } } })
     expect(tools(detail).every(message => message.state === 'completed')).toBe(true)
-    // pi asked through an extension, so what Latch says of pi's approvals must leave room for that.
-    expect(detail.permission?.notes).toEqual(['pi 执行工具前不请求审批，只有扩展要求确认时才会问你'])
+    // pi asks through Latch's own extension, and its other extensions run outside it.
+    expect(detail.permission).toMatchObject({ approvals: 'prompts', readback: 'mode', expectedMode: 'ask' })
+    expect(detail.permission?.notes).toContain('pi 的其他扩展在 Latch 的询问之外运行，它们可以自己执行任何事')
   },
   model_switch(detail) {
     expect(detail.summary.status).toBe('idle')
@@ -319,7 +320,14 @@ describe('replaying each harness', () => {
       // One process per run of the agent the transcript holds; a test that started more found something it did not expect.
       expect(status!.starts.map(start => start.at)).toEqual(starts(transcript))
       for (const start of status!.starts) {
-        expect(start.argv).toEqual(fixture.harness === 'pi' ? ['--mode', 'rpc'] : [])
+        // pi gets Latch's permission extension, written into the process's own temporary directory.
+        expect(start.argv).toEqual(
+          fixture.harness === 'pi'
+            ? ['-e', expect.stringMatching(/\/latch-permission\.ts$/u), '--mode', 'rpc']
+            : fixture.harness === 'dsh'
+              ? ['--patch', expect.stringMatching(/\/latch-permission\.patch\.json$/u)]
+              : [],
+        )
         const value = start.env.CODEX_PATH
         if (value !== null) expect(value.startsWith(`${bin}/`)).toBe(true)
       }

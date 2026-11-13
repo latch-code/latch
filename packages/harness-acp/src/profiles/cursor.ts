@@ -51,8 +51,33 @@ function merged(sessionKey: string, items: Todo[], merge: boolean): Todo[] {
 
 export const cursorProfile: HarnessProfile = {
   presetId: 'cursor',
-  version: 1,
+  version: 2,
+  processMode: {
+    prepare(_directory, mode) {
+      const args = mode === 'agent-force' ? ['--force'] : mode === 'ask' || mode === 'plan' ? ['--mode', mode] : []
+      return Promise.resolve({ args, env: {} })
+    },
+    unread: true,
+    agentMode: mode => (mode === 'agent-force' ? 'agent' : mode),
+    fromMode(option, launchMode) {
+      const force = launchMode === 'agent-force' && option.currentValue === 'agent'
+      return {
+        ...option,
+        ...(force ? { source: 'launch' as const } : {}),
+        currentValue: force ? 'agent-force' : option.currentValue,
+        options: [
+          ...option.options.filter(item => item.value !== 'agent-force'),
+          {
+            value: 'agent-force',
+            name: 'Agent --force',
+            description: '启动参数；显式拒绝的命令仍拒绝，ACP 不独立报告 force。',
+          },
+        ],
+      }
+    },
+  },
   ownModelsOnly: true,
+  thinkingInModel: true,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {
@@ -60,7 +85,13 @@ export const cursorProfile: HarnessProfile = {
     defaultEnv: {},
     expectedMode: 'agent',
     // Ask and plan are documented as read-only.
-    modeLadder: ['ask', 'plan', 'agent'],
+    modeLadder: ['ask', 'plan', 'agent', 'agent-force'],
+    modeTiers: {
+      ask: { tier: 'plan', name: 'Ask', line: '问答，只读。' },
+      plan: { tier: 'plan', name: 'Plan', line: '制定计划，只读。' },
+      agent: { tier: 'ask', name: 'Agent', line: '完整工具能力，按 Cursor 权限规则询问。' },
+      'agent-force': { tier: 'never', name: 'Agent --force', line: '启动时 --force；直接允许未被明确拒绝的命令。' },
+    },
     // Cursor's documented option IDs; the one that stores a rule is hidden whatever kind it reports.
     hiddenOptionIds: ['allow-always'],
     readback: 'mode',

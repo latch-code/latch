@@ -1,18 +1,29 @@
 import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
+import { DSH_MODES, prepareDshMode, readDshMode } from './dsh-mode.ts'
 
 export const dshProfile: HarnessProfile = {
   presetId: 'dsh',
-  version: 1,
+  version: 2,
+  processMode: { prepare: prepareDshMode, read: readDshMode },
+  // dsh-acp offers `reasoning_effort` when the exact model declares one (its README).
+  thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     // DeepSeek Harness takes any non-empty DSH_TELEMETRY_DISABLED as off.
     defaultEnv: { DSH_PERMISSION_MODE: 'read-only', DSH_TELEMETRY_DISABLED: '1' },
-    readback: 'none',
+    expectedMode: 'read-only',
+    modeLadder: [...DSH_MODES],
+    modeTiers: {
+      'read-only': { tier: 'plan', line: '只读，不改文件' },
+      'workspace-write': { tier: 'rule', line: '直接写工作目录与允许的临时目录；扩大范围前问你' },
+      'danger-full-access': { tier: 'never', line: '直接改文件和运行命令' },
+    },
+    readback: 'mode',
     inheritEnv: ['DSH_HOME'],
-    notes: ['无法读回权限模式'],
+    notes: ['Latch 的私有插件通过 DeepSeek Harness 的权限服务设置和读回档位；空闲时换档会重启并恢复会话'],
   },
   // DeepSeek Harness refuses additionalDirectories and keeps to the session directory.
   folderAccess: 'primary',
@@ -23,7 +34,7 @@ export const dshProfile: HarnessProfile = {
   minimumVersion: {
     args: ['--version'],
     read: bareVersion,
-    minimum: '0.2.1-rc.1',
+    minimum: '0.2.2-rc.1',
     upgrade: 'npm i -g @deepseek-ai/dsh@latest',
   },
 }

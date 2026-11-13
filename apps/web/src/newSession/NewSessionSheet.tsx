@@ -10,6 +10,7 @@ import {
   servicePick,
   withServicePick,
   type ComposerChoice,
+  withLadderMode,
 } from '../composerChoice.ts'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -121,7 +122,12 @@ export function NewSessionSheet({
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const known = harness?.capabilities.models.owner === 'latch' ? undefined : draftConfig(harness, choice.config)
   const reading = useReading(harness)
-  const permission = draftPermission(harness, choice.mode, known?.config, draftRead(harness, access, reading))
+  const permission = draftPermission(
+    harness,
+    choice.mode,
+    withLadderMode(harness, known?.config, choice.config),
+    draftRead(harness, access, reading),
+  )
   // As in the menu on a wider screen: the main rows, and the rest under 更多.
   const [morePermission, setMorePermission] = useState(false)
   const permissionRows = permission?.rows?.filter(row => morePermission || !row.more)

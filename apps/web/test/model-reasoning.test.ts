@@ -2,11 +2,20 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
+import { LADDER_MODE, type HarnessInfo, type HostCatalog, type ModelRef, type SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
 import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../src/composer/ThinkingControl.tsx'
-import { draftConfig, harnessPicks, resolveChoice, sameModel, startConfig, switchModel, thinkingLevels } from '../src/composerChoice.ts'
+import {
+  draftConfig,
+  harnessPicks,
+  resolveChoice,
+  sameModel,
+  startConfig,
+  switchModel,
+  thinkingLevels,
+  withLadderMode,
+} from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
 import { contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
 import {
@@ -105,6 +114,21 @@ describe('Agent model and reasoning controls', () => {
     expect(agentConfigChoice([changed], model.id, 'two', { busy: null })).toBeUndefined()
   })
 
+  it('lets an explicit launch-setting reselect replace a draft but still respects an unknown write', () => {
+    const launch = { ...reasoning, source: 'launch' as const }
+    expect(agentConfigChoice([launch], launch.id, launch.currentValue, { busy: null })).toEqual({
+      configId: launch.id,
+      value: launch.currentValue,
+    })
+    expect(agentConfigChoice([launch], launch.id, 'not-listed', { busy: null })).toBeUndefined()
+    expect(
+      agentConfigChoice([launch], launch.id, launch.currentValue, {
+        busy: null,
+        feedback: { kind: 'unknown', message: 'unknown' },
+      }),
+    ).toBeUndefined()
+  })
+
   it('does not invent a level for a model-only or uncategorized list: 思考 is 默认 and says why', () => {
     const modelOnly = { ...props(), config: [model] }
     expect(named(html(modelOnly), '模型')).toBe('First model')
@@ -123,7 +147,7 @@ describe('Agent model and reasoning controls', () => {
     const rendered = html(props())
     expect(named(rendered, '模型')).toBe('First model')
     expect(rendered).toContain('上下文窗口')
-    expect(rendered).toContain('Agent description')
+    expect(rendered).not.toContain('Agent description')
     expect(rendered).not.toContain('aria-label="思考"')
     const thinking = thinkingHtml(props())
     expect(named(thinking, '思考')).toBe('均衡')
@@ -759,5 +783,40 @@ describe('the service a session started on through Latch', () => {
     const { name: _name, ...deleted } = route
     expect(header(off, deleted as typeof route).label).toBe('模型服务 · 已经删除')
     for (const at of [stopped, route]) expect(JSON.stringify(header(off, at))).not.toContain('openai ·')
+  })
+})
+
+describe('a permission picked before the Harness reports its option', () => {
+  const declared = testHarness('codex', {
+    permission: {
+      approvals: 'prompts',
+      readback: 'mode',
+      modes: ['read-only', 'workspace-write', 'agent-full-access'],
+      startMode: 'read-only',
+    },
+  })
+  const reportedMode: SessionConfigOption = {
+    id: 'permission-profile',
+    name: '权限',
+    category: 'mode',
+    currentValue: 'read-only',
+    options: ['read-only', 'workspace-write', 'agent-full-access'].map(value => ({ value, name: value })),
+  }
+  const listed: HarnessInfo = {
+    ...declared,
+    catalogue: { options: [reportedMode], perModel: [], reportedAt: '2026-11-13T00:00:00Z', source: 'check' },
+  }
+
+  it('keeps the selected level when a catalogue arrives with the real mode option id', () => {
+    const picks = { [LADDER_MODE]: 'workspace-write' }
+    expect(withLadderMode(declared, undefined, picks)?.[0]?.currentValue).toBe('workspace-write')
+    expect(withLadderMode(listed, draftConfig(listed, picks)?.config, picks)?.[0]?.currentValue).toBe('workspace-write')
+    expect(startConfig(listed, picks)).toEqual([{ configId: LADDER_MODE, value: 'workspace-write' }])
+  })
+
+  it('lets a later explicit pick in the reported option replace the earlier declared choice', () => {
+    const picks = { [LADDER_MODE]: 'workspace-write', 'permission-profile': 'read-only' }
+    expect(withLadderMode(listed, draftConfig(listed, picks)?.config, picks)?.[0]?.currentValue).toBe('read-only')
+    expect(startConfig(listed, picks)).toEqual([{ configId: 'permission-profile', value: 'read-only' }])
   })
 })

@@ -577,6 +577,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   width?: number
   /** A search row on top of the menu, for long lists such as models. */
   searchable?: boolean
+  /** An explicit choice of the current value is meaningful to the caller. */
+  reselect?: boolean
   /** Optional domain-specific match; the default is a literal substring. */
   searchMatch?: (option: PickerOption<T>, query: string) => boolean
   disabled?: boolean
@@ -627,6 +629,7 @@ export function ValuePicker<T extends string>({
   valueText: shownText,
   width,
   searchable = false,
+  reselect = false,
   searchMatch,
   disabled = false,
   disabledReason,
@@ -678,6 +681,19 @@ export function ValuePicker<T extends string>({
   }, [currentLabel])
 
   const showingForm = form !== undefined
+  const lastMenuFocus = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    if (!open || sheet || showingForm) {
+      lastMenuFocus.current = null
+      return
+    }
+    const previous = lastMenuFocus.current
+    if (!previous || previous.isConnected) return
+    lastMenuFocus.current = null
+    // An asynchronous option refresh can remove the focused row. Repair only that lost focus;
+    // ordinary polling must leave a surviving row, search field or another control alone.
+    if (document.activeElement === document.body && layer.current?.matches(':popover-open')) focusInto(panel.current)
+  })
   useEffect(() => {
     if (open && !sheet && !showingForm) focusInto(panel.current)
   }, [open, sheet, showingForm])
@@ -687,7 +703,7 @@ export function ValuePicker<T extends string>({
 
   const choose = (next: T) => {
     close(true)
-    if (next === value) return
+    if (next === value && !reselect) return
     const result = onValueChange(next)
     if (result instanceof Promise) {
       setWaiting(true)
@@ -826,6 +842,9 @@ export function ValuePicker<T extends string>({
         className="ui-popover"
         data-panel={form === undefined ? undefined : ''}
         style={{ width: width ?? (searchable ? 360 : undefined) }}
+        onFocusCapture={event => {
+          if (event.target instanceof HTMLElement) lastMenuFocus.current = event.target
+        }}
         onKeyDown={event => {
           // The menu handles its own keys; a panel in its place closes on Escape like the menu.
           if (form === undefined || event.key !== 'Escape' || event.defaultPrevented) return
@@ -836,6 +855,7 @@ export function ValuePicker<T extends string>({
         onBlur={event => {
           // Tabbing out of a panel closes the layer, as tabbing out of the menu does.
           const next = event.relatedTarget
+          if (next instanceof Node && !layer.current?.contains(next)) lastMenuFocus.current = null
           if (form === undefined || !(next instanceof Node)) return
           if (layer.current?.contains(next) || triggerRef.current?.contains(next)) return
           close(false)

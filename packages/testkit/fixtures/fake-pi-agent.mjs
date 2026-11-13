@@ -11,16 +11,53 @@
 // It keeps each session's entries as pi does, a tree with IDs, parents and times, in a JSONL file under FAKE_PI_SESSIONS
 // when that is set, so another process can switch to it, list it and fork or clone it. "recall" replies with the user
 // messages on the branch before it; a session whose first message says "no-fork" has an extension cancel its forks.
+// Given `-e <dir>/latch-permission.ts`, it acts as Latch's permission extension does in pi (it never loads the file):
+// `/latch-permission <level>` sets the level and every level is reported as a status; before a tool runs, `plan`
+// blocks anything but reading, `ask` confirms the rest, `rule` lets edits and writes through. "write" in a prompt writes
+// a file with the write tool. Each tool that really runs is logged as `executed`.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 const env = process.env
 const log = event => {
   if (env.FAKE_PI_LOG) appendFileSync(env.FAKE_PI_LOG, `${JSON.stringify({ pid: process.pid, ...event })}\n`)
 }
 log({ event: 'start', argv: process.argv.slice(2), cwd: process.cwd() })
+
+const argv = process.argv.slice(2)
+const gatePath = argv.flatMap((arg, at) =>
+  arg === '-e' && basename(argv[at + 1] ?? '') === 'latch-permission.ts' ? [argv[at + 1]] : [],
+)[0]
+const gate = gatePath ? { level: 'ask' } : undefined
+const reportGate = () => {
+  if (gate)
+    send({
+      type: 'extension_ui_request',
+      id: `status-${++uiRequests}`,
+      method: 'setStatus',
+      statusKey: 'latch-permission',
+      statusText: gate.level,
+    })
+}
+const READ_TOOLS = new Set(['read', 'grep', 'find', 'ls'])
+/** What the gate says of a call: undefined to run it, or why it was blocked. */
+async function gated(current, call, tool, input) {
+  if (!gate || gate.level === 'never' || READ_TOOLS.has(tool)) return undefined
+  if (gate.level === 'rule' && (tool === 'edit' || tool === 'write')) return undefined
+  if (gate.level === 'plan') return `Latch: this session only reads (只看不改); ${tool} is blocked.`
+  const id = `fake-ui-${++uiRequests}`
+  send({
+    type: 'extension_ui_request',
+    id,
+    method: 'confirm',
+    title: tool,
+    message: JSON.stringify({ latchGate: 1, toolCallId: call, toolName: tool, input }),
+  })
+  const answer = await Promise.race([new Promise(resolve => dialogs.set(id, resolve)), current.stopped.then(() => ({ cancelled: true }))])
+  return answer.confirmed === true ? undefined : 'The person refused this call in Latch.'
+}
 
 const MODELS =
   env.FAKE_PI_NO_MODELS === '1'
@@ -164,6 +201,18 @@ async function command(current, call, commandLine, ms) {
     message: assistantMessage([{ type: 'toolCall', id: call, name: 'bash', arguments: { command: commandLine } }], 'toolUse'),
   })
   send({ type: 'tool_execution_start', toolCallId: call, toolName: 'bash', args: { command: commandLine } })
+  const blocked = await gated(current, call, 'bash', { command: commandLine })
+  if (blocked !== undefined) {
+    send({
+      type: 'tool_execution_end',
+      toolCallId: call,
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: blocked }] },
+      isError: true,
+    })
+    return true
+  }
+  log({ event: 'executed', tool: 'bash', command: commandLine })
   send({
     type: 'tool_execution_update',
     toolCallId: call,
@@ -180,6 +229,26 @@ async function command(current, call, commandLine, ms) {
     isError: !waited,
   })
   return waited
+}
+
+/** The write tool on `a.txt`, through the gate. */
+async function write(current, call) {
+  const args = { path: 'a.txt', content: 'hi' }
+  send({ type: 'message_start', message: assistantMessage([], 'pending') })
+  send({ type: 'message_end', message: assistantMessage([{ type: 'toolCall', id: call, name: 'write', arguments: args }], 'toolUse') })
+  send({ type: 'tool_execution_start', toolCallId: call, toolName: 'write', args })
+  const blocked = await gated(current, call, 'write', args)
+  if (blocked === undefined) {
+    writeFileSync(join(process.cwd(), 'a.txt'), 'hi')
+    log({ event: 'executed', tool: 'write', path: 'a.txt' })
+  }
+  send({
+    type: 'tool_execution_end',
+    toolCallId: call,
+    toolName: 'write',
+    result: { content: [{ type: 'text', text: blocked ?? 'Wrote a.txt' }] },
+    isError: blocked !== undefined,
+  })
 }
 
 function confirm(title) {
@@ -208,6 +277,7 @@ async function play(message) {
     send({ type: 'message_end', message: assistantMessage([], 'error', '529 overloaded_error: Overloaded') })
     ended = 'error'
   } else {
+    if (/write/u.test(message)) await write(current, 'call-w')
     if (/sleep/u.test(message)) await command(current, 'call-1', 'sleep 600', 600_000)
     else if (/slow/u.test(message)) await command(current, 'call-1', 'npm run build', 3_000)
     else if (/run/u.test(message)) await command(current, 'call-1', 'npm test', 400)
@@ -309,6 +379,9 @@ function handle(record) {
       return ok(type, id)
     case 'switch_session':
       load(record.sessionPath)
+      // pi starts its extensions again for another session: the gate is back at its first level.
+      if (gate) gate.level = 'ask'
+      reportGate()
       return ok(type, id, { cancelled: false })
     case 'new_session':
       sessionFile = newFile()
@@ -331,7 +404,29 @@ function handle(record) {
       branchInto(type === 'fork' ? chosen.parentId : leafId)
       return ok(type, id, type === 'fork' ? { text: userText(chosen), cancelled: false } : { cancelled: false })
     }
+    case 'get_commands':
+      return ok(type, id, {
+        commands: gate
+          ? [
+              {
+                name: 'latch-permission',
+                description: 'Set by Latch',
+                source: 'extension',
+                sourceInfo: { path: gatePath, source: 'cli', scope: 'temporary', origin: 'top-level' },
+              },
+            ]
+          : [],
+      })
     case 'prompt':
+      {
+        // An extension command runs at once, even during a run, and is not a message.
+        const asked = gate && /^\/latch-permission(?:\s+(\S+))?\s*$/u.exec(String(record.message ?? ''))
+        if (asked) {
+          if (['plan', 'ask', 'rule', 'never'].includes(asked[1])) gate.level = asked[1]
+          reportGate()
+          return ok(type, id, { disposition: 'handled' })
+        }
+      }
       if (run) return refuse(type, id, 'Agent is already processing. Specify streamingBehavior.')
       if (!model) return refuse(type, id, 'No model selected')
       ok(type, id, { disposition: 'started' })
@@ -375,6 +470,7 @@ function handle(record) {
   }
 }
 
+reportGate()
 if (env.FAKE_PI_SHAPE === '1.5') process.stdout.write(`${JSON.stringify({ type: 'queue_update', steering: [], followUp: [] })}\n`)
 
 let buffered = ''

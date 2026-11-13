@@ -1,12 +1,11 @@
 import { useState, useSyncExternalStore } from 'react'
 import { TextCursorInput } from 'lucide-react'
 import type { HarnessInfo } from '@latch/protocol'
-import { Button, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
+import { Button, Hint, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
-import { dateTime } from '../format.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
 /**
@@ -34,12 +33,18 @@ export function useReading(harness: HarnessInfo | undefined): boolean {
   return here || harness?.catalogueRead?.running === true
 }
 
-/** Reads what the Harness offers without a turn; the catalog the Host sends next carries it, or why it failed. */
-export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean): Promise<void> {
+/**
+ * Reads what the Harness offers without a turn; the catalog the Host sends next carries it, or why it failed. `model`:
+ * only what it offers for that model of its list, such as thinking.
+ */
+export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean, model?: string): Promise<void> {
   waiting.add(harness.id)
   changed()
   try {
-    await api(`agents/${encodeURIComponent(harness.id)}/catalogue`, { method: 'POST', body: { auto } })
+    await api(`agents/${encodeURIComponent(harness.id)}/catalogue`, {
+      method: 'POST',
+      body: { auto, ...(model !== undefined ? { model } : {}) },
+    })
   } finally {
     waiting.delete(harness.id)
     changed()
@@ -130,11 +135,6 @@ export function CatalogueRows({
   const label = failed ? '重新读取' : catalogue ? '刷新模型列表' : `读取 ${name} 的模型列表`
   return (
     <>
-      {catalogue && (
-        <p className="model-note">
-          {catalogue.source === 'session' ? `来自上次会话 · ${dateTime(catalogue.reportedAt)}` : `读取于 ${dateTime(catalogue.reportedAt)}`}
-        </p>
-      )}
       {running && <p className="model-note">正在读取 {name} 的模型列表…</p>}
       {!running && failed && (
         <p className="model-note" data-tone="error">
@@ -151,6 +151,11 @@ export function CatalogueRows({
           }}>
           {label}
         </MenuFooterLink>
+      )}
+      {read?.when === 'request' && !catalogue && !running && (
+        <Hint label="点了才读" className="model-note">
+          读取要启动 {name}，它会加载你的扩展或插件、运行会话钩子，所以 Latch 不自动读。
+        </Hint>
       )}
       {hasModels && canRun && (
         <MenuFooterLink icon={TextCursorInput} chevron={false} onClick={onTypeModel}>
@@ -260,4 +265,34 @@ export function TypedModelsPanel({
       )}
     </div>
   )
+}
+
+/** Models a draft here asked the Host about, by Harness: each once, as the Host reads each once. */
+const modelsAsked = new Set<string>()
+
+/**
+ * Whether a draft that picked a model nothing is known of can read what that model offers, such as thinking: in the
+ * empty session a read opens, with no turn. `select` Harnesses read it by themselves; the others only when asked.
+ */
+export function readsModel(harness: HarnessInfo | undefined, access: Pick<DeviceAccess, 'scopes'>): harness is HarnessInfo {
+  const read = harness?.catalogueRead
+  return (
+    harness !== undefined
+    && harness.offer === undefined
+    && access.scopes.has('run')
+    && harness.status === 'ready'
+    && harness.catalogue !== undefined
+    && read !== undefined
+    && !read.running
+    && read.modes === true
+  )
+}
+
+/** The read a draft's model pick starts on a `select` Harness, once per model. */
+export function readModelOnSelect(harness: HarnessInfo, model: string): void {
+  const key = `${harness.id}\n${harness.catalogue?.reportedAt ?? ''}\n${model}`
+  if (modelsAsked.has(key)) return
+  modelsAsked.add(key)
+  if (modelsAsked.size > 256) modelsAsked.delete(modelsAsked.values().next().value!)
+  void readHarnessCatalogue(harness, true, model).catch(() => {})
 }
