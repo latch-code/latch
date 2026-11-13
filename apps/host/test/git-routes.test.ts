@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { GitPrResult, GitPrState, GitDeliveryState, TaskDetail } from '@latch/protocol'
+import type { GitPrResult, GitPrState, GitDeliveryState, TaskDetail, WorkbenchDelivery } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type FakeGh, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
+import { GitDelivery } from '../src/git-delivery.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -75,6 +76,50 @@ const errorOf = async (response: Response) => ({ status: response.status, error:
 const post = (device: TestDevice, path: string, body: object) => device.request(path, { method: 'POST', body })
 
 describe('git delivery routes', () => {
+  it('reads only requested workbench repositories, without file names, remote probes or write authority', SLOW, async () => {
+    let gh: FakeGh | undefined
+    const { t, owner, sessionId } = await fixture({ gh: async scratch => (gh = await installFakeGh(scratch)) })
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    const result = await viewer.json<WorkbenchDelivery>('workbench/delivery', {
+      method: 'POST',
+      body: { ids: [sessionId, 'missing', sessionId] },
+    })
+    expect(result.entries).toHaveLength(2)
+    expect(result.entries[0]).toMatchObject({ sessionId, state: { branch: 'main', files: 2, untracked: 2 } })
+    expect(result.entries[0]?.pr).toBeUndefined()
+    expect(result.entries[1]?.error?.code).toBe('task-not-found')
+    expect(JSON.stringify(result)).not.toContain('agent-edit.txt')
+    expect(await gh!.calls()).toEqual([])
+    expect(await audited(t)).toEqual([])
+    expect((await post(owner, 'workbench/delivery', { ids: Array.from({ length: 13 }, () => sessionId) })).status).toBe(400)
+    expect((await post(owner, 'workbench/delivery', { ids: [sessionId], extra: true })).status).toBe(400)
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    expect(await errorOf(await post(narrow, 'workbench/delivery', { ids: [sessionId] }))).toEqual({ status: 403, error: 'file-scope' })
+    expect((await t.raw('loopback-tcp', 'api/workbench/delivery', { method: 'POST', body: { ids: [sessionId] } })).status).toBe(401)
+  })
+
+  it('rechecks data scope after slow workbench reads before returning any evidence', SLOW, async () => {
+    const { t, sessionId } = await fixture()
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    const original = GitDelivery.prototype.state
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const read = vi.spyOn(GitDelivery.prototype, 'state').mockImplementation(async function (this: GitDelivery, folder) {
+      const result = await original.call(this, folder)
+      await gate
+      return result
+    })
+    const request = post(viewer, 'workbench/delivery', { ids: [sessionId] })
+    await expect.poll(() => read.mock.calls.length).toBe(1)
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
+    release()
+    expect(await errorOf(await request)).toEqual({ status: 403, error: 'file-scope' })
+  })
+
   it('announces the feature, lists the status and stages and commits with the audit record first', SLOW, async () => {
     const { t, owner, path, git } = await fixture()
     const snapshot = await owner.json<{ catalog: { features: { gitDelivery?: true } } }>('snapshot')

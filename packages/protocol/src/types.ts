@@ -16,6 +16,7 @@ export type { HarnessMcpReport, HarnessMcpServer, HarnessMcpState, HarnessOwnMcp
 export type * from './model-route.ts'
 export type * from './settings.ts'
 export type * from './changes.ts'
+export type * from './workbench.ts'
 export type * from './review-notes.ts'
 export type * from './git.ts'
 export type * from './git-delivery.ts'

@@ -295,6 +295,9 @@ describe('bringing in an earlier session of the agent', () => {
     const input = { ...test.place('ext-main'), sessionId, loadId: load.loadId, title: 'Fix the login bug' }
     const adopted = await bridge.adoptExternalSession!(input)
     expect(adopted).toMatchObject({ sessionId, messageCount: 6, droppedBefore: 0 })
+    // The model the agent's session reports, before any turn of Latch's.
+    expect(load.model).toEqual(expect.any(String))
+    expect((await bridge.detail(sessionId)).summary.model).toBe(load.model)
     // The same session ID answers again, also after a restart; another agent session under it is refused.
     expect((await bridge.adoptExternalSession!(input)).sessionId).toBe(sessionId)
     await bridge.close()

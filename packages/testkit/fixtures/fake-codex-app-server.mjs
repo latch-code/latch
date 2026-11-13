@@ -17,16 +17,25 @@
 // before the turn goes on; `sub` has a subagent thread run a command and ask for it; `crash` exits mid-turn. With the
 // `auto_review` reviewer, `run` (and `risky run`, which it denies) is decided by Codex's review model, not asked.
 // FAKE_CODEX_INTERRUPT_MS delays the end of an interrupted turn; FAKE_CODEX_INTERRUPT_NEVER=1 never ends it; a `sleep
-// late` turn asks for a command once interrupted. Anything else is echoed as `echo: <text>`, as the fake ACP agent
-// does. Text added with turn/steer is replied to in the same turn.
+// late` turn asks for a command once interrupted. `hold` asks to run `sleep`, which, allowed, starts a real `sleep` in a
+// process group of its own that keeps running after the turn is interrupted, as Codex leaves an allowed command running,
+// until thread/backgroundTerminals/terminate or a signal ends it; its pid is logged (`command-started`). With
+// FAKE_CODEX_TERMINALS=ignore terminate ends nothing, and with `none` Codex has no such requests. FAKE_CODEX_OS_PID is
+// the osPid it lists instead of the command's own. `hold` takes words after it: `sub` runs the command on a subagent's
+// thread, `early` reports it started before asking (as for an MCP call), `orphan` runs `sleep` behind a shell that
+// exits at once, so the group outlives its leader (the item ends only once the group is gone), `self` interrupts the
+// turn by itself with no turn/interrupt; FAKE_CODEX_INTERRUPT_STATUS=failed ends an interrupted turn failed. Anything
+// else is echoed as `echo: <text>`, as the fake ACP agent does. Text added with turn/steer is replied to in the same turn.
 //
 // Its own MCP servers: FAKE_CODEX_MCP is a JSON array of `McpServerStatus` (default none), which mcpServerStatus/list
-// pages (by `limit`) together with the thread's `config.mcp_servers`, as Codex lists both; with no thread it says the
-// servers start first. Once a thread opens, each of its own servers reports `starting`, then `ready`, or `failed` for one
+// pages (by `limit`) together with the thread's `config.mcp_servers`, as Codex lists both. With no thread it lists only
+// the configured names, each without a runtimeStatus, and leaves out those marked `threadOnly` (a plugin's), as Codex
+// 0.167 does. Once a thread opens, each of its own servers reports `starting`, then `ready`, or `failed` for one
 // whose runtimeStatus is `failed` (with `reauthenticationRequired` for `authenticationRequired`). FAKE_CODEX_MCP_LIMIT
 // makes its pages smaller and FAKE_CODEX_MCP_PAGE_MS answers each page that much later.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 
 const env = process.env
 // Codex keeps its threads across processes; so does this fake, beside the fake ACP agent's state when no file is named.
@@ -112,6 +121,8 @@ const shown = thread => ({
 })
 
 let thread
+/** Commands still running, by Codex's process ID: what thread/backgroundTerminals lists and ends. */
+const terminals = new Map()
 /** The running turn: its ID, what it is waiting on, and how to end it. */
 let turn
 const asks = new Map()
@@ -408,6 +419,73 @@ async function play(text) {
     })
     return reply('planned')
   }
+  if (word === 'hold') {
+    const has = flag => text.split(/\s+/u).includes(flag)
+    const id = `cmd-${randomUUID()}`
+    const command = 'sleep 40'
+    const turnId = turn.id
+    const threadId = has('sub') ? `thread-sub-${randomUUID()}` : thread.id
+    const shape = { type: 'commandExecution', id, command, cwd: thread.cwd }
+    if (has('early')) notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...shape, status: 'inProgress' } })
+    const decision =
+      turn.policy.approvalPolicy === 'never'
+        ? 'accept'
+        : ((
+            await ask('item/commandExecution/requestApproval', {
+              threadId,
+              turnId,
+              startedAtMs: Date.now(),
+              itemId: id,
+              command,
+              cwd: thread.cwd,
+              reason: 'wait',
+            })
+          )?.decision ?? 'cancel')
+    // Unanswered, the item Codex reported started is never reported ended.
+    if (decision === 'cancel') return 'interrupted'
+    if (decision !== 'accept') return reply('not run')
+    const child = has('orphan')
+      ? spawn('sh', ['-c', 'sleep 600 >/dev/null 2>&1 & exit 0'], { detached: true, stdio: 'ignore' })
+      : spawn('sleep', ['600'], { detached: true, stdio: 'ignore' })
+    const group = child.pid
+    const processId = `proc-${terminals.size + 1}`
+    terminals.set(processId, { itemId: id, child, command, threadId })
+    log('command-started', { itemId: id, osPid: group })
+    const shown = { ...shape, processId }
+    if (!has('quiet')) notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...shown, status: 'inProgress' } })
+    const ended = code => {
+      terminals.delete(processId)
+      log('command-ended', { itemId: id })
+      notify('item/completed', {
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+        item: { ...shown, status: 'failed', aggregatedOutput: '', exitCode: code ?? -1 },
+      })
+    }
+    if (has('orphan')) {
+      // Done once nothing of its group is left, not when the shell in front of it exits.
+      const poll = setInterval(() => {
+        try {
+          process.kill(-group, 0)
+        } catch {
+          clearInterval(poll)
+          ended(-1)
+        }
+      }, 50)
+    } else child.on('exit', code => ended(code))
+    if (has('self')) {
+      await sleep(100)
+      return 'interrupted'
+    }
+    // Quiet: no output until it ends. The turn waits on the interrupt, not on the command.
+    await new Promise(resolve => {
+      turn.interrupt = resolve
+    })
+    return env.FAKE_CODEX_INTERRUPT_STATUS === 'failed'
+      ? { status: 'failed', error: { message: 'Interrupted with an error' } }
+      : 'interrupted'
+  }
   if (word === 'sleep') {
     await new Promise(resolve => {
       turn.interrupt = resolve
@@ -512,17 +590,44 @@ function announceMcp(threadId) {
 async function handle(method, params) {
   switch (method) {
     case 'mcpServerStatus/list': {
-      if (!params.threadId) log('mcp-started', { names: ownMcp.map(server => server.name) })
-      else if (!thread || params.threadId !== thread.id) throw Object.assign(new Error('thread not loaded'), { code: -32600 })
-      const listed = [
-        ...ownMcp,
-        ...(params.threadId ? threadMcp.map(name => ({ name, runtimeStatus: 'connected', tools: {}, authStatus: 'unsupported' })) : []),
-      ]
+      if (params.threadId && (!thread || params.threadId !== thread.id))
+        throw Object.assign(new Error('thread not loaded'), { code: -32600 })
+      const configured = ({ threadOnly, ...server }) => server
+      const listed = params.threadId
+        ? [
+            ...ownMcp.map(configured),
+            ...threadMcp.map(name => ({ name, runtimeStatus: 'connected', tools: {}, authStatus: 'unsupported' })),
+          ]
+        : ownMcp.filter(server => !server.threadOnly).map(server => ({ ...configured(server), runtimeStatus: null, tools: {} }))
       const start = params.cursor ? Number(params.cursor) : 0
       const limit = Number(env.FAKE_CODEX_MCP_LIMIT ?? params.limit ?? 100)
       if (env.FAKE_CODEX_MCP_PAGE_MS) await sleep(Number(env.FAKE_CODEX_MCP_PAGE_MS))
       const next = start + limit < listed.length ? String(start + limit) : null
       return { data: listed.slice(start, start + limit), nextCursor: next }
+    }
+    case 'thread/backgroundTerminals/list':
+      if (env.FAKE_CODEX_TERMINALS === 'none') throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 })
+      return {
+        data: [...terminals]
+          .filter(([, entry]) => entry.threadId === params.threadId)
+          .map(([processId, entry]) => ({
+            itemId: entry.itemId,
+            processId,
+            command: entry.command,
+            cwd: thread?.cwd ?? '',
+            osPid: env.FAKE_CODEX_OS_PID ? Number(env.FAKE_CODEX_OS_PID) : (entry.child.pid ?? null),
+            cpuPercent: null,
+            rssKb: null,
+          })),
+        nextCursor: null,
+      }
+    case 'thread/backgroundTerminals/terminate': {
+      if (env.FAKE_CODEX_TERMINALS === 'none') throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 })
+      const entry = terminals.get(params.processId)
+      log('terminate', { processId: params.processId })
+      if (!entry || env.FAKE_CODEX_TERMINALS === 'ignore' || entry.threadId !== params.threadId) return { terminated: false }
+      process.kill(-entry.child.pid, 'SIGKILL')
+      return { terminated: true }
     }
     case 'initialize':
       if (env.FAKE_ACP_INIT_AUTH === '1') throw Object.assign(new Error('Authentication required'), { code: -32000 })

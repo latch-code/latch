@@ -318,7 +318,7 @@ describe('读取 a Harness’s own MCP on the Host', () => {
     spy.mockRestore()
 
     const read = await desktop.json<{ ownMcp: HarnessOwnMcp }>('agents/codex/mcp', { body: {} })
-    expect(read.ownMcp.last).toMatchObject({ via: 'read', servers: [{ name: 'github', state: 'ready', tools: 1 }] })
+    expect(read.ownMcp.last).toMatchObject({ via: 'read', namesOnly: true, servers: [{ name: 'github', state: 'unknown' }] })
     expect(await starts()).toBe(1)
   })
 

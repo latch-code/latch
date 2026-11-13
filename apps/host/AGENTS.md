@@ -16,7 +16,7 @@ Host 的监听、授权、配置与插件组合根。
 
 不变量：
 
-- 请求上下文只来自监听入口：从不读取代理请求头，入口类别、来源与凭据形式由接受连接的 `ListenerContext` 决定（`test/server.test.ts`）。
+- 请求上下文只取 `ListenerContext`，不读取代理请求头（`test/server.test.ts`）。
 - 先审计再执行：授予或执行权限的操作先写审计，写入失败就不执行；撤销、拒绝、取消、删除、移除权限与收紧策略从不因审计失败受阻，响应改带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
 - 出站只经注入的 `fetch`：内置模型协议只发往预置或已确认的地址并经出站策略；密钥只发往保存时绑定的源与路径（`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
@@ -30,5 +30,5 @@ Host 的监听、授权、配置与插件组合根。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索只给 `all`；macOS树仅经 `latch-files` 描述符组件，不回退。索引不存权限；预览绑定Harness、根身份/版本，迟到结果重查设备/正文窗口（`test/file-tree.test.ts`、`test/native.test.ts`）。
 - 自定义插件草稿与应用分离；批准执行摘要后才导入，旧租约真实释放后回收。边界见 [PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产)（`test/plugin-package-api.test.ts`）。
-- Config RID: [Arch](../../docs/ARCHITECTURE.md).
+- 配置回执见 [Arch](../../docs/ARCHITECTURE.md)；交付摘要的限额与授权见 [交付](../../docs/GIT-DELIVERY.md#状态)。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [TRANSPORT-PLUGINS.md](../../docs/TRANSPORT-PLUGINS.md)。

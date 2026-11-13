@@ -1176,7 +1176,13 @@ export class GitDelivery {
    * and with `discussion` its reviews and comments; without one, what 创建 PR starts from (`title`: the last commit's
    * subject).
    */
-  async prState(input: { sessionId: string; folder: string; discussion: boolean; title: boolean }): Promise<GitPrState> {
+  async prState(input: {
+    sessionId: string
+    folder: string
+    discussion: boolean
+    title: boolean
+    boundOnly?: boolean
+  }): Promise<GitPrState> {
     const layout = await this.layout(input.folder)
     const bound = this.options.prs?.get(input.sessionId)
     if (bound) {
@@ -1189,7 +1195,7 @@ export class GitDelivery {
       )
       if (view.pr.state !== 'open' && (await this.movedOn(layout, input.sessionId, bound, view.pr.headSha))) {
         await this.options.prs?.unbind(input.sessionId)
-        return this.unboundState(layout, input)
+        return input.boundOnly ? { checks: [] } : this.unboundState(layout, input)
       }
       let discussion: { items: GitPrState['discussion'] & object; capped: boolean } | undefined
       if (input.discussion) discussion = await this.discussion(layout, input.sessionId, where)
@@ -1199,7 +1205,7 @@ export class GitDelivery {
         ...(discussion ? { discussion: discussion.items, ...(discussion.capped ? { discussionCapped: true as const } : {}) } : {}),
       }
     }
-    return this.unboundState(layout, input)
+    return input.boundOnly ? { checks: [] } : this.unboundState(layout, input)
   }
 
   private async unboundState(layout: GitLayout, input: { sessionId: string; title: boolean }): Promise<GitPrState> {

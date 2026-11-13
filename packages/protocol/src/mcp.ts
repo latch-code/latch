@@ -184,6 +184,8 @@ export interface HarnessMcpReport {
   via: 'session' | 'read'
   /** More servers than Latch lists. */
   truncated?: true
+  /** A 读取 with no session, of a Harness that then names its servers only: every state is `unknown`. */
+  namesOnly?: true
 }
 
 /** On a Harness that reports its own MCP servers (`HarnessInfo.ownMcp`); absent on every other. */

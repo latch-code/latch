@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WorkbenchDeliveryReader, workbenchReadFailure, type WorkbenchDeliveryTarget } from '../workbench-delivery.ts'
 import type { GitDeliveryKind } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
@@ -15,6 +16,7 @@ const requestId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const pathsSchema = z.strictObject({ requestId, paths: z.array(z.string().min(1).max(4096)).min(1).max(1000) })
 const commitSchema = z.strictObject({ requestId, message: z.string().min(1).max(MESSAGE_LIMIT), skipHooks: z.boolean().optional() })
 const pushSchema = z.strictObject({ requestId })
+const workbenchSchema = z.strictObject({ ids: z.array(z.string().min(1).max(256)).max(12) })
 const prSchema = z.strictObject({
   requestId,
   title: z.string().min(1).max(TITLE_LIMIT),
@@ -53,6 +55,12 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
     log: context.log,
     changed: sessionId => refresh(sessionId),
   })
+  const workbench = new WorkbenchDeliveryReader({
+    now: context.now,
+    state: folder => delivery.state(folder),
+    pr: (sessionId, folder) => delivery.prState({ sessionId, folder, discussion: false, title: false, boundOnly: true }),
+  })
+  let workbenchBusy = 0
   /** Runs that may be writing files, by session, with that session's folders. */
   const open = new Map<string, { runId: string; folders: ProjectFolder[] }>()
   lifecycle.on('runStarted', ({ sessionId, runId, folders }) => {
@@ -131,6 +139,34 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
   async function route(request: CallerRequest): Promise<boolean> {
     const { req, res, path, method } = request
     const caller: Caller = request.caller
+    if (path === '/link/api/workbench/delivery' && method === 'POST') {
+      requireScope(caller, 'view')
+      limits.files.take(caller.device.id)
+      const { ids } = workbenchSchema.parse(await jsonBody(req))
+      recheck(caller, 'view')
+      const unique = [...new Set(ids)]
+      for (const id of unique) permitted(caller, id, 'state')
+      if (workbenchBusy >= 2) throw new AppError(429, 'rate-limited', '正在读取交付状态，请稍后再试。', { retryAfter: 1 })
+      workbenchBusy++
+      try {
+        const targets: WorkbenchDeliveryTarget[] = []
+        for (const sessionId of unique) {
+          permitted(caller, sessionId, 'state')
+          try {
+            targets.push({ sessionId, folder: await folderOf(sessionId), boundPr: !!hub.prOf(sessionId) })
+          } catch (error) {
+            targets.push({ sessionId, boundPr: false, error: workbenchReadFailure(error) })
+          }
+        }
+        const result = await workbench.read(targets)
+        recheck(caller, 'view')
+        for (const id of unique) permitted(caller, id, 'state')
+        json(res, result)
+      } finally {
+        workbenchBusy--
+      }
+      return true
+    }
     const log = LOG_PATH.exec(path)
     if (log && method === 'GET') {
       const sessionId = safeDecode(log[1]!)

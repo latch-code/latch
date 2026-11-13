@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 export interface ExitInfo {
   code: number | null
@@ -56,6 +56,68 @@ const STDERR_TAIL = 600
 const WRITE_QUEUE_LIMIT = 64 * 1024 * 1024
 /** After the leader exits, a grandchild could hold the pipes open; stop waiting for them. */
 const CLOSE_FALLBACK_MS = 2_000
+
+/** `pid ppid pgid` lines of every process, or undefined when they cannot be read. Replaced in tests. */
+type Lister = () => Promise<string | undefined>
+const psListing: Lister = () =>
+  new Promise(resolve => {
+    if (process.platform === 'win32') return resolve(undefined)
+    // A fixed program with no inherited environment, as other system reads here run.
+    execFile('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], { env: {}, timeout: 2_000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) =>
+      resolve(error ? undefined : stdout),
+    )
+  })
+let lister: Lister = psListing
+
+/** Tests only: how the process list is read (`undefined` restores `ps`). */
+export function setProcessLister(next: Lister | undefined): void {
+  lister = next ?? psListing
+}
+
+/**
+ * The processes below `root`, each with its process group, from one listing. Undefined when the listing could not be
+ * read (no `ps`, Windows, a failure or timeout): a caller then cannot tell what is the agent's, and kills nothing by pid.
+ */
+export async function descendants(root: number): Promise<Map<number, number> | undefined> {
+  const listing = await lister()
+  if (listing === undefined) return undefined
+  const found = new Map<number, number>()
+  const children = new Map<number, Array<{ pid: number; pgid: number }>>()
+  for (const line of listing.split('\n')) {
+    const [pid, ppid, pgid] = line.trim().split(/\s+/u).map(Number)
+    if (!pid || !ppid || !pgid) continue
+    children.set(ppid, [...(children.get(ppid) ?? []), { pid, pgid }])
+  }
+  const queue = [root]
+  while (queue.length) {
+    for (const child of children.get(queue.shift()!) ?? []) {
+      if (found.has(child.pid) || child.pid === root) continue
+      found.set(child.pid, child.pgid)
+      queue.push(child.pid)
+    }
+  }
+  return found
+}
+
+/** SIGKILL for a process and, when it leads its own group, the whole group. */
+export function killProcess(pid: number, pgid: number | undefined): void {
+  try {
+    if (pgid === pid) process.kill(-pid, 'SIGKILL')
+    else process.kill(pid, 'SIGKILL')
+  } catch {
+    /* Already gone. */
+  }
+}
+
+/** Whether any process of the group is left: `kill(-pgid, 0)` fails with ESRCH only once none is. */
+export function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -156,6 +218,9 @@ export class AgentProcess {
       this.child.stdin.end()
       if (await this.waitFor(graceMs)) return this.exited
     }
+    // A forced end takes along what the agent started in groups of their own (Codex runs each command in one), which the
+    // group's signal misses and which would outlive it: found while the leader is alive, before they are reparented.
+    if (reason === 'kill' && !this.info && !this.leaderExited) await this.killStrays()
     if (!this.info && !this.leaderExited) {
       this.signalGroup('SIGTERM')
       if (await this.waitFor(graceMs)) return this.exited
@@ -172,6 +237,15 @@ export class AgentProcess {
     const tail = text.slice(-limit)
     const newline = tail.indexOf('\n')
     return `…${newline >= 0 && newline < tail.length - 1 ? tail.slice(newline + 1) : tail}`
+  }
+
+  private async killStrays(): Promise<void> {
+    const pid = this.child.pid
+    if (pid === undefined) return
+    const below = await descendants(pid)
+    // Once the owned leader exits, an in-flight listing can name reparented or re-used PIDs. Its ancestry is no authority.
+    if (this.info || this.leaderExited) return
+    for (const [stray, pgid] of below ?? []) if (pgid !== pid) killProcess(stray, pgid)
   }
 
   private async waitFor(ms: number): Promise<boolean> {

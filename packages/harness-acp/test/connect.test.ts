@@ -230,6 +230,16 @@ describe('a command older than its preset supports', () => {
     expect(detail.summary.status).toBe('idle')
   })
 
+  it('shows the version it read in a test start, when the handshake says none', async () => {
+    const where = await computer('dsh', '0.2.2-rc.1')
+    const record = dsh({ FAKE_ACP_VERSION: 'none' })
+    await recheckVersions([record], 5_000)
+    const options = { dataDir: where.dataDir, cwd: where.workspace }
+    const preview = await agentProbePreview(record, options)
+    const result = await probeAgent(record, { ...options, expectedLaunchHash: preview.launchHash })
+    expect(result.agent).toEqual({ name: 'Fake ACP', version: '0.2.2-rc.1' })
+  })
+
   it('blocks nothing when the version cannot be read', async () => {
     const where = await computer('dsh', 'fail')
     const record = dsh({})

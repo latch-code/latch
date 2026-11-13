@@ -2755,6 +2755,21 @@ describe('ACP cancellation', () => {
     expect(log[answer].result?.outcome).toEqual({ outcome: 'cancelled' })
   })
 
+  it('never says an allowed call that reported nothing more did not start: its result is unknown', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'quiet', requestId: rid() })
+    const asked = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    await bridge.decide(asked.approvals[0]!.id, 'allow')
+    await until(bridge, sessionId, detail => detail.liveText.includes('running'))
+    await bridge.cancel(sessionId)
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary.status).toBe('cancelled')
+    const row = tool(detail, 'tool:1:call_1')
+    expect(row).toMatchObject({ state: 'failed', text: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') })
+    expect(row?.text).not.toContain('TOOL_NOT_STARTED')
+    expect(detail.summary.runEnd?.unknownResults).toEqual([{ messageId: 'tool:1:call_1', name: 'sleep 40' }])
+  })
+
   it('treats a turn ended with end_turn after cancel as cancelled and lets late tool reports win', async () => {
     const bridge = await (await setup()).open()
     const { sessionId } = await bridge.createTask({ prompt: 'endturn', requestId: rid() })
@@ -2859,7 +2874,7 @@ describe('ACP cancellation before the prompt is sent', () => {
     expect((await bridge.detail(busy.sessionId)).summary.status).toBe('cancelled')
   })
 
-  it('withdraws a slow session/load without recording the prompt or touching other sessions', async () => {
+  it('shows a prompt to a session being loaded as starting at once, and records a stop then as a stopped turn', async () => {
     const fixture = await setup({ FAKE_ACP_CAPS: 'load', FAKE_ACP_SLOW_SETUP: '800' })
     const first = await fixture.open()
     const restored = await first.createTask({ prompt: 'echo one', requestId: rid() })
@@ -2872,12 +2887,20 @@ describe('ACP cancellation before the prompt is sent', () => {
     const requestId = rid()
     const prompted = bridge.prompt(restored.sessionId, 'echo two', requestId)
     prompted.catch(() => {})
+    const starting = await until(bridge, restored.sessionId, detail => detail.summary.status === 'running')
+    expect(starting.messages).toHaveLength(2)
+    expect(starting.summary).toMatchObject({ status: 'running', live: { activity: 'starting' } })
+    expect(starting.activity?.phase).toBe('starting')
+    expect((await bridge.listTasks()).find(task => task.id === restored.sessionId)?.status).toBe('running')
     await vi.waitFor(async () => expect(received(await fixture.log(), 'session/load')).toHaveLength(1), { timeout: 5_000, interval: 10 })
     await bridge.cancel(restored.sessionId)
-    await expect(prompted).rejects.toMatchObject({ status: 409, code: 'cancelled-before-send' })
-    const untouched = await bridge.detail(restored.sessionId)
-    expect(untouched.summary.status).toBe('idle')
-    expect(untouched.messages.map(message => message.text)).toEqual(['echo one', 'echo: echo one'])
+    await prompted
+    const stopped = await bridge.detail(restored.sessionId)
+    expect(stopped.summary).toMatchObject({ status: 'cancelled', runOutcome: 'cancelled' })
+    expect(stopped.messages.map(message => message.text)).toEqual(['echo one', 'echo: echo one', 'echo two'])
+    expect(received(await fixture.log(), 'session/prompt').filter(entry => JSON.stringify(entry.params).includes('echo two'))).toHaveLength(
+      0,
+    )
     await new Promise(resolve => setTimeout(resolve, 500))
     expect((await bridge.detail(busy.sessionId)).summary.status).toBe('running')
     const log = await fixture.log()
@@ -2888,9 +2911,11 @@ describe('ACP cancellation before the prompt is sent', () => {
         .map(entry => entry.params?.requestId),
     ).toContain(load.id)
 
-    // The prompt was never recorded, so the same request can be sent again.
+    // Recorded, so the same request is the same turn; a new one runs.
     await bridge.prompt(restored.sessionId, 'echo two', requestId)
-    expect(assistants(await settled(bridge, restored.sessionId)).at(-1)?.text).toBe('echo: echo two')
+    expect((await bridge.detail(restored.sessionId)).messages).toEqual(stopped.messages)
+    await bridge.prompt(restored.sessionId, 'echo three', rid())
+    expect(assistants(await settled(bridge, restored.sessionId)).at(-1)?.text).toBe('echo: echo three')
     await bridge.cancel(busy.sessionId)
   })
 })
@@ -3414,6 +3439,15 @@ describe('ACP sessions across processes', () => {
               { id: 'u', role: 'user', text: 'stale' },
               { id: 'tool:1:a', role: 'tool', toolName: 'execute', text: '', state: 'running', tool: { title: 'A' } },
               { id: 'tool:1:b', role: 'tool', toolName: 'execute', text: '', state: 'awaiting-approval' },
+              // Allowed, it may run though it never said so.
+              {
+                id: 'tool:1:c',
+                role: 'tool',
+                toolName: 'execute',
+                text: '',
+                state: 'queued',
+                tool: { title: 'C', decision: { outcome: 'allowed', at: updatedAt } },
+              },
             ],
             revision: 3,
             acp: { acpSessionId: 'sess-gone', cwd: fixture.workspace, turnSeq: 1 },
@@ -3434,7 +3468,14 @@ describe('ACP sessions across processes', () => {
     expect(tool(detail, 'tool:1:b')).toMatchObject({ state: 'cancelled', interrupted: true })
     expect(detail.summary.runOutcome).toBe('interrupted')
     expect(systemText(detail)).toContain('Latch 重启时中断')
-    expect(detail.summary.runEnd).toMatchObject({ reason: 'host-stopped', unknownResults: [{ messageId: 'tool:1:a', name: 'A' }] })
+    expect(tool(detail, 'tool:1:c')).toMatchObject({ state: 'failed', tool: { output: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') } })
+    expect(detail.summary.runEnd).toMatchObject({
+      reason: 'host-stopped',
+      unknownResults: [
+        { messageId: 'tool:1:a', name: 'A' },
+        { messageId: 'tool:1:c', name: 'C' },
+      ],
+    })
     const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8'))
     expect(stored.tasks.stale.summary.status).toBe('interrupted')
     expect(await fixture.log()).toEqual([])

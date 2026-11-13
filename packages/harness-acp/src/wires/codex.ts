@@ -11,7 +11,18 @@ import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexMo
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, type RpcId } from '../protocol.ts'
-import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
+import {
+  AgentProcess,
+  ConnectionClosed,
+  ConnectionStopping,
+  descendants,
+  groupAlive,
+  isRecord,
+  killProcess,
+  RequestTimeout,
+  type ExitInfo,
+  type SpawnSpec,
+} from './process.ts'
 import type { AgentWire, WireHandlers } from './types.ts'
 
 /** Appended to the definition's arguments: the protocol this wire speaks. */
@@ -122,6 +133,30 @@ const mcpStatusEntry = z.object({
   tools: z.unknown().optional(),
 })
 const mcpStatusPage = z.object({ data: z.array(z.unknown()).max(1000), nextCursor: text.max(1024).nullish().catch(undefined) })
+/** `thread/backgroundTerminals/list`: the commands Codex still runs, each with its item and, when it has one, its OS process. */
+const terminalPage = z.object({
+  data: z
+    .array(
+      z.object({
+        itemId: text.max(512),
+        processId: text.max(512),
+        osPid: z.number().int().positive().nullish().catch(undefined),
+      }),
+    )
+    .max(1000),
+})
+/**
+ * How long a stop waits on Codex to end a command it left running, and then on the command Latch ended itself
+ * (`commandMs`); and how long a turn Codex interrupted with no stop of Latch's waits on its commands (`unaskedMs`, the
+ * runtime's own cancel limit), after which its process is ended and those commands' results are unknown.
+ */
+const STOP_LIMITS = { commandMs: 2_000, unaskedMs: 30_000 }
+let stopLimits = { ...STOP_LIMITS }
+
+/** Tests only. */
+export function setCodexStopLimits(next: Partial<typeof STOP_LIMITS> | undefined): void {
+  stopLimits = { ...STOP_LIMITS, ...next }
+}
 const startupUpdate = z.object({
   name: text.min(1).max(256),
   status: text.max(64),
@@ -255,7 +290,10 @@ interface Pending {
   cleanup(): void
 }
 
-/** The prompt being run: answered once Codex reports the turn completed. */
+/**
+ * The prompt being run: answered once Codex reports the turn completed, and, when it was stopped, once every command it
+ * started has ended too (`ending` holds the answer meanwhile).
+ */
 interface Turn {
   id?: string
   resolve(result: unknown): void
@@ -263,6 +301,12 @@ interface Turn {
   cancelled: boolean
   error?: string
   usage?: { inputTokens: number; outputTokens: number }
+  /** Commands started in this turn that Codex has not reported ended, by item ID. */
+  commands: Set<string>
+  /** The subagents' threads that reported calls in this turn: their commands are listed with the session's. */
+  threads: Set<string>
+  /** The turn's answer, held while its commands run. */
+  ending?: () => void
 }
 
 export class CodexWire implements AgentWire {
@@ -286,6 +330,10 @@ export class CodexWire implements AgentWire {
   private readonly output = new Map<string, string>()
   /** Calls a person answered: what Codex then reports declined was their choice, not Codex's refusal. */
   private readonly answered = new Set<string>()
+  /** Commands a person allowed: they run from then on, whether or not they ever print anything. */
+  private readonly allowed = new Set<string>()
+  /** Commands whose ask was declined or went unanswered: they never run, so a stop does not wait for them. */
+  private readonly notRun = new Set<string>()
   /** MCP tools (`server\0tool`) a person answered about this turn: such a call reported declined was their choice. */
   private readonly toolAnswers = new Set<string>()
   /** Calls Codex's review model denied, with its reason. */
@@ -349,7 +397,7 @@ export class CodexWire implements AgentWire {
     }
   }
 
-  /** `session/cancel`: interrupts the running turn, which ends once Codex reports it completed. */
+  /** `session/cancel`: interrupts the running turn, which ends once Codex reports it completed and its commands ended. */
   notify(method: string): void {
     const turn = this.turn
     if (method !== 'session/cancel' || !turn || turn.cancelled) return
@@ -480,19 +528,20 @@ export class CodexWire implements AgentWire {
 
   /**
    * Codex's own MCP servers, as `mcpServerStatus/list` reports them: for the thread, reusing its connections and starting
-   * nothing; without one, Codex connects to the servers it has configured. Latch's own servers on the thread are left
-   * out: they are Latch's to show.
+   * nothing. Without a thread Codex 0.167 lists only the names it has configured, with no state (and none a plugin adds
+   * in a thread): `namesOnly`. Latch's own servers on the thread are left out: they are Latch's to show.
    */
   private async readMcp(
     threadId: string | undefined,
     timeoutMs?: number,
     signal?: AbortSignal,
-  ): Promise<{ servers: Map<string, HarnessMcpServer>; truncated?: true }> {
+  ): Promise<{ servers: Map<string, HarnessMcpServer>; truncated?: true; namesOnly?: true }> {
     const latch = new Set(this.servers.map(server => server.name))
     const servers = new Map<string, HarnessMcpServer>()
     // One deadline for every page: a slow Codex cannot stretch the read by answering each page just in time.
     const deadline = timeoutMs ? Date.now() + timeoutMs : undefined
     let truncated = false
+    let stated = false
     let cursor: string | null | undefined = null
     for (let pages = 0; ; pages++) {
       if (pages >= MCP_PAGES) {
@@ -518,6 +567,7 @@ export class CodexWire implements AgentWire {
           break
         }
         const state = RUNTIME_STATE[item.data.runtimeStatus ?? ''] ?? 'unknown'
+        if (item.data.runtimeStatus) stated = true
         servers.set(
           item.data.name,
           codexMcpServer(item.data.name, state, { tools: toolCount(item.data.tools), origin: mcpOrigin(item.data.httpOrigin) }),
@@ -526,16 +576,23 @@ export class CodexWire implements AgentWire {
       cursor = page.data.nextCursor
       if (!cursor || truncated) break
     }
-    return { servers, ...(truncated ? { truncated: true as const } : {}) }
+    if (threadId || stated) return { servers, ...(truncated ? { truncated: true as const } : {}) }
+    // Names only: with no connection, the tools it lists are no count of what the server offers.
+    for (const [name, server] of servers) servers.set(name, codexMcpServer(name, 'unknown', { origin: server.origin }))
+    return { servers, namesOnly: true, ...(truncated ? { truncated: true as const } : {}) }
   }
 
-  /** `_latch/mcp/status`: the session's servers when it names one, or, in a process with no thread, all Codex has. */
+  /** `_latch/mcp/status`: the session's servers when it names one, or, in a process with no thread, the names Codex has. */
   private async mcpStatus(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     const sessionId = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
     if (sessionId !== undefined) this.assertSession(sessionId)
     else if (this.threadId) throw new RpcError(RPC.invalidParams, 'This process runs a session')
     const read = await this.readMcp(sessionId, timeoutMs, signal)
-    return { servers: [...read.servers.values()], ...(read.truncated ? { truncated: true } : {}) }
+    return {
+      servers: [...read.servers.values()],
+      ...(read.truncated ? { truncated: true } : {}),
+      ...(read.namesOnly ? { namesOnly: true } : {}),
+    }
   }
 
   /** Once a thread is open: its servers as Codex lists them, then as each start is reported. Never fails the thread. */
@@ -666,7 +723,7 @@ export class CodexWire implements AgentWire {
     const input = this.input(parsed.data.prompt)
     let turn!: Turn
     const done = new Promise<unknown>((resolve, reject) => {
-      turn = { resolve, reject, cancelled: false }
+      turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set() }
     })
     this.turn = turn
     done.catch(() => {})
@@ -722,17 +779,112 @@ export class CodexWire implements AgentWire {
     return { outcome: 'injected' }
   }
 
+  /** The turn is over for Codex: its answer, kept back while a command a stop left running has not ended. */
   private settle(status: unknown, error: unknown): void {
     const turn = this.turn
-    if (!turn) return
+    if (!turn || turn.ending) return
+    const usage = turn.usage ? { usage: turn.usage } : {}
+    const answer =
+      status === 'interrupted' || (turn.cancelled && status !== 'failed')
+        ? () => turn.resolve({ stopReason: 'cancelled', ...usage })
+        : () => this.answer(turn, status, error)
+    // A stopped turn, however Codex ends it, and one Codex interrupted itself are over once their commands have ended.
+    if (!(turn.cancelled || status === 'interrupted') || !turn.commands.size) return this.finish(turn, answer)
+    turn.ending = answer
+    void this.endCommands(turn)
+  }
+
+  private finish(turn: Turn, answer: () => void): void {
+    if (this.turn !== turn) return
     this.turn = undefined
     this.streamed.clear()
     this.output.clear()
     this.answered.clear()
+    this.allowed.clear()
+    this.notRun.clear()
     this.toolAnswers.clear()
     this.denied.clear()
+    answer()
+  }
+
+  /** A command of the turn ended; a stopped turn that waited only on it is answered now. */
+  private commandEnded(id: string): void {
+    const turn = this.turn
+    if (!turn?.commands.delete(id)) return
+    const ending = turn.ending
+    if (ending && !turn.commands.size) this.finish(turn, ending)
+  }
+
+  /**
+   * Codex answers a stop once its turn is interrupted, but a command it started keeps running (an allowed one outside
+   * the sandbox among them). The stop is answered only once each has ended: Latch asks Codex to end the ones it lists
+   * for the session's thread and its subagents', then ends any it still runs itself, by the process Codex named, while
+   * that is still one of this process's and leads its own group, and answers once each group is gone. Anything less
+   * (the process list unreadable, a process that is not this one's, a group whose leader exited) is left to the
+   * runtime's cancel limit, which ends the whole process and what it started; a turn Codex interrupted with no stop of
+   * Latch's has no such limit, so it gets one of its own (`unaskedMs`).
+   */
+  private async endCommands(turn: Turn): Promise<void> {
+    const threadId = this.threadId
+    const pids = new Map<string, number>()
+    for (const thread of threadId ? [threadId, ...turn.threads] : [])
+      try {
+        const listed = terminalPage.safeParse(
+          await this.send('thread/backgroundTerminals/list', { threadId: thread, limit: 100 }, stopLimits.commandMs),
+        )
+        for (const entry of listed.success ? listed.data.data : []) {
+          if (!turn.commands.has(entry.itemId)) continue
+          if (entry.osPid) pids.set(entry.itemId, entry.osPid)
+          await this.send(
+            'thread/backgroundTerminals/terminate',
+            { threadId: thread, processId: entry.processId },
+            stopLimits.commandMs,
+          ).catch(() => {})
+        }
+      } catch {
+        /* An older Codex without the request: the command is found below or left to the limit. */
+      }
+    if (await this.ended(turn, stopLimits.commandMs)) return
+    const leader = this.process.pid
+    const below = leader === undefined ? undefined : await descendants(leader)
+    if (this.turn !== turn || this.process.stopping) return
+    if (below) {
+      let all = true
+      const ended: number[] = []
+      for (const id of turn.commands) {
+        const pid = pids.get(id)
+        const group = pid === undefined ? undefined : below.get(pid)
+        if (pid === undefined || group === undefined) {
+          all = false
+          continue
+        }
+        killProcess(pid, group)
+        // Only a command that leads its own group can be seen to be gone with everything it started.
+        if (group === pid) ended.push(pid)
+        else all = false
+      }
+      if (await this.ended(turn, stopLimits.commandMs)) return
+      // Each command Latch ended is gone with its group, though Codex never said how it went: its result is unknown.
+      const ending = turn.ending
+      if (all && ending && ended.every(pid => !groupAlive(pid))) return this.finish(turn, ending)
+    }
+    if (turn.cancelled || (await this.ended(turn, stopLimits.unaskedMs)) || turn.cancelled) return
+    // An interrupted notification alone cannot end a command. Without a runtime cancel timer, stop the process here
+    // so the runtime records an interrupted turn and unknown tool results instead of claiming a completed stop.
+    if (this.turn === turn) await this.process.stop('kill', stopLimits.commandMs)
+  }
+
+  /** Whether the stopped turn was answered within `ms`. */
+  private async ended(turn: Turn, ms: number): Promise<boolean> {
+    for (const until = Date.now() + ms; Date.now() < until;) {
+      if (this.turn !== turn) return true
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    return this.turn !== turn
+  }
+
+  private answer(turn: Turn, status: unknown, error: unknown): void {
     const usage = turn.usage ? { usage: turn.usage } : {}
-    if (status === 'interrupted' || (turn.cancelled && status !== 'failed')) return turn.resolve({ stopReason: 'cancelled', ...usage })
     if (status === 'failed') {
       // Codex's own word for a login the service no longer takes: the session asks for a login, as ACP's refusal does.
       if (isRecord(error) && error.codexErrorInfo === 'unauthorized')
@@ -764,8 +916,9 @@ export class CodexWire implements AgentWire {
 
   /**
    * One of Codex's items as ACP tool calls: started, or completed (with what it produced). Messages are text; a
-   * subagent's (`child`) are left out, its calls shown as its. A command is pending until it is seen running: one Codex
-   * refuses first (its review model, its rules) never ran, and its refusal says so (`latch/codexDenied`).
+   * subagent's (`child`) are left out, its calls shown as its. A command is pending until it is seen running or a person
+   * allows it: one Codex refuses first (its review model, its rules) never ran, and its refusal says so
+   * (`latch/codexDenied`). Every command started in a turn is waited for when the turn is stopped (`endCommands`).
    */
   private item(sessionId: string, item: Record<string, unknown>, phase: 'started' | 'completed', child?: string): void {
     const id = typeof item.id === 'string' ? clip(item.id, 512) : undefined
@@ -792,13 +945,15 @@ export class CodexWire implements AgentWire {
       }
       case 'commandExecution': {
         const command = typeof item.command === 'string' ? item.command : 'command'
+        if (!done && item.status === 'inProgress' && !this.notRun.has(id)) this.turn?.commands.add(id)
+        if (child) this.turn?.threads.add(child)
         if (!done || !this.output.has(id))
           emit({
             sessionUpdate: 'tool_call',
             toolCallId: id,
             title: clip(command, 500),
             kind: 'execute',
-            status: 'pending',
+            status: this.allowed.has(id) ? 'in_progress' : 'pending',
             rawInput: { command, ...(typeof item.cwd === 'string' ? { cwd: item.cwd } : {}) },
           })
         if (!done) {
@@ -816,6 +971,7 @@ export class CodexWire implements AgentWire {
           content: output ? [{ type: 'content', content: { type: 'text', text: clip(output, TOOL_TEXT_LIMIT) } }] : [],
           ...this.refusal(id, item.status),
         })
+        this.commandEnded(id)
         return
       }
       case 'fileChange': {
@@ -1114,6 +1270,18 @@ export class CodexWire implements AgentWire {
     const outcome = isRecord(answer) && isRecord(answer.outcome) ? answer.outcome : {}
     const chosen = outcome.outcome === 'selected' ? outcome.optionId : undefined
     if (chosen === 'accept' || chosen === 'decline') this.answered.add(itemId)
+    if (chosen === 'accept' && command && params.kind !== 'writeStdin') {
+      this.allowed.add(itemId)
+      this.notRun.delete(itemId)
+      // An accepted quiet command can run without item/started or any output. It belongs to the turn's stop either way.
+      this.turn?.commands.add(itemId)
+      if (child) this.turn?.threads.add(child)
+      this.update(this.marked({ sessionUpdate: 'tool_call_update', toolCallId: itemId, status: 'in_progress' }, child))
+    } else if (command && params.kind !== 'writeStdin') {
+      // Declined or unanswered, it never runs, whether or not Codex reports it ended.
+      this.notRun.add(itemId)
+      this.commandEnded(itemId)
+    }
     return { decision: chosen === 'accept' ? 'accept' : chosen === 'decline' ? 'decline' : 'cancel' }
   }
 

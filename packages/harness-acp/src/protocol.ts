@@ -260,8 +260,9 @@ export const STEER_METHOD = '_session/steering'
 export const FORK_METHOD = '_latch/session/fork'
 /**
  * Latch's own request to a wire whose harness reports its own MCP servers (Codex's app-server): params `{ sessionId? }`,
- * answered `{ servers, truncated? }` as `HarnessMcpServer`s. With the session's ID it reads that session's servers as they
- * are, starting nothing; without one, in a process with no session, the harness starts the servers it has configured.
+ * answered `{ servers, truncated?, namesOnly? }` as `HarnessMcpServer`s. With the session's ID it reads that session's
+ * servers as they are, starting nothing; without one, in a process with no session, what the harness has configured,
+ * which Codex gives as names only (`namesOnly`, every state `unknown`).
  */
 export const MCP_STATUS_METHOD = '_latch/mcp/status'
 /** The session update such a wire sends as the session's servers start: `{ sessionUpdate, servers }`, all of them. */
@@ -280,6 +281,7 @@ export const ownMcpStatus = z.object({
     )
     .max(200),
   truncated: z.literal(true).optional(),
+  namesOnly: z.literal(true).optional(),
 })
 
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })

@@ -87,6 +87,10 @@ sources:
 
 ## 状态
 
+工作台通过只读 `POST /link/api/workbench/delivery` 请求至多 12 个当前可见会话的交付摘要。它复用交付服务与权限检查：需要 `view` 和数据范围 `all`，读取前后都复查设备与私有会话权限；收紧权限时整批不返回。摘要只给文件数量、分支、领先/落后、进行中的写入和已绑定 PR 的检查，不给文件名、钩子配置、评论或 PR 默认正文。部分暂存的文件只计一次，超过读取上限仍带 `more`。
+
+同批次相同目录只读一次，并发相同读取共用在途结果；每批最多三个读取，全 Host 最多两批，结束后不缓存或继续轮询。没有绑定 PR 的会话不启动 `gh`，也不查询远端。仓库与 PR 分别带实际读取时间，单项失败保留固定错误码，不把读取失败当成没有改动或检查通过。客户端只在总览可见时跟读；写入仍使用既有交付接口和回执。
+
 `GET git` 回答 `GitDeliveryState`（`packages/protocol/src/git-delivery.ts`）：`branch`、`head`、`upstream`、`ahead`、`behind`、`staged`、`unstaged`、`untracked`、`conflicted`（合计最多 2,000 条，其余数目在 `more`）、`gitOperation`、`running`、`hooks`（`core.hooksPath` 或共同 Git 目录 `hooks/` 下可执行的、Git 认识的钩子名，只列出，不运行；配置里的 `hook.*` 钩子不列出）、`filters`、`remote`。分支与上游名按分支读取的规则显示：像密钥的不给，隐藏字符可见。快照里的「有未提交 / 领先 N」摘要尚未实现：它会让每次快照都运行 Git。
 
 ## PR 与检查

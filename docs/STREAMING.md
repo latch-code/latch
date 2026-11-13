@@ -165,7 +165,7 @@ snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大
 - 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
 - 审批显示在输入框上方的抽屉里，不进入对话；携带 `toolCallId` 时用 `tool:<toolCallId>` 工具行的文字与差异。审批按钮来自 `Approval.options`，缺省为允许与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
 - 客户端把消息按回合分组（一条用户消息与回答它的一切，[conversation.ts](../apps/web/src/conversation.ts)），只是排列方式：每一行仍按 message.id 渲染、带 `data-message-id`。正常完成的回合把答案前的过程折叠成一行时，被折叠的行仍挂载在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
-- `activity` 表达当前 `starting / model / tool / approval / cancelling`，用于区分正在启动 Agent（进程与会话在准备，还没有发出提示）、等待模型、执行工具、等待用户和取消中；`since` 是这个阶段开始的时间，只在阶段变化时更新。它不代表百分比进度。`plan` 为 Harness 报告的最新计划（整体替换）；`config` 为 Harness 允许修改的会话选项。
+- `activity` 表达当前 `starting / model / tool / approval / cancelling`，用于区分正在启动 Agent（进程与会话在准备，还没有发出提示；已有会话的下一条在恢复会话期间还没有记录，摘要也投影为 `running` 与 `starting`，带这一轮新的 `runId`（不带上一轮的 `runOutcome`、`runEnd`），所以按它停止能停到这一轮；这时停止会把这条记为已发送、在送到 Agent 之前停止的一轮）、等待模型、执行工具、等待用户和取消中；`since` 是这个阶段开始的时间，只在阶段变化时更新。它不代表百分比进度。`plan` 为 Harness 报告的最新计划（整体替换）；`config` 为 Harness 允许修改的会话选项。
 - 审批认领在异步等待前完成，重复或迟到的决定失败；同一审批的决定在 Host 上串行处理。取消会请求 Provider/工具中止，等待实际结束与状态提交；如果仅网络请求失败，UI 不能宣称已取消。
 - 每次运行（创建或一次输入触发）有自己的 `TaskSummary.runId`，由 Driver 在运行开始时写入会话并持久化；取消用它指明要停止哪一次运行（见下文）。不记录运行的外部 Driver 不提供它。
 - 模型流截断或取消会尽量保留已经收到的正文，并标记失败或已停止。崩溃前尚未结算的内存文字仍可能丢失。中断的工具结果可能未知，不会自动重放或自动回滚。

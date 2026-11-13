@@ -1,4 +1,5 @@
 // Codex over its own app-server (`wires/codex.ts`), driven against the fake app-server: no network, no model.
+import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,9 +18,9 @@ import {
   type AcpAgentOptions,
   type AgentRecord,
 } from '../src/index.ts'
-import { CodexWire, codexMcpServer, codexVersion } from '../src/wires/codex.ts'
+import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
-import { RequestTimeout } from '../src/wires/process.ts'
+import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 2_000, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000, log: () => {} }
 const cleanups: Array<() => Promise<void> | void> = []
@@ -368,6 +369,173 @@ describe('Codex over its app-server', () => {
     expect(late?.answer).toEqual({ decision: 'cancel' })
   })
 
+  describe('a stop while an allowed command runs', () => {
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const killGroup = (pid: number) => {
+      try {
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        /* ended */
+      }
+    }
+    /** Starts `prompt` (a `hold`), allows its command, and returns the pid Codex runs it as after an interrupt. */
+    async function holding(prompt: string, env: Record<string, string>, options: AcpAgentOptions = {}) {
+      const t = await computer(env, [], options)
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, prompt)
+      const asked = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+      await bridge.decide(asked.approvals[0]!.id, 'allow')
+      let pid = 0
+      await vi.waitFor(
+        async () => {
+          pid = ((await t.log()).find(entry => entry.event === 'command-started') as (LogEntry & { osPid: number }) | undefined)?.osPid ?? 0
+          expect(pid).toBeGreaterThan(0)
+        },
+        { timeout: 5_000 },
+      )
+      cleanups.push(() => killGroup(pid))
+      // Allowed, it runs, though it prints nothing.
+      await until(bridge, id, detail => detail.messages.some(message => message.role === 'tool' && message.state === 'running'))
+      return { t, bridge, id, pid }
+    }
+    const row = (detail: DriverTaskDetail) => detail.messages.find(message => message.role === 'tool')
+    const quick = (limits: Parameters<typeof setCodexStopLimits>[0]) => {
+      setCodexStopLimits(limits)
+      cleanups.push(() => setCodexStopLimits(undefined))
+    }
+    /** Stops it and says how long the stop took. */
+    async function stop(bridge: Bridge, id: string): Promise<{ detail: DriverTaskDetail; ms: number }> {
+      const began = Date.now()
+      await bridge.cancel(id)
+      return { detail: await settled(bridge, id), ms: Date.now() - began }
+    }
+
+    it('answers only once Codex has ended the command, and never says it did not start', async () => {
+      const { t, bridge, id, pid } = await holding('hold on', {}, { cancelGraceMs: 10_000 })
+      const { detail } = await stop(bridge, id)
+      expect(detail.summary.status).toBe('cancelled')
+      expect(alive(pid)).toBe(false)
+      const log = await t.log()
+      expect(log.findIndex(entry => entry.event === 'command-ended')).toBeGreaterThan(log.findIndex(entry => entry.event === 'interrupted'))
+      expect(sent(log, 'thread/backgroundTerminals/terminate')).toHaveLength(1)
+      expect(row(detail)?.state).toBe('failed')
+      expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
+      expect(said(detail, 'system')).not.toContain('强制结束')
+    })
+
+    it('ends the command’s own process group itself when Codex does not, before answering', async () => {
+      quick({ commandMs: 300 })
+      const { t, bridge, id, pid } = await holding('hold on', { FAKE_CODEX_TERMINALS: 'ignore' }, { cancelGraceMs: 10_000 })
+      const { detail, ms } = await stop(bridge, id)
+      expect(alive(pid)).toBe(false)
+      expect(ms).toBeLessThan(5_000)
+      expect(detail.summary.status).toBe('cancelled')
+      expect((await t.log()).some(entry => entry.event === 'terminate')).toBe(true)
+      expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
+      expect(said(detail, 'system')).not.toContain('强制结束')
+    })
+
+    it.each(['hold quiet', 'hold sub quiet'])('waits for an accepted command with no started notification: %s', async prompt => {
+      const { t, bridge, id, pid } = await holding(prompt, {}, { cancelGraceMs: 10_000 })
+      const { detail } = await stop(bridge, id)
+      expect(alive(pid)).toBe(false)
+      expect(detail.summary.status).toBe('cancelled')
+      expect(sent(await t.log(), 'thread/backgroundTerminals/terminate')).toHaveLength(1)
+      expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
+    })
+
+    it('ends a subagent’s command through the subagent’s thread', async () => {
+      const { t, bridge, id, pid } = await holding('hold sub', {}, { cancelGraceMs: 10_000 })
+      const { detail, ms } = await stop(bridge, id)
+      expect(alive(pid)).toBe(false)
+      expect(ms).toBeLessThan(5_000)
+      expect(detail.summary.status).toBe('cancelled')
+      const listed = sent(await t.log(), 'thread/backgroundTerminals/list').map(entry => entry.params?.threadId)
+      expect(listed).toHaveLength(2)
+      expect(listed[1]).toMatch(/^thread-sub-/u)
+    })
+
+    it('waits for the command too when Codex ends the stopped turn failed', async () => {
+      const { bridge, id, pid } = await holding('hold on', { FAKE_CODEX_INTERRUPT_STATUS: 'failed' }, { cancelGraceMs: 10_000 })
+      await bridge.cancel(id)
+      expect(alive(pid)).toBe(false)
+      expect((await settled(bridge, id)).summary.status).toBe('cancelled')
+    })
+
+    it('does not wait for a command whose ask the stop left unanswered', async () => {
+      const t = await computer({}, [], { cancelGraceMs: 10_000 })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'hold early')
+      await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+      const { detail, ms } = await stop(bridge, id)
+      expect(ms).toBeLessThan(3_000)
+      expect(detail.summary.status).toBe('cancelled')
+      expect((await t.log()).some(entry => entry.event === 'command-started')).toBe(false)
+    })
+
+    it('ends Codex when its own interrupted turn leaves a command running past the bound', async () => {
+      quick({ commandMs: 200, unaskedMs: 800 })
+      const { bridge, id, pid } = await holding('hold self', { FAKE_CODEX_TERMINALS: 'none' })
+      const detail = await settled(bridge, id)
+      expect(detail.summary.status).toBe('interrupted')
+      expect(detail.summary.runEnd).toMatchObject({
+        reason: 'forced-stop',
+        unknownResults: [expect.objectContaining({ messageId: row(detail)?.id })],
+      })
+      expect(row(detail)).toMatchObject({ state: 'failed', text: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') })
+      expect(alive(pid)).toBe(false)
+    })
+
+    describe('never confirmed while it may still run: left to the cancel limit', () => {
+      async function unconfirmed(prompt: string, env: Record<string, string>) {
+        quick({ commandMs: 200 })
+        const found = await holding(prompt, { FAKE_CODEX_TERMINALS: 'ignore', ...env }, { cancelGraceMs: 2_000 })
+        const { detail, ms } = await stop(found.bridge, found.id)
+        expect(ms).toBeGreaterThanOrEqual(1_900)
+        expect(detail.summary.status).toBe('interrupted')
+        expect(said(detail, 'system')).toContain('已强制结束 Codex 进程')
+        expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
+        return found
+      }
+
+      it('when the process Codex names is not one of its own, which is left alone', async () => {
+        const foreign = spawn('sleep', ['600'], { stdio: 'ignore' })
+        cleanups.push(() => void foreign.kill('SIGKILL'))
+        const { pid } = await unconfirmed('hold on', { FAKE_CODEX_OS_PID: String(foreign.pid) })
+        expect(alive(foreign.pid!)).toBe(true)
+        // The limit ends Codex with the command it started in a group of its own.
+        expect(alive(pid)).toBe(false)
+      })
+
+      it('when the process list cannot be read', async () => {
+        setProcessLister(async () => undefined)
+        cleanups.push(() => setProcessLister(undefined))
+        await unconfirmed('hold on', {})
+      })
+
+      it('when the command’s group outlives its leader', async () => {
+        const { pid } = await unconfirmed('hold orphan', {})
+        expect(alive(pid)).toBe(false)
+      })
+    })
+
+    it('with no way to find the command, ends Codex and what it started once the grace runs out, and says so', async () => {
+      const { bridge, id, pid } = await holding('hold on', { FAKE_CODEX_TERMINALS: 'none' }, { cancelGraceMs: 800 })
+      const { detail } = await stop(bridge, id)
+      expect(alive(pid)).toBe(false)
+      expect(detail.summary.status).toBe('interrupted')
+      expect(said(detail, 'system')).toContain('已强制结束 Codex 进程')
+      expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
+    })
+  })
+
   it('adds text to the running turn with turn/steer', async () => {
     const t = await computer()
     const bridge = await t.open()
@@ -583,6 +751,7 @@ describe('Codex over its app-server', () => {
         authStatus: 'bearerToken',
       },
       { name: 'linear', runtimeStatus: 'authenticationRequired', tools: {}, authStatus: 'notLoggedIn' },
+      { name: 'plugin-docs', runtimeStatus: 'connected', tools: {}, authStatus: 'unsupported', threadOnly: true },
     ])
 
     it('reads the thread’s servers without starting any, leaves Latch’s own out, and follows each start Codex reports', async () => {
@@ -606,34 +775,45 @@ describe('Codex over its app-server', () => {
       await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'linear')?.state).toBe('needs-login'))
       const last = bridge.ownMcp!()!.last!
       expect(last.via).toBe('session')
-      expect(last.servers.map(server => server.name).sort()).toEqual(['github', 'linear'])
+      expect(last.servers.map(server => server.name).sort()).toEqual(['github', 'linear', 'plugin-docs'])
       expect(last.servers.find(server => server.name === 'github')).toMatchObject({ tools: 2, origin: 'https://api.github.com' })
       expect(last.servers.find(server => server.name === 'github')?.login).toBeUndefined()
       expect(last.servers.find(server => server.name === 'linear')?.login).toBe('codex mcp login linear')
       const log = await t.log()
       expect(sent(log, 'mcpServerStatus/list')[0]!.params).toMatchObject({ detail: 'toolsAndAuthOnly', threadId: expect.any(String) })
-      expect(log.some(entry => entry.event === 'mcp-started')).toBe(false)
     })
 
-    it('读取 asks a process with no thread, in an empty folder of its own, which starts what Codex has configured', async () => {
+    it('读取 asks a process with no thread, in an empty folder of its own, and keeps the names Codex gives without a state', async () => {
       const t = await computer({ FAKE_CODEX_MCP: OWN })
       const bridge = await t.open()
       await bridge.readOwnMcp!()
       const read = bridge.ownMcp!()!
       expect(read.running).toBeUndefined()
-      expect(read.last).toMatchObject({ via: 'read' })
-      expect(read.last!.servers.map(server => [server.name, server.state])).toEqual([
-        ['github', 'ready'],
-        ['linear', 'needs-login'],
+      expect(read.last).toMatchObject({ via: 'read', namesOnly: true })
+      expect(read.last!.servers).toEqual([
+        { name: 'github', state: 'unknown', origin: 'https://api.github.com' },
+        { name: 'linear', state: 'unknown' },
       ])
       const log = await t.log()
       const listed = sent(log, 'mcpServerStatus/list')
       expect(listed).toHaveLength(1)
       expect(listed[0]!.params).not.toHaveProperty('threadId')
-      expect(log.some(entry => entry.event === 'mcp-started')).toBe(true)
       const started = log.filter(entry => entry.event === 'start').at(-1) as LogEntry & { cwd: string }
       expect(started.cwd).not.toBe(t.main)
       expect(sent(log, 'thread/start')).toHaveLength(0)
+    })
+
+    it('never replaces a session’s report with names alone', async () => {
+      const t = await computer({ FAKE_CODEX_MCP: OWN })
+      const bridge = await t.open()
+      await settled(bridge, await start(bridge, t.main, 'echo hi'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'github')?.state).toBe('ready'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'linear')?.state).toBe('needs-login'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'plugin-docs')?.state).toBe('ready'))
+      const session = bridge.ownMcp!()!.last!
+      await bridge.readOwnMcp!()
+      expect(bridge.ownMcp!()!.last).toEqual(session)
+      expect(sent(await t.log(), 'mcpServerStatus/list').at(-1)!.params).not.toHaveProperty('threadId')
     })
 
     it('shows a name with hidden characters written out, and gives a login command only for a plain one Codex says needs it', () => {
