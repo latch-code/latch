@@ -9,6 +9,7 @@ import { chromium, type CDPSession, type Page } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { openSession } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 
 // Explicit performance run only: this uses long conversations and DevTools instrumentation, never a real model.
@@ -272,7 +273,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
         await cdp.send('Performance.enable')
         const meter = await wireMeter(cdp)
         await enrollBrowser(page, host, { name: '流式性能', scopes: ['view', 'run'] })
-        await page.locator(`[data-task-id="${sessionId}"]`).filter({ visible: true }).first().click()
+        await openSession(page, sessionId)
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         await input.waitFor()
         await page.evaluate(() => document.fonts.ready)
