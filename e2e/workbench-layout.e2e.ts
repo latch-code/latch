@@ -35,7 +35,7 @@ async function openHome(page: Page): Promise<void> {
       await closeSettings(page.locator('.settings-page'))
     }
     await backToPhoneSessions(page)
-    await page.locator('.phone-list .phone-overview-link').getByRole('button', { name: '总览', exact: true }).click()
+    await page.locator('.phone-list .phone-overview-link').getByRole('button', { name: '返回总览', exact: true }).click()
   } else {
     await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
   }
@@ -221,7 +221,11 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
         }
         await navigation.getByRole('button', { name: label, exact: true }).click()
         await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe(entry)
-        await expect.poll(() => page.locator('.workbench-home').count()).toBe(0)
+        await expect.poll(() => page.locator('.workbench-home').isVisible()).toBe(entry === 'sessions')
+        if (entry === 'sessions') {
+          await reachable(page.getByRole('button', { name: '全部会话', exact: true }))
+          expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
+        }
         await page.setViewportSize({ width: 1440, height: 1000 })
         await settleShell(page)
       }

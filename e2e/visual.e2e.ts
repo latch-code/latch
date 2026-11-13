@@ -17,6 +17,7 @@ import {
   openSection,
   openSettings,
   backToPhoneSessions,
+  openSession as openListedSession,
   reachable,
   closeSettings,
 } from './helpers/layout.ts'
@@ -644,23 +645,20 @@ describe('visual capture of the real product', () => {
       for (const key of Object.keys(localStorage)) if (key.startsWith('latch.composer.')) localStorage.removeItem(key)
     })
     await home(target, 'reduce')
-    if ((await target.locator('.phone-tabs').count()) > 0)
-      await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-    await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
-    if ((await target.locator('.phone-list').count()) > 0) {
+    if ((await target.locator('.phone-tabs').count()) > 0) {
+      await target.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
       await target.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
       await settleMotion(target)
       return
     }
+    await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await target.locator('.workspace.is-new').waitFor()
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
   }
   /** A session from the list: the sidebar, the tablet's drawer, or a phone's list (the session's page pushed over it). */
   async function openSession(target: Page, viewport: VisualViewport, id: string): Promise<void> {
     await home(target)
-    if (viewport.name === 'phone') await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-    if (viewport.name === 'tablet') await openDrawer(target)
-    await target.locator(`[data-task-id="${id}"]`).click()
+    await openListedSession(target, id)
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     if (viewport.name === 'phone') await target.locator('.phone-list[data-covered]').waitFor()
     await target.locator(`[data-task-id="${id}"][aria-current="page"]`).waitFor({ state: 'attached' })
@@ -671,12 +669,12 @@ describe('visual capture of the real product', () => {
   }
 
   /**
-   * A phone's root page: the list with 等你处理 and a section per group, its search, the menu of a row pressed and
+   * A phone's explicit history page: 等你处理 and a section per group, its search, the menu of a row pressed and
    * held, a pinned session and the archived filter. Every change made here is undone before it returns.
    */
   async function capturePhoneSessions(target: Page, viewport: VisualViewport): Promise<void> {
     await home(target)
-    await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+    await backToPhoneSessions(target)
     const list = target.locator('#session-navigation')
     const head = list.locator('.phone-list-head')
     await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
@@ -693,7 +691,7 @@ describe('visual capture of the real product', () => {
     await row(sessions.r1).locator('.ui-status-word', { hasText: '等你处理' }).waitFor()
     await noHorizontalOverflow(target)
     await settleMotion(target)
-    await recorder.capture(target, viewport, 'navigation', 'the session list, the root page')
+    await recorder.capture(target, viewport, 'navigation', 'the complete session history reached from Home')
 
     // Search filters the titles; 取消 clears it.
     const search = list.getByRole('searchbox', { name: '搜索会话', exact: true })
@@ -1111,8 +1109,13 @@ describe('visual capture of the real product', () => {
       await newSession(target)
       await target.getByRole('button', { name: /^Harness：/ }).click()
       await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
-      const setup = target.locator('.setup-card')
+      // The phone sheet covers Home's same setup state; only the modal's controls may be reached.
+      const setup =
+        viewport.name === 'phone'
+          ? target.getByRole('dialog', { name: '新会话', exact: true }).locator('.setup-card')
+          : target.locator('.setup-card')
       await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
+      expect(await target.getByRole('button', { name: '添加模型服务', exact: true }).count()).toBe(1)
       await reachable(setup.getByRole('button', { name: '添加模型服务', exact: true }))
       await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
         allowDisabled: true,
@@ -1626,7 +1629,7 @@ describe('visual capture of the real product', () => {
         await drawer.getByRole('button', { name: '关闭会话列表', exact: true }).click()
         await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
       }
-      // Navigation on a phone: the session list is the root page.
+      // Navigation on a phone: the explicit history retains its search, row menus and archive.
       if (viewport.name === 'phone') await capturePhoneSessions(target, viewport)
 
       // On a phone the title's menu holds the session's actions, as a sheet; 同步最新状态 is the connection's 重试.
