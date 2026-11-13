@@ -275,7 +275,8 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
 
   it('delivers a long paste whole, and frees what it has written while more waits', async () => {
     const total = 12 * 1024 * 1024
-    const helper = new Helper(shell(`stty raw -echo; echo ready; head -c ${total} | wc -c`))
+    // Keep the process alive for the last RSS sample; consuming the paste can beat `ps`.
+    const helper = new Helper(shell(`stty raw -echo; echo ready; head -c ${total} | wc -c; read finish`))
     await helper.until(() => helper.output().includes('ready'))
     const chunk = Buffer.alloc(65_536, 0x61)
     let peak = 0
@@ -288,8 +289,11 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
         peak = Math.max(peak, Number((await run('/bin/ps', ['-o', 'rss=', '-p', String(helper.child.pid)])).stdout))
       }
     }
+    expect(peak).toBeGreaterThan(0)
     expect(peak).toBeLessThan(16 * 1024)
     await helper.until(() => helper.output().includes(String(total)), 30_000)
+    helper.send(TO_HELPER.input, Buffer.from('\n'))
+    expect(await helper.closed).toBe(0)
   }, 60_000)
 
   it('refuses a malformed start and reports why a start failed, before anything runs', async () => {
