@@ -65,6 +65,23 @@ describe('a Harness’s own MCP', () => {
     expect(render(createElement(HarnessMcpGroup, { harness: harness({ ownMcp: {} }), title: 'MCP', run: false }))).not.toContain('读取</')
   })
 
+  it('shows a read with no session as names only, the missing state behind ⓘ', () => {
+    const html = render(
+      createElement(HarnessMcpGroup, {
+        harness: harness({
+          ownMcp: {
+            last: { via: 'read', namesOnly: true, at: '2026-11-13T00:00:00.000Z', servers: [{ name: 'github', state: 'unknown' }] },
+          },
+        }),
+        title: 'MCP',
+        run: true,
+      }),
+    )
+    expect(html).toContain('github')
+    expect(html).not.toContain('状态未知')
+    expect(html).toContain('只有名字')
+  })
+
   it('in 设置 › MCP, gives Codex its own group and lists the rest as not reporting', () => {
     const html = render(
       createElement(HarnessesMcp, {

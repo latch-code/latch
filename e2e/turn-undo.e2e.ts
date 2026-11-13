@@ -44,9 +44,13 @@ async function openWithFiles(context: BrowserContext): Promise<Page> {
 async function withPage(run: (page: Page) => Promise<void>) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'zh-CN' })
   context.setDefaultTimeout(15_000)
+  let page: Page | undefined
   try {
-    await run(await openWithFiles(context))
+    page = await openWithFiles(context)
+    await run(page)
   } finally {
+    // The visible card can settle before its follow-up read; finish those intercepted reads before closing fetch.
+    await page?.unrouteAll({ behavior: 'wait' })
     await context.close()
   }
 }

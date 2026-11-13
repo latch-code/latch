@@ -1302,6 +1302,16 @@ const scenarios = {
     say('allowed')
     return END
   },
+  // Asks, and once allowed runs without a word (no in_progress, no output) until the turn is stopped, as a quiet command.
+  quiet: async ({ sessionId, say, tool, permission }) => {
+    const call = { toolCallId: 'call_1', title: 'Run sleep', kind: 'execute', status: 'pending', rawInput: { command: 'sleep 40' } }
+    tool(call)
+    const { result } = await permission(call)
+    if (result.outcome.outcome === 'cancelled') return { stopReason: 'cancelled' }
+    say('running')
+    await waitCancel(sessionId)
+    return { stopReason: 'cancelled' }
+  },
   // One edit that asks once per file: it writes a.txt after the first answer allows it, then asks again for b.txt and
   // reports what it wrote whatever the second answer is.
   twice: async ({ say, tool, permission }) => {

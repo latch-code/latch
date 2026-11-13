@@ -105,9 +105,11 @@ import {
   thinkingName,
   planEntries,
   pretty,
+  mayHaveRun,
   settleAskedTool,
   settleTool,
   settleToolMessage,
+  toolRowMayHaveRun,
   TOOL_TEXT_LIMIT,
   toolDetail,
   commandName,
@@ -817,7 +819,20 @@ export class AgentRuntime implements Bridge {
   /** The stored summary with what only the live turn knows, which is never stored. */
   private projected(task: AcpTask): DriverTaskSummary {
     const run = this.runs.get(task.summary.id)
+    if (run && this.preparing(task, run)) {
+      // The new run's ID, so a stop that names it reaches it; the last run's outcome is no longer this one's.
+      const { runOutcome: _outcome, runEnd: _end, ...summary } = task.summary
+      return { ...summary, status: 'running', runId: run.id, live: this.liveOf(run) }
+    }
     return run && isActive(task.summary) ? { ...task.summary, live: this.liveOf(run) } : task.summary
+  }
+
+  /**
+   * A prompt to a session whose process is still being started, resumed and checked: not recorded until then, but shown
+   * as starting at once, so its stop button is there; never stored.
+   */
+  private preparing(task: AcpTask, run: Run): boolean {
+    return !isActive(task.summary) && run.userMessageId === undefined && !run.sent
   }
 
   liveRuns(): Array<{ sessionId: string; live: RunLive }> {
@@ -846,9 +861,7 @@ export class AgentRuntime implements Bridge {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         const at = this.now()
         const unknown = task.messages.flatMap(item =>
-          item.role === 'tool' && item.state === 'running' && !item.subagent
-            ? [{ messageId: item.id, name: item.tool?.title ?? item.toolName ?? 'tool' }]
-            : [],
+          toolRowMayHaveRun(item) ? [{ messageId: item.id, name: item.tool?.title ?? item.toolName ?? 'tool' }] : [],
         )
         for (const item of task.messages) {
           if (item.subagent) settleSubagent(item, at, true)
@@ -912,7 +925,7 @@ export class AgentRuntime implements Bridge {
     await this.ready()
     const task = this.task(sessionId)
     const run = this.runs.get(sessionId)
-    const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'
+    const active = isActive(task.summary) || (run !== undefined && this.preparing(task, run))
     const segment = active ? run?.segment : undefined
     const detail: DriverTaskDetail = structuredClone({
       summary: this.projected(task),
@@ -1116,6 +1129,13 @@ export class AgentRuntime implements Bridge {
     const parsed = ownMcpStatus.safeParse(reported)
     const definitionHash = this.definitionNow()
     if (!parsed.success || !definitionHash) return
+    const before = this.ownMcpState?.definitionHash === definitionHash ? this.ownMcpState.last : undefined
+    // Names alone say less than a session's report: that stays, with its states, until a session reports again.
+    if (via === 'read' && parsed.data.namesOnly && before?.via === 'session') {
+      delete this.ownMcpState!.failed
+      this.notify()
+      return
+    }
     this.ownMcpState = {
       definitionHash,
       last: {
@@ -1123,6 +1143,7 @@ export class AgentRuntime implements Bridge {
         at: this.now(),
         via,
         ...(parsed.data.truncated ? { truncated: true as const } : {}),
+        ...(via === 'read' && parsed.data.namesOnly ? { namesOnly: true as const } : {}),
       },
     }
     this.notify()
@@ -1130,7 +1151,7 @@ export class AgentRuntime implements Bridge {
 
   /**
    * 读取: the harness's own MCP servers from a process with no session, in a private empty folder, so that no project's
-   * configuration is read. The harness then starts the servers it has configured, which is why only a person asks.
+   * configuration is read. The harness may then start the servers it has configured, which is why only a person asks.
    */
   readOwnMcp(options: { before?: () => Promise<void> } = {}): Promise<void> {
     if (this.mcpReading) return this.mcpReading
@@ -1173,9 +1194,8 @@ export class AgentRuntime implements Bridge {
         await rm(cwd, { recursive: true, force: true }).catch(() => {})
       }
       if (this.definitionNow(true) !== definitionHash) return
+      if (!ownMcpStatus.safeParse(answer).success) throw new AppError(502, 'agent-protocol', `${this.agent.name} 的 MCP 状态无效`)
       this.noteOwnMcp(answer, 'read')
-      if (this.ownMcpState?.definitionHash !== definitionHash || this.ownMcpState.last?.via !== 'read')
-        throw new AppError(502, 'agent-protocol', `${this.agent.name} 的 MCP 状态无效`)
     })().finally(() => {
       if (this.mcpReading === reading) this.mcpReading = undefined
       this.notify()
@@ -1508,6 +1528,8 @@ export class AgentRuntime implements Bridge {
           workspaceId: scope.workspaceId,
           folders: scope.folders.map(({ id, path }) => ({ id, path })),
           ...(scope.passed ? { folderAccess: 'all' as const } : {}),
+          // The model the agent's session reports on load (Codex's thread), shown before the first turn.
+          ...(entry.load.model ? { model: entry.load.model } : {}),
         },
         messages,
         revision: 1,
@@ -1979,6 +2001,8 @@ export class AgentRuntime implements Bridge {
     context = seed + context
     const run = this.reserve(sessionId, task.acp.turnSeq + 1, context)
     run.attachments = attachments
+    // Shown as starting from now on (`preparing`), while the process starts.
+    this.notify(sessionId)
     const promise = (async () => {
       try {
         if (fresh) {
@@ -1987,10 +2011,12 @@ export class AgentRuntime implements Bridge {
             await binding.promise.catch(() => {})
           this.clearContext(this.task(sessionId))
         }
-        // Reattach and confirm the mode before recording, so a refused turn leaves no side effects.
-        await this.attach(sessionId)
+        // Reattach and confirm the mode before recording, so a refused turn leaves no side effects. A stop meanwhile is no
+        // refusal: the prompt is recorded as sent and stopped before it reached the agent, as a new session's is.
+        await this.attach(sessionId).catch((error: unknown) => {
+          if (!run.cancelRequested || this.closed || !(error instanceof AppError && error.code === 'cancelled-before-send')) throw error
+        })
         this.assertOpen()
-        if (run.cancelRequested) throw cancelledBeforeSend()
         const current = this.task(sessionId)
         this.assertUsable(current)
         current.acp.turnSeq = run.seq
@@ -3342,8 +3368,8 @@ export class AgentRuntime implements Bridge {
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
     if (error instanceof ConnectionClosed) {
-      run.end = this.endOf(run, error.info)
-      // A stop the user asked for did not fail, and only a process that went away unasked is a failure of the turn.
+      run.end = this.endOf(error.info)
+      // A sent turn ended by Latch is interrupted even when its wire initiated the forced stop; a crash remains a failure.
       const status = run.sent && (run.cancelRequested || run.end !== 'process-exited') ? 'interrupted' : 'failed'
       notes.push(this.exitNote(run, error.info, status))
       return status
@@ -3396,11 +3422,11 @@ export class AgentRuntime implements Bridge {
     return 'failed'
   }
 
-  private endOf(run: Run, info: ExitInfo): RunEnd['reason'] | undefined {
+  private endOf(info: ExitInfo): RunEnd['reason'] | undefined {
     // A process that never started did not end anything; the turn's note says why it could not start.
     if (info.reason === 'spawn') return undefined
     if (info.reason === 'stop') return 'host-stopped'
-    return info.reason === 'kill' && info.cause === run.taskId ? 'forced-stop' : 'process-exited'
+    return info.reason === 'kill' ? 'forced-stop' : 'process-exited'
   }
 
   private exitNote(run: Run, info: ExitInfo, status: TaskStatus): string {
@@ -3463,7 +3489,7 @@ export class AgentRuntime implements Bridge {
       const stopped = status === 'interrupted' && run.end === 'host-stopped'
       if (tools?.seq === run.seq) {
         for (const state of tools.calls.values()) {
-          if (state.status === 'in_progress' && !state.final)
+          if (mayHaveRun(state) && !state.final && state.status !== 'completed' && state.status !== 'failed')
             unknown.push({ messageId: state.id, name: clip(this.redact(commandName(state)), COMMAND_NAME_LIMIT) })
           if (settleTool(state, at)) this.upsert(task, stopped ? { ...toolMessage(state), interrupted: true } : toolMessage(state))
         }

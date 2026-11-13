@@ -10,7 +10,7 @@ import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
-import { assertVersion } from './version.ts'
+import { assertVersion, knownVersion } from './version.ts'
 import { AUTH_STATUS_METHOD, clientCapabilities, initializeResult, PROTOCOL_VERSION, RPC, RpcError } from './protocol.ts'
 
 interface ProbeOptions {
@@ -235,6 +235,9 @@ export async function probeAgent(
       && !pairing.checked.some(pair => new RegExp(pair.adapter, 'u').test(adapter) && new RegExp(pair.program, 'u').test(version))
     if (program.found) result.program = { name, ...(version ? { version } : {}), ...(unchecked ? { unchecked: true as const } : {}) }
   }
+  // A harness that is its own program and says no version in its handshake (pi): the version its gate read before the start.
+  const own = pairing ? undefined : knownVersion(agent, preview.command)?.version
+  if (result.agent && !result.agent.version && own) result.agent.version = bounded(own, 100)
   result.checkedAt = new Date().toISOString()
   if (diagnostic) result.diagnostic = bounded([diagnostic, connection.stderrTail(4096)].filter(Boolean).join('\n'))
   return result

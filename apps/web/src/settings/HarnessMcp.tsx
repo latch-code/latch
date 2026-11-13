@@ -28,10 +28,12 @@ export function harnessMcpWord(server: Pick<HarnessMcpServer, 'state' | 'tools'>
 }
 
 const READ_NOTE = {
-  label: '读取会启动它配置的服务器',
+  label: '读取会在空文件夹里运行 Harness',
   detail:
-    'Latch 不读写 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里启动它配置的每个 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
+    'Latch 不读写 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里运行，可能启动它配置的 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
 }
+
+const NAMES_ONLY = { label: '只有名字', detail: '开一个会话后才有状态' }
 
 /**
  * A Harness's own MCP servers, read-only: as it reports them (a session, or 读取 here), with its own login command where
@@ -100,6 +102,7 @@ export function HarnessMcpGroup({
       )}
       {!last && <SettingsRow title={reading ? '正在读取…' : '还没有报告'} />}
       {last?.servers.length === 0 && <SettingsRow title="没有 MCP 服务器" />}
+      {last?.namesOnly && last.servers.length > 0 && <NoteLine brief={NAMES_ONLY} />}
       {last?.servers.map(server => {
         const word = harnessMcpWord(server)
         return (
@@ -108,7 +111,7 @@ export function HarnessMcpGroup({
               leading={<IconTile icon={server.origin ? GlobeGlyph : TerminalGlyph} />}
               title={<code className="settings-mono">{server.name}</code>}
               description={shadowed.has(server.name.toLowerCase()) ? '会话里用 Latch 的同名服务器' : server.origin}
-              trailing={<StatusWord tone={word.tone}>{word.text}</StatusWord>}
+              trailing={last.namesOnly ? undefined : <StatusWord tone={word.tone}>{word.text}</StatusWord>}
             />
             {server.login && (
               <SettingsRow

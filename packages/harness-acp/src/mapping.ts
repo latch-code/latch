@@ -113,14 +113,23 @@ export function mergeTool(state: ToolState, fields: ToolFields, at: string): voi
 }
 
 /**
- * Marks a call the turn left unfinished. Returns whether anything changed. A call that was running ends with the turn
- * at `at`; one that never started has no end time, so it shows no duration.
+ * Whether an unfinished call may have acted: reported running, or allowed (by the person, or by the harness's own
+ * reviewer). An agent need not report a quiet command running, so being allowed is enough.
+ */
+export function mayHaveRun(state: Pick<ToolState, 'status' | 'decision' | 'judged'>): boolean {
+  return state.status === 'in_progress' || state.decision?.outcome === 'allowed' || state.judged?.outcome === 'approved'
+}
+
+/**
+ * Marks a call the turn left unfinished. Returns whether anything changed. A call that may have run ends with the turn
+ * at `at` and its result is unknown; one that never started has no end time, so it shows no duration.
  */
 export function settleTool(state: ToolState, at: string): boolean {
   if (state.final || state.status === 'completed' || state.status === 'failed') return false
   state.awaiting = 0
-  state.final = state.status === 'in_progress' ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
-  if (state.status === 'in_progress') state.completedAt ??= at
+  const ran = mayHaveRun(state)
+  state.final = ran ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
+  if (ran) state.completedAt ??= at
   return true
 }
 
@@ -237,12 +246,23 @@ export function toolMessage(state: ToolState): Message {
   }
 }
 
+/** A stored tool row whose turn ended unsettled and which may have acted: running, or queued once allowed. */
+export function toolRowMayHaveRun(message: Message): boolean {
+  if (message.role !== 'tool' || message.subagent) return false
+  return (
+    message.state === 'running'
+    || (message.state === 'queued'
+      && message.tool !== undefined
+      && mayHaveRun({ decision: message.tool.decision, judged: message.tool.judged }))
+  )
+}
+
 /** Restart recovery for persisted tool rows whose turn can no longer report a result; a waiting ask was answered by nobody. */
 export function settleToolMessage(message: Message, at: string): boolean {
   if (message.role !== 'tool') return false
   let note: string
   const asked = message.state === 'awaiting-approval'
-  if (message.state === 'running') {
+  if (toolRowMayHaveRun(message)) {
     message.state = 'failed'
     note = OUTCOME_UNKNOWN
   } else if (message.state === 'queued' || asked) {

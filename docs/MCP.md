@@ -105,9 +105,9 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 
 ## Harness 自己的 MCP
 
-- 只显示 Harness 经协议报告的，从不读写任何 CLI 的配置（`~/.codex/config.toml`、`~/.claude.json`、`~/.cursor/mcp.json` 等），也不代它登录：现在只有 Codex 直连报告（app-server 的 `mcpServerStatus/list` 与 `mcpServer/startupStatus/updated`，0.156.0 与 0.167.0 都有；wire 的做法见 [HARNESSES.md](HARNESSES.md#codex-的-app-server)）。`HarnessInfo.ownMcp` 只在报告的 Harness 上有：`last`（服务器、时间、来自会话还是读取）、`running`、`failed`；只在 Host 内存里，定义变了就作废。
+- 只显示 Harness 经协议报告的，从不读写任何 CLI 的配置（`~/.codex/config.toml`、`~/.claude.json`、`~/.cursor/mcp.json` 等），也不代它登录：现在只有 Codex 直连报告（app-server 的 `mcpServerStatus/list` 与 `mcpServer/startupStatus/updated`，0.156.0 与 0.167.0 都有；wire 的做法见 [HARNESSES.md](HARNESSES.md#codex-的-app-server)）。`HarnessInfo.ownMcp` 只在报告的 Harness 上有：`last`（服务器、时间、来自会话还是读取，读取只得到名字时 `namesOnly`）、`running`、`failed`；只在 Host 内存里，定义变了就作废。
 - 设置 › MCP 与这个 Harness 的页（设置 › Harness）都列出它们，只读。每个服务器是名字、状态（可用、正在启动、需要登录、失败、已取消、已停用、未启动、状态未知）、工具数与远程服务器的源。Codex 报告需要登录时给出它自己的 `codex mcp login <名字>`（名字只有字母、数字、`-`、`_`、不以 `-` 开头时；否则不给），Latch 不调用它的 OAuth。
-- 会话里的状态随 Codex 的启动通知更新，不启动任何东西；「读取」在空的私有文件夹里启动一次 `codex app-server`（整个读取连同进程启动与翻页共 60 秒），不开 thread，Codex 这时会启动它配置的服务器，所以只由人按下，ⓘ 写明。线程配置里 Latch 自己的服务器不算 Codex 的。与 Latch 的服务器同名的写「会话里用 Latch 的同名服务器」：线程配置覆盖 Codex 自己的。
+- 会话里的状态随 Codex 的启动通知更新，不启动任何东西；「读取」在空的私有文件夹里启动一次 `codex app-server`（整个读取连同进程启动与翻页共 60 秒），不开 thread，可能启动它配置的服务器，所以只由人按下，ⓘ 写明。Codex 0.167 这时只给名字：列表只有名字，ⓘ「开一个会话后才有状态」；已有会话报告的状态不被它覆盖。线程配置里 Latch 自己的服务器不算 Codex 的。与 Latch 的服务器同名的写「会话里用 Latch 的同名服务器」：线程配置覆盖 Codex 自己的。
 - 其他 Harness（经 ACP 的各预设、codex-acp、pi）在设置 › MCP 与它的 Harness 页写「这个 Harness 不报告自己的 MCP」。
 
 ## 从项目导入
