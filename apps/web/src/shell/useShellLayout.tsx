@@ -109,6 +109,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
   )
   const routeRef = useRef(route)
+  const fromAllSessions = useRef(false)
   routeRef.current = route
   const parkInput = useRef<() => boolean>(() => true)
   const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
@@ -122,6 +123,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     snapshot,
     inputTarget: route.overview ? 'new' : 'session',
     onBeforeSelect: id => {
+      if (id !== null) fromAllSessions.current = routeRef.current.allSessions === true
       clearTimeout(popTimer.current)
       setPopping(false)
       setPushed(id !== null)
@@ -488,7 +490,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   })
   /** A new session starts where the person is: in the open session's project, else as last chosen. */
   const startNewDraft = (intent?: SessionSelectionIntent, afterSelect?: () => void) => {
-    const project = selectedId === null ? undefined : projectFor(catalog, summary)
+    const project = session.inputId === null ? undefined : projectFor(catalog, summary)
     const arrived = () => {
       // choose has already parked the source input; do not save its old render again while changing the route.
       updateRoute({ entry: 'sessions' })
@@ -499,8 +501,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       afterSelect?.()
     }
     // Reopening the phone sheet keeps its existing draft; explicit actions may replace it atomically.
-    if (phone && selectedId === null && !intent) arrived()
-    else choose(null, arrived, intent)
+    if (phone && session.inputId === null && !intent) {
+      submission.setFork(null)
+      setNewSheet(true)
+      afterSelect?.()
+    } else choose(null, arrived, intent)
   }
   const startNew = () => startNewDraft()
   /**
@@ -509,6 +514,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    */
   const back = (instant = false) => {
     const id = selectedId
+    if (fromAllSessions.current) {
+      choose(null, () => {
+        fromAllSessions.current = false
+        updateRoute({ entry: 'sessions', allSessions: true })
+      })
+      return
+    }
     // A conversation in 我的 Agent goes back to its list, not to Code's list it is not on.
     const away = backRoute(summary, entries.includes('agents'))
     const arrive = () => {
@@ -709,9 +721,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setNewSheet(false)
     setRoute({ entry: 'settings', section: 'engines', agent: target })
   }
-  /** The palette searches, except on a phone, which keeps its search under the title. */
+  /** Home and the full-history page keep their inputs underneath search; the phone's old list has its own field. */
   const openSearch = () => {
-    if (!phone) {
+    if (!phone || route.overview || route.allSessions) {
       setCommandMode('root')
       setCommandOpen(true)
       return

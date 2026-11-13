@@ -494,6 +494,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <LayoutMenu value={shell.preferences.workbenchLayout} />
                   </header>
                 )}
+                {phone && triage && (
+                  <nav className="workbench-phone-code-nav" aria-label="会话导航">
+                    <Button variant="ghost" onClick={shell.openAllSessions}>
+                      全部会话
+                    </Button>
+                    <Button variant="ghost" onClick={openSearch}>
+                      搜索
+                    </Button>
+                  </nav>
+                )}
                 <ConnectionBanners shell={shell} />
                 <div className="workbench-home-composer">
                   {phone && (
@@ -553,7 +563,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {phone && (
               <NewSessionSheet
                 focusComposer={submission.fork ? sheetComposerRef : undefined}
-                open={newSheet && (selectedId === null || overview)}
+                open={newSheet && shell.inputId === null}
                 onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
                 onClose={() => {
                   setNewSheet(false)
