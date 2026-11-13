@@ -12,7 +12,7 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 afterEach(() => vi.unstubAllEnvs())
 
 const live = process.env.LATCH_CLAUDE_GATEWAY_BINARY
-it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
+it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as const)(
   'chooses real Claude %s gateway models in the normal menus and restores the exact model',
   async kind => {
     const harness = 'claude-agent'
@@ -27,6 +27,8 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
     const command = live!
     const service = await startFakeModels({ replies: [{ text: 'gateway menu answer' }] })
     const names = ['service-only-model', 'service-only-next']
+    const serviceName =
+      kind === 'anthropic' ? 'Temporary Anthropic' : kind === 'openai-responses' ? 'Temporary Responses' : 'Temporary Chat'
     const nativeValue = (id: string) => id
     const options = {
       uiDir: process.env.LATCH_E2E_UI_DIR ?? resolve('dist/web'),
@@ -55,7 +57,7 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
     try {
       const added = await owner.confirmed('providers', {
         body: {
-          name: kind === 'anthropic' ? 'Temporary Anthropic' : 'Temporary Chat',
+          name: serviceName,
           kind,
           baseURL: `${service.origin}/v1`,
           apiKey: 'sk-test-ui-gateway-0123456789',
@@ -87,8 +89,8 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
       await connected(page)
       await chip('模型').click()
       await row(names[0]!).waitFor()
-      if (kind === 'openai-compatible')
-        await page.getByText('Temporary Chat · 实验性 · 经 Latch', { exact: true }).filter({ visible: true }).first().waitFor()
+      if (kind !== 'anthropic')
+        await page.getByText(`${serviceName} · 实验性 · 经 Latch`, { exact: true }).filter({ visible: true }).first().waitFor()
       await page.screenshot({ path: `${output}/draft.png`, animations: 'disabled' })
       await row(names[0]!).click()
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
@@ -100,7 +102,10 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
       await expect.poll(async () => (await detail()).summary.status, { timeout: 60_000 }).toBe('idle')
       expect(
         service.requests.some(
-          request => request.model === names[0] && request.wire === (kind === 'anthropic' ? 'anthropic-messages' : 'chat-completions'),
+          request =>
+            request.model === names[0]
+            && request.wire
+              === (kind === 'anthropic' ? 'anthropic-messages' : kind === 'openai-responses' ? 'responses' : 'chat-completions'),
         ),
       ).toBe(true)
       expect((await detail()).summary.modelRoute?.providerId).toBe(provider.id)
@@ -152,7 +157,12 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
         `${output}/evidence.json`,
         JSON.stringify({
           actualCli: Boolean(live),
-          upstream: kind === 'anthropic' ? 'local fake Anthropic Messages' : 'local fake Chat Completions',
+          upstream:
+            kind === 'anthropic'
+              ? 'local fake Anthropic Messages'
+              : kind === 'openai-responses'
+                ? 'local fake Responses'
+                : 'local fake Chat Completions',
           testPresence: true,
           privateHome: true,
           model: names[1],

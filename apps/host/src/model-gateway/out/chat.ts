@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { AppError } from '@latch/sdk'
 import { sseData, toolImageLabel } from '../../plugins/providers/http.ts'
 import { invalidRequest, invalidReply, object, type Content, type GatewayRequest, type GatewayDelta, type GatewayUsage } from '../ir.ts'
 import { ToolNames } from '../tools.ts'
+import { responseError } from '../errors.ts'
 
 function chatContent(parts: Content[]): string | unknown[] {
   if (parts.every(part => part.type === 'text')) return parts.map(part => part.text).join('')
@@ -67,7 +67,10 @@ export function encodeChat(request: GatewayRequest): { body: Record<string, unkn
     } else if (item.type === 'result') {
       assistant = undefined
       messages.push({ role: 'tool', tool_call_id: item.id, content: chatContent(item.content.filter(part => part.type === 'text')) })
-      if (item.content.some(part => part.type === 'image')) images.push(item)
+      if (item.content.some(part => part.type === 'image')) {
+        images.push(item)
+        if (!request.dropped.includes('tool-image-location')) request.dropped.push('tool-image-location')
+      }
     } else if (item.role === 'assistant') {
       const current = getAssistant()
       const next = chatContent(item.content)
@@ -182,16 +185,6 @@ function finishOf(value: string): Extract<GatewayDelta, { type: 'finish' }> {
   if (value === 'length') return { type: 'finish', reason: 'length' }
   if (value === 'content_filter') return { type: 'finish', reason: 'filter' }
   throw invalidReply('模型报告了不能确认完成的结束状态')
-}
-
-function responseError(value: unknown): AppError {
-  const error = object(value)
-  const description = `${typeof error?.code === 'string' ? error.code : ''} ${typeof error?.message === 'string' ? error.message : ''}`
-  if (/context_length_exceeded|maximum context|context window|prompt is too long/iu.test(description))
-    return new AppError(400, 'context_length_exceeded', '输入超过模型服务的上下文上限')
-  if (/rate_limit_exceeded|slow_down/iu.test(description)) return new AppError(429, 'rate_limit_exceeded', '模型服务暂时限流')
-  if (/server_is_overloaded|overloaded_error/iu.test(description)) return new AppError(503, 'server_is_overloaded', '模型服务暂时繁忙')
-  return invalidReply('模型服务在回复中报告错误')
 }
 
 /** Shared by the streamed and non-streamed paths; invalid upstream errors never become a successful empty reply. */

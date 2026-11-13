@@ -30,6 +30,8 @@ import { ReasoningSeals } from './model-gateway/reasoning.ts'
 import { decodeResponses, ResponsesOutput } from './model-gateway/in/responses.ts'
 import { decodeAnthropic, AnthropicOutput } from './model-gateway/in/anthropic.ts'
 import { decodeChat, decodeChatReply, encodeChat } from './model-gateway/out/chat.ts'
+import { encodeResponses } from './model-gateway/out/responses.ts'
+import { decodeResponsesReply, decodeResponsesStream } from './model-gateway/out/responses-reply.ts'
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 
@@ -297,7 +299,11 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
     if (path === '/v1/messages')
       return {
         upstream: base =>
-          upstream === 'chat-completions' ? chatEndpoint(base, '/chat/completions') : anthropicEndpoint(base, '/messages'),
+          upstream === 'chat-completions'
+            ? chatEndpoint(base, '/chat/completions')
+            : upstream === 'responses'
+              ? chatEndpoint(base, '/responses')
+              : anthropicEndpoint(base, '/messages'),
       }
     // Only an Anthropic service counts tokens the way Anthropic's clients ask.
     if (path === '/v1/messages/count_tokens' && upstream === 'anthropic-messages')
@@ -559,11 +565,11 @@ export class ModelGatewayServer implements ModelGateway {
         const converted =
           binding.entry === 'anthropic-messages'
             ? decodeAnthropic(body.toString('utf8'), openReasoning)
-            : decodeResponses(fields, openReasoning)
+            : decodeResponses(fields, openReasoning, body.toString('utf8'))
         const allowed = service.modelCapabilities?.[model]?.thinking
         if (converted.effort && !allowed?.includes(converted.effort))
           throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
-        const encoded = encodeChat(converted)
+        const encoded = binding.upstream === 'responses' ? encodeResponses(converted) : encodeChat(converted)
         body = Buffer.from(JSON.stringify(encoded.body))
         if (body.length > MAX_BODY_BYTES) throw new AppError(413, 'body-too-large', '转换后的请求内容过大，Latch 没有转发')
         translated = { request: converted, tools: encoded.tools }
@@ -761,7 +767,8 @@ export class ModelGatewayServer implements ModelGateway {
         // Decode before redaction so a key split across two logical deltas cannot evade the rolling scrubber.
         const scrubbers = { text: replyRedactor(service.apiKey), reasoning: replyRedactor(service.apiKey) }
         const encoder = new TextEncoder()
-        for await (const delta of decodeChat(body, signal)) {
+        const deltas = binding.upstream === 'responses' ? decodeResponsesStream(body, signal) : decodeChat(body, signal)
+        for await (const delta of deltas) {
           if (delta.type === 'loss') {
             request?.tally.dropped.add(delta.loss)
             continue
@@ -770,6 +777,11 @@ export class ModelGatewayServer implements ModelGateway {
             const text = scrubbers[delta.type].feed(encoder.encode(delta.text))
             if (text) await write(output.push({ ...delta, text }))
           } else {
+            if (delta.type === 'reasoning-state') {
+              const text = scrubbers.text.end()
+              if (text) await write(output.push({ type: 'text', text }))
+              scrubbers.text = replyRedactor(service.apiKey)
+            }
             if (delta.type === 'finish')
               for (const type of ['text', 'reasoning'] as const) {
                 const text = scrubbers[type].end()
@@ -797,7 +809,8 @@ export class ModelGatewayServer implements ModelGateway {
         } finally {
           await reader.cancel().catch(() => {})
         }
-        const deltas: GatewayDelta[] = decodeChatReply(JSON.parse(text))
+        const deltas: GatewayDelta[] =
+          binding.upstream === 'responses' ? decodeResponsesReply(JSON.parse(text)) : decodeChatReply(JSON.parse(text))
         for (const delta of deltas) {
           if (delta.type === 'loss') request?.tally.dropped.add(delta.loss)
           else output.push(delta)

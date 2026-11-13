@@ -20,6 +20,10 @@ const sealedSchema = z.discriminatedUnion('wire', [
             .min(1)
             .max(4 * MAX_TEXT),
           summary: z.array(z.object({ type: z.literal('summary_text'), text: z.string().max(MAX_TEXT) }).strict()).max(128),
+          content: z
+            .array(z.object({ type: z.literal('reasoning_text'), text: z.string().max(MAX_TEXT) }).strict())
+            .max(128)
+            .optional(),
           status: z.enum(['completed', 'incomplete']).optional(),
         })
         .strict(),
@@ -46,7 +50,14 @@ export class ReasoningSeals {
       // Rewriting an opaque state would invalidate it. Reject a secret-bearing state before wrapping it in base64.
       if (redact(item.id) !== item.id || redact(item.encrypted_content) !== item.encrypted_content)
         throw invalidReply('模型思考状态包含敏感内容，不能安全回放')
-      clean = { ...checked.data, item: { ...item, summary: item.summary.map(part => ({ ...part, text: redact(part.text) })) } }
+      clean = {
+        ...checked.data,
+        item: {
+          ...item,
+          summary: item.summary.map(part => ({ ...part, text: redact(part.text) })),
+          ...(item.content ? { content: item.content.map(part => ({ ...part, text: redact(part.text) })) } : {}),
+        },
+      }
     }
     if (!sealedSchema.safeParse(clean).success) throw invalidReply('模型思考超出回放大小限制')
     const json = JSON.stringify(clean)

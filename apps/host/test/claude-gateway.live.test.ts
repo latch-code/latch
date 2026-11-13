@@ -12,7 +12,7 @@ const binary = process.env.LATCH_CLAUDE_GATEWAY_BINARY
 afterEach(() => vi.unstubAllEnvs())
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
-it.skipIf(!binary).each(['anthropic', 'openai-compatible'] as const)(
+it.skipIf(!binary).each(['anthropic', 'openai-compatible', 'openai-responses'] as const)(
   'runs Claude through the %s gateway without giving its token to Bash, hooks or MCP',
   async kind => {
     const root = await mkdtemp(join(tmpdir(), 'latch-claude-gateway-boundary-'))
@@ -42,16 +42,29 @@ it.skipIf(!binary).each(['anthropic', 'openai-compatible'] as const)(
         if (phase === 'failure') return { error: { status: 400, message: 'planned gateway refusal' } }
         const body = request.body as {
           messages?: Array<{ role: string; content?: unknown; reasoning_content?: string }>
+          input?: Array<{ type?: string; output?: unknown; encrypted_content?: string; summary?: Array<{ text?: string }> }>
           tools?: unknown[]
         }
         if (body.messages?.some(message => message.reasoning_content === 'Gateway source reasoning')) thoughtReplayed = true
-        const outputs = (body.messages ?? []).flatMap(message =>
-          message.role === 'tool'
-            ? [JSON.stringify(message.content)]
-            : message.role === 'user' && Array.isArray(message.content)
-              ? message.content.filter(block => block.type === 'tool_result').map(block => JSON.stringify(block.content))
-              : [],
+        if (
+          body.input?.some(
+            item =>
+              item.type === 'reasoning'
+              && item.encrypted_content?.startsWith('fake-encrypted-')
+              && item.summary?.some(part => part.text === 'Gateway source reasoning'),
+          )
         )
+          thoughtReplayed = true
+        const outputs = [
+          ...(body.messages ?? []).flatMap(message =>
+            message.role === 'tool'
+              ? [JSON.stringify(message.content)]
+              : message.role === 'user' && Array.isArray(message.content)
+                ? message.content.filter(block => block.type === 'tool_result').map(block => JSON.stringify(block.content))
+                : [],
+          ),
+          ...(body.input ?? []).flatMap(item => (item.type === 'function_call_output' ? [JSON.stringify(item.output)] : [])),
+        ]
         if (outputs.length) {
           const present = outputs.some(value => value.includes('TOKEN_PRESENT'))
           const absent = outputs.some(value => value.includes('TOKEN_ABSENT'))
@@ -62,7 +75,7 @@ it.skipIf(!binary).each(['anthropic', 'openai-compatible'] as const)(
         }
         if (!body.tools?.length) return { text: 'boundary probe' }
         return {
-          ...(kind === 'openai-compatible' ? { reasoning: 'Gateway source reasoning' } : {}),
+          ...(kind !== 'anthropic' ? { reasoning: 'Gateway source reasoning' } : {}),
           tool: {
             name: /^Bash$/u,
             input: {
@@ -216,11 +229,13 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
       expect(model.requests.length > 1).toBe(true)
       expect(model.requests.every(request => request.model === 'fake-model')).toBe(true)
       expect(model.requests.some(request => JSON.stringify(request.body).includes(png.toString('base64')))).toBe(true)
-      if (kind === 'openai-compatible') expect(thoughtReplayed).toBe(true)
+      if (kind !== 'anthropic') expect(thoughtReplayed).toBe(true)
       expect(current.config?.find(option => option.category === 'model')?.currentValue).toBe('fake-model')
       expect(
         model.requests.every(
-          request => request.wire === (kind === 'anthropic' ? 'anthropic-messages' : 'chat-completions') && request.key === fakeValue,
+          request =>
+            request.wire === (kind === 'anthropic' ? 'anthropic-messages' : kind === 'openai-responses' ? 'responses' : 'chat-completions')
+            && request.key === fakeValue,
         ),
       ).toBe(true)
       const modelOption = current.config!.find(option => option.category === 'model')!

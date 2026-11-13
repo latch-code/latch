@@ -15,7 +15,7 @@ import {
   type GatewayUsage,
 } from '../ir.ts'
 import { assertToolSelection, safeToolIdentity, type ToolNames } from '../tools.ts'
-import { checkedArguments } from '../json.ts'
+import { checkedArguments, exactJson } from '../json.ts'
 
 const requestSchema = z
   .object({
@@ -120,10 +120,13 @@ function readTools(values: unknown[], dropped: Set<GatewayLoss>, namespace?: str
 export function decodeResponses(
   value: unknown,
   openReasoning: (value: string) => GatewayReasoning | undefined = () => undefined,
+  source?: string,
 ): GatewayRequest {
   const parsed = requestSchema.safeParse(value)
   if (!parsed.success) throw invalidRequest('Responses 请求字段格式无效')
   const body = parsed.data
+  // Control fields use the validated numbers above; schemas retain their original finite JSON number tokens.
+  const exact = source === undefined ? object(value) : object(exactJson(source))
   if (
     body.store === true
     || body.previous_response_id != null
@@ -140,6 +143,8 @@ export function decodeResponses(
   if (body.text?.verbosity || body.service_tier || body.client_metadata || body.access_programs || body.stream_options)
     dropped.add('unsupported-options')
   const input: GatewayItem[] = []
+  const pending = new Map<string, 'function' | 'custom'>()
+  const seen = new Set<string>()
   if (body.instructions != null) input.push({ type: 'message', role: 'system', content: [{ type: 'text', text: body.instructions }] })
   if (typeof body.input === 'string') input.push({ type: 'message', role: 'user', content: [{ type: 'text', text: body.input }] })
   else
@@ -151,20 +156,30 @@ export function decodeResponses(
         if (sealed !== undefined) input.push({ type: 'reasoning', state: sealed })
         else dropped.add('reasoning-state')
       } else if (item.type === 'function_call' || item.type === 'custom_tool_call') {
+        const id = name(item.call_id),
+          kind = item.type === 'custom_tool_call' ? 'custom' : 'function'
+        if (seen.has(id)) throw invalidRequest('工具调用 ID 重复')
+        seen.add(id)
+        pending.set(id, kind)
+        const args = requiredText(kind === 'custom' ? item.input : item.arguments, '工具输入')
         input.push({
           type: 'call',
-          kind: item.type === 'custom_tool_call' ? 'custom' : 'function',
+          kind,
           name: name(item.name),
           ...(item.namespace != null ? { namespace: name(item.namespace) } : {}),
-          id: name(item.call_id),
-          arguments: requiredText(item.type === 'custom_tool_call' ? item.input : item.arguments, '工具输入'),
+          id,
+          arguments: kind === 'custom' ? args : checkedArguments(args, text => text).json,
         })
       } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
+        const id = name(item.call_id),
+          kind = item.type === 'custom_tool_call_output' ? 'custom' : 'function'
+        if (pending.get(id) !== kind) throw invalidRequest('工具结果没有对应种类的未完成调用')
+        pending.delete(id)
         const parts = content(item.output, dropped)
-        if (parts.some(part => part.type === 'image')) dropped.add('tool-image-location')
-        input.push({ type: 'result', id: name(item.call_id), content: parts })
+        input.push({ type: 'result', id, content: parts })
       } else if (item.type === 'message' || item.type === undefined) {
         if (!['system', 'developer', 'user', 'assistant'].includes(String(item.role))) throw invalidRequest('消息角色无法转换')
+        if (item.role !== 'assistant' && pending.size) throw invalidRequest('工具结果尚未完整返回')
         const parts = content(item.content, dropped)
         if ((item.role === 'assistant' || item.role === 'system' || item.role === 'developer') && parts.some(part => part.type === 'image'))
           throw invalidRequest('Chat 转换只接受用户消息或工具结果中的图片')
@@ -175,8 +190,9 @@ export function decodeResponses(
         })
       } else throw invalidRequest('这类 Responses 输入条目尚不能转换为 Chat')
     }
+  if (pending.size) throw invalidRequest('工具结果尚未完整返回')
   if (!input.length) throw invalidRequest('请求没有可转换的消息')
-  const tools = readTools(body.tools ?? [], dropped)
+  const tools = readTools(Array.isArray(exact?.tools) ? exact.tools : (body.tools ?? []), dropped)
   if (tools.length > 1024) throw invalidRequest('工具过多')
   let choice: GatewayRequest['choice']
   if (body.tool_choice !== undefined) {
@@ -188,6 +204,7 @@ export function decodeResponses(
     }
     if (choice === 'required' && !tools.length) throw invalidRequest('没有可以强制调用的工具')
   }
+  const format = body.text?.format ? (object(object(exact?.text)?.format) ?? body.text.format) : undefined
   return {
     model: body.model,
     stream: body.stream === true,
@@ -199,7 +216,7 @@ export function decodeResponses(
     ...(body.max_output_tokens != null ? { maxOutput: body.max_output_tokens } : {}),
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { topP: body.top_p } : {}),
-    ...(body.text?.format ? { format: body.text.format } : {}),
+    ...(format ? { format } : {}),
     dropped: [...dropped],
   }
 }
@@ -278,6 +295,7 @@ export class ResponsesOutput {
   }
 
   push(delta: GatewayDelta): Event[] {
+    if (delta.type === 'reasoning-state') throw invalidReply('这种原生思考输出尚不能转换为 Responses')
     if (delta.type === 'loss') return []
     if (this.status !== 'in_progress') throw invalidReply('模型在回复完成后继续发送内容')
     if (delta.type === 'usage') {

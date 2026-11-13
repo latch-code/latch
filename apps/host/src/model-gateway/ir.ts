@@ -27,6 +27,7 @@ export type GatewayReasoning =
         id: string
         encrypted_content: string
         summary: Array<{ type: 'summary_text'; text: string }>
+        content?: Array<{ type: 'reasoning_text'; text: string }>
         status?: 'completed' | 'incomplete'
       }
     }
@@ -64,6 +65,7 @@ export interface GatewayUsage {
 
 export type GatewayDelta =
   | { type: 'text' | 'reasoning' | 'refusal'; text: string }
+  | { type: 'reasoning-state'; state: Extract<GatewayReasoning, { wire: 'responses' }> }
   | { type: 'tool'; index: number; id?: string; name?: string; arguments?: string }
   | { type: 'usage'; usage: GatewayUsage }
   | { type: 'loss'; loss: GatewayLoss }
