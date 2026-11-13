@@ -243,7 +243,7 @@ export function HelperCreate({
         {abandon && 'creationToken' in state && state.creationToken?.record === abandon.record && (
           <ConfirmDialog
             title="放弃等待创建结果？"
-            message="Mac 可能已经创建了这个 Agent。这里只放下本机的待确认请求，不会撤销创建；再次创建会是另一个请求。"
+            message="Mac 可能已经创建了这个 Agent。这里只放下此设备保存的待确认请求，不会撤销创建；再次创建会是另一个请求。"
             confirmLabel="放弃等待"
             onClose={() => setAbandon(undefined)}
             onConfirm={async () => {

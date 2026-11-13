@@ -40,9 +40,9 @@ function retainedCreation(store: AgentCreation): Extract<WriteState, { kind: 'un
         },
         kind: 'unknown',
         message: pending.unavailable
-          ? '暂时读不到本机的待确认记录，不能开始另一项创建。请恢复浏览器存储后再确认。'
+          ? '暂时读不到此设备保存的待确认记录，不能开始另一项创建。请恢复浏览器存储后再确认。'
           : pending.unread
-            ? '本机的待确认创建记录无法读取。请查看已有 Agent 后，再决定是否放弃等待。'
+            ? '此设备保存的待确认创建记录无法读取。请查看已有 Agent 后，再决定是否放弃等待。'
             : pending.body
               ? '上一次创建的结果尚未确认。'
               : '上一次创建的结果尚未确认。敏感内容只保留在原页面内存中，当前页面不能重发；请查看已有 Agent 后再决定是否放弃等待。',
@@ -130,7 +130,7 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
                 ...retainedCreation(store),
                 write,
                 kind: 'unknown',
-                message: 'Mac 已回复，但本机无法清除待确认记录。请重试同一请求。',
+                message: 'Mac 已回复，但此设备无法清除待确认记录。请重试同一请求。',
               })
               return undefined
             }
@@ -169,7 +169,7 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
             try {
               store.finish(write.body.requestId)
             } catch {
-              setState({ ...retainedCreation(store), write, kind: 'unknown', message: '本机无法清除待确认记录，请重试同一请求。' })
+              setState({ ...retainedCreation(store), write, kind: 'unknown', message: '此设备无法清除待确认记录，请重试同一请求。' })
               return undefined
             }
           }
