@@ -111,6 +111,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 - 用例导入的依赖在第一个用例之前就预构建（`optimizeDeps.entries` 指向这些用例），运行中途不会因发现新依赖而重新加载页面。
 - `test/gallery/` 是原语总览页：`Gallery.tsx` 由用例渲染（检查每个样式表画的原语都在页上、每个控件都有名称、总览页的排版不改原语的标题、手机宽度下就地画出的对话框与弹层不超出卡片、深色与减少动效），`index.html` 与 `main.tsx` 由视觉截图构建（见[视觉截图](#视觉截图)）。它只在测试中构建，不进入 `dist/web`。
 
+`packages/ui/test/button-width.test.tsx` 在真实浏览器中检查 Button 的自然宽度缓存、外部 minWidth、连续忙态、字体/语言变化、隐藏恢复、容器缩放与减少动效；三宽深浅截图写入 `test-results/button-width/`。固定 16 个按钮随父组件更新 50 次，在 CPU 4 倍降速下记录全部提交耗时与同步宽度读取次数到同目录 `performance.json`；读取次数是回归断言，耗时用于同机安静窗口前后对比，不作为跨机器的固定性能阈值。
+
 ### 报告与用例集合
 
 - Vitest 的报告与附件写入 `.vitest/`（已在 `.gitignore` 中）：`--reporter=json` 写 `.vitest/json/output.json`，`--reporter=junit` 写 `.vitest/junit/output.xml`，附件在 `.vitest/attachments/`。e2e 截图仍由用例写入 `test-results/`。
