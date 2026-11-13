@@ -61,16 +61,20 @@ describe("when a draft reads a Harness's lists by itself", () => {
     // Starting these runs the person's own session hooks and extensions, so only a person asks.
     expect(rule('pi')).toEqual({ when: 'request', modes: true })
     expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
+    expect(rule('antigravity')).toEqual({ when: 'request', modes: true })
+    expect(rule('grok')).toEqual({ when: 'request', modes: true })
     // A command with no profile was confirmed as the program to run, and its empty session runs no turn either.
     expect(catalogueReadOf(undefined)).toEqual({ when: 'select', modes: true })
     // Every preset decides; none is left to the default.
     expect([...HARNESS_PROFILES.keys()].sort()).toEqual([
+      'antigravity',
       'claude-agent',
       'codex',
       'cursor',
       'dsh',
       'gemini',
       'goose',
+      'grok',
       'opencode',
       'pi',
       'qwen',
