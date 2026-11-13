@@ -13,6 +13,8 @@ import { startTestHost } from './helpers/host.ts'
 
 // Explicit performance run only: this uses long conversations and DevTools instrumentation, never a real model.
 const enabled = process.env.LATCH_STREAM_BENCH === '1'
+// Same built page and Host for both arms. Only the test's fixed capability advertisement changes.
+const transport = process.env.LATCH_STREAM_TRANSPORT === 'full' ? 'full' : 'delta'
 const label = process.env.LATCH_STREAM_LABEL ?? 'baseline'
 const output = join('test-results', 'stream-performance', /^[a-z0-9-]{1,48}$/u.test(label) ? label : 'baseline')
 const uiDir = resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web')
@@ -70,7 +72,15 @@ function distribution(values: number[]) {
 }
 
 async function instrument(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript(transport => {
+    const fetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+      if (url.pathname !== '/link/api/events' || transport !== 'full') return fetch(input, init)
+      const headers = new Headers(init?.headers)
+      headers.delete('x-latch-state')
+      return fetch(input, { ...init, headers })
+    }
     const probe: Probe = { active: false, start: 0, end: 0, frames: [], parses: [], longTasks: [] }
     window.latchStreamProbe = probe
     const parse = JSON.parse.bind(JSON)
@@ -105,7 +115,7 @@ async function instrument(page: Page) {
       requestAnimationFrame(frame)
     }
     requestAnimationFrame(frame)
-  })
+  }, transport)
 }
 
 async function metrics(cdp: CDPSession) {
@@ -382,6 +392,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
         const report = {
           schema: 1,
           label,
+          transport,
           rounds,
           baseCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
           uiIndexSha256: createHash('sha256')
@@ -389,6 +400,13 @@ describe.runIf(enabled)('stream performance baseline', () => {
             .digest('hex'),
           sourceRendererSha256: createHash('sha256')
             .update(await readFile('apps/web/src/MessageContent.tsx'))
+            .digest('hex'),
+          sourceTransportSha256: createHash('sha256')
+            .update(await readFile('packages/protocol/src/task-delta.ts'))
+            .update(await readFile('apps/host/src/task-delta.ts'))
+            .update(await readFile('apps/web/src/core/taskStream.ts'))
+            .update(await readFile('apps/web/src/core/eventStream.ts'))
+            .update(await readFile('apps/web/src/core/useHarness.ts'))
             .digest('hex'),
           browser: browser.version(),
           platform: platform(),
@@ -447,6 +465,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
             after: afterScroll,
           },
           notes: [
+            'Both transport arms use the same built page and Host; full removes only the fixed capability header inside the test browser.',
             'JSON.parse is timed around the real parser; validation remains included in renderer script time.',
             'Script intervals are unioned on the timing-marker renderer thread and split at observed animation-frame callbacks; this includes probe overhead.',
             'Host bytes exclude HTTP/TLS overhead; the optional CDP stream meter records exact SSE text-frame sizes in the test process.',
@@ -459,6 +478,8 @@ describe.runIf(enabled)('stream performance baseline', () => {
         await mkdir(output, { recursive: true })
         await writeFile(join(output, `${rounds}-turns.json`), JSON.stringify(report, null, 2) + '\n')
         await page.screenshot({ path: join(output, `${rounds}-turns.png`) })
+        if (transport === 'full') expect(deltaTraffic.frames).toBe(0)
+        else expect(deltaTraffic.frames).toBeGreaterThan(0)
         if (process.env.LATCH_STREAM_ENFORCE_BUDGET === '1') expect(report.budget.passed).toBe(true)
       } finally {
         if (tracing) await (await context.newCDPSession(page)).send('Tracing.end').catch(() => {})
