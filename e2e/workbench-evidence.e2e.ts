@@ -197,6 +197,12 @@ it('finds real evidence on the home, decides there, and continues the original s
     await page.getByRole('button', { name: '全部会话', exact: true }).click()
     const all = page.getByRole('region', { name: '全部会话', exact: true })
     await all.waitFor()
+    expect(
+      await page.locator('.workspace .approval-panel').evaluate(element => ({
+        visible: element.checkVisibility({ opacityProperty: true, visibilityProperty: true }),
+        inert: !!element.closest('[inert]'),
+      })),
+    ).toEqual({ visible: false, inert: true })
     expect(await all.locator('.workbench-session-row').count()).toBe(3)
     expect(await all.getByRole('button', { name: `更多操作：${EDIT}`, exact: true }).isVisible()).toBe(true)
     for (const theme of ['light', 'dark'] as const)
