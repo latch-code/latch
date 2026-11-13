@@ -327,7 +327,7 @@
   display: none;
 }
 .workbench-home-composer textarea {
-  padding-left: var(--sp-16);
+  padding: 0 var(--sp-16);
   font-size: var(--fs-work-input);
   line-height: var(--lh-work-input);
   min-height: 30px;
