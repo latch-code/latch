@@ -70,6 +70,37 @@ const ask = (base: string, token: string, body: unknown, headers: Record<string,
   })
 
 describe('model gateway', () => {
+  it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)('keeps non-Gemini model IDs exact over %s', async wire => {
+    const fake = await models()
+    const service = responses(fake, {
+      kind: wire === 'responses' ? 'openai-responses' : wire === 'chat-completions' ? 'openai-compatible' : 'anthropic',
+    })
+    const { server } = await gateway({ svc: service })
+    const modelRoute = { providerId: 'svc', model: 'fake-model', wire, origin: fake.origin }
+    expect(() => server.open({ sessionId: 'wrong', route: { ...modelRoute, model: 'models/fake-model' } })).toThrow()
+    const lease = server.open({ sessionId: 'exact', route: modelRoute })
+    const path = wire === 'responses' ? '/responses' : wire === 'chat-completions' ? '/chat/completions' : '/v1/messages'
+    const response = await fetch(`${lease.baseURL}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}` },
+      body: JSON.stringify({ model: 'models/fake-model', input: 'hi', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(403)
+    expect(fake.requests).toHaveLength(0)
+    service.models = ['models/fake-model']
+    service.fingerprint = 'two'
+    const prefixed = server.open({ sessionId: 'prefixed', route: { ...modelRoute, model: 'models/fake-model' } })
+    expect(prefixed.models).toEqual(['models/fake-model'])
+    const accepted = await fetch(`${prefixed.baseURL}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${prefixed.token}` },
+      body: JSON.stringify({ model: 'models/fake-model', input: 'hi', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(accepted.status).toBe(200)
+    await accepted.text()
+    expect(fake.requests[0]?.model).toBe('models/fake-model')
+  })
+
   it('carries only declared capabilities under the same normalized model IDs, without sharing service state', async () => {
     const fake = await models()
     const service = responses(fake, {

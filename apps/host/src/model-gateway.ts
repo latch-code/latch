@@ -28,8 +28,9 @@ import { geminiEndpoint, geminiHeaders } from './plugins/providers/gemini-wire.t
 import type { FetchLike } from './plugins/providers/http.ts'
 import { ReasoningSeals } from './model-gateway/reasoning.ts'
 import { decodeResponses, ResponsesOutput } from './model-gateway/in/responses.ts'
+import { decodeAnthropic, AnthropicOutput } from './model-gateway/in/anthropic.ts'
 import { decodeChat, decodeChatReply, encodeChat } from './model-gateway/out/chat.ts'
-import type { GatewayRequest, GatewayDelta } from './model-gateway/ir.ts'
+import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
@@ -109,6 +110,7 @@ const GEMINI_METHODS = new Set(['generateContent', 'streamGenerateContent', 'cou
 
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
 const bareModel = (model: string) => model.replace(/^models\//u, '')
+const serviceModel = (wire: ModelWire, model: string) => (wire === 'gemini' ? bareModel(model) : model)
 const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set(), dropped: new Set() })
 
 /** Adds a reply's tokens; a part stays only while every reply added reported it, so it never claims tokens it does not cover. */
@@ -292,7 +294,11 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
   if (entry === 'chat-completions')
     return path === '/v1/chat/completions' ? { upstream: base => chatEndpoint(base, '/chat/completions') } : undefined
   if (entry === 'anthropic-messages') {
-    if (path === '/v1/messages') return { upstream: base => anthropicEndpoint(base, '/messages') }
+    if (path === '/v1/messages')
+      return {
+        upstream: base =>
+          upstream === 'chat-completions' ? chatEndpoint(base, '/chat/completions') : anthropicEndpoint(base, '/messages'),
+      }
     // Only an Anthropic service counts tokens the way Anthropic's clients ask.
     if (path === '/v1/messages/count_tokens' && upstream === 'anthropic-messages')
       return { count: true, upstream: base => anthropicEndpoint(base, '/messages/count_tokens') }
@@ -414,8 +420,8 @@ export class ModelGatewayServer implements ModelGateway {
       throw new AppError(409, 'model-route-changed', '这个会话开始时用的模型服务换了协议或地址，不能再经 Latch 用它。请新开一个会话。')
     if (route.wire !== upstream && !canTranslate(route.wire, upstream))
       throw new AppError(400, 'model-route-unsupported', '这两个协议之间的转换尚未实现')
-    const models = new Set(service.models.map(bareModel))
-    if (!models.has(bareModel(route.model)))
+    const models = new Set(service.models.map(model => serviceModel(upstream, model)))
+    if (!models.has(serviceModel(upstream, route.model)))
       throw new AppError(409, 'model-unavailable', `模型服务里已经没有「${route.model}」，这个会话不能再经 Latch 用它。`)
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
     const hash = hashOf(token)
@@ -466,7 +472,7 @@ export class ModelGatewayServer implements ModelGateway {
             modelCapabilities: Object.fromEntries(
               service.models.flatMap(model => {
                 const capabilities = service.modelCapabilities?.[model]
-                return capabilities ? [[bareModel(model), structuredClone(capabilities)]] : []
+                return capabilities ? [[serviceModel(upstream, model), structuredClone(capabilities)]] : []
               }),
             ),
           }
@@ -536,7 +542,7 @@ export class ModelGatewayServer implements ModelGateway {
         return refuse(res, 400, 'invalid-json', '请求不是有效的 JSON', shape)
       }
       fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
-      model = typeof fields.model === 'string' ? bareModel(fields.model) : undefined
+      model = typeof fields.model === 'string' ? serviceModel(binding.upstream, fields.model) : undefined
       body = withUsage(binding.entry, fields) ?? body
     }
     // A token count is forwarded to the session's service like any request, and has no reply of the model to count.
@@ -548,8 +554,12 @@ export class ModelGatewayServer implements ModelGateway {
     let translated: { request: GatewayRequest; tools: ToolNames } | undefined
     if (binding.entry !== binding.upstream) {
       try {
-        const scope = { providerId: binding.providerId, model }
-        const converted = decodeResponses(fields, value => this.reasoning.open(scope, value))
+        const scope = { providerId: binding.providerId, model, wire: binding.upstream }
+        const openReasoning = (value: string) => this.reasoning.open(scope, value)
+        const converted =
+          binding.entry === 'anthropic-messages'
+            ? decodeAnthropic(body.toString('utf8'), openReasoning)
+            : decodeResponses(fields, openReasoning)
         const allowed = service.modelCapabilities?.[model]?.thinking
         if (converted.effort && !allowed?.includes(converted.effort))
           throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
@@ -644,8 +654,16 @@ export class ModelGatewayServer implements ModelGateway {
         res.writeHead(status, { ...returned, 'content-type': 'application/json; charset=utf-8' })
         res.end(
           JSON.stringify({
+            ...(shape === 'anthropic' ? { type: 'error' } : {}),
             error: {
-              type: status < 500 ? 'invalid_request_error' : 'server_error',
+              type:
+                shape === 'anthropic'
+                  ? status === 503
+                    ? 'overloaded_error'
+                    : (ANTHROPIC_ERRORS[status] ?? 'api_error')
+                  : status < 500
+                    ? 'invalid_request_error'
+                    : 'server_error',
               code,
               message: safe.slice(0, 1000) || '模型服务拒绝了请求',
             },
@@ -708,14 +726,17 @@ export class ModelGatewayServer implements ModelGateway {
   ): Promise<void> {
     const { request: input, tools } = translated
     const safe = (text: string) => withoutKey(text, service.apiKey)
-    const scope = { providerId: binding.providerId, model: input.model }
-    const output = new ResponsesOutput(input, tools, text => this.reasoning.seal(scope, safe(text)), safe)
+    const scope = { providerId: binding.providerId, model: input.model, wire: binding.upstream }
+    const seal = (state: GatewayReasoning) => this.reasoning.seal(scope, state, safe)
+    const output =
+      binding.entry === 'anthropic-messages' ? new AnthropicOutput(input, tools, seal, safe) : new ResponsesOutput(input, tools, seal, safe)
     const reply = replyReader(binding.upstream, response.headers.get('content-type'))
     if (request) request.reply = reply
-    const write = async (events: ReturnType<ResponsesOutput['start']>) => {
+    const write = async (events: Array<Record<string, unknown> & { type: string }>) => {
       for (const event of events) {
         if (res.destroyed || signal.aborted) return
-        if (event.type === 'response.completed' || event.type === 'response.incomplete') finish(request, reply.facts())
+        if (event.type === 'response.completed' || event.type === 'response.incomplete' || event.type === 'message_stop')
+          finish(request, reply.facts())
         const frame = `event: ${event.type}\ndata: ${safeJson(event, service.apiKey)}\n\n`
         if (!res.write(frame)) await new Promise<void>(resolve => res.once('drain', resolve).once('close', resolve))
       }
@@ -799,6 +820,7 @@ export class ModelGatewayServer implements ModelGateway {
           error instanceof AppError ? error.status : 502,
           error instanceof AppError ? error.code : 'gateway-translation-output',
           message,
+          binding.entry === 'anthropic-messages' ? 'anthropic' : 'openai',
         )
     }
   }

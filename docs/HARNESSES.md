@@ -208,7 +208,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 经 Latch 使用模型服务
 
-模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses→Chat 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses→Chat 与 Anthropic→Chat 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
 | Harness | 当前支持 | 交给 Agent 的方式 |
 | --- | --- | --- |
@@ -217,7 +217,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 | Gemini CLI | Gemini，至少 0.44.0 | 环境变量与 0600 会话私有系统设置，合并思考启动设置，不声称独立读回 |
 | OpenCode | 四种同协议服务，至少 2.2.6 | 私有 provider 配置与官方 shell hook；工具环境清空令牌值 |
 | DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
-| Claude Agent | Anthropic 同协议服务，实际 Claude Code 至少 2.1.318 | 官方环境变量与会话 modelPicker；逐次核对适配器自带 CLI 版本，精确模型 ID 与子进程凭据清理 |
+| Claude Agent | Anthropic 同协议服务；Chat 需实验性转换，实际 Claude Code 至少 2.1.318 | 官方环境变量与会话 modelPicker；逐次核对适配器自带 CLI 版本，精确模型 ID 与子进程凭据清理 |
 | pi | 四种同协议服务，至少 1.5.0 | 官方 provider 扩展；精确目录上限或显式运行预算；凭据仅在进程内存 |
 
 Codex 直连使用服务的模型列表，可以选择原生目录之外的模型；codex-acp 保留其已知模型限制。经网关的会话不能换服务，同服务内的模型可选。服务停用、删除、密钥或地址不再可用时明确失败，不回退到 Harness 自己的登录或演示模型。整轮没有经过网关时会如实提示和审计；这不证明每个辅助请求都经过它。订阅仍由各 Harness 自己使用，不借给网关。

@@ -13,7 +13,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供单独的回环临时端�
 
 ## 协议与请求
 
-四种入口优先同协议透传；Responses 入口另可转换到 Chat Completions。其他跨协议方向、备选调度、价格账本和费用预算尚未实现：
+四种入口优先同协议透传；Responses 与 Anthropic Messages 入口另可转换到 Chat Completions。其他跨协议方向、备选调度、价格账本和费用预算尚未实现：
 
 | 入口 | 模型请求 | 模型列表 |
 | --- | --- | --- |
@@ -38,7 +38,21 @@ Host 为经 Latch 使用模型服务的 Harness 提供单独的回环临时端�
 
 Chat 流强制请求末尾用量。每条流独立维护有界状态，处理 UTF-8 分块、交错并行调用与结束后的 usage，输出完整的 `response.output_item.done`。工具参数与所有工具身份都核对后才给可执行的 done；同一工具索引的 ID 与名称一旦报告就不能变化，重复相同值兼容；达到输出上限或内容过滤时不发布未完成工具的 done。模型断流、畸形输出或流内错误返回 `response.failed`，不能变成空成功，也不重试或回退。429 与 retry-after 保留；上游过载改为 503，上下文超长保留 `context_length_exceeded`。
 
-Chat 的 `reasoning_content` 以 `latch1.` 封装在 Responses 的 `encrypted_content` 中。它是带 HMAC 的来源封装，不是加密；签名 key 只在当前 Host 内存，签名绑定同一服务和模型。合法回放覆盖历史中的各个助手步骤，跨服务、跨模型、篡改、外来封装与 Host 重启前的封装都剥离并记录损耗。重启后不能承诺仍满足要求完整旧思考的服务；这样的服务可能拒绝旧上下文，须重新开始或清空上下文。封装前先脱敏，函数参数先核对对象、嵌套上限和有限数值，再逐个解码并脱敏 JSON 字符串词元；数字与未修改的词元保留原样。错误也在增加 JSON 转义层之前脱敏，避免编码隐藏密钥。不会持久化签名 key 或正文账本来恢复封装。
+Chat 的 `reasoning_content` 以 `latch2.` 封装在 Responses 的 `encrypted_content` 中。它是带 HMAC 的来源封装，不是加密；签名 key 只在当前 Host 内存，签名绑定同一上游协议、服务和模型。合法回放覆盖历史中的各个助手步骤，跨协议、跨服务、跨模型、篡改、外来封装与 Host 重启前的封装都剥离并记录损耗。重启后不能承诺仍满足要求完整旧思考的服务；这样的服务可能拒绝旧上下文，须重新开始或清空上下文。封装前先脱敏，函数参数先核对对象、嵌套上限和有限数值，再逐个解码并脱敏 JSON 字符串词元；数字与未修改的词元保留原样。错误也在增加 JSON 转义层之前脱敏，避免编码隐藏密钥。不会持久化签名 key 或正文账本来恢复封装。
+
+网关 IR 分开表示 Chat 可读思考与 Responses 原生推理项（原生 ID、加密内容、摘要与完成状态）；原生加密状态不能转换成 Chat 的文字思考。不透明内容命中脱敏规则时拒绝封装，不通过改写生成无效密文。封装版本只在当前 Host 生命周期内有效，重启前的旧版本同样剥离。Responses 上游转换尚未开放。
+
+### Anthropic Messages 转 Chat
+
+入口使用同一份网关类型化条目与 Chat 编解码器。保留系统和会话中途的系统文字、用户图片、完整的工具调用与结果、错误结果标记、工具选择、并行开关、输出上限、stop sequences 与明确的 effort；effort 仍须在服务的声明中。工具结果图片沿用有归属说明的移动规则。PDF、未知内容块、服务端工具、缺少对应调用或结果的历史、服务端容器和压缩状态明确拒绝。缓存、引用和协议专用选项的实际损耗沿用闭合枚举；固定 thinking token 预算不能变成 Chat 的离散 effort，计入协议专用选项损耗。
+
+CLI 使用这条转换时启用官方 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`，不把服务端工具搜索、context management 等尚未转换的功能发送给 Chat。其他来源仍按收到的内容严格检查，不能通过略去执行型历史条目继续。转换不表示模型是 Claude，也不按 Chat 协议猜测模型厂商。
+
+回复按 Anthropic SSE 的 message/content-block 顺序发送文字和思考。思考的 signature 使用同协议、同服务、同模型的 `latch2.` 来源封装；外来或重启前的 signature 不重放。封装不是加密，所以显式 `thinking.display: omitted` 请求在出站前拒绝，不能只藏文字却仍在 signature 里返回明文。两种转换输出都在发布前核对本次工具约束：none 不得调用、指定工具按名称/命名空间/function或custom身份精确匹配、parallel=false 至多一个调用；正常完成却未满足 required 或指定工具时拒绝，截断/过滤仍保持原本的不完整状态。全部工具身份与参数都验证后才发布任何可执行的 tool_use 块；输出截断、过滤、畸形调用或断流不发布未完成工具。脱敏会改变工具 ID 或名称时整组拒绝，避免把不同调用变成同一身份；此规则也适用于 Responses 输出。
+
+工具参数的对象与 JSON 字符串互换时，用 Node 24 标准 JSON source/rawJSON 保留有限数值的原始词元，包括大整数、长小数和 -0；共用的参数检查仍限制嵌套、非有限数值与脱敏后的键冲突，只改动字符串词元。Anthropic 回复要求用量字段：message_start 的零值仅作流开始时的暂存，最终 message_delta 必须使用上游实际 usage；缺少 usage 时返回错误且不发布工具或 message_stop。Host 的用量始终取上游证据，不计暂存值。429 与 retry-after 保留，错误使用 Anthropic 形状；取消中止上游，不重试或回退。
+
+非 Gemini 协议的模型 ID 完全匹配服务清单，不去掉 `models/`；只有 Gemini 的资源名称使用该协议的前缀归一化。
 
 ## Harness 交付
 
@@ -49,7 +63,7 @@ Chat 的 `reasoning_content` 以 `latch1.` 封装在 Responses 的 `encrypted_co
 | Gemini CLI | 至少 0.44.0；GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY 与会话私有系统设置 |
 | OpenCode | 经网关至少 2.2.6；私有 `providers.latch` 配置与 shell hook；四种同协议服务 |
 | DeepSeek Harness | 至少 0.2.2-rc.1；私有 Cordis patch 配置 llm provider、ACP 与默认模型；四种同协议服务 |
-| Claude Agent | 适配器实际运行的 Claude Code 至少 2.1.318；Anthropic 同协议服务；官方环境变量控制路由、模型发现与子进程凭据清理 |
+| Claude Agent | 适配器实际运行的 Claude Code 至少 2.1.318；Anthropic 同协议服务与实验性 Chat 转换；官方环境变量控制路由、模型发现与子进程凭据清理 |
 | pi | 经网关至少 1.5.0；私有扩展调用官方 `registerProvider`，只在当前进程注册模型；四种同协议服务 |
 
 Qwen Code 与 goose 的接线尚未实现，不在模型菜单中承诺转发。Cursor 与未知自定义命令只用自己的模型。订阅登录不进入网关；使用 Harness 自己的登录时仍由它原生处理。

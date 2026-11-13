@@ -1,8 +1,32 @@
 import { createHash } from 'node:crypto'
-import { invalidRequest, invalidReply, toolKey, type GatewayTool, type ToolIdentity } from './ir.ts'
+import { invalidRequest, invalidReply, toolKey, type GatewayTool, type ToolIdentity, type GatewayRequest } from './ir.ts'
 
 export interface NamedTool extends GatewayTool {
   wireName: string
+}
+
+/** Changing an executable identity during redaction could merge calls or name a tool the client never declared. */
+export function safeToolIdentity(id: string, tool: ToolIdentity, redact: (text: string) => string): void {
+  for (const value of [id, tool.name, ...(tool.namespace ? [tool.namespace] : [])])
+    if (redact(value) !== value) throw invalidReply('工具调用标识包含敏感内容，不能安全转换')
+}
+
+/** A provider's output must obey the caller's tool selection, before any executable block is published. */
+export function assertToolSelection(
+  request: Pick<GatewayRequest, 'choice' | 'parallel'>,
+  tools: ToolNames,
+  names: string[],
+  incomplete: boolean,
+): void {
+  // Truncated or filtered replies publish no calls; their actual incomplete stop reason must remain intact.
+  if (incomplete) return
+  const calls = names.map(name => tools.called(name))
+  if (request.parallel === false && calls.length > 1) throw invalidReply('模型返回了未允许的并行工具调用')
+  const choice = request.choice
+  if (choice === 'none' && calls.length) throw invalidReply('本次请求不允许工具调用，模型回复未被执行')
+  if ((choice === 'required' || typeof choice === 'object') && !calls.length) throw invalidReply('模型没有返回本次请求要求的工具调用')
+  if (typeof choice === 'object' && calls.some(call => toolKey(call) !== toolKey(choice)))
+    throw invalidReply('模型调用了本次请求没有选择的工具')
 }
 
 /** Names are deterministic across history and requests; namespace and custom/function identity cannot collide. */

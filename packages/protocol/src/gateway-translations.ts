@@ -3,6 +3,7 @@ import type { ModelWire } from './harnesses.ts'
 /** Only implemented, independently testable directions are advertised. Same-protocol forwarding takes precedence. */
 export const TRANSLATED_PAIRS: ReadonlyArray<{ entry: ModelWire; upstream: ModelWire }> = [
   { entry: 'responses', upstream: 'chat-completions' },
+  { entry: 'anthropic-messages', upstream: 'chat-completions' },
 ]
 
 export const GATEWAY_LOSSES = [

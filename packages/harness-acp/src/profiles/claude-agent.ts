@@ -91,12 +91,12 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
 
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
-  version: 2,
+  version: 3,
   gateway: {
     via: 'launch',
     wires: ['anthropic-messages'],
     tokenEnv: 'ANTHROPIC_AUTH_TOKEN',
-    envNames: ['ANTHROPIC_BASE_URL', ...Object.keys(GATEWAY_DEFAULTS), ...GATEWAY_MODEL_NAMES],
+    envNames: ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS', ...Object.keys(GATEWAY_DEFAULTS), ...GATEWAY_MODEL_NAMES],
     templates: { session: 1 },
     models: { value: id => id, id: value => value || undefined, reportedOnly: true },
     minimumVersion: {
@@ -113,6 +113,7 @@ export const claudeAgentProfile: HarnessProfile = {
         env: {
           ...GATEWAY_DEFAULTS,
           ANTHROPIC_BASE_URL: place.baseURL,
+          ...(route.upstream && route.upstream !== route.wire ? { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1' } : {}),
           ...Object.fromEntries(GATEWAY_MODEL_NAMES.map(name => [name, route.model])),
         },
         sessionMeta: {

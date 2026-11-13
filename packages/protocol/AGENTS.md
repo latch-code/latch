@@ -12,7 +12,7 @@
 - `agent-presets.ts` 只放浏览器可用的展示与启动数据；权限行为写在 `packages/harness-acp/src/profiles/`。
 - `AgentRecord.env` 的值不离开 Host，浏览器只收到 `AgentSettings`（变量名）。
 - 改 `src/text.ts` 前读根 `AGENTS.md`「共享安全编码」。
-- Harness 与服务由 `pairRoute`（`src/model-route.ts`）裁决；互译只认已实现配对，Host 重算，不信客户端。
+- 服务配对用 `pairRoute`（`src/model-route.ts`）；互译仅 Responses/Anthropic→Chat。Host 重算，不信客户端。
 - 「这台电脑」只用 `isLocalListener` 判定，默认拒绝、只有 `unix` 为真；Host 与页面都调用它，不按入口类别另写本机判断。新增入口类别写进 `LISTENER_CLASSES`，逐个入口的用例随之覆盖它（`apps/host/test/auth.test.ts#this computer > counts only host.sock as this computer: every other listener needs its own invitation, refuses offline codes and cannot show a confirmation uninvited`）。
 
 改动后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。消息与快照见 [docs/STREAMING.md](../../docs/STREAMING.md)，代码地图见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。

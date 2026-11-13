@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { AppSnapshot, CancelReceipt, ProviderSettings, TaskDetail } from '@latch/protocol'
+import type { AppSnapshot, AttachmentRef, CancelReceipt, ProviderSettings, TaskDetail } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 import { assertNoGatewayCredentials } from './helpers/gateway-evidence.ts'
@@ -12,9 +12,9 @@ const binary = process.env.LATCH_CLAUDE_GATEWAY_BINARY
 afterEach(() => vi.unstubAllEnvs())
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
-it.skipIf(!binary)(
-  'runs Claude through the gateway without giving its token to Bash, hooks or MCP',
-  async () => {
+it.skipIf(!binary).each(['anthropic', 'openai-compatible'] as const)(
+  'runs Claude through the %s gateway without giving its token to Bash, hooks or MCP',
+  async kind => {
     const root = await mkdtemp(join(tmpdir(), 'latch-claude-gateway-boundary-'))
     vi.stubEnv('NO_PROXY', '127.0.0.1,localhost,::1')
     for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']) vi.stubEnv(name, 'http://127.0.0.1:9')
@@ -33,17 +33,24 @@ it.skipIf(!binary)(
     let observed: 'TOKEN_PRESENT' | 'TOKEN_ABSENT' | undefined
     let extra: boolean | undefined
     let control: boolean | undefined
+    let thoughtReplayed = false
     let phase: 'tools' | 'followup' | 'slow' | 'failure' = 'tools'
     const model = await startFakeModels({
       replyFor: request => {
         if (phase === 'followup') return { text: 'restored gateway answer' }
         if (phase === 'slow') return { text: 'late answer must not arrive', delayMs: 5000 }
         if (phase === 'failure') return { error: { status: 400, message: 'planned gateway refusal' } }
-        const body = request.body as { messages?: Array<{ role: string; content?: unknown }>; tools?: unknown[] }
+        const body = request.body as {
+          messages?: Array<{ role: string; content?: unknown; reasoning_content?: string }>
+          tools?: unknown[]
+        }
+        if (body.messages?.some(message => message.reasoning_content === 'Gateway source reasoning')) thoughtReplayed = true
         const outputs = (body.messages ?? []).flatMap(message =>
-          message.role === 'user' && Array.isArray(message.content)
-            ? message.content.filter(block => block.type === 'tool_result').map(block => JSON.stringify(block.content))
-            : [],
+          message.role === 'tool'
+            ? [JSON.stringify(message.content)]
+            : message.role === 'user' && Array.isArray(message.content)
+              ? message.content.filter(block => block.type === 'tool_result').map(block => JSON.stringify(block.content))
+              : [],
         )
         if (outputs.length) {
           const present = outputs.some(value => value.includes('TOKEN_PRESENT'))
@@ -55,6 +62,7 @@ it.skipIf(!binary)(
         }
         if (!body.tools?.length) return { text: 'boundary probe' }
         return {
+          ...(kind === 'openai-compatible' ? { reasoning: 'Gateway source reasoning' } : {}),
           tool: {
             name: /^Bash$/u,
             input: {
@@ -129,10 +137,16 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
         method: 'POST',
         body: {
           name: 'Temporary Claude service',
-          kind: 'anthropic',
+          kind,
           baseURL: `${model.origin}/v1`,
           apiKey: fakeValue,
           models: ['fake-model', 'service-only-next'],
+          modelCapabilities: Object.fromEntries(
+            ['fake-model', 'service-only-next'].map(model => [
+              model,
+              { vision: true, thinking: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] },
+            ]),
+          ),
           defaultModel: 'fake-model',
           confirmOrigin: true,
         },
@@ -153,11 +167,31 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
       expect(saved.status).toBe(201)
       const catalog = (await owner.json<AppSnapshot>('snapshot')).catalog
       expect(catalog?.harnesses.find(harness => harness.id === 'probe-claude')?.capabilities.models.wires).toEqual(['anthropic-messages'])
+      const probe = await owner.confirmed('agents/probe-claude/probe', { body: { requestId: randomUUID() } })
+      expect(probe.status).toBe(200)
+      expect(await probe.json()).toMatchObject({ capabilities: { images: true } })
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+      const attachment = await owner.json<{ attachment: AttachmentRef }>('attachments', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-latch-attachment': Buffer.from(
+            JSON.stringify({
+              requestId: randomUUID(),
+              name: 'pixel.png',
+              size: png.length,
+              selection: { harnessId: 'probe-claude', model: { providerId: provider.id, model: 'fake-model' } },
+            }),
+          ).toString('base64url'),
+        },
+        rawBody: png,
+      })
       const started = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
         body: {
           harnessId: 'probe-claude',
           model: { providerId: provider.id, model: 'fake-model' },
+          attachmentIds: [attachment.attachment.id],
           prompt: 'Run the supplied environment presence diagnostic and reply once.',
           requestId: randomUUID(),
           config: [{ configId: '~mode', value: 'bypassPermissions' }],
@@ -181,8 +215,14 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
       expect(trap.requests).toHaveLength(0)
       expect(model.requests.length > 1).toBe(true)
       expect(model.requests.every(request => request.model === 'fake-model')).toBe(true)
+      expect(model.requests.some(request => JSON.stringify(request.body).includes(png.toString('base64')))).toBe(true)
+      if (kind === 'openai-compatible') expect(thoughtReplayed).toBe(true)
       expect(current.config?.find(option => option.category === 'model')?.currentValue).toBe('fake-model')
-      expect(model.requests.every(request => request.wire === 'anthropic-messages' && request.key === fakeValue)).toBe(true)
+      expect(
+        model.requests.every(
+          request => request.wire === (kind === 'anthropic' ? 'anthropic-messages' : 'chat-completions') && request.key === fakeValue,
+        ),
+      ).toBe(true)
       const modelOption = current.config!.find(option => option.category === 'model')!
       expect(modelOption.options.some(option => option.value === 'service-only-next')).toBe(true)
       await owner.json(`tasks/${started.sessionId}/config`, {

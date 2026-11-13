@@ -17,11 +17,25 @@ export interface GatewayTool extends ToolIdentity {
   strict?: boolean
 }
 
+/** Native encrypted state is never interchangeable with a model's readable reasoning or its summary. */
+export type GatewayReasoning =
+  | { wire: 'chat-completions'; text: string }
+  | {
+      wire: 'responses'
+      item: {
+        type: 'reasoning'
+        id: string
+        encrypted_content: string
+        summary: Array<{ type: 'summary_text'; text: string }>
+        status?: 'completed' | 'incomplete'
+      }
+    }
+
 export type GatewayItem =
   | { type: 'message'; role: 'system' | 'user' | 'assistant'; content: Content[] }
   | ({ type: 'call'; id: string; arguments: string } & ToolIdentity)
   | { type: 'result'; id: string; content: Content[] }
-  | { type: 'reasoning'; text: string }
+  | { type: 'reasoning'; state: GatewayReasoning }
 
 export interface GatewayRequest {
   model: string
@@ -34,6 +48,7 @@ export interface GatewayRequest {
   maxOutput?: number
   temperature?: number
   topP?: number
+  stop?: string[]
   format?: Record<string, unknown>
   dropped: GatewayLoss[]
 }
