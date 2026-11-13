@@ -255,6 +255,7 @@ export function DraftHarnessControl({
       options={entries.map(entry => ({
         value: entry.harness.id,
         label: entry.label,
+        description: entry.harness.statusMessage ? onComputer(entry.harness.statusMessage, computer) : undefined,
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}

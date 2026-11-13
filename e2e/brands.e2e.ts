@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { build, preview } from 'vite'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { AGENT_PRESETS } from '@latch/protocol'
+import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -12,6 +13,40 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 
 const output = 'test-results/brands'
 const cases = [320, 820, 1440].flatMap(width => (['light', 'dark'] as const).map(theme => ({ width, theme })))
+const statusFixture: HarnessPlugin = {
+  id: 'brand-status',
+  name: 'Brand status fixture',
+  version: '1',
+  description: '',
+  activate(context) {
+    for (const outdated of [false, true])
+      context.registerHarness({
+        id: outdated ? 'old-fixture' : 'login-fixture',
+        name: outdated ? '旧版本夹具' : '待登录夹具',
+        version: '1',
+        status: () =>
+          outdated
+            ? { status: 'unavailable', statusReason: 'outdated', statusMessage: '需要升级到新版本' }
+            : { status: 'ready', statusMessage: '上次运行异常：需要先登录' },
+        create: () => ({
+          start: async () => {},
+          close: async () => {},
+          listTasks: async () => [],
+          detail: async () => {
+            throw new Error('No task in this menu fixture')
+          },
+          createTask: async () => {
+            throw new Error('This menu fixture never sends')
+          },
+          prompt: async () => {},
+          cancel: async () => {},
+          approvals: () => [],
+          decide: async () => false,
+          subscribe: () => () => {},
+        }),
+      })
+  },
+}
 let gallery: Awaited<ReturnType<typeof preview>>
 let directory: string
 
@@ -98,6 +133,7 @@ it.each(cases)('keeps official marks in the normal Harness menu at $width $theme
     await chmod(file, 0o755)
   }
   const host = await startTestHost({
+    plugins: [statusFixture],
     commandDirectories: () => [commands],
     detectPreset: preset => ({ found: true, path: join(commands, preset.command) }),
   })
@@ -122,6 +158,11 @@ it.each(cases)('keeps official marks in the normal Harness menu at $width $theme
     await picker.click()
     const choices = page.getByRole('menuitemradio').or(page.getByRole('radio')).or(page.getByRole('option')).filter({ visible: true })
     await expect.poll(() => choices.count()).toBeGreaterThanOrEqual(AGENT_PRESETS.length + 1)
+    expect(await choices.getByText(/^(?:读写文件、运行命令|只读写文件，不运行命令)$/u).count()).toBe(0)
+    await choices.filter({ hasText: '待登录夹具' }).getByText('上次运行异常：需要先登录', { exact: true }).waitFor()
+    const outdated = choices.filter({ hasText: '旧版本夹具' })
+    await outdated.getByText('需要升级', { exact: true }).waitFor()
+    expect(await outdated.getAttribute('aria-disabled')).toBe('true')
     for (const preset of AGENT_PRESETS) {
       const choice = choices.filter({ hasText: preset.name }).first()
       expect(await choice.locator('.ui-tile').count()).toBe(1)
