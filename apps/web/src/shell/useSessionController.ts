@@ -1348,6 +1348,7 @@ export function useSessionController({
     },
     homeComposerState: {
       selectedId: null,
+      sendingView: sendingMessageFor(snapshot, submission.sendingMessage, null, null),
       current: null,
       summary: undefined,
       active: false,

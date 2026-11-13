@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
@@ -42,6 +42,9 @@ export function useSlashCommands({
   const [selection, setSelection] = useState({ word: '', optionId: '' })
   const token = slashToken(draft, caret)
   const word = token ? draft.slice(0, token.end) : ''
+  useEffect(() => {
+    setDismissed(previous => (previous === word ? previous : null))
+  }, [word])
   const history = useMemo(
     () => (historyScope ? new SlashHistory(location.origin, historyScope.deviceId) : undefined),
     [historyScope?.deviceId],

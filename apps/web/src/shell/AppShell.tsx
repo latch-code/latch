@@ -5,9 +5,10 @@ import { FileOpenContext } from '../preview/fileContext.ts'
 import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
+import { FoundHarnessesCard } from '../newSession/NewSession.tsx'
 import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
-import { worktreeProject, usesDemoModel } from '../composerChoice.ts'
+import { worktreeProject, usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -227,17 +228,17 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 id="session-navigation"
                 className="phone-list"
                 aria-label="会话"
-                data-covered={(phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) ? '' : undefined}
+                data-covered={(phoneSession && !popping && !covered) || (phoneReview.present && !phoneReview.leaving) ? '' : undefined}
                 inert={
-                  (phoneSession && !popping)
+                  (phoneSession && !popping && !covered)
                   || (phoneReview.present && !phoneReview.leaving)
                   || route.entry !== 'sessions'
-                  || covered
+                  || overview
                   || undefined
                 }>
                 <div className="phone-overview-link">
                   <Button variant="ghost" icon={OverviewGlyph} onClick={shell.openOverview}>
-                    总览
+                    返回总览
                   </Button>
                   <LayoutMenu value={shell.preferences.workbenchLayout} />
                 </div>
@@ -530,12 +531,15 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       onClick={() => setNewSheet(true)}
                     />
                   )}
+                  <SendingBubble shell={homeShell} />
                   <SessionComposer shell={shell} home />
                 </div>
+                <SetupNotices shell={homeShell} />
+                {listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && <FoundHarnessesCard onRecheck={refresh} />}
                 <WorkOverview {...work} />
               </section>
             )}
-            {allSessions && <WorkbenchSessions shell={shell} snapshot={listed} />}
+            {allSessions && !phone && <WorkbenchSessions shell={shell} snapshot={listed} />}
             {route.entry === 'agents' && <AgentsPage shell={shell} />}
             {route.entry === 'apps' && <AppsPage shell={shell} />}
             {route.entry === 'settings' && (

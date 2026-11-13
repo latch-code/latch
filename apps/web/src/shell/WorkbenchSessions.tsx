@@ -104,6 +104,7 @@ export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snap
                 <button
                   type="button"
                   className="workbench-session-row"
+                  data-task-id={task.id}
                   onClick={() => shell.choose(task.id)}
                   aria-current={shell.selectedId === task.id ? 'page' : undefined}>
                   <SessionRowGlyph

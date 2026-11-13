@@ -86,6 +86,26 @@ describe('ValuePicker placement', () => {
 })
 
 describe('value picker', () => {
+  it.each(['hidden', 'inert', 'visibility'] as const)('does not open a modal for a request on a %s retained page', async hiddenBy => {
+    const picker = (request: number, covered = true) => (
+      <div
+        hidden={covered && hiddenBy === 'hidden'}
+        inert={covered && hiddenBy === 'inert'}
+        style={covered && hiddenBy === 'visibility' ? { visibility: 'hidden' } : undefined}>
+        <ValuePicker variant="row" label="项目" value="alpha" options={MODELS} openRequest={request} onValueChange={() => {}} />
+      </div>
+    )
+    const screen = await render(picker(0))
+    await screen.rerender(picker(1))
+    expect(document.querySelectorAll('dialog:modal')).toHaveLength(0)
+    await screen.rerender(picker(1, false))
+    expect(document.querySelectorAll('dialog:modal')).toHaveLength(0)
+    await screen.rerender(picker(2, false))
+    await screen.getByRole('radio', { name: 'beta-mini' }).click()
+    await expect.element(screen.getByRole('button', { name: '项目：alpha-large' })).toHaveFocus()
+    expect(document.querySelectorAll('dialog:modal')).toHaveLength(0)
+  })
+
   it('reports a current value only when the caller explicitly enables reselect', async () => {
     const picked = vi.fn()
     const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={picked} />)

@@ -284,6 +284,7 @@ function PhoneTopBar({
   cancelling,
   demo,
   onBack,
+  backLabel,
   panelOpen,
   onPanel,
   panelRef,
@@ -303,6 +304,7 @@ function PhoneTopBar({
   cancelling: boolean
   demo: boolean
   onBack?: () => void
+  backLabel?: string
   panelOpen: boolean
   onPanel: () => void
   panelRef?: RefObject<HTMLButtonElement | null>
@@ -323,7 +325,9 @@ function PhoneTopBar({
     )
   return (
     <header className="topbar" data-phone="">
-      {onBack && <IconButton size="lg" className="topbar-back" label="返回会话列表" icon={ChevronLeftGlyph} onClick={onBack} />}
+      {onBack && (
+        <IconButton size="lg" className="topbar-back" label={backLabel ?? '返回会话列表'} icon={ChevronLeftGlyph} onClick={onBack} />
+      )}
       <div className="topbar-title">
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
@@ -386,6 +390,7 @@ export function SessionHeader({
   demo,
   phone,
   onBack,
+  backLabel,
   onRename,
   panelOpen,
   onPanel,
@@ -424,6 +429,7 @@ export function SessionHeader({
   phone: boolean
   /** Phones: back to the session list. */
   onBack?: () => void
+  backLabel?: string
   onRename?: () => void
   /** The panel is shown, beside the conversation or in its place. */
   panelOpen: boolean
@@ -448,6 +454,7 @@ export function SessionHeader({
         cancelling={cancelling}
         demo={demo}
         onBack={onBack}
+        backLabel={backLabel}
         panelOpen={panelOpen}
         onPanel={onPanel}
         panelRef={panelRef}
@@ -619,6 +626,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       cancelling={selectedId !== null && stopping.has(selectedId)}
       demo={demo}
       phone={phone}
+      backLabel={shell.phoneBackLabel}
       onBack={() => {
         back()
       }}

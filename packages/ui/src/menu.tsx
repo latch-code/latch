@@ -670,8 +670,18 @@ export function ValuePicker<T extends string>({
   useEffect(() => {
     if (seenRequest.current === openRequest) return
     seenRequest.current = openRequest
+    const trigger = triggerRef.current
+    // Retained pages can hear the same request; their native modal would block the visible page.
+    if (
+      !trigger
+      || trigger.closest('[inert], [hidden], [aria-hidden="true"]')
+      || trigger.getClientRects().length === 0
+      || getComputedStyle(trigger).visibility !== 'visible'
+    )
+      return
+    trigger.focus({ preventScroll: true })
     setOpen(true)
-  }, [openRequest, setOpen])
+  }, [openRequest, setOpen, triggerRef])
 
   // The value fades in when it changes (120ms), not when the picker first appears.
   const currentLabel = shownText ?? current?.label

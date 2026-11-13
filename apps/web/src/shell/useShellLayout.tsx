@@ -1,3 +1,4 @@
+import { requestLeave } from '../preview/editDrafts.ts'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
@@ -110,6 +111,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   )
   const routeRef = useRef(route)
   const fromAllSessions = useRef(false)
+  const fromOverview = useRef(false)
   routeRef.current = route
   const parkInput = useRef<() => boolean>(() => true)
   const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
@@ -123,7 +125,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     snapshot,
     inputTarget: route.overview ? 'new' : 'session',
     onBeforeSelect: id => {
-      if (id !== null) fromAllSessions.current = routeRef.current.allSessions === true
+      if (id !== null) {
+        fromAllSessions.current = routeRef.current.allSessions === true
+        fromOverview.current = routeRef.current.overview === true
+      }
       clearTimeout(popTimer.current)
       setPopping(false)
       setPushed(id !== null)
@@ -133,6 +138,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       if (id !== null) updateRoute({ entry: 'sessions' })
     },
     onForegroundSent: () => {
+      // A late receipt may settle the input, but must not undo an explicit navigation away from it.
+      if (routeRef.current.entry !== 'sessions' || (routeRef.current.allSessions && !newSheetRef.current)) return
+      fromAllSessions.current = routeRef.current.allSessions === true
+      fromOverview.current = routeRef.current.overview === true
       updateRoute({ entry: 'sessions' })
       setFilter('all')
       setSearch('')
@@ -188,6 +197,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const [infoPage, setInfoPage] = useState(false)
   /** Phones: the new-session sheet over the session list. */
   const [newSheet, setNewSheet] = useState(false)
+  const newSheetRef = useRef(newSheet)
+  newSheetRef.current = newSheet
   const seenProjectRequest = useRef(session.projectAsk.request)
   useEffect(() => {
     if (seenProjectRequest.current === session.projectAsk.request) return
@@ -528,13 +539,29 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * Phones: the open session slides back to the list (180ms), then is let go, and focus lands on its row; at once without
    * motion, or when the browser has already drawn the way back (its own edge swipe).
    */
-  const back = (instant = false) => {
+  const back = (instant = false): void => {
     const id = selectedId
+    // Keep the page in place while its unsaved editor asks; only an accepted leave starts the exit animation.
+    if (id !== null && requestLeave(id, () => back(instant))) return
     if (fromAllSessions.current) {
-      choose(null, () => {
-        fromAllSessions.current = false
-        updateRoute({ entry: 'sessions', allSessions: true })
-      })
+      const arrive = () =>
+        choose(null, () => {
+          fromAllSessions.current = false
+          updateRoute({ entry: 'sessions', allSessions: true })
+          requestAnimationFrame(() => {
+            if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
+          })
+        })
+      if (instant || !matchMedia('(prefers-reduced-motion: no-preference)').matches) arrive()
+      else {
+        setPopping(true)
+        clearTimeout(popTimer.current)
+        popTimer.current = setTimeout(arrive, MOTION.pushExit)
+      }
+      return
+    }
+    if (fromOverview.current) {
+      setRoute({ entry: 'sessions', overview: true })
       return
     }
     // A conversation in 我的 Agent goes back to its list, not to Code's list it is not on.
@@ -1152,6 +1179,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     setInspectorDrag(false)
+    // Resizing is an explicit open intent, including when the chosen width turns the column into a sheet.
+    setInfoPage(true)
     setPreference('rightPanel', { ...preferences.rightPanel, width })
   }
   const resetInspector = () => {
@@ -1418,12 +1447,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     panelToggle.current?.focus({ preventScroll: true })
   }
   // A pushed page holds a place in the browser's history, so the platform's back returns to the page under it.
-  useBackLayer(phone && selectedId !== null && !popping, instant => {
+  useBackLayer(phone && conversationVisible && selectedId !== null && !popping, instant => {
     back(instant)
   })
   useBackLayer(pageMode && infoPage, closeInfoPage)
-  useBackLayer(phone && route.overview === true, () => setRoute({ entry: 'sessions' }))
-  useBackLayer(phone && route.allSessions === true, openOverview)
+  useBackLayer(phone && (route.allSessions === true || (conversationVisible && fromAllSessions.current)), openOverview)
   // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
   // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
   // still open, stays where it is.
@@ -1441,6 +1469,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setRoute,
     entries,
     goEntry,
+    phoneBackLabel: fromOverview.current ? '返回总览' : '返回会话列表',
     openOverview,
     openAllSessions,
     space,

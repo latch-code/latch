@@ -35,7 +35,8 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
             className="phone-tab"
             aria-current={route.entry === entry ? 'page' : undefined}
             onClick={() => {
-              goEntry(entry)
+              if (entry === 'sessions') shell.openOverview()
+              else goEntry(entry)
             }}>
             <Icon icon={tab.icon} size={20} solid={route.entry === entry} />
             <span>{tab.label}</span>
