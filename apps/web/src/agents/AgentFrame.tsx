@@ -99,6 +99,7 @@ export function AgentFrame({
   avatar,
   state,
   word,
+  note = null,
   topic,
   profileOpen,
   onProfile,
@@ -114,6 +115,8 @@ export function AgentFrame({
   state: AvatarState
   /** The state word, or what the place says instead (不在线). */
   word: ReactNode
+  /** What stays said whatever the state: 不先问你 or 权限没确认, amber. */
+  note?: ReactNode
   /** The open topic's title, under the name on a phone. */
   topic?: string | undefined
   profileOpen: boolean
@@ -143,6 +146,7 @@ export function AgentFrame({
         </span>
       </button>
       {!phone && word}
+      {note}
       <span className="agent-frame-actions">{actions}</span>
     </div>
   )

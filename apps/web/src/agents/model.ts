@@ -14,11 +14,12 @@ import {
   type WorktreeStart,
 } from '@latch/protocol'
 import { ApiError, ApiTimeoutError, ClientError, isUncertain, type PendingSubmission } from '../core/api.ts'
-import { findProvider, harnessName, type ComposerChoice } from '../composerChoice.ts'
+import { findProvider, type ComposerChoice } from '../composerChoice.ts'
 import { projectName } from '../projects.tsx'
 import { rowStatus, waitsOnYou } from '../sessions.ts'
 import type { AvatarState } from './avatarFace.ts'
 import { agentTopics, topicOwner } from './chat.ts'
+import { personActivity, WAITS_ON_YOU } from './personWords.ts'
 
 /** One entry of 我的 Agent's list: 通用 first, then the Host's own order. */
 export type AgentEntry =
@@ -40,6 +41,21 @@ export function agentHarnesses(catalog: HostCatalog | undefined): HarnessInfo[] 
   return (catalog?.harnesses ?? []).filter(harness => harness.status === 'ready' && harness.agentContext !== undefined && !harness.offer)
 }
 
+/**
+ * 通用's picks for a new topic: the Host's default Harness where it can take 通用, else the first that can; only talk
+ * where it has that, no project, and the Host's default model.
+ */
+export function generalChoice(catalog: HostCatalog | undefined): ComposerChoice {
+  const harnesses = agentHarnesses(catalog)
+  const harness = harnesses.find(item => item.id === catalog?.defaults.harnessId) ?? harnesses[0]
+  return {
+    mode: harness && !harness.modes.includes('chat') ? (harness.modes[0] ?? 'chat') : 'chat',
+    workspaceId: 'default',
+    ...(harness ? { harnessId: harness.id } : {}),
+    ...(catalog?.defaults.model ? { model: catalog.defaults.model } : {}),
+  }
+}
+
 /** Whether the Harness runs on Latch's model services, so an Agent's model applies to it. */
 export const usesHostModels = (harness: Pick<HarnessInfo, 'capabilities'> | undefined) => harness?.capabilities.models.owner === 'latch'
 
@@ -53,14 +69,6 @@ export function dutyLine(agent: { description?: string; instructions?: string })
       .map(line => line.trim())
       .find(Boolean) ?? ''
   )
-}
-
-/** 「Harness · 模型」: how the Agent runs. A Harness no longer listed keeps its ID. */
-export function runsWith(catalog: HostCatalog | undefined, agent: { harnessId: string; model?: ModelRef }): string {
-  const harness = catalog?.harnesses.find(item => item.id === agent.harnessId)
-  const name = harness ? harnessName(harness) : agent.harnessId
-  if (harness && !usesHostModels(harness)) return name
-  return `${name} · ${agent.model ? modelName(catalog, agent.model) : '默认模型'}`
 }
 
 export function modelName(catalog: HostCatalog | undefined, model: ModelRef): string {
@@ -92,6 +100,18 @@ export function sessionAgent(
   return { id, name: found?.name ?? (snapshot.customAgents ? '已删除的 Agent' : 'Agent'), ...(found ? { avatar: found.avatar } : {}) }
 }
 
+/**
+ * Who answers in a session of 我的 Agent: the helper's face and name (通用's own; a deleted one's neutral face). Code's
+ * sessions have none, so their author line keeps the Harness and the model.
+ */
+export function speakerOf(
+  snapshot: Pick<AppSnapshot, 'customAgents'>,
+  task: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined,
+): { name: string; avatar: AgentAvatar | 'general' } | undefined {
+  const named = sessionAgent(snapshot, task)
+  return named ? { name: named.name, avatar: named.avatar ?? 'general' } : undefined
+}
+
 /** Whether this device may read Agents at all: their contents are private to a device with the full data scope. */
 export const readsAgents = (snapshot: Pick<AppSnapshot, 'device'>) => snapshot.device.dataScope === 'all'
 
@@ -118,11 +138,28 @@ export function agentActivity(
   return latest && rowStatus(latest).kind === 'failed' ? 'failed' : 'idle'
 }
 
-/** The words beside a face for the states that have one; 休息 says 不可用 through the Agent's availability. */
+/**
+ * The words beside a face for the states that have one, as a person says them (agents/personWords.ts); 休息 says 不可用
+ * through the Agent's availability. 运行中 stands in only while no topic says what it does.
+ */
 export const ACTIVITY_WORDS: Partial<Record<AvatarState, { words: string; tone: 'running' | 'waiting' | 'failed' }>> = {
   running: { words: '运行中', tone: 'running' },
-  waiting: { words: '等你处理', tone: 'waiting' },
+  waiting: { words: WAITS_ON_YOU.words, tone: 'waiting' },
   failed: { words: '失败', tone: 'failed' },
+}
+
+/**
+ * What a running helper is doing, from its running topic's `RunLive.activity` (the one in view first): 在想, 在跑命令…
+ * Undefined while none of its topics runs or says.
+ */
+export function agentLiveWord(
+  snapshot: Pick<AppSnapshot, 'tasks'>,
+  id: string,
+  prefer?: string | null,
+): { words: string; tone: 'running' | 'waiting' } | undefined {
+  const running = snapshot.tasks.filter(task => topicOwner(task) === id && task.status === 'running' && task.live)
+  const task = running.find(item => item.id === prefer) ?? running[0]
+  return personActivity(task?.live)
 }
 
 /** What the form edits. */
@@ -137,18 +174,6 @@ export interface AgentDraft {
   skills: string[]
   /** Absent: every enabled plugin (no extra limit). */
   tools?: string[]
-}
-
-export function emptyDraft(catalog: HostCatalog | undefined): AgentDraft {
-  const harness = agentHarnesses(catalog).find(item => item.id === catalog?.defaults.harnessId) ?? agentHarnesses(catalog)[0]
-  return {
-    name: '',
-    description: '',
-    instructions: '',
-    harnessId: harness?.id ?? '',
-    mode: harness && !harness.modes.includes('agent') ? (harness.modes[0] ?? 'agent') : 'agent',
-    skills: [],
-  }
 }
 
 export function draftOf(agent: CustomAgentDetail['agent']): AgentDraft {
@@ -177,14 +202,6 @@ export function normalizedDraft(catalog: HostCatalog | undefined, draft: AgentDr
     mode,
     ...(model && (!harness || usesHostModels(harness)) ? { model } : {}),
   }
-}
-
-/** Why the form cannot be saved yet, in a few words; undefined when it can. */
-export function draftProblem(catalog: HostCatalog | undefined, draft: AgentDraft): string | undefined {
-  if (!draft.name.trim()) return '先填名称'
-  if (!draft.harnessId) return '先选 Harness'
-  if (!agentHarnesses(catalog).some(harness => harness.id === draft.harnessId)) return '这个 Harness 现在不能运行 Agent'
-  return undefined
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)

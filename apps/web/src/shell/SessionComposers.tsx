@@ -51,6 +51,8 @@ import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
 import { SendingMessage } from '../components/SendingMessage.tsx'
 import { askSideQuestion, sideQuestionBlock, sideQuestionOf, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { speakerOf } from '../agents/model.ts'
+import { RouteWarning } from '../agents/parts.tsx'
 
 /** The message on its way, until the Host lists it. */
 export function SendingBubble({ shell }: { shell: ShellState }) {
@@ -295,7 +297,10 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
   // A new-context send that did not start has cleared it on the Host already: there is nothing left to keep.
   const hostCleared = current?.contextCleared === true && current.summary.id === selectedId
-  const showControls = selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped')
+  // A topic of 我的 Agent talks to the helper: the input, ＋ and send only. Its model, thinking and permission are the
+  // helper's settings, and what the permission means for safety stays in its frame (TopicFrame), not here.
+  const speaker = selectedId !== null ? speakerOf(shell.snapshot, summary) : undefined
+  const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
   const status = (() => {
     if (selectedId === null) {
@@ -321,6 +326,8 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       })
       return <ComposerStatus place={place} route={route} phone={phone} />
     }
+    // A helper's input has no status line; only a route that needs saying is said, in its own short line.
+    if (speaker) return summary?.modelRoute && catalog ? <RouteWarning catalog={catalog} route={summary.modelRoute} /> : null
     if (!summary || summary.personal) return null
     const project = catalog && summary.mode !== 'chat' ? projectOf(summary, catalog.workspaces) : undefined
     const folder = summary.mode === 'chat' ? undefined : project?.name || (summary.cwd ? placeName(summary) : undefined)
@@ -379,7 +386,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         <QuestionDrawer
           presentation="conversation"
           state={asked}
-          asker={harnessInfo ? harnessName(harnessInfo) : 'Harness'}
+          asker={speaker?.name ?? (harnessInfo ? harnessName(harnessInfo) : 'Harness')}
           canAnswer={questionActions.canAnswer}
           onOther={() => {
             earlierDraft.release()
@@ -390,6 +397,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       {approvals.length > 0 && (
         <ApprovalDrawer
           presentation="conversation"
+          {...(speaker ? { requester: speaker.name } : {})}
           approvals={approvals}
           messages={current?.messages ?? []}
           index={approvalIndex}
@@ -470,6 +478,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         : undefined
   return (
     <Composer
+      showSlashButton={speaker === undefined}
       textareaRef={composerRef}
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}

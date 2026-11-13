@@ -68,9 +68,11 @@ describe('topics', () => {
     expect(currentTopic([], 'agt_a')).toBeUndefined()
   })
 
-  it('says what a topic is doing in the session list’s words', () => {
+  it('says what a topic is doing as its helper does', () => {
     expect(topicWords(mine('r', 0, { status: 'running' }), false)).toBe('运行中')
-    expect(topicWords(mine('w', 0, { status: 'waiting-approval' }), false)).toBe('等你处理')
+    const live = { runId: 'x', activity: 'command' as const, since: '', lastEventAt: '' }
+    expect(topicWords(mine('r', 0, { status: 'running', live }), false)).toBe('在跑命令')
+    expect(topicWords(mine('w', 0, { status: 'waiting-approval' }), false)).toBe('等你点头')
     expect(topicWords(mine('f', 0, { status: 'failed' }), false)).toBe('失败')
     expect(topicWords(mine('i', 0), false)).toBeUndefined()
     // Offline nothing live is said.

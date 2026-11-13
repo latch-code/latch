@@ -99,14 +99,17 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await page.getByText('还没有自己的 Agent').waitFor()
     await page.screenshot({ path: `${OUT}/list-empty-1440.png` })
 
-    // Create one on the fake ACP Harness, working in the project, from the sidebar's own 新建 Agent.
+    // Create one on the fake ACP Harness, working in the project, from the sidebar's own 新建 Agent: first who, then
+    // its name and duty, with the project under 更多.
     await agentsNav(page).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.getByRole('heading', { name: '你想让谁成为你的帮手？' }).waitFor()
+    await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Fake Agent', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
-    await form.getByLabel('名称').fill('资料助手')
+    await form.getByLabel('名字').fill('资料助手')
     await form.getByLabel('职责').fill('查资料，写成一页摘要')
+    await form.getByRole('button', { name: '多说几句' }).click()
     await form.getByLabel('指令').fill('只用中文回答。')
-    await form.getByRole('button', { name: /^Harness：/u }).click()
-    await choice(page, /Fake Agent/u).click()
+    await form.getByRole('button', { name: '更多' }).click()
     await form.getByRole('button', { name: /^项目：/u }).click()
     await choice(page, /notes/u).click()
     await form.getByRole('button', { name: '创建', exact: true }).click()

@@ -3476,6 +3476,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
       null,
     ])
+    // A stale client pick cannot move an Agent to another Harness, or reuse its model there.
+    expect((result.changedHarness as unknown[]).slice(0, 2)).toEqual((result.fields as unknown[]).slice(0, 2))
     // Topics newest first; the current one is the newest open topic that is not a schedule's run; 通用's are `generalChat`.
     expect(result.topics).toEqual([
       { open: ['g'], archived: [], current: 'g' },

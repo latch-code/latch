@@ -1,3 +1,28 @@
+import type { AgentBracket, AgentEyes } from './custom-agents.ts'
+
+/** What a helper on this Harness does, as its card in 「你想让谁成为你的帮手？」 lists it: only what it really does. */
+export type HelperAbility = 'files' | 'commands' | 'mcp' | 'ask' | 'memory' | 'schedule'
+
+/**
+ * A Harness as a candidate helper: the face a new helper on it starts with (the person can change all of it), one honest
+ * line on what it is, and the abilities it really has. `source` says where the line and the abilities come from; an
+ * ability nobody has checked on the real Harness is left out, never drawn greyed.
+ */
+export interface HelperCard {
+  face: { bracket: AgentBracket; eyes: AgentEyes }
+  line: string
+  abilities: HelperAbility[]
+  source: string
+}
+
+/** Latch 内置: L1, each write asks; remote MCP only; ask_user, propose_memory and propose_schedule. */
+export const BUILTIN_HELPER_CARD: HelperCard = {
+  face: { bracket: 'round', eyes: 'dot' },
+  line: '稳当，动手前每次问你。',
+  abilities: ['files', 'mcp', 'ask', 'memory', 'schedule'],
+  source: 'docs/PLUGIN-DEVELOPMENT.md（L1 分级）、docs/MCP.md（内置 Harness 只用远程地址）、docs/CUSTOM-AGENTS.md（提议）',
+}
+
 /**
  * Agents that speak ACP over stdio from a command the person installed: open-source ones, and vendors' own commands
  * their documentation supports, each with its licence or terms. Browser-safe: no Node imports. Permission behaviour is
@@ -34,6 +59,11 @@ export interface AgentPreset {
   brandMark?: false
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
+  /**
+   * The preset as a candidate helper. 上网 and MCP are not listed for any until they are checked on the real Harness;
+   * 记事 and 定时 show only where the Harness takes Latch's skill server.
+   */
+  helperCard: HelperCard
   /**
    * An ACP adapter that runs the same agent, for when `command` (the agent's own protocol) cannot be used: definitions
    * saved with it keep it, and a draft gets it when only it is installed or `command` is older than its preset supports.
@@ -76,6 +106,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
       direct: '直接连接需要 Codex 0.156.0 或更高版本：npm i -g @openai/codex',
       drives: 'codex',
     },
+    helperCard: {
+      face: { bracket: 'square', eyes: 'dot' },
+      line: '埋头写代码、跑命令的工程师。',
+      abilities: ['files', 'commands', 'memory', 'schedule'],
+      source: 'Codex README；latch-skills 的提议工具（docs/CUSTOM-AGENTS.md）；MCP 尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'claude-agent',
@@ -89,6 +125,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     installNote: '还要在 Claude Code 中登录',
     signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
     brandMark: false,
+    helperCard: {
+      face: { bracket: 'round', eyes: 'arc' },
+      line: 'Claude Code 的 Agent，用你自己的登录。',
+      abilities: ['files', 'commands'],
+      source: 'claude-agent-acp README；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'pi',
@@ -102,6 +144,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'npm i -g @earendil-works/pi-coding-agent',
     installNote: '0.84.4 或更高版本',
     login: { command: 'pi', args: [], note: '进入 pi 后输入 /login，按提示登录。' },
+    helperCard: {
+      face: { bracket: 'curly', eyes: 'oval' },
+      line: '轻巧，专注把事情做完。',
+      abilities: ['files', 'commands'],
+      source: 'pi README；pi 不收 MCP（skillServer: false），提议工具到不了它',
+    },
   },
   {
     id: 'opencode',
@@ -113,6 +161,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '模型与登录由 OpenCode 管理。',
     install: 'npm i -g @opencode/cli',
     login: { command: 'opencode', args: ['auth', 'login'] },
+    helperCard: {
+      face: { bracket: 'angle', eyes: 'dot' },
+      line: '开源的多面手，动手前先问你。',
+      abilities: ['files', 'commands', 'memory', 'schedule'],
+      source: 'OpenCode README；latch-skills 的提议工具（docs/CUSTOM-AGENTS.md）；MCP 尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'dsh',
@@ -124,6 +178,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '按完整消息回复，不逐字流式输出。',
     install: 'npm i -g @deepseek-ai/dsh',
     installNote: '0.2.1-rc.1 或更高版本',
+    helperCard: {
+      face: { bracket: 'round', eyes: 'oval' },
+      line: 'DeepSeek 的开源 Harness，整段回复。',
+      abilities: ['files', 'commands'],
+      source: 'DeepSeek Harness README；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'gemini',
@@ -135,6 +195,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '登录与模型由 Gemini CLI 管理。',
     install: 'npm i -g @google/gemini-cli',
     login: { command: 'gemini', args: [], note: '进入 Gemini CLI 后按提示登录，或输入 /auth。' },
+    helperCard: {
+      face: { bracket: 'curly', eyes: 'dot' },
+      line: 'Google 的开源命令行 Agent。',
+      abilities: ['files', 'commands'],
+      source: 'Gemini CLI README；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'qwen',
@@ -146,6 +212,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '登录与模型由 Qwen Code 管理。',
     install: 'npm i -g @qwen-code/qwen-code',
     login: { command: 'qwen', args: [], note: '进入 Qwen Code 后输入 /auth，按提示登录。' },
+    helperCard: {
+      face: { bracket: 'square', eyes: 'arc' },
+      line: '通义千问的开源命令行 Agent。',
+      abilities: ['files', 'commands'],
+      source: 'Qwen Code README；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'goose',
@@ -157,6 +229,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '模型在 goose 中配置。',
     install: 'brew install block-goose-cli',
     login: { command: 'goose', args: ['configure'] },
+    helperCard: {
+      face: { bracket: 'angle', eyes: 'arc' },
+      line: 'Block 的开源 Agent。',
+      abilities: ['files', 'commands'],
+      source: 'goose README；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'cursor',
@@ -170,6 +248,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'curl https://cursor.com/install -fsS | bash',
     login: { command: 'cursor-agent', args: ['login'] },
     brandMark: false,
+    helperCard: {
+      face: { bracket: 'square', eyes: 'oval' },
+      line: 'Cursor 官方的命令行 Agent。',
+      abilities: ['files', 'commands'],
+      source: 'Cursor CLI ACP 文档；MCP、记事与定时尚未在真实 Agent 上核对',
+    },
   },
   {
     id: 'antigravity',
@@ -182,6 +266,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     installNote: '需要 Antigravity CLI 1.5.8 或更高版本',
     login: { command: 'agy', args: ['acp', '--login'] },
     brandMark: false,
+    helperCard: {
+      face: { bracket: 'angle', eyes: 'arc' },
+      line: '使用你已有的 Antigravity 登录。',
+      abilities: [],
+      source: 'https://antigravity.google/docs/ide/extensions/acp/；个人话题的工具能力仍待逐项核对',
+    },
   },
   {
     id: 'grok',
@@ -195,6 +285,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
     installNote: '1.0.77 或更高版本',
     login: { command: 'grok', args: ['login'] },
     brandMark: false,
+    helperCard: {
+      face: { bracket: 'square', eyes: 'dot' },
+      line: '读写文件，运行命令。',
+      abilities: ['files', 'commands'],
+      source: 'https://docs.x.ai/build；本机 CLI 的读写与命令已核对，记事与定时未核对',
+    },
   },
 ]
 

@@ -211,6 +211,8 @@ export interface ApprovalDrawerProps {
   emphasis?: boolean
   numberKeys?: boolean
   context?: ReactNode
+  /** A personal Agent's name; its actual tool title and parameters stay visible. */
+  requester?: string
   approvals: readonly Approval[]
   /** The tool rows of the transcript, for the words of what a request does. */
   messages: readonly Message[]
@@ -250,6 +252,7 @@ export function ApprovalDrawer({
   emphasis = true,
   numberKeys = false,
   context,
+  requester,
 }: ApprovalDrawerProps) {
   const approval = approvals[Math.min(index, approvals.length - 1)]
   if (!approval) return null
@@ -272,6 +275,7 @@ export function ApprovalDrawer({
       emphasis={emphasis}
       numberKeys={numberKeys}
       context={context}
+      requester={requester}
     />
   )
 }
@@ -292,11 +296,13 @@ function ApprovalPanel({
   emphasis,
   numberKeys,
   context,
+  requester,
 }: {
   presentation?: 'workbench' | 'conversation'
   emphasis: boolean
   numberKeys: boolean
   context?: ReactNode
+  requester?: string | undefined
   approval: Approval
   message: Message | null
   position: number
@@ -318,6 +324,10 @@ function ApprovalPanel({
   // The tool's own title and its ID are what the approver weighs against each other, so the drawer always shows both.
   const action = toolHeading(tool, toolName)
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
+  const file = (diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0])?.split(/[\\/]/u).at(-1)
+  const heading = requester
+    ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
+    : action
   const hidden = approvalHidesText(approval, action, diffs)
   const quietReason =
     presentation
@@ -473,7 +483,7 @@ function ApprovalPanel({
           <div className="approval-title">
             <span className="approval-dot" aria-hidden="true" />
             <span className="approval-object">
-              <VisibleText text={action} />
+              <VisibleText text={heading} />
             </span>
             {stat && (
               <span className="approval-stat">
@@ -488,6 +498,7 @@ function ApprovalPanel({
             )}
           </div>
           <div className="approval-meta">
+            {requester && heading !== action && <VisibleText text={action} />}
             {context}
             {!presentation && toolName && toolName !== action && (
               <code className="tool-card-name">

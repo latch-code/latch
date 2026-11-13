@@ -149,3 +149,31 @@ export function AvatarPicker({
     </>
   )
 }
+
+/**
+ * The face of a helper still being created: the same picker, with nothing written until 创建. The preview moves as the
+ * person picks.
+ */
+export function DraftAvatarPicker({ avatar, name, onPick }: { avatar: Avatar; name: string; onPick: (next: Avatar) => void }) {
+  return (
+    <Popover
+      label="头像"
+      width={360}
+      side="auto"
+      align="start"
+      trigger={props => (
+        <button {...props} type="button" className="agent-head-avatar helper-create-face" aria-label={`${name || '它'}的头像`}>
+          <AgentAvatar avatar={avatar} size={72} />
+        </button>
+      )}>
+      <div className="avatar-picker">
+        <div className="avatar-picker-preview">
+          <AgentAvatar avatar={avatar} size={64} />
+        </div>
+        {ROWS.map(row => (
+          <PartRow key={row.part} row={row} avatar={avatar} disabled={false} onPick={onPick} />
+        ))}
+      </div>
+    </Popover>
+  )
+}

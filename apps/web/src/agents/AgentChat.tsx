@@ -62,7 +62,17 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
               <div className="agent-chat-intro">
                 <AgentAvatar avatar={agent?.avatar ?? 'general'} size={56} />
                 <h1>{earlier ? '新话题' : name}</h1>
-                {!earlier && duty && <p>{duty}</p>}
+                {/*
+                 * A helper's first words, before it has any topic: drawn from what it is, never a message. No model is
+                 * asked, its Harness never hears them, and they are not in any history, so they cannot fail.
+                 */}
+                {!earlier && agent ? (
+                  <p className="agent-chat-greeting">
+                    你好，我是{name}。{duty}
+                  </p>
+                ) : (
+                  !earlier && duty && <p>{duty}</p>
+                )}
               </div>
               {waiting.length > 0 && (
                 <ResultStack shell={shell} owner={owner} results={waiting} writes={writes} className="agent-chat-results" />

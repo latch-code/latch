@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import type {
@@ -838,4 +839,126 @@ test("an Agent's computer: missed times with their cause, its switches, the desk
   await owner.json(`devices/${limited.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
   expect((await limited.request(`custom-agents/${agent.id}/computer`)).status).toBe(403)
   expect(await limited.json<AppSnapshot>('snapshot')).not.toHaveProperty('computer')
+})
+
+test('an Agent keeps the Harness it was created on: a change is refused, and so is a start on another', async () => {
+  const { owner } = await fixture()
+  const defined = await owner.confirmed('agents', {
+    method: 'POST',
+    body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+  })
+  expect(defined.status).toBe(201)
+  const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+  const moved = await owner.request(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: agent.revision, harnessId: 'fake-engine' },
+  })
+  expect(moved.status).toBe(409)
+  expect(await moved.json()).toMatchObject({ error: 'agent-harness-fixed', message: expect.stringContaining('不能换 Harness') })
+  expect((await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).agent).toMatchObject({ harnessId: 'standard', revision: 1 })
+  // A start on another Harness is refused before anything starts; on its own (or naming none) it starts.
+  const elsewhere = await owner.request('tasks', {
+    method: 'POST',
+    body: { customAgentId: agent.id, prompt: 'Go', requestId: randomUUID(), harnessId: 'fake-engine' },
+  })
+  expect(elsewhere.status).toBe(400)
+  expect(await elsewhere.json()).toMatchObject({ error: 'agent-harness-fixed' })
+  expect((await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)).toHaveLength(0)
+  const requestId = randomUUID()
+  const start = { customAgentId: agent.id, prompt: 'Go', requestId, harnessId: 'standard' }
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: start })
+  await settled(owner, sessionId)
+  // A retry of that start is answered as the first time.
+  expect(await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: start })).toMatchObject({ sessionId })
+})
+
+test('a start on another Harness is refused before that Harness is confirmed or bound: no prompt, no record', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-harness-fixed-'))
+  let active: TestHost | undefined
+  try {
+    const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin([])] }
+    const first = await startTestHost(options)
+    active = first
+    const setup = await first.enroll({ listener: 'unix' })
+    await setup.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const agent = await setup.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: definition({ harnessId: 'fake-engine', mode: 'agent', model: undefined }),
+    })
+    await first.close()
+    // As saved before definitions were bound to the confirmed program: the Agent's own Harness would ask before its next start.
+    const file = join(options.dataDir, 'settings.json')
+    const settings = JSON.parse(await readFile(file, 'utf8')) as { agents: Array<Record<string, unknown>> }
+    for (const record of settings.agents) delete record.confirmedCommand
+    await writeFile(file, JSON.stringify(settings))
+    const host = await startTestHost(options)
+    active = host
+    const owner = await host.enroll({ listener: 'unix' })
+    const asked = host.presence.requests.length
+    const records = async () => (await readFile(join(options.dataDir, 'audit', 'audit.jsonl'), 'utf8')).trim().split('\n').length
+    const before = await records()
+    const refused = await owner.request('tasks', {
+      method: 'POST',
+      body: { customAgentId: agent.id, prompt: 'Go', requestId: randomUUID(), harnessId: 'standard' },
+    })
+    expect(refused.status).toBe(400)
+    expect(await refused.json()).toMatchObject({ error: 'agent-harness-fixed' })
+    expect(host.presence.requests).toHaveLength(asked)
+    expect(await records()).toBe(before)
+    expect(JSON.parse(await readFile(file, 'utf8')).agents[0]).not.toHaveProperty('confirmedCommand')
+  } finally {
+    await active?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a legacy start retry binds its recorded Harness rather than a later Agent definition', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-harness-receipt-'))
+  let active: TestHost | undefined
+  try {
+    const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin([])] }
+    const first = await startTestHost(options)
+    active = first
+    const owner = await first.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: { id: 'fake-engine', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+    const start = { customAgentId: agent.id, prompt: 'Keep this receipt', requestId: randomUUID(), harnessId: 'standard' }
+    const result = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: start })
+    await settled(owner, result.sessionId)
+    await first.close()
+    // Older builds allowed changing an Agent's Harness. Preserve that saved state without executing the old program.
+    const agentFile = join(options.dataDir, 'agents', 'custom.json')
+    const saved = JSON.parse(await readFile(agentFile, 'utf8')) as { agents: CustomAgent[] }
+    saved.agents[0]!.harnessId = 'fake-engine'
+    delete saved.agents[0]!.model
+    await writeFile(agentFile, JSON.stringify(saved))
+    const file = join(options.dataDir, 'settings.json')
+    const settings = JSON.parse(await readFile(file, 'utf8')) as { agents: Array<Record<string, unknown>> }
+    for (const record of settings.agents) delete record.confirmedCommand
+    await writeFile(file, JSON.stringify(settings))
+    const host = await startTestHost(options)
+    active = host
+    const asked = host.presence.requests.length
+    const records = async () => (await readFile(join(options.dataDir, 'audit', 'audit.jsonl'), 'utf8')).trim().split('\n').length
+    const before = await records()
+    const replay = await host.raw('unix', 'api/tasks', {
+      method: 'POST',
+      headers: { authorization: `Latch-Device ${owner.credential}` },
+      body: start,
+    })
+    expect(replay.status).toBe(201)
+    expect(await replay.json()).toEqual(result)
+    expect(host.presence.requests).toHaveLength(asked)
+    expect(await records()).toBe(before)
+    expect(JSON.parse(await readFile(file, 'utf8')).agents[0]).not.toHaveProperty('confirmedCommand')
+  } finally {
+    await active?.close()
+    await rm(root, { recursive: true, force: true })
+  }
 })

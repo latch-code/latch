@@ -15,7 +15,6 @@ import {
   EditGlyph,
   PlusGlyph,
 } from '@latch/ui'
-import { HarnessTile } from '../components/BrandTile.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentForm, GeneralForm, WriteNotice } from './AgentForm.tsx'
@@ -24,7 +23,7 @@ import { type ProfileSection } from './chat.ts'
 import { ActivityTab, LibraryTab } from './Activity.tsx'
 import { activityVersion, type SchedulePrefill } from './activity.ts'
 import { MemoryTab } from './Memory.tsx'
-import { agentActivity, dutyLine, GENERAL_NAME, runsWith, scheduleWords, worksIn } from './model.ts'
+import { agentActivity, dutyLine, GENERAL_NAME, scheduleWords, worksIn } from './model.ts'
 import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
@@ -343,11 +342,6 @@ export function AgentProfile({
               <dt>工作位置</dt>
               <dd>
                 <span>{summary ? worksIn(catalog ?? undefined, summary.defaultProjectId) : '不带项目'}</span>
-              </dd>
-              <dt>Harness · 模型</dt>
-              <dd>
-                {harness && <HarnessTile harness={harness} size={14} />}
-                <span>{summary ? runsWith(catalog ?? undefined, summary) : '每个会话自己选'}</span>
               </dd>
               {value && (
                 <>

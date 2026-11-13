@@ -51,6 +51,44 @@ describe('session text drafts', () => {
 })
 
 describe('session text drafts kept in browser storage', () => {
+  it.each([false, true])('rejects a late old device handle after replacement, including another window: %s', async otherWindow => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return values.size
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    })
+    try {
+      const origin = `https://draft-${otherWindow}.invalid`
+      const old = new SessionDrafts(browserDraftStorage(origin, 'old'))
+      old.save('first', 'old private draft', true)
+      old.keep('queued', 'old delayed draft', true)
+      const next = new SessionDrafts(browserDraftStorage(origin, 'next'))
+      next.save('next', 'new device draft', false)
+      if (otherWindow) {
+        vi.resetModules()
+        const remote = await import('../src/core/sessionDrafts.ts')
+        remote.forgetStoredDrafts(origin, 'next')
+      } else forgetStoredDrafts(origin, 'next')
+      old.save('late', 'old reply arriving late', true)
+      vi.advanceTimersByTime(1000)
+      old.flush()
+      expect(values.has(draftsKey(origin, 'old'))).toBe(false)
+      next.save('after', 'next device remains writable', false)
+      const restored = new SessionDrafts(browserDraftStorage(origin, 'next'))
+      expect(restored.read('next', true)).toBe('new device draft')
+      expect(restored.read('after', true)).toBe('next device remains writable')
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
   const memory = () => {
     let value: string | null = null
     return {
@@ -166,12 +204,15 @@ describe('session text drafts kept in browser storage', () => {
       current.save('a', 'this device', false)
       values.set('latch.pending.other', 'kept')
       forgetStoredDrafts(origin, 'dev_new')
-      expect([...values.keys()].sort()).toEqual([draftsKey(origin, 'dev_new'), 'latch.pending.other'])
+      expect([...values.keys()].filter(key => key.startsWith('latch.drafts.'))).toEqual([draftsKey(origin, 'dev_new')])
+      expect(values.get('latch.pending.other')).toBe('kept')
       current.keep('b', 'typed just before', false)
       forgetStoredDrafts(origin)
       vi.advanceTimersByTime(1000)
       current.save('c', 'after sign-out', false)
-      expect([...values.keys()].sort()).toEqual(['latch.drafts-forgotten.' + origin, 'latch.pending.other'])
+      expect([...values.keys()].filter(key => key.startsWith('latch.drafts.'))).toEqual([])
+      expect(values.has('latch.drafts-forgotten.' + origin)).toBe(true)
+      expect(values.get('latch.pending.other')).toBe('kept')
       // Another window signs out: this one, still open, writes nothing on its way out either.
       const other = new SessionDrafts(browserDraftStorage(origin, 'dev_new'))
       other.keep('d', 'typed in the other window', false)

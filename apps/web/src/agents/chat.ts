@@ -1,6 +1,7 @@
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type TaskMode, type TaskSummary } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import { rowStatus } from '../sessions.ts'
+import { personActivity, WAITS_ON_YOU } from './personWords.ts'
 import type { MyAgentTab, MyAgentTarget, ShellRoute } from '../shell/routes.ts'
 
 /**
@@ -84,15 +85,19 @@ export function ownerName(agents: readonly Pick<CustomAgentSummary, 'id' | 'name
   return agents.find(agent => agent.id === owner)?.name ?? '已删除的 Agent'
 }
 
-/** A topic's state in the words the session list uses; a topic at rest says nothing. */
+/**
+ * A topic's state as its helper says it (agents/personWords.ts): what it is doing, 等你点头, 正在停止, 失败 or how it
+ * ended; a topic at rest says nothing.
+ */
 export function topicWords(task: TaskSummary, frozen: boolean): string | undefined {
   const status = rowStatus(task, { frozen })
   switch (status.kind) {
     case 'waiting':
+      return WAITS_ON_YOU.words
     case 'silent':
-      return '等你处理'
+      return '没有动静'
     case 'running':
-      return '运行中'
+      return personActivity(task.live)?.words ?? '运行中'
     case 'stopping':
       return '正在停止'
     case 'failed':

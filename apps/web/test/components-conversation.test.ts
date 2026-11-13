@@ -133,11 +133,13 @@ const Drawer = ({
   approval,
   gateFor,
   busy,
+  requester,
 }: {
   message: Message | null
   approval: Approval
   gateFor?: (approval: Approval) => ApprovalGate
   busy?: string
+  requester?: string
   onDecide?: unknown
 }) =>
   createElement(ApprovalDrawer, {
@@ -149,9 +151,43 @@ const Drawer = ({
     busy: new Map(busy ? [[approval.id, busy]] : []),
     statuses: new Map(),
     onDecide: () => {},
+    ...(requester ? { requester } : {}),
   })
 
 describe('with the connection down', () => {
+  it('names the helper on a failed reply without replacing the Host reason or message identity', () => {
+    const message: Message = { id: 'failed-note', role: 'system', state: 'failed', text: '本地验收模型暂时不可用' }
+    const html = renderToStaticMarkup(createElement(MessageRow, { message, voice: '晨报' }))
+    expect(html).toContain('晨报 没能回复：')
+    expect(html).toContain('本地验收模型暂时不可用')
+    expect(html).toContain('data-message-id="failed-note"')
+    expect(renderToStaticMarkup(createElement(MessageRow, { message }))).not.toContain('没能回复')
+  })
+
+  it('names a personal requester while preserving the original approval tool, parameters and decision identity', () => {
+    const request = approval({ toolName: 'execute', arguments: '{"command":"ls"}' })
+    const command = tool({ toolName: 'execute', tool: { kind: 'execute', title: 'Run ls', input: '{"command":"ls"}' } })
+    const html = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request, requester: '小抄' }))
+    expect(html).toContain('小抄 想运行一条命令')
+    expect(html).toContain('Run ls')
+    expect(html).toContain('execute')
+    expect(html).toContain('data-approval-id="ap1"')
+    expect(html).toContain('允许')
+    expect(html).toContain('拒绝')
+    const edited = renderToStaticMarkup(
+      createElement(Drawer, {
+        message: tool({
+          tool: { kind: 'edit', title: 'Apply edit', diffs: [{ path: '/tmp/notes.md', oldText: 'before', newText: 'after' }] },
+        }),
+        approval: approval(),
+        requester: '资料员',
+      }),
+    )
+    expect(edited).toContain('资料员 想改 notes.md')
+    expect(edited).toContain('Apply edit')
+    expect(renderToStaticMarkup(createElement(Drawer, { message: command, approval: request }))).not.toContain('想运行')
+  })
+
   it('stops the thinking row and the caret, and says when it last knew', () => {
     const live = { text: '想', live: true, streaming: true, liveTimes: { startedAt: localIso(0) } }
     const moving = renderToStaticMarkup(createElement(ThinkingRow, live))

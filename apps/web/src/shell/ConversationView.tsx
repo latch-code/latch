@@ -17,7 +17,7 @@ import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
 import { renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
-import { Button, Hint, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
+import { Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import {
@@ -37,6 +37,7 @@ import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
 import { SideQuestionPanel } from '../conversation/SideQuestion.tsx'
 import { useTopicResults } from '../agents/TopicResults.tsx'
+import { speakerOf } from '../agents/model.ts'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -91,6 +92,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     openSettings,
   } = shell
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
+  // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
+  const speaker = current ? speakerOf(snapshot, current.summary) : undefined
   const placeProposals = useTopicProposals(shell, current)
   const placeResults = useTopicResults(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
@@ -281,7 +284,10 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   </>
                 ) : (
                   <ChangesLinkContext.Provider value={changesLink}>
-                    {current.summary.firstStart && harnessInfo && <FirstStartNote harness={harnessInfo} />}
+                    {/* In a helper's topic the same fact names the helper, not its Harness. */}
+                    {current.summary.firstStart && harnessInfo && (
+                      <FirstStartNote harness={harnessInfo} {...(speaker ? { who: speaker.name } : {})} />
+                    )}
                     {current.summary.worktree?.unfiltered !== undefined && (
                       <div className="session-start-note" role="note">
                         <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
@@ -315,6 +321,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       }
                       approvals={approvals}
                       harnessName={harnessName}
+                      {...(speaker ? { speaker } : {})}
                       login={
                         harnessInfo?.login
                           ? { harnessId: harnessInfo.id, login: harnessInfo.login, terminal: catalog?.features?.loginTerminal === true }
@@ -463,12 +470,20 @@ export function ConversationView({ shell }: { shell: ShellState }) {
  * The timeline's first row in an external Harness's session, once per launch in a project: the Harness's mark and that
  * Latch does not isolate it, always in view; what it can do behind ⓘ.
  */
-function FirstStartNote({ harness }: { harness: HarnessInfo }) {
-  const name = harness.capabilities.display.label
+function FirstStartNote({ harness, who }: { harness: HarnessInfo; who?: string }) {
+  const name = who ?? harness.capabilities.display.label
   const note = harness.permission?.approvals === 'none' ? MODE_COPY.firstStartUnasked(name) : MODE_COPY.firstStart(name)
   return (
     <div className="session-start-note" role="note">
-      <Hint lead={<MarkTile mark={harness.capabilities.display.mark} size={14} />} label={note.label}>
+      <Hint
+        lead={
+          who ? (
+            <ShieldAlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
+          ) : (
+            <MarkTile mark={harness.capabilities.display.mark} size={14} />
+          )
+        }
+        label={note.label}>
         {note.detail}
       </Hint>
     </div>
