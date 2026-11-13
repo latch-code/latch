@@ -113,6 +113,7 @@ describe('a Harness with its own models on a saved service', () => {
     }
     openai = await add('OpenAI', 'openai-responses', `${models.origin}/v1`)
     await add('DeepSeek', 'openai-compatible', `${models.origin}/v1`)
+    await add('Gemini', 'gemini', `${models.origin}/v1`)
     // A relay with a model Codex does not know: Codex would not use it.
     await add('Relay', 'openai-responses', `${models.origin}/v1`, ['fake-model', 'deepseek-v3'])
     browser = await chromium.launch(browserLaunchOptions())
@@ -195,14 +196,16 @@ describe('a Harness with its own models on a saved service', () => {
     const page = await open(1440, 'light')
     await chip(page, '模型').click()
     await shownText(page, 'OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
-    // A service Codex does not speak is not offered: one folded row counts it, and opening it says why; nor is a model it
-    // does not know offered.
+    // Chat is available through the implemented conversion; Gemini remains folded with its actual incompatibility.
+    await shownText(page, 'DeepSeek · 实验性 · 经 Latch', { exact: true }).waitFor()
+    const chatGroup = page.getByRole('group', { name: 'DeepSeek · 实验性 · 经 Latch', exact: true })
+    expect(await chatGroup.getByRole('menuitemradio', { name: 'fake-model-large', exact: true }).getAttribute('aria-disabled')).toBeNull()
     const unusable = menuText(page, '1 个服务用不了')
     await unusable.waitFor()
-    expect(await shownText(page, 'DeepSeek', { exact: true }).count()).toBe(0)
+    expect(await shownText(page, 'Gemini', { exact: true }).count()).toBe(0)
     await unusable.click()
-    await menuText(page, 'Codex 只说 Responses，这个服务是 Chat Completions').waitFor()
-    await menuText(page, 'DeepSeek').waitFor()
+    await menuText(page, 'Codex 只说 Responses，这个服务是 Gemini').waitFor()
+    await menuText(page, 'Gemini').waitFor()
     expect(await shownText(page, /尚未实现/u).count()).toBe(0)
     await shownText(page, 'Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
@@ -255,7 +258,11 @@ describe('a Harness with its own models on a saved service', () => {
     await routed.getByText(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。$/u).waitFor()
     // What Codex lists now is that service's; another service it speaks needs a new session.
     await menuText(page, 'OpenAI · 经 Latch').waitFor()
-    await shownText(page, '开始后不能换服务', { exact: true }).waitFor()
+    for (const name of ['DeepSeek', 'Relay']) {
+      const service = page.getByRole('menuitemradio', { name, exact: true })
+      expect(await service.getAttribute('aria-disabled')).toBe('true')
+      await service.getByText('开始后不能换服务', { exact: true }).waitFor()
+    }
     expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
     // The service it cannot use stays folded in the session too.
     await menuText(page, '1 个服务用不了').waitFor()

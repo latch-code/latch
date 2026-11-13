@@ -26,8 +26,17 @@ export function TextPreview({
     [finding, setFinding] = useState(false)
   const copied = useCopy()
   const openFind = () => {
+    if (search.current) {
+      search.current.focus({ preventScroll: true })
+      return
+    }
     setFinding(true)
-    requestAnimationFrame(() => search.current?.focus())
+    requestAnimationFrame(() => {
+      const field = search.current
+      // Opening the row must not steal focus from a control the person already chose in it.
+      if (!field || field.closest('.file-find')?.contains(document.activeElement)) return
+      field.focus({ preventScroll: true })
+    })
   }
   useViewerMenu([
     { id: 'find', label: '查找', onSelect: openFind },
